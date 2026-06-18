@@ -6,7 +6,7 @@
 //! `PlacedFeature` rows; P4 removes the chunk-edge skip via a bordered
 //! `ProtoChunk` and positional RNG.
 
-use super::*;
+use crate::biome::{Biome, biome_at};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use super::rng::FeatureRng;
 use super::WorldNoise;
