@@ -1,0 +1,59 @@
+[package]
+name = "llamacraft"
+version = "0.1.0"
+edition = "2021"
+authors = ["rachel"]
+description = "A noise-based voxel world biomes + features."
+license = "MIT"
+
+[workspace]
+members = [".", "worker_wasm"]
+resolver = "2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "llamacraft_native"
+path = "src/bin/native.rs"
+
+[dependencies]
+wgpu = { version = "22", features = ["webgl"] }
+winit = { version = "0.30", features = ["rwh_06"] }
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }
+glam = { version = "0.29", features = ["bytemuck"] }
+noise = { version = "0.9", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+# Web bindings (gated on web). wgpu handles native/web.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = [
+  "Document", "Window", "Element", "HtmlElement", "HtmlCanvasElement", "Node",
+  "Worker", "MessageEvent", "DedicatedWorkerGlobalScope", "MessagePort",
+  "WorkerOptions", "WorkerType",
+  "Location", "Performance",
+] }
+wasm-bindgen = "0.2.125"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+console_log = "1"
+js-sys = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.10"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
