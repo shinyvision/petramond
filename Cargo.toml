@@ -17,6 +17,11 @@ crate-type = ["cdylib", "rlib"]
 name = "llamacraft_native"
 path = "src/bin/native.rs"
 
+# Throwaway worldgen byte-parity gate used during the Strata refactor.
+[[bin]]
+name = "genparity"
+path = "src/bin/genparity.rs"
+
 [dependencies]
 wgpu = { version = "22", features = ["webgl"] }
 winit = { version = "0.30", features = ["rwh_06"] }

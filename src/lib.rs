@@ -13,6 +13,7 @@ pub mod camera;
 pub mod chunk;
 pub mod gen;
 pub mod mathh;
+pub mod worldgen;
 pub mod mesh;
 pub mod platform;
 pub mod render;
