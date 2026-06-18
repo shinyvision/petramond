@@ -6,3 +6,4 @@
 //! place.
 
 pub mod biomes;
+pub mod features;

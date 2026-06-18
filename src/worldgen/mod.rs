@@ -18,12 +18,11 @@ pub mod climate;
 pub mod ctx;
 pub mod data;
 pub mod driver;
-pub mod features;
+pub mod feature;
 pub mod noise;
 pub mod proto;
 pub mod rng;
 pub mod surface;
-pub mod trees;
 
 pub use noise::WorldNoise;
 
@@ -31,17 +30,13 @@ use crate::chunk::Chunk;
 
 /// Generate terrain + features for a chunk. Caller passes the world seed.
 ///
-/// P2: terrain (fill + carve + surface) flows through the staged
-/// `ChunkGenerator`; features are still layered on by the legacy placer until
-/// P3 folds feature placement in as the pipeline's final stage.
+/// P3: terrain (fill + carve + surface) and feature placement both flow through
+/// the staged `ChunkGenerator`; the composable `feature` system replaces the
+/// bespoke oak functions.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     let generator = driver::ChunkGenerator::new(seed);
     let mut chunk = generator.generate(cx, cz);
-
-    // Trees & features layered on top via deterministic RNG seeded per chunk.
-    let noise = WorldNoise::new(seed);
-    let mut frng = rng::FeatureRng::new(seed, cx, cz);
-    features::place_features(&mut chunk, &noise, &mut frng);
+    generator.place_features(&mut chunk, cx, cz);
 
     chunk.dirty = true;
     chunk

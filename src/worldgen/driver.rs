@@ -22,8 +22,6 @@ use super::proto::ProtoChunk;
 use super::surface::SurfaceSystem;
 
 pub struct ChunkGenerator {
-    /// Retained for the feature stage seeding folded in at P3.
-    #[allow(dead_code)]
     seed: u32,
     field: HeightField,
     biome_source: &'static dyn BiomeSource,
@@ -49,6 +47,12 @@ impl ChunkGenerator {
         self.biome_assign(&mut proto, &mut grid);
         self.fill_columns(&mut proto, &grid);
         proto.into_chunk()
+    }
+
+    /// Feature placement stage (P3). Reuses this generator's height field +
+    /// biome source + seed so nothing is rebuilt.
+    pub fn place_features(&self, chunk: &mut Chunk, cx: i32, cz: i32) {
+        super::feature::place_features(chunk, &self.field, self.biome_source, self.seed, cx, cz);
     }
 
     /// BiomeAssign: sample height/climate/biome/river per column, memoize into
