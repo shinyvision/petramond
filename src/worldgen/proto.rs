@@ -6,9 +6,17 @@
 
 use crate::chunk::Chunk;
 
-/// Border (in blocks) the proto extends beyond the 16×16 chunk footprint on
-/// each horizontal side. Zero until P4 introduces cross-chunk features.
-pub const MARGIN: i32 = 0;
+/// Border (in blocks) considered around a chunk for cross-chunk feature
+/// placement: the driver derives feature origins in `[-MARGIN, 16+MARGIN)` so a
+/// tree rooted in a neighbour can write its overlapping voxels into this chunk.
+///
+/// Feature writes are clipped to the chunk's own `[0,16)` (see `FeatureCtx`), so
+/// no wider buffer is needed: an in-chunk write only ever reads in-chunk cells,
+/// and a feature whose footprint <= MARGIN is materialised identically by every
+/// chunk that owns part of it (seam-consistent, no double-placement). Features
+/// with footprint > MARGIN (the big oak, ~7) clip at the margin exactly as they
+/// clipped at the chunk edge before — an accepted, unchanged limitation.
+pub const MARGIN: i32 = 3;
 
 pub struct ProtoChunk {
     chunk: Chunk,

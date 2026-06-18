@@ -71,103 +71,202 @@ pub struct PlacedFeature {
 
 /// Bounded voxel writer — the ONLY place imperative feature writes happen.
 ///
-/// P3: wraps a `&mut Chunk` in LOCAL chunk coords (0..16, 0..256) and reproduces
-/// the god file's three overwrite predicates exactly. P4 reparents this to a
-/// bordered `ProtoChunk` in world coords so features can cross chunk seams.
+/// Coordinates are WORLD coords. Writes are clipped to this chunk's own
+/// `[0,16)×[0,16)` (and `[0,256)` vertically); out-of-footprint writes are
+/// dropped and out-of-footprint reads return Air. Because every retained write
+/// only ever reads in-chunk cells, a feature rooted in a neighbour materialises
+/// its overlapping voxels here identically to how the owner chunk does — giving
+/// seam-consistent cross-chunk features with no shared buffer. Reproduces the
+/// god file's three overwrite predicates (`log_at`/`leaf_at`/`oak_big`-branch).
 pub struct FeatureCtx<'a> {
     chunk: &'a mut Chunk,
+    ox: i32,
+    oz: i32,
 }
 
 impl<'a> FeatureCtx<'a> {
     pub fn new(chunk: &'a mut Chunk) -> Self {
-        Self { chunk }
+        let (ox, oz) = chunk.chunk_origin_world();
+        Self { chunk, ox, oz }
     }
 
+    /// Map a world position to in-chunk local indices, or `None` if outside.
     #[inline]
-    fn in_bounds(p: IVec3) -> bool {
-        p.x >= 0 && p.x < 16 && p.z >= 0 && p.z < 16 && p.y >= 0 && p.y < CHUNK_SY as i32
+    fn local(&self, p: IVec3) -> Option<(usize, usize, usize)> {
+        let lx = p.x - self.ox;
+        let lz = p.z - self.oz;
+        if lx < 0 || lx >= 16 || lz < 0 || lz >= 16 || p.y < 0 || p.y >= CHUNK_SY as i32 {
+            return None;
+        }
+        Some((lx as usize, p.y as usize, lz as usize))
     }
 
     /// Unconditional write (== `trees::log_at`).
     pub fn set_log(&mut self, p: IVec3, b: Block) {
-        if Self::in_bounds(p) {
-            self.chunk.set_block_raw(p.x as usize, p.y as usize, p.z as usize, b.id());
+        if let Some((x, y, z)) = self.local(p) {
+            self.chunk.set_block_raw(x, y, z, b.id());
         }
     }
 
     /// Write over Air/Water only (== `trees::leaf_at`).
     pub fn set_leaf(&mut self, p: IVec3, b: Block) {
-        if Self::in_bounds(p) {
-            let cur = self.chunk.block_raw(p.x as usize, p.y as usize, p.z as usize);
-            if cur == Block::Air.id() || cur == Block::Water.id() {
-                self.chunk.set_block_raw(p.x as usize, p.y as usize, p.z as usize, b.id());
+        if let Some((x, y, z)) = self.local(p) {
+            let c = self.chunk.block_raw(x, y, z);
+            if c == Block::Air.id() || c == Block::Water.id() {
+                self.chunk.set_block_raw(x, y, z, b.id());
             }
         }
     }
 
     /// Write over Air/OakLeaves/Water (== `oak_big` branch predicate).
     pub fn set_branch(&mut self, p: IVec3, b: Block) {
-        if Self::in_bounds(p) {
-            let cur = self.chunk.block_raw(p.x as usize, p.y as usize, p.z as usize);
-            if cur == Block::Air.id() || cur == Block::OakLeaves.id() || cur == Block::Water.id() {
-                self.chunk.set_block_raw(p.x as usize, p.y as usize, p.z as usize, b.id());
+        if let Some((x, y, z)) = self.local(p) {
+            let c = self.chunk.block_raw(x, y, z);
+            if c == Block::Air.id() || c == Block::OakLeaves.id() || c == Block::Water.id() {
+                self.chunk.set_block_raw(x, y, z, b.id());
             }
         }
     }
 
     /// Unconditional leaf write (== `leaf_blob` with `allow_overwrite = true`).
     pub fn set_leaf_force(&mut self, p: IVec3, b: Block) {
-        if Self::in_bounds(p) {
-            self.chunk.set_block_raw(p.x as usize, p.y as usize, p.z as usize, b.id());
+        if let Some((x, y, z)) = self.local(p) {
+            self.chunk.set_block_raw(x, y, z, b.id());
         }
     }
 }
 
-/// Per-chunk feature placement. Reproduces `features::place_features` exactly:
-/// edge-skip, surf>sea gate, per-biome tree density (one `chance` roll), variant
-/// pick (one `next_i32(0,99)` roll), then the `place_oak` height guard, then the
-/// feature's own draws. Byte-parity under the per-chunk xorshift64 stream.
+/// Salt distinguishing the tree-feature positional RNG stream from other users.
+const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
+
+/// Per-chunk feature placement (P4). Iterates feature origins across the chunk
+/// plus a `MARGIN` border, in canonical (wz, wx) order, so a tree rooted in a
+/// neighbour that reaches into this chunk is generated here too. Each origin
+/// seeds its OWN positional RNG (`FeatureRng::positional`), so the per-biome
+/// density roll, variant pick, and geometry are pure functions of (seed, wx, wz)
+/// — independent of chunk and order. Features write in world coords and are
+/// clipped to this chunk, so seams are continuous with no double-placement and
+/// the old chunk-edge skip is gone.
 pub fn place_features(
     chunk: &mut Chunk,
     field: &HeightField,
     biome_source: &dyn BiomeSource,
     seed: u32,
-    cx: i32,
-    cz: i32,
 ) {
-    let (ox, oz) = chunk.chunk_origin_world();
-    let mut rng = FeatureRng::new(seed, cx, cz);
     let mut ctx = FeatureCtx::new(chunk);
+    let (ox, oz) = (ctx.ox, ctx.oz);
+    let margin = super::proto::MARGIN;
 
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            // Edge-skip: avoid cross-chunk writes (removed at P4 via margin).
-            if x == 0 || z == 0 || x == CHUNK_SX - 1 || z == CHUNK_SZ - 1 {
-                continue;
-            }
-            let wx = ox + x as i32;
-            let wz = oz + z as i32;
+    for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
+        for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
             let surf = field.surface_height(wx, wz);
             if surf <= SEA_LEVEL {
                 continue;
             }
             let climate = field.climate(wx, wz);
             let biome = biome_source.pick(&climate, surf);
-
-            // Roll 1: per-biome tree density.
             let p = data::features::tree_density(biome);
+            if p <= 0.0 {
+                continue;
+            }
+
+            // Each origin draws its own positional stream.
+            let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
             if !rng.chance(p) {
                 continue;
             }
-            // Roll 2: variant pick (draws even if the height guard then fails).
             let cf = data::features::pick_oak(&mut rng, biome);
 
-            // place_oak height guard.
+            // place_oak height guard (origin too low / too near the world top).
             if surf < 1 || surf + 12 >= CHUNK_SY as i32 {
                 continue;
             }
             cf.feature
-                .generate(&mut ctx, IVec3::new(x as i32, surf, z as i32), &mut rng);
+                .generate(&mut ctx, IVec3::new(wx, surf, wz), &mut rng);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::block::Block;
+    use crate::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+    use crate::worldgen::generate_chunk;
+
+    fn is_tree(id: u8) -> bool {
+        id == Block::OakLog.id() || id == Block::OakLeaves.id()
+    }
+
+    #[test]
+    fn generate_chunk_is_deterministic() {
+        let seed = 0x1234_5678;
+        for &(cx, cz) in &[(0, 0), (3, -2), (-5, 7), (12, 9)] {
+            let a = generate_chunk(seed, cx, cz);
+            let b = generate_chunk(seed, cx, cz);
+            assert_eq!(a.blocks_slice(), b.blocks_slice(), "blocks differ at {cx},{cz}");
+            assert_eq!(a.biomes_slice(), b.biomes_slice(), "biomes differ at {cx},{cz}");
+        }
+    }
+
+    #[test]
+    fn features_occupy_chunk_edges() {
+        // P4 removed the chunk-edge skip: trees may now sit on the border.
+        let seed = 1u32;
+        let mut found = false;
+        'scan: for cz in 0..24 {
+            for cx in 0..24 {
+                let c = generate_chunk(seed, cx, cz);
+                for z in 0..CHUNK_SZ {
+                    for x in 0..CHUNK_SX {
+                        let edge = x == 0 || x == CHUNK_SX - 1 || z == 0 || z == CHUNK_SZ - 1;
+                        if !edge {
+                            continue;
+                        }
+                        for y in 0..CHUNK_SY {
+                            if is_tree(c.block_raw(x, y, z)) {
+                                found = true;
+                                break 'scan;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found, "no tree blocks on any chunk edge — edge-skip not removed?");
+    }
+
+    #[test]
+    fn trees_span_chunk_seams() {
+        // A trunk rooted on the west border of chunk (cx,cz) (world x = cx*16)
+        // must have canopy reaching into the previous chunk's east column
+        // (local x = 15). Any one confirmed seam-spanning tree proves the
+        // cross-chunk feature mechanism (no bald seam, no gap).
+        for seed in [1u32, 7, 13, 42, 0x1234_5678] {
+            for cz in 0..6 {
+                for cx in 1..6 {
+                    let west = generate_chunk(seed, cx - 1, cz);
+                    let east = generate_chunk(seed, cx, cz);
+                    for z in 0..CHUNK_SZ {
+                        for y in 2..CHUNK_SY - 2 {
+                            if east.block_raw(0, y, z) != Block::OakLog.id() {
+                                continue;
+                            }
+                            // Canopy of this trunk should reach the west chunk's
+                            // x = 15 column near (y.., z..).
+                            let z_lo = z.saturating_sub(2);
+                            let z_hi = (z + 3).min(CHUNK_SZ);
+                            for yy in y..(y + 8).min(CHUNK_SY) {
+                                for zz in z_lo..z_hi {
+                                    if is_tree(west.block_raw(15, yy, zz)) {
+                                        return; // seam-spanning tree confirmed
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        panic!("no seam-spanning tree found in the sampled region");
     }
 }

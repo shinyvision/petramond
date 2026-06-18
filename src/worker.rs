@@ -9,7 +9,7 @@
 
 use crate::chunk::Chunk;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::gen::generate_chunk;
+use crate::worldgen::generate_chunk;
 
 #[derive(Copy, Clone, Debug)]
 pub struct GenRequest { pub cx: i32, pub cz: i32, pub seed: u32 }

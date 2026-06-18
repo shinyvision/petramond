@@ -51,10 +51,9 @@ pub struct GiantOakFeature {
 impl Feature for GiantOakFeature {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
         let (x, y, z) = (origin.x, origin.y, origin.z);
-        // Reserve a 2×2 footprint; caller already skipped chunk edges.
-        if x + 1 >= 16 || z + 1 >= 16 {
-            return;
-        }
+        // 2×2 footprint anchored at the origin; world coords, clipped by ctx.
+        // (The old local-coord edge guard is gone now that origins are world
+        // positions and writes are clipped per chunk.)
         let height = sample_height(self.height, rng); // == 8 + next_i32(0,4)
         let base = y;
         // Trunk: 2×2 column.

@@ -2,7 +2,7 @@
 //! via `postMessage`, runs `generate_chunk`, replies with 8 + VOLUME bytes.
 
 use llamacraft::chunk::VOLUME;
-use llamacraft::gen::generate_chunk;
+use llamacraft::worldgen::generate_chunk;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

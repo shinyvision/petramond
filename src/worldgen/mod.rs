@@ -30,13 +30,13 @@ use crate::chunk::Chunk;
 
 /// Generate terrain + features for a chunk. Caller passes the world seed.
 ///
-/// P3: terrain (fill + carve + surface) and feature placement both flow through
-/// the staged `ChunkGenerator`; the composable `feature` system replaces the
-/// bespoke oak functions.
+/// Terrain (fill + carve + surface) and feature placement both flow through the
+/// staged `ChunkGenerator`. P4: features are placed via world-positional RNG
+/// over the chunk + a margin border, so trees cross chunk seams seamlessly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     let generator = driver::ChunkGenerator::new(seed);
     let mut chunk = generator.generate(cx, cz);
-    generator.place_features(&mut chunk, cx, cz);
+    generator.place_features(&mut chunk);
 
     chunk.dirty = true;
     chunk

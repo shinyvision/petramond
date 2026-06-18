@@ -49,10 +49,10 @@ impl ChunkGenerator {
         proto.into_chunk()
     }
 
-    /// Feature placement stage (P3). Reuses this generator's height field +
-    /// biome source + seed so nothing is rebuilt.
-    pub fn place_features(&self, chunk: &mut Chunk, cx: i32, cz: i32) {
-        super::feature::place_features(chunk, &self.field, self.biome_source, self.seed, cx, cz);
+    /// Feature placement stage. Reuses this generator's height field + biome
+    /// source + seed so nothing is rebuilt. (P4: world-positional, cross-chunk.)
+    pub fn place_features(&self, chunk: &mut Chunk) {
+        super::feature::place_features(chunk, &self.field, self.biome_source, self.seed);
     }
 
     /// BiomeAssign: sample height/climate/biome/river per column, memoize into

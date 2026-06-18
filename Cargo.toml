@@ -22,6 +22,11 @@ path = "src/bin/native.rs"
 name = "genparity"
 path = "src/bin/genparity.rs"
 
+# Headless top-down worldgen previewer (dev tool).
+[[bin]]
+name = "genmap"
+path = "src/bin/genmap.rs"
+
 [dependencies]
 wgpu = { version = "22", features = ["webgl"] }
 winit = { version = "0.30", features = ["rwh_06"] }

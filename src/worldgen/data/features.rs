@@ -58,17 +58,20 @@ pub static OAK3: ConfiguredFeature = ConfiguredFeature { feature: &OAK3_F };
 pub static OAK4: ConfiguredFeature = ConfiguredFeature { feature: &OAK4_F };
 pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature { feature: &OAK_BIG_F };
 
-/// Per-biome tree density (verbatim `tree_probability`).
+/// Per-biome tree density. P4 modestly enriches the wooded biomes (a pure data
+/// edit — the only knob that controls forest fullness). Combined with the P4
+/// cross-chunk placement (no more bald chunk-edge seams), forests read as full,
+/// continuous canopies rather than sparse grids. Tune freely here.
 pub fn tree_density(b: Biome) -> f32 {
     match b {
-        Biome::Forest => 0.06,
-        Biome::BirchForest => 0.04,
-        Biome::Plains => 0.012,
-        Biome::Savanna => 0.015,
-        Biome::Swamp => 0.014,
-        Biome::Taiga => 0.010,
-        Biome::SnowyTaiga => 0.010,
-        Biome::SnowyTundra => 0.002,
+        Biome::Forest => 0.09,
+        Biome::BirchForest => 0.06,
+        Biome::Plains => 0.018,
+        Biome::Savanna => 0.018,
+        Biome::Swamp => 0.020,
+        Biome::Taiga => 0.018,
+        Biome::SnowyTaiga => 0.016,
+        Biome::SnowyTundra => 0.003,
         _ => 0.0,
     }
 }

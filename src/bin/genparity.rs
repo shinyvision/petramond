@@ -7,7 +7,7 @@
 //!
 //! Run: `cargo run --quiet --bin genparity`
 
-use llamacraft::gen::generate_chunk;
+use llamacraft::worldgen::generate_chunk;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;

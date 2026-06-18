@@ -83,7 +83,7 @@ impl App {
     }
 
     fn world_seed_climate(&self, cx: i32, cz: i32) -> crate::biome::Climate {
-        use crate::gen::WorldNoise;
+        use crate::worldgen::WorldNoise;
         let n = WorldNoise::new(self.world.seed);
         n.climate(cx * CHUNK_SX as i32, cz * CHUNK_SX as i32)
     }
