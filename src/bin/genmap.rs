@@ -376,7 +376,7 @@ fn render_river(seed: u32, out: &str) {
 fn print_stats(seed: u32) {
     use llamacraft::worldgen::WorldNoise;
     let wn = WorldNoise::new(seed);
-    let (mut c, mut e, mut pv, mut j) = (vec![], vec![], vec![], vec![]);
+    let (mut c, mut e, mut w, mut pv, mut j) = (vec![], vec![], vec![], vec![], vec![]);
     let (mut tp, mut hu) = (vec![], vec![]);
     let mut z = -600;
     while z < 600 {
@@ -385,6 +385,7 @@ fn print_stats(seed: u32) {
             let (a, b, d, g) = wn.debug_sample(x, z);
             c.push(a);
             e.push(b);
+            w.push(wn.debug_weirdness(x, z));
             pv.push(d);
             j.push(g);
             let cl = wn.climate(x, z);
@@ -408,6 +409,7 @@ fn print_stats(seed: u32) {
     };
     stat(&mut c, "cont");
     stat(&mut e, "erosion");
+    stat(&mut w, "weird");
     stat(&mut pv, "pv");
     stat(&mut j, "jagged");
     stat(&mut tp, "temp");
@@ -686,6 +688,45 @@ fn render_shaded(
 /// `pillar%` = columns that stick >=4 above ALL four neighbours (isolated spikes);
 /// `walkable%` = columns whose steepest neighbour step is <=2 (you can stand/walk).
 fn roughness(seed: u32) {
+    use llamacraft::worldgen::WorldNoise;
+
+    #[derive(Default, Clone, Copy)]
+    struct RoughBin {
+        cols: u64,
+        pillars: u64,
+        walkable: u64,
+        step_sum: i64,
+    }
+
+    impl RoughBin {
+        fn record(&mut self, max_step: i32, above_all: bool) {
+            self.cols += 1;
+            self.step_sum += max_step as i64;
+            if above_all {
+                self.pillars += 1;
+            }
+            if max_step <= 2 {
+                self.walkable += 1;
+            }
+        }
+
+        fn print(self, label: &str) {
+            if self.cols == 0 {
+                println!("  {label:>8}: no mountain columns");
+                return;
+            }
+            let pct = |v: u64| 100.0 * v as f64 / self.cols as f64;
+            println!(
+                "  {label:>8}: cols {:5}  mean-step {:.2}  pillar {:.1}%  walkable {:.1}%",
+                self.cols,
+                self.step_sum as f64 / self.cols as f64,
+                pct(self.pillars),
+                pct(self.walkable)
+            );
+        }
+    }
+
+    let wn = WorldNoise::new(seed);
     let r: i32 = 12;
     let n = (r * 2) as usize;
     let w = n * CHUNK_SX;
@@ -707,6 +748,7 @@ fn roughness(seed: u32) {
     let (mut mtn, mut pillars, mut walkable) = (0u64, 0u64, 0u64);
     let mut step_sum = 0i64;
     let mut steps_hist = [0u64; 6]; // 0,1,2,3,4,5+ block max-step buckets
+    let mut bins = [RoughBin::default(); 3]; // negative, neutral, positive weirdness
     for z in 1..w as i32 - 1 {
         for x in 1..w as i32 - 1 {
             let h = at(x, z);
@@ -725,6 +767,17 @@ fn roughness(seed: u32) {
             if max_step <= 2 {
                 walkable += 1;
             }
+            let wx = -r * CHUNK_SX as i32 + x;
+            let wz = -r * CHUNK_SZ as i32 + z;
+            let weird = wn.climate(wx, wz).weirdness;
+            let bin = if weird < -0.15 {
+                0
+            } else if weird > 0.15 {
+                2
+            } else {
+                1
+            };
+            bins[bin].record(max_step, above_all);
         }
     }
     if mtn == 0 {
@@ -747,6 +800,9 @@ fn roughness(seed: u32) {
         pct(steps_hist[4]),
         pct(steps_hist[5])
     );
+    bins[0].print("weird-");
+    bins[1].print("neutral");
+    bins[2].print("weird+");
 }
 
 /// Oblique 3-D heightfield render (Comanche/voxel-landscape style). This is the

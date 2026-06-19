@@ -6,8 +6,8 @@
 //!   - `biome_assign` samples the 16×16 interior,
 //!   - `smoothed_plan` resamples a 5×5 (`±SMOOTH_R`) stencil per river column —
 //!     once in `fill_columns` and AGAIN in `place_features`,
-//!   - `place_features` samples the whole `16 + 2*MARGIN` window plus its own
-//!     stencils.
+//!   - `place_features` samples the whole `16 + 2*MARGIN` origin window, nearby
+//!     tree-spacing candidates, plus each candidate's river stencil.
 //! That cross-stage duplication dominated worldgen. This cache computes each
 //! distinct column at most once and hands the SAME bits back on every later read.
 //!
@@ -22,16 +22,17 @@ use crate::biome::Climate;
 use crate::chunk::{CHUNK_SX, CHUNK_SZ};
 
 use super::carve::SMOOTH_R;
+use super::feature::TREE_SPACING_RADIUS;
 use super::noise::HeightField;
 use super::proto::MARGIN;
 
 /// Half-width padding around the 16-column chunk that generation + feature
-/// placement can reach: the feature origin border (`MARGIN`) plus the river
-/// smoothing stencil radius (`SMOOTH_R`) applied at the outermost feature
-/// columns. Derived from the source constants so a future bump to either keeps
-/// the window correct (an undersized window would trip the `index` assert, not
-/// silently alias).
-pub const PAD: i32 = MARGIN + SMOOTH_R;
+/// placement can reach: the feature origin border (`MARGIN`), the tree-spacing
+/// neighbour search, and the river smoothing stencil radius (`SMOOTH_R`) applied
+/// at the outermost candidate columns. Derived from the source constants so a
+/// future bump keeps the window correct (an undersized window would trip the
+/// `index` assert, not silently alias).
+pub const PAD: i32 = MARGIN + TREE_SPACING_RADIUS + SMOOTH_R;
 /// Cache window edge length, in columns.
 pub const W: i32 = 16 + 2 * PAD;
 const WN: usize = (W * W) as usize;

@@ -17,6 +17,7 @@ pub mod placement;
 pub mod placers;
 pub mod tree;
 
+use crate::biome::Biome;
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use crate::mathh::IVec3;
@@ -139,15 +140,118 @@ impl<'a> FeatureCtx<'a> {
 
 /// Salt distinguishing the tree-feature positional RNG stream from other users.
 const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
+/// Minimum horizontal block radius between generated tree origins.
+pub(crate) const TREE_SPACING_RADIUS: i32 = 3;
+/// Separate stream used only to break ties between nearby tree candidates.
+const TREE_PRIORITY_SALT: u64 = 0x0000_7A3E_51AC_1EAF;
+
+#[derive(Copy, Clone)]
+struct TreeCandidate {
+    anchor: i32,
+    biome: Biome,
+    density: f32,
+    priority: u64,
+}
+
+#[inline]
+fn tree_priority(seed: u32, wx: i32, wz: i32) -> u64 {
+    FeatureRng::positional(seed, TREE_PRIORITY_SALT, wx, 0, wz).next_u64()
+}
+
+#[inline]
+fn tree_candidate_beats(
+    lhs_priority: u64,
+    lhs_wx: i32,
+    lhs_wz: i32,
+    rhs_priority: u64,
+    rhs_wx: i32,
+    rhs_wz: i32,
+) -> bool {
+    lhs_priority > rhs_priority
+        || (lhs_priority == rhs_priority && (lhs_wz, lhs_wx) < (rhs_wz, rhs_wx))
+}
+
+fn tree_candidate_at(
+    cache: &mut FieldCache,
+    carvers: &CarverSet,
+    biome_source: &dyn BiomeSource,
+    seed: u32,
+    wx: i32,
+    wz: i32,
+) -> Option<TreeCandidate> {
+    let surf = cache.surf(wx, wz);
+    // Anchor to the ACTUAL top solid block, which on a river column is the
+    // carved valley floor, not the natural heightfield surface.
+    let river = cache.river(wx, wz);
+    let plan = carvers.smoothed_plan(cache, wx, wz, river, surf);
+    let anchor = if plan.carve { plan.river_floor } else { surf };
+    // No trees in water/on the riverbed, and a treeline at the overhang onset
+    // (y96): above it columns can be 3-D carved, so a tree anchored at the
+    // heightfield `surf` could float or bury.
+    if anchor <= SEA_LEVEL || surf > 95 {
+        return None;
+    }
+    // place_oak height guard (origin too low / too near the world top).
+    if anchor < 1 || anchor + 14 >= CHUNK_SY as i32 {
+        return None;
+    }
+
+    // Biome from the natural surface (matches the column's stored biome id).
+    let climate = cache.climate(wx, wz);
+    let biome = biome_source.pick(&climate, surf);
+    let density = data::features::tree_density(biome);
+    if density <= 0.0 {
+        return None;
+    }
+
+    let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
+    if !rng.chance(density) {
+        return None;
+    }
+
+    Some(TreeCandidate {
+        anchor,
+        biome,
+        density,
+        priority: tree_priority(seed, wx, wz),
+    })
+}
+
+fn tree_spacing_allows(
+    candidate: TreeCandidate,
+    cache: &mut FieldCache,
+    carvers: &CarverSet,
+    biome_source: &dyn BiomeSource,
+    seed: u32,
+    wx: i32,
+    wz: i32,
+) -> bool {
+    for dz in -TREE_SPACING_RADIUS..=TREE_SPACING_RADIUS {
+        for dx in -TREE_SPACING_RADIUS..=TREE_SPACING_RADIUS {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            let nx = wx + dx;
+            let nz = wz + dz;
+            if let Some(other) = tree_candidate_at(cache, carvers, biome_source, seed, nx, nz) {
+                if tree_candidate_beats(other.priority, nx, nz, candidate.priority, wx, wz) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
 
 /// Per-chunk feature placement (P4). Iterates feature origins across the chunk
 /// plus a `MARGIN` border, in canonical (wz, wx) order, so a tree rooted in a
 /// neighbour that reaches into this chunk is generated here too. Each origin
 /// seeds its OWN positional RNG (`FeatureRng::positional`), so the per-biome
 /// density roll, variant pick, and geometry are pure functions of (seed, wx, wz)
-/// — independent of chunk and order. Features write in world coords and are
-/// clipped to this chunk, so seams are continuous with no double-placement and
-/// the old chunk-edge skip is gone.
+/// — independent of chunk and order. Candidate origins are then thinned by a
+/// deterministic three-block spacing rule. Features write in world coords and
+/// are clipped to this chunk, so seams are continuous with no double-placement
+/// and the old chunk-edge skip is gone.
 pub fn place_features(
     chunk: &mut Chunk,
     cache: &mut FieldCache,
@@ -161,55 +265,104 @@ pub fn place_features(
 
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
-            let surf = cache.surf(wx, wz);
-            // Anchor to the ACTUAL top solid block, which on a river column is the
-            // carved valley floor — not the natural heightfield surface. Otherwise
-            // a tree on a river column would float over the carved channel. The
-            // floor matches the driver's carve exactly (no bed noise), so trees sit
-            // on the ground; wet channels (floor at/below sea) drop out of the
-            // `<= SEA_LEVEL` guard below, so nothing grows in the water.
-            let river = cache.river(wx, wz);
-            let plan = carvers.smoothed_plan(cache, wx, wz, river, surf);
-            let anchor = if plan.carve { plan.river_floor } else { surf };
-            // No trees in water/on the riverbed, and a treeline at the overhang
-            // onset (y96): above it columns can be 3-D carved, so a tree anchored
-            // at the heightfield `surf` could float or bury — so we don't plant there.
-            if anchor <= SEA_LEVEL || surf > 95 {
+            let Some(candidate) = tree_candidate_at(cache, carvers, biome_source, seed, wx, wz)
+            else {
                 continue;
-            }
-            // Biome from the natural surface (matches the column's stored biome id).
-            let climate = cache.climate(wx, wz);
-            let biome = biome_source.pick(&climate, surf);
-            let p = data::features::tree_density(biome);
-            if p <= 0.0 {
+            };
+
+            if !tree_spacing_allows(candidate, cache, carvers, biome_source, seed, wx, wz) {
                 continue;
             }
 
-            // Each origin draws its own positional stream.
+            // Recreate the accepted origin's stream and consume the already-proven
+            // density roll so variant and geometry draws stay on the tree stream.
             let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
-            if !rng.chance(p) {
-                continue;
-            }
-            let cf = data::features::pick_oak(&mut rng, biome);
-
-            // place_oak height guard (origin too low / too near the world top).
-            if anchor < 1 || anchor + 14 >= CHUNK_SY as i32 {
-                continue;
-            }
+            let _density_hit = rng.chance(candidate.density);
+            debug_assert!(_density_hit);
+            let cf = data::features::pick_oak(&mut rng, candidate.biome);
             cf.feature
-                .generate(&mut ctx, IVec3::new(wx, anchor, wz), &mut rng);
+                .generate(&mut ctx, IVec3::new(wx, candidate.anchor, wz), &mut rng);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{tree_candidate_at, tree_spacing_allows, TREE_SPACING_RADIUS};
+    use crate::biome::Biome;
     use crate::block::Block;
     use crate::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+    use crate::worldgen::carve::CarverSet;
+    use crate::worldgen::climate::source::CASCADE;
+    use crate::worldgen::data;
+    use crate::worldgen::field_cache::FieldCache;
     use crate::worldgen::generate_chunk;
+    use crate::worldgen::noise::HeightField;
 
     fn is_tree(id: u8) -> bool {
         id == Block::OakLog.id() || id == Block::OakLeaves.id()
+    }
+
+    fn accepted_tree_origins(seed: u32, chunk_radius: i32) -> Vec<(i32, i32)> {
+        let field = HeightField::new(seed);
+        let carvers = CarverSet::default();
+        let mut origins = Vec::new();
+
+        for cz in -chunk_radius..=chunk_radius {
+            for cx in -chunk_radius..=chunk_radius {
+                let mut cache = FieldCache::new(&field, cx, cz);
+                let ox = cx * CHUNK_SX as i32;
+                let oz = cz * CHUNK_SZ as i32;
+                for wz in oz..(oz + CHUNK_SZ as i32) {
+                    for wx in ox..(ox + CHUNK_SX as i32) {
+                        let Some(candidate) =
+                            tree_candidate_at(&mut cache, &carvers, &CASCADE, seed, wx, wz)
+                        else {
+                            continue;
+                        };
+                        if tree_spacing_allows(
+                            candidate, &mut cache, &carvers, &CASCADE, seed, wx, wz,
+                        ) {
+                            origins.push((wx, wz));
+                        }
+                    }
+                }
+            }
+        }
+
+        origins
+    }
+
+    #[test]
+    fn forest_like_tree_density_values_are_thinned() {
+        assert_eq!(data::features::tree_density(Biome::Forest), 0.055);
+        assert_eq!(data::features::tree_density(Biome::BirchForest), 0.040);
+        assert_eq!(data::features::tree_density(Biome::Taiga), 0.014);
+        assert_eq!(data::features::tree_density(Biome::SnowyTaiga), 0.011);
+    }
+
+    #[test]
+    fn tree_origin_spacing_rule_enforces_three_block_radius() {
+        for seed in [1u32, 7, 42, 0x1234_5678] {
+            let origins = accepted_tree_origins(seed, 4);
+            assert!(
+                origins.len() > 10,
+                "spacing test sampled too few tree origins for seed {seed:#x}"
+            );
+
+            for i in 0..origins.len() {
+                for j in (i + 1)..origins.len() {
+                    let (ax, az) = origins[i];
+                    let (bx, bz) = origins[j];
+                    let dx = (ax - bx).abs();
+                    let dz = (az - bz).abs();
+                    assert!(
+                        dx > TREE_SPACING_RADIUS || dz > TREE_SPACING_RADIUS,
+                        "tree origins ({ax},{az}) and ({bx},{bz}) are within {TREE_SPACING_RADIUS} blocks"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

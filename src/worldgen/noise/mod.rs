@@ -45,4 +45,9 @@ impl WorldNoise {
     pub fn debug_sample(&self, x: i32, z: i32) -> (f64, f64, f64, f64) {
         self.field.debug_sample(x, z)
     }
+
+    /// Debug: raw weirdness sample at a column.
+    pub fn debug_weirdness(&self, x: i32, z: i32) -> f64 {
+        self.field.debug_weirdness(x, z)
+    }
 }

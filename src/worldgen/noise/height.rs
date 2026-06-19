@@ -85,6 +85,12 @@ impl HeightField {
         )
     }
 
+    /// Debug: raw weirdness sample at a column. Kept separate from
+    /// `debug_sample` so that facade stays ABI-stable for local tools.
+    pub fn debug_weirdness(&self, x: i32, z: i32) -> f64 {
+        self.weirdness.get([x as f64, z as f64])
+    }
+
     /// 3-D overhang noise at a world voxel, in ~[-1, 1]. Anisotropic: finer in Y
     /// so the warped surface leans and undercuts. Sampled only inside the carve
     /// band of mountain columns (see the driver's per-column precompute).
@@ -226,17 +232,19 @@ impl HeightField {
 
         // (E) Weird mountain morphology. Positive weirdness grows extra
         // knife-edge ridge crests from a broad legacy ridged sampler; negative
-        // weirdness terraces high faces into shelves. Both are gated by `peak`
-        // and `rugged`, keeping lowlands and mild foothills out of the effect.
+        // weirdness terraces high faces into shelves, spreading onto highlands
+        // before the full mountain peak gate. Both remain gated by ruggedness so
+        // calm lowlands do not turn into stair fields.
         let spine = self.jagged.get([wx * 0.42 + 11.0, wz * 0.42 - 7.0]);
         let spine = (spine * 0.38 + 0.08).clamp(-0.22, 0.92);
-        let spine_gate = peak.powf(1.8) * rugged * weird_pos;
-        let h = h + spine_gate * (9.0 + 17.0 * rugged) * spine;
+        let spine_gate = peak.powf(1.55) * rugged * weird_pos;
+        let h = h + spine_gate * (12.0 + 20.0 * rugged) * spine;
 
-        let shelf_gate = peak.powf(1.15) * rugged * weird_neg;
+        let highland = smoothstep(88.0, 116.0, h as f32) as f64;
+        let shelf_gate = (0.35 * highland + 0.65 * peak.powf(1.10)) * rugged.powf(0.7) * weird_neg;
         let shelf_noise = self.surface.get([wx * 0.006 + 37.0, wz * 0.006 - 29.0]);
-        let shelf_strength = shelf_gate * (0.16 + 0.14 * (shelf_noise * 0.5 + 0.5));
-        let shelf_size = 4.0 + 3.0 * er01;
+        let shelf_strength = shelf_gate * (0.24 + 0.22 * (shelf_noise * 0.5 + 0.5));
+        let shelf_size = 4.0 + 3.0 * er01 + 2.0 * weird_neg;
         let terraced = (h / shelf_size).round() * shelf_size;
         let h = h + (terraced - h) * shelf_strength;
 
@@ -308,7 +316,7 @@ impl HeightField {
 }
 
 #[inline]
-fn weirdness_shape_weights(weird: f64) -> (f64, f64, f64) {
+pub(crate) fn weirdness_shape_weights(weird: f64) -> (f64, f64, f64) {
     let weird_pos = (weird * 2.6).clamp(0.0, 1.0);
     let weird_neg = (-weird * 2.6).clamp(0.0, 1.0);
     let strange = (weird.abs() * 2.4).clamp(0.0, 1.0);

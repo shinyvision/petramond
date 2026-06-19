@@ -86,16 +86,16 @@ pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature {
 /// Per-biome tree density (probability per column). A pure data knob.
 pub fn tree_density(b: Biome) -> f32 {
     match b {
-        Biome::Forest => 0.10,
-        Biome::BirchForest => 0.06,
+        Biome::Forest => 0.055,
+        Biome::BirchForest => 0.040,
         Biome::Plains => 0.012,
         Biome::Savanna => 0.015,
         Biome::Foothills => 0.012,
         Biome::Mountains => 0.004, // sparse, lower slopes only
-        Biome::Swamp => 0.022,
-        Biome::Wetland => 0.014,
-        Biome::Taiga => 0.018,
-        Biome::SnowyTaiga => 0.014,
+        Biome::Swamp => 0.018,
+        Biome::Wetland => 0.011,
+        Biome::Taiga => 0.014,
+        Biome::SnowyTaiga => 0.011,
         Biome::SnowyTundra => 0.003,
         _ => 0.0, // Ocean/DeepOcean/Beach/Desert/River/SnowyPeaks
     }

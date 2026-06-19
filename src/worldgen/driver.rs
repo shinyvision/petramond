@@ -18,6 +18,7 @@ use super::climate::source::{BiomeSource, CASCADE};
 use super::ctx::ColumnGrid;
 use super::data::biomes::def;
 use super::field_cache::FieldCache;
+use super::noise::height::weirdness_shape_weights;
 use super::noise::HeightField;
 use super::proto::ProtoChunk;
 use super::surface::rule::SurfaceCtx;
@@ -85,15 +86,10 @@ impl ChunkGenerator {
 
                 // Overhang plan: mountains get a 3-D carve. Gated on the actual
                 // surface height (robust regardless of the noise distribution) so
-                // tall peaks always distort; roughness just adds extra amplitude.
-                // Onset stays at y96 (just above the y95 treeline) so trees are
-                // never anchored on a 3-D-carved column. Amplitude kept at the
-                // value that holds the 0-detached-debris invariant (flood audit);
-                // the jagged heightfield already supplies the dramatic relief.
-                let high = smoothstep(96.0, 128.0, surf as f32) as f64; // 0 below y96
-                let er01 = (climate.erosion * 0.5 + 0.5).clamp(0.0, 1.0) as f64;
-                let rough = 1.0 - er01;
-                let amp = (12.0 * high * (0.5 + 0.5 * rough)) as f32;
+                // tall peaks always distort; roughness and weirdness add extra
+                // amplitude. Onset stays at y96 (just above the y95 treeline) so
+                // trees are never anchored on a 3-D-carved column.
+                let amp = overhang_amplitude(surf, climate.erosion, climate.weirdness);
                 grid.overhang_amp[i] = amp;
                 if amp > 0.0 {
                     let a = amp.ceil() as i32;
@@ -183,5 +179,48 @@ impl ChunkGenerator {
                 }
             }
         }
+    }
+}
+
+#[inline]
+fn overhang_amplitude(surf: i32, erosion: f32, weirdness: f32) -> f32 {
+    let high = smoothstep(96.0, 128.0, surf as f32) as f64; // 0 below y96
+    let er01 = (erosion * 0.5 + 0.5).clamp(0.0, 1.0) as f64;
+    let rough = 1.0 - er01;
+    let (weird_pos, weird_neg, strange) = weirdness_shape_weights(weirdness as f64);
+
+    // Positive weirdness already sharpens heightfield ridge crests; negative
+    // weirdness terraces faces into shelves. The 3-D carve follows that signal by
+    // making high-weirdness mountains more undercut, with extra shelf depth for
+    // negative weirdness and a smaller boost for knife-edge positive terrain.
+    let shape = 0.5 + 0.5 * rough;
+    let weird_boost = 1.0 + 0.40 * strange + 0.25 * weird_neg + 0.15 * weird_pos;
+    (12.0 * high * shape * weird_boost) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overhang_amplitude_stays_below_tree_boundary() {
+        assert_eq!(overhang_amplitude(95, -1.0, 1.0), 0.0);
+        assert_eq!(overhang_amplitude(95, -1.0, -1.0), 0.0);
+    }
+
+    #[test]
+    fn weirdness_increases_mountain_overhang_amplitude() {
+        let neutral = overhang_amplitude(128, -0.4, 0.0);
+        let positive = overhang_amplitude(128, -0.4, 0.6);
+        let negative = overhang_amplitude(128, -0.4, -0.6);
+
+        assert!(
+            positive > neutral,
+            "positive weirdness should make mountain crests more undercut"
+        );
+        assert!(
+            negative > positive,
+            "negative weirdness shelves should get the strongest undercut"
+        );
     }
 }
