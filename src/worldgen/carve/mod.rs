@@ -92,11 +92,15 @@ impl CarverSet {
                 let nf = self.plan(rv, s).river_floor;
                 sum += nf;
                 cnt += 1;
+                // Opposite-side water is tested COLLINEARLY through the centre (the
+                // ±x water must share the centre row, ±z the centre column), so the
+                // enclosure fires on a true bar flanked by water — not on a straight
+                // land neck that merely has water diagonally on either side.
                 if nf < SEA_LEVEL {
-                    if dx > 0 { w_px = true; }
-                    if dx < 0 { w_nx = true; }
-                    if dz > 0 { w_pz = true; }
-                    if dz < 0 { w_nz = true; }
+                    if dz == 0 && dx > 0 { w_px = true; }
+                    if dz == 0 && dx < 0 { w_nx = true; }
+                    if dx == 0 && dz > 0 { w_pz = true; }
+                    if dx == 0 && dz < 0 { w_nz = true; }
                 }
             }
         }
