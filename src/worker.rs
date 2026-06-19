@@ -39,8 +39,13 @@ mod native_impl {
         pub fn new(seed: u32) -> Self {
             let (tx_req, rx_req) = channel::<GenRequest>();
             let (tx_res, rx_res) = channel::<GenResult>();
+            // Use almost all cores for chunk gen (it is ~80% of CPU and the
+            // bottleneck for world streaming), reserving ~2 for the main/render
+            // thread and the mesh rayon pool. The single Mutex<Receiver> is held
+            // only across the brief recv(); gen runs unlocked, so contention is
+            // negligible even at high thread counts.
             let n = std::thread::available_parallelism()
-                .map(|n| n.get()).unwrap_or(4).max(2).min(8);
+                .map(|n| n.get()).unwrap_or(4).saturating_sub(2).max(2);
             let rx_req = Arc::new(Mutex::new(rx_req));
             let mut handles = Vec::with_capacity(n);
             for _ in 0..n {

@@ -27,6 +27,11 @@ path = "src/bin/genparity.rs"
 name = "genmap"
 path = "src/bin/genmap.rs"
 
+# Throwaway perf harness: times worldgen + meshing over a chunk grid.
+[[bin]]
+name = "perfbench"
+path = "src/bin/perfbench.rs"
+
 [dependencies]
 wgpu = { version = "27", features = ["webgl"] }
 winit = { version = "0.30", features = ["rwh_06"] }

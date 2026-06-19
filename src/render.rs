@@ -1,6 +1,6 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-use crate::atlas::decode_atlas;
+use crate::atlas::{decode_atlas, tile_uv, Tile, TILE_COUNT};
 use crate::camera::{Camera, Frustum};
 use crate::chunk::{ChunkPos, CHUNK_SY};
 use crate::mesh::{ChunkMesh, Vertex};
@@ -12,6 +12,11 @@ use wgpu::util::DeviceExt;
 
 pub const FOG_START: f32 = 14.0 * 16.0;
 pub const FOG_END:   f32 = 16.0 * 16.0;
+
+/// Fixed size of the uv-rect table shared with the vertex shader (`block.wgsl`
+/// declares `array<vec4<f32>, UV_RECTS_LEN>`). Sized with headroom over the tile
+/// count so adding a few tiles needs no shader edit.
+pub const UV_RECTS_LEN: usize = 16;
 
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
@@ -31,6 +36,9 @@ pub struct Renderer {
     /// Camera frustum for viewspace culling, refreshed each frame in
     /// `update_uniforms`; chunk meshes outside it are skipped in `render`.
     pub frustum: Frustum,
+    /// Camera world position, refreshed in `update_uniforms`; used to sort
+    /// chunk draws front-to-back (opaque) / back-to-front (transparent).
+    pub cam_pos: glam::Vec3,
 }
 
 pub struct GpuMesh {
@@ -170,6 +178,21 @@ async fn new_renderer_inner(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
+    // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
+    // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
+    // on every backend (incl. WebGL2). Never updated after creation.
+    const _: () = assert!(TILE_COUNT <= UV_RECTS_LEN);
+    let mut uv_rects = [[0f32; 4]; UV_RECTS_LEN];
+    for &t in Tile::ALL {
+        uv_rects[t as usize] = tile_uv(t);
+    }
+    let uv_rects_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("uv_rects"),
+        contents: bytemuck::cast_slice(&uv_rects[..]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
     let uniform_bind_layout = wgpu::BindGroupLayoutDescriptor {
         label: Some("uniform bgl"),
         entries: &[
@@ -182,13 +205,25 @@ async fn new_renderer_inner(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1, visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new((UV_RECTS_LEN * 16) as u64),
+                },
+                count: None,
+            },
         ],
     };
     let uniform_bgl = device.create_bind_group_layout(&uniform_bind_layout);
     let uniform_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("uniform bg"),
         layout: &uniform_bgl,
-        entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() }],
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uv_rects_buf.as_entire_binding() },
+        ],
     });
 
     let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -225,18 +260,16 @@ async fn new_renderer_inner(
         push_constant_ranges: &[],
     });
 
+    // 28-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32).
     let vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2, offset: 12, shader_location: 1,
+            format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32, offset: 20, shader_location: 2,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3, offset: 24, shader_location: 3,
+            format: wgpu::VertexFormat::Uint32, offset: 24, shader_location: 2,
         },
     ];
     let vbuf_layout = wgpu::VertexBufferLayout {
@@ -303,6 +336,7 @@ async fn new_renderer_inner(
         depth,
         chunk_meshes: HashMap::new(),
         frustum: Frustum::permissive(),
+        cam_pos: glam::Vec3::ZERO,
     }
 }
 
@@ -372,6 +406,7 @@ impl Renderer {
         let view_proj = cam.view_proj();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.frustum = Frustum::from_view_proj(view_proj);
+        self.cam_pos = cam.pos;
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             cam_pos: [cam.pos.x, cam.pos.y, cam.pos.z, 0.0],
@@ -425,6 +460,21 @@ impl Renderer {
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
+        // Frustum-cull + depth-sort the visible chunks once. The opaque pass
+        // draws nearest-first so the GPU's early-Z rejects occluded fragments
+        // before the (texture + tint + fog) fragment shader runs — cutting
+        // overdraw, which is the dominant GPU cost in dense voxel terrain. The
+        // transparent pass draws farthest-first for correct back-to-front alpha.
+        let cam = self.cam_pos;
+        let mut order: Vec<(f32, &GpuMesh)> = self.chunk_meshes.values()
+            .filter(|gm| self.chunk_visible(gm))
+            .map(|gm| {
+                let (ox, oz) = gm.origin;
+                let c = glam::Vec3::new(ox as f32 + 8.0, CHUNK_SY as f32 * 0.5, oz as f32 + 8.0);
+                ((cam - c).length_squared(), gm)
+            })
+            .collect();
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("opaque pass"),
@@ -453,9 +503,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
-            for (pos, gm) in self.chunk_meshes.iter() {
-                let _ = pos;
-                if !self.chunk_visible(gm) { continue; } // viewspace (frustum) cull
+            for (_, gm) in order.iter() { // near -> far (early-Z)
                 if let (Some(vb), Some(ib)) = (&gm.opaque_vbuf, &gm.opaque_ibuf) {
                     if gm.opaque_idx_count == 0 { continue; }
                     pass.set_vertex_buffer(0, vb.slice(..));
@@ -490,9 +538,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.transparent_pipe);
-            for (pos, gm) in self.chunk_meshes.iter() {
-                let _ = pos;
-                if !self.chunk_visible(gm) { continue; } // viewspace (frustum) cull
+            for (_, gm) in order.iter().rev() { // far -> near (alpha order)
                 if let (Some(vb), Some(ib)) = (&gm.transparent_vbuf, &gm.transparent_ibuf) {
                     if gm.transparent_idx_count == 0 { continue; }
                     pass.set_vertex_buffer(0, vb.slice(..));
@@ -542,5 +588,109 @@ fn upload_mesh(device: &wgpu::Device, mesh: &ChunkMesh, pos: ChunkPos) -> GpuMes
         transparent_vbuf, transparent_ibuf,
         transparent_idx_count: mesh.transparent_idx.len() as u32,
         origin: (pos.cx * 16, pos.cz * 16),
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_validation {
+    use super::*;
+
+    /// Headless validation that the packed-vertex pipeline is internally
+    /// consistent: WGSL parses + passes naga validation, the vertex attribute
+    /// formats/locations match the shader's `VsIn`, and the bind-group layouts
+    /// match the shader's declared bindings (group0: Uniforms + uv_rects;
+    /// group1: atlas texture + sampler). Any mismatch surfaces as a captured
+    /// validation error. Skips cleanly on machines/CI with no GPU adapter
+    /// (the interactive demo is where final visual confirmation happens).
+    #[test]
+    fn packed_vertex_pipeline_validates() {
+        let instance = wgpu::Instance::new(&instance_descriptor());
+        let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })) {
+            Ok(a) => a,
+            Err(_) => { eprintln!("[skip] no wgpu adapter; pipeline validation not run"); return; }
+        };
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default().using_alignment(adapter.limits()),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        })).expect("device");
+
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("block shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/block.wgsl").into()),
+        });
+
+        let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64) },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1, visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: NonZeroU64::new((UV_RECTS_LEN * 16) as u64) },
+                    count: None,
+                },
+            ],
+        });
+        let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None, bind_group_layouts: &[&uniform_bgl, &atlas_bgl], push_constant_ranges: &[],
+        });
+
+        let vbuf_attrs = [
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Uint32, offset: 24, shader_location: 2 },
+        ];
+        let vbuf_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vbuf_attrs,
+        };
+        let targets = [Some(wgpu::ColorTargetState {
+            format: wgpu::TextureFormat::Rgba8UnormSrgb, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let _pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None, layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[vbuf_layout] },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_opaque"), compilation_options: Default::default(), targets: &targets }),
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth32Float, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
+            multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
+        });
+
+        let err = pollster::block_on(device.pop_error_scope());
+        assert!(err.is_none(), "packed-vertex pipeline validation error: {err:?}");
+        // Confirm the assumption baked into the packing: tile ids fit in 8 bits.
+        assert!(TILE_COUNT <= 256);
+        // Stride sanity: the compressed vertex is exactly 28 bytes.
+        assert_eq!(std::mem::size_of::<Vertex>(), 28);
     }
 }

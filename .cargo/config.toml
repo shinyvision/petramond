@@ -1,0 +1,17 @@
+# Native build tuning. Scoped to the host triple ONLY so the wasm32 web build is
+# left completely untouched (do NOT move these into a [build] table — that would
+# also re-tune wasm32 and other targets).
+#
+# `x86-64-v3` = the Haswell/Zen-era baseline: AVX2 + FMA + BMI2. This is committed
+# because it runs on essentially every CPU since ~2015. It enables VEX encoding,
+# `roundsd`-inlined floor/round, and better register allocation for the f64 noise
+# math. It does NOT change floating-point *semantics* (Rust emits no reassoc/
+# contract fast-math, scalar f64 stays SSE2-deterministic, and FMA is IEEE
+# correctly-rounded either way) — the genparity gate is the hard proof of that.
+#
+# For maximum speed on THIS machine only, you may locally swap "x86-64-v3" for
+# "native" (do not commit it — `native` SIGILLs on older CPUs). Re-run the
+# genparity gate after any change here: if COMBINED != 731e2503a634c9fb, the flag
+# altered terrain and must be reverted.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

@@ -1,6 +1,7 @@
 //! Native desktop binary: winit window + wgpu surface, runs `App::tick`.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use llamacraft::app::App;
 use llamacraft::camera::Camera;
@@ -15,17 +16,28 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+/// Frame-rate cap. Movement is real-time (`dt`-scaled), so capping the redraw
+/// cadence does not change movement speed — it just stops the loop from
+/// busy-rendering as fast as the GPU allows.
+const TARGET_FPS: u64 = 60;
+const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
+
 struct Game {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     app: Option<App>,
     seed: u32,
     render_dist: i32,
+    /// Earliest instant the next frame may render (drives the FPS cap).
+    next_frame: Instant,
 }
 
 impl Game {
     fn new(seed: u32, render_dist: i32) -> Self {
-        Self { window: None, renderer: None, app: None, seed, render_dist }
+        Self {
+            window: None, renderer: None, app: None, seed, render_dist,
+            next_frame: Instant::now(),
+        }
     }
 }
 
@@ -80,8 +92,9 @@ impl ApplicationHandler for Game {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Redraws are paced by `about_to_wait` (FPS cap); don't
+                // self-trigger another redraw here or we'd run uncapped.
                 app.tick(renderer);
-                window.request_redraw();
             }
             _ => {}
         }
@@ -102,8 +115,16 @@ impl ApplicationHandler for Game {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(w) = self.window.as_ref() { w.request_redraw(); }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Cap the frame rate: only request a redraw once the frame interval has
+        // elapsed, and sleep until then. Scheduling the next deadline from `now`
+        // (not the old deadline) avoids catch-up bursts after a stall.
+        let now = Instant::now();
+        if now >= self.next_frame {
+            self.next_frame = now + FRAME;
+            if let Some(w) = self.window.as_ref() { w.request_redraw(); }
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
 

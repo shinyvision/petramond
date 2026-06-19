@@ -34,6 +34,11 @@ const TILES: &[(&str, &str)] = &[
     ("oak_log_side", "oak_log.png"),
     ("oak_log_top", "oak_log_top.png"),
     ("oak_leaves", "oak_leaves.png"),
+    // Appended (keeps tiles 0..9 stable): the snowy-block top, and the
+    // grayscale grass side overlay that is biome-tinted + composited over dirt
+    // so the grass on a block's side matches its tinted top.
+    ("snow", "snow.png"),
+    ("grass_side_overlay", "grass_block_side_overlay.png"),
 ];
 
 fn main() {

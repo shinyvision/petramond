@@ -3,18 +3,30 @@
 //! Vertex layout: position (3 floats) + UV (2 floats) + light (1 float, 0..1
 //! face-direction-based shading, baked AO skipped in v1).
 
-use crate::atlas::tile_uv;
 use crate::block::Block;
 use crate::biome::Biome;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 
+/// Per-face directional shade factors, indexed by `Face::shade_idx`. The vertex
+/// shader (`block.wgsl`) holds a byte-identical copy; `tests::shade_table_*`
+/// locks the two in sync. Top brightest, bottom darkest.
+pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
+
+/// GPU vertex: 28 bytes. `pos` and `tint` stay full `f32` (pos keeps the water
+/// surface Y baked on the CPU; tint must not be quantized — the sRGB OETF would
+/// shift output levels). `packed` folds the uv tile + corner + shade index into
+/// one word; the vertex shader reconstructs uv (by SELECTING from a CPU-uploaded
+/// `tile_uv()` table — never recomputing) and light (from the SHADES literal),
+/// so every decoded value is bit-identical to the old inline `uv`/`light` and
+/// the rendered image is unchanged.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub pos: [f32; 3],
-    pub uv: [f32; 2],
-    pub light: f32,
     pub tint: [f32; 3],
+    /// bits 0..8 = tile id (`Tile as u32`), 8..10 = corner (0..3),
+    /// 10..12 = shade index (into `SHADES`).
+    pub packed: u32,
 }
 
 pub struct ChunkMesh {
@@ -49,12 +61,25 @@ impl Face {
         }
     }
     /// Per-face directional shading factor (top brightest, bottom darkest).
+    /// Now a test-only oracle: production reads `SHADES[shade_idx]` (and the
+    /// shader mirrors it); `tests::shade_table_matches_face_shade` checks they agree.
+    #[cfg(test)]
     fn shade(self) -> f32 {
         match self {
             Face::PosY => 1.00,
             Face::PosX | Face::NegX => 0.75,
             Face::PosZ | Face::NegZ => 0.85,
             Face::NegY => 0.55,
+        }
+    }
+    /// Index into `SHADES` (and the shader's mirror) for this face — packed into
+    /// the vertex instead of the raw float.
+    fn shade_idx(self) -> u32 {
+        match self {
+            Face::PosY => 0,
+            Face::PosZ | Face::NegZ => 1,
+            Face::PosX | Face::NegX => 2,
+            Face::NegY => 3,
         }
     }
 }
@@ -119,7 +144,16 @@ pub fn build_mesh(
         }
     }
 
-    for y in 0..CHUNK_SY {
+    // Skip the all-air shell above the terrain. `heightmap[i]` is the highest
+    // non-air Y in column i (set for every non-air block incl. water; rebuilt by
+    // recompute_heightmap when block data arrives raw — see worker.rs). Bounding
+    // the outer loop by the chunk-wide max is byte-identical to looping 0..CHUNK_SY:
+    // every skipped iteration (y > max_h) has an air centre voxel that would hit
+    // the `Block::Air { continue }` guard below and emit zero bytes. We use the
+    // chunk-wide max (NOT a per-column bound) so the y-major emission order — and
+    // thus the alpha-blended transparent buffer ordering — is exactly preserved.
+    let max_h = chunk.heightmap.iter().copied().max().unwrap_or(0) as usize;
+    for y in 0..=max_h {
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 let id = chunk.block_raw(x, y, z);
@@ -167,13 +201,30 @@ pub fn build_mesh(
                     if nb.is_opaque() { continue; }
                     if is_water && nb == Block::Water { continue; }
 
-                    // Select tile by face direction.
-                    let tile = match face {
-                        Face::PosY => tile_top,
-                        Face::NegY => tile_bot,
-                        _ => tile_side,
+                    // Material for this face: base tile + optional biome-tinted
+                    // overlay + tint. Grass block SIDES render as dirt + a
+                    // grayscale grass overlay tinted by the same biome grass
+                    // colour as the top, so side grass matches the top (the
+                    // pre-greened grass_block_side never did). Everything else is
+                    // the face's own tile, tinted only for grass-top/foliage/water.
+                    let ci = z * CHUNK_SX + x;
+                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
+                    let (base_tile, overlay_tile, tint) = if block == Block::Grass && is_side {
+                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass[ci])
+                    } else {
+                        let t = match face {
+                            Face::PosY => tile_top,
+                            Face::NegY => tile_bot,
+                            _ => tile_side,
+                        };
+                        let tint = match tile_tint(t) {
+                            Some(TintKind::Grass) => tint_grass[ci],
+                            Some(TintKind::Foliage) => tint_foliage[ci],
+                            Some(TintKind::Water) => tint_water[ci],
+                            None => [1.0, 1.0, 1.0],
+                        };
+                        (t, None, tint)
                     };
-                    let uv = tile_uv(tile);
 
                     // Water top face: lower the top by 0.1 to mimic MC water surface.
                     let y_adjust = if is_water && matches!(face, Face::PosY) {
@@ -188,26 +239,21 @@ pub fn build_mesh(
                     let base_z = z as f32 + oz as f32;
                     let [p0, p1, p2, p3] = quad_for(face, base_x, base_y, base_z);
 
-                    let light = face.shade();
-
-                    // Biome-blend tint: tile-tinted kinds only (grass top, water, leaves).
-                    let tint = match tile_tint(tile) {
-                        Some(TintKind::Grass) => tint_grass[z * CHUNK_SX + x],
-                        Some(TintKind::Foliage) => tint_foliage[z * CHUNK_SX + x],
-                        Some(TintKind::Water) => tint_water[z * CHUNK_SX + x],
-                        None => [1.0, 1.0, 1.0],
+                    // Pack base tile + shade + optional overlay once per face; the
+                    // corner (0..3) is the per-vertex index. Bit layout:
+                    //   0..8 base tile | 8..10 corner | 10..12 shade
+                    //   12..20 overlay tile | 20 has-overlay
+                    // The shader selects uvs from the CPU-baked tile_uv() table by
+                    // (tile, corner): 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
+                    let (ov_tile, ov_flag) = match overlay_tile {
+                        Some(o) => (o as u32, 1u32),
+                        None => (0, 0),
                     };
-
-                    // Per-vertex UV: map tile rect to quad corners.
-                    // Order matches quad_for ordering: (u0,v0)(u1,v0)(u1,v1)(u0,v1)
-                    // where (u0,v0) = top-left of tile in atlas (v flipped).
-                    let [u0, v0, u1, v1] = uv;
-                    let verts = [
-                        (p0, [u0, v1]),
-                        (p1, [u1, v1]),
-                        (p2, [u1, v0]),
-                        (p3, [u0, v0]),
-                    ];
+                    let face_bits = (base_tile as u32)
+                        | (face.shade_idx() << 10)
+                        | (ov_tile << 12)
+                        | (ov_flag << 20);
+                    let corners = [p0, p1, p2, p3];
 
                     let (vbuf, ibuf) = if is_water {
                         (&mut transparent, &mut transparent_idx)
@@ -216,8 +262,8 @@ pub fn build_mesh(
                     };
 
                     let start = vbuf.len() as u32;
-                    for (p, uv) in verts {
-                        vbuf.push(Vertex { pos: p, uv, light, tint });
+                    for (corner, p) in corners.into_iter().enumerate() {
+                        vbuf.push(Vertex { pos: p, tint, packed: face_bits | ((corner as u32) << 8) });
                     }
                     ibuf.extend_from_slice(&[start, start+1, start+2, start, start+2, start+3]);
                 }
@@ -232,6 +278,18 @@ pub fn build_mesh(
 mod tests {
     use super::*;
     use crate::worldgen::generate_chunk;
+
+    /// The packed shade index must decode (via SHADES) to the same float the old
+    /// per-vertex `Face::shade()` produced — and SHADES must match the literal
+    /// table in block.wgsl. Guards the index↔value mapping against drift.
+    #[test]
+    fn shade_table_matches_face_shade() {
+        for f in FACES {
+            assert_eq!(SHADES[f.shade_idx() as usize], f.shade(), "shade idx/value drift for {f:?}");
+        }
+        // Mirror of block.wgsl's `array<f32,4>(...)`.
+        assert_eq!(SHADES, [1.00, 0.85, 0.75, 0.55]);
+    }
 
     /// Leaves must render in the OPAQUE pass, not the alpha-blended one. Proof: a
     /// chunk that has leaves but NO water must produce an empty transparent buffer
@@ -266,6 +324,63 @@ mod tests {
             }
         }
         panic!("no leaf-bearing, water-free chunk found to test");
+    }
+}
+
+/// Parallel mesh building (World::tick_mesh_budget on native) must produce
+/// byte-identical meshes to a serial build: `build_mesh` is a pure function of
+/// (chunk, neighbour reads) with no shared mutable state, so rayon only reorders
+/// independent work. This locks that invariant down objectively (perfbench
+/// meshes serially and never exercises the rayon path).
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod parallel_parity_tests {
+    use super::*;
+    use crate::worldgen::generate_chunk;
+    use rayon::prelude::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn parallel_meshing_is_byte_identical_to_serial() {
+        let seed = 0x1234_5678u32;
+        let coords: Vec<(i32, i32)> =
+            (-2..=2).flat_map(|cz| (-2..=2).map(move |cx| (cx, cz))).collect();
+        let chunks: HashMap<(i32, i32), Chunk> =
+            coords.iter().map(|&(cx, cz)| ((cx, cz), generate_chunk(seed, cx, cz))).collect();
+
+        let mesh_one = |&(cx, cz): &(i32, i32)| -> ChunkMesh {
+            let c = &chunks[&(cx, cz)];
+            let nb = |wx: i32, wy: i32, wz: i32| -> u8 {
+                if wy < 0 || wy >= CHUNK_SY as i32 { return 0; }
+                match chunks.get(&(wx >> 4, wz >> 4)) {
+                    Some(c) => c.block_raw((wx & 15) as usize, wy as usize, (wz & 15) as usize),
+                    None => 0,
+                }
+            };
+            let nb_biome = |wx: i32, wz: i32| -> u8 {
+                match chunks.get(&(wx >> 4, wz >> 4)) {
+                    Some(c) => c.biome_at((wx & 15) as usize, (wz & 15) as usize),
+                    None => 0,
+                }
+            };
+            build_mesh(c, nb, nb_biome)
+        };
+
+        let serial: Vec<ChunkMesh> = coords.iter().map(mesh_one).collect();
+        let parallel: Vec<ChunkMesh> = coords.par_iter().map(mesh_one).collect();
+
+        for (s, p) in serial.iter().zip(&parallel) {
+            assert_eq!(
+                bytemuck::cast_slice::<Vertex, u8>(&s.opaque),
+                bytemuck::cast_slice::<Vertex, u8>(&p.opaque),
+            );
+            assert_eq!(s.opaque_idx, p.opaque_idx);
+            assert_eq!(
+                bytemuck::cast_slice::<Vertex, u8>(&s.transparent),
+                bytemuck::cast_slice::<Vertex, u8>(&p.transparent),
+            );
+            assert_eq!(s.transparent_idx, p.transparent_idx);
+        }
     }
 }
 

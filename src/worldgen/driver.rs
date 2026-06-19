@@ -16,6 +16,7 @@ use crate::mathh::smoothstep;
 use super::carve::CarverSet;
 use super::climate::source::{BiomeSource, CASCADE};
 use super::ctx::ColumnGrid;
+use super::field_cache::FieldCache;
 use super::data::biomes::def;
 use super::noise::HeightField;
 use super::proto::ProtoChunk;
@@ -41,34 +42,41 @@ impl ChunkGenerator {
         }
     }
 
+    /// Build a per-chunk field cache bound to this generator's height field.
+    /// Thread the SAME cache through `generate` then `place_features` so the
+    /// per-column field samples are computed once and reused across both stages.
+    pub fn field_cache(&self, cx: i32, cz: i32) -> FieldCache<'_> {
+        FieldCache::new(&self.field, cx, cz)
+    }
+
     /// Run terrain generation (everything except features) for one chunk.
-    pub fn generate(&self, cx: i32, cz: i32) -> Chunk {
+    pub fn generate(&self, cx: i32, cz: i32, cache: &mut FieldCache) -> Chunk {
         let mut proto = ProtoChunk::new(cx, cz);
         let mut grid = ColumnGrid::default();
-        self.biome_assign(&mut proto, &mut grid);
-        self.fill_columns(&mut proto, &grid);
+        self.biome_assign(&mut proto, &mut grid, cache);
+        self.fill_columns(&mut proto, &grid, cache);
         proto.into_chunk()
     }
 
     /// Feature placement stage. Reuses this generator's height field + biome
     /// source + seed so nothing is rebuilt. (P4: world-positional, cross-chunk.)
-    pub fn place_features(&self, chunk: &mut Chunk) {
-        super::feature::place_features(chunk, &self.field, &self.carvers, self.biome_source, self.seed);
+    pub fn place_features(&self, chunk: &mut Chunk, cache: &mut FieldCache) {
+        super::feature::place_features(chunk, cache, &self.carvers, self.biome_source, self.seed);
     }
 
     /// BiomeAssign: sample height/climate/biome/river per column, memoize into the
     /// grid, write the per-column biome id, and precompute the overhang carve plan
     /// (amplitude + Y band) so the fill stage can skip the 3-D work in flatland.
-    fn biome_assign(&self, proto: &mut ProtoChunk, grid: &mut ColumnGrid) {
+    fn biome_assign(&self, proto: &mut ProtoChunk, grid: &mut ColumnGrid, cache: &mut FieldCache) {
         let (ox, oz) = proto.chunk_origin_world();
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 let wx = ox + x as i32;
                 let wz = oz + z as i32;
-                let surf = self.field.surface_height(wx, wz);
-                let climate = self.field.climate(wx, wz);
+                let surf = cache.surf(wx, wz);
+                let climate = cache.climate(wx, wz);
                 let biome = self.biome_source.pick(&climate, surf);
-                let river = self.field.river_strength(wx, wz);
+                let river = cache.river(wx, wz);
                 let i = z * CHUNK_SX + x;
                 grid.surf[i] = surf;
                 grid.biome[i] = biome;
@@ -101,7 +109,7 @@ impl ChunkGenerator {
     /// a hard anchor below the band makes floating debris impossible), then a
     /// top-down skin pass that fills water and resolves the surface material by
     /// contiguous depth-from-top.
-    fn fill_columns(&self, proto: &mut ProtoChunk, grid: &ColumnGrid) {
+    fn fill_columns(&self, proto: &mut ProtoChunk, grid: &ColumnGrid, cache: &mut FieldCache) {
         let (ox, oz) = proto.chunk_origin_world();
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -114,7 +122,7 @@ impl ChunkGenerator {
                 let amp = grid.overhang_amp[i];
                 let band_lo = grid.band_lo[i];
                 let band_hi = grid.band_hi[i];
-                let plan = self.carvers.smoothed_plan(&self.field, wx, wz, river, surf);
+                let plan = self.carvers.smoothed_plan(cache, wx, wz, river, surf);
                 // Biome surface rule looked up ONCE per column (not per voxel).
                 let surface_rule = def(biome).surface;
 

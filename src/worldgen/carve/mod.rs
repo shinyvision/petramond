@@ -9,7 +9,7 @@ pub mod river;
 
 use crate::chunk::SEA_LEVEL;
 use river::RiverCarver;
-use super::noise::HeightField;
+use super::field_cache::FieldCache;
 
 #[derive(Copy, Clone)]
 pub struct CarvePlan {
@@ -37,7 +37,7 @@ impl Default for CarverSet {
 /// (5×5 mean) is enough to ramp the stair-step banks and dissolve the small
 /// (≲4-wide) mid-channel sand bars / peninsulas the per-column carve leaves
 /// behind, without over-blurring the channel itself.
-const SMOOTH_R: i32 = 2;
+pub const SMOOTH_R: i32 = 2;
 
 impl CarverSet {
     /// Combined carve plan for a column. P2 has a single carver.
@@ -65,7 +65,7 @@ impl CarverSet {
     /// columns the raw carver actually touches pay for the neighbourhood resample.
     pub fn smoothed_plan(
         &self,
-        field: &HeightField,
+        cache: &mut FieldCache,
         wx: i32,
         wz: i32,
         river: f32,
@@ -84,8 +84,8 @@ impl CarverSet {
         let (mut w_px, mut w_nx, mut w_pz, mut w_nz) = (false, false, false, false);
         for dz in -SMOOTH_R..=SMOOTH_R {
             for dx in -SMOOTH_R..=SMOOTH_R {
-                let s = field.surface_height(wx + dx, wz + dz);
-                let rv = field.river_strength(wx + dx, wz + dz);
+                let s = cache.surf(wx + dx, wz + dz);
+                let rv = cache.river(wx + dx, wz + dz);
                 // A neighbour's contribution is its own carved floor (its natural
                 // surface where it isn't a river column), so the blur ramps from the
                 // sub-sea bed up to the surrounding terrain across the bank.

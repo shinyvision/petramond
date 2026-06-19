@@ -66,7 +66,7 @@ impl Block {
             Block::Dirt => [Dirt, Dirt, Dirt],
             Block::Stone => [Stone, Stone, Stone],
             Block::Sand => [Sand, Sand, Sand],
-            Block::Snow => [GrassSnow, Dirt, GrassSnow],
+            Block::Snow => [Snow, Dirt, GrassSnow],
             Block::Water => [Water, Water, Water],
             Block::OakLog => [OakLogTop, OakLogTop, OakLogSide],
             Block::OakLeaves => [OakLeaves, OakLeaves, OakLeaves],

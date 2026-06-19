@@ -23,7 +23,7 @@ pub enum Biome {
 }
 
 /// 6-parameter climate sample, each in [-1, 1].
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Climate {
     pub temperature: f32,
     pub humidity: f32,

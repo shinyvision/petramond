@@ -68,7 +68,13 @@ impl App {
         let cam_cz = (self.cam.pos.z as i32) >> 4;
         self.world.update_load(cam_cx, cam_cz);
         let _ = self.world.poll();
-        self.world.tick_mesh_budget(6); // 6 chunks/frame
+        // Native meshes a big burst per frame in parallel (rayon); wasm stays
+        // conservative on its single thread.
+        #[cfg(not(target_arch = "wasm32"))]
+        const MESH_BUDGET: usize = 32;
+        #[cfg(target_arch = "wasm32")]
+        const MESH_BUDGET: usize = 6;
+        self.world.tick_mesh_budget(MESH_BUDGET);
 
         // Fog colour sampled from biome at camera column.
         let climate = self.world_seed_climate(cam_cx, cam_cz);

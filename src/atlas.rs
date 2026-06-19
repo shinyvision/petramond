@@ -24,7 +24,9 @@ pub fn tile_uv(tile: Tile) -> [f32; 4] {
     let v0 = row as f32 / ATLAS_ROWS as f32;
     let u1 = (col + 1) as f32 / ATLAS_COLS as f32;
     let v1 = (row + 1) as f32 / ATLAS_ROWS as f32;
-    // Inset slightly to avoid bilinear bleed at tile borders.
-    let inset = 0.5 / ATLAS_W as f32;
-    [u0 + inset, v0 + inset, u1 - inset, v1 - inset]
+    // No inset. The sampler is Nearest with no mips, so there is no bilinear
+    // bleed to guard against; a half-texel inset shrank the edge texels to
+    // half-width, making every block boundary look offset/overlapping. Full-tile
+    // UVs sample all 16 texels at full width and tile seamlessly across blocks.
+    [u0, v0, u1, v1]
 }

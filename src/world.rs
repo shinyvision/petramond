@@ -100,21 +100,22 @@ impl World {
         // We require all 4 horizontal neighbours present so cross-chunk
         // face culling is correct. If a neighbour is missing we still mesh
         // but with a permissive "assume air" fallback for outside.
-        let mut done = 0;
-        let mut to_mesh: Vec<ChunkPos> = Vec::new();
-        for (pos, chunk) in self.chunks.iter() {
-            if !chunk.dirty { continue; }
-            to_mesh.push(*pos);
-            if done >= max_per_frame { break; }
-            done += 1;
-        }
-        // Disjoint borrows: chunks (immutable) for neighbour queries + mesh,
-        // meshes (mutable) for storing built meshes. We collect built meshes
-        // first, then flip dirty flags in a second pass to avoid borrow clash.
+        let to_mesh: Vec<ChunkPos> = self.chunks.iter()
+            .filter(|(_, c)| c.dirty)
+            .map(|(pos, _)| *pos)
+            .take(max_per_frame)
+            .collect();
+        if to_mesh.is_empty() { return; }
+
+        // Mesh building is a PURE function of (chunk, neighbour block/biome reads)
+        // over an IMMUTABLE &self.chunks borrow — so every chunk can be meshed on a
+        // separate thread and the resulting ChunkMesh is byte-identical to the
+        // serial build (no shared mutable state). We collect (pos, mesh) pairs,
+        // then flip dirty flags + insert meshes serially afterward (the only
+        // mutation), keeping the immutable/mutable borrows disjoint in time.
         let chunks = &self.chunks;
-        let mut built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> = Vec::new();
-        for pos in to_mesh {
-            let Some(chunk) = chunks.get(&pos) else { continue };
+        let build_one = move |pos: ChunkPos| -> Option<(ChunkPos, crate::mesh::ChunkMesh)> {
+            let chunk = chunks.get(&pos)?;
             let nb = |wx: i32, wy: i32, wz: i32| -> u8 {
                 let nx = wx >> 4; let nz = wz >> 4;
                 let lx = (wx & 0x0F) as usize;
@@ -138,8 +139,18 @@ impl World {
                     n.biome_at(lx, lz)
                 } else { 0 }
             };
-            built.push((pos, build_mesh(chunk, nb, nb_biome)));
-        }
+            Some((pos, build_mesh(chunk, nb, nb_biome)))
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> = {
+            use rayon::prelude::*;
+            to_mesh.into_par_iter().filter_map(build_one).collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> =
+            to_mesh.into_iter().filter_map(build_one).collect();
+
         for (pos, mesh) in built {
             self.meshes.insert(pos, mesh);
             if let Some(c) = self.chunks.get_mut(&pos) {

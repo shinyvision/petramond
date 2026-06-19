@@ -24,7 +24,7 @@ use crate::mathh::IVec3;
 use super::carve::CarverSet;
 use super::climate::source::BiomeSource;
 use super::data;
-use super::noise::HeightField;
+use super::field_cache::FieldCache;
 use super::rng::FeatureRng;
 
 /// Decoration step ordering. Features declare which step they run in so the
@@ -150,7 +150,7 @@ const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
 /// the old chunk-edge skip is gone.
 pub fn place_features(
     chunk: &mut Chunk,
-    field: &HeightField,
+    cache: &mut FieldCache,
     carvers: &CarverSet,
     biome_source: &dyn BiomeSource,
     seed: u32,
@@ -161,15 +161,15 @@ pub fn place_features(
 
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
-            let surf = field.surface_height(wx, wz);
+            let surf = cache.surf(wx, wz);
             // Anchor to the ACTUAL top solid block, which on a river column is the
             // carved valley floor — not the natural heightfield surface. Otherwise
             // a tree on a river column would float over the carved channel. The
             // floor matches the driver's carve exactly (no bed noise), so trees sit
             // on the ground; wet channels (floor at/below sea) drop out of the
             // `<= SEA_LEVEL` guard below, so nothing grows in the water.
-            let river = field.river_strength(wx, wz);
-            let plan = carvers.smoothed_plan(field, wx, wz, river, surf);
+            let river = cache.river(wx, wz);
+            let plan = carvers.smoothed_plan(cache, wx, wz, river, surf);
             let anchor = if plan.carve { plan.river_floor } else { surf };
             // No trees in water/on the riverbed, and a treeline at the overhang
             // onset (y96): above it columns can be 3-D carved, so a tree anchored
@@ -178,7 +178,7 @@ pub fn place_features(
                 continue;
             }
             // Biome from the natural surface (matches the column's stored biome id).
-            let climate = field.climate(wx, wz);
+            let climate = cache.climate(wx, wz);
             let biome = biome_source.pick(&climate, surf);
             let p = data::features::tree_density(biome);
             if p <= 0.0 {

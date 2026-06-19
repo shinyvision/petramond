@@ -19,6 +19,7 @@ pub mod ctx;
 pub mod data;
 pub mod driver;
 pub mod feature;
+pub mod field_cache;
 pub mod noise;
 pub mod proto;
 pub mod rng;
@@ -35,8 +36,13 @@ use crate::chunk::Chunk;
 /// over the chunk + a margin border, so trees cross chunk seams seamlessly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     let generator = driver::ChunkGenerator::new(seed);
-    let mut chunk = generator.generate(cx, cz);
-    generator.place_features(&mut chunk);
+    // One field cache shared across both stages collapses the cross-stage
+    // duplication (biome_assign, the river smoothing stencils, and the feature
+    // pass all resample the same columns). Identity-preserving: a cache hit
+    // returns the exact bits the direct sampler call would have produced.
+    let mut cache = generator.field_cache(cx, cz);
+    let mut chunk = generator.generate(cx, cz, &mut cache);
+    generator.place_features(&mut chunk, &mut cache);
 
     chunk.dirty = true;
     chunk
