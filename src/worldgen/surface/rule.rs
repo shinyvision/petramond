@@ -20,10 +20,15 @@ pub enum SurfaceRule {
 }
 
 pub enum SurfaceCond {
-    /// Column surface (or evaluated y) is strictly above this world Y.
+    /// The evaluated voxel's world Y is strictly above this.
     AboveY(i32),
     /// Strictly below this world Y.
     BelowY(i32),
+    /// The COLUMN's heightfield surface is strictly above this world Y. Use this
+    /// for altitude bands (snow caps / bare rock) so the whole column is treated
+    /// uniformly by its height — not per-voxel, which would paint overhang
+    /// undersides by absolute Y.
+    SurfaceAboveY(i32),
     /// y is within N blocks below the column's surface top (depth <= N).
     DepthFromTop(u32),
     /// The column's surface is at or below sea level.
@@ -44,6 +49,7 @@ impl SurfaceCond {
         match self {
             SurfaceCond::AboveY(n) => c.y > *n,
             SurfaceCond::BelowY(n) => c.y < *n,
+            SurfaceCond::SurfaceAboveY(n) => c.surf_y > *n,
             SurfaceCond::DepthFromTop(n) => c.depth_from_top <= *n,
             SurfaceCond::Underwater => c.surf_y <= SEA_LEVEL,
         }

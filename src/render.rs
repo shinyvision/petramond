@@ -1,8 +1,8 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
 use crate::atlas::decode_atlas;
-use crate::camera::Camera;
-use crate::chunk::ChunkPos;
+use crate::camera::{Camera, Frustum};
+use crate::chunk::{ChunkPos, CHUNK_SY};
 use crate::mesh::{ChunkMesh, Vertex};
 use crate::world::World;
 
@@ -28,6 +28,9 @@ pub struct Renderer {
     pub atlas_bind: wgpu::BindGroup,
     pub depth: wgpu::TextureView,
     pub chunk_meshes: HashMap<ChunkPos, GpuMesh>,
+    /// Camera frustum for viewspace culling, refreshed each frame in
+    /// `update_uniforms`; chunk meshes outside it are skipped in `render`.
+    pub frustum: Frustum,
 }
 
 pub struct GpuMesh {
@@ -54,7 +57,7 @@ pub async fn new_renderer_from_target(
     width: u32,
     height: u32,
 ) -> Renderer {
-    let instance = wgpu::Instance::new(instance_descriptor());
+    let instance = wgpu::Instance::new(&instance_descriptor());
     let surface = instance.create_surface(target).expect("create surface");
     new_renderer_inner(instance, surface, width, height).await
 }
@@ -76,8 +79,7 @@ pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
         wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
-            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+            ..Default::default()
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -96,7 +98,7 @@ pub async fn new_renderer(
     // the caller must have created the surface from this same runtime. In
     // practice, prefer `new_renderer_from_target` so the surface and adapter
     // share the same instance.
-    let instance = wgpu::Instance::new(instance_descriptor());
+    let instance = wgpu::Instance::new(&instance_descriptor());
     new_renderer_inner(instance, surface, width, height).await
 }
 
@@ -115,8 +117,8 @@ async fn new_renderer_inner(
         compatible_surface: Some(&surface),
         force_fallback_adapter: false,
     }).await {
-        Some(a) => a,
-        None => {
+        Ok(a) => a,
+        Err(_) => {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::warn_1(
                 &"wgpu: primary adapter unavailable; trying fallback".into(),
@@ -140,13 +142,16 @@ async fn new_renderer_inner(
             #[cfg(not(target_arch = "wasm32"))]
             { wgpu::Limits::default().using_alignment(adapter.limits()) }
         },
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::Performance,
-    }, None).await.expect("device");
+        trace: wgpu::Trace::Off,
+    }).await.expect("device");
 
     let config = surface.get_default_config(&adapter, width, height)
         .expect("surface config");
     let format = config.format;
     let sample_count = 1u32;
+    surface.configure(&device, &config);
 
     let (atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -252,9 +257,9 @@ async fn new_renderer_inner(
     let opaque_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("opaque pipe"),
         layout: Some(&layout),
-        vertex: wgpu::VertexState { module: &shader, entry_point: "vs_main", compilation_options: Default::default(), buffers: &[vbuf_layout.clone()] },
+        vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[vbuf_layout.clone()] },
         fragment: Some(wgpu::FragmentState {
-            module: &shader, entry_point: "fs_opaque", compilation_options: Default::default(), targets: &opaque_targets,
+            module: &shader, entry_point: Some("fs_opaque"), compilation_options: Default::default(), targets: &opaque_targets,
         }),
         primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -271,9 +276,9 @@ async fn new_renderer_inner(
     let transparent_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("transparent pipe"),
         layout: Some(&layout),
-        vertex: wgpu::VertexState { module: &shader, entry_point: "vs_main", compilation_options: Default::default(), buffers: &[vbuf_layout] },
+        vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[vbuf_layout] },
         fragment: Some(wgpu::FragmentState {
-            module: &shader, entry_point: "fs_transparent", compilation_options: Default::default(), targets: &transparent_targets,
+            module: &shader, entry_point: Some("fs_transparent"), compilation_options: Default::default(), targets: &transparent_targets,
         }),
         primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -297,6 +302,7 @@ async fn new_renderer_inner(
         uniform_buf, uniform_bind, atlas_bind,
         depth,
         chunk_meshes: HashMap::new(),
+        frustum: Frustum::permissive(),
     }
 }
 
@@ -314,12 +320,12 @@ fn create_atlas(device: &wgpu::Device, queue: &wgpu::Queue)
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &rgba,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(w * 4),
             rows_per_image: Some(h),
@@ -362,14 +368,26 @@ impl Renderer {
         self.depth = create_depth(&self.device, width, height);
     }
 
-    pub fn update_uniforms(&self, cam: &Camera, fog_color: [f32; 3]) {
+    pub fn update_uniforms(&mut self, cam: &Camera, fog_color: [f32; 3]) {
+        let view_proj = cam.view_proj();
+        // Refresh the culling frustum from the same matrix the GPU will use.
+        self.frustum = Frustum::from_view_proj(view_proj);
         let u = Uniforms {
-            view_proj: cam.view_proj().to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
             cam_pos: [cam.pos.x, cam.pos.y, cam.pos.z, 0.0],
             fog: [FOG_START, FOG_END, 0.0, 0.0],
             fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
         };
         self.queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
+    }
+
+    /// Is this chunk mesh's bounding box inside the current view frustum?
+    #[inline]
+    fn chunk_visible(&self, gm: &GpuMesh) -> bool {
+        let (ox, oz) = gm.origin;
+        let min = glam::Vec3::new(ox as f32, 0.0, oz as f32);
+        let max = glam::Vec3::new((ox + 16) as f32, CHUNK_SY as f32, (oz + 16) as f32);
+        self.frustum.aabb_visible(min, max)
     }
 
     /// Synchronize GPU meshes with the World's CPU meshes.
@@ -412,6 +430,7 @@ impl Renderer {
                 label: Some("opaque pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -436,6 +455,7 @@ impl Renderer {
             pass.set_pipeline(&self.opaque_pipe);
             for (pos, gm) in self.chunk_meshes.iter() {
                 let _ = pos;
+                if !self.chunk_visible(gm) { continue; } // viewspace (frustum) cull
                 if let (Some(vb), Some(ib)) = (&gm.opaque_vbuf, &gm.opaque_ibuf) {
                     if gm.opaque_idx_count == 0 { continue; }
                     pass.set_vertex_buffer(0, vb.slice(..));
@@ -449,6 +469,7 @@ impl Renderer {
                 label: Some("transparent pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -471,6 +492,7 @@ impl Renderer {
             pass.set_pipeline(&self.transparent_pipe);
             for (pos, gm) in self.chunk_meshes.iter() {
                 let _ = pos;
+                if !self.chunk_visible(gm) { continue; } // viewspace (frustum) cull
                 if let (Some(vb), Some(ib)) = (&gm.transparent_vbuf, &gm.transparent_ibuf) {
                     if gm.transparent_idx_count == 0 { continue; }
                     pass.set_vertex_buffer(0, vb.slice(..));

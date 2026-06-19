@@ -50,9 +50,8 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv);
-    // Leaves: alpha-test. Water: alpha blend.
-    // We can't know which here; encode by uv or by alpha: if alpha < 0.5
-    // discard (leaves edges), water has full alpha so it survives.
+    // Only water uses this alpha-blended pass now (leaves render fully opaque in
+    // fs_opaque). Water tiles are full-alpha, so the discard is a no-op for them.
     if (tex.a < 0.5) { discard; }
     let color = tex.rgb * in.tint * in.light;
     // Water blue tint + slight transparency.

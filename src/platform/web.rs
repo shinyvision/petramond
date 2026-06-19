@@ -62,7 +62,7 @@ pub fn run(canvas: HtmlCanvasElement) -> Result<JsValue, JsValue> {
         let w = canvas_boot.client_width().max(1) as u32;
         let h = canvas_boot.client_height().max(1) as u32;
         let renderer = {
-            let instance = wgpu::Instance::new(crate::render::instance_descriptor());
+            let instance = wgpu::Instance::new(&crate::render::instance_descriptor());
             let target = wgpu::SurfaceTarget::Canvas(canvas_boot.clone());
             let surface = match instance.create_surface(target) {
                 Ok(s) => s,

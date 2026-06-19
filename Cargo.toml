@@ -28,7 +28,7 @@ name = "genmap"
 path = "src/bin/genmap.rs"
 
 [dependencies]
-wgpu = { version = "22", features = ["webgl"] }
+wgpu = { version = "27", features = ["webgl"] }
 winit = { version = "0.30", features = ["rwh_06"] }
 pollster = "0.4"
 bytemuck = { version = "1.21", features = ["derive"] }
@@ -67,3 +67,4 @@ opt-level = 1
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+

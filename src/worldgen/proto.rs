@@ -13,10 +13,10 @@ use crate::chunk::Chunk;
 /// Feature writes are clipped to the chunk's own `[0,16)` (see `FeatureCtx`), so
 /// no wider buffer is needed: an in-chunk write only ever reads in-chunk cells,
 /// and a feature whose footprint <= MARGIN is materialised identically by every
-/// chunk that owns part of it (seam-consistent, no double-placement). Features
-/// with footprint > MARGIN (the big oak, ~7) clip at the margin exactly as they
-/// clipped at the chunk edge before — an accepted, unchanged limitation.
-pub const MARGIN: i32 = 3;
+/// chunk that owns part of it (seam-consistent, no double-placement). MARGIN is
+/// sized to the widest feature (the fancy oak, footprint ~5) so every tree —
+/// including big oaks rooted in a neighbour — replays seamlessly across chunks.
+pub const MARGIN: i32 = 5;
 
 pub struct ProtoChunk {
     chunk: Chunk,

@@ -3,8 +3,6 @@
 //! Owns World + Camera + Renderer, drives input -> movement -> world update
 //! -> render. The platform shell handles window/event loop and surfaces.
 
-use std::time::Instant;
-
 use crate::camera::Camera;
 use crate::chunk::CHUNK_SX;
 use crate::mathh::Vec3;
@@ -14,7 +12,7 @@ use crate::world::World;
 pub struct App {
     pub cam: Camera,
     pub world: World,
-    pub last: Instant,
+    pub last: f64,
     pub keys: KeyState,
     pub mouse: MouseState,
 }
@@ -34,15 +32,15 @@ impl App {
     pub fn new(cam: Camera, seed: u32, render_dist: i32) -> Self {
         Self {
             cam, world: World::new(seed, render_dist),
-            last: Instant::now(), keys: KeyState::default(),
+            last: now_seconds(), keys: KeyState::default(),
             mouse: MouseState::default(),
         }
     }
 
     /// Advance one frame. `dt_override` lets web supply a fixed step.
     pub fn tick(&mut self, renderer: &mut Renderer) {
-        let now = Instant::now();
-        let dt = (now - self.last).as_secs_f32();
+        let now = now_seconds();
+        let dt = (now - self.last) as f32;
         self.last = now;
 
         // Apply mouse look.
@@ -100,4 +98,21 @@ impl App {
             _ => {}
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_seconds() -> f64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_seconds() -> f64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map(|performance| performance.now() / 1000.0)
+        .unwrap_or(0.0)
 }

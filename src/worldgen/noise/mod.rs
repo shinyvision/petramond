@@ -37,4 +37,9 @@ impl WorldNoise {
     pub fn river_strength(&self, x: i32, z: i32) -> f32 {
         self.field.river_strength(x, z)
     }
+
+    /// Debug: raw noise field samples (cont, erosion, pv, jagged) at a column.
+    pub fn debug_sample(&self, x: i32, z: i32) -> (f64, f64, f64, f64) {
+        self.field.debug_sample(x, z)
+    }
 }

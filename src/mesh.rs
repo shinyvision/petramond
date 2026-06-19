@@ -126,7 +126,8 @@ pub fn build_mesh(
                 let block = Block::from_id(id);
                 if block == Block::Air { continue; }
 
-                let is_transparent = block.is_transparent();
+                // Only water is alpha-blended; leaves render in the OPAQUE pass
+                // (crisp/cutout, no see-through ghosting) per the "fully opaque" rule.
                 let is_water = block == Block::Water;
 
                 // Choose tile for each face.
@@ -157,17 +158,14 @@ pub fn build_mesh(
                     };
                     let nb = Block::from_id(nb_id);
 
-                    // Cull rule: do not draw face if neighbour opaque.
-                    // For transparent blocks: cull against same-type only
-                    // (water-water cull, leaves-leaves cull to save tris).
-                    if !is_transparent {
-                        if nb.is_opaque() { continue; }
-                    } else {
-                        // Don't cull water by leaves (different type).
-                        if nb == block { continue; }
-                        if nb.is_opaque() { continue; }
-                        // water against air: draw.
-                    }
+                    // Cull rule: a face is hidden only if the neighbour is a full
+                    // opaque cube (`is_opaque()` — stone/dirt/grass/sand/snow/log).
+                    // Leaves are NOT opaque-for-culling (they're a cutout), so
+                    // leaf↔leaf faces are intentionally NOT culled — every leaf
+                    // cube draws all its faces, giving a dense canopy you can't see
+                    // through to the sky. Water additionally culls against itself.
+                    if nb.is_opaque() { continue; }
+                    if is_water && nb == Block::Water { continue; }
 
                     // Select tile by face direction.
                     let tile = match face {
@@ -211,7 +209,7 @@ pub fn build_mesh(
                         (p3, [u0, v0]),
                     ];
 
-                    let (vbuf, ibuf) = if is_transparent {
+                    let (vbuf, ibuf) = if is_water {
                         (&mut transparent, &mut transparent_idx)
                     } else {
                         (&mut opaque, &mut opaque_idx)
@@ -228,6 +226,47 @@ pub fn build_mesh(
     }
 
     ChunkMesh { opaque, opaque_idx, transparent, transparent_idx, mesh_dirty: true }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worldgen::generate_chunk;
+
+    /// Leaves must render in the OPAQUE pass, not the alpha-blended one. Proof: a
+    /// chunk that has leaves but NO water must produce an empty transparent buffer
+    /// (only water feeds it now) and a non-empty opaque buffer.
+    #[test]
+    fn leaves_go_to_opaque_pass() {
+        let seed = 0x1234_5678u32;
+        for cz in 0..16 {
+            for cx in 0..16 {
+                let c = generate_chunk(seed, cx, cz);
+                let (mut leaf, mut water) = (false, false);
+                for y in 0..CHUNK_SY {
+                    for z in 0..CHUNK_SZ {
+                        for x in 0..CHUNK_SX {
+                            match Block::from_id(c.block_raw(x, y, z)) {
+                                Block::OakLeaves => leaf = true,
+                                Block::Water => water = true,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                if leaf && !water {
+                    let mesh = build_mesh(&c, |_, _, _| 0u8, |_, _| 4u8);
+                    assert!(
+                        mesh.transparent_idx.is_empty(),
+                        "leaves+no-water chunk should have an empty transparent buffer"
+                    );
+                    assert!(!mesh.opaque_idx.is_empty(), "leaves should fill the opaque buffer");
+                    return;
+                }
+            }
+        }
+        panic!("no leaf-bearing, water-free chunk found to test");
+    }
 }
 
 fn quad_for(face: Face, x: f32, y: f32, z: f32) -> [[f32;3]; 4] {

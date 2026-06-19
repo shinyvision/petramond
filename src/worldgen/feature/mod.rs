@@ -21,6 +21,7 @@ use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use crate::mathh::IVec3;
 
+use super::carve::CarverSet;
 use super::climate::source::BiomeSource;
 use super::data;
 use super::noise::HeightField;
@@ -150,6 +151,7 @@ const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
 pub fn place_features(
     chunk: &mut Chunk,
     field: &HeightField,
+    carvers: &CarverSet,
     biome_source: &dyn BiomeSource,
     seed: u32,
 ) {
@@ -160,9 +162,22 @@ pub fn place_features(
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
             let surf = field.surface_height(wx, wz);
-            if surf <= SEA_LEVEL {
+            // Anchor to the ACTUAL top solid block, which on a river column is the
+            // carved valley floor — not the natural heightfield surface. Otherwise
+            // a tree on a river column would float over the carved channel. The
+            // floor matches the driver's carve exactly (no bed noise), so trees sit
+            // on the ground; wet channels (floor at/below sea) drop out of the
+            // `<= SEA_LEVEL` guard below, so nothing grows in the water.
+            let river = field.river_strength(wx, wz);
+            let plan = carvers.smoothed_plan(field, wx, wz, river, surf);
+            let anchor = if plan.carve { plan.river_floor } else { surf };
+            // No trees in water/on the riverbed, and a treeline at the overhang
+            // onset (y96): above it columns can be 3-D carved, so a tree anchored
+            // at the heightfield `surf` could float or bury — so we don't plant there.
+            if anchor <= SEA_LEVEL || surf > 95 {
                 continue;
             }
+            // Biome from the natural surface (matches the column's stored biome id).
             let climate = field.climate(wx, wz);
             let biome = biome_source.pick(&climate, surf);
             let p = data::features::tree_density(biome);
@@ -178,11 +193,11 @@ pub fn place_features(
             let cf = data::features::pick_oak(&mut rng, biome);
 
             // place_oak height guard (origin too low / too near the world top).
-            if surf < 1 || surf + 12 >= CHUNK_SY as i32 {
+            if anchor < 1 || anchor + 14 >= CHUNK_SY as i32 {
                 continue;
             }
             cf.feature
-                .generate(&mut ctx, IVec3::new(wx, surf, wz), &mut rng);
+                .generate(&mut ctx, IVec3::new(wx, anchor, wz), &mut rng);
         }
     }
 }

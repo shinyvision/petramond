@@ -1,44 +1,32 @@
-//! `SurfaceSystem` — composes the column's surface material.
+//! `SurfaceSystem` — composes a column's surface material per voxel.
 //!
-//! Strata P2: a global river/beach pre-pass (cross-cutting, applies in every
-//! biome) wraps each biome's declarative top rule; the subsurface material is a
-//! per-biome block. Together these reproduce `surface_block`/`subsurface_block`
-//! exactly. P4 generalises this into a single layered per-cell `SurfaceRule`
-//! stack per biome.
+//! The driver's skin pass walks each contiguous solid run top-down and calls
+//! `skin_block` with the voxel's `depth_from_top`. A cross-cutting river/beach
+//! sand pre-pass (applies in every biome, only at the exposed top) wraps the
+//! biome's layered `SurfaceRule` stack, which resolves the grass/dirt/stone/sand/
+//! snow bands by depth and altitude.
 
 pub mod rule;
 
-use crate::biome::Biome;
 use crate::block::Block;
 use crate::chunk::SEA_LEVEL;
-use rule::SurfaceCtx;
-
-use super::data::biomes::def;
+use rule::{SurfaceCtx, SurfaceRule};
 
 pub struct SurfaceSystem;
 
 impl SurfaceSystem {
-    /// Top (surface) block at a column. Mirrors `surface_block(biome, surf, river)`:
-    /// the river/beach sand pre-pass first (using y = surf), then the biome's
-    /// declarative top rule (which carries the mountain altitude bands).
-    pub fn top_block(&self, biome: Biome, surf: i32, river: f32) -> Block {
-        if river > 0.05 && surf <= SEA_LEVEL + 1 {
+    /// Material for one solid voxel given its surface context and the column's
+    /// (already looked-up) biome surface rule. The river/beach sand pre-pass runs
+    /// only at the exposed top (depth 0) near sea level; otherwise the layered rule
+    /// resolves the band by depth/altitude. The rule is passed in so the caller
+    /// looks the biome up once per column, not once per voxel.
+    #[inline]
+    pub fn skin_block(&self, c: &SurfaceCtx, rule: &SurfaceRule) -> Block {
+        // River bed + waterline banks: sand a couple of blocks up from the water,
+        // so river edges read as sandy point-bars rather than grass to the water.
+        if c.depth_from_top == 0 && c.river > 0.05 && c.y <= SEA_LEVEL + 2 {
             return Block::Sand;
         }
-        let ctx = SurfaceCtx {
-            y: surf,
-            surf_y: surf,
-            depth_from_top: 0,
-            biome,
-            river,
-        };
-        def(biome).surface_top.resolve(&ctx).unwrap_or(Block::Stone)
-    }
-
-    /// Subsurface block (the band just below the surface). Mirrors
-    /// `subsurface_block(biome)` — altitude-independent, no river override.
-    #[inline]
-    pub fn subsurface(&self, biome: Biome) -> Block {
-        def(biome).subsurface
+        rule.resolve(c).unwrap_or(Block::Stone)
     }
 }

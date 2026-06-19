@@ -40,94 +40,67 @@ impl Feature for TreeFeature {
     }
 }
 
-/// Big 2×2 branching oak (== `trees::oak_big`).
+/// Big "fancy oak" (== vanilla `WorldGenBigTree`): a SINGLE-column trunk (the 2×2
+/// trunk belongs to dark oak / jungle, not oak), a handful of limbs angling up
+/// and out to leaf blobs, and a rounded central crown of stacked leaf discs.
 pub struct GiantOakFeature {
     pub log: Block,
     pub leaf: Block,
+    /// {min,max} of the nominal total height H; bare trunk = floor(H·0.618).
     pub height: (i32, i32),
     pub footprint: i32,
 }
 
+/// Draw a straight 3-D line of branch logs from `a` to `b` (== fancy-oak limbs).
+/// Uses `set_branch` so a limb may pass through already-placed leaves.
+fn log_line(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Block) {
+    let n = (b.x - a.x).abs().max((b.y - a.y).abs()).max((b.z - a.z).abs()).max(1);
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let x = (a.x as f32 + (b.x - a.x) as f32 * t).round() as i32;
+        let y = (a.y as f32 + (b.y - a.y) as f32 * t).round() as i32;
+        let z = (a.z as f32 + (b.z - a.z) as f32 * t).round() as i32;
+        ctx.set_branch(IVec3::new(x, y, z), log);
+    }
+}
+
 impl Feature for GiantOakFeature {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
+        use std::f32::consts::TAU;
         let (x, y, z) = (origin.x, origin.y, origin.z);
-        // 2×2 footprint anchored at the origin; world coords, clipped by ctx.
-        // (The old local-coord edge guard is gone now that origins are world
-        // positions and writes are clipped per chunk.)
-        let height = sample_height(self.height, rng); // == 8 + next_i32(0,4)
-        let base = y;
-        // Trunk: 2×2 column.
-        for i in 0..height {
-            let h = base + i;
+        let height = sample_height(self.height, rng); // nominal total height H
+        let trunk_h = (height as f32 * 0.618).floor() as i32; // bare lower trunk
+        let trunk_top = y + trunk_h;
+        let spine_top = y + height - 1; // central log spine runs to near the top
+
+        // Single 1×1 trunk + spine.
+        for h in y..=spine_top {
             ctx.set_log(IVec3::new(x, h, z), self.log);
-            ctx.set_log(IVec3::new(x + 1, h, z), self.log);
-            ctx.set_log(IVec3::new(x, h, z + 1), self.log);
-            ctx.set_log(IVec3::new(x + 1, h, z + 1), self.log);
         }
-        // Branches: from ~70% height, walk diagonally out/up; leaf blob at tip.
-        let crown_base = base + (height * 7 / 10);
-        let branch_count = rng.next_i32(2, 4);
-        for _ in 0..branch_count {
-            let sx = x + rng.next_i32(0, 1);
-            let sz = z + rng.next_i32(0, 1);
-            let sy = crown_base + rng.next_i32(0, 2);
-            let (bdx, bdz) = match rng.next_i32(0, 7) {
-                0 => (-1, 0),
-                1 => (1, 0),
-                2 => (0, -1),
-                3 => (0, 1),
-                4 => (-1, -1),
-                5 => (-1, 1),
-                6 => (1, -1),
-                _ => (1, 1),
-            };
-            let len = rng.next_i32(2, 4);
-            let (mut bx, mut by, mut bz) = (sx, sy, sz);
-            for _ in 0..len {
-                bx += bdx;
-                by += 1;
-                bz += bdz;
-                ctx.set_branch(IVec3::new(bx, by, bz), self.log);
-            }
-            shapes::leaf_blob(ctx, IVec3::new(bx, by, bz), 2, self.leaf, false);
+
+        // Limbs: a few branches up and out, each capped by a spherical leaf blob.
+        // Draw order is fixed so a neighbour chunk replays the tree identically.
+        let branches = rng.next_i32(3, 5);
+        let span = (spine_top - 1 - trunk_top).max(0);
+        for _ in 0..branches {
+            let ang = rng.next_f32() * TAU;
+            let reach = 2 + rng.next_i32(0, 1); // 2..3 blocks out
+            let node_y = trunk_top + rng.next_i32(0, span);
+            let tip = IVec3::new(
+                x + (ang.cos() * reach as f32).round() as i32,
+                node_y + rng.next_i32(0, 1),
+                z + (ang.sin() * reach as f32).round() as i32,
+            );
+            let base = IVec3::new(x, (node_y - 1).max(trunk_top), z);
+            log_line(ctx, base, tip, self.log);
+            shapes::leaf_blob(ctx, tip, 2, self.leaf, false);
         }
-        // Crown: layered leaves around the 2×2 top center.
-        let top = base + height - 1;
-        let cx = x + 1;
-        let cz = z + 1;
-        // Layer 0 (just below top): radius 2.
-        for lx in -2i32..=2 {
-            for lz in -2i32..=2 {
-                if lx.abs() == 2 && lz.abs() == 2 {
-                    continue;
-                }
-                ctx.set_leaf(IVec3::new(cx + lx, top - 1, cz + lz), self.leaf);
-            }
-        }
-        // Layer 1 (top): radius 1, plus corners randomly.
-        for lx in -1i32..=1 {
-            for lz in -1i32..=1 {
-                if lx == 0 && lz == 0 {
-                    ctx.set_leaf(IVec3::new(cx, top + 1, cz), self.leaf);
-                    continue;
-                }
-                if (lx.abs() == 1 && lz.abs() == 1) && rng.chance(0.5) {
-                    continue;
-                }
-                ctx.set_leaf(IVec3::new(cx + lx, top, cz + lz), self.leaf);
-            }
-        }
-        // Layer 2 (above): small cap.
-        for lx in -1i32..=1 {
-            for lz in -1i32..=1 {
-                if lx.abs() == 1 && lz.abs() == 1 {
-                    continue;
-                }
-                if rng.chance(0.4) {
-                    continue;
-                }
-                ctx.set_leaf(IVec3::new(cx + lx, top + 1, cz + lz), self.leaf);
-            }
+
+        // Rounded central crown over the trunk top: stacked leaf discs with the
+        // canonical 2,3,3,2,1 radius profile (== `crossSection` per layer).
+        let crown_base = (spine_top - 3).max(trunk_top);
+        for (k, r) in [(0, 2.0f32), (1, 3.0), (2, 3.0), (3, 2.0), (4, 1.0)] {
+            shapes::leaf_disc(ctx, IVec3::new(x, crown_base + k, z), r, self.leaf);
         }
     }
 
