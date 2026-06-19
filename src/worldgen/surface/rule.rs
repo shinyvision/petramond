@@ -16,7 +16,10 @@ pub enum SurfaceRule {
     /// First child that resolves to `Some` wins.
     Sequence(&'static [SurfaceRule]),
     /// Evaluate `then` only when `when` holds; otherwise yield `None`.
-    Condition { when: SurfaceCond, then: &'static SurfaceRule },
+    Condition {
+        when: SurfaceCond,
+        then: &'static SurfaceRule,
+    },
 }
 
 pub enum SurfaceCond {
@@ -63,7 +66,11 @@ impl SurfaceRule {
             SurfaceRule::Block(b) => Some(*b),
             SurfaceRule::Sequence(rules) => rules.iter().find_map(|r| r.resolve(c)),
             SurfaceRule::Condition { when, then } => {
-                if when.test(c) { then.resolve(c) } else { None }
+                if when.test(c) {
+                    then.resolve(c)
+                } else {
+                    None
+                }
             }
         }
     }

@@ -1,6 +1,6 @@
 //! Worker abstraction: off-thread chunk generation.
 //!
-//! Native: thread pool running `generate_chunk`.
+//! Native: thread pool running reused `ChunkGenerator`s.
 //! Web: dedicated Worker whose source is `src/bin/worker_wasm.rs` built
 //! with `--target wasm32-unknown-unknown` and loaded as a module worker.
 //!
@@ -9,12 +9,20 @@
 
 use crate::chunk::Chunk;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::worldgen::generate_chunk;
+use crate::worldgen::{driver::ChunkGenerator, generate_chunk_with};
 
 #[derive(Copy, Clone, Debug)]
-pub struct GenRequest { pub cx: i32, pub cz: i32, pub seed: u32 }
+pub struct GenRequest {
+    pub cx: i32,
+    pub cz: i32,
+    pub seed: u32,
+}
 
-pub struct GenResult { pub cx: i32, pub cz: i32, pub chunk: Chunk }
+pub struct GenResult {
+    pub cx: i32,
+    pub cz: i32,
+    pub chunk: Chunk,
+}
 
 // ---------------------------------------------------------------------------
 // Native: thread pool using std::sync::mpsc + scoped threads.
@@ -45,34 +53,49 @@ mod native_impl {
             // only across the brief recv(); gen runs unlocked, so contention is
             // negligible even at high thread counts.
             let n = std::thread::available_parallelism()
-                .map(|n| n.get()).unwrap_or(4).saturating_sub(2).max(2);
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .saturating_sub(2)
+                .max(2);
             let rx_req = Arc::new(Mutex::new(rx_req));
             let mut handles = Vec::with_capacity(n);
             for _ in 0..n {
                 let rx_req = rx_req.clone();
                 let tx_res = tx_res.clone();
-                let h = thread::spawn(move || {
-                    loop {
-                        let req = {
-                            let g = rx_req.lock().unwrap();
-                            g.recv()
-                        };
-                        match req {
-                            Ok(r) => {
-                                let chunk = generate_chunk(r.seed, r.cx, r.cz);
-                                if tx_res.send(GenResult {
-                                    cx: r.cx, cz: r.cz, chunk
-                                }).is_err() { break; }
+                let mut generator_seed = seed;
+                let mut generator = ChunkGenerator::new(generator_seed);
+                let h = thread::spawn(move || loop {
+                    let req = {
+                        let g = rx_req.lock().unwrap();
+                        g.recv()
+                    };
+                    match req {
+                        Ok(r) => {
+                            if r.seed != generator_seed {
+                                generator_seed = r.seed;
+                                generator = ChunkGenerator::new(generator_seed);
                             }
-                            Err(_) => break,
+                            let chunk = generate_chunk_with(&generator, r.cx, r.cz);
+                            if tx_res
+                                .send(GenResult {
+                                    cx: r.cx,
+                                    cz: r.cz,
+                                    chunk,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
+                        Err(_) => break,
                     }
                 });
                 handles.push(h);
             }
-            let _ = seed;
             Self {
-                tx_req, rx_res: Mutex::new(rx_res), _handles: handles,
+                tx_req,
+                rx_res: Mutex::new(rx_res),
+                _handles: handles,
             }
         }
 
@@ -95,10 +118,10 @@ pub use web_impl::*;
 #[cfg(target_arch = "wasm32")]
 mod web_impl {
     use super::*;
+    use js_sys::{ArrayBuffer, Uint8Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
     use web_sys::{MessageEvent, Worker};
-    use js_sys::{ArrayBuffer, Uint8Array};
 
     /// A request as serialized to the worker: 12 bytes (cx,cz,seed i32×3).
     pub struct WorkerPool {
@@ -145,23 +168,28 @@ mod web_impl {
         // worker module. Requires COOP/COEP for cross-origin isolation.
         let opts = web_sys::WorkerOptions::new();
         opts.set_type(web_sys::WorkerType::Module);
-        Worker::new_with_options("worker_host.js", &opts)
-            .expect("spawn worker")
+        Worker::new_with_options("worker_host.js", &opts).expect("spawn worker")
     }
 
     fn decode_result(bytes: &[u8]) -> Option<GenResult> {
         const BIOME_BYTES: usize = crate::chunk::CHUNK_SX * crate::chunk::CHUNK_SZ;
-        if bytes.len() < 8 { return None; }
+        if bytes.len() < 8 {
+            return None;
+        }
         let cx = i32::from_le_bytes(bytes[0..4].try_into().ok()?);
         let cz = i32::from_le_bytes(bytes[4..8].try_into().ok()?);
         let blocks = &bytes[8..];
-        if blocks.len() != crate::chunk::VOLUME + BIOME_BYTES { return None; }
+        if blocks.len() != crate::chunk::VOLUME + BIOME_BYTES {
+            return None;
+        }
         let mut chunk = crate::chunk::Chunk::new(cx, cz);
         for (i, &b) in blocks[..crate::chunk::VOLUME].iter().enumerate() {
             // Direct write to avoid per-block dirty/heightmap update cost.
             chunk.blocks_slice_mut()[i] = b;
         }
-        chunk.biomes_slice_mut().copy_from_slice(&blocks[crate::chunk::VOLUME..crate::chunk::VOLUME + BIOME_BYTES]);
+        chunk
+            .biomes_slice_mut()
+            .copy_from_slice(&blocks[crate::chunk::VOLUME..crate::chunk::VOLUME + BIOME_BYTES]);
         // Rebuild heightmap + mark dirty.
         chunk.recompute_heightmap();
         chunk.dirty = true;

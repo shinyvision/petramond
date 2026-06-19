@@ -35,7 +35,11 @@ struct Game {
 impl Game {
     fn new(seed: u32, render_dist: i32) -> Self {
         Self {
-            window: None, renderer: None, app: None, seed, render_dist,
+            window: None,
+            renderer: None,
+            app: None,
+            seed,
+            render_dist,
             next_frame: Instant::now(),
         }
     }
@@ -43,7 +47,9 @@ impl Game {
 
 impl ApplicationHandler for Game {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() { return; }
+        if self.window.is_some() {
+            return;
+        }
         let attrs = Window::default_attributes()
             .with_title("Llamacraft")
             .with_inner_size(PhysicalSize::new(1280, 720));
@@ -52,7 +58,10 @@ impl ApplicationHandler for Game {
         let renderer = pollster::block_on(async {
             new_renderer_from_target(window.clone(), size.width, size.height).await
         });
-        let cam = Camera::new(Vec3::new(8.0, 90.0, 8.0), size.width as f32 / size.height as f32);
+        let cam = Camera::new(
+            Vec3::new(8.0, 90.0, 8.0),
+            size.width as f32 / size.height as f32,
+        );
         let app = App::new(cam, self.seed, self.render_dist);
         // Try to grab cursor.
         let _ = window.set_cursor_grab(CursorGrabMode::Confined);
@@ -62,24 +71,41 @@ impl ApplicationHandler for Game {
         self.app = Some(app);
     }
 
-    fn window_event(
-        &mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent,
-    ) {
-        let Some(app) = self.app.as_mut() else { return; };
-        let Some(renderer) = self.renderer.as_mut() else { return; };
-        let Some(window) = self.window.as_ref() else { return; };
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(app) = self.app.as_mut() else {
+            return;
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
         match event {
-            WindowEvent::CloseRequested => { event_loop.exit(); }
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
             WindowEvent::Resized(s) => {
                 renderer.resize(s.width, s.height);
                 app.cam.aspect = s.width as f32 / s.height as f32;
             }
-            WindowEvent::ScaleFactorChanged { scale_factor:_, inner_size_writer: _ } => {
+            WindowEvent::ScaleFactorChanged {
+                scale_factor: _,
+                inner_size_writer: _,
+            } => {
                 let s = window.inner_size();
                 renderer.resize(s.width, s.height);
                 app.cam.aspect = s.width as f32 / s.height as f32;
             }
-            WindowEvent::KeyboardInput { event: KeyEvent { physical_key, state, .. }, .. } => {
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key,
+                        state,
+                        ..
+                    },
+                ..
+            } => {
                 if let PhysicalKey::Code(code) = physical_key {
                     let down = state == ElementState::Pressed;
                     let code_str = keycode_str(code);
@@ -91,7 +117,11 @@ impl ApplicationHandler for Game {
                     }
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button,
+                ..
+            } => {
                 // Edge-triggered: one press = one break/place. The cursor is
                 // grabbed at startup, so the first click is already a game click.
                 match button {
@@ -111,10 +141,14 @@ impl ApplicationHandler for Game {
     }
 
     fn device_event(
-        &mut self, _event_loop: &ActiveEventLoop,
-        _device_id: winit::event::DeviceId, event: DeviceEvent,
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
     ) {
-        let Some(app) = self.app.as_mut() else { return; };
+        let Some(app) = self.app.as_mut() else {
+            return;
+        };
         match event {
             DeviceEvent::MouseMotion { delta: (dx, dy) } => {
                 app.mouse.dx += dx as f32;
@@ -132,7 +166,9 @@ impl ApplicationHandler for Game {
         let now = Instant::now();
         if now >= self.next_frame {
             self.next_frame = now + FRAME;
-            if let Some(w) = self.window.as_ref() { w.request_redraw(); }
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
@@ -156,10 +192,12 @@ fn keycode_str(c: KeyCode) -> &'static str {
 fn main() {
     env_logger::init();
     let seed: u32 = std::env::var("LLAMACRAFT_SEED")
-        .ok().and_then(|s| s.parse().ok())
+        .ok()
+        .and_then(|s| s.parse().ok())
         .unwrap_or(0x1234_5678);
     let rd: i32 = std::env::var("LLAMACRAFT_RD")
-        .ok().and_then(|s| s.parse().ok())
+        .ok()
+        .and_then(|s| s.parse().ok())
         .unwrap_or(RENDER_DIST);
 
     let mut game = Game::new(seed, rd);

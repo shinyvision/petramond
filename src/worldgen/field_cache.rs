@@ -101,7 +101,11 @@ impl<'a> FieldCache<'a> {
         // hit MUST return the exact value a direct sample would — proving no
         // window/index aliasing for whatever terrain the caller generates,
         // beyond the few chunks the genparity gate covers.
-        debug_assert_eq!(v, self.field.surface_height(wx, wz), "FieldCache.surf aliased at ({wx},{wz})");
+        debug_assert_eq!(
+            v,
+            self.field.surface_height(wx, wz),
+            "FieldCache.surf aliased at ({wx},{wz})"
+        );
         v
     }
 
@@ -113,7 +117,11 @@ impl<'a> FieldCache<'a> {
             self.hr[i] = true;
         }
         let v = self.river[i];
-        debug_assert_eq!(v, self.field.river_strength(wx, wz), "FieldCache.river aliased at ({wx},{wz})");
+        debug_assert_eq!(
+            v,
+            self.field.river_strength(wx, wz),
+            "FieldCache.river aliased at ({wx},{wz})"
+        );
         v
     }
 
@@ -125,7 +133,11 @@ impl<'a> FieldCache<'a> {
             self.hc[i] = true;
         }
         let v = self.climate[i];
-        debug_assert_eq!(v, self.field.climate(wx, wz), "FieldCache.climate aliased at ({wx},{wz})");
+        debug_assert_eq!(
+            v,
+            self.field.climate(wx, wz),
+            "FieldCache.climate aliased at ({wx},{wz})"
+        );
         v
     }
 }

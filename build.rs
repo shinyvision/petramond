@@ -13,13 +13,15 @@ const TILE: u32 = 16;
 
 /// snake_case -> CamelCase (e.g. "grass_top" -> "GrassTop").
 fn to_camel(s: &str) -> String {
-    s.split('_').map(|p| {
-        let mut chars = p.chars();
-        match chars.next() {
-            Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
-            None => String::new(),
-        }
-    }).collect()
+    s.split('_')
+        .map(|p| {
+            let mut chars = p.chars();
+            match chars.next() {
+                Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 // (name, file). Order defines tile index in atlas (stable for shader uv math).
@@ -68,13 +70,11 @@ fn main() {
             panic!("missing texture: {}", path.display());
         }
         // Use `image` crate to load + resize to 16x16 RGBA.
-        let img = image::open(&path).unwrap_or_else(|e| {
-            panic!("failed to load {}: {}", path.display(), e)
-        }).to_rgba8();
-        let resized = image::imageops::resize(
-            &img, TILE, TILE,
-            image::imageops::FilterType::Nearest,
-        );
+        let img = image::open(&path)
+            .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
+            .to_rgba8();
+        let resized =
+            image::imageops::resize(&img, TILE, TILE, image::imageops::FilterType::Nearest);
         let tile_col = i as u32 % cols;
         let tile_row = i as u32 / cols;
         let base_x = tile_col * TILE;
@@ -93,10 +93,8 @@ fn main() {
     }
 
     // Write atlas PNG (used by runtime to create GPU texture).
-    image::save_buffer(
-        &atlas_png, &buf, atlas_w, atlas_h,
-        image::ColorType::Rgba8,
-    ).expect("write atlas png");
+    image::save_buffer(&atlas_png, &buf, atlas_w, atlas_h, image::ColorType::Rgba8)
+        .expect("write atlas png");
 
     // Write Rust source with tile indices + uv layout.
     let mut src = String::new();
@@ -125,16 +123,25 @@ fn main() {
     src.push_str("    pub fn grid(self) -> (u32, u32) {\n        #[allow(unused)] let _ = (); match self {\n");
     for (name, col, row) in &entries {
         let ident = to_camel(name);
-        src.push_str(&format!("            Tile::{} => ({}, {}),\n", ident, col, row));
+        src.push_str(&format!(
+            "            Tile::{} => ({}, {}),\n",
+            ident, col, row
+        ));
     }
     src.push_str("        }\n    }\n");
     src.push_str("}\n\n");
-    src.push_str(&format!("pub const TILE_COUNT: usize = {};\n", entries.len()));
+    src.push_str(&format!(
+        "pub const TILE_COUNT: usize = {};\n",
+        entries.len()
+    ));
 
     fs::write(&atlas_rs, src).expect("write atlas_data.rs");
 
     // Tell downstream where atlas png lives via envvar passed to tests/tests.
-    println!("cargo:rustc-env=LLAMACRAFT_ATLAS_PNG={}", atlas_png.display());
+    println!(
+        "cargo:rustc-env=LLAMACRAFT_ATLAS_PNG={}",
+        atlas_png.display()
+    );
     println!("cargo:rustc-env=LLAMACRAFT_ATLAS_DIR={}", out_dir.display());
 
     // Try to also copy atlas into web/ for inspection (best-effort).

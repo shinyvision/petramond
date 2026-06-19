@@ -16,9 +16,18 @@ fn main() {
     let iters: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(1);
     let seed = 0x1234_5678u32;
 
-    let coords: Vec<(i32, i32)> = (-r..=r).flat_map(|cz| (-r..=r).map(move |cx| (cx, cz))).collect();
+    let coords: Vec<(i32, i32)> = (-r..=r)
+        .flat_map(|cz| (-r..=r).map(move |cx| (cx, cz)))
+        .collect();
     let n = coords.len();
-    println!("grid: {}x{} = {} chunks, seed={:08x}, iters={}", 2 * r + 1, 2 * r + 1, n, seed, iters);
+    println!(
+        "grid: {}x{} = {} chunks, seed={:08x}, iters={}",
+        2 * r + 1,
+        2 * r + 1,
+        n,
+        seed,
+        iters
+    );
 
     // ---- worldgen ----
     let mut chunks: HashMap<(i32, i32), Chunk> = HashMap::new();
@@ -112,7 +121,9 @@ fn main() {
                 }
             };
             let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 || wy >= CHUNK_SY as i32 { return 0; }
+                if wy < 0 || wy >= CHUNK_SY as i32 {
+                    return 0;
+                }
                 match owner(wx >> 4, wz >> 4) {
                     Some(c) => c.block_raw((wx & 15) as usize, wy as usize, (wz & 15) as usize),
                     None => 0,
@@ -125,8 +136,12 @@ fn main() {
                 }
             };
             let light_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 { return 0; }
-                if wy >= CHUNK_SY as i32 { return SKY_FULL; }
+                if wy < 0 {
+                    return 0;
+                }
+                if wy >= CHUNK_SY as i32 {
+                    return SKY_FULL;
+                }
                 match owner(wx >> 4, wz >> 4) {
                     Some(c) => c.skylight_at((wx & 15) as usize, wy, (wz & 15) as usize),
                     None => SKY_FULL,

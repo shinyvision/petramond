@@ -7,9 +7,9 @@
 
 pub mod river;
 
+use super::field_cache::FieldCache;
 use crate::chunk::SEA_LEVEL;
 use river::RiverCarver;
-use super::field_cache::FieldCache;
 
 #[derive(Copy, Clone)]
 pub struct CarvePlan {
@@ -97,10 +97,18 @@ impl CarverSet {
                 // enclosure fires on a true bar flanked by water — not on a straight
                 // land neck that merely has water diagonally on either side.
                 if nf < SEA_LEVEL {
-                    if dz == 0 && dx > 0 { w_px = true; }
-                    if dz == 0 && dx < 0 { w_nx = true; }
-                    if dx == 0 && dz > 0 { w_pz = true; }
-                    if dx == 0 && dz < 0 { w_nz = true; }
+                    if dz == 0 && dx > 0 {
+                        w_px = true;
+                    }
+                    if dz == 0 && dx < 0 {
+                        w_nx = true;
+                    }
+                    if dx == 0 && dz > 0 {
+                        w_pz = true;
+                    }
+                    if dx == 0 && dz < 0 {
+                        w_nz = true;
+                    }
                 }
             }
         }

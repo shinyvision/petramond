@@ -37,9 +37,9 @@
 //! RIVER_MAX_LAND`); taller land is left alone so rivers thread valleys instead of
 //! canyoning mountains.
 
+use super::{CarvePlan, Carver};
 use crate::chunk::SEA_LEVEL;
 use crate::mathh::smoothstep;
-use super::{CarvePlan, Carver};
 
 /// Highest land (above sea) a river will still carve through. Land taller than
 /// this is left alone so rivers thread valleys instead of canyoning mountains.

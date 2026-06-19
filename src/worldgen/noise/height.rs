@@ -11,14 +11,12 @@
 //! The `as f32` casts inside `base_height` and `peak_gate` are LOAD-BEARING for
 //! parity (`mathh::smoothstep` is f32). Do not "clean them up" to all-f64.
 
+use super::settings::*;
 use crate::biome::Climate;
 use crate::chunk::CHUNK_SY;
 use crate::mathh::smoothstep;
-use super::settings::*;
 
-use noise::{
-    MultiFractal, NoiseFn, OpenSimplex, Perlin, RidgedMulti, Seedable, Fbm,
-};
+use noise::{Fbm, MultiFractal, NoiseFn, OpenSimplex, Perlin, RidgedMulti, Seedable};
 
 /// Owns the named noise samplers and computes per-column surface height,
 /// climate, and river strength. Immutable after construction; `Send + Sync`.
@@ -112,13 +110,13 @@ impl HeightField {
     fn base_floor(&self, c: f64) -> f64 {
         // (cont01, floor_y) control points — monotone increasing.
         const PTS: [(f64, f64); 8] = [
-            (0.00, 24.0), // deep ocean basin (~40 blocks of water under sea=64)
-            (0.18, 38.0), // deep ocean
-            (0.34, 52.0), // shallow ocean shelf
-            (0.44, 60.0), // coastal shelf (just under sea)
-            (0.49, 70.0), // STEEP shore crossing (thin beaches, not wide flats)
-            (0.60, 76.0), // plains / forest lowland
-            (0.78, 90.0), // foothill shoulder
+            (0.00, 24.0),  // deep ocean basin (~40 blocks of water under sea=64)
+            (0.18, 38.0),  // deep ocean
+            (0.34, 52.0),  // shallow ocean shelf
+            (0.44, 60.0),  // coastal shelf (just under sea)
+            (0.49, 70.0),  // STEEP shore crossing (thin beaches, not wide flats)
+            (0.60, 76.0),  // plains / forest lowland
+            (0.78, 90.0),  // foothill shoulder
             (1.00, 104.0), // mountain base (peaks ride on top)
         ];
         let mut i = 0;
@@ -127,7 +125,11 @@ impl HeightField {
         }
         let (c0, y0) = PTS[i];
         let (c1, y1) = PTS[(i + 1).min(PTS.len() - 1)];
-        let t = if c1 > c0 { ((c - c0) / (c1 - c0)).clamp(0.0, 1.0) } else { 0.0 };
+        let t = if c1 > c0 {
+            ((c - c0) / (c1 - c0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         y0 + (y1 - y0) * t
     }
 
@@ -182,7 +184,10 @@ impl HeightField {
         // frequency field so massifs become bent, irregular ridge systems instead
         // of radially-symmetric smooth domes (the "boobs" failure mode).
         let warp_x = self.surface.get([fx * WARP_FREQ, fz * WARP_FREQ]) * WARP_AMP;
-        let warp_z = self.offset.get([fx * WARP_FREQ + 19.3, fz * WARP_FREQ + 4.1]) * WARP_AMP;
+        let warp_z = self
+            .offset
+            .get([fx * WARP_FREQ + 19.3, fz * WARP_FREQ + 4.1])
+            * WARP_AMP;
         let wx = fx + warp_x;
         let wz = fz + warp_z;
 
@@ -255,8 +260,13 @@ impl HeightField {
         // Domain warp: displace the sample point by a medium-frequency field. The
         // offset is treated as locally constant, so the gradient (and thus width)
         // is still measured correctly in world blocks at the warped location.
-        let dx = self.river_warp.get([fx * RIVER_WARP_FREQ, fz * RIVER_WARP_FREQ]) * RIVER_WARP_AMP;
-        let dz = self.river_warp.get([fx * RIVER_WARP_FREQ + 31.7, fz * RIVER_WARP_FREQ + 5.1])
+        let dx = self
+            .river_warp
+            .get([fx * RIVER_WARP_FREQ, fz * RIVER_WARP_FREQ])
+            * RIVER_WARP_AMP;
+        let dz = self
+            .river_warp
+            .get([fx * RIVER_WARP_FREQ + 31.7, fz * RIVER_WARP_FREQ + 5.1])
             * RIVER_WARP_AMP;
         let (sx, sz) = (fx + dx, fz + dz);
         let n = self.river.get([sx, sz]);
@@ -268,8 +278,10 @@ impl HeightField {
         let gz = (self.river.get([sx, sz + 2.0]) - self.river.get([sx, sz - 2.0])) * 0.25;
         let grad = (gx * gx + gz * gz).sqrt().max(1e-6);
         let dist = (n.abs() / grad) as f32; // blocks from the channel centreline
-        // Vary width along the course (broad, decorrelated low-freq field).
-        let wmod = self.river_warp.get([fx * 0.006 + 100.0, fz * 0.006 + 100.0]) as f32;
+                                            // Vary width along the course (broad, decorrelated low-freq field).
+        let wmod = self
+            .river_warp
+            .get([fx * 0.006 + 100.0, fz * 0.006 + 100.0]) as f32;
         let half = (RIVER_HALF * (1.0 + RIVER_WIDTH_VAR * wmod)).max(2.0);
         (1.0 - dist / half).max(0.0)
     }

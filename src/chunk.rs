@@ -19,10 +19,14 @@ pub const VOLUME: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ;
 pub const SKY_FULL: u8 = 30;
 
 #[inline]
-pub fn lx(x: i32) -> usize { (x & 0x0F) as usize }
+pub fn lx(x: i32) -> usize {
+    (x & 0x0F) as usize
+}
 
 #[inline]
-pub fn lz(z: i32) -> usize { (z & 0x0F) as usize }
+pub fn lz(z: i32) -> usize {
+    (z & 0x0F) as usize
+}
 
 #[inline]
 pub fn idx(x: usize, y: usize, z: usize) -> usize {
@@ -57,8 +61,16 @@ impl Chunk {
         let heightmap = Box::new([0u16; CHUNK_SX * CHUNK_SZ]);
         let biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         Self {
-            cx, cz, blocks, heightmap, biomes, dirty: true,
-            skylight: Vec::new().into_boxed_slice(), sky_ylo: 0, sky_yhi: 0, light_dirty: true,
+            cx,
+            cz,
+            blocks,
+            heightmap,
+            biomes,
+            dirty: true,
+            skylight: Vec::new().into_boxed_slice(),
+            sky_ylo: 0,
+            sky_yhi: 0,
+            light_dirty: true,
         }
     }
 
@@ -68,8 +80,12 @@ impl Chunk {
     /// light is baked).
     #[inline]
     pub fn skylight_at(&self, x: usize, y: i32, z: usize) -> u8 {
-        if self.skylight.is_empty() || y > self.sky_yhi { return SKY_FULL; }
-        if y < self.sky_ylo { return 0; }
+        if self.skylight.is_empty() || y > self.sky_yhi {
+            return SKY_FULL;
+        }
+        if y < self.sky_ylo {
+            return 0;
+        }
         let ay = y - self.sky_ylo;
         self.skylight[((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
     }
@@ -95,7 +111,9 @@ impl Chunk {
         self.blocks[i] = b.id();
         if b != Block::Air {
             let h = &mut self.heightmap[z * CHUNK_SX + x];
-            if (y as u16) > *h { *h = y as u16; }
+            if (y as u16) > *h {
+                *h = y as u16;
+            }
         }
         self.dirty = true;
         self.light_dirty = true;
@@ -106,7 +124,9 @@ impl Chunk {
         self.blocks[i] = id;
         if id != 0 {
             let h = &mut self.heightmap[z * CHUNK_SX + x];
-            if (y as u16) > *h { *h = y as u16; }
+            if (y as u16) > *h {
+                *h = y as u16;
+            }
         }
         self.dirty = true;
         self.light_dirty = true;
@@ -116,12 +136,24 @@ impl Chunk {
         self.heightmap[z * CHUNK_SX + x] as i32
     }
 
-    pub fn blocks_slice(&self) -> &[u8] { &self.blocks }
-    pub fn blocks_slice_mut(&mut self) -> &mut [u8] { &mut self.blocks }
-    pub fn biomes_slice(&self) -> &[u8] { &self.biomes[..] }
-    pub fn biomes_slice_mut(&mut self) -> &mut [u8] { &mut self.biomes[..] }
-    pub fn biome_at(&self, x: usize, z: usize) -> u8 { self.biomes[z * CHUNK_SX + x] }
-    pub fn set_biome(&mut self, x: usize, z: usize, b: u8) { self.biomes[z * CHUNK_SX + x] = b; }
+    pub fn blocks_slice(&self) -> &[u8] {
+        &self.blocks
+    }
+    pub fn blocks_slice_mut(&mut self) -> &mut [u8] {
+        &mut self.blocks
+    }
+    pub fn biomes_slice(&self) -> &[u8] {
+        &self.biomes[..]
+    }
+    pub fn biomes_slice_mut(&mut self) -> &mut [u8] {
+        &mut self.biomes[..]
+    }
+    pub fn biome_at(&self, x: usize, z: usize) -> u8 {
+        self.biomes[z * CHUNK_SX + x]
+    }
+    pub fn set_biome(&mut self, x: usize, z: usize, b: u8) {
+        self.biomes[z * CHUNK_SX + x] = b;
+    }
 
     pub fn chunk_origin_world(&self) -> (i32, i32) {
         (self.cx * CHUNK_SX as i32, self.cz * CHUNK_SZ as i32)
@@ -147,6 +179,13 @@ impl Chunk {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ChunkPos { pub cx: i32, pub cz: i32 }
+pub struct ChunkPos {
+    pub cx: i32,
+    pub cz: i32,
+}
 
-impl ChunkPos { pub fn new(cx: i32, cz: i32) -> Self { Self { cx, cz } } }
+impl ChunkPos {
+    pub fn new(cx: i32, cz: i32) -> Self {
+        Self { cx, cz }
+    }
+}

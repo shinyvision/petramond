@@ -39,7 +39,9 @@ impl Frustum {
     /// A frustum that contains everything (used before the first real update).
     pub fn permissive() -> Self {
         // d = +inf-ish so every point is on the inside of every plane.
-        Self { planes: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6] }
+        Self {
+            planes: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6],
+        }
     }
 
     /// True if the axis-aligned box `[min,max]` is at least partially inside the
@@ -85,11 +87,7 @@ impl Camera {
 
     pub fn forward(&self) -> Vec3 {
         let cp = self.pitch.cos();
-        Vec3::new(
-            self.yaw.sin() * cp,
-            self.pitch.sin(),
-            self.yaw.cos() * cp,
-        ).normalize()
+        Vec3::new(self.yaw.sin() * cp, self.pitch.sin(), self.yaw.cos() * cp).normalize()
     }
 
     pub fn right(&self) -> Vec3 {
@@ -101,7 +99,9 @@ impl Camera {
         Vec3::new(-self.yaw.cos(), 0.0, self.yaw.sin()).normalize()
     }
 
-    pub fn up(&self) -> Vec3 { Vec3::Y }
+    pub fn up(&self) -> Vec3 {
+        Vec3::Y
+    }
 
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
         self.yaw += dyaw;
@@ -118,7 +118,9 @@ impl Camera {
         Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
     }
 
-    pub fn view_proj(&self) -> Mat4 { self.proj() * self.view() }
+    pub fn view_proj(&self) -> Mat4 {
+        self.proj() * self.view()
+    }
 }
 
 #[cfg(test)]
@@ -132,9 +134,7 @@ mod tests {
         cam.yaw = 0.0;
         cam.pitch = 0.0;
         let f = Frustum::from_view_proj(cam.view_proj());
-        let chunk = |x: f32, z: f32| {
-            (Vec3::new(x, 72.0, z), Vec3::new(x + 16.0, 88.0, z + 16.0))
-        };
+        let chunk = |x: f32, z: f32| (Vec3::new(x, 72.0, z), Vec3::new(x + 16.0, 88.0, z + 16.0));
         // Directly ahead (+Z): visible.
         let (mn, mx) = chunk(-8.0, 40.0);
         assert!(f.aabb_visible(mn, mx), "chunk ahead should be visible");
@@ -143,7 +143,10 @@ mod tests {
         assert!(!f.aabb_visible(mn, mx), "chunk behind should be culled");
         // Far to the side at camera depth: culled.
         let (mn, mx) = chunk(400.0, -8.0);
-        assert!(!f.aabb_visible(mn, mx), "chunk 90° to the side should be culled");
+        assert!(
+            !f.aabb_visible(mn, mx),
+            "chunk 90° to the side should be culled"
+        );
         // The permissive frustum culls nothing.
         let (mn, mx) = chunk(-8.0, -64.0);
         assert!(Frustum::permissive().aabb_visible(mn, mx));

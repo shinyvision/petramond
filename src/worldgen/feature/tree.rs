@@ -33,7 +33,8 @@ pub struct TreeFeature {
 impl Feature for TreeFeature {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
         let attach = self.trunk.place(ctx, origin, self.height, self.log, rng);
-        self.foliage.place(ctx, &attach, self.radius, self.leaf, rng);
+        self.foliage
+            .place(ctx, &attach, self.radius, self.leaf, rng);
     }
     fn max_footprint(&self) -> i32 {
         self.footprint
@@ -54,7 +55,11 @@ pub struct GiantOakFeature {
 /// Draw a straight 3-D line of branch logs from `a` to `b` (== fancy-oak limbs).
 /// Uses `set_branch` so a limb may pass through already-placed leaves.
 fn log_line(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Block) {
-    let n = (b.x - a.x).abs().max((b.y - a.y).abs()).max((b.z - a.z).abs()).max(1);
+    let n = (b.x - a.x)
+        .abs()
+        .max((b.y - a.y).abs())
+        .max((b.z - a.z).abs())
+        .max(1);
     for i in 0..=n {
         let t = i as f32 / n as f32;
         let x = (a.x as f32 + (b.x - a.x) as f32 * t).round() as i32;

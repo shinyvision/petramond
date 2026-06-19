@@ -54,7 +54,7 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::Desert => [224, 186, 88], // tan-orange (distinct from beach)
         Biome::Plains => [126, 198, 78], // bright green
         Biome::Savanna => [188, 186, 86], // olive
-        Biome::Forest => [46, 128, 48], // dark green
+        Biome::Forest => [46, 128, 48],  // dark green
         Biome::BirchForest => [120, 176, 96],
         Biome::Wetland => [92, 144, 96],
         Biome::Swamp => [58, 92, 64],
@@ -68,8 +68,7 @@ fn biome_color(id: u8) -> [u8; 3] {
 }
 
 fn save(out: &str, buf: &[u8], w: usize, h: usize) {
-    image::save_buffer(out, buf, w as u32, h as u32, image::ColorType::Rgb8)
-        .expect("write png");
+    image::save_buffer(out, buf, w as u32, h as u32, image::ColorType::Rgb8).expect("write png");
 }
 
 /// Top-down map, coloured by either top block or biome id.
@@ -110,10 +109,18 @@ fn render_topdown(seed: u32, out: &str, by_biome: bool) {
     heights.sort_unstable();
     let pct = |p: f64| heights[((heights.len() - 1) as f64 * p) as usize];
     let below_sea = heights.iter().filter(|&&y| y <= 64).count() as f64 / heights.len() as f64;
-    println!("wrote {out} ({w}x{h}, seed {seed:#x}, mode {})", if by_biome { "biome" } else { "top" });
+    println!(
+        "wrote {out} ({w}x{h}, seed {seed:#x}, mode {})",
+        if by_biome { "biome" } else { "top" }
+    );
     println!(
         "  top-Y: min {} p10 {} p50 {} p90 {} p99 {} max {} | water-cover {:.0}%",
-        heights[0], pct(0.10), pct(0.50), pct(0.90), pct(0.99), heights[heights.len() - 1],
+        heights[0],
+        pct(0.10),
+        pct(0.50),
+        pct(0.90),
+        pct(0.99),
+        heights[heights.len() - 1],
         below_sea * 100.0
     );
 }
@@ -195,7 +202,11 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
             } else {
                 let b = c.block_raw(lx, wy as usize, lz);
                 if b == 0 {
-                    if wy >= 64 { [150, 190, 232] } else { [22, 22, 26] }
+                    if wy >= 64 {
+                        [150, 190, 232]
+                    } else {
+                        [22, 22, 26]
+                    }
                 } else {
                     block_color(b)
                 }
@@ -340,7 +351,13 @@ fn render_river(seed: u32, out: &str) {
         }
     }
     save(out, &buf, w, h);
-    let p = |v: u64, d: u64| if d > 0 { 100.0 * v as f64 / d as f64 } else { 0.0 };
+    let p = |v: u64, d: u64| {
+        if d > 0 {
+            100.0 * v as f64 / d as f64
+        } else {
+            0.0
+        }
+    };
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, mode river)");
     println!(
         "  carved river band: {:.3}% of world | {:.2}% of low cols | top-is-water {:.1}% of band",
@@ -382,7 +399,11 @@ fn print_stats(seed: u32) {
         let p = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
         println!(
             "{name:8} min {:+.3} p05 {:+.3} p50 {:+.3} p95 {:+.3} max {:+.3}",
-            v[0], p(0.05), p(0.50), p(0.95), v[v.len() - 1]
+            v[0],
+            p(0.05),
+            p(0.50),
+            p(0.95),
+            v[v.len() - 1]
         );
     };
     stat(&mut c, "cont");
@@ -430,7 +451,10 @@ fn audit(seed: u32) {
                     if Block::from_id(tb) == Block::Water {
                         let mut fy = 0;
                         for y in (0..CHUNK_SY).rev() {
-                            if is_solid(chunk.block_raw(x, y, z)) { fy = y as i32; break; }
+                            if is_solid(chunk.block_raw(x, y, z)) {
+                                fy = y as i32;
+                                break;
+                            }
                         }
                         deepest_floor = deepest_floor.min(fy);
                     } else if ty > tall {
@@ -446,9 +470,13 @@ fn audit(seed: u32) {
                         if s && y > 0 && !is_solid(chunk.block_raw(x, y - 1, z)) {
                             overhang += 1;
                             col_oh += 1;
-                            if !solid_below { floating += 1; }
+                            if !solid_below {
+                                floating += 1;
+                            }
                         }
-                        if s { solid_below = true; }
+                        if s {
+                            solid_below = true;
+                        }
                     }
                     if col_oh > best_oh {
                         best_oh = col_oh;
@@ -466,7 +494,9 @@ fn audit(seed: u32) {
     let (tx, tz) = tall_xz;
     let mut stack = String::new();
     for y in (tall - 6..=tall).rev() {
-        if y < 0 { break; }
+        if y < 0 {
+            break;
+        }
         let b = Block::from_id(tc.block_raw(tx, y as usize, tz));
         stack.push_str(&format!("y{y}:{b:?} "));
     }
@@ -474,7 +504,10 @@ fn audit(seed: u32) {
     let twz = tall_chunk.1 * CHUNK_SZ as i32 + tz as i32;
     println!("seed {seed:#x}: overhang-ceilings {overhang}  floating-debris {floating}  deepest-ocean-floor y{}  tallest y{tall} @ (x{twx},z{twz})", if deepest_floor == i32::MAX { -1 } else { deepest_floor });
     println!("  tallest skin: {stack}");
-    println!("  overhangiest column: {best_oh} ceilings @ (x{},z{})", oh_loc.0, oh_loc.1);
+    println!(
+        "  overhangiest column: {best_oh} ceilings @ (x{},z{})",
+        oh_loc.0, oh_loc.1
+    );
     let mut census: Vec<(f64, &str)> = (0..17u8)
         .map(|id| {
             let pct = 100.0 * biome_counts[id as usize] as f64 / total_cols as f64;
@@ -533,19 +566,35 @@ fn flood_audit(seed: u32) {
         }
     }
     while let Some((x, y, z)) = stack.pop() {
-        let push = |x: usize, y: usize, z: usize, st: &mut Vec<(usize, usize, usize)>, reach: &mut Vec<bool>| {
+        let push = |x: usize,
+                    y: usize,
+                    z: usize,
+                    st: &mut Vec<(usize, usize, usize)>,
+                    reach: &mut Vec<bool>| {
             let i = idx(x, y, z);
             if occ[i] && !reach[i] {
                 reach[i] = true;
                 st.push((x, y, z));
             }
         };
-        if x + 1 < w { push(x + 1, y, z, &mut stack, &mut reach); }
-        if x > 0 { push(x - 1, y, z, &mut stack, &mut reach); }
-        if z + 1 < w { push(x, y, z + 1, &mut stack, &mut reach); }
-        if z > 0 { push(x, y, z - 1, &mut stack, &mut reach); }
-        if y + 1 < hgt { push(x, y + 1, z, &mut stack, &mut reach); }
-        if y > 0 { push(x, y - 1, z, &mut stack, &mut reach); }
+        if x + 1 < w {
+            push(x + 1, y, z, &mut stack, &mut reach);
+        }
+        if x > 0 {
+            push(x - 1, y, z, &mut stack, &mut reach);
+        }
+        if z + 1 < w {
+            push(x, y, z + 1, &mut stack, &mut reach);
+        }
+        if z > 0 {
+            push(x, y, z - 1, &mut stack, &mut reach);
+        }
+        if y + 1 < hgt {
+            push(x, y + 1, z, &mut stack, &mut reach);
+        }
+        if y > 0 {
+            push(x, y - 1, z, &mut stack, &mut reach);
+        }
     }
     let mut floaters: u64 = 0;
     for i in 0..occ.len() {
@@ -563,7 +612,14 @@ fn flood_audit(seed: u32) {
 /// by the surface-height gradient (Lambert against a NW light). Jagged terrain
 /// shows as sharp speckled relief; smooth domes show as soft gradients — so this
 /// directly reveals whether mountains are craggy ranges or "boobs".
-fn render_shaded(seed: u32, out: &str, center_x: i32, center_z: i32, radius_chunks: i32, px_scale: i32) {
+fn render_shaded(
+    seed: u32,
+    out: &str,
+    center_x: i32,
+    center_z: i32,
+    radius_chunks: i32,
+    px_scale: i32,
+) {
     let r = radius_chunks;
     let s = px_scale.max(1) as usize; // upscale: each world column -> s×s pixels
     let n = (r * 2) as usize;
@@ -645,7 +701,9 @@ fn roughness(seed: u32) {
             }
         }
     }
-    let at = |x: i32, z: i32| surf[(z.clamp(0, w as i32 - 1) as usize) * w + x.clamp(0, w as i32 - 1) as usize];
+    let at = |x: i32, z: i32| {
+        surf[(z.clamp(0, w as i32 - 1) as usize) * w + x.clamp(0, w as i32 - 1) as usize]
+    };
     let (mut mtn, mut pillars, mut walkable) = (0u64, 0u64, 0u64);
     let mut step_sum = 0i64;
     let mut steps_hist = [0u64; 6]; // 0,1,2,3,4,5+ block max-step buckets
@@ -676,12 +734,18 @@ fn roughness(seed: u32) {
     let pct = |v: u64| 100.0 * v as f64 / mtn as f64;
     println!(
         "seed {seed:#x}: mtn-cols {mtn}  mean-max-step {:.2}  pillar {:.1}%  walkable {:.1}%",
-        step_sum as f64 / mtn as f64, pct(pillars), pct(walkable)
+        step_sum as f64 / mtn as f64,
+        pct(pillars),
+        pct(walkable)
     );
     println!(
         "  max-step hist (0,1,2,3,4,5+): {:.0}% {:.0}% {:.0}% {:.0}% {:.0}% {:.0}%",
-        pct(steps_hist[0]), pct(steps_hist[1]), pct(steps_hist[2]),
-        pct(steps_hist[3]), pct(steps_hist[4]), pct(steps_hist[5])
+        pct(steps_hist[0]),
+        pct(steps_hist[1]),
+        pct(steps_hist[2]),
+        pct(steps_hist[3]),
+        pct(steps_hist[4]),
+        pct(steps_hist[5])
     );
 }
 
@@ -703,7 +767,9 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
     let surf = |wx: i32, wz: i32, cache: &mut HashMap<(i32, i32), Chunk>| -> (u8, i32) {
         let cx = wx.div_euclid(CHUNK_SX as i32);
         let cz = wz.div_euclid(CHUNK_SZ as i32);
-        let c = cache.entry((cx, cz)).or_insert_with(|| generate_chunk(seed, cx, cz));
+        let c = cache
+            .entry((cx, cz))
+            .or_insert_with(|| generate_chunk(seed, cx, cz));
         let lx = wx.rem_euclid(CHUNK_SX as i32) as usize;
         let lz = wz.rem_euclid(CHUNK_SZ as i32) as usize;
         top_block(c, lx, lz)
@@ -728,7 +794,7 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
         px.copy_from_slice(&[150, 190, 232]);
     }
     let mut ybuf = vec![h as f32; w]; // lowest sky-free y per column (start at bottom)
-    // Front-to-back: nearer distances drawn first own the column top.
+                                      // Front-to-back: nearer distances drawn first own the column top.
     for d in 1..max_d {
         let df = d as f32;
         let half = fov * df;
@@ -762,22 +828,44 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let seed: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(0x1234_5678);
-    let out = args.next().unwrap_or_else(|| "/tmp/worldmap.png".to_string());
+    let seed: u32 = args
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0x1234_5678);
+    let out = args
+        .next()
+        .unwrap_or_else(|| "/tmp/worldmap.png".to_string());
     let mode = args.next().unwrap_or_else(|| "top".to_string());
     let arg = args.next().and_then(|s| s.parse::<i32>().ok());
-    let zoom = args.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+    let zoom = args
+        .next()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
     let center_x = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
     let proj = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
 
     match mode.as_str() {
         "biome" => render_topdown(seed, &out, true),
         "side" => render_side(seed, &out, arg.unwrap_or(0), zoom, center_x, proj),
-        "shade" => render_shaded(seed, &out, center_x, arg.unwrap_or(0), zoom.max(1) as i32, proj),
+        "shade" => render_shaded(
+            seed,
+            &out,
+            center_x,
+            arg.unwrap_or(0),
+            zoom.max(1) as i32,
+            proj,
+        ),
         "stats" => print_stats(seed),
         "audit" => audit(seed),
         "rough" => roughness(seed),
-        "view" => render_view(seed, &out, center_x, zoom as i32, arg.unwrap_or(0), proj as f32),
+        "view" => render_view(
+            seed,
+            &out,
+            center_x,
+            zoom as i32,
+            arg.unwrap_or(0),
+            proj as f32,
+        ),
         "flood" => flood_audit(seed),
         "river" => render_river(seed, &out),
         _ => render_topdown(seed, &out, false),

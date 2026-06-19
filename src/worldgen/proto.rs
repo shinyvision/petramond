@@ -24,7 +24,9 @@ pub struct ProtoChunk {
 
 impl ProtoChunk {
     pub fn new(cx: i32, cz: i32) -> Self {
-        Self { chunk: Chunk::new(cx, cz) }
+        Self {
+            chunk: Chunk::new(cx, cz),
+        }
     }
 
     #[inline]

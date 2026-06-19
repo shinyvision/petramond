@@ -6,8 +6,8 @@
 //! and the `crate::gen` shim. It owns the field and delegates; it holds no
 //! interior mutability and is plain `Send + Sync`.
 
-pub mod settings;
 pub mod height;
+pub mod settings;
 
 pub use height::HeightField;
 
@@ -20,7 +20,10 @@ pub struct WorldNoise {
 
 impl WorldNoise {
     pub fn new(seed: u32) -> Self {
-        Self { seed, field: HeightField::new(seed) }
+        Self {
+            seed,
+            field: HeightField::new(seed),
+        }
     }
 
     #[inline]

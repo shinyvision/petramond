@@ -72,7 +72,7 @@ impl FoliagePlacer for CanopyOakFoliage {
         let r = radius.max(1);
         let rn = (r - 1).max(1); // narrowed (upper) radius
         let top_y = a.y + 1; // leaves attach one block above the highest log
-        // (dy from top, layer radius) bottom→top: wide, wide, narrow, narrow.
+                             // (dy from top, layer radius) bottom→top: wide, wide, narrow, narrow.
         let layers = [(-3, r), (-2, r), (-1, rn), (0, rn)];
         for (dy, lr) in layers {
             let y = top_y + dy;

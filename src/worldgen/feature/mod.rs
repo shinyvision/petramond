@@ -218,8 +218,16 @@ mod tests {
         for &(cx, cz) in &[(0, 0), (3, -2), (-5, 7), (12, 9)] {
             let a = generate_chunk(seed, cx, cz);
             let b = generate_chunk(seed, cx, cz);
-            assert_eq!(a.blocks_slice(), b.blocks_slice(), "blocks differ at {cx},{cz}");
-            assert_eq!(a.biomes_slice(), b.biomes_slice(), "biomes differ at {cx},{cz}");
+            assert_eq!(
+                a.blocks_slice(),
+                b.blocks_slice(),
+                "blocks differ at {cx},{cz}"
+            );
+            assert_eq!(
+                a.biomes_slice(),
+                b.biomes_slice(),
+                "biomes differ at {cx},{cz}"
+            );
         }
     }
 
@@ -247,7 +255,10 @@ mod tests {
                 }
             }
         }
-        assert!(found, "no tree blocks on any chunk edge — edge-skip not removed?");
+        assert!(
+            found,
+            "no tree blocks on any chunk edge — edge-skip not removed?"
+        );
     }
 
     #[test]

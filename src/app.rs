@@ -28,16 +28,24 @@ pub struct App {
 
 #[derive(Default, Copy, Clone)]
 pub struct KeyState {
-    pub w: bool, a: bool, s: bool, d: bool,
-    pub space: bool, shift: bool, ctrl: bool,
+    pub w: bool,
+    a: bool,
+    s: bool,
+    d: bool,
+    pub space: bool,
+    shift: bool,
+    ctrl: bool,
 }
 
 #[derive(Default, Copy, Clone)]
 pub struct MouseState {
-    pub dx: f32, pub dy: f32, pub grabbing: bool,
+    pub dx: f32,
+    pub dy: f32,
+    pub grabbing: bool,
     /// Edge-triggered click flags: set by the platform on button-press,
     /// consumed (and cleared) once per `tick` so one click = one action.
-    pub left_click: bool, pub right_click: bool,
+    pub left_click: bool,
+    pub right_click: bool,
 }
 
 impl App {
@@ -46,9 +54,12 @@ impl App {
         // the requested spot: feet sit `EYE` below the eye.
         let feet = Vec3::new(cam.pos.x, cam.pos.y - player::EYE, cam.pos.z);
         Self {
-            cam, world: World::new(seed, render_dist),
-            player: Player::new(feet), look: None,
-            last: now_seconds(), keys: KeyState::default(),
+            cam,
+            world: World::new(seed, render_dist),
+            player: Player::new(feet),
+            look: None,
+            last: now_seconds(),
+            keys: KeyState::default(),
             mouse: MouseState::default(),
         }
     }
@@ -62,9 +73,11 @@ impl App {
         // Apply mouse look.
         if self.mouse.grabbing {
             const SENS: f32 = 0.0025;
-            self.cam.rotate(-self.mouse.dx * SENS, -self.mouse.dy * SENS);
+            self.cam
+                .rotate(-self.mouse.dx * SENS, -self.mouse.dy * SENS);
         }
-        self.mouse.dx = 0.0; self.mouse.dy = 0.0;
+        self.mouse.dx = 0.0;
+        self.mouse.dy = 0.0;
 
         // Build movement intent from keys, relative to where we're looking.
         // Walking is horizontal: project the (pitched) forward onto the XZ plane.
@@ -72,10 +85,18 @@ impl App {
         let fwd_h = Vec3::new(f.x, 0.0, f.z).normalize_or_zero();
         let right = self.cam.right(); // already horizontal
         let mut wishdir = Vec3::ZERO;
-        if self.keys.w { wishdir += fwd_h; }
-        if self.keys.s { wishdir -= fwd_h; }
-        if self.keys.d { wishdir += right; }
-        if self.keys.a { wishdir -= right; }
+        if self.keys.w {
+            wishdir += fwd_h;
+        }
+        if self.keys.s {
+            wishdir -= fwd_h;
+        }
+        if self.keys.d {
+            wishdir += right;
+        }
+        if self.keys.a {
+            wishdir -= right;
+        }
         let input = Input {
             wishdir: wishdir.normalize_or_zero(),
             jump: self.keys.space,
@@ -130,7 +151,11 @@ impl App {
         // submerged so distant terrain dissolves into the water.
         let climate = self.world_seed_climate(cam_cx, cam_cz);
         let biome = crate::biome::biome_at(climate, eye.y as i32);
-        let fog = if underwater { UNDERWATER_FOG_COLOR } else { biome.fog_color() };
+        let fog = if underwater {
+            UNDERWATER_FOG_COLOR
+        } else {
+            biome.fog_color()
+        };
 
         // Seconds since start (wrapped to keep the value small) drive the animated
         // underwater caustics in the shader.
@@ -147,7 +172,8 @@ impl App {
     fn handle_block_actions(&mut self) {
         if self.mouse.left_click {
             if let Some(h) = self.look {
-                self.world.set_block_world(h.block.x, h.block.y, h.block.z, Block::Air);
+                self.world
+                    .set_block_world(h.block.x, h.block.y, h.block.z, Block::Air);
             }
         }
         if self.mouse.right_click {

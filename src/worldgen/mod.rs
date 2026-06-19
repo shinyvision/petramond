@@ -36,6 +36,14 @@ use crate::chunk::Chunk;
 /// over the chunk + a margin border, so trees cross chunk seams seamlessly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     let generator = driver::ChunkGenerator::new(seed);
+    generate_chunk_with(&generator, cx, cz)
+}
+
+/// Generate terrain + features with an already-built generator.
+///
+/// This preserves `generate_chunk` as the public one-shot API while allowing
+/// hot worker loops to reuse the generator's immutable seed-derived state.
+pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
     // One field cache shared across both stages collapses the cross-stage
     // duplication (biome_assign, the river smoothing stencils, and the feature
     // pass all resample the same columns). Identity-preserving: a cache hit
@@ -46,4 +54,28 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 
     chunk.dirty = true;
     chunk
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_chunk_with_matches_one_shot() {
+        let seed = 0x1234_5678;
+        let generator = driver::ChunkGenerator::new(seed);
+
+        for (cx, cz) in [(0, 0), (-3, 5), (12, -7)] {
+            let one_shot = generate_chunk(seed, cx, cz);
+            let reused = generate_chunk_with(&generator, cx, cz);
+
+            assert_eq!(one_shot.cx, reused.cx);
+            assert_eq!(one_shot.cz, reused.cz);
+            assert_eq!(one_shot.blocks_slice(), reused.blocks_slice());
+            assert_eq!(one_shot.biomes_slice(), reused.biomes_slice());
+            assert_eq!(&one_shot.heightmap[..], &reused.heightmap[..]);
+            assert_eq!(one_shot.dirty, reused.dirty);
+            assert_eq!(one_shot.light_dirty, reused.light_dirty);
+        }
+    }
 }

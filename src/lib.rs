@@ -5,19 +5,19 @@
 
 #![allow(clippy::too_many_arguments)]
 
-pub mod atlas;
 pub mod app;
-pub mod block;
+pub mod atlas;
 pub mod biome;
+pub mod block;
 pub mod camera;
 pub mod chunk;
 pub mod mathh;
-pub mod worldgen;
 pub mod mesh;
-pub mod player;
 pub mod platform;
+pub mod player;
 pub mod render;
-pub mod world;
 pub mod worker;
+pub mod world;
+pub mod worldgen;
 
 pub use atlas::Tile;

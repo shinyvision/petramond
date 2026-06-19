@@ -20,9 +20,7 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{
-    HtmlCanvasElement, KeyboardEvent, MouseEvent,
-};
+use web_sys::{HtmlCanvasElement, KeyboardEvent, MouseEvent};
 
 /// Holds the initialised renderer + app once async construction completes.
 /// Before that it is `None` and tick() is a no-op.
@@ -41,11 +39,16 @@ impl WebGame {
     pub fn new(canvas: HtmlCanvasElement) -> Rc<RefCell<WebGame>> {
         console_error_panic_hook::set_once();
         console_log::init_with_level(log::Level::Info).ok();
-        Rc::new(RefCell::new(WebGame { canvas, state: None }))
+        Rc::new(RefCell::new(WebGame {
+            canvas,
+            state: None,
+        }))
     }
 
     pub fn tick(&mut self) {
-        let Some(s) = self.state.as_mut() else { return; };
+        let Some(s) = self.state.as_mut() else {
+            return;
+        };
         s.app.tick(&mut s.renderer);
     }
 }
@@ -110,17 +113,28 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
         let down = ev.type_() == "keydown";
         if !matches!(
             code.as_str(),
-            "KeyW"|"KeyA"|"KeyS"|"KeyD"|"Space"|"ShiftLeft"|"ShiftRight"|
-            "ControlLeft"|"ControlRight"
-        ) { return; }
-        if code == "Space" { ev.prevent_default(); }
+            "KeyW"
+                | "KeyA"
+                | "KeyS"
+                | "KeyD"
+                | "Space"
+                | "ShiftLeft"
+                | "ShiftRight"
+                | "ControlLeft"
+                | "ControlRight"
+        ) {
+            return;
+        }
+        if code == "Space" {
+            ev.prevent_default();
+        }
         let mut g = g2.borrow_mut();
         if let Some(s) = g.state.as_mut() {
             s.app.set_key(&code, down);
         }
     });
     document.add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref())?;
-    document.add_event_listener_with_callback("keyup",   on_key.as_ref().unchecked_ref())?;
+    document.add_event_listener_with_callback("keyup", on_key.as_ref().unchecked_ref())?;
     on_key.forget();
 
     // Pointer lock on canvas click.
@@ -131,9 +145,12 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
         let canvas = g3.borrow().canvas.clone();
         let _ = canvas.request_pointer_lock();
         let mut g = g3.borrow_mut();
-        if let Some(s) = g.state.as_mut() { s.app.mouse.grabbing = true; }
+        if let Some(s) = g.state.as_mut() {
+            s.app.mouse.grabbing = true;
+        }
     });
-    canvas_for_listener.add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())?;
+    canvas_for_listener
+        .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())?;
     on_click.forget();
 
     // Break/place: mousedown on canvas. Only act once the pointer is locked to
@@ -145,7 +162,9 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
     let on_mousedown = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
         let locked = doc_md.pointer_lock_element().map(|e| e.id());
         let canvas_id = g_md.borrow().canvas.id();
-        if locked.as_deref() != Some(canvas_id.as_str()) { return; }
+        if locked.as_deref() != Some(canvas_id.as_str()) {
+            return;
+        }
         let mut g = g_md.borrow_mut();
         if let Some(s) = g.state.as_mut() {
             match ev.button() {
@@ -155,14 +174,16 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
             }
         }
     });
-    canvas_md.add_event_listener_with_callback("mousedown", on_mousedown.as_ref().unchecked_ref())?;
+    canvas_md
+        .add_event_listener_with_callback("mousedown", on_mousedown.as_ref().unchecked_ref())?;
     on_mousedown.forget();
 
     // Suppress the browser context menu so right-click can place blocks.
     let on_contextmenu = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
         ev.prevent_default();
     });
-    canvas_md.add_event_listener_with_callback("contextmenu", on_contextmenu.as_ref().unchecked_ref())?;
+    canvas_md
+        .add_event_listener_with_callback("contextmenu", on_contextmenu.as_ref().unchecked_ref())?;
     on_contextmenu.forget();
 
     // Mousemove deltas (only while pointer locked to our canvas).
@@ -171,7 +192,9 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
     let on_move = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
         let locked = doc_for_move.pointer_lock_element().map(|e| e.id());
         let canvas_id = g4.borrow().canvas.id();
-        if locked.as_deref() != Some(canvas_id.as_str()) { return; }
+        if locked.as_deref() != Some(canvas_id.as_str()) {
+            return;
+        }
         let mut g = g4.borrow_mut();
         if let Some(s) = g.state.as_mut() {
             s.app.mouse.dx += ev.movement_x() as f32;

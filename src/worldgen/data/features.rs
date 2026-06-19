@@ -7,7 +7,9 @@
 use crate::biome::Biome;
 use crate::block::Block;
 
-use crate::worldgen::feature::placers::foliage::{CanopyOakFoliage, DroopyFoliage, FlatSparseFoliage};
+use crate::worldgen::feature::placers::foliage::{
+    CanopyOakFoliage, DroopyFoliage, FlatSparseFoliage,
+};
 use crate::worldgen::feature::placers::trunk::{LeaningTrunk, StraightTrunk};
 use crate::worldgen::feature::tree::{GiantOakFeature, TreeFeature};
 use crate::worldgen::feature::ConfiguredFeature;
@@ -22,36 +24,64 @@ static FLAT: FlatSparseFoliage = FlatSparseFoliage;
 
 // Tree shapes.
 static OAK_SMALL_F: TreeFeature = TreeFeature {
-    trunk: &STRAIGHT, foliage: &CANOPY,
-    log: Block::OakLog, leaf: Block::OakLeaves,
-    height: (5, 6), radius: 2, footprint: 3, // min trunk height 5
+    trunk: &STRAIGHT,
+    foliage: &CANOPY,
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (5, 6),
+    radius: 2,
+    footprint: 3, // min trunk height 5
 };
 static OAK_LEAN_F: TreeFeature = TreeFeature {
-    trunk: &LEANING, foliage: &CANOPY,
-    log: Block::OakLog, leaf: Block::OakLeaves,
-    height: (5, 7), radius: 2, footprint: 3,
+    trunk: &LEANING,
+    foliage: &CANOPY,
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (5, 7),
+    radius: 2,
+    footprint: 3,
 };
 static OAK_SWAMP_F: TreeFeature = TreeFeature {
-    trunk: &STRAIGHT, foliage: &DROOPY,
-    log: Block::OakLog, leaf: Block::OakLeaves,
-    height: (5, 7), radius: 2, footprint: 3,
+    trunk: &STRAIGHT,
+    foliage: &DROOPY,
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (5, 7),
+    radius: 2,
+    footprint: 3,
 };
 static OAK_SAVANNA_F: TreeFeature = TreeFeature {
-    trunk: &STRAIGHT, foliage: &FLAT,
-    log: Block::OakLog, leaf: Block::OakLeaves,
-    height: (5, 7), radius: 3, footprint: 3,
+    trunk: &STRAIGHT,
+    foliage: &FLAT,
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (5, 7),
+    radius: 3,
+    footprint: 3,
 };
 // Big single-trunk fancy oak; limbs+crown reach ~5, footprint declared honestly.
 static OAK_BIG_F: GiantOakFeature = GiantOakFeature {
-    log: Block::OakLog, leaf: Block::OakLeaves,
-    height: (9, 14), footprint: 5, // floor(9*0.618)=5 -> bare trunk >= 5 too
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (9, 14),
+    footprint: 5, // floor(9*0.618)=5 -> bare trunk >= 5 too
 };
 
-pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature { feature: &OAK_SMALL_F };
-pub static OAK_LEAN: ConfiguredFeature = ConfiguredFeature { feature: &OAK_LEAN_F };
-pub static OAK_SWAMP: ConfiguredFeature = ConfiguredFeature { feature: &OAK_SWAMP_F };
-pub static OAK_SAVANNA: ConfiguredFeature = ConfiguredFeature { feature: &OAK_SAVANNA_F };
-pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature { feature: &OAK_BIG_F };
+pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_SMALL_F,
+};
+pub static OAK_LEAN: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_LEAN_F,
+};
+pub static OAK_SWAMP: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_SWAMP_F,
+};
+pub static OAK_SAVANNA: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_SAVANNA_F,
+};
+pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_BIG_F,
+};
 
 /// Per-biome tree density (probability per column). A pure data knob.
 pub fn tree_density(b: Biome) -> f32 {

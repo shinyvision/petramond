@@ -1,0 +1,745 @@
+use super::{
+    collision::Axis,
+    movement::{
+        friction_retain, AIR_ACCEL, AIR_FRICTION, FRICTION_REF_DT, GRAVITY, GROUND_ACCEL,
+        GROUND_FRICTION, SPRINT, SWIM_CLIMB, WALK, WATER_PROBE_Y,
+    },
+    *,
+};
+use crate::mathh::{IVec3, Vec3};
+
+/// No water anywhere -- the dry-land predicate every physics test uses.
+fn dry(_x: i32, _y: i32, _z: i32) -> bool {
+    false
+}
+
+fn p(feet: Vec3) -> Player {
+    Player::new(feet)
+}
+
+#[test]
+fn falls_and_lands_on_floor() {
+    // Solid everywhere y < 64 (a thick floor), air above.
+    let solid = |_x: i32, y: i32, _z: i32| y < 64;
+    let mut pl = p(Vec3::new(0.0, 70.0, 0.0));
+    // Large downward sweep: must clamp feet to the top of cell 63 (y=64).
+    let blocked = pl.sweep(Axis::Y, -20.0, &solid);
+    assert!(blocked);
+    assert_eq!(pl.pos.y, 64.0);
+}
+
+#[test]
+fn does_not_tunnel_through_one_block_floor() {
+    // Only y == 0 is solid (a 1-block-thick platform).
+    let solid = |_x: i32, y: i32, _z: i32| y == 0;
+    let mut pl = p(Vec3::new(0.0, 5.0, 0.0));
+    let blocked = pl.sweep(Axis::Y, -20.0, &solid);
+    assert!(blocked, "must not fall through a 1-thick floor");
+    assert_eq!(pl.pos.y, 1.0, "feet rest on top of cell 0");
+}
+
+#[test]
+fn stops_at_wall_moving_positive_x() {
+    // Wall at x >= 5.
+    let solid = |x: i32, _y: i32, _z: i32| x >= 5;
+    let mut pl = p(Vec3::new(4.0, 64.0, 0.0)); // max.x = 4.3
+    let blocked = pl.sweep(Axis::X, 2.0, &solid);
+    assert!(blocked);
+    // max.x clamped to 5.0 => centre at 4.7.
+    assert!((pl.pos.x - 4.7).abs() < 1e-5, "pos.x = {}", pl.pos.x);
+}
+
+#[test]
+fn stops_at_wall_moving_negative_x() {
+    // Wall at x <= 1 (cells 1 and below solid).
+    let solid = |x: i32, _y: i32, _z: i32| x <= 1;
+    let mut pl = p(Vec3::new(4.0, 64.0, 0.0)); // min.x = 3.7
+    let blocked = pl.sweep(Axis::X, -3.0, &solid);
+    assert!(blocked);
+    // min.x clamped to 2.0 (top of cell 1) => centre at 2.3.
+    assert!((pl.pos.x - 2.3).abs() < 1e-5, "pos.x = {}", pl.pos.x);
+}
+
+#[test]
+fn moves_freely_in_open_air() {
+    let solid = |_x: i32, _y: i32, _z: i32| false;
+    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    assert!(!pl.sweep(Axis::Z, 3.0, &solid));
+    assert_eq!(pl.pos.z, 3.0);
+}
+
+#[test]
+fn air_decays_slower_than_ground() {
+    // No input: both decay gradually toward zero, but air friction is far
+    // weaker than ground friction, so in a single frame the airborne body
+    // sheds only a sliver of its speed while the grounded body sheds a larger
+    // share — both a slide, ground just firmer.
+    let dt = FRICTION_REF_DT; // at the reference frame, retain == 1 - friction
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let mut air = p(Vec3::new(0.0, 128.0, 0.0));
+    air.vel = Vec3::new(WALK, 5.0, 0.0); // gliding +x, rising
+    air.on_ground = false;
+    air.update_core(dt, &open, &dry, Input::default());
+
+    let floor = |_x: i32, y: i32, _z: i32| y < 64;
+    let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
+    gnd.vel = Vec3::new(WALK, 0.0, 0.0);
+    gnd.on_ground = true;
+    gnd.update_core(dt, &floor, &dry, Input::default());
+
+    // Air retains 1 - AIR_FRICTION of its speed; ground retains less per frame.
+    assert!(
+        (air.vel.x - WALK * (1.0 - AIR_FRICTION)).abs() < 1e-5,
+        "air vx = {}",
+        air.vel.x
+    );
+    assert!(
+        (gnd.vel.x - WALK * (1.0 - GROUND_FRICTION)).abs() < 1e-5,
+        "gnd vx = {}",
+        gnd.vel.x
+    );
+    assert!(
+        air.vel.x > gnd.vel.x,
+        "air should keep more momentum than ground"
+    );
+    assert!(air.vel.y < 5.0, "gravity should bleed upward speed");
+}
+
+#[test]
+fn ground_accelerates_faster_than_air() {
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+    let dt = FRICTION_REF_DT;
+
+    // On the ground from rest, one step ramps toward walk speed at the high
+    // ground acceleration (GROUND_ACCEL·dt, still well below WALK so it is not
+    // yet clamped) — a few frames to top speed, so the ground feels snappy.
+    let floor = |_x: i32, y: i32, _z: i32| y < 64;
+    let mut g = p(Vec3::new(0.0, 64.0, 0.0));
+    g.on_ground = true;
+    g.update_core(dt, &floor, &dry, input);
+    assert!(
+        (g.vel.x - GROUND_ACCEL * dt).abs() < 1e-5,
+        "ground vx = {}",
+        g.vel.x
+    );
+
+    // In the air from rest, the same input ramps far more slowly — gentle
+    // steering, not a snap to speed.
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    a.on_ground = false;
+    a.update_core(dt, &open, &dry, input);
+    assert!(
+        (a.vel.x - AIR_ACCEL * dt).abs() < 1e-5,
+        "air vx = {}",
+        a.vel.x
+    );
+    assert!(
+        g.vel.x > a.vel.x * 2.0,
+        "ground acceleration much stronger than air"
+    );
+}
+
+#[test]
+fn air_input_does_not_brake_momentum() {
+    // Airborne at sprint speed, then holding plain forward (a *slower* walk
+    // wish). Air acceleration is additive — it only adds toward the wish
+    // direction, never brakes — so the launched momentum is kept, not bled
+    // down to walk speed. (Releasing input instead lets air friction coast it
+    // down very gradually; that path is covered elsewhere.)
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    a.on_ground = false;
+    a.vel = Vec3::new(SPRINT, 0.0, 0.0); // gliding +x faster than WALK
+    a.update_core(FRICTION_REF_DT, &open, &dry, input);
+    assert!(
+        (a.vel.x - SPRINT).abs() < 1e-5,
+        "air input must not brake momentum, vx = {}",
+        a.vel.x
+    );
+}
+
+#[test]
+fn air_steering_redirects_without_inflating_speed() {
+    // Airborne moving +x at walk speed; steering +z rotates the velocity
+    // toward +z at constant total speed — momentum is redirected, not pumped
+    // (forward bleeds a hair as lateral is added). This speed cap is what stops
+    // wall-scraping from building crazy sideways speed.
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let input = Input {
+        wishdir: Vec3::new(0.0, 0.0, 1.0),
+        jump: false,
+        sprint: false,
+    };
+    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    a.on_ground = false;
+    a.vel = Vec3::new(WALK, 0.0, 0.0);
+    a.update_core(FRICTION_REF_DT, &open, &dry, input);
+    let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
+    assert!(
+        (speed - WALK).abs() < 1e-4,
+        "total speed preserved, not inflated, got {speed}"
+    );
+    assert!(a.vel.z > 0.0, "lateral input adds +z, vz = {}", a.vel.z);
+    assert!(
+        a.vel.x < WALK,
+        "forward bleeds slightly as speed redirects, vx = {}",
+        a.vel.x
+    );
+}
+
+#[test]
+fn jumping_into_wall_does_not_pump_sideways_speed() {
+    // Wall just ahead in +x; hold a wish mostly *into* the wall, slightly along
+    // it. The into-wall velocity is killed by the wall every step, which used to
+    // let the perpendicular (+z) speed climb without bound. With the air speed
+    // cap, total horizontal speed stays bounded by walk speed no matter how
+    // long you scrape the wall.
+    let wall_x = 6;
+    let solid = move |x: i32, _y: i32, _z: i32| x >= wall_x;
+    let mut a = p(Vec3::new(wall_x as f32 - 1.0, 128.0, 0.0));
+    a.on_ground = false; // open below: stays airborne the whole run
+    let wishdir = Vec3::new(0.98, 0.0, 0.2).normalize();
+    let input = Input {
+        wishdir,
+        jump: false,
+        sprint: false,
+    };
+    for _ in 0..600 {
+        a.update_core(0.02, &solid, &dry, input);
+    }
+    let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
+    assert!(
+        speed <= WALK + 1e-3,
+        "wall-scrape pumped speed to {speed} (cap is WALK = {WALK})"
+    );
+}
+
+#[test]
+fn air_out_coasts_ground() {
+    // No input: both decay by friction alone. Air friction is far weaker than
+    // ground friction, so after the same coast the airborne body retains
+    // strictly — and, with the tuned values, far — more speed. Expectations are
+    // derived from the constants, so this survives retuning either friction (it
+    // only assumes the design invariant AIR_FRICTION < GROUND_FRICTION).
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let floor = |_x: i32, y: i32, _z: i32| y < 64;
+    let mut air = p(Vec3::new(0.0, 1024.0, 0.0)); // open below: airborne the whole run
+    air.on_ground = false;
+    air.vel = Vec3::new(WALK, 0.0, 0.0);
+    let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
+    gnd.on_ground = true;
+    gnd.vel = Vec3::new(WALK, 0.0, 0.0);
+    let steps = 30; // ~half a second at the reference step
+    for _ in 0..steps {
+        air.update_core(FRICTION_REF_DT, &open, &dry, Input::default());
+        gnd.update_core(FRICTION_REF_DT, &floor, &dry, Input::default());
+    }
+    // Pure-decay speeds implied by the friction constants (one ref step retains
+    // exactly 1 - friction).
+    let air_expected = WALK * (1.0 - AIR_FRICTION).powi(steps);
+    let gnd_expected = WALK * (1.0 - GROUND_FRICTION).powi(steps);
+    assert!(
+        (air.vel.x - air_expected).abs() < 1e-3,
+        "air vx = {} (want {air_expected})",
+        air.vel.x
+    );
+    assert!(
+        (gnd.vel.x - gnd_expected).abs() < 1e-3,
+        "gnd vx = {} (want {gnd_expected})",
+        gnd.vel.x
+    );
+    assert!(
+        air.vel.x > gnd.vel.x,
+        "air must out-coast ground: air {} vs gnd {}",
+        air.vel.x,
+        gnd.vel.x
+    );
+}
+
+#[test]
+fn friction_endpoints_hold_at_any_dt() {
+    for &dt in &[0.005f32, FRICTION_REF_DT, 0.05] {
+        // friction 0: nothing shed, motion continues indefinitely.
+        assert_eq!(
+            friction_retain(0.0, dt),
+            1.0,
+            "friction 0 must not decay (dt={dt})"
+        );
+        // friction 1: everything shed, an immediate stop.
+        assert_eq!(
+            friction_retain(1.0, dt),
+            0.0,
+            "friction 1 must snap to a stop (dt={dt})"
+        );
+    }
+    // At the reference frame the retained fraction is exactly 1 - friction.
+    assert!(
+        (friction_retain(GROUND_FRICTION, FRICTION_REF_DT) - (1.0 - GROUND_FRICTION)).abs() < 1e-6
+    );
+    assert!((friction_retain(AIR_FRICTION, FRICTION_REF_DT) - (1.0 - AIR_FRICTION)).abs() < 1e-6);
+}
+
+#[test]
+fn friction_is_framerate_independent() {
+    // One big decay step must retain the same fraction as several small steps
+    // spanning the same wall-clock time (the property the sub-step loop relies on).
+    let total = 0.05f32;
+    let one = friction_retain(GROUND_FRICTION, total);
+    let n = 5;
+    let many = friction_retain(GROUND_FRICTION, total / n as f32).powi(n);
+    assert!(
+        (one - many).abs() < 1e-6,
+        "retained {one} (1 step) vs {many} ({n} steps)"
+    );
+}
+
+#[test]
+fn gravity_eases_near_apex() {
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    // In a jump, inside the apex band: reduced gravity loses less speed.
+    let mut near = p(Vec3::new(0.0, 128.0, 0.0));
+    near.vel = Vec3::new(0.0, 1.0, 0.0);
+    near.on_ground = false;
+    near.jumping = true;
+    near.update_core(0.05, &open, &dry, Input::default());
+    let near_drop = 1.0 - near.vel.y;
+
+    // In a jump, outside the band: full gravity.
+    let mut fast = p(Vec3::new(0.0, 128.0, 0.0));
+    fast.vel = Vec3::new(0.0, 20.0, 0.0);
+    fast.on_ground = false;
+    fast.jumping = true;
+    fast.update_core(0.05, &open, &dry, Input::default());
+    let fast_drop = 20.0 - fast.vel.y;
+
+    assert!(
+        near_drop < fast_drop,
+        "apex should ease gravity: {near_drop} vs {fast_drop}"
+    );
+    assert!(
+        (fast_drop - GRAVITY * 0.05).abs() < 1e-5,
+        "outside band is full gravity"
+    );
+}
+
+#[test]
+fn no_apex_easing_when_not_jumping() {
+    // Walking off a ledge / stepping down (jumping == false) must fall at
+    // full gravity even though vel.y is briefly inside the apex band — the
+    // easing is reserved for real jump arcs, so the world never feels floaty.
+    let open = |_x: i32, _y: i32, _z: i32| false;
+    let mut pl = p(Vec3::new(0.0, 128.0, 0.0));
+    pl.vel = Vec3::new(0.0, 1.0, 0.0); // small downward-bound speed, no jump
+    pl.on_ground = false;
+    pl.jumping = false;
+    pl.update_core(0.05, &open, &dry, Input::default());
+    let drop = 1.0 - pl.vel.y;
+    assert!(
+        (drop - GRAVITY * 0.05).abs() < 1e-5,
+        "not jumping → full gravity, got {drop}"
+    );
+}
+
+/// Trusted, slow reference: does the player AABB centred at `pos` overlap any
+/// solid cell? Shrinks the box by a symmetric tol on every side (so it is
+/// direction-agnostic by construction — any asymmetry in `sweep` shows up as
+/// a disagreement with this).
+fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: Vec3, solid: &F) -> bool {
+    let t = 1e-4;
+    let x0 = (pos.x - HALF_W + t).floor() as i32;
+    let x1 = (pos.x + HALF_W - t).floor() as i32;
+    let y0 = (pos.y + t).floor() as i32;
+    let y1 = (pos.y + HEIGHT - t).floor() as i32;
+    let z0 = (pos.z - HALF_W + t).floor() as i32;
+    let z1 = (pos.z + HALF_W - t).floor() as i32;
+    for x in x0..=x1 {
+        for y in y0..=y1 {
+            for z in z0..=z1 {
+                if solid(x, y, z) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Reference separated-axis move (X then Z, like `sweep`) advancing in
+/// ~0.5 mm micro-steps and stopping before the first overlap. Moves *exactly*
+/// `disp` in open space (the final sub-step takes up the remainder, so there
+/// is no rounding drift). Obviously correct; the slow oracle for `sweep`.
+fn ref_move<F: Fn(i32, i32, i32) -> bool>(mut pos: Vec3, disp: Vec3, solid: &F) -> Vec3 {
+    let step = 5e-4f32;
+    for axis in [0, 1] {
+        let d = if axis == 0 { disp.x } else { disp.z };
+        let mut moved = 0.0f32;
+        while moved < d.abs() {
+            let this = step.min(d.abs() - moved) * d.signum();
+            let mut next = pos;
+            if axis == 0 {
+                next.x += this;
+            } else {
+                next.z += this;
+            }
+            if ref_overlaps(next, solid) {
+                break;
+            }
+            pos = next;
+            moved += this.abs();
+        }
+    }
+    pos
+}
+
+#[test]
+fn sweep_matches_reference_from_all_directions() {
+    let configs: [(&str, &[IVec3]); 6] = [
+        ("single", &[IVec3::new(10, 64, 10)]),
+        (
+            "wall_x",
+            &[
+                IVec3::new(10, 64, 8),
+                IVec3::new(10, 64, 9),
+                IVec3::new(10, 64, 10),
+                IVec3::new(10, 64, 11),
+                IVec3::new(10, 64, 12),
+            ],
+        ),
+        (
+            "wall_z",
+            &[
+                IVec3::new(8, 64, 10),
+                IVec3::new(9, 64, 10),
+                IVec3::new(10, 64, 10),
+                IVec3::new(11, 64, 10),
+                IVec3::new(12, 64, 10),
+            ],
+        ),
+        ("pillar2", &[IVec3::new(10, 64, 10), IVec3::new(10, 65, 10)]),
+        ("head", &[IVec3::new(10, 65, 10)]),
+        (
+            "Lcorner",
+            &[
+                IVec3::new(10, 64, 10),
+                IVec3::new(11, 64, 10),
+                IVec3::new(10, 64, 11),
+            ],
+        ),
+    ];
+    let dirs: [(f32, f32, &str); 8] = [
+        (1.0, 0.0, "+X"),
+        (-1.0, 0.0, "-X"),
+        (0.0, 1.0, "+Z"),
+        (0.0, -1.0, "-Z"),
+        (1.0, 1.0, "+X+Z"),
+        (1.0, -1.0, "+X-Z"),
+        (-1.0, 1.0, "-X+Z"),
+        (-1.0, -1.0, "-X-Z"),
+    ];
+    // Translate the whole scene to probe positive, origin-crossing, and
+    // negative coordinates (floor()/cast/>>4 behave differently around 0).
+    let bases: [(i32, i32, &str); 3] = [(0, 0, "pos"), (-10, -10, "origin"), (-21, -21, "neg")];
+    let mut failures = Vec::new();
+    for (bx, bz, bname) in bases {
+        for (cname0, cells0) in configs {
+            let cells_v: Vec<IVec3> = cells0
+                .iter()
+                .map(|c| IVec3::new(c.x + bx, c.y, c.z + bz))
+                .collect();
+            let cname = format!("{bname}/{cname0}");
+            let solid = {
+                let cells_v = cells_v.clone();
+                move |x: i32, y: i32, z: i32| {
+                    y < 64 || cells_v.iter().any(|c| c.x == x && c.y == y && c.z == z)
+                }
+            };
+            let centre = Vec3::new(10.5 + bx as f32, 64.0, 10.5 + bz as f32);
+            for (dx, dz, name) in dirs {
+                let len = (dx * dx + dz * dz).sqrt();
+                let wishdir = Vec3::new(dx / len, 0.0, dz / len);
+                let lateral = Vec3::new(-wishdir.z, 0.0, wishdir.x);
+                for k in -19..=19 {
+                    let off = k as f32 * 0.05;
+                    let start = centre - wishdir * 3.5 + lateral * off;
+                    let (dt, speed) = (0.02f32, WALK);
+                    // sweep path. Start at full walk speed so the friction
+                    // ramp-up doesn't lag the reference mover (which moves at
+                    // exactly speed·dt from step one); this test probes the
+                    // collision sweep, not the acceleration curve.
+                    let mut pl = p(start);
+                    pl.on_ground = true;
+                    pl.vel = wishdir * WALK;
+                    let input = Input {
+                        wishdir,
+                        jump: false,
+                        sprint: false,
+                    };
+                    // reference path (kept at floor height, like the grounded body)
+                    let mut rpos = start;
+                    for _ in 0..150 {
+                        pl.update_core(dt, &solid, &dry, input);
+                        rpos = ref_move(rpos, wishdir * (speed * dt), &solid);
+                    }
+                    let d = ((pl.pos.x - rpos.x).powi(2) + (pl.pos.z - rpos.z).powi(2)).sqrt();
+                    // Cardinals must track the reference tightly (the property the
+                    // float-boundary bug broke: phantom/pass-through collisions).
+                    // Diagonals slide along walls, where the two integrators round
+                    // a corner up to one sub-step apart — allow that discretisation.
+                    let tol = if dx == 0.0 || dz == 0.0 { 0.02 } else { 0.12 };
+                    if d > tol {
+                        failures.push(format!(
+                            "{cname} {name} off={off:+.2}: sweep=({:.3},{:.3}) ref=({:.3},{:.3}) d={d:.3}",
+                            pl.pos.x, pl.pos.z, rpos.x, rpos.z
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} mismatches:\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(40)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn raycast_hits_block_ahead_with_back_normal() {
+    // Single solid block at (4, 64, 0): entered at x=4.0, i.e. 3.5 from the
+    // eye — within REACH (4.0). (A block at x=5 would be 4.5 away → a miss.)
+    let solid = |x: i32, y: i32, z: i32| x == 4 && y == 64 && z == 0;
+    // Eye centred in cell (0,64,0) looking +x.
+    let eye = Vec3::new(0.5, 64.5, 0.5);
+    let hit = Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).unwrap();
+    assert_eq!(hit.block, IVec3::new(4, 64, 0));
+    assert_eq!(hit.normal, IVec3::new(-1, 0, 0)); // face toward the eye
+}
+
+#[test]
+fn raycast_out_of_reach_misses() {
+    let solid = |x: i32, _y: i32, _z: i32| x == 100;
+    let eye = Vec3::new(0.5, 64.5, 0.5);
+    assert!(Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).is_none());
+}
+
+#[test]
+fn raycast_eye_inside_solid_returns_zero_normal() {
+    let solid = |_x: i32, _y: i32, _z: i32| true;
+    let eye = Vec3::new(0.5, 64.5, 0.5);
+    let hit = Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).unwrap();
+    assert_eq!(hit.normal, IVec3::ZERO);
+}
+
+#[test]
+fn intersects_block_consistent_with_sweep_when_flush() {
+    // Standing flush against a wall on the -X side: a -X resolve leaves the
+    // min edge on the integer boundary, which float renders as 0.99999994.
+    // `sweep` (lo = floor(min+EPS)) treats the cell beside you as free; the
+    // place-gate must agree, or you can't build into a cell you clearly fit
+    // next to.
+    let pl = p(Vec3::new(1.3, 64.0, 0.5)); // min.x = 1.3 - 0.3 = 0.99999994
+    assert!(
+        pl.aabb_min().x < 1.0,
+        "precondition: float pulls min.x below 1.0"
+    );
+    assert!(
+        !pl.intersects_block(IVec3::new(0, 64, 0)),
+        "flush-beside cell must read as free, matching sweep"
+    );
+    // And the cell the body actually stands in still counts.
+    assert!(pl.intersects_block(IVec3::new(1, 64, 0)));
+}
+
+#[test]
+fn intersects_block_strict_faces() {
+    let pl = p(Vec3::new(0.5, 64.0, 0.5));
+    // The cell the feet stand in overlaps.
+    assert!(pl.intersects_block(IVec3::new(0, 64, 0)));
+    // A block flush against +x face (player max.x = 0.8 < 1.0) does not.
+    assert!(!pl.intersects_block(IVec3::new(1, 64, 0)));
+    // A block at head height overlaps (player spans y in [64, 65.8]).
+    assert!(pl.intersects_block(IVec3::new(0, 65, 0)));
+    // Above the head does not.
+    assert!(!pl.intersects_block(IVec3::new(0, 66, 0)));
+}
+
+/// A pool against a 1-block-high land ledge, for the swim-out tests. Pool floor
+/// is solid up to y=6 (top 7) for x<2; the land plateau is solid up to y=9
+/// (top 10) for x>=2; water fills the pool cells y=7..=9 (surface ~10, level
+/// with the plateau top). So a swimmer in the pool must climb ~1 block of land
+/// to get out onto the plateau.
+fn pool_solid(x: i32, y: i32, _z: i32) -> bool {
+    (x >= 2 && y <= 9) || (x < 2 && y <= 6)
+}
+
+fn pool_water(x: i32, y: i32, _z: i32) -> bool {
+    x < 2 && (7..=9).contains(&y)
+}
+
+/// Explicitly jumping (Space) while swimming toward a climbable ledge gives a
+/// firm upward boost (>= SWIM_CLIMB) so the player rises to crest it.
+#[test]
+fn swim_toward_ledge_boosts_up() {
+    // Near the surface (feet=8: water probe at 8.6 -> cell 8 is water) and one
+    // step back from the wall so the look-ahead probe reaches the plateau.
+    let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: true,
+        sprint: false,
+    };
+    pl.update_core(
+        0.02,
+        &(pool_solid as fn(i32, i32, i32) -> bool),
+        &(pool_water as fn(i32, i32, i32) -> bool),
+        input,
+    );
+    assert!(
+        pl.vel.y >= SWIM_CLIMB - 1e-3,
+        "expected climb boost >= {SWIM_CLIMB}, got vel.y = {}",
+        pl.vel.y
+    );
+}
+
+/// Climbing out is an EXPLICIT action: moving toward a ledge WITHOUT pressing
+/// jump must not boost (regression for the "1-deep / edge water hops you out on
+/// its own" bug). Same scene as the boost test, jump released.
+#[test]
+fn swim_toward_ledge_requires_jump() {
+    let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+    pl.update_core(
+        0.02,
+        &(pool_solid as fn(i32, i32, i32) -> bool),
+        &(pool_water as fn(i32, i32, i32) -> bool),
+        input,
+    );
+    assert!(
+        pl.vel.y < SWIM_CLIMB - 1.0,
+        "no jump -> no climb boost; vel.y = {}",
+        pl.vel.y
+    );
+}
+
+/// Swimming toward open water (no ledge ahead) does NOT trigger the climb
+/// boost — vertical stays the gentle buoyant motion, so surface bobbing is
+/// preserved.
+#[test]
+fn swim_open_water_no_boost() {
+    // Deep open water, no solid anywhere near, moving horizontally.
+    let open_water = |_x: i32, _y: i32, _z: i32| true;
+    let no_solid = |_x: i32, _y: i32, _z: i32| false;
+    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+    pl.update_core(0.02, &no_solid, &open_water, input);
+    assert!(
+        pl.vel.y < SWIM_CLIMB - 1.0,
+        "open water must not boost; vel.y = {}",
+        pl.vel.y
+    );
+}
+
+/// Falling back into the water against the ledge wall (Space still held, still
+/// facing the ledge) must NOT relaunch: the downward fall velocity is preserved
+/// so the player sinks, instead of the boost discarding it and firing again
+/// immediately. They sink once before another attempt is allowed.
+#[test]
+fn swim_falling_back_does_not_relaunch() {
+    let solid = pool_solid as fn(i32, i32, i32) -> bool;
+    let water = pool_water as fn(i32, i32, i32) -> bool;
+    // At the wall, in water, but moving DOWN (just fell back in) at -5 m/s.
+    let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+    pl.vel.y = -5.0;
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: true,
+        sprint: false,
+    };
+    pl.update_core(0.02, &solid, &water, input);
+    assert!(
+        pl.vel.y < 0.0,
+        "falling back in must keep sinking, not relaunch; vel.y = {}",
+        pl.vel.y
+    );
+}
+
+/// Swimming into a tall (2+ block) wall must NOT boost — the assist is only for
+/// 1-block ledges you can actually climb onto, so you can't scale a cliff face
+/// just by holding into it underwater.
+#[test]
+fn swim_into_tall_wall_no_boost() {
+    let tall_wall = |x: i32, _y: i32, _z: i32| x >= 2; // solid at every height
+    let all_water = |x: i32, _y: i32, _z: i32| x < 2;
+    let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+    pl.update_core(0.02, &tall_wall, &all_water, input);
+    assert!(
+        pl.vel.y < SWIM_CLIMB - 1.0,
+        "a tall wall is not a climbable ledge; vel.y = {}",
+        pl.vel.y
+    );
+}
+
+/// End-to-end: a swimmer holding "forward + swim up" against a 1-block ledge
+/// climbs out of the pool and ends up standing on the plateau (the reported
+/// "can't get out of the water onto a block" case).
+#[test]
+fn swims_out_onto_ledge() {
+    let solid = pool_solid as fn(i32, i32, i32) -> bool;
+    let water = pool_water as fn(i32, i32, i32) -> bool;
+    // Start floating in the pool a little back from the wall, swimming up+toward.
+    let mut pl = p(Vec3::new(1.0, 8.0, 0.5));
+    let input = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: true,
+        sprint: false,
+    };
+    for _ in 0..250 {
+        pl.update_core(0.02, &solid, &water, input);
+    }
+    // Made it up and over onto the plateau (x>=2), out of the water, near its
+    // top (y~10). Failure mode would leave the player stuck at the wall (x<2,
+    // bobbing at y~8-9 in the pool).
+    assert!(
+        pl.pos.x > 2.0 && pl.pos.y > 9.5,
+        "expected to climb onto the plateau, ended at ({:.2}, {:.2})",
+        pl.pos.x,
+        pl.pos.y
+    );
+    assert!(
+        !water(
+            pl.pos.x.floor() as i32,
+            (pl.pos.y + WATER_PROBE_Y).floor() as i32,
+            pl.pos.z.floor() as i32
+        ),
+        "expected to be out of the water after climbing out"
+    );
+}
