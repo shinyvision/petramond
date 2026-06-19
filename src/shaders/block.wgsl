@@ -3,7 +3,7 @@
 struct Uniforms {
     view_proj: mat4x4<f32>,
     cam_pos:   vec4<f32>,
-    fog:       vec4<f32>, // (start, end, _, _)
+    fog:       vec4<f32>, // (start, end, time, underwater)
     fog_color: vec4<f32>,
 };
 
@@ -12,9 +12,19 @@ struct Uniforms {
 // dark, not pitch black"). Tune these to taste.
 const SKY_MIN: f32 = 0.05;
 const FINAL_MIN: f32 = 0.02;
-// Steepness of the light->dark falloff: higher = more of the range reads dark,
-// brightness ramps up only near full sky -> a more dramatic light/shadow split.
+// Steepness of the light->dark falloff: higher = more of the range reads dark.
 const SKY_GAMMA: f32 = 3.0;
+
+// Underwater look: a multiply tint (darker + blue) applied to everything seen
+// while submerged, plus animated caustics added on lit surfaces. The caustic is
+// cheap layered sine "ridges" drifting over time, sampled in world space so the
+// dappled light is continuous across block boundaries.
+const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
+const CAUSTIC_COLOR: vec3<f32> = vec3<f32>(0.45, 0.85, 1.0);
+// Caustics are deliberately *barely* noticeable: just a faint shimmer on lit
+// surfaces, not a bold dappled pattern.
+const CAUSTIC_STRENGTH: f32 = 0.12;
+const CAUSTIC_SCALE: f32 = 0.55;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
@@ -27,9 +37,8 @@ const SKY_GAMMA: f32 = 3.0;
 struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
-    // bits 0..8 = tile id, 8..10 = corner (0..3), 10..12 = shade index,
-    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO level (0..3),
-    // 23..29 = skylight level (0..63).
+    // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index,
+    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = skylight.
     @location(2) packed: u32,
 };
 
@@ -41,6 +50,7 @@ struct VsOut {
     @location(3) tint: vec3<f32>,
     @location(4) uv2: vec2<f32>,
     @location(5) @interpolate(flat) overlay: u32,
+    @location(6) world_pos: vec3<f32>,
 };
 
 // Select a tile-rect corner. r = (u0,v0,u1,v1); corner order matches the mesher:
@@ -50,6 +60,17 @@ fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
     if (corner == 1u) { return vec2<f32>(r.z, r.w); }
     if (corner == 2u) { return vec2<f32>(r.z, r.y); }
     return vec2<f32>(r.x, r.y);
+}
+
+// Animated caustic ridges in [0,1]: layered sines combined into thin bright
+// filaments, sharpened by a cubic. p is a world-space xz position; t is seconds.
+fn caustic(p: vec2<f32>, t: f32) -> f32 {
+    let q = p * CAUSTIC_SCALE;
+    let a = sin(q.x + t * 1.3) + sin(q.y - t * 1.1);
+    let b = sin((q.x + q.y) * 0.7 + t * 1.7) + sin((q.x - q.y) * 0.9 - t * 1.5);
+    let v = (a + b) * 0.25 + 0.5;
+    let s = clamp(v, 0.0, 1.0);
+    return pow(s, 3.0);
 }
 
 @vertex
@@ -72,9 +93,9 @@ fn vs_main(in: VsIn) -> VsOut {
     // byte-identical) * per-vertex AO * per-vertex skylight, all smoothly
     // interpolated so shadows and the light-level gradient are soft.
     //   - AO_LUT: contact-shadow dip in lit areas.
-    //   - skylight: 0..63 -> 0..1; a gamma curve (square) keeps near-full sky
-    //     bright while letting mid/low levels fall off (avoids a muddy grey),
-    //     mixed up from SKY_MIN so a sky-occluded face never goes black.
+    //   - skylight: 0..63 -> 0..1; a gamma curve keeps near-full sky bright while
+    //     mid/low levels fall off, mixed up from SKY_MIN so a sky-occluded face
+    //     never goes black.
     //   - FINAL_MIN floors the darkest possible pixel: "very dark, not pitch black".
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
@@ -84,6 +105,7 @@ fn vs_main(in: VsIn) -> VsOut {
 
     out.dist = length(u.cam_pos.xyz - in.pos);
     out.tint = in.tint;
+    out.world_pos = in.pos;
     return out;
 }
 
@@ -100,7 +122,14 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         if (base.a < 0.5) { discard; } // leaf/cutout
         rgb = base.rgb * in.tint;
     }
-    let color = rgb * in.light;
+    var color = rgb * in.light;
+    // Underwater: blue darkening + animated caustics. The caustic is scaled by the
+    // surface's own light so shadowed/deep areas stay dark.
+    if (u.fog.w > 0.5) {
+        color = color * WATER_TINT;
+        let c = caustic(in.world_pos.xz, u.fog.z) * in.light;
+        color = color + CAUSTIC_COLOR * (c * CAUSTIC_STRENGTH);
+    }
     let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
     let out = mix(color, u.fog_color.rgb, f);
     return vec4<f32>(out, 1.0);
@@ -109,13 +138,18 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv);
-    // Only water uses this alpha-blended pass now (leaves render fully opaque in
-    // fs_opaque). Water tiles are full-alpha, so the discard is a no-op for them.
+    // Only water uses this alpha-blended pass; water tiles are full-alpha so the
+    // discard is a no-op for them.
     if (tex.a < 0.5) { discard; }
-    let color = tex.rgb * in.tint * in.light;
+    var color = tex.rgb * in.tint * in.light;
+    // Tint the water volume itself when submerged so the surface seen from below
+    // blends into the murk rather than glowing.
+    if (u.fog.w > 0.5) {
+        color = color * WATER_TINT;
+    }
     // Water blue tint + slight transparency.
     let alpha = 0.78;
     let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    let out = mix(vec3<f32>(color), u.fog_color.rgb, f);
+    let out = mix(color, u.fog_color.rgb, f);
     return vec4<f32>(out, alpha);
 }

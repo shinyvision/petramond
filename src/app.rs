@@ -11,6 +11,10 @@ use crate::player::{self, Input, Player, RaycastHit};
 use crate::render::Renderer;
 use crate::world::World;
 
+/// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
+/// is underwater.
+const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
+
 pub struct App {
     pub cam: Camera,
     pub world: World,
@@ -113,12 +117,26 @@ impl App {
         const MESH_BUDGET: usize = 6;
         self.world.tick_mesh_budget(MESH_BUDGET);
 
-        // Fog colour sampled from biome at camera column.
-        let climate = self.world_seed_climate(cam_cx, cam_cz);
-        let biome = crate::biome::biome_at(climate, self.cam.pos.y as i32);
-        let fog = biome.fog_color();
+        // Is the camera eye inside a water block? Drives the underwater shader
+        // (blue darkening + dense fog + caustics) and the matching clear colour.
+        let eye = self.cam.pos;
+        let underwater = Block::from_id(self.world.chunk_block(
+            eye.x.floor() as i32,
+            eye.y.floor() as i32,
+            eye.z.floor() as i32,
+        )) == Block::Water;
 
-        renderer.update_uniforms(&self.cam, fog);
+        // Fog colour: the biome's above-water fog, or a deep murky blue when
+        // submerged so distant terrain dissolves into the water.
+        let climate = self.world_seed_climate(cam_cx, cam_cz);
+        let biome = crate::biome::biome_at(climate, eye.y as i32);
+        let fog = if underwater { UNDERWATER_FOG_COLOR } else { biome.fog_color() };
+
+        // Seconds since start (wrapped to keep the value small) drive the animated
+        // underwater caustics in the shader.
+        let time = (now % 3600.0) as f32;
+
+        renderer.update_uniforms(&self.cam, fog, time, underwater);
         renderer.set_selection(self.look.map(|h| h.block));
         renderer.sync_meshes(&mut self.world);
         renderer.render();
@@ -137,8 +155,10 @@ impl App {
                 // normal == 0 means the eye was inside a block: nowhere to place.
                 if h.normal != IVec3::ZERO {
                     let p = h.block + h.normal;
-                    let empty = self.world.chunk_block(p.x, p.y, p.z) == 0;
-                    if empty && !self.player.intersects_block(p) {
+                    // Place into any replaceable cell (air or water -- building
+                    // into water displaces it), if the player isn't standing there.
+                    let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
+                    if target.is_replaceable() && !self.player.intersects_block(p) {
                         self.world.set_block_world(p.x, p.y, p.z, Block::Stone);
                     }
                 }

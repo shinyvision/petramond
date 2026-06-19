@@ -68,6 +68,35 @@ const GROUND_ACCEL: f32 = 60.0;
 /// trajectory: you keep the momentum a jump launched you with and gently steer,
 /// never snap to a new direction. The air counterpart to [`GROUND_ACCEL`].
 const AIR_ACCEL: f32 = 20.0;
+/// --- Swimming (in-water) constants. ---
+/// Horizontal swim speed: about half walk, so you move through water much more
+/// slowly than on land.
+const SWIM_SPEED: f32 = 2.2;
+/// Horizontal acceleration toward the swim wish velocity (m/s2). Lower than the
+/// ground so swimming feels sluggish.
+const SWIM_ACCEL: f32 = 16.0;
+/// Horizontal drag while submerged with no input: the fraction of speed shed per
+/// reference frame (heavy, so water stops you quickly when you let go).
+const WATER_FRICTION: f32 = 0.30;
+/// Upward swim speed reached while holding the jump key underwater.
+const SWIM_RISE: f32 = 3.0;
+/// Gentle downward drift speed while submerged and not swimming up (buoyant, far
+/// below the dry-land terminal velocity).
+const SWIM_SINK: f32 = 1.4;
+/// How fast vertical velocity eases toward the rise/sink target (m/s2): a soft
+/// approach so falling into water decelerates smoothly instead of snapping.
+const SWIM_VACCEL: f32 = 14.0;
+/// Probe height above the feet for the "submerged enough to swim" test: once
+/// water reaches roughly thigh height the player switches to swim physics, so
+/// shallow wading still walks. Probing the body (not the eye) lets the head break
+/// the surface and gravity resume, so you bob at the waterline.
+const WATER_PROBE_Y: f32 = 0.6;
+/// Upward boost given when swimming toward a 1-block ledge you can climb onto: a
+/// bit below a full land jump (`JUMP_V0`) but well above the gentle swim rise, so
+/// you crest the surface with enough speed to land on the block instead of bobbing
+/// at its base. It engages while still submerged (see [`Player::ledge_ahead`]) so
+/// the velocity carries you up through the waterline.
+const SWIM_CLIMB: f32 = 7.5;
 /// Reference timestep the friction fractions are calibrated to: at exactly this
 /// `dt` the player sheds `friction` of its speed in one frame (ground 10 %, air
 /// 1 %). [`friction_retain`] rescales to any other `dt` so the slowdown per
@@ -164,6 +193,30 @@ impl Player {
         Block::from_id(world.chunk_block(x, y, z)).is_solid()
     }
 
+    /// Is there a 1-block-high ledge to climb onto just ahead in `dir`? True when
+    /// the cell in front (at the feet, or one above them) is solid with open space
+    /// directly above it — i.e. a single step, not a taller wall. Used by the in-
+    /// water climb-out assist: it returns true while the player is still ~1 block
+    /// below the ledge top, so the upward boost fires before the head clears the
+    /// surface and carries the player up onto the block. A genuine 2+ block wall
+    /// (solid above too) is *not* a ledge, so swimming into a cliff face won't lift
+    /// you up it.
+    fn ledge_ahead<F: Fn(i32, i32, i32) -> bool>(&self, dir: Vec3, solid: &F) -> bool {
+        let d = Vec3::new(dir.x, 0.0, dir.z);
+        if d.length_squared() <= 1e-12 {
+            return false;
+        }
+        let d = d.normalize();
+        // A point just beyond the AABB face in the move direction.
+        let fx = (self.pos.x + d.x * (HALF_W + 0.2)).floor() as i32;
+        let fz = (self.pos.z + d.z * (HALF_W + 0.2)).floor() as i32;
+        let base = self.pos.y.floor() as i32;
+        // Step at feet level, or one block above the feet (so the boost engages
+        // from roughly a block below the ledge top, giving runway to crest it).
+        let step_at = |y: i32| solid(fx, y, fz) && !solid(fx, y + 1, fz);
+        step_at(base) || step_at(base + 1)
+    }
+
     /// True if every chunk column the horizontal AABB overlaps is loaded. The
     /// caller gates physics on this (once per frame) so the player can't fall
     /// through terrain that hasn't generated yet (spawn, or running past the
@@ -189,36 +242,83 @@ impl Player {
     /// [`Player::columns_loaded`]) before stepping physics.
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
         let solid = |x: i32, y: i32, z: i32| Self::solid_world(world, x, y, z);
-        self.update_core(dt, &solid, input);
+        let water = |x: i32, y: i32, z: i32| {
+            Block::from_id(world.chunk_block(x, y, z)) == Block::Water
+        };
+        self.update_core(dt, &solid, &water, input);
     }
 
-    /// Physics integration against an arbitrary solidity predicate, so the feel
-    /// can be unit-tested without a `World`. See [`Player::update`].
-    fn update_core<F: Fn(i32, i32, i32) -> bool>(&mut self, dt: f32, solid: &F, input: Input) {
+    /// Physics integration against arbitrary solidity + water predicates, so the
+    /// feel can be unit-tested without a World. See [`Player::update`].
+    fn update_core<F, W>(&mut self, dt: f32, solid: &F, water: &W, input: Input)
+    where
+        F: Fn(i32, i32, i32) -> bool,
+        W: Fn(i32, i32, i32) -> bool,
+    {
         let was_on_ground = self.on_ground;
 
-        // --- Vertical: jump impulse, then gravity (eased near the jump apex). ---
-        if input.jump && was_on_ground {
-            self.vel.y = JUMP_V0;
-            self.jumping = true;
-        }
-        // Soften the apex of a jump: scale gravity down as the vertical speed
-        // approaches zero, easing back to full gravity by |vel.y| = APEX_VY.
-        // Velocity stays continuous, so the up→down switch reads as a gentle arc,
-        // not a corner. Only while `jumping`, so walk-offs and ceiling bonks
-        // (where vel.y is also briefly small) keep full gravity.
-        let g = if self.jumping {
-            let t = (self.vel.y.abs() / APEX_VY).min(1.0); // 0 at apex → 1 outside
-            GRAVITY * (APEX_GRAVITY + (1.0 - APEX_GRAVITY) * t)
+        // Submerged enough to swim? Sample water ~thigh height above the feet, so
+        // wading in shallow water still walks but deeper water switches to buoyant
+        // swim physics. Probing the body (not the eye) means the head can break the
+        // surface and gravity resumes -> you bob at the waterline.
+        let in_water = water(
+            self.pos.x.floor() as i32,
+            (self.pos.y + WATER_PROBE_Y).floor() as i32,
+            self.pos.z.floor() as i32,
+        );
+
+        // --- Vertical. In water: ease toward a rise (holding jump) or a gentle
+        // sink target -- buoyant and slow. On land: the original jump impulse +
+        // gravity (eased near the apex). ---
+        if in_water {
+            // Climb-out assist: when the player explicitly jumps (Space) while
+            // moving toward a low ledge they could get out onto (a 1-block step
+            // just ahead with open space above it — see `ledge_ahead`) and is not
+            // currently sinking, give a firm upward boost instead of the gentle
+            // rise. It engages while still submerged, so you carry that speed
+            // through the waterline and land on the block rather than bobbing at its
+            // base. Mark it as a jump arc so gravity eases at the apex once you
+            // surface, floating you the last bit onto the ledge.
+            //   - Requiring jump keeps it an explicit action — wading through
+            //     shallow/edge water toward shore never hops you out on its own.
+            //   - Requiring vel.y >= 0 makes a *failed* hop behave: if you don't
+            //     make the ledge and fall back in against the wall, your downward
+            //     fall velocity is preserved (this branch is skipped, so the normal
+            //     swim handling lets you sink) instead of being discarded by the
+            //     `max` below and relaunching you instantly. You sink back down
+            //     once — the harder you fell in, the deeper — before the boost can
+            //     fire again.
+            let climbing_out = input.jump
+                && self.vel.y >= 0.0
+                && input.wishdir.length_squared() > 1e-12
+                && self.ledge_ahead(input.wishdir, solid);
+            if climbing_out {
+                self.vel.y = self.vel.y.max(SWIM_CLIMB);
+                self.jumping = true;
+            } else {
+                // Ease toward a rise (holding jump) or a gentle buoyant sink.
+                let target = if input.jump { SWIM_RISE } else { -SWIM_SINK };
+                self.vel.y = approach(self.vel.y, target, SWIM_VACCEL * dt);
+                self.jumping = false;
+            }
         } else {
-            GRAVITY
-        };
-        self.vel.y = (self.vel.y - g * dt).max(-TERMINAL);
+            if input.jump && was_on_ground {
+                self.vel.y = JUMP_V0;
+                self.jumping = true;
+            }
+            let g = if self.jumping {
+                let t = (self.vel.y.abs() / APEX_VY).min(1.0); // 0 at apex -> 1 outside
+                GRAVITY * (APEX_GRAVITY + (1.0 - APEX_GRAVITY) * t)
+            } else {
+                GRAVITY
+            };
+            self.vel.y = (self.vel.y - g * dt).max(-TERMINAL);
+        }
         let dy = self.vel.y * dt;
         let blocked_y = self.sweep(Axis::Y, dy, solid);
         if blocked_y {
-            // Landed if we were moving down; bonked head if moving up. Either
-            // way the jump arc is over, so stop easing gravity.
+            // Landed if we were moving down; bonked head if moving up. Either way
+            // the jump arc is over, so stop easing gravity.
             self.on_ground = dy < 0.0;
             self.vel.y = 0.0;
             self.jumping = false;
@@ -227,9 +327,8 @@ impl Player {
         }
 
         // --- Horizontal: input accelerates toward the wish velocity; friction
-        // decays it. The two are decoupled — acceleration is how fast you reach
-        // and steer toward top speed, friction is purely how fast you slow down
-        // once you let go (0 = coast forever, 1 = stop instantly). ---
+        // decays it. In water this is a slow swim with heavy drag; on land it is
+        // the original ground/air handling. ---
         let speed = if input.sprint { SPRINT } else { WALK };
         let wish = if input.wishdir.length_squared() > 1.0 {
             input.wishdir.normalize()
@@ -242,7 +341,26 @@ impl Player {
         // no longer subject to the grippy ground friction. A landing flips it
         // straight back, so a touchdown stops you promptly.
         let grounded = self.on_ground;
-        if wish.length_squared() <= 1e-12 {
+        if in_water {
+            // Swim: accelerate toward the (slow) swim speed; heavy drag when idle.
+            // Ground/air friction and the air speed-cap are bypassed — water has its
+            // own feel (a sluggish ramp to a low top speed, then a quick stop).
+            if wish.length_squared() <= 1e-12 {
+                let retain = friction_retain(WATER_FRICTION, dt);
+                self.vel.x *= retain;
+                self.vel.z *= retain;
+            } else {
+                let (vx, vz) = move_toward(
+                    self.vel.x,
+                    self.vel.z,
+                    wish.x * SWIM_SPEED,
+                    wish.z * SWIM_SPEED,
+                    SWIM_ACCEL * dt,
+                );
+                self.vel.x = vx;
+                self.vel.z = vz;
+            }
+        } else if wish.length_squared() <= 1e-12 {
             // No input: friction is the only horizontal force. Keep the retained
             // fraction (1 - friction) per reference frame, rescaled to this dt so
             // the slowdown per second is the same at any frame rate or sub-step
@@ -258,11 +376,11 @@ impl Player {
             self.vel.x *= retain;
             self.vel.z *= retain;
         } else if grounded {
-            // Ground: snap toward the wish velocity at the high ground
-            // acceleration — responsive starts, stops, and reversals, with no
-            // stray momentum (move_toward redirects the whole velocity vector, so
-            // turning leaves no leftover speed on the axis you stopped steering).
-            // Friction is not read here: speeding up is fully decoupled from it.
+            // Ground: snap toward the wish velocity at the high ground acceleration
+            // — responsive starts, stops, and reversals, with no stray momentum
+            // (move_toward redirects the whole velocity vector, so turning leaves no
+            // leftover speed on the axis you stopped steering). Friction is not read
+            // here: speeding up is fully decoupled from it.
             let (vx, vz) = move_toward(
                 self.vel.x,
                 self.vel.z,
@@ -273,16 +391,16 @@ impl Player {
             self.vel.x = vx;
             self.vel.z = vz;
         } else {
-            // Air: additive acceleration along the wish direction only — it tops
-            // the wish-direction speed up to `speed` but never brakes, so a jump
-            // keeps the momentum it launched with. The total horizontal speed is
-            // then capped at whatever we already had (or `speed` if slower): input
-            // can *redirect* momentum but never *inflate* it. Without that cap,
-            // scraping a wall pumps speed without bound — the wall zeroes the
-            // into-wall velocity each step, keeping the wish-direction projection
-            // low so `add` stays large, while the perpendicular (along-wall) speed
-            // climbs every frame. The cap makes steering a constant-speed turn and
-            // kills that exploit; friction (above) is the only thing that slows you.
+            // Air: additive acceleration along the wish direction only — it tops the
+            // wish-direction speed up to `speed` but never brakes, so a jump keeps
+            // the momentum it launched with. The total horizontal speed is then
+            // capped at whatever we already had (or `speed` if slower): input can
+            // *redirect* momentum but never *inflate* it. Without that cap, scraping
+            // a wall pumps speed without bound — the wall zeroes the into-wall
+            // velocity each step, keeping the wish-direction projection low so `add`
+            // stays large, while the perpendicular (along-wall) speed climbs every
+            // frame. The cap makes steering a constant-speed turn and kills that
+            // exploit; friction (above) is the only thing that slows you.
             let speed_sq_before = self.vel.x * self.vel.x + self.vel.z * self.vel.z;
             let along = self.vel.x * wish.x + self.vel.z * wish.z;
             let add = (speed - along).max(0.0);
@@ -548,6 +666,19 @@ fn move_toward(x: f32, z: f32, tx: f32, tz: f32, max_delta: f32) -> (f32, f32) {
     }
 }
 
+/// Move the scalar `v` toward `target` by at most `max_delta`, clamping onto the
+/// target when within reach (never overshoots). The 1-D analogue of
+/// [`move_toward`], used to ease vertical swim velocity toward its rise/sink goal.
+#[inline]
+fn approach(v: f32, target: f32, max_delta: f32) -> f32 {
+    let d = target - v;
+    if d.abs() <= max_delta {
+        target
+    } else {
+        v + d.signum() * max_delta
+    }
+}
+
 #[inline]
 fn sign(v: f32) -> i32 {
     if v > 0.0 {
@@ -586,6 +717,9 @@ fn boundary_t(p: f32, d: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No water anywhere -- the dry-land predicate every physics test uses.
+    fn dry(_x: i32, _y: i32, _z: i32) -> bool { false }
 
     fn p(feet: Vec3) -> Player {
         Player::new(feet)
@@ -653,13 +787,13 @@ mod tests {
         let mut air = p(Vec3::new(0.0, 128.0, 0.0));
         air.vel = Vec3::new(WALK, 5.0, 0.0); // gliding +x, rising
         air.on_ground = false;
-        air.update_core(dt, &open, Input::default());
+        air.update_core(dt, &open, &dry, Input::default());
 
         let floor = |_x: i32, y: i32, _z: i32| y < 64;
         let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
         gnd.vel = Vec3::new(WALK, 0.0, 0.0);
         gnd.on_ground = true;
-        gnd.update_core(dt, &floor, Input::default());
+        gnd.update_core(dt, &floor, &dry, Input::default());
 
         // Air retains 1 - AIR_FRICTION of its speed; ground retains less per frame.
         assert!(
@@ -694,7 +828,7 @@ mod tests {
         let floor = |_x: i32, y: i32, _z: i32| y < 64;
         let mut g = p(Vec3::new(0.0, 64.0, 0.0));
         g.on_ground = true;
-        g.update_core(dt, &floor, input);
+        g.update_core(dt, &floor, &dry, input);
         assert!(
             (g.vel.x - GROUND_ACCEL * dt).abs() < 1e-5,
             "ground vx = {}",
@@ -706,7 +840,7 @@ mod tests {
         let open = |_x: i32, _y: i32, _z: i32| false;
         let mut a = p(Vec3::new(0.0, 128.0, 0.0));
         a.on_ground = false;
-        a.update_core(dt, &open, input);
+        a.update_core(dt, &open, &dry, input);
         assert!(
             (a.vel.x - AIR_ACCEL * dt).abs() < 1e-5,
             "air vx = {}",
@@ -734,7 +868,7 @@ mod tests {
         let mut a = p(Vec3::new(0.0, 128.0, 0.0));
         a.on_ground = false;
         a.vel = Vec3::new(SPRINT, 0.0, 0.0); // gliding +x faster than WALK
-        a.update_core(FRICTION_REF_DT, &open, input);
+        a.update_core(FRICTION_REF_DT, &open, &dry, input);
         assert!(
             (a.vel.x - SPRINT).abs() < 1e-5,
             "air input must not brake momentum, vx = {}",
@@ -757,7 +891,7 @@ mod tests {
         let mut a = p(Vec3::new(0.0, 128.0, 0.0));
         a.on_ground = false;
         a.vel = Vec3::new(WALK, 0.0, 0.0);
-        a.update_core(FRICTION_REF_DT, &open, input);
+        a.update_core(FRICTION_REF_DT, &open, &dry, input);
         let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
         assert!(
             (speed - WALK).abs() < 1e-4,
@@ -789,7 +923,7 @@ mod tests {
             sprint: false,
         };
         for _ in 0..600 {
-            a.update_core(0.02, &solid, input);
+            a.update_core(0.02, &solid, &dry, input);
         }
         let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
         assert!(
@@ -815,8 +949,8 @@ mod tests {
         gnd.vel = Vec3::new(WALK, 0.0, 0.0);
         let steps = 30; // ~half a second at the reference step
         for _ in 0..steps {
-            air.update_core(FRICTION_REF_DT, &open, Input::default());
-            gnd.update_core(FRICTION_REF_DT, &floor, Input::default());
+            air.update_core(FRICTION_REF_DT, &open, &dry, Input::default());
+            gnd.update_core(FRICTION_REF_DT, &floor, &dry, Input::default());
         }
         // Pure-decay speeds implied by the friction constants (one ref step retains
         // exactly 1 - friction).
@@ -888,7 +1022,7 @@ mod tests {
         near.vel = Vec3::new(0.0, 1.0, 0.0);
         near.on_ground = false;
         near.jumping = true;
-        near.update_core(0.05, &open, Input::default());
+        near.update_core(0.05, &open, &dry, Input::default());
         let near_drop = 1.0 - near.vel.y;
 
         // In a jump, outside the band: full gravity.
@@ -896,7 +1030,7 @@ mod tests {
         fast.vel = Vec3::new(0.0, 20.0, 0.0);
         fast.on_ground = false;
         fast.jumping = true;
-        fast.update_core(0.05, &open, Input::default());
+        fast.update_core(0.05, &open, &dry, Input::default());
         let fast_drop = 20.0 - fast.vel.y;
 
         assert!(
@@ -919,7 +1053,7 @@ mod tests {
         pl.vel = Vec3::new(0.0, 1.0, 0.0); // small downward-bound speed, no jump
         pl.on_ground = false;
         pl.jumping = false;
-        pl.update_core(0.05, &open, Input::default());
+        pl.update_core(0.05, &open, &dry, Input::default());
         let drop = 1.0 - pl.vel.y;
         assert!(
             (drop - GRAVITY * 0.05).abs() < 1e-5,
@@ -1064,7 +1198,7 @@ mod tests {
                         // reference path (kept at floor height, like the grounded body)
                         let mut rpos = start;
                         for _ in 0..150 {
-                            pl.update_core(dt, &solid, input);
+                            pl.update_core(dt, &solid, &dry, input);
                             rpos = ref_move(rpos, wishdir * (speed * dt), &solid);
                         }
                         let d = ((pl.pos.x - rpos.x).powi(2) + (pl.pos.z - rpos.z).powi(2)).sqrt();
@@ -1153,5 +1287,130 @@ mod tests {
         assert!(pl.intersects_block(IVec3::new(0, 65, 0)));
         // Above the head does not.
         assert!(!pl.intersects_block(IVec3::new(0, 66, 0)));
+    }
+
+    /// A pool against a 1-block-high land ledge, for the swim-out tests. Pool floor
+    /// is solid up to y=6 (top 7) for x<2; the land plateau is solid up to y=9
+    /// (top 10) for x>=2; water fills the pool cells y=7..=9 (surface ~10, level
+    /// with the plateau top). So a swimmer in the pool must climb ~1 block of land
+    /// to get out onto the plateau.
+    fn pool_solid(x: i32, y: i32, _z: i32) -> bool {
+        (x >= 2 && y <= 9) || (x < 2 && y <= 6)
+    }
+    fn pool_water(x: i32, y: i32, _z: i32) -> bool {
+        x < 2 && (7..=9).contains(&y)
+    }
+
+    /// Explicitly jumping (Space) while swimming toward a climbable ledge gives a
+    /// firm upward boost (>= SWIM_CLIMB) so the player rises to crest it.
+    #[test]
+    fn swim_toward_ledge_boosts_up() {
+        // Near the surface (feet=8: water probe at 8.6 -> cell 8 is water) and one
+        // step back from the wall so the look-ahead probe reaches the plateau.
+        let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: true, sprint: false };
+        pl.update_core(0.02, &(pool_solid as fn(i32, i32, i32) -> bool), &(pool_water as fn(i32, i32, i32) -> bool), input);
+        assert!(
+            pl.vel.y >= SWIM_CLIMB - 1e-3,
+            "expected climb boost >= {SWIM_CLIMB}, got vel.y = {}",
+            pl.vel.y
+        );
+    }
+
+    /// Climbing out is an EXPLICIT action: moving toward a ledge WITHOUT pressing
+    /// jump must not boost (regression for the "1-deep / edge water hops you out on
+    /// its own" bug). Same scene as the boost test, jump released.
+    #[test]
+    fn swim_toward_ledge_requires_jump() {
+        let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: false, sprint: false };
+        pl.update_core(0.02, &(pool_solid as fn(i32, i32, i32) -> bool), &(pool_water as fn(i32, i32, i32) -> bool), input);
+        assert!(
+            pl.vel.y < SWIM_CLIMB - 1.0,
+            "no jump -> no climb boost; vel.y = {}",
+            pl.vel.y
+        );
+    }
+
+    /// Swimming toward open water (no ledge ahead) does NOT trigger the climb
+    /// boost — vertical stays the gentle buoyant motion, so surface bobbing is
+    /// preserved.
+    #[test]
+    fn swim_open_water_no_boost() {
+        // Deep open water, no solid anywhere near, moving horizontally.
+        let open_water = |_x: i32, _y: i32, _z: i32| true;
+        let no_solid = |_x: i32, _y: i32, _z: i32| false;
+        let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: false, sprint: false };
+        pl.update_core(0.02, &no_solid, &open_water, input);
+        assert!(
+            pl.vel.y < SWIM_CLIMB - 1.0,
+            "open water must not boost; vel.y = {}",
+            pl.vel.y
+        );
+    }
+
+    /// Falling back into the water against the ledge wall (Space still held, still
+    /// facing the ledge) must NOT relaunch: the downward fall velocity is preserved
+    /// so the player sinks, instead of the boost discarding it and firing again
+    /// immediately. They sink once before another attempt is allowed.
+    #[test]
+    fn swim_falling_back_does_not_relaunch() {
+        let solid = pool_solid as fn(i32, i32, i32) -> bool;
+        let water = pool_water as fn(i32, i32, i32) -> bool;
+        // At the wall, in water, but moving DOWN (just fell back in) at -5 m/s.
+        let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+        pl.vel.y = -5.0;
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: true, sprint: false };
+        pl.update_core(0.02, &solid, &water, input);
+        assert!(
+            pl.vel.y < 0.0,
+            "falling back in must keep sinking, not relaunch; vel.y = {}",
+            pl.vel.y
+        );
+    }
+
+    /// Swimming into a tall (2+ block) wall must NOT boost — the assist is only for
+    /// 1-block ledges you can actually climb onto, so you can't scale a cliff face
+    /// just by holding into it underwater.
+    #[test]
+    fn swim_into_tall_wall_no_boost() {
+        let tall_wall = |x: i32, _y: i32, _z: i32| x >= 2; // solid at every height
+        let all_water = |x: i32, _y: i32, _z: i32| x < 2;
+        let mut pl = p(Vec3::new(1.6, 8.0, 0.5));
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: false, sprint: false };
+        pl.update_core(0.02, &tall_wall, &all_water, input);
+        assert!(
+            pl.vel.y < SWIM_CLIMB - 1.0,
+            "a tall wall is not a climbable ledge; vel.y = {}",
+            pl.vel.y
+        );
+    }
+
+    /// End-to-end: a swimmer holding "forward + swim up" against a 1-block ledge
+    /// climbs out of the pool and ends up standing on the plateau (the reported
+    /// "can't get out of the water onto a block" case).
+    #[test]
+    fn swims_out_onto_ledge() {
+        let solid = pool_solid as fn(i32, i32, i32) -> bool;
+        let water = pool_water as fn(i32, i32, i32) -> bool;
+        // Start floating in the pool a little back from the wall, swimming up+toward.
+        let mut pl = p(Vec3::new(1.0, 8.0, 0.5));
+        let input = Input { wishdir: Vec3::new(1.0, 0.0, 0.0), jump: true, sprint: false };
+        for _ in 0..250 {
+            pl.update_core(0.02, &solid, &water, input);
+        }
+        // Made it up and over onto the plateau (x>=2), out of the water, near its
+        // top (y~10). Failure mode would leave the player stuck at the wall (x<2,
+        // bobbing at y~8-9 in the pool).
+        assert!(
+            pl.pos.x > 2.0 && pl.pos.y > 9.5,
+            "expected to climb onto the plateau, ended at ({:.2}, {:.2})",
+            pl.pos.x, pl.pos.y
+        );
+        assert!(
+            !water(pl.pos.x.floor() as i32, (pl.pos.y + WATER_PROBE_Y).floor() as i32, pl.pos.z.floor() as i32),
+            "expected to be out of the water after climbing out"
+        );
     }
 }

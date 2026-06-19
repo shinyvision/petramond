@@ -66,6 +66,12 @@ impl Block {
         matches!(self, Block::Water | Block::OakLeaves)
     }
 
+    /// A cell a placement may overwrite: empty air, or water (building into water
+    /// displaces it). Mirrors the place-gate in app::handle_block_actions.
+    pub fn is_replaceable(self) -> bool {
+        matches!(self, Block::Air | Block::Water)
+    }
+
     /// Per-face tile: [top, bottom, side].
     pub fn tiles(self) -> [Tile; 3] {
         use Tile::*;

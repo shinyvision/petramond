@@ -13,6 +13,11 @@ use wgpu::util::DeviceExt;
 pub const FOG_START: f32 = 14.0 * 16.0;
 pub const FOG_END:   f32 = 16.0 * 16.0;
 
+/// Underwater fog band (blocks): pulled in tight so submerged visibility is short
+/// and distant terrain dissolves into the murky water colour.
+pub const UNDERWATER_FOG_START: f32 = 0.5;
+pub const UNDERWATER_FOG_END:   f32 = 22.0;
+
 /// Fixed size of the uv-rect table shared with the vertex shader (`block.wgsl`
 /// declares `array<vec4<f32>, UV_RECTS_LEN>`). Sized with headroom over the tile
 /// count so adding a few tiles needs no shader edit.
@@ -49,6 +54,10 @@ pub struct Renderer {
     /// Camera world position, refreshed in `update_uniforms`; used to sort
     /// chunk draws front-to-back (opaque) / back-to-front (transparent).
     pub cam_pos: glam::Vec3,
+    /// Background clear colour, kept in sync with the fog colour each frame (sky/
+    /// biome fog above water, deep blue when submerged) so the horizon matches the
+    /// fog the terrain fades into.
+    pub clear_color: [f32; 3],
 }
 
 pub struct GpuMesh {
@@ -323,7 +332,9 @@ async fn new_renderer_inner(
         fragment: Some(wgpu::FragmentState {
             module: &shader, entry_point: Some("fs_transparent"), compilation_options: Default::default(), targets: &transparent_targets,
         }),
-        primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+        // Double-sided: water faces must be visible from underneath (looking up at
+        // the surface while submerged) as well as from above.
+        primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: false,
@@ -427,6 +438,7 @@ async fn new_renderer_inner(
         chunk_meshes: HashMap::new(),
         frustum: Frustum::permissive(),
         cam_pos: glam::Vec3::ZERO,
+        clear_color: [0.62, 0.78, 0.95],
     }
 }
 
@@ -524,15 +536,22 @@ impl Renderer {
         self.depth = create_depth(&self.device, width, height);
     }
 
-    pub fn update_uniforms(&mut self, cam: &Camera, fog_color: [f32; 3]) {
+    pub fn update_uniforms(&mut self, cam: &Camera, fog_color: [f32; 3], time: f32, underwater: bool) {
         let view_proj = cam.view_proj();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.frustum = Frustum::from_view_proj(view_proj);
         self.cam_pos = cam.pos;
+        self.clear_color = fog_color;
+        let (fog_start, fog_end) = if underwater {
+            (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
+        } else {
+            (FOG_START, FOG_END)
+        };
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             cam_pos: [cam.pos.x, cam.pos.y, cam.pos.z, 0.0],
-            fog: [FOG_START, FOG_END, 0.0, 0.0],
+            // fog.z = animation time (caustics), fog.w = underwater flag.
+            fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
             fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
         };
         self.queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
@@ -613,6 +632,7 @@ impl Renderer {
             })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let cc = self.clear_color;
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("opaque pass"),
@@ -622,7 +642,7 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.62, g: 0.78, b: 0.95, a: 1.0,
+                            r: cc[0] as f64, g: cc[1] as f64, b: cc[2] as f64, a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
