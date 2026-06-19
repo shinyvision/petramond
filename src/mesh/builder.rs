@@ -6,6 +6,27 @@ use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
 use super::face::{quad_for, should_flip, vertex_ao, Face, FACES};
 use super::vertex::{ChunkMesh, Vertex};
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LeafMeshMode {
+    Detailed,
+    Simplified,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MeshOptions {
+    pub leaf_mesh_mode: LeafMeshMode,
+}
+
+impl MeshOptions {
+    pub const DETAILED: Self = Self {
+        leaf_mesh_mode: LeafMeshMode::Detailed,
+    };
+
+    pub const FAR_LEAVES: Self = Self {
+        leaf_mesh_mode: LeafMeshMode::Simplified,
+    };
+}
+
 #[derive(Copy, Clone)]
 enum TintKind {
     Grass,
@@ -33,6 +54,52 @@ pub fn build_mesh(
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
+) -> ChunkMesh {
+    build_mesh_with_options(
+        chunk,
+        neighbour_block,
+        neighbour_biome,
+        neighbour_light,
+        MeshOptions::DETAILED,
+    )
+}
+
+pub fn build_mesh_lods(
+    chunk: &Chunk,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_biome: impl Fn(i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+) -> ChunkMesh {
+    let mut mesh = build_mesh_with_options(
+        chunk,
+        &neighbour_block,
+        &neighbour_biome,
+        &neighbour_light,
+        MeshOptions::DETAILED,
+    );
+    if !chunk.blocks_slice().contains(&Block::OakLeaves.id()) {
+        return mesh;
+    }
+    let far = build_mesh_with_options(
+        chunk,
+        &neighbour_block,
+        &neighbour_biome,
+        &neighbour_light,
+        MeshOptions::FAR_LEAVES,
+    );
+    if far.opaque_idx.len() < mesh.opaque_idx.len() {
+        mesh.far_opaque = far.opaque;
+        mesh.far_opaque_idx = far.opaque_idx;
+    }
+    mesh
+}
+
+pub fn build_mesh_with_options(
+    chunk: &Chunk,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_biome: impl Fn(i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    options: MeshOptions,
 ) -> ChunkMesh {
     let mut opaque = vec![];
     let mut opaque_idx = vec![];
@@ -157,6 +224,12 @@ pub fn build_mesh(
                     // cube draws all its faces, giving a dense canopy you can't see
                     // through to the sky. Water additionally culls against itself.
                     if nb.is_opaque() {
+                        continue;
+                    }
+                    if options.leaf_mesh_mode == LeafMeshMode::Simplified
+                        && block == Block::OakLeaves
+                        && nb == Block::OakLeaves
+                    {
                         continue;
                     }
                     if is_water && nb == Block::Water {
@@ -318,6 +391,8 @@ pub fn build_mesh(
         opaque_idx,
         transparent,
         transparent_idx,
+        far_opaque: vec![],
+        far_opaque_idx: vec![],
         mesh_dirty: true,
     }
 }

@@ -86,9 +86,13 @@ fn solo_skylight(c: &Chunk) -> TestSky {
 /// Mesh a standalone chunk: bake its self-contained skylight, then build the
 /// mesh sampling that cached light (out-of-chunk reads as open sky).
 fn mesh_solo(c: &mut Chunk) -> ChunkMesh {
+    mesh_solo_with_options(c, MeshOptions::DETAILED)
+}
+
+fn mesh_solo_with_options(c: &mut Chunk, options: MeshOptions) -> ChunkMesh {
     let (band, ylo, yhi) = compute_chunk_skylight(c);
     c.set_skylight(band, ylo, yhi);
-    build_mesh(
+    build_mesh_with_options(
         &*c,
         |_, _, _| 0u8,
         |_, _| 4u8,
@@ -105,6 +109,7 @@ fn mesh_solo(c: &mut Chunk) -> ChunkMesh {
                 c.skylight_at(wx as usize, wy, wz as usize)
             }
         },
+        options,
     )
 }
 
@@ -234,6 +239,35 @@ fn leaves_self_occlude() {
         min_ao < 3,
         "leaves in a cluster must self-occlude (some ao < 3)"
     );
+}
+
+#[test]
+fn far_leaf_lod_culls_leaf_internal_faces() {
+    let mut c = Chunk::new(0, 0);
+    for y in 5..=7 {
+        for z in 7..=9 {
+            for x in 7..=9 {
+                c.set_block(x, y, z, Block::OakLeaves);
+            }
+        }
+    }
+
+    let detailed = mesh_solo_with_options(&mut c, MeshOptions::DETAILED);
+    let simplified = mesh_solo_with_options(&mut c, MeshOptions::FAR_LEAVES);
+
+    assert_eq!(detailed.transparent_idx.len(), 0);
+    assert_eq!(simplified.transparent_idx.len(), 0);
+    assert_eq!(
+        detailed.opaque_idx.len() / 6,
+        27 * 6,
+        "detailed leaves keep every cube face for nearby cutout density"
+    );
+    assert_eq!(
+        simplified.opaque_idx.len() / 6,
+        6 * 3 * 3,
+        "far leaves should collapse to the cluster's visible outer shell"
+    );
+    assert!(simplified.opaque_idx.len() < detailed.opaque_idx.len());
 }
 
 /// The AO occlusion table: brightest with no occluders, one step per single

@@ -27,6 +27,11 @@ pub struct ChunkMesh {
     pub opaque_idx: Vec<u32>,
     pub transparent: Vec<Vertex>,
     pub transparent_idx: Vec<u32>,
+    /// Optional opaque LOD used for far chunks. This keeps the normal mesh
+    /// byte-identical nearby while allowing far foliage to cull leaf-to-leaf
+    /// internals once texture mips make the cutouts read as a dense canopy.
+    pub far_opaque: Vec<Vertex>,
+    pub far_opaque_idx: Vec<u32>,
     /// True until GPU upload has happened. Set by `build_mesh`, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
@@ -39,6 +44,8 @@ impl ChunkMesh {
             opaque_idx: vec![],
             transparent: vec![],
             transparent_idx: vec![],
+            far_opaque: vec![],
+            far_opaque_idx: vec![],
             mesh_dirty: false,
         }
     }

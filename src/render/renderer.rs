@@ -10,6 +10,9 @@ use super::resources::{create_atlas, create_depth, upload_mesh, GpuMesh};
 use super::selection::outline_vertices;
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 
+const FAR_LEAF_LOD_FADE_START: f32 = 128.0;
+const FAR_LEAF_LOD_FADE_END: f32 = 192.0;
+
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -382,15 +385,26 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
-            for (_, gm) in order.iter() {
+            for (dist_sq, gm) in order.iter() {
                 // near -> far (early-Z)
-                if let (Some(vb), Some(ib)) = (&gm.opaque_vbuf, &gm.opaque_ibuf) {
-                    if gm.opaque_idx_count == 0 {
-                        continue;
-                    }
+                let use_far_leaf_lod =
+                    far_leaf_lod_active(*dist_sq, gm.origin, gm.far_opaque_idx_count > 0);
+                let (vbuf, ibuf, idx_count) = if use_far_leaf_lod {
+                    (
+                        &gm.far_opaque_vbuf,
+                        &gm.far_opaque_ibuf,
+                        gm.far_opaque_idx_count,
+                    )
+                } else {
+                    (&gm.opaque_vbuf, &gm.opaque_ibuf, gm.opaque_idx_count)
+                };
+                if idx_count == 0 {
+                    continue;
+                }
+                if let (Some(vb), Some(ib)) = (vbuf, ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..gm.opaque_idx_count, 0, 0..1);
+                    pass.draw_indexed(0..idx_count, 0, 0..1);
                 }
             }
         }
@@ -465,5 +479,73 @@ impl Renderer {
         }
         self.queue.submit(std::iter::once(enc.finish()));
         frame.present();
+    }
+}
+
+fn far_leaf_lod_active(dist_sq: f32, origin: (i32, i32), has_far_lod: bool) -> bool {
+    if !has_far_lod {
+        return false;
+    }
+
+    let dist = dist_sq.sqrt();
+    if dist <= FAR_LEAF_LOD_FADE_START {
+        return false;
+    }
+    if dist >= FAR_LEAF_LOD_FADE_END {
+        return true;
+    }
+
+    let t = (dist - FAR_LEAF_LOD_FADE_START) / (FAR_LEAF_LOD_FADE_END - FAR_LEAF_LOD_FADE_START);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    smooth >= chunk_lod_threshold(origin)
+}
+
+fn chunk_lod_threshold(origin: (i32, i32)) -> f32 {
+    let mut h =
+        (origin.0 as u32).wrapping_mul(0x9E37_79B1) ^ (origin.1 as u32).wrapping_mul(0x85EB_CA77);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7FEB_352D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846C_A68B);
+    h ^= h >> 16;
+    ((h & 0xFFFF) as f32 + 0.5) / 65_536.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn far_leaf_lod_stays_near_and_converges_far() {
+        assert!(!far_leaf_lod_active(200.0 * 200.0, (0, 0), false));
+        assert!(!far_leaf_lod_active(
+            FAR_LEAF_LOD_FADE_START * FAR_LEAF_LOD_FADE_START,
+            (0, 0),
+            true
+        ));
+        assert!(far_leaf_lod_active(
+            FAR_LEAF_LOD_FADE_END * FAR_LEAF_LOD_FADE_END,
+            (0, 0),
+            true
+        ));
+    }
+
+    #[test]
+    fn far_leaf_lod_transition_is_staggered_by_chunk() {
+        let mid = ((FAR_LEAF_LOD_FADE_START + FAR_LEAF_LOD_FADE_END) * 0.5).powi(2);
+        let mut near_count = 0;
+        let mut far_count = 0;
+        for z in -8..=8 {
+            for x in -8..=8 {
+                if far_leaf_lod_active(mid, (x * 16, z * 16), true) {
+                    far_count += 1;
+                } else {
+                    near_count += 1;
+                }
+            }
+        }
+
+        assert!(near_count > 0);
+        assert!(far_count > 0);
     }
 }

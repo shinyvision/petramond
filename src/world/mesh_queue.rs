@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SY, SKY_FULL};
-use crate::mesh::build_mesh;
+use crate::mesh::build_mesh_lods;
 
 use super::store::World;
 
@@ -123,7 +123,7 @@ impl World {
                     None => SKY_FULL,
                 }
             };
-            Some((pos, build_mesh(chunk, nb, nb_biome, nb_light)))
+            Some((pos, build_mesh_lods(chunk, nb, nb_biome, nb_light)))
         };
 
         #[cfg(not(target_arch = "wasm32"))]
