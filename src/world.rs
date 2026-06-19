@@ -8,7 +8,8 @@
 
 use std::collections::HashMap;
 
-use crate::chunk::{Chunk, ChunkPos, CHUNK_SY};
+use crate::block::Block;
+use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::mesh::{build_mesh, ChunkMesh};
 use crate::worker::{GenRequest, WorkerPool};
 
@@ -172,5 +173,38 @@ impl World {
         if let Some(c) = self.chunks.get(&ChunkPos::new(cx, cz)) {
             c.block_raw(lx, wy as usize, lz)
         } else { 0 }
+    }
+
+    /// Is the chunk at chunk-coords `(cx, cz)` loaded?
+    pub fn chunk_loaded(&self, cx: i32, cz: i32) -> bool {
+        self.chunks.contains_key(&ChunkPos::new(cx, cz))
+    }
+
+    /// Set a block at world coords, marking the owning chunk (and any cardinal
+    /// neighbour whose border faces this edit touches) dirty so the next
+    /// `tick_mesh_budget` rebuilds them. Returns false if the chunk isn't loaded
+    /// or `wy` is out of range. In-memory only — not persisted.
+    pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
+        if wy < 0 || wy >= CHUNK_SY as i32 { return false; }
+        let cx = wx >> 4;
+        let cz = wz >> 4;
+        let lx = (wx & 0x0F) as usize;
+        let lz = (wz & 0x0F) as usize;
+        let Some(c) = self.chunks.get_mut(&ChunkPos::new(cx, cz)) else { return false; };
+        c.set_block(lx, wy as usize, lz, b);
+        // A cell on a chunk edge changes the adjacent chunk's border-face cull.
+        // Only cardinal neighbours matter (build_mesh reads cross-chunk faces
+        // along ±X / ±Z only); a corner edit dirties both cardinal neighbours.
+        if lx == 0 { self.mark_dirty(cx - 1, cz); }
+        if lx == CHUNK_SX - 1 { self.mark_dirty(cx + 1, cz); }
+        if lz == 0 { self.mark_dirty(cx, cz - 1); }
+        if lz == CHUNK_SZ - 1 { self.mark_dirty(cx, cz + 1); }
+        true
+    }
+
+    fn mark_dirty(&mut self, cx: i32, cz: i32) {
+        if let Some(n) = self.chunks.get_mut(&ChunkPos::new(cx, cz)) {
+            n.dirty = true;
+        }
     }
 }

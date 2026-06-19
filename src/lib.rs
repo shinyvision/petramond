@@ -14,6 +14,7 @@ pub mod chunk;
 pub mod mathh;
 pub mod worldgen;
 pub mod mesh;
+pub mod player;
 pub mod platform;
 pub mod render;
 pub mod world;

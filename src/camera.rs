@@ -1,7 +1,6 @@
 //! Fly camera: yaw/pitch orientation, WASD/space/shift translation.
 
 use crate::mathh::{Mat4, Vec3, Vec4};
-use crate::chunk::CHUNK_SY;
 
 /// View frustum as 6 inward-facing planes, for viewspace (frustum) culling.
 /// Each plane is `(a,b,c,d)` with the convention `a·x + b·y + c·z + d >= 0`
@@ -103,12 +102,6 @@ impl Camera {
     }
 
     pub fn up(&self) -> Vec3 { Vec3::Y }
-
-    pub fn move_by(&mut self, delta: Vec3) {
-        self.pos += delta;
-        // Soft clamp to world bounds (allow flying above).
-        self.pos.y = self.pos.y.clamp(-8.0, (CHUNK_SY as f32) * 1.5);
-    }
 
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
         self.yaw += dyaw;

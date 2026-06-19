@@ -11,7 +11,7 @@ use llamacraft::world::RENDER_DIST;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
@@ -90,6 +90,16 @@ impl ApplicationHandler for Game {
                         event_loop.exit();
                     }
                 }
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                // Edge-triggered: one press = one break/place. The cursor is
+                // grabbed at startup, so the first click is already a game click.
+                match button {
+                    MouseButton::Left => app.mouse.left_click = true,
+                    MouseButton::Right => app.mouse.right_click = true,
+                    _ => {}
+                }
+                app.mouse.grabbing = true;
             }
             WindowEvent::RedrawRequested => {
                 // Redraws are paced by `about_to_wait` (FPS cap); don't

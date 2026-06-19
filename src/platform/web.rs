@@ -136,6 +136,35 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
     canvas_for_listener.add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())?;
     on_click.forget();
 
+    // Break/place: mousedown on canvas. Only act once the pointer is locked to
+    // our canvas — the first click (which acquires the lock via `on_click`)
+    // therefore doesn't accidentally edit a block. left=0 break, right=2 place.
+    let g_md = game.clone();
+    let doc_md = document.clone();
+    let canvas_md = game.borrow().canvas.clone();
+    let on_mousedown = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
+        let locked = doc_md.pointer_lock_element().map(|e| e.id());
+        let canvas_id = g_md.borrow().canvas.id();
+        if locked.as_deref() != Some(canvas_id.as_str()) { return; }
+        let mut g = g_md.borrow_mut();
+        if let Some(s) = g.state.as_mut() {
+            match ev.button() {
+                0 => s.app.mouse.left_click = true,
+                2 => s.app.mouse.right_click = true,
+                _ => {}
+            }
+        }
+    });
+    canvas_md.add_event_listener_with_callback("mousedown", on_mousedown.as_ref().unchecked_ref())?;
+    on_mousedown.forget();
+
+    // Suppress the browser context menu so right-click can place blocks.
+    let on_contextmenu = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
+        ev.prevent_default();
+    });
+    canvas_md.add_event_listener_with_callback("contextmenu", on_contextmenu.as_ref().unchecked_ref())?;
+    on_contextmenu.forget();
+
     // Mousemove deltas (only while pointer locked to our canvas).
     let g4 = game.clone();
     let doc_for_move = document.clone();

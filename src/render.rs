@@ -28,6 +28,16 @@ pub struct Renderer {
     pub atlas_sampler: wgpu::Sampler,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
+    /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
+    pub outline_pipe: wgpu::RenderPipeline,
+    pub outline_bind: wgpu::BindGroup,
+    /// 24 line vertices (12 cube edges) for the selection box; rewritten only
+    /// when the selected block changes (see `selection` / `selection_drawn`).
+    pub outline_vbuf: wgpu::Buffer,
+    /// Currently-targeted block (min corner), or None when nothing is targeted.
+    pub selection: Option<glam::IVec3>,
+    /// The block whose geometry currently sits in `outline_vbuf`.
+    selection_drawn: Option<glam::IVec3>,
     pub uniform_buf: wgpu::Buffer,
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
@@ -326,18 +336,130 @@ async fn new_renderer_inner(
         cache: None,
     });
 
+    // --- Selection-outline pipeline. ---
+    // Its own minimal bind-group layout (Uniforms at binding 0 only) so it
+    // doesn't couple to the block pipelines' uv_rects layout. Reuses the same
+    // uniform buffer for view_proj.
+    let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("outline shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/outline.wgsl").into()),
+    });
+    let outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("outline bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+            },
+            count: None,
+        }],
+    });
+    let outline_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("outline bg"),
+        layout: &outline_bgl,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() }],
+    });
+    let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("outline layout"),
+        bind_group_layouts: &[&outline_bgl],
+        push_constant_ranges: &[],
+    });
+    let outline_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: 12, // vec3<f32>
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0,
+        }],
+    };
+    let outline_targets = [Some(wgpu::ColorTargetState {
+        format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL,
+    })];
+    let outline_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("outline pipe"),
+        layout: Some(&outline_layout),
+        vertex: wgpu::VertexState {
+            module: &outline_shader, entry_point: Some("vs_outline"),
+            compilation_options: Default::default(), buffers: &[outline_vbuf_layout],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &outline_shader, entry_point: Some("fs_outline"),
+            compilation_options: Default::default(), targets: &outline_targets,
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        // Depth-test against terrain so edges behind blocks are hidden, but
+        // don't write depth. The box is inflated slightly outward (see
+        // `outline_vertices`) so visible front edges win the LessEqual test.
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState { count: sample_count, ..Default::default() },
+        multiview: None,
+        cache: None,
+    });
+    // 24 vertices × vec3<f32> = 288 bytes (12 edges).
+    let outline_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("outline vbuf"),
+        size: 24 * 12,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     let depth = create_depth(&device, width, height);
 
     Renderer {
         surface, device, queue, config,
         atlas_texture, atlas_view, atlas_sampler,
         opaque_pipe, transparent_pipe,
+        outline_pipe, outline_bind, outline_vbuf,
+        selection: None, selection_drawn: None,
         uniform_buf, uniform_bind, atlas_bind,
         depth,
         chunk_meshes: HashMap::new(),
         frustum: Frustum::permissive(),
         cam_pos: glam::Vec3::ZERO,
     }
+}
+
+/// The 24 line-segment endpoints (12 edges) of the wireframe cube for block
+/// `b`, in world space. Inflated outward by `INFLATE` so visible front edges
+/// sit a hair nearer the camera than the block surface and pass the LessEqual
+/// depth test (no z-fighting); back edges remain occluded by the block itself.
+fn outline_vertices(b: glam::IVec3) -> [[f32; 3]; 24] {
+    const INFLATE: f32 = 0.003;
+    let lo = [b.x as f32 - INFLATE, b.y as f32 - INFLATE, b.z as f32 - INFLATE];
+    let hi = [b.x as f32 + 1.0 + INFLATE, b.y as f32 + 1.0 + INFLATE, b.z as f32 + 1.0 + INFLATE];
+    // 8 corners indexed by (x_hi?, y_hi?, z_hi?).
+    let c = |xh: bool, yh: bool, zh: bool| {
+        [if xh { hi[0] } else { lo[0] },
+         if yh { hi[1] } else { lo[1] },
+         if zh { hi[2] } else { lo[2] }]
+    };
+    let c000 = c(false, false, false);
+    let c100 = c(true, false, false);
+    let c010 = c(false, true, false);
+    let c001 = c(false, false, true);
+    let c110 = c(true, true, false);
+    let c101 = c(true, false, true);
+    let c011 = c(false, true, true);
+    let c111 = c(true, true, true);
+    [
+        // bottom rectangle (y = lo)
+        c000, c100, c100, c101, c101, c001, c001, c000,
+        // top rectangle (y = hi)
+        c010, c110, c110, c111, c111, c011, c011, c010,
+        // four vertical edges
+        c000, c010, c100, c110, c101, c111, c001, c011,
+    ]
 }
 
 fn create_atlas(device: &wgpu::Device, queue: &wgpu::Queue)
@@ -416,6 +538,12 @@ impl Renderer {
         self.queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
     }
 
+    /// Set (or clear) the block highlighted by the selection outline. Cheap: the
+    /// vertex buffer is only re-uploaded in `render` when the target changes.
+    pub fn set_selection(&mut self, block: Option<glam::IVec3>) {
+        self.selection = block;
+    }
+
     /// Is this chunk mesh's bounding box inside the current view frustum?
     #[inline]
     fn chunk_visible(&self, gm: &GpuMesh) -> bool {
@@ -457,6 +585,16 @@ impl Renderer {
             Err(_) => return,
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Refresh the outline vertex buffer only when the target changed.
+        if self.selection != self.selection_drawn {
+            if let Some(b) = self.selection {
+                let verts = outline_vertices(b);
+                self.queue.write_buffer(&self.outline_vbuf, 0, bytemuck::cast_slice(&verts));
+            }
+            self.selection_drawn = self.selection;
+        }
+
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
@@ -546,6 +684,31 @@ impl Renderer {
                     pass.draw_indexed(0..gm.transparent_idx_count, 0, 0..1);
                 }
             }
+        }
+        // Selection outline, last: load color + depth, depth-test (no write) so
+        // it draws over terrain/water at the targeted block but stays occluded
+        // behind nearer geometry.
+        if self.selection.is_some() {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("outline pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.outline_pipe);
+            pass.set_bind_group(0, &self.outline_bind, &[]);
+            pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
+            pass.draw(0..24, 0..1);
         }
         self.queue.submit(std::iter::once(enc.finish()));
         frame.present();
@@ -683,6 +846,36 @@ mod gpu_validation {
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_opaque"), compilation_options: Default::default(), targets: &targets }),
             primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth32Float, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
+            multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
+        });
+
+        // Also validate the outline pipeline + shader (LineList, group0 = a
+        // minimal Uniforms-only bind group).
+        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("outline shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/outline.wgsl").into()),
+        });
+        let outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0, visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64) },
+                count: None,
+            }],
+        });
+        let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None, bind_group_layouts: &[&outline_bgl], push_constant_ranges: &[],
+        });
+        let outline_vbuf_layout = wgpu::VertexBufferLayout {
+            array_stride: 12, step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 }],
+        };
+        let _outline_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None, layout: Some(&outline_layout),
+            vertex: wgpu::VertexState { module: &outline_shader, entry_point: Some("vs_outline"), compilation_options: Default::default(), buffers: &[outline_vbuf_layout] },
+            fragment: Some(wgpu::FragmentState { module: &outline_shader, entry_point: Some("fs_outline"), compilation_options: Default::default(), targets: &targets }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::LineList, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth32Float, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::LessEqual, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
             multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
 

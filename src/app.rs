@@ -3,15 +3,20 @@
 //! Owns World + Camera + Renderer, drives input -> movement -> world update
 //! -> render. The platform shell handles window/event loop and surfaces.
 
+use crate::block::Block;
 use crate::camera::Camera;
 use crate::chunk::CHUNK_SX;
-use crate::mathh::Vec3;
+use crate::mathh::{IVec3, Vec3};
+use crate::player::{self, Input, Player, RaycastHit};
 use crate::render::Renderer;
 use crate::world::World;
 
 pub struct App {
     pub cam: Camera,
     pub world: World,
+    pub player: Player,
+    /// Block currently under the crosshair (within reach), refreshed each tick.
+    pub look: Option<RaycastHit>,
     pub last: f64,
     pub keys: KeyState,
     pub mouse: MouseState,
@@ -26,12 +31,19 @@ pub struct KeyState {
 #[derive(Default, Copy, Clone)]
 pub struct MouseState {
     pub dx: f32, pub dy: f32, pub grabbing: bool,
+    /// Edge-triggered click flags: set by the platform on button-press,
+    /// consumed (and cleared) once per `tick` so one click = one action.
+    pub left_click: bool, pub right_click: bool,
 }
 
 impl App {
     pub fn new(cam: Camera, seed: u32, render_dist: i32) -> Self {
+        // Spawn the player so the camera (passed in as the eye position) lands at
+        // the requested spot: feet sit `EYE` below the eye.
+        let feet = Vec3::new(cam.pos.x, cam.pos.y - player::EYE, cam.pos.z);
         Self {
             cam, world: World::new(seed, render_dist),
+            player: Player::new(feet), look: None,
             last: now_seconds(), keys: KeyState::default(),
             mouse: MouseState::default(),
         }
@@ -50,26 +62,51 @@ impl App {
         }
         self.mouse.dx = 0.0; self.mouse.dy = 0.0;
 
-        // Movement.
-        let speed = if self.keys.ctrl { 180.0 } else { 22.0 } * dt.max(0.001);
-        let mut delta = Vec3::ZERO;
-        let fwd = self.cam.forward();
-        let right = self.cam.right();
-        if self.keys.w { delta += fwd * speed; }
-        if self.keys.s { delta -= fwd * speed; }
-        if self.keys.d { delta += right * speed; }
-        if self.keys.a { delta -= right * speed; }
-        if self.keys.space  { delta += Vec3::Y * speed; }
-        if self.keys.shift  { delta -= Vec3::Y * speed; }
-        if delta != Vec3::ZERO { self.cam.move_by(delta); }
+        // Build movement intent from keys, relative to where we're looking.
+        // Walking is horizontal: project the (pitched) forward onto the XZ plane.
+        let f = self.cam.forward();
+        let fwd_h = Vec3::new(f.x, 0.0, f.z).normalize_or_zero();
+        let right = self.cam.right(); // already horizontal
+        let mut wishdir = Vec3::ZERO;
+        if self.keys.w { wishdir += fwd_h; }
+        if self.keys.s { wishdir -= fwd_h; }
+        if self.keys.d { wishdir += right; }
+        if self.keys.a { wishdir -= right; }
+        let input = Input {
+            wishdir: wishdir.normalize_or_zero(),
+            jump: self.keys.space,
+            sprint: self.keys.ctrl,
+        };
 
-        // World update around camera chunk coords.
+        // Advance physics in fixed sub-steps so a long frame (or a backgrounded
+        // tab on web) can't move the player far enough to tunnel. `dt` is also
+        // capped so we never spin through a huge backlog after a stall. The
+        // load-gate is checked once per frame here (column membership can't
+        // change mid-frame) rather than inside every sub-step.
+        if self.player.columns_loaded(&self.world) {
+            let mut remaining = dt.min(0.25);
+            while remaining > 0.0 {
+                let step = remaining.min(player::DT_MAX);
+                self.player.update(step, &self.world, input);
+                remaining -= step;
+            }
+        }
+        // Camera eye follows the player.
+        self.cam.pos = self.player.eye();
+
+        // World update around the player's chunk column.
         let cam_cx = (self.cam.pos.x as i32) >> 4;
         let cam_cz = (self.cam.pos.z as i32) >> 4;
         self.world.update_load(cam_cx, cam_cz);
         let _ = self.world.poll();
+
+        // Crosshair raycast, then break/place against the hit (consume clicks).
+        self.look = Player::raycast(self.cam.pos, self.cam.forward(), &self.world);
+        self.handle_block_actions();
+
         // Native meshes a big burst per frame in parallel (rayon); wasm stays
-        // conservative on its single thread.
+        // conservative on its single thread. Done AFTER edits so a break/place
+        // is remeshed and visible this same frame.
         #[cfg(not(target_arch = "wasm32"))]
         const MESH_BUDGET: usize = 32;
         #[cfg(target_arch = "wasm32")]
@@ -82,8 +119,33 @@ impl App {
         let fog = biome.fog_color();
 
         renderer.update_uniforms(&self.cam, fog);
+        renderer.set_selection(self.look.map(|h| h.block));
         renderer.sync_meshes(&mut self.world);
         renderer.render();
+    }
+
+    /// Apply any pending left/right clicks to the targeted block. Left = break
+    /// (instant), right = place Stone in the empty cell against the hit face.
+    fn handle_block_actions(&mut self) {
+        if self.mouse.left_click {
+            if let Some(h) = self.look {
+                self.world.set_block_world(h.block.x, h.block.y, h.block.z, Block::Air);
+            }
+        }
+        if self.mouse.right_click {
+            if let Some(h) = self.look {
+                // normal == 0 means the eye was inside a block: nowhere to place.
+                if h.normal != IVec3::ZERO {
+                    let p = h.block + h.normal;
+                    let empty = self.world.chunk_block(p.x, p.y, p.z) == 0;
+                    if empty && !self.player.intersects_block(p) {
+                        self.world.set_block_world(p.x, p.y, p.z, Block::Stone);
+                    }
+                }
+            }
+        }
+        self.mouse.left_click = false;
+        self.mouse.right_click = false;
     }
 
     fn world_seed_climate(&self, cx: i32, cz: i32) -> crate::biome::Climate {
