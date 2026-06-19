@@ -9,6 +9,8 @@ use super::uniforms::{Uniforms, UV_RECTS_LEN};
 pub(super) struct PipelineResources {
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
+    pub sky_pipe: wgpu::RenderPipeline,
+    pub sky_bind: wgpu::BindGroup,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
     pub outline_pipe: wgpu::RenderPipeline,
@@ -27,6 +29,10 @@ pub(super) fn create_pipeline_resources(
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("block shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/block.wgsl").into()),
+    });
+    let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sky shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
     });
 
     // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
@@ -231,6 +237,65 @@ pub(super) fn create_pipeline_resources(
         cache: None,
     });
 
+    // --- Sky-background pipeline. ---
+    // Uses its own Uniforms-only bind group because the sky shader does not need
+    // atlas resources or the block pipeline's uv-rect table.
+    let sky_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sky bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+            },
+            count: None,
+        }],
+    });
+    let sky_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sky bg"),
+        layout: &sky_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buf.as_entire_binding(),
+        }],
+    });
+    let sky_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("sky layout"),
+        bind_group_layouts: &[&sky_bgl],
+        push_constant_ranges: &[],
+    });
+    let sky_targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: Some(wgpu::BlendState::REPLACE),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    let sky_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sky pipe"),
+        layout: Some(&sky_layout),
+        vertex: wgpu::VertexState {
+            module: &sky_shader,
+            entry_point: Some("vs_sky"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &sky_shader,
+            entry_point: Some("fs_sky"),
+            compilation_options: Default::default(),
+            targets: &sky_targets,
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    });
+
     // --- Selection-outline pipeline. ---
     // Its own minimal bind-group layout (Uniforms at binding 0 only) so it
     // doesn't couple to the block pipelines' uv_rects layout. Reuses the same
@@ -326,6 +391,8 @@ pub(super) fn create_pipeline_resources(
     PipelineResources {
         uniform_bind,
         atlas_bind,
+        sky_pipe,
+        sky_bind,
         opaque_pipe,
         transparent_pipe,
         outline_pipe,
@@ -549,6 +616,52 @@ mod gpu_validation {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // Validate the fullscreen sky pipeline too. It uses the same Uniforms
+        // layout but no vertex buffers, atlas resources, or depth attachment.
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sky shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+        });
+        let sky_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+                },
+                count: None,
+            }],
+        });
+        let sky_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&sky_bgl],
+            push_constant_ranges: &[],
+        });
+        let _sky_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&sky_layout),
+            vertex: wgpu::VertexState {
+                module: &sky_shader,
+                entry_point: Some("vs_sky"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sky_shader,
+                entry_point: Some("fs_sky"),
+                compilation_options: Default::default(),
+                targets: &targets,
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,

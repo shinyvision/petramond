@@ -18,6 +18,8 @@ pub struct Renderer {
     pub atlas_texture: wgpu::Texture,
     pub atlas_view: wgpu::TextureView,
     pub atlas_sampler: wgpu::Sampler,
+    pub sky_pipe: wgpu::RenderPipeline,
+    pub sky_bind: wgpu::BindGroup,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
     /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
@@ -162,7 +164,8 @@ async fn new_renderer_inner(
             view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             cam_pos: [0.0; 4],
             fog: [FOG_START, FOG_END, 0.0, 0.0],
-            fog_color: [0.62, 0.78, 0.95, 1.0],
+            fog_color: [0.60, 0.82, 1.00, 1.0],
+            inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -184,6 +187,8 @@ async fn new_renderer_inner(
         atlas_texture,
         atlas_view,
         atlas_sampler,
+        sky_pipe: pipelines.sky_pipe,
+        sky_bind: pipelines.sky_bind,
         opaque_pipe: pipelines.opaque_pipe,
         transparent_pipe: pipelines.transparent_pipe,
         outline_pipe: pipelines.outline_pipe,
@@ -198,7 +203,7 @@ async fn new_renderer_inner(
         chunk_meshes: HashMap::new(),
         frustum: Frustum::permissive(),
         cam_pos: glam::Vec3::ZERO,
-        clear_color: [0.62, 0.78, 0.95],
+        clear_color: [0.60, 0.82, 1.00],
     }
 }
 
@@ -221,6 +226,7 @@ impl Renderer {
         underwater: bool,
     ) {
         let view_proj = cam.view_proj();
+        let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.frustum = Frustum::from_view_proj(view_proj);
         self.cam_pos = cam.pos;
@@ -236,6 +242,7 @@ impl Renderer {
             // fog.z = animation time (caustics), fog.w = underwater flag.
             fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
             fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
+            inv_view_proj: inv_view_proj.to_cols_array_2d(),
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
@@ -326,7 +333,7 @@ impl Renderer {
         let cc = self.clear_color;
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("opaque pass"),
+                label: Some("sky pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -338,6 +345,26 @@ impl Renderer {
                             b: cc[2] as f64,
                             a: 1.0,
                         }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.sky_pipe);
+            pass.set_bind_group(0, &self.sky_bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("opaque pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],

@@ -39,6 +39,16 @@ impl World {
         WorldQuery::chunk_block(self, wx, wy, wz)
     }
 
+    /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its
+    /// owning chunk is not currently loaded.
+    pub fn column_biome(&self, wx: i32, wz: i32) -> Option<u8> {
+        let cx = wx >> 4;
+        let cz = wz >> 4;
+        self.chunks
+            .get(&ChunkPos::new(cx, cz))
+            .map(|c| c.biome_at((wx & 0x0F) as usize, (wz & 0x0F) as usize))
+    }
+
     /// Is the chunk at chunk-coords `(cx, cz)` loaded?
     pub fn chunk_loaded(&self, cx: i32, cz: i32) -> bool {
         WorldQuery::chunk_loaded(self, cx, cz)

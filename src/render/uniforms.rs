@@ -18,4 +18,5 @@ pub struct Uniforms {
     pub cam_pos: [f32; 4], // padded to 16
     pub fog: [f32; 4],     // (start, end, _, _)
     pub fog_color: [f32; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
 }

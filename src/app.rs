@@ -5,7 +5,6 @@
 
 use crate::block::Block;
 use crate::camera::Camera;
-use crate::chunk::CHUNK_SX;
 use crate::mathh::{IVec3, Vec3};
 use crate::player::{self, Input, Player, RaycastHit};
 use crate::render::Renderer;
@@ -147,14 +146,12 @@ impl App {
             eye.z.floor() as i32,
         )) == Block::Water;
 
-        // Fog colour: the biome's above-water fog, or a deep murky blue when
-        // submerged so distant terrain dissolves into the water.
-        let climate = self.world_seed_climate(cam_cx, cam_cz);
-        let biome = crate::biome::biome_at(climate, eye.y as i32);
+        // Fog colour: blended nearby biome fog above water, or a deep murky blue
+        // when submerged so distant terrain dissolves into the water.
         let fog = if underwater {
             UNDERWATER_FOG_COLOR
         } else {
-            biome.fog_color()
+            self.blended_sky_fog_color(eye.x, eye.z)
         };
 
         // Seconds since start (wrapped to keep the value small) drive the animated
@@ -194,10 +191,19 @@ impl App {
         self.mouse.right_click = false;
     }
 
-    fn world_seed_climate(&self, cx: i32, cz: i32) -> crate::biome::Climate {
+    fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
+        use crate::biome::{biome_at, blended_fog_color, Biome};
         use crate::worldgen::WorldNoise;
-        let n = WorldNoise::new(self.world.seed);
-        n.climate(cx * CHUNK_SX as i32, cz * CHUNK_SX as i32)
+
+        let mut noise = None;
+        blended_fog_color(x, z, |wx, wz| {
+            if let Some(id) = self.world.column_biome(wx, wz) {
+                return Biome::from_id(id);
+            }
+
+            let noise = noise.get_or_insert_with(|| WorldNoise::new(self.world.seed));
+            biome_at(noise.climate(wx, wz), noise.surface_height(wx, wz))
+        })
     }
 
     pub fn set_key(&mut self, code: &str, down: bool) {

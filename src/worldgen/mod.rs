@@ -59,6 +59,8 @@ pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
+    use crate::chunk::{CHUNK_SX, CHUNK_SZ, SEA_LEVEL};
 
     #[test]
     fn generate_chunk_with_matches_one_shot() {
@@ -76,6 +78,28 @@ mod tests {
             assert_eq!(&one_shot.heightmap[..], &reused.heightmap[..]);
             assert_eq!(one_shot.dirty, reused.dirty);
             assert_eq!(one_shot.light_dirty, reused.light_dirty);
+        }
+    }
+
+    #[test]
+    fn generated_underwater_terrain_has_no_grass_blocks() {
+        for &seed in &[0x1234_5678u32, 1, 0xDEAD_BEEF, 7] {
+            for cz in -3..=3 {
+                for cx in -3..=3 {
+                    let chunk = generate_chunk(seed, cx, cz);
+                    for z in 0..CHUNK_SZ {
+                        for x in 0..CHUNK_SX {
+                            for y in 0..SEA_LEVEL as usize {
+                                let block = chunk.block(x, y, z);
+                                assert!(
+                                    !matches!(block, Block::Grass | Block::Snow),
+                                    "grass variant {block:?} below sea level at chunk ({cx},{cz}) local ({x},{y},{z}) seed {seed:#x}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

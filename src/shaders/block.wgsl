@@ -5,6 +5,7 @@ struct Uniforms {
     cam_pos:   vec4<f32>,
     fog:       vec4<f32>, // (start, end, time, underwater)
     fog_color: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 };
 
 // Skylight floor: a fully sky-occluded surface fades to this fraction of its lit

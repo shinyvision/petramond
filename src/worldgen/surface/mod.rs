@@ -27,6 +27,68 @@ impl SurfaceSystem {
         if c.depth_from_top == 0 && c.river > 0.05 && c.y <= SEA_LEVEL + 2 {
             return Block::Sand;
         }
-        rule.resolve(c).unwrap_or(Block::Stone)
+        let block = rule.resolve(c).unwrap_or(Block::Stone);
+        if c.y < SEA_LEVEL && matches!(block, Block::Grass | Block::Snow) {
+            Block::Dirt
+        } else {
+            block
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::biome::Biome;
+    use crate::worldgen::data::biomes::def;
+
+    fn ctx(y: i32, depth_from_top: u32, biome: Biome) -> SurfaceCtx {
+        SurfaceCtx {
+            y,
+            surf_y: y,
+            depth_from_top,
+            biome,
+            river: 0.0,
+        }
+    }
+
+    #[test]
+    fn below_sea_grass_caps_resolve_to_dirt() {
+        let surface = SurfaceSystem;
+
+        let plains = ctx(SEA_LEVEL - 1, 0, Biome::Plains);
+        assert_eq!(
+            surface.skin_block(&plains, def(Biome::Plains).surface),
+            Block::Dirt
+        );
+
+        let snowy_top = ctx(SEA_LEVEL - 1, 0, Biome::SnowyTundra);
+        assert_eq!(
+            surface.skin_block(&snowy_top, def(Biome::SnowyTundra).surface),
+            Block::Dirt
+        );
+
+        let snowy_subsurface = ctx(SEA_LEVEL - 2, 1, Biome::SnowyTundra);
+        assert_eq!(
+            surface.skin_block(&snowy_subsurface, def(Biome::SnowyTundra).surface),
+            Block::Dirt
+        );
+    }
+
+    #[test]
+    fn above_sea_grass_caps_are_unchanged() {
+        let surface = SurfaceSystem;
+
+        let plains = ctx(SEA_LEVEL + 1, 0, Biome::Plains);
+        assert_eq!(
+            surface.skin_block(&plains, def(Biome::Plains).surface),
+            Block::Grass
+        );
+
+        let snowy = ctx(SEA_LEVEL + 1, 0, Biome::SnowyTundra);
+        assert_eq!(
+            surface.skin_block(&snowy, def(Biome::SnowyTundra).surface),
+            Block::Snow
+        );
     }
 }
