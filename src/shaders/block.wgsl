@@ -7,6 +7,15 @@ struct Uniforms {
     fog_color: vec4<f32>,
 };
 
+// Skylight floor: a fully sky-occluded surface fades to this fraction of its lit
+// value rather than to black. FINAL_MIN is the absolute darkest pixel ("very
+// dark, not pitch black"). Tune these to taste.
+const SKY_MIN: f32 = 0.05;
+const FINAL_MIN: f32 = 0.02;
+// Steepness of the light->dark falloff: higher = more of the range reads dark,
+// brightness ramps up only near full sky -> a more dramatic light/shadow split.
+const SKY_GAMMA: f32 = 3.0;
+
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
 // The shader only SELECTS from it — no arithmetic — so uvs are bit-identical
@@ -18,7 +27,9 @@ struct Uniforms {
 struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
-    // bits 0..8 = tile id, 8..10 = corner (0..3), 10..12 = shade index.
+    // bits 0..8 = tile id, 8..10 = corner (0..3), 10..12 = shade index,
+    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO level (0..3),
+    // 23..29 = skylight level (0..63).
     @location(2) packed: u32,
 };
 
@@ -50,14 +61,26 @@ fn vs_main(in: VsIn) -> VsOut {
     let corner = (in.packed >> 8u) & 0x3u;
     let shade_idx = (in.packed >> 10u) & 0x3u;
     let overlay_tile = (in.packed >> 12u) & 0xFFu;
+    let ao = (in.packed >> 21u) & 0x3u;
+    let sky6 = (in.packed >> 23u) & 0x3Fu;
 
     out.uv = corner_uv(uv_rects[tile], corner);
     out.uv2 = corner_uv(uv_rects[overlay_tile], corner);
     out.overlay = (in.packed >> 20u) & 0x1u;
 
-    // Mirror of mesh::SHADES — keep byte-identical.
+    // Final vertex light = directional face shade (mirror of mesh::SHADES — keep
+    // byte-identical) * per-vertex AO * per-vertex skylight, all smoothly
+    // interpolated so shadows and the light-level gradient are soft.
+    //   - AO_LUT: contact-shadow dip in lit areas.
+    //   - skylight: 0..63 -> 0..1; a gamma curve (square) keeps near-full sky
+    //     bright while letting mid/low levels fall off (avoids a muddy grey),
+    //     mixed up from SKY_MIN so a sky-occluded face never goes black.
+    //   - FINAL_MIN floors the darkest possible pixel: "very dark, not pitch black".
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
-    out.light = shades[shade_idx];
+    var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
+    let sky = f32(sky6) / 63.0;
+    let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA));
+    out.light = max(FINAL_MIN, shades[shade_idx] * ao_lut[ao] * sky_term);
 
     out.dist = length(u.cam_pos.xyz - in.pos);
     out.tint = in.tint;

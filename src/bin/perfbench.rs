@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use llamacraft::mesh::build_mesh;
+use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
+use llamacraft::mesh::{build_mesh, compute_chunk_skylight};
 use llamacraft::worldgen::generate_chunk;
 
 fn main() {
@@ -67,25 +67,30 @@ fn main() {
         );
     }
 
-    // ---- meshing (with real cross-chunk neighbour reads) ----
-    let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if wy < 0 || wy >= CHUNK_SY as i32 {
-            return 0;
+    // ---- skylight bake (self-contained per chunk, cached on the Chunk) ----
+    // This is the expensive flood-fill, now done ONCE per chunk (at ingest in the
+    // real app) instead of inside every mesh build.
+    {
+        let mut sky_ns = u128::MAX;
+        for _ in 0..iters {
+            let t = Instant::now();
+            for c in chunks.values_mut() {
+                let (band, ylo, yhi) = compute_chunk_skylight(c);
+                c.set_skylight(band, ylo, yhi);
+            }
+            sky_ns = sky_ns.min(t.elapsed().as_nanos());
         }
-        let (cx, cz) = (wx >> 4, wz >> 4);
-        match chunks.get(&(cx, cz)) {
-            Some(c) => c.block_raw((wx & 15) as usize, wy as usize, (wz & 15) as usize),
-            None => 0,
-        }
-    };
-    let biome_at = |wx: i32, wz: i32| -> u8 {
-        let (cx, cz) = (wx >> 4, wz >> 4);
-        match chunks.get(&(cx, cz)) {
-            Some(c) => c.biome_at((wx & 15) as usize, (wz & 15) as usize),
-            None => 0,
-        }
-    };
+        println!(
+            "skylight : {:>8.2} ms total | {:>7.3} ms/chunk  (best of {})",
+            sky_ns as f64 / 1e6,
+            sky_ns as f64 / 1e6 / n as f64,
+            iters
+        );
+    }
 
+    // ---- meshing (samples cached skylight; real cross-chunk neighbour reads) ----
+    // Mirrors world.rs: gather the 3x3 neighbourhood per chunk so light/cull reads
+    // index an array instead of hashing the chunk map per voxel.
     let mut mesh_ns = u128::MAX;
     let mut total_quads = 0u64;
     for it in 0..iters {
@@ -93,7 +98,41 @@ fn main() {
         let mut quads = 0u64;
         for &(cx, cz) in &coords {
             let c = &chunks[&(cx, cz)];
-            let m = build_mesh(c, block_at, biome_at);
+            let neigh: [Option<&Chunk>; 9] = std::array::from_fn(|k| {
+                let dx = (k % 3) as i32 - 1;
+                let dz = (k / 3) as i32 - 1;
+                chunks.get(&(cx + dx, cz + dz))
+            });
+            let owner = |nx: i32, nz: i32| -> Option<&Chunk> {
+                let (dcx, dcz) = (nx - cx, nz - cz);
+                if (-1..=1).contains(&dcx) && (-1..=1).contains(&dcz) {
+                    neigh[((dcz + 1) * 3 + (dcx + 1)) as usize]
+                } else {
+                    chunks.get(&(nx, nz))
+                }
+            };
+            let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+                if wy < 0 || wy >= CHUNK_SY as i32 { return 0; }
+                match owner(wx >> 4, wz >> 4) {
+                    Some(c) => c.block_raw((wx & 15) as usize, wy as usize, (wz & 15) as usize),
+                    None => 0,
+                }
+            };
+            let biome_at = |wx: i32, wz: i32| -> u8 {
+                match owner(wx >> 4, wz >> 4) {
+                    Some(c) => c.biome_at((wx & 15) as usize, (wz & 15) as usize),
+                    None => 0,
+                }
+            };
+            let light_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+                if wy < 0 { return 0; }
+                if wy >= CHUNK_SY as i32 { return SKY_FULL; }
+                match owner(wx >> 4, wz >> 4) {
+                    Some(c) => c.skylight_at((wx & 15) as usize, wy, (wz & 15) as usize),
+                    None => SKY_FULL,
+                }
+            };
+            let m = build_mesh(c, block_at, biome_at, light_at);
             quads += (m.opaque_idx.len() + m.transparent_idx.len()) as u64 / 6;
         }
         let e = t.elapsed().as_nanos();

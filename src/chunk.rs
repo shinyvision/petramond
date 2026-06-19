@@ -14,6 +14,10 @@ pub const SEA_LEVEL: i32 = 64;
 
 pub const VOLUME: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ;
 
+/// Full skylight on the x2 integer scale used by the mesher (= light level 15).
+/// Shared so chunk storage and the flood-fill agree on "open sky".
+pub const SKY_FULL: u8 = 30;
+
 #[inline]
 pub fn lx(x: i32) -> usize { (x & 0x0F) as usize }
 
@@ -36,6 +40,15 @@ pub struct Chunk {
     /// Biome id per (x,z) column (Biome::from_id).
     pub biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
     pub dirty: bool,
+    /// Cached self-contained skylight (x2 scale), a `16 x 16 x (sky_yhi-sky_ylo+1)`
+    /// band indexed like `blocks` but with Y offset by `sky_ylo`. Computed from
+    /// THIS chunk's blocks only (see `mesh::compute_chunk_skylight`) and reused
+    /// across mesh rebuilds until the chunk changes. Empty until first computed.
+    pub skylight: Box<[u8]>,
+    pub sky_ylo: i32,
+    pub sky_yhi: i32,
+    /// Set when blocks change; cleared when the skylight band is recomputed.
+    pub light_dirty: bool,
 }
 
 impl Chunk {
@@ -43,7 +56,30 @@ impl Chunk {
         let blocks = vec![0u8; VOLUME].into_boxed_slice();
         let heightmap = Box::new([0u16; CHUNK_SX * CHUNK_SZ]);
         let biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
-        Self { cx, cz, blocks, heightmap, biomes, dirty: true }
+        Self {
+            cx, cz, blocks, heightmap, biomes, dirty: true,
+            skylight: Vec::new().into_boxed_slice(), sky_ylo: 0, sky_yhi: 0, light_dirty: true,
+        }
+    }
+
+    /// Skylight (x2 scale) at a local voxel. Above the cached band reads as open
+    /// sky, below as dark; an uncomputed band reads as open sky (so a not-yet-lit
+    /// chunk renders bright rather than black for the brief moment before its
+    /// light is baked).
+    #[inline]
+    pub fn skylight_at(&self, x: usize, y: i32, z: usize) -> u8 {
+        if self.skylight.is_empty() || y > self.sky_yhi { return SKY_FULL; }
+        if y < self.sky_ylo { return 0; }
+        let ay = y - self.sky_ylo;
+        self.skylight[((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
+    }
+
+    /// Install a freshly computed skylight band and clear the dirty flag.
+    pub fn set_skylight(&mut self, band: Box<[u8]>, ylo: i32, yhi: i32) {
+        self.skylight = band;
+        self.sky_ylo = ylo;
+        self.sky_yhi = yhi;
+        self.light_dirty = false;
     }
 
     pub fn block(&self, x: usize, y: usize, z: usize) -> Block {
@@ -62,6 +98,7 @@ impl Chunk {
             if (y as u16) > *h { *h = y as u16; }
         }
         self.dirty = true;
+        self.light_dirty = true;
     }
 
     pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
@@ -72,6 +109,7 @@ impl Chunk {
             if (y as u16) > *h { *h = y as u16; }
         }
         self.dirty = true;
+        self.light_dirty = true;
     }
 
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {

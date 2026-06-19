@@ -53,6 +53,15 @@ impl Block {
         !matches!(self, Block::Air | Block::Water | Block::OakLeaves)
     }
 
+    /// Does this block cast ambient occlusion? Full opaque cubes always do, and
+    /// leaves also occlude — onto adjacent leaves and within a canopy — so dense
+    /// foliage gets internal AO depth instead of reading flat. Unlike `is_opaque`,
+    /// this does NOT affect face culling or skylight (leaves still draw every face
+    /// and still pass light through at half attenuation). Water never occludes.
+    pub fn occludes_ao(self) -> bool {
+        self.is_opaque() || matches!(self, Block::OakLeaves)
+    }
+
     pub fn is_transparent(self) -> bool {
         matches!(self, Block::Water | Block::OakLeaves)
     }
