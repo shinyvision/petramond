@@ -6,12 +6,13 @@ use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
 struct SkyScratch {
     medium: Vec<u8>,
     sky: Vec<u8>,
+    step: Vec<u8>,
     buckets: Vec<Vec<u32>>,
 }
 
 thread_local! {
     /// Reusable skylight scratch (the medium buffer, sky-reached flags, and the
-    /// Dijkstra bucket queues), kept per worker thread so the per-chunk
+    /// Dijkstra step costs/queues), kept per worker thread so the per-chunk
     /// flood-fill doesn't churn the allocator across thousands of streaming mesh
     /// builds. Cleared each use; the result buffer (`light2`) is allocated fresh
     /// since it outlives the solve.
@@ -19,6 +20,7 @@ thread_local! {
         RefCell::new(SkyScratch {
             medium: Vec::new(),
             sky: Vec::new(),
+            step: Vec::new(),
             buckets: Vec::new(),
         })
     };
@@ -40,9 +42,11 @@ thread_local! {
 //    opaque block ends the column (no sky below it).
 //  * Horizontal/secondary bleed (pass 2, bucketed Dijkstra) lights enclosed
 //    spaces light can bend into -- caves, tunnels, overhang mouths -- at 1 level
-//    per air/water step, half per leaf step. It only FILLS cells the sky descent
-//    never reached (below the first opaque); it never re-brightens a sky-lit
-//    cell, so it cannot flatten the volumetric depth gradient from the side.
+//    per normal covered step, half per leaf-covered step. Opaque-covered cells
+//    fill from the side; leaf-covered cells do the same, but with the half-rate
+//    cost and with their direct vertical half-rate seed as a floor. Water-lit
+//    cells stay frozen so a neighbouring shaft cannot flatten their depth
+//    gradient.
 //
 // Being self-contained, horizontal light does NOT bleed across chunk borders --
 // the dominant vertical sky term stays seamless (per-column); only secondary
@@ -87,14 +91,15 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     let bh = (yhi - ylo + 1).max(1);
     let vol = (SX * SZ * bh) as usize;
 
-    // Temporary buffers from per-thread scratch (medium and sky are fully
+    // Temporary buffers from per-thread scratch (medium, sky, and step are fully
     // overwritten by the fill pass; buckets are cleared). The result band is
     // allocated fresh.
-    let (mut medium, mut sky, mut buckets) = SKY_SCRATCH.with(|s| {
+    let (mut medium, mut sky, mut step, mut buckets) = SKY_SCRATCH.with(|s| {
         let mut s = s.borrow_mut();
         (
             std::mem::take(&mut s.medium),
             std::mem::take(&mut s.sky),
+            std::mem::take(&mut s.step),
             std::mem::take(&mut s.buckets),
         )
     });
@@ -102,15 +107,17 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     medium.resize(vol, M_AIR);
     sky.clear();
     sky.resize(vol, 0);
+    step.clear();
+    step.resize(vol, 2);
     buckets.resize_with(SKY_FULL as usize + 1, Vec::new);
     for b in buckets.iter_mut() {
         b.clear();
     }
     let mut light2 = vec![0u8; vol];
-    // Marks cells reached by the vertical sky descent (pass 1). Their value is the
-    // authoritative volumetric depth term; pass 2's horizontal bleed must not
-    // re-brighten them, or an adjacent bright column (e.g. a dug shaft) would
-    // flatten the depth gradient back to surface level.
+    // Marks pass-1 cells whose direct vertical value is authoritative. Open sky
+    // and water-lit cells freeze here; leaf-covered cells remain fillable by pass
+    // 2 so a neighbouring skylight shaft bleeds into them like it does under an
+    // opaque roof, but at the leaf half-rate.
 
     let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * SZ + z) * SX + x) as usize };
 
@@ -140,6 +147,11 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
                 };
                 let i = idx(x, wy - ylo, z);
                 medium[i] = m;
+                step[i] = match m {
+                    M_OPAQUE => 0,
+                    M_LEAF => 1,
+                    _ => 2,
+                };
                 if !blocked {
                     if m == M_OPAQUE {
                         blocked = true;
@@ -153,7 +165,8 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
                         });
                         cur = cur.saturating_sub(rate);
                         light2[i] = cur;
-                        sky[i] = 1;
+                        step[i] = if rate == 1 { 1 } else { 2 };
+                        sky[i] = if rate == 1 { 0 } else { 1 };
                         buckets[cur as usize].push(i as u32);
                     }
                 }
@@ -162,11 +175,11 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
         }
     }
 
-    // Pass 2: bucketed Dijkstra (bright -> dark) within the 16x16xbh box. Air/water
-    // neighbour costs 2, leaf 1; opaque impassable. Sky-lit cells are frozen (their
-    // pass-1 depth value is authoritative) -- they still SOURCE light into enclosed
-    // neighbours but are never raised. Staleness check skips voxels already improved
-    // past their bucket. Final values are order-independent.
+    // Pass 2: bucketed Dijkstra (bright -> dark) within the 16x16xbh box. Normal
+    // covered neighbours cost 2, leaf-covered neighbours cost 1, and opaque cells
+    // are impassable. Frozen pass-1 cells still SOURCE light into enclosed
+    // neighbours but are never raised. Staleness check skips voxels already
+    // improved past their bucket. Final values are order-independent.
     let mut level = SKY_FULL as i32;
     while level >= 1 {
         while let Some(i) = buckets[level as usize].pop() {
@@ -200,9 +213,9 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
                 if m == M_OPAQUE {
                     continue;
                 }
-                let step = if m == M_LEAF { 1 } else { 2 };
-                if level > step {
-                    let nl = (level - step) as u8;
+                let cost = step[ni] as i32;
+                if level > cost {
+                    let nl = (level - cost) as u8;
                     if nl > light2[ni] {
                         light2[ni] = nl;
                         buckets[nl as usize].push(ni as u32);
@@ -218,6 +231,7 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
         let mut s = s.borrow_mut();
         s.medium = medium;
         s.sky = sky;
+        s.step = step;
         s.buckets = buckets;
     });
 

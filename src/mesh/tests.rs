@@ -395,6 +395,35 @@ fn skylight_depth_gradient_survives_adjacent_open_shaft() {
     );
 }
 
+fn roof_with_open_shaft(roof: Block) -> Chunk {
+    let mut c = floored_chunk();
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            c.set_block(x, 10, z, roof);
+        }
+    }
+    c.set_block(8, 10, 8, Block::Air);
+    c
+}
+
+/// Leaf-covered light bleeds from an adjacent open skylight the same way
+/// opaque-covered light does, but loses half as much light per covered step.
+#[test]
+fn skylight_leaf_covered_side_bleed_is_half_opaque_falloff() {
+    let opaque = solo_skylight(&roof_with_open_shaft(Block::Stone));
+    let leaf = solo_skylight(&roof_with_open_shaft(Block::OakLeaves));
+
+    assert_eq!(opaque.at(8, 5, 8), SKY_FULL);
+    assert_eq!(leaf.at(8, 5, 8), SKY_FULL);
+
+    for dx in 1..=4 {
+        let x = 8 + dx;
+        let dx = dx as u8;
+        assert_eq!(opaque.at(x, 5, 8), SKY_FULL - dx * 2);
+        assert_eq!(leaf.at(x, 5, 8), SKY_FULL - dx);
+    }
+}
+
 /// AO must actually be computed and vary: real terrain has both fully-lit
 /// (ao=3) corners and occluded (ao<3) ones. Scans a small chunk grid so the
 /// assertion can't hinge on one unlucky flat chunk.
