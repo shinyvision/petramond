@@ -34,6 +34,8 @@ pub struct KeyState {
     pub space: bool,
     shift: bool,
     ctrl: bool,
+    y: bool,
+    mode_toggle_chord: bool,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -79,22 +81,36 @@ impl App {
         self.mouse.dy = 0.0;
 
         // Build movement intent from keys, relative to where we're looking.
-        // Walking is horizontal: project the (pitched) forward onto the XZ plane.
+        // Survival walking is horizontal; spectator movement uses the full
+        // pitched camera forward plus explicit Space/Shift vertical flight.
         let f = self.cam.forward();
-        let fwd_h = Vec3::new(f.x, 0.0, f.z).normalize_or_zero();
+        let spectator = self.player.is_spectator();
+        let fwd = if spectator {
+            f
+        } else {
+            Vec3::new(f.x, 0.0, f.z).normalize_or_zero()
+        };
         let right = self.cam.right(); // already horizontal
         let mut wishdir = Vec3::ZERO;
         if self.keys.w {
-            wishdir += fwd_h;
+            wishdir += fwd;
         }
         if self.keys.s {
-            wishdir -= fwd_h;
+            wishdir -= fwd;
         }
         if self.keys.d {
             wishdir += right;
         }
         if self.keys.a {
             wishdir -= right;
+        }
+        if spectator {
+            if self.keys.space {
+                wishdir += Vec3::Y;
+            }
+            if self.keys.shift {
+                wishdir -= Vec3::Y;
+            }
         }
         let input = Input {
             wishdir: wishdir.normalize_or_zero(),
@@ -107,7 +123,7 @@ impl App {
         // capped so we never spin through a huge backlog after a stall. The
         // load-gate is checked once per frame here (column membership can't
         // change mid-frame) rather than inside every sub-step.
-        if self.player.columns_loaded(&self.world) {
+        if spectator || self.player.columns_loaded(&self.world) {
             let mut remaining = dt.min(0.25);
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
@@ -215,8 +231,14 @@ impl App {
             "Space" => self.keys.space = down,
             "ShiftLeft" | "ShiftRight" => self.keys.shift = down,
             "ControlLeft" | "ControlRight" => self.keys.ctrl = down,
+            "KeyY" => self.keys.y = down,
             _ => {}
         }
+        let chord = self.keys.ctrl && self.keys.y;
+        if chord && !self.keys.mode_toggle_chord {
+            self.player.toggle_mode();
+        }
+        self.keys.mode_toggle_chord = chord;
     }
 }
 
@@ -235,4 +257,39 @@ fn now_seconds() -> f64 {
         .and_then(|window| window.performance())
         .map(|performance| performance.now() / 1000.0)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::PlayerMode;
+
+    fn app() -> App {
+        App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1, 1)
+    }
+
+    #[test]
+    fn ctrl_y_toggles_player_mode_once_per_chord() {
+        let mut app = app();
+        assert_eq!(app.player.mode(), PlayerMode::Survival);
+
+        app.set_key("ControlLeft", true);
+        app.set_key("KeyY", true);
+        assert_eq!(app.player.mode(), PlayerMode::Spectator);
+
+        // Repeated keydown events while the chord remains held must not bounce
+        // rapidly between modes.
+        app.set_key("KeyY", true);
+        app.set_key("ControlLeft", true);
+        assert_eq!(app.player.mode(), PlayerMode::Spectator);
+
+        app.set_key("KeyY", false);
+        app.set_key("KeyY", true);
+        assert_eq!(app.player.mode(), PlayerMode::Survival);
+
+        app.set_key("ControlLeft", false);
+        app.set_key("KeyY", false);
+        app.set_key("KeyY", true);
+        assert_eq!(app.player.mode(), PlayerMode::Survival);
+    }
 }

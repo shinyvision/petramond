@@ -180,6 +180,7 @@ fn keycode_str(c: KeyCode) -> &'static str {
         KeyCode::KeyA => "KeyA",
         KeyCode::KeyS => "KeyS",
         KeyCode::KeyD => "KeyD",
+        KeyCode::KeyY => "KeyY",
         KeyCode::Space => "Space",
         KeyCode::ShiftLeft => "ShiftLeft",
         KeyCode::ShiftRight => "ShiftRight",

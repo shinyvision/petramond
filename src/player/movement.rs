@@ -6,6 +6,8 @@ use crate::world::World;
 
 pub(super) const WALK: f32 = 4.3;
 pub(super) const SPRINT: f32 = 5.6;
+pub(super) const SPECTATOR_SPEED: f32 = 10.0;
+pub(super) const SPECTATOR_SPRINT: f32 = 24.0;
 pub(super) const GRAVITY: f32 = 28.0;
 /// Jump take-off speed. Apex height = v0² / (2·g) = 8.4²/56 ≈ 1.26 blocks, so a
 /// held jump clears a single full block with margin.
@@ -104,7 +106,8 @@ impl Player {
 
     /// Advance the player by `dt` seconds against the world's solid voxels.
     /// The caller must ensure the overlapped columns are loaded (see
-    /// [`Player::columns_loaded`]) before stepping physics.
+    /// [`Player::columns_loaded`]) before stepping survival physics. Spectator
+    /// mode ignores world solidity and may move through unloaded columns.
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
         let solid = |x: i32, y: i32, z: i32| Self::solid_world(world, x, y, z);
         let water =
@@ -119,6 +122,11 @@ impl Player {
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
     {
+        if self.is_spectator() {
+            self.update_spectator(dt, input);
+            return;
+        }
+
         let was_on_ground = self.on_ground;
 
         // Submerged enough to swim? Sample water ~thigh height above the feet, so
@@ -288,6 +296,19 @@ impl Player {
         if self.sweep(Axis::Z, dz, solid) {
             self.vel.z = 0.0;
         }
+    }
+
+    fn update_spectator(&mut self, dt: f32, input: Input) {
+        let dir = input.wishdir.normalize_or_zero();
+        let speed = if input.sprint {
+            SPECTATOR_SPRINT
+        } else {
+            SPECTATOR_SPEED
+        };
+        self.vel = dir * speed;
+        self.pos += self.vel * dt;
+        self.on_ground = false;
+        self.jumping = false;
     }
 }
 

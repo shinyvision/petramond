@@ -15,10 +15,17 @@ pub const DT_MAX: f32 = 0.05;
 /// Per-frame movement intent, in world space.
 #[derive(Copy, Clone, Default)]
 pub struct Input {
-    /// Horizontal wish direction (unit length, or zero). Y is ignored.
+    /// Wish direction (unit length, or zero). Survival uses the horizontal XZ
+    /// components; spectator mode uses the full 3-D vector.
     pub wishdir: Vec3,
     pub jump: bool,
     pub sprint: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PlayerMode {
+    Survival,
+    Spectator,
 }
 
 pub struct Player {
@@ -26,6 +33,7 @@ pub struct Player {
     pub pos: Vec3,
     pub vel: Vec3,
     pub on_ground: bool,
+    mode: PlayerMode,
     /// True between a jump take-off and the next blocked vertical sweep (landing
     /// or head-bonk). Gates the apex easing so only a genuine jump arc is
     /// softened — walking off a ledge or bonking a ceiling falls at full gravity.
@@ -38,8 +46,37 @@ impl Player {
             pos: feet,
             vel: Vec3::ZERO,
             on_ground: false,
+            mode: PlayerMode::Survival,
             jumping: false,
         }
+    }
+
+    #[inline]
+    pub fn mode(&self) -> PlayerMode {
+        self.mode
+    }
+
+    #[inline]
+    pub fn is_spectator(&self) -> bool {
+        self.mode == PlayerMode::Spectator
+    }
+
+    pub fn set_mode(&mut self, mode: PlayerMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.vel = Vec3::ZERO;
+        self.on_ground = false;
+        self.jumping = false;
+    }
+
+    pub fn toggle_mode(&mut self) {
+        let next = match self.mode {
+            PlayerMode::Survival => PlayerMode::Spectator,
+            PlayerMode::Spectator => PlayerMode::Survival,
+        };
+        self.set_mode(next);
     }
 
     /// Eye position (camera origin).

@@ -117,6 +117,7 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
                 | "KeyA"
                 | "KeyS"
                 | "KeyD"
+                | "KeyY"
                 | "Space"
                 | "ShiftLeft"
                 | "ShiftRight"
@@ -125,7 +126,7 @@ fn wire_input(game: Rc<RefCell<WebGame>>) -> Result<(), JsValue> {
         ) {
             return;
         }
-        if code == "Space" {
+        if code == "Space" || (code == "KeyY" && ev.ctrl_key()) {
             ev.prevent_default();
         }
         let mut g = g2.borrow_mut();

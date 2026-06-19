@@ -1,15 +1,15 @@
 //! Typed height / climate / river field — the numeric core of worldgen.
 //!
-//! Strata P1: extracted from `gen.rs::WorldNoise`. The math is **byte-identical**
-//! to the god file (locked by the genparity gate); it is only decomposed into
-//! named, unit-testable helpers. We deliberately keep a plain typed function
-//! rather than a runtime density-function interpreter: terrain here is a 2-D
-//! per-column height field (~40 lines of math), so a `Box<dyn>`/enum DAG would
-//! add a per-node interpreter and — most dangerously — an opportunity for the
-//! f64->f32 cast points below to silently drift.
+//! Strata P1: extracted from the original `WorldNoise` god file into named,
+//! unit-testable helpers. We deliberately keep a plain typed function rather
+//! than a runtime density-function interpreter: terrain here is a 2-D per-column
+//! height field, so a `Box<dyn>`/enum DAG would add a per-node interpreter and —
+//! most dangerously — an opportunity for the f64->f32 cast points below to
+//! silently drift.
 //!
-//! The `as f32` casts inside `base_height` and `peak_gate` are LOAD-BEARING for
-//! parity (`mathh::smoothstep` is f32). Do not "clean them up" to all-f64.
+//! The `as f32` casts at `mathh::smoothstep` call sites are intentional because
+//! that helper is f32-based. Do not "clean them up" to all-f64 unless the helper
+//! changes too.
 
 use super::settings::*;
 use crate::biome::Climate;
@@ -100,7 +100,7 @@ impl HeightField {
         (n * 3.2).clamp(-1.0, 1.0)
     }
 
-    // ---- decomposed height helpers (bit-identical to the inline god-file math) ----
+    // ---- decomposed height helpers ----
 
     /// Continentalness (0..1) mapped to a base floor height via a monotone
     /// piecewise-linear spline: a deep ocean basin well below sea level, a coastal
@@ -159,7 +159,6 @@ impl HeightField {
     }
 
     /// Surface height (top solid block Y) at world (x,z).
-    /// Byte-for-byte identical to `gen.rs::WorldNoise::surface_height`.
     pub fn surface_height(&self, x: i32, z: i32) -> i32 {
         let fx = x as f64;
         let fz = z as f64;
@@ -179,15 +178,20 @@ impl HeightField {
 
         // (A) Base floor from continentalness: deep basin -> coast -> highland base.
         let base = self.base_floor(cont01);
+        let weird = self.weirdness.get([fx, fz]);
+        let (weird_pos, weird_neg, strange) = weirdness_shape_weights(weird);
 
         // Domain warp: displace the mountain-mass + crag sample points by a low-
         // frequency field so massifs become bent, irregular ridge systems instead
-        // of radially-symmetric smooth domes (the "boobs" failure mode).
-        let warp_x = self.surface.get([fx * WARP_FREQ, fz * WARP_FREQ]) * WARP_AMP;
+        // of radially-symmetric smooth domes (the "boobs" failure mode). Weird
+        // regions warp harder, so their mountain chains twist into less regular
+        // silhouettes while calm regions keep broader, simpler ranges.
+        let warp_amp = WARP_AMP * (1.0 + 0.35 * strange);
+        let warp_x = self.surface.get([fx * WARP_FREQ, fz * WARP_FREQ]) * warp_amp;
         let warp_z = self
             .offset
             .get([fx * WARP_FREQ + 19.3, fz * WARP_FREQ + 4.1])
-            * WARP_AMP;
+            * warp_amp;
         let wx = fx + warp_x;
         let wz = fz + warp_z;
 
@@ -200,10 +204,10 @@ impl HeightField {
         let pv = self.pv.get([wx, wz]); // raw ~[-0.23,0.35], period ~550
         let pv01 = (pv * 3.4 * 0.5 + 0.5).clamp(0.0, 1.0); // expand to span [0,1]
         let peak = (smoothstep(0.56, 0.90, pv01 as f32) as f64).powf(1.3) * inland;
-        let h = base + peak * (28.0 + 80.0 * rugged); // taller where rugged
+        let peak_amp = (28.0 + 80.0 * rugged) * (1.0 + 0.18 * weird_pos - 0.06 * weird_neg);
+        let h = base + peak * peak_amp; // taller where rugged
 
         // (C) Rolling hills everywhere (gentle), damped hard on mountain faces.
-        let weird = self.weirdness.get([fx, fz]);
         let hill_amp = (1.0 - 0.5 * er01) * (5.0 + 13.0 * cont01) * (1.0 - 0.7 * peak);
         let h = h + weird * hill_amp;
 
@@ -217,14 +221,30 @@ impl HeightField {
         // verify walkability with `genmap … rough`, not just a cross-section.)
         let ridge = self.crag.get([wx, wz]);
         let crag = (ridge * 0.45 + 0.18).clamp(-0.35, 0.95);
-        let jag_amp = 8.0 + 16.0 * rugged;
+        let jag_amp = (8.0 + 16.0 * rugged) * (1.0 + 0.70 * weird_pos + 0.20 * strange);
         let h = h + peak * jag_amp * crag;
 
-        // (E) Surface detail (mid freq) — gentle texture.
+        // (E) Weird mountain morphology. Positive weirdness grows extra
+        // knife-edge ridge crests from a broad legacy ridged sampler; negative
+        // weirdness terraces high faces into shelves. Both are gated by `peak`
+        // and `rugged`, keeping lowlands and mild foothills out of the effect.
+        let spine = self.jagged.get([wx * 0.42 + 11.0, wz * 0.42 - 7.0]);
+        let spine = (spine * 0.38 + 0.08).clamp(-0.22, 0.92);
+        let spine_gate = peak.powf(1.8) * rugged * weird_pos;
+        let h = h + spine_gate * (9.0 + 17.0 * rugged) * spine;
+
+        let shelf_gate = peak.powf(1.15) * rugged * weird_neg;
+        let shelf_noise = self.surface.get([wx * 0.006 + 37.0, wz * 0.006 - 29.0]);
+        let shelf_strength = shelf_gate * (0.16 + 0.14 * (shelf_noise * 0.5 + 0.5));
+        let shelf_size = 4.0 + 3.0 * er01;
+        let terraced = (h / shelf_size).round() * shelf_size;
+        let h = h + (terraced - h) * shelf_strength;
+
+        // (F) Surface detail (mid freq) — gentle texture.
         let surf = self.surface.get([fx * 0.018, fz * 0.018]);
         let h = h + surf * 2.5 * (1.0 - 0.5 * er01);
 
-        // (F) Micro offset (high freq) — small bumps.
+        // (G) Micro offset (high freq) — small bumps.
         let off = self.offset.get([fx * 0.08, fz * 0.08]);
         let h = h + off * 1.0;
 
@@ -287,6 +307,14 @@ impl HeightField {
     }
 }
 
+#[inline]
+fn weirdness_shape_weights(weird: f64) -> (f64, f64, f64) {
+    let weird_pos = (weird * 2.6).clamp(0.0, 1.0);
+    let weird_neg = (-weird * 2.6).clamp(0.0, 1.0);
+    let strange = (weird.abs() * 2.4).clamp(0.0, 1.0);
+    (weird_pos, weird_neg, strange)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +352,23 @@ mod tests {
             assert_eq!(a.weirdness, b.weirdness);
             assert_eq!(a.depth, b.depth);
         }
+    }
+
+    #[test]
+    fn weirdness_shape_weights_track_sign_and_magnitude() {
+        assert_eq!(weirdness_shape_weights(0.0), (0.0, 0.0, 0.0));
+
+        let (pos, neg, strange) = weirdness_shape_weights(0.25);
+        assert!(pos > 0.0, "positive weirdness should enable ridge crests");
+        assert_eq!(neg, 0.0);
+        assert!(strange > 0.0);
+
+        let (pos, neg, strange) = weirdness_shape_weights(-0.25);
+        assert_eq!(pos, 0.0);
+        assert!(neg > 0.0, "negative weirdness should enable terraces");
+        assert!(strange > 0.0);
+
+        assert_eq!(weirdness_shape_weights(10.0), (1.0, 0.0, 1.0));
+        assert_eq!(weirdness_shape_weights(-10.0), (0.0, 1.0, 1.0));
     }
 }

@@ -1,5 +1,5 @@
 //! First-person player: AABB physics with gravity/jump, swept voxel collision,
-//! and a block raycast used for break/place.
+//! spectator noclip movement, and a block raycast used for break/place.
 //!
 //! The player is a 0.6 × 1.8 × 0.6 box. `pos` is the *feet centre*: x/z are the
 //! horizontal centre of the box and y is its bottom. The camera eye sits `EYE`
@@ -17,6 +17,8 @@
 //! decay is frame-rate independent; the ramp's rate is too, though the exact
 //! frame it reaches top speed can vary by up to one sub-step. Gravity pulls the
 //! player down — eased near the jump apex for a softer arc — and Space jumps.
+//! Spectator mode bypasses gravity and collision entirely, moving through the
+//! full 3-D wish direction.
 //! There is
 //! no auto step-up: every block is a full unit cube, so a sub-block step would
 //! never trigger and a full-block step would contradict the jump-to-climb feel
@@ -31,4 +33,4 @@ mod state;
 mod tests;
 
 pub use interaction::{RaycastHit, REACH};
-pub use state::{Input, Player, DT_MAX, EYE, HALF_W, HEIGHT};
+pub use state::{Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT};
