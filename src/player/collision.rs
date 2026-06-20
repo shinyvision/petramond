@@ -1,15 +1,11 @@
 use super::state::{Player, HALF_W, HEIGHT};
 use crate::mathh::IVec3;
 
-/// Boundary epsilon: the AABB is shrunk by this on every side before its float
-/// edges are turned into integer cell indices, so an edge flush on a voxel
-/// boundary — or a hair off from float error — is *not* treated as occupying the
-/// neighbouring cell. Applied symmetrically (see `lo`/`hi` in `sweep`) for a
-/// consistent cell set per axis regardless of approach direction or world
-/// position. (Past a few thousand blocks one f32 ULP exceeds EPS, so it stops
-/// biting and collisions degrade — phantom blocks and tunnelling return; the
-/// inherent limit of an f32 voxel world, reached only far outside normal play.)
-const EPS: f32 = 1e-4;
+/// Boundary epsilon in world units. The AABB is shrunk by this on every side
+/// before its float edges are turned into integer cell indices, so an edge flush
+/// on a voxel boundary — or a hair off from float error — is not treated as
+/// occupying the neighbouring cell.
+const EPS: f64 = 1e-4;
 
 #[derive(Copy, Clone)]
 pub(super) enum Axis {
@@ -34,12 +30,12 @@ impl Player {
         let min = self.aabb_min();
         let max = self.aabb_max();
         // Cell index of a min edge (inclusive) and a max edge (exclusive-ish).
-        // Both shrink the box by EPS so an edge sitting on a voxel boundary — or
-        // a hair off it from float error (e.g. 1.3 - 0.3 = 0.99999994) — yields a
-        // consistent cell set: a flush min edge does not pull in the cell below,
-        // and a flush max edge does not pull in the cell above.
-        let lo = |a: f32| (a + EPS).floor() as i32;
-        let hi = |b: f32| (b - EPS).floor() as i32;
+        // Move the f32 edge one representable value inward before applying EPS in
+        // f64. At larger coordinates, one f32 ULP is wider than EPS; doing only
+        // `edge ± EPS` in f32 can round straight back to the original integer
+        // boundary, causing the next sweep to skip the wall cell it is flush with.
+        let lo = cell_min;
+        let hi = cell_max;
 
         match axis {
             Axis::X => {
@@ -152,12 +148,18 @@ impl Player {
     pub fn intersects_block(&self, b: IVec3) -> bool {
         let min = self.aabb_min();
         let max = self.aabb_max();
-        let (bx, by, bz) = (b.x as f32, b.y as f32, b.z as f32);
-        min.x + EPS < bx + 1.0
-            && max.x - EPS > bx
-            && min.y + EPS < by + 1.0
-            && max.y - EPS > by
-            && min.z + EPS < bz + 1.0
-            && max.z - EPS > bz
+        (cell_min(min.x)..=cell_max(max.x)).contains(&b.x)
+            && (cell_min(min.y)..=cell_max(max.y)).contains(&b.y)
+            && (cell_min(min.z)..=cell_max(max.z)).contains(&b.z)
     }
+}
+
+#[inline]
+fn cell_min(edge: f32) -> i32 {
+    (edge.next_up() as f64 + EPS).floor() as i32
+}
+
+#[inline]
+fn cell_max(edge: f32) -> i32 {
+    (edge.next_down() as f64 - EPS).floor() as i32
 }

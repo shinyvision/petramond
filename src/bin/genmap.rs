@@ -291,19 +291,12 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, side z={slice_z} zoom={zoom} cx={center_x})");
 }
 
-/// River diagnostic: top-down terrain with the ACTUAL carve result overlaid, so it
-/// reflects what was generated rather than the eligibility band. Wet channel
-/// columns are painted blue (brighter toward the centre); genuinely dry-carved
-/// columns (a cut of >=2 below the natural surface) are tinted red by depth; faded
-/// or uncarved eligible columns just show terrain. So a healthy river reads as a
-/// continuous blue channel that ends in a little red (the dry slope-back banks),
-/// NOT a long red trench. Reports coverage plus a dry-trench audit: the deepest
-/// dry carve and the count of dry columns cut >=4 deep (both should stay small —
-/// the carve couples depth to water presence, so dry cuts are shallow slope-backs).
+/// River diagnostic: top-down terrain with the active explicit river metadata
+/// overlaid. Wet channel columns are blue, bank influence is amber, and any wet
+/// channel column whose top block is not water is red for easy artifact spotting.
 fn render_river(seed: u32, out: &str) {
-    use llamacraft::chunk::SEA_LEVEL;
-    use llamacraft::worldgen::WorldNoise;
-    let wn = WorldNoise::new(seed);
+    use llamacraft::worldgen::{driver::ChunkGenerator, generate_chunk_with};
+    let generator = ChunkGenerator::new(seed);
     let r: i32 = 12;
     let n = (r * 2) as usize;
     let w = n * CHUNK_SX;
@@ -312,84 +305,62 @@ fn render_river(seed: u32, out: &str) {
     // Per-pixel masks for the island audit (built during the scan, used after).
     let mut water = vec![false; w * h];
     let mut bandmask = vec![false; w * h];
-    let (mut band, mut band_water, mut low, mut low_band) = (0u64, 0u64, 0u64, 0u64);
+    let (mut band, mut channel, mut channel_water, mut centerline) = (0u64, 0u64, 0u64, 0u64);
     let mut total = 0u64;
-    // Dry-trench audit: among carved (eligible) columns whose top block is NOT
-    // water, how deep does the cut go below the natural surface? The coupled carve
-    // bounds a dry cut to ~(surf-sea), so deep dry trenches (>=4) should be absent.
-    let (mut dry_deep, mut max_dry) = (0u64, 0i32);
+    let mut dry_channel = 0u64;
     for cz in 0..n {
         for cx in 0..n {
-            let chunk = generate_chunk(seed, cx as i32 - r, cz as i32 - r);
+            let gcx = cx as i32 - r;
+            let gcz = cz as i32 - r;
+            let region = generator.region(gcx, gcz);
+            let chunk = generate_chunk_with(&generator, gcx, gcz);
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {
-                    let wx = (cx as i32 - r) * CHUNK_SX as i32 + x as i32;
-                    let wz = (cz as i32 - r) * CHUNK_SZ as i32 + z as i32;
+                    let wx = gcx * CHUNK_SX as i32 + x as i32;
+                    let wz = gcz * CHUNK_SZ as i32 + z as i32;
                     let (b, _) = top_block(&chunk, x, z);
-                    let rs = wn.river_strength(wx, wz);
-                    let surf = wn.surface_height(wx, wz);
+                    let river = region.river_at(wx, wz);
                     total += 1;
-                    if surf <= SEA_LEVEL + 5 {
-                        low += 1;
-                    }
-                    // Carve-eligible columns only — mirrors RiverCarver (river>0.05
-                    // AND land no higher than sea+18); above that rivers fade out and
-                    // nothing is cut, so the overlay must not paint them or it
-                    // overstates the carved network on hillsides.
-                    let carved = rs > 0.05 && surf <= SEA_LEVEL + 18;
+                    let carved = river.influence > 0.05;
                     let mut col = block_color(b);
                     if carved {
                         band += 1;
-                        if surf <= SEA_LEVEL + 5 {
-                            low_band += 1;
-                        }
-                        if Block::from_id(b) == Block::Water {
-                            band_water += 1;
-                            // Wet channel: paint blue, brighter toward the centre.
-                            let t = rs.clamp(0.0, 1.0);
+                        let is_water = Block::from_id(b) == Block::Water;
+                        if river.distance < 0.75 {
+                            centerline += 1;
+                            col = [245, 248, 255];
+                        } else if river.wet() {
+                            channel += 1;
+                            if is_water {
+                                channel_water += 1;
+                            }
+                            let t = river.channel.clamp(0.0, 1.0);
                             col = [
                                 (40.0 * (1.0 - t)) as u8,
                                 (90.0 * (1.0 - t) + 90.0 * t) as u8,
                                 (160.0 * (1.0 - t) + 255.0 * t) as u8,
                             ];
+                            if !is_water {
+                                dry_channel += 1;
+                                col = [255, 24, 18];
+                            }
                         } else {
-                            // Dry carved column: measure cut below the natural surface.
-                            let mut y_solid = 0;
-                            for y in (0..CHUNK_SY).rev() {
-                                let bb = chunk.block_raw(x, y, z);
-                                if bb != 0 && Block::from_id(bb) != Block::Water {
-                                    y_solid = y as i32;
-                                    break;
-                                }
-                            }
-                            let dry_cut = surf - y_solid;
-                            max_dry = max_dry.max(dry_cut);
-                            if dry_cut >= 4 {
-                                dry_deep += 1;
-                            }
-                            // A genuinely cut dry column (a dry channel) is tinted red
-                            // by depth; faded/shallow eligible columns (cut<2) show
-                            // terrain, so the overlay reflects the ACTUAL carve, not
-                            // the eligibility band.
-                            if dry_cut >= 2 {
-                                let t = (dry_cut as f32 / 8.0).clamp(0.0, 1.0);
-                                col[0] = (col[0] as f32 * (1.0 - t) + 255.0 * t) as u8;
-                                col[1] = (col[1] as f32 * (1.0 - t)) as u8;
-                                col[2] = (col[2] as f32 * (1.0 - t)) as u8;
-                            }
+                            let t = river.influence.clamp(0.0, 1.0);
+                            col[0] = (col[0] as f32 * (1.0 - t) + 212.0 * t) as u8;
+                            col[1] = (col[1] as f32 * (1.0 - t) + 156.0 * t) as u8;
+                            col[2] = (col[2] as f32 * (1.0 - t) + 74.0 * t) as u8;
                         }
                     }
                     let px = (cz * CHUNK_SZ + z) * w + (cx * CHUNK_SX + x);
                     water[px] = Block::from_id(b) == Block::Water;
-                    bandmask[px] = carved;
+                    bandmask[px] = river.wet();
                     buf[px * 3..px * 3 + 3].copy_from_slice(&col);
                 }
             }
         }
     }
-    // Island audit: a river-band column that is LAND but has water within 2 blocks on
-    // BOTH opposite sides (a mid-channel bar / peninsula tip the carve leaves behind).
-    // The smoothing pass should drive this toward 0.
+    // Island audit: a wet-channel column that is LAND but has water within two
+    // blocks on both opposite sides.
     let mut islands = 0u64;
     let near = |arr: &[bool], x: usize, y: usize, dx: i32, dy: i32| -> bool {
         for d in 1..=2 {
@@ -427,22 +398,22 @@ fn render_river(seed: u32, out: &str) {
     };
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, mode river)");
     println!(
-        "  carved river band: {:.3}% of world | {:.2}% of low cols | top-is-water {:.1}% of band",
+        "  river banks: {:.3}% of world | wet channel {:.3}% | top-is-water {:.1}% of channel",
         p(band, total),
-        p(low_band, low),
-        p(band_water, band)
+        p(channel, total),
+        p(channel_water, channel)
     );
-    println!(
-        "  dry-trench audit: deepest dry carve {max_dry} blocks | dry cols >=4 deep: {dry_deep}"
-    );
+    println!("  centerline pixels: {centerline} | dry wet-channel cols: {dry_channel}");
     println!("  island audit: mid-channel land cols enclosed by water: {islands}");
 }
 
-/// Print raw noise-field ranges to calibrate amplitudes against the (non-
-/// normalised) ranges the `noise` crate actually produces.
+/// Print legacy `WorldNoise` field ranges. Active chunk terrain is generated by
+/// the classic terrain provider; this mode is only for maintaining the remaining
+/// legacy noise/cave diagnostics.
 fn print_stats(seed: u32) {
     use llamacraft::worldgen::WorldNoise;
     let wn = WorldNoise::new(seed);
+    println!("legacy WorldNoise stats for seed {seed:#x}");
     let (mut c, mut e, mut w, mut pv, mut j) = (vec![], vec![], vec![], vec![], vec![]);
     let (mut tp, mut hu) = (vec![], vec![]);
     let mut sy = vec![];
@@ -856,45 +827,6 @@ fn render_shaded(
 /// `pillar%` = columns that stick >=4 above ALL four neighbours (isolated spikes);
 /// `walkable%` = columns whose steepest neighbour step is <=2 (you can stand/walk).
 fn roughness(seed: u32) {
-    use llamacraft::worldgen::WorldNoise;
-
-    #[derive(Default, Clone, Copy)]
-    struct RoughBin {
-        cols: u64,
-        pillars: u64,
-        walkable: u64,
-        step_sum: i64,
-    }
-
-    impl RoughBin {
-        fn record(&mut self, max_step: i32, above_all: bool) {
-            self.cols += 1;
-            self.step_sum += max_step as i64;
-            if above_all {
-                self.pillars += 1;
-            }
-            if max_step <= 2 {
-                self.walkable += 1;
-            }
-        }
-
-        fn print(self, label: &str) {
-            if self.cols == 0 {
-                println!("  {label:>8}: no mountain columns");
-                return;
-            }
-            let pct = |v: u64| 100.0 * v as f64 / self.cols as f64;
-            println!(
-                "  {label:>8}: cols {:5}  mean-step {:.2}  pillar {:.1}%  walkable {:.1}%",
-                self.cols,
-                self.step_sum as f64 / self.cols as f64,
-                pct(self.pillars),
-                pct(self.walkable)
-            );
-        }
-    }
-
-    let wn = WorldNoise::new(seed);
     let r: i32 = 12;
     let n = (r * 2) as usize;
     let w = n * CHUNK_SX;
@@ -916,7 +848,6 @@ fn roughness(seed: u32) {
     let (mut mtn, mut pillars, mut walkable) = (0u64, 0u64, 0u64);
     let mut step_sum = 0i64;
     let mut steps_hist = [0u64; 6]; // 0,1,2,3,4,5+ block max-step buckets
-    let mut bins = [RoughBin::default(); 3]; // negative, neutral, positive weirdness
     for z in 1..w as i32 - 1 {
         for x in 1..w as i32 - 1 {
             let h = at(x, z);
@@ -935,17 +866,6 @@ fn roughness(seed: u32) {
             if max_step <= 2 {
                 walkable += 1;
             }
-            let wx = -r * CHUNK_SX as i32 + x;
-            let wz = -r * CHUNK_SZ as i32 + z;
-            let weird = wn.climate(wx, wz).weirdness;
-            let bin = if weird < -0.15 {
-                0
-            } else if weird > 0.15 {
-                2
-            } else {
-                1
-            };
-            bins[bin].record(max_step, above_all);
         }
     }
     if mtn == 0 {
@@ -968,9 +888,6 @@ fn roughness(seed: u32) {
         pct(steps_hist[4]),
         pct(steps_hist[5])
     );
-    bins[0].print("weird-");
-    bins[1].print("neutral");
-    bins[2].print("weird+");
 }
 
 /// Oblique 3-D heightfield render (Comanche/voxel-landscape style). This is the

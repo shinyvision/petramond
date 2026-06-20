@@ -13,14 +13,12 @@ pub const SALT_DEPTH: u32 = 0x666;
 pub const SALT_JAG: u32 = 0x777;
 pub const SALT_SURF: u32 = 0x888;
 pub const SALT_OFF: u32 = 0x999;
-pub const SALT_RIVER: u32 = 0xAAA;
-pub const SALT_RIVERW: u32 = 0xBBB;
 
 // Fractal sampler shapes (octaves, frequency), verbatim from gen.rs. NOTE these
-// set each fractal's *internal* base frequency; `surface_height`/`river_strength`
-// additionally scale their sample coordinates (e.g. `[fx * 0.012, ...]`), so the
-// per-call coordinate multipliers in `height.rs` are a separate, equally
-// load-bearing set of constants and must not be folded into these.
+// set each fractal's *internal* base frequency; `surface_height` additionally
+// scales some sample coordinates (e.g. `[fx * 0.012, ...]`), so the per-call
+// coordinate multipliers in `height.rs` are a separate, equally load-bearing set
+// of constants and must not be folded into these.
 pub const CONT_OCTAVES: usize = 3;
 pub const CONT_FREQ: f64 = 0.0013;
 pub const WEIRD_OCTAVES: usize = 4;
@@ -36,32 +34,6 @@ pub const TEMP_SAMPLE_FREQ: f64 = 0.00160;
 pub const HUMID_SAMPLE_FREQ: f64 = 0.00195;
 pub const EROSION_SAMPLE_FREQ: f64 = 0.000_80;
 pub const DEPTH_SAMPLE_FREQ: f64 = 0.0011;
-
-// River network. A smooth fbm whose ZERO-CONTOUR is the river: `river_strength`
-// carves where |sample| is small, so rivers are the long winding curves of the
-// noise's zero set (connected meanders), not a threshold on a ridged sampler
-// (whose output never reaches 0 — the old bug that left rivers uncarved).
-// Frequency is LITERAL: `river_strength` samples with raw world coords (no extra
-// coordinate multiplier), so this value IS the period (~1/f blocks) — unlike the
-// legacy samplers that double-scale via both set_frequency AND a `.get([x*m])`
-// multiplier. `RIVER_HALF` is the valley half-width in BLOCKS: `river_strength`
-// is 1 at the channel centre (the noise zero-contour) and ramps to 0 at this many
-// blocks away, measured by dividing |n| by the local gradient so width is
-// spatially consistent (a fixed |n| band would balloon wherever the field is
-// locally flat). The carver slopes the floor across that band so only the deep
-// centre floods — a narrow channel inside a wide, constant-slope valley.
-pub const RIVER_OCTAVES: usize = 2;
-pub const RIVER_FREQ: f64 = 0.000_75;
-pub const RIVER_HALF: f32 = 18.0;
-
-// River meander + width variation. The clean zero-contour of a smooth fbm draws
-// geometric arcs; domain-warping the sample point (a medium-frequency field
-// displacing coords by ~RIVER_WARP_AMP blocks) bends it into natural meanders
-// (and the occasional oxbow). `RIVER_WIDTH_VAR` modulates the half-width along
-// the course (wider pools, narrower runs) so banks aren't parallel lines.
-pub const RIVER_WARP_FREQ: f64 = 0.018;
-pub const RIVER_WARP_AMP: f64 = 26.0;
-pub const RIVER_WIDTH_VAR: f32 = 0.35;
 
 // --- Relief shaping additions ---
 

@@ -1,17 +1,12 @@
-//! Worldgen pipeline — **Strata**.
+//! Worldgen pipeline.
 //!
 //! `generate_chunk(seed, cx, cz) -> Chunk` is the single deterministic
 //! entrypoint, invoked in isolation on a worker thread (native pool / web
 //! Worker) and serialized to flat block + per-column biome bytes.
 //!
-//! Strata phases (see `docs/ARCHITECTURE_WORLDGEN.md`):
-//!   - P0: relocate the `gen.rs` god file into this module tree behind an ABI shim
-//!   - P1: `noise` -> typed `HeightField` + const sampler settings
-//!   - P2: a staged `driver::ChunkGenerator` + `ProtoChunk` + declarative
-//!         surface rules + carvers + a `BiomeSource` (terrain now flows through
-//!         the pipeline; features still use the legacy placer)
-//!   - P3: a composable `feature` system (trunk/foliage placers) replacing `trees`
-//!   - P4: cross-chunk margin + positional RNG + data-driven biome definitions
+//! Active terrain is built from the classic land-biome terrain provider, then an
+//! explicit river path system carves channels and water levels, followed by
+//! surface skinning, underground scatter, ground vegetation, and tree features.
 
 pub mod classic;
 pub mod climate;
@@ -21,6 +16,7 @@ pub mod driver;
 pub mod feature;
 pub mod noise;
 pub mod proto;
+pub mod river;
 pub mod rng;
 pub mod surface;
 
@@ -30,9 +26,9 @@ use crate::chunk::Chunk;
 
 /// Generate terrain + features for a chunk. Caller passes the world seed.
 ///
-/// Terrain (fill + carve + surface) and feature placement both flow through the
-/// staged `ChunkGenerator`. P4: features are placed via world-positional RNG
-/// over the chunk + a margin border, so trees cross chunk seams seamlessly.
+/// Terrain and feature placement both flow through the staged `ChunkGenerator`.
+/// Features are placed via world-positional RNG over the chunk plus a margin
+/// border, so trees cross chunk seams seamlessly.
 ///
 /// The generator holds only immutable seed-derived state (noise samplers + the
 /// cascade layer stacks), which is expensive to build, so it is cached per thread
@@ -58,9 +54,8 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 /// This preserves `generate_chunk` as the public one-shot API while allowing
 /// hot worker loops to reuse the generator's immutable seed-derived state.
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
-    // The cascade region (chunk + feature margin) is computed ONCE and shared by
-    // terrain fill and feature placement — the whole chunk's biomes + biome-driven
-    // height are generated a single time.
+    // The region (chunk + feature margin) is computed ONCE and shared by terrain
+    // fill and feature placement, including river-carved surface metadata.
     let region = generator.region(cx, cz);
     let mut chunk = generator.generate(&region, cx, cz);
     generator.place_underground(&mut chunk);

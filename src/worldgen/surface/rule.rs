@@ -8,7 +8,6 @@
 
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::chunk::SEA_LEVEL;
 
 pub enum SurfaceRule {
     /// Unconditionally place this block.
@@ -48,6 +47,10 @@ pub struct SurfaceCtx {
     pub depth_from_top: u32,
     pub biome: Biome,
     pub river: f32,
+    pub water_y: i32,
+    pub river_bed: Block,
+    pub river_bank: Option<Block>,
+    pub preserve_river_bed: bool,
 }
 
 impl SurfaceCond {
@@ -59,7 +62,7 @@ impl SurfaceCond {
             SurfaceCond::SurfaceAboveY(n) => c.surf_y > *n,
             SurfaceCond::DepthFromTop(n) => c.depth_from_top <= *n,
             SurfaceCond::YBand(lo, hi) => c.y >= *lo && c.y < *hi,
-            SurfaceCond::Underwater => c.surf_y <= SEA_LEVEL,
+            SurfaceCond::Underwater => c.surf_y <= c.water_y,
         }
     }
 }

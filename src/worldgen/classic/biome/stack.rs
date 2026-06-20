@@ -1,7 +1,8 @@
-//! Assembly of the full 1.8 biome cascade as composable [`Layer`]s. The terrain
-//! generator reads biomes at the pre-voronoi (1:4) scale ([`river_mix`]); the
-//! surface pass reads the per-block biome ([`voronoi`]). Builders duplicate shared
-//! upstream nodes (the layers are pure, so rebuilding is bit-identical).
+//! Assembly of the 1.8 biome cascade as composable [`Layer`]s.
+//!
+//! Active worldgen uses the land-only branch for base terrain. Rivers are carved
+//! later by `worldgen::river` as explicit path objects, so the classic river
+//! overlay remains available only as reference/parity machinery.
 
 use super::layers::*;
 
@@ -51,8 +52,12 @@ fn hills_branch(seed: i64) -> Box<dyn Layer> {
 
 /// The main biome branch through smooth (scale 4), pre river-mix.
 pub fn main_branch(seed: i64) -> Box<dyn Layer> {
-    let l: Box<dyn Layer> =
-        Box::new(Hills::new(seed, 1000, biome_edge_64(seed), hills_branch(seed)));
+    let l: Box<dyn Layer> = Box::new(Hills::new(
+        seed,
+        1000,
+        biome_edge_64(seed),
+        hills_branch(seed),
+    ));
     let l: Box<dyn Layer> = Box::new(Sunflower::new(seed, 1001, l));
     let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
     let l: Box<dyn Layer> = Box::new(Land::new(seed, 3, l));
@@ -76,10 +81,25 @@ fn river_branch(seed: i64) -> Box<dyn Layer> {
 
 /// River-mix (scale 4) — the biome grid the terrain generator samples.
 pub fn river_mix(seed: i64) -> Box<dyn Layer> {
-    Box::new(RiverMix::new(seed, 100, main_branch(seed), river_branch(seed)))
+    Box::new(RiverMix::new(
+        seed,
+        100,
+        main_branch(seed),
+        river_branch(seed),
+    ))
 }
 
-/// Voronoi (scale 1) — the per-block biome the surface pass samples.
+/// Land-only biome grid (scale 4), before the classic river overlay.
+pub fn land_mix(seed: i64) -> Box<dyn Layer> {
+    main_branch(seed)
+}
+
+/// Land-only per-block biome grid (scale 1), before river carving.
+pub fn land_voronoi(seed: i64) -> Box<dyn Layer> {
+    Box::new(Voronoi::new(seed, 10, land_mix(seed)))
+}
+
+/// Classic river-overlay Voronoi (scale 1), kept for diagnostics/reference.
 pub fn voronoi(seed: i64) -> Box<dyn Layer> {
     Box::new(Voronoi::new(seed, 10, river_mix(seed)))
 }

@@ -1,11 +1,10 @@
-//! Typed height / climate / river field — the numeric core of worldgen.
+//! Typed height / climate / cave field used by legacy diagnostics and caves.
 //!
-//! Strata P1: extracted from the original `WorldNoise` god file into named,
-//! unit-testable helpers. We deliberately keep a plain typed function rather
-//! than a runtime density-function interpreter: terrain here is a 2-D per-column
-//! height field, so a `Box<dyn>`/enum DAG would add a per-node interpreter and —
-//! most dangerously — an opportunity for the f64->f32 cast points below to
-//! silently drift.
+//! Legacy typed noise helpers extracted from the original `WorldNoise` path.
+//! Active terrain no longer uses this height field, but caves and debug tooling
+//! still use the samplers here. We keep the plain typed functions rather than a
+//! runtime density-function interpreter to avoid per-node overhead and accidental
+//! f64/f32 drift.
 //!
 //! The `as f32` casts at `mathh::smoothstep` call sites are intentional because
 //! that helper is f32-based. Do not "clean them up" to all-f64 unless the helper
@@ -19,8 +18,9 @@ use crate::mathh::smoothstep;
 
 use noise::{Fbm, MultiFractal, NoiseFn, OpenSimplex, Perlin, RidgedMulti, Seedable};
 
-/// Owns the named noise samplers and computes per-column surface height,
-/// climate, and river strength. Immutable after construction; `Send + Sync`.
+/// Owns the named noise samplers and computes per-column surface height and
+/// climate for legacy diagnostics, plus cave fields used by active generation.
+/// Immutable after construction; `Send + Sync`.
 pub struct HeightField {
     temperature: OpenSimplex,
     humidity: OpenSimplex,
@@ -31,8 +31,6 @@ pub struct HeightField {
     jagged: RidgedMulti<Perlin>, // sharp ridges for peaks
     surface: Perlin,             // high-freq surface detail
     offset: Perlin,              // micro surface noise
-    river: Fbm<OpenSimplex>,     // smooth fbm; rivers run along its zero-contour
-    river_warp: OpenSimplex,     // domain warp (+ width modulation) for river meander
     density3d: OpenSimplex,      // 3-D overhang carve (sampled per band voxel)
     pv: Fbm<OpenSimplex>,        // peaks & valleys: broad mountain massing
     crag: RidgedMulti<Perlin>,   // broad craggy ridgelines on peaks (walkable, not pillars)
@@ -61,10 +59,6 @@ impl HeightField {
                 .set_frequency(JAG_FREQ),
             surface: Perlin::new(s(SALT_SURF)),
             offset: Perlin::new(s(SALT_OFF)),
-            river: Fbm::<OpenSimplex>::new(s(SALT_RIVER))
-                .set_octaves(RIVER_OCTAVES)
-                .set_frequency(RIVER_FREQ),
-            river_warp: OpenSimplex::new(s(SALT_RIVERW)),
             density3d: OpenSimplex::new(s(SALT_DENS3D)),
             pv: Fbm::<OpenSimplex>::new(s(SALT_PV))
                 .set_octaves(PV_OCTAVES)
@@ -343,80 +337,8 @@ impl HeightField {
         let off = self.offset.get([fx * 0.08, fz * 0.08]);
         let h = h + off * 1.0;
 
-        // (J) River valley. Pull the surface DOWN into a continuous low valley
-        // wherever a river runs, so the channel floods as one connected, properly
-        // wide water course regardless of the surrounding terrain height — rivers
-        // are low ground (like a river biome), not a thin cut that dies at every
-        // rise. This is the fix for "1-wide rivers that end as soon as height
-        // varies": the valley keeps the river low through rolling lowland, and the
-        // carver then just shapes the banks. The valley floor is bounded ~16 below
-        // the natural surface, so a river crossing genuine highland becomes a
-        // shallow dry valley rather than an unnatural slot canyon through a peak.
-        let river = self.river_strength(x, z);
-        let h = if river > 0.0 {
-            let valley = smoothstep(0.04, 0.50, river) as f64; // 0 bank .. 1 core
-            let target = (SEA_LEVEL as f64 - 3.0).max(h - 16.0);
-            h + (target - h) * valley
-        } else {
-            h
-        };
-
         let h = h.round() as i32;
         h.clamp(4, CHUNK_SY as i32 - 8)
-    }
-
-    /// River intensity at world (x,z): 0 = no river, 1 = channel centre.
-    ///
-    /// Rivers run along the ZERO-CONTOUR of a smooth fbm: where `|n|` is small the
-    /// column is on the river, ramping linearly to 0 at the bank. A smooth noise's
-    /// zero set is a network of long winding curves, so this gives connected
-    /// meandering rivers. (The previous version thresholded a `RidgedMulti` near 0,
-    /// but ridged output never approaches 0 — and the sample coords were scaled a
-    /// second time on top of `set_frequency`, pinning the field to a near-constant
-    /// ~0.83 — so `river_strength` was identically 0 and nothing ever carved.)
-    ///
-    /// Frequency is LITERAL: sampled with raw world coords, so `RIVER_FREQ` is the
-    /// real period — no second coordinate multiplier (the double-scaling trap).
-    ///
-    /// Width is measured in BLOCKS: the distance to the centreline is `|n|` divided
-    /// by the local gradient, so a river is the same width whether the noise is
-    /// locally steep or flat (a raw `|n|` band balloons over flat stretches into
-    /// huge blobs). Near a local extremum that never crosses zero the gradient is
-    /// tiny, so the distance blows up and no false river/lake forms there.
-    ///
-    /// The sample point is domain-warped first so the channel meanders instead of
-    /// drawing clean geometric arcs, and the half-width is modulated along the
-    /// course so the river pinches and widens.
-    pub fn river_strength(&self, x: i32, z: i32) -> f32 {
-        let fx = x as f64;
-        let fz = z as f64;
-        // Domain warp: displace the sample point by a medium-frequency field. The
-        // offset is treated as locally constant, so the gradient (and thus width)
-        // is still measured correctly in world blocks at the warped location.
-        let dx = self
-            .river_warp
-            .get([fx * RIVER_WARP_FREQ, fz * RIVER_WARP_FREQ])
-            * RIVER_WARP_AMP;
-        let dz = self
-            .river_warp
-            .get([fx * RIVER_WARP_FREQ + 31.7, fz * RIVER_WARP_FREQ + 5.1])
-            * RIVER_WARP_AMP;
-        let (sx, sz) = (fx + dx, fz + dz);
-        let n = self.river.get([sx, sz]);
-        // Gradient over a ±2-block stencil rather than ±1: the wider stencil
-        // low-passes the gradient estimate so `dist` (and thus the carved floor)
-        // doesn't swing sharply between adjacent columns near low-gradient fade
-        // points — those swings were the source of small bank stairs.
-        let gx = (self.river.get([sx + 2.0, sz]) - self.river.get([sx - 2.0, sz])) * 0.25;
-        let gz = (self.river.get([sx, sz + 2.0]) - self.river.get([sx, sz - 2.0])) * 0.25;
-        let grad = (gx * gx + gz * gz).sqrt().max(1e-6);
-        let dist = (n.abs() / grad) as f32; // blocks from the channel centreline
-                                            // Vary width along the course (broad, decorrelated low-freq field).
-        let wmod = self
-            .river_warp
-            .get([fx * 0.006 + 100.0, fz * 0.006 + 100.0]) as f32;
-        let half = (RIVER_HALF * (1.0 + RIVER_WIDTH_VAR * wmod)).max(2.0);
-        (1.0 - dist / half).max(0.0)
     }
 }
 
@@ -456,7 +378,6 @@ mod tests {
         let wn = super::super::WorldNoise::new(seed);
         for &(x, z) in &[(0, 0), (13, -7), (-100, 250), (999, -999)] {
             assert_eq!(wn.surface_height(x, z), f.surface_height(x, z));
-            assert_eq!(wn.river_strength(x, z), f.river_strength(x, z));
             let a = wn.climate(x, z);
             let b = f.climate(x, z);
             assert_eq!(a.temperature, b.temperature);

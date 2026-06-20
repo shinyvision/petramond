@@ -9,6 +9,7 @@ use crate::mathh::{IVec3, Vec3};
 use crate::player::{self, Input, Player, RaycastHit};
 use crate::render::Renderer;
 use crate::world::World;
+use crate::worldgen::classic::world::CascadeWorld;
 
 /// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
 /// is underwater.
@@ -17,6 +18,7 @@ const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
 pub struct App {
     pub cam: Camera,
     pub world: World,
+    fallback_world: CascadeWorld,
     pub player: Player,
     /// Block currently under the crosshair (within reach), refreshed each tick.
     pub look: Option<RaycastHit>,
@@ -57,6 +59,7 @@ impl App {
         Self {
             cam,
             world: World::new(seed, render_dist),
+            fallback_world: CascadeWorld::new(seed),
             player: Player::new(feet),
             look: None,
             last: now_seconds(),
@@ -208,17 +211,14 @@ impl App {
     }
 
     fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
-        use crate::biome::{biome_at, blended_fog_color, Biome};
-        use crate::worldgen::WorldNoise;
+        use crate::biome::{blended_fog_color, Biome};
 
-        let mut noise = None;
         blended_fog_color(x, z, |wx, wz| {
             if let Some(id) = self.world.column_biome(wx, wz) {
                 return Biome::from_id(id);
             }
 
-            let noise = noise.get_or_insert_with(|| WorldNoise::new(self.world.seed));
-            biome_at(noise.climate(wx, wz), noise.surface_height(wx, wz))
+            self.fallback_world.biome_at(wx, wz)
         })
     }
 

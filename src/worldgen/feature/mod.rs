@@ -196,8 +196,8 @@ fn tree_candidate_beats(
 }
 
 fn tree_candidate_at(field: &RegionCells, seed: u32, wx: i32, wz: i32) -> Option<TreeCandidate> {
-    // Anchor on the biome-driven surface. River/ocean columns are below sea level
-    // (the river biome is low ground), so the water guard keeps trees off them.
+    // Anchor on the final region surface. Ocean and wet river-channel columns sit
+    // at/below their waterline, so the water guard keeps trees off them.
     let (surf, biome_id) = field.at(wx, wz);
     let anchor = surf;
     if anchor <= SEA_LEVEL || surf > TREELINE {
@@ -296,6 +296,7 @@ mod tests {
     use crate::worldgen::classic::world::CascadeWorld;
     use crate::worldgen::data;
     use crate::worldgen::generate_chunk;
+    use crate::worldgen::river::RiverSystem;
 
     fn is_tree(id: u8) -> bool {
         id == Block::OakLog.id() || id == Block::OakLeaves.id()
@@ -303,13 +304,15 @@ mod tests {
 
     fn accepted_tree_origins(seed: u32, chunk_radius: i32) -> Vec<(i32, i32)> {
         let world = CascadeWorld::new(seed);
+        let rivers = RiverSystem::new(seed);
         let mut origins = Vec::new();
 
         for cz in -chunk_radius..=chunk_radius {
             for cx in -chunk_radius..=chunk_radius {
                 let ox = cx * CHUNK_SX as i32;
                 let oz = cz * CHUNK_SZ as i32;
-                let field = feature_region(&world, ox, oz);
+                let mut field = feature_region(&world, ox, oz);
+                rivers.apply(&mut field);
                 for wz in oz..(oz + CHUNK_SZ as i32) {
                     for wx in ox..(ox + CHUNK_SX as i32) {
                         let Some(candidate) = tree_candidate_at(&field, seed, wx, wz) else {

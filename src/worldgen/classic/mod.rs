@@ -7,11 +7,10 @@
 //!
 //! Pipeline (each stage a pure function of the seed + coordinate):
 //!   - [`lcg`] — the 48-bit LCG random source every stage draws from.
-//!   - layered biome generation (an island → zoom → refine → river → smooth
-//!     cascade) — *next*.
-//!   - octave-noise terrain + surface, where rivers emerge as a low biome rather
-//!     than a post-hoc carver — *next*.
-//!   - a fixed-order decoration pass (trees, flowers, …) — *next*.
+//!   - layered land-biome generation (island → zoom → refine → smooth cascade).
+//!   - octave-noise base terrain shaped by those land biomes.
+//!   - the classic river overlay remains available for parity/reference tests,
+//!     while active generation carves rivers later via `worldgen::river`.
 //!
 //! **Verification contract.** Correctness is *measured*, not asserted: the LCG is
 //! pinned by known-answer vectors (see [`lcg`]); each higher stage is diffed

@@ -1,8 +1,8 @@
 //! `ChunkGenerator` — owns the worldgen subsystems and runs the fixed stage
 //! order for one chunk.
 //!
-//! Stages: Setup → BiomeAssign (height/climate/biome/river + per-column overhang
-//! plan) → FillColumns (3-D solidity bitmap + top-down skin pass) → Features.
+//! Stages: Setup → RegionBuild (land terrain + explicit rivers) → BiomeAssign
+//! → FillColumns (top-down skin pass + caves) → Features.
 //!
 //! The generator holds only immutable wiring built from `seed` (no interior
 //! mutability) and is `Send + Sync`; its only mutable scratch — a `ColumnGrid`
@@ -18,6 +18,7 @@ use super::data::biomes::def;
 use super::noise::settings::{CAVE_MIN_Y, CAVE_SURFACE_BUFFER};
 use super::noise::HeightField;
 use super::proto::ProtoChunk;
+use super::river::RiverSystem;
 use super::surface::rule::SurfaceCtx;
 use super::surface::SurfaceSystem;
 
@@ -25,6 +26,7 @@ pub struct ChunkGenerator {
     seed: u32,
     field: HeightField,
     world: CascadeWorld,
+    rivers: RiverSystem,
     surface: SurfaceSystem,
 }
 
@@ -34,6 +36,7 @@ impl ChunkGenerator {
             seed,
             field: HeightField::new(seed),
             world: CascadeWorld::new(seed),
+            rivers: RiverSystem::new(seed),
             surface: SurfaceSystem,
         }
     }
@@ -43,11 +46,13 @@ impl ChunkGenerator {
         &self.world
     }
 
-    /// Compute the cascade region for one chunk PLUS the feature margin in a single
-    /// pass. Shared by terrain fill and feature placement, so the whole chunk's
-    /// biomes + biome-driven height are generated exactly once.
+    /// Compute the region for one chunk PLUS the feature margin in a single pass.
+    /// Shared by terrain fill and feature placement, so terrain height, biomes,
+    /// and explicit river metadata are generated exactly once.
     pub fn region(&self, cx: i32, cz: i32) -> RegionCells {
-        super::feature::feature_region(&self.world, cx * 16, cz * 16)
+        let mut region = super::feature::feature_region(&self.world, cx * 16, cz * 16);
+        self.rivers.apply(&mut region);
+        region
     }
 
     /// Run terrain generation (everything except features) for one chunk, reading
@@ -89,18 +94,19 @@ impl ChunkGenerator {
             for x in 0..CHUNK_SX {
                 let i = z * CHUNK_SX + x;
                 let (surf, biome_id) = region.at(ox + x as i32, oz + z as i32);
+                let river = region.river_at(ox + x as i32, oz + z as i32);
                 let biome = map_biome(biome_id);
                 grid.surf[i] = surf;
                 grid.biome[i] = biome;
+                grid.river[i] = river;
                 proto.set_biome(x, z, biome.id());
             }
         }
     }
 
-    /// FillColumns: per column lay solid terrain up to the biome-driven surface,
-    /// flood to sea level, resolve the surface skin by depth-from-top, then carve
-    /// caves. Pure heightfield — overhangs and the fbm river carve are gone (rivers
-    /// are simply the low river-biome columns flooded by the water pass).
+    /// FillColumns: per column lay solid terrain up to the final surface, flood
+    /// oceans and wet river channels to the fixed water level, resolve the
+    /// surface skin by depth-from-top, then carve caves.
     fn fill_columns(&self, proto: &mut ProtoChunk, grid: &ColumnGrid) {
         let (ox, oz) = proto.chunk_origin_world();
         for z in 0..CHUNK_SZ {
@@ -110,6 +116,7 @@ impl ChunkGenerator {
                 let wz = oz + z as i32;
                 let surf = grid.surf[i];
                 let biome = grid.biome[i];
+                let river = grid.river[i];
                 // Biome surface rule looked up ONCE per column (not per voxel).
                 let surface_rule = def(biome).surface;
 
@@ -119,7 +126,7 @@ impl ChunkGenerator {
                     let yi = y as usize;
                     if y > surf {
                         depth = 0;
-                        if y <= SEA_LEVEL {
+                        if y <= SEA_LEVEL || (river.wet() && y <= river.water_y) {
                             proto.set_block_raw(x, yi, z, Block::Water.id());
                         }
                         continue;
@@ -129,7 +136,11 @@ impl ChunkGenerator {
                         surf_y: surf,
                         depth_from_top: depth,
                         biome,
-                        river: 0.0,
+                        river: river.influence,
+                        water_y: river.water_y,
+                        river_bed: river.bed_block,
+                        river_bank: river.bank_block,
+                        preserve_river_bed: river.preserve_bed,
                     };
                     let b = self.surface.skin_block(&ctx, surface_rule);
                     proto.set_block_raw(x, yi, z, b.id());
@@ -158,4 +169,3 @@ impl ChunkGenerator {
         }
     }
 }
-

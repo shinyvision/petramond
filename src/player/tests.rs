@@ -565,6 +565,61 @@ fn sweep_matches_reference_from_all_directions() {
 }
 
 #[test]
+fn sweep_does_not_skip_flush_wall_at_far_coordinates() {
+    let bases = [2048, -2048, 8192, -8192];
+    for base in bases {
+        let wx = base + 10;
+        let wz = base + 20;
+
+        let wall_x = |x: i32, y: i32, z: i32| x == wx && (64..=65).contains(&y) && z == wz;
+        let mut plus_x = p(Vec3::new(wx as f32 - HALF_W, 64.0, wz as f32 + 0.5));
+        assert!(
+            plus_x.sweep(Axis::X, 0.1, &wall_x),
+            "+X should still hit a flush wall at base {base}"
+        );
+        assert!(
+            (plus_x.pos.x - (wx as f32 - HALF_W)).abs() <= 0.001,
+            "+X moved through flush wall at base {base}: x={}",
+            plus_x.pos.x
+        );
+
+        let mut minus_x = p(Vec3::new((wx + 1) as f32 + HALF_W, 64.0, wz as f32 + 0.5));
+        assert!(
+            minus_x.sweep(Axis::X, -0.1, &wall_x),
+            "-X should still hit a flush wall at base {base}"
+        );
+        assert!(
+            (minus_x.pos.x - ((wx + 1) as f32 + HALF_W)).abs() <= 0.001,
+            "-X moved through flush wall at base {base}: x={}",
+            minus_x.pos.x
+        );
+
+        let wall_z = |x: i32, y: i32, z: i32| x == wx && (64..=65).contains(&y) && z == wz;
+        let mut plus_z = p(Vec3::new(wx as f32 + 0.5, 64.0, wz as f32 - HALF_W));
+        assert!(
+            plus_z.sweep(Axis::Z, 0.1, &wall_z),
+            "+Z should still hit a flush wall at base {base}"
+        );
+        assert!(
+            (plus_z.pos.z - (wz as f32 - HALF_W)).abs() <= 0.001,
+            "+Z moved through flush wall at base {base}: z={}",
+            plus_z.pos.z
+        );
+
+        let mut minus_z = p(Vec3::new(wx as f32 + 0.5, 64.0, (wz + 1) as f32 + HALF_W));
+        assert!(
+            minus_z.sweep(Axis::Z, -0.1, &wall_z),
+            "-Z should still hit a flush wall at base {base}"
+        );
+        assert!(
+            (minus_z.pos.z - ((wz + 1) as f32 + HALF_W)).abs() <= 0.001,
+            "-Z moved through flush wall at base {base}: z={}",
+            minus_z.pos.z
+        );
+    }
+}
+
+#[test]
 fn raycast_hits_block_ahead_with_back_normal() {
     // Single solid block at (4, 64, 0): entered at x=4.0, i.e. 3.5 from the
     // eye — within REACH (4.0). (A block at x=5 would be 4.5 away → a miss.)
