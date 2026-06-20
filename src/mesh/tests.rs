@@ -89,6 +89,37 @@ fn leaves_go_to_opaque_pass() {
     panic!("no leaf-bearing, water-free chunk found to test");
 }
 
+fn edge_water_mesh(east_chunk_loaded: bool) -> ChunkMesh {
+    let mut chunk = Chunk::new(0, 0);
+    chunk.set_block_raw(CHUNK_SX - 1, 8, 8, Block::Water.id());
+    build_mesh_lods_with_loaded_neighbors(
+        &chunk,
+        |_, _, _| 0u8,
+        |_, _| 0u8,
+        |_, _, _| SKY_FULL,
+        |cx, cz| cx == 0 && cz == 0 || east_chunk_loaded && cx == 1 && cz == 0,
+    )
+}
+
+#[test]
+fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
+    let loaded_air = edge_water_mesh(true);
+    let unloaded = edge_water_mesh(false);
+
+    assert_eq!(
+        loaded_air.transparent.len(),
+        24,
+        "loaded neighbour air keeps all water faces visible"
+    );
+    assert_eq!(
+        unloaded.transparent.len(),
+        20,
+        "unloaded neighbour culls only the streaming-edge water side"
+    );
+    assert_eq!(loaded_air.transparent_idx.len(), 36);
+    assert_eq!(unloaded.transparent_idx.len(), 30);
+}
+
 /// Sampler over a computed skylight band, for the skylight unit tests.
 struct TestSky {
     band: Box<[u8]>,
@@ -158,6 +189,29 @@ fn skylight_open_column_is_full() {
     assert_eq!(sky.at(8, 1, 8), SKY_FULL);
     // Nothing ever exceeds full sky.
     assert!(sky.band.iter().all(|&v| v <= SKY_FULL));
+}
+
+/// Regression for dug shafts: removing the top block of a column must lower the
+/// heightmap, otherwise the skylight band stops near the old surface and the
+/// deeper open shaft abruptly turns black.
+#[test]
+fn skylight_dug_vertical_shaft_stays_lit_below_old_surface_margin() {
+    let mut c = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            for y in 0..=80 {
+                c.set_block(x, y, z, Block::Stone);
+            }
+        }
+    }
+    for y in (1..=80).rev() {
+        c.set_block(8, y, 8, Block::Air);
+    }
+
+    assert_eq!(c.surface_y(8, 8), 0, "dug column heightmap lowered");
+    let sky = solo_skylight(&c);
+    assert_eq!(sky.at(8, 55, 8), SKY_FULL);
+    assert_eq!(sky.at(8, 1, 8), SKY_FULL);
 }
 
 /// A sealed horizontal tunnel off an open vertical shaft: light falls off by

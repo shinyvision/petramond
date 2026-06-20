@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SY, SKY_FULL};
-use crate::mesh::build_mesh_lods;
+use crate::mesh::build_mesh_lods_with_loaded_neighbors;
 
 use super::store::World;
 
@@ -123,7 +123,11 @@ impl World {
                     None => SKY_FULL,
                 }
             };
-            Some((pos, build_mesh_lods(chunk, nb, nb_biome, nb_light)))
+            let nb_loaded = |cx: i32, cz: i32| -> bool { owner(cx, cz).is_some() };
+            Some((
+                pos,
+                build_mesh_lods_with_loaded_neighbors(chunk, nb, nb_biome, nb_light, nb_loaded),
+            ))
         };
 
         #[cfg(not(target_arch = "wasm32"))]

@@ -108,13 +108,9 @@ impl Chunk {
 
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, b: Block) {
         let i = idx(x, y, z);
-        self.blocks[i] = b.id();
-        if b != Block::Air {
-            let h = &mut self.heightmap[z * CHUNK_SX + x];
-            if (y as u16) > *h {
-                *h = y as u16;
-            }
-        }
+        let id = b.id();
+        self.blocks[i] = id;
+        self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.light_dirty = true;
     }
@@ -122,14 +118,31 @@ impl Chunk {
     pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
         let i = idx(x, y, z);
         self.blocks[i] = id;
-        if id != 0 {
-            let h = &mut self.heightmap[z * CHUNK_SX + x];
-            if (y as u16) > *h {
-                *h = y as u16;
-            }
-        }
+        self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.light_dirty = true;
+    }
+
+    fn update_heightmap_after_set(&mut self, x: usize, y: usize, z: usize, id: u8) {
+        let hi = z * CHUNK_SX + x;
+        let h = self.heightmap[hi];
+        if id != 0 {
+            if (y as u16) > h {
+                self.heightmap[hi] = y as u16;
+            }
+            return;
+        }
+        if (y as u16) != h {
+            return;
+        }
+        let mut next = 0u16;
+        for yy in (0..y).rev() {
+            if self.blocks[idx(x, yy, z)] != 0 {
+                next = yy as u16;
+                break;
+            }
+        }
+        self.heightmap[hi] = next;
     }
 
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
@@ -175,6 +188,7 @@ impl Chunk {
             }
         }
         self.dirty = true;
+        self.light_dirty = true;
     }
 }
 

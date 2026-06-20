@@ -13,7 +13,8 @@ mod skylight;
 mod vertex;
 
 pub use builder::{
-    build_mesh, build_mesh_lods, build_mesh_with_options, LeafMeshMode, MeshOptions,
+    build_mesh, build_mesh_lods, build_mesh_lods_with_loaded_neighbors, build_mesh_with_options,
+    LeafMeshMode, MeshOptions,
 };
 pub use skylight::compute_chunk_skylight;
 pub use vertex::{ChunkMesh, Vertex, SHADES};

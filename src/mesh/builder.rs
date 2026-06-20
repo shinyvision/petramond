@@ -63,11 +63,12 @@ pub fn build_mesh(
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
 ) -> ChunkMesh {
-    build_mesh_with_options(
+    build_mesh_with_context(
         chunk,
         neighbour_block,
         neighbour_biome,
         neighbour_light,
+        |_, _| true,
         MeshOptions::DETAILED,
     )
 }
@@ -78,21 +79,39 @@ pub fn build_mesh_lods(
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
 ) -> ChunkMesh {
-    let mut mesh = build_mesh_with_options(
+    build_mesh_lods_with_loaded_neighbors(
+        chunk,
+        neighbour_block,
+        neighbour_biome,
+        neighbour_light,
+        |_, _| true,
+    )
+}
+
+pub fn build_mesh_lods_with_loaded_neighbors(
+    chunk: &Chunk,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_biome: impl Fn(i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
+) -> ChunkMesh {
+    let mut mesh = build_mesh_with_context(
         chunk,
         &neighbour_block,
         &neighbour_biome,
         &neighbour_light,
+        &neighbour_chunk_loaded,
         MeshOptions::DETAILED,
     );
     if !chunk.blocks_slice().contains(&Block::OakLeaves.id()) {
         return mesh;
     }
-    let far = build_mesh_with_options(
+    let far = build_mesh_with_context(
         chunk,
         &neighbour_block,
         &neighbour_biome,
         &neighbour_light,
+        &neighbour_chunk_loaded,
         MeshOptions::FAR_LEAVES,
     );
     if far.opaque_idx.len() < mesh.opaque_idx.len() {
@@ -107,6 +126,24 @@ pub fn build_mesh_with_options(
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    options: MeshOptions,
+) -> ChunkMesh {
+    build_mesh_with_context(
+        chunk,
+        neighbour_block,
+        neighbour_biome,
+        neighbour_light,
+        |_, _| true,
+        options,
+    )
+}
+
+fn build_mesh_with_context(
+    chunk: &Chunk,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_biome: impl Fn(i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
     options: MeshOptions,
 ) -> ChunkMesh {
     let mut opaque = vec![];
@@ -238,11 +275,14 @@ pub fn build_mesh_with_options(
                     let nz = z as i32 + dz;
 
                     // Neighbour block to test cull.
+                    let mut unloaded_horizontal_neighbor = false;
                     let nb_id =
                         if nx < 0 || nx >= CHUNK_SX as i32 || nz < 0 || nz >= CHUNK_SZ as i32 {
                             // Out of horizontal chunk bounds -> ask neighbour fn.
                             let wx = ox + nx;
                             let wz = oz + nz;
+                            unloaded_horizontal_neighbor =
+                                !neighbour_chunk_loaded(wx >> 4, wz >> 4);
                             if ny < 0 || ny >= CHUNK_SY as i32 {
                                 0 // air
                             } else {
@@ -264,6 +304,10 @@ pub fn build_mesh_with_options(
                     if nb.is_opaque() {
                         continue;
                     }
+                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
+                    if is_water && is_side && unloaded_horizontal_neighbor {
+                        continue;
+                    }
                     if options.leaf_mesh_mode == LeafMeshMode::Simplified
                         && block == Block::OakLeaves
                         && nb == Block::OakLeaves
@@ -280,7 +324,6 @@ pub fn build_mesh_with_options(
                     // colour as the top, so side grass matches the top (the
                     // pre-greened grass_block_side never did). Everything else is
                     // the face's own tile, tinted only for grass-top/foliage/water.
-                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
                     let (base_tile, overlay_tile, tint) = if block == Block::Grass && is_side {
                         (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass[ci])
                     } else {
