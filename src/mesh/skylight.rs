@@ -26,7 +26,7 @@ thread_local! {
     };
 }
 
-// --- Skylight (Minecraft-style flood-fill, cached per chunk) -------------------
+// --- Skylight (flood-fill, cached per chunk) -------------------
 // Each chunk's skylight is computed from ITS OWN blocks (no neighbour reads),
 // stored on the Chunk, and recomputed only when that chunk changes (see
 // world.rs). Light is on an x2 integer scale (`SKY_FULL` = 30 = level 15): open

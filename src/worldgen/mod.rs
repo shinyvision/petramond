@@ -13,13 +13,12 @@
 //!   - P3: a composable `feature` system (trunk/foliage placers) replacing `trees`
 //!   - P4: cross-chunk margin + positional RNG + data-driven biome definitions
 
-pub mod carve;
+pub mod classic;
 pub mod climate;
 pub mod ctx;
 pub mod data;
 pub mod driver;
 pub mod feature;
-pub mod field_cache;
 pub mod noise;
 pub mod proto;
 pub mod rng;
@@ -34,9 +33,24 @@ use crate::chunk::Chunk;
 /// Terrain (fill + carve + surface) and feature placement both flow through the
 /// staged `ChunkGenerator`. P4: features are placed via world-positional RNG
 /// over the chunk + a margin border, so trees cross chunk seams seamlessly.
+///
+/// The generator holds only immutable seed-derived state (noise samplers + the
+/// cascade layer stacks), which is expensive to build, so it is cached per thread
+/// keyed by seed — repeated one-shot calls for the same world reuse it instead of
+/// rebuilding every cascade layer per chunk. Hot worker loops should still hold
+/// their own generator and call [`generate_chunk_with`] directly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
-    let generator = driver::ChunkGenerator::new(seed);
-    generate_chunk_with(&generator, cx, cz)
+    thread_local! {
+        static CACHED: std::cell::RefCell<Option<(u32, driver::ChunkGenerator)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    CACHED.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|(s, _)| *s) != Some(seed) {
+            *slot = Some((seed, driver::ChunkGenerator::new(seed)));
+        }
+        generate_chunk_with(&slot.as_ref().unwrap().1, cx, cz)
+    })
 }
 
 /// Generate terrain + features with an already-built generator.
@@ -44,13 +58,14 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 /// This preserves `generate_chunk` as the public one-shot API while allowing
 /// hot worker loops to reuse the generator's immutable seed-derived state.
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
-    // One field cache shared across both stages collapses the cross-stage
-    // duplication (biome_assign, the river smoothing stencils, and the feature
-    // pass all resample the same columns). Identity-preserving: a cache hit
-    // returns the exact bits the direct sampler call would have produced.
-    let mut cache = generator.field_cache(cx, cz);
-    let mut chunk = generator.generate(cx, cz, &mut cache);
-    generator.place_features(&mut chunk, &mut cache);
+    // The cascade region (chunk + feature margin) is computed ONCE and shared by
+    // terrain fill and feature placement — the whole chunk's biomes + biome-driven
+    // height are generated a single time.
+    let region = generator.region(cx, cz);
+    let mut chunk = generator.generate(&region, cx, cz);
+    generator.place_underground(&mut chunk);
+    generator.place_vegetation(&mut chunk);
+    generator.place_features(&mut chunk, &region);
 
     chunk.dirty = true;
     chunk

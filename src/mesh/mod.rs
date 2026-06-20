@@ -2,7 +2,7 @@
 //!
 //! Lighting is `directional face shade x per-vertex ambient occlusion`: the
 //! face-direction `SHADES` factor (top brightest, bottom darkest) is modulated
-//! by a Minecraft-style "smooth lighting" AO term baked per vertex from the
+//! by a "smooth lighting" AO term baked per vertex from the
 //! solid neighbours around each corner. The shader interpolates the per-vertex
 //! AO across the face, giving the soft contact shadows in nooks and against
 //! adjacent blocks.

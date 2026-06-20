@@ -81,6 +81,30 @@ impl Face {
     }
 }
 
+/// The two diagonal billboard quads of an X-shaped plant model, filling the cell
+/// `[x,x+1] × [y,y+1] × [z,z+1]`. Corner order matches `quad_for` (p0 bottom-left,
+/// p1 bottom-right, p2 top-right, p3 top-left) so the shader's `corner_uv` maps the
+/// tile upright. Each plane is drawn in both windings by the mesher so the plant is
+/// visible from both sides under back-face culling.
+pub(super) fn cross_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 2] {
+    [
+        // Plane (x,z) -> (x+1,z+1).
+        [
+            [x, y, z],
+            [x + 1.0, y, z + 1.0],
+            [x + 1.0, y + 1.0, z + 1.0],
+            [x, y + 1.0, z],
+        ],
+        // Plane (x,z+1) -> (x+1,z).
+        [
+            [x, y, z + 1.0],
+            [x + 1.0, y, z],
+            [x + 1.0, y + 1.0, z],
+            [x, y + 1.0, z + 1.0],
+        ],
+    ]
+}
+
 pub(super) const FACES: [Face; 6] = [
     Face::PosX,
     Face::NegX,
@@ -90,7 +114,7 @@ pub(super) const FACES: [Face; 6] = [
     Face::NegZ,
 ];
 
-/// Minecraft per-vertex AO occlusion level: 0 = darkest (corner buried in a
+/// Per-vertex AO occlusion level: 0 = darkest (corner buried in a
 /// crevice), 3 = no occlusion. `side1`/`side2` are the two edge-adjacent
 /// neighbours of the corner in the voxel plane just outside the face; `corner`
 /// is the diagonal one. Two solid edges bury the corner regardless of the

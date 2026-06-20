@@ -30,8 +30,9 @@ const CAUSTIC_SCALE: f32 = 0.55;
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
 // The shader only SELECTS from it — no arithmetic — so uvs are bit-identical
-// across backends. Size mirrors render::UV_RECTS_LEN.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 16>;
+// across backends. Size MUST mirror render::UV_RECTS_LEN (= 256, the 8-bit tile
+// cap); a mismatch fails `packed_vertex_pipeline_validates`.
+@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 

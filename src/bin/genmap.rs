@@ -14,7 +14,7 @@
 //!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
 //!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
 
-use llamacraft::biome::Biome;
+use llamacraft::biome::{biome_at, Biome};
 use llamacraft::block::Block;
 use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use llamacraft::worldgen::generate_chunk;
@@ -33,13 +33,68 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
 fn block_color(block: u8) -> [u8; 3] {
     match Block::from_id(block) {
         Block::OakLeaves => [44, 110, 40],
-        Block::OakLog => [104, 74, 40],
+        Block::SpruceLeaves => [40, 78, 52],
+        Block::BirchLeaves => [108, 150, 78],
+        Block::JungleLeaves => [48, 124, 28],
+        Block::AcaciaLeaves => [104, 130, 40],
+        Block::DarkOakLeaves => [36, 84, 30],
+        Block::MangroveLeaves => [60, 124, 44],
+        Block::CherryLeaves => [236, 170, 206],
+        Block::AzaleaLeaves => [88, 124, 56],
+        Block::OakLog | Block::DarkOakLog => [104, 74, 40],
+        Block::SpruceLog => [70, 50, 32],
+        Block::BirchLog => [206, 206, 198],
+        Block::JungleLog | Block::AcaciaLog => [120, 90, 54],
+        Block::CherryLog => [76, 50, 60],
+        Block::MangroveLog => [92, 44, 40],
         Block::Grass => [86, 140, 60],
         Block::Sand => [216, 204, 152],
-        Block::Snow => [238, 242, 248],
+        Block::RedSand => [190, 110, 56],
+        Block::Sandstone => [222, 208, 156],
+        Block::RedSandstone => [188, 108, 54],
+        Block::Snow | Block::SnowBlock => [238, 242, 248],
+        Block::PackedIce | Block::Ice => [160, 192, 232],
         Block::Stone => [128, 128, 132],
+        Block::Granite => [150, 106, 90],
+        Block::Diorite => [200, 200, 202],
+        Block::Andesite => [136, 138, 138],
+        Block::Tuff => [98, 102, 96],
+        Block::Calcite => [224, 226, 222],
         Block::Water => [44, 96, 176],
-        Block::Dirt => [122, 92, 62],
+        Block::Dirt | Block::CoarseDirt => [122, 92, 62],
+        Block::Podzol => [92, 64, 32],
+        Block::Mycelium => [126, 110, 120],
+        Block::Gravel => [128, 122, 118],
+        Block::Clay => [160, 166, 178],
+        Block::Mud => [60, 52, 50],
+        Block::MossBlock => [88, 110, 56],
+        Block::Terracotta => [150, 92, 66],
+        Block::WhiteTerracotta => [210, 186, 168],
+        Block::OrangeTerracotta => [162, 84, 40],
+        Block::YellowTerracotta => [186, 138, 50],
+        Block::BrownTerracotta => [110, 76, 54],
+        Block::RedTerracotta => [142, 70, 52],
+        Block::LightGrayTerracotta => [150, 122, 110],
+        Block::CoalOre => [54, 54, 56],
+        Block::IronOre => [190, 160, 132],
+        Block::CopperOre => [166, 120, 92],
+        Block::GoldOre => [206, 184, 90],
+        Block::RedstoneOre => [150, 60, 56],
+        Block::LapisOre => [50, 84, 160],
+        Block::DiamondOre => [110, 200, 206],
+        Block::EmeraldOre => [70, 184, 110],
+        Block::Cactus => [70, 120, 56],
+        Block::Pumpkin => [200, 120, 40],
+        Block::Melon => [90, 150, 60],
+        Block::ShortGrass | Block::Fern => [86, 150, 58],
+        Block::Dandelion => [220, 210, 70],
+        Block::Poppy | Block::RedTulip => [200, 60, 50],
+        Block::Cornflower => [90, 110, 210],
+        Block::Allium => [170, 120, 200],
+        Block::AzureBluet | Block::OxeyeDaisy => [225, 225, 220],
+        Block::DeadBush => [150, 110, 60],
+        Block::BrownMushroom => [150, 110, 80],
+        Block::RedMushroom => [200, 70, 60],
         _ => [12, 12, 14],
     }
 }
@@ -64,6 +119,18 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::SnowyTundra => [210, 224, 228],
         Biome::SnowyTaiga => [168, 198, 198],
         Biome::SnowyPeaks => [238, 242, 250],
+        Biome::Jungle => [40, 150, 30],
+        Biome::Badlands => [184, 100, 48],
+        Biome::DarkForest => [34, 72, 30],
+        Biome::OldGrowthTaiga => [44, 96, 64],
+        Biome::CherryGrove => [228, 150, 196],
+        Biome::Meadow => [120, 200, 90],
+        Biome::Grove => [184, 208, 208],
+        Biome::SnowySlopes => [220, 230, 238],
+        Biome::IceSpikes => [196, 224, 238],
+        Biome::MushroomFields => [150, 110, 150],
+        Biome::WindsweptHills => [130, 150, 120],
+        Biome::StonyPeaks => [170, 168, 164],
     }
 }
 
@@ -378,6 +445,11 @@ fn print_stats(seed: u32) {
     let wn = WorldNoise::new(seed);
     let (mut c, mut e, mut w, mut pv, mut j) = (vec![], vec![], vec![], vec![], vec![]);
     let (mut tp, mut hu) = (vec![], vec![]);
+    let mut sy = vec![];
+    let (mut mountain, mut foothill, mut rolling, mut plateau, mut wet_basin) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    let mut biome_counts = [0u32; 29];
+    let mut biome_grid = vec![];
     let mut z = -600;
     while z < 600 {
         let mut x = -600;
@@ -391,6 +463,19 @@ fn print_stats(seed: u32) {
             let cl = wn.climate(x, z);
             tp.push(cl.temperature as f64);
             hu.push(cl.humidity as f64);
+            let surf = wn.surface_height(x, z);
+            sy.push(surf as f64);
+            let (m, f, r, p, wb) = wn.debug_landform(x, z);
+            mountain.push(m as f64);
+            foothill.push(f as f64);
+            rolling.push(r as f64);
+            plateau.push(p as f64);
+            wet_basin.push(wb as f64);
+            let bid = biome_at(cl, surf).id() as usize;
+            if bid < biome_counts.len() {
+                biome_counts[bid] += 1;
+            }
+            biome_grid.push(Biome::from_id(bid as u8));
             x += 5;
         }
         z += 5;
@@ -414,6 +499,89 @@ fn print_stats(seed: u32) {
     stat(&mut j, "jagged");
     stat(&mut tp, "temp");
     stat(&mut hu, "humid");
+    stat(&mut sy, "surf_y");
+    stat(&mut mountain, "mountain");
+    stat(&mut foothill, "foothill");
+    stat(&mut rolling, "rolling");
+    stat(&mut plateau, "plateau");
+    stat(&mut wet_basin, "wetbasin");
+
+    let total_cols = biome_counts.iter().sum::<u32>() as f64;
+    let mut census: Vec<(f64, &str)> = (0..29u8)
+        .map(|id| {
+            let pct = 100.0 * biome_counts[id as usize] as f64 / total_cols;
+            (pct, Biome::from_id(id).name())
+        })
+        .filter(|(p, _)| *p > 0.0)
+        .collect();
+    census.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    let line: Vec<String> = census.iter().map(|(p, n)| format!("{n} {p:.1}%")).collect();
+    println!("biomes   {}", line.join(", "));
+
+    let grid_n = (1200 / 5) as usize;
+    let mut components: Vec<(usize, &str)> = (0..29u8)
+        .map(|id| {
+            let biome = Biome::from_id(id);
+            (
+                largest_biome_component(&biome_grid, grid_n, biome),
+                biome.name(),
+            )
+        })
+        .filter(|(size, _)| *size > 0)
+        .collect();
+    components.sort_by(|a, b| b.0.cmp(&a.0));
+    let line: Vec<String> = components
+        .iter()
+        .take(8)
+        .map(|(size, name)| format!("{name} {size}"))
+        .collect();
+    println!(
+        "largest  {} sampled cells @ 5-block stride",
+        line.join(", ")
+    );
+}
+
+fn largest_biome_component(grid: &[Biome], n: usize, target: Biome) -> usize {
+    let mut seen = vec![false; grid.len()];
+    let mut best = 0usize;
+    let mut stack = Vec::new();
+
+    for i in 0..grid.len() {
+        if seen[i] || grid[i] != target {
+            continue;
+        }
+
+        seen[i] = true;
+        stack.push(i);
+        let mut size = 0usize;
+        while let Some(cur) = stack.pop() {
+            size += 1;
+            let x = cur % n;
+            let z = cur / n;
+            let push = |nx: usize, nz: usize, seen: &mut [bool], stack: &mut Vec<usize>| {
+                let ni = nz * n + nx;
+                if !seen[ni] && grid[ni] == target {
+                    seen[ni] = true;
+                    stack.push(ni);
+                }
+            };
+            if x > 0 {
+                push(x - 1, z, &mut seen, &mut stack);
+            }
+            if x + 1 < n {
+                push(x + 1, z, &mut seen, &mut stack);
+            }
+            if z > 0 {
+                push(x, z - 1, &mut seen, &mut stack);
+            }
+            if z + 1 < n {
+                push(x, z + 1, &mut seen, &mut stack);
+            }
+        }
+        best = best.max(size);
+    }
+
+    best
 }
 
 /// Audit overhangs + floating debris across a region. An "overhang ceiling" is a
@@ -436,7 +604,7 @@ fn audit(seed: u32) {
     let mut deepest_floor = i32::MAX;
     let (mut tall, mut tall_chunk, mut tall_xz) = (0i32, (0, 0), (0usize, 0usize));
     let (mut best_oh, mut oh_loc) = (0u32, (0i32, 0i32));
-    let mut biome_counts = [0u32; 17];
+    let mut biome_counts = [0u32; 29];
     let mut total_cols = 0u32;
     for cz in 0..n {
         for cx in 0..n {
@@ -510,7 +678,7 @@ fn audit(seed: u32) {
         "  overhangiest column: {best_oh} ceilings @ (x{},z{})",
         oh_loc.0, oh_loc.1
     );
-    let mut census: Vec<(f64, &str)> = (0..17u8)
+    let mut census: Vec<(f64, &str)> = (0..29u8)
         .map(|id| {
             let pct = 100.0 * biome_counts[id as usize] as f64 / total_cols as f64;
             (pct, Biome::from_id(id).name())
@@ -924,6 +1092,59 @@ fn main() {
         ),
         "flood" => flood_audit(seed),
         "river" => render_river(seed, &out),
+        "bench" => bench(seed, arg.unwrap_or(24)),
         _ => render_topdown(seed, &out, false),
     }
+}
+
+/// Time the game per-chunk generation path (one reused generator, like the
+/// worker), reporting chunks/sec over a `radius`-chunk square.
+fn bench(seed: u32, radius: i32) {
+    use llamacraft::worldgen::{driver::ChunkGenerator, generate_chunk_with};
+    let generator = ChunkGenerator::new(seed);
+    // Warm up (touch a few chunks) so allocation/codepaths are hot.
+    for cz in -1..=1 {
+        for cx in -1..=1 {
+            let _ = generate_chunk_with(&generator, cx, cz);
+        }
+    }
+    let n = (2 * radius + 1) * (2 * radius + 1);
+    let t0 = std::time::Instant::now();
+    let mut acc = 0u64;
+    let (mut t_gen, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0);
+    for cz in -radius..=radius {
+        for cx in -radius..=radius {
+            let region = generator.region(cx, cz);
+            let s = std::time::Instant::now();
+            let mut chunk = generator.generate(&region, cx, cz);
+            t_gen += s.elapsed().as_secs_f64();
+            let s = std::time::Instant::now();
+            generator.place_underground(&mut chunk);
+            t_ug += s.elapsed().as_secs_f64();
+            let s = std::time::Instant::now();
+            generator.place_vegetation(&mut chunk);
+            t_veg += s.elapsed().as_secs_f64();
+            let s = std::time::Instant::now();
+            generator.place_features(&mut chunk, &region);
+            t_feat += s.elapsed().as_secs_f64();
+            acc = acc.wrapping_add(chunk.blocks_slice()[0] as u64);
+        }
+    }
+    let dt = t0.elapsed();
+    let per = dt.as_secs_f64() * 1000.0 / n as f64;
+    let ms = |t: f64| t * 1000.0 / n as f64;
+    println!(
+        "bench: {n} chunks {:.3}s = {:.3} ms/chunk ({:.0}/s) [acc {acc}]",
+        dt.as_secs_f64(),
+        per,
+        n as f64 / dt.as_secs_f64()
+    );
+    println!(
+        "  generate {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
+        ms(t_gen),
+        ms(t_ug),
+        ms(t_veg),
+        ms(t_feat)
+    );
+    let _ = generate_chunk_with;
 }

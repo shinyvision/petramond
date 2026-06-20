@@ -15,18 +15,31 @@
 
 pub mod placement;
 pub mod placers;
+pub mod scatter;
 pub mod tree;
+pub mod vegetation;
 
 use crate::biome::Biome;
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use crate::mathh::IVec3;
 
-use super::carve::CarverSet;
-use super::climate::source::BiomeSource;
+use super::classic::world::{map_biome, CascadeWorld, RegionCells};
 use super::data;
-use super::field_cache::FieldCache;
 use super::rng::FeatureRng;
+
+/// Highest surface a tree will root on — above this (bare snow/stone peaks) the
+/// canopy is left off regardless of biome.
+const TREELINE: i32 = 118;
+
+/// Biome-driven surface + biome over the chunk plus the feature margin (and the
+/// spacing-rule neighbourhood), computed in ONE cascade region pass. The driver
+/// reuses the result for terrain fill too.
+pub fn feature_region(world: &CascadeWorld, ox: i32, oz: i32) -> RegionCells {
+    let pad = super::proto::MARGIN + TREE_SPACING_RADIUS;
+    let w = (CHUNK_SX as i32 + 2 * pad) as usize;
+    world.region(ox - pad, oz - pad, w, w)
+}
 
 /// Decoration step ordering. Features declare which step they run in so the
 /// driver can place all of step N before step N+1. P4 iterates these; P3
@@ -136,6 +149,17 @@ impl<'a> FeatureCtx<'a> {
             self.chunk.set_block_raw(x, y, z, b.id());
         }
     }
+
+    /// Replace a voxel only when it currently equals `expect`. Used by the
+    /// underground ore / stone-blob veins, which overwrite Stone (and never air,
+    /// dirt, or an already-placed ore). World coords; clipped to this chunk.
+    pub fn replace_block(&mut self, p: IVec3, expect: Block, b: Block) {
+        if let Some((x, y, z)) = self.local(p) {
+            if self.chunk.block_raw(x, y, z) == expect.id() {
+                self.chunk.set_block_raw(x, y, z, b.id());
+            }
+        }
+    }
 }
 
 /// Salt distinguishing the tree-feature positional RNG stream from other users.
@@ -171,24 +195,12 @@ fn tree_candidate_beats(
         || (lhs_priority == rhs_priority && (lhs_wz, lhs_wx) < (rhs_wz, rhs_wx))
 }
 
-fn tree_candidate_at(
-    cache: &mut FieldCache,
-    carvers: &CarverSet,
-    biome_source: &dyn BiomeSource,
-    seed: u32,
-    wx: i32,
-    wz: i32,
-) -> Option<TreeCandidate> {
-    let surf = cache.surf(wx, wz);
-    // Anchor to the ACTUAL top solid block, which on a river column is the
-    // carved valley floor, not the natural heightfield surface.
-    let river = cache.river(wx, wz);
-    let plan = carvers.smoothed_plan(cache, wx, wz, river, surf);
-    let anchor = if plan.carve { plan.river_floor } else { surf };
-    // No trees in water/on the riverbed, and a treeline at the overhang onset
-    // (y96): above it columns can be 3-D carved, so a tree anchored at the
-    // heightfield `surf` could float or bury.
-    if anchor <= SEA_LEVEL || surf > 95 {
+fn tree_candidate_at(field: &RegionCells, seed: u32, wx: i32, wz: i32) -> Option<TreeCandidate> {
+    // Anchor on the biome-driven surface. River/ocean columns are below sea level
+    // (the river biome is low ground), so the water guard keeps trees off them.
+    let (surf, biome_id) = field.at(wx, wz);
+    let anchor = surf;
+    if anchor <= SEA_LEVEL || surf > TREELINE {
         return None;
     }
     // place_oak height guard (origin too low / too near the world top).
@@ -196,9 +208,7 @@ fn tree_candidate_at(
         return None;
     }
 
-    // Biome from the natural surface (matches the column's stored biome id).
-    let climate = cache.climate(wx, wz);
-    let biome = biome_source.pick(&climate, surf);
+    let biome = map_biome(biome_id);
     let density = data::features::tree_density(biome);
     if density <= 0.0 {
         return None;
@@ -219,9 +229,7 @@ fn tree_candidate_at(
 
 fn tree_spacing_allows(
     candidate: TreeCandidate,
-    cache: &mut FieldCache,
-    carvers: &CarverSet,
-    biome_source: &dyn BiomeSource,
+    field: &RegionCells,
     seed: u32,
     wx: i32,
     wz: i32,
@@ -233,7 +241,7 @@ fn tree_spacing_allows(
             }
             let nx = wx + dx;
             let nz = wz + dz;
-            if let Some(other) = tree_candidate_at(cache, carvers, biome_source, seed, nx, nz) {
+            if let Some(other) = tree_candidate_at(field, seed, nx, nz) {
                 if tree_candidate_beats(other.priority, nx, nz, candidate.priority, wx, wz) {
                     return false;
                 }
@@ -252,25 +260,18 @@ fn tree_spacing_allows(
 /// deterministic three-block spacing rule. Features write in world coords and
 /// are clipped to this chunk, so seams are continuous with no double-placement
 /// and the old chunk-edge skip is gone.
-pub fn place_features(
-    chunk: &mut Chunk,
-    cache: &mut FieldCache,
-    carvers: &CarverSet,
-    biome_source: &dyn BiomeSource,
-    seed: u32,
-) {
+pub fn place_features(chunk: &mut Chunk, field: &RegionCells, seed: u32) {
     let mut ctx = FeatureCtx::new(chunk);
     let (ox, oz) = (ctx.ox, ctx.oz);
     let margin = super::proto::MARGIN;
 
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
-            let Some(candidate) = tree_candidate_at(cache, carvers, biome_source, seed, wx, wz)
-            else {
+            let Some(candidate) = tree_candidate_at(field, seed, wx, wz) else {
                 continue;
             };
 
-            if !tree_spacing_allows(candidate, cache, carvers, biome_source, seed, wx, wz) {
+            if !tree_spacing_allows(candidate, field, seed, wx, wz) {
                 continue;
             }
 
@@ -288,41 +289,33 @@ pub fn place_features(
 
 #[cfg(test)]
 mod tests {
-    use super::{tree_candidate_at, tree_spacing_allows, TREE_SPACING_RADIUS};
+    use super::{feature_region, tree_candidate_at, tree_spacing_allows, TREE_SPACING_RADIUS};
     use crate::biome::Biome;
     use crate::block::Block;
     use crate::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-    use crate::worldgen::carve::CarverSet;
-    use crate::worldgen::climate::source::CASCADE;
+    use crate::worldgen::classic::world::CascadeWorld;
     use crate::worldgen::data;
-    use crate::worldgen::field_cache::FieldCache;
     use crate::worldgen::generate_chunk;
-    use crate::worldgen::noise::HeightField;
 
     fn is_tree(id: u8) -> bool {
         id == Block::OakLog.id() || id == Block::OakLeaves.id()
     }
 
     fn accepted_tree_origins(seed: u32, chunk_radius: i32) -> Vec<(i32, i32)> {
-        let field = HeightField::new(seed);
-        let carvers = CarverSet::default();
+        let world = CascadeWorld::new(seed);
         let mut origins = Vec::new();
 
         for cz in -chunk_radius..=chunk_radius {
             for cx in -chunk_radius..=chunk_radius {
-                let mut cache = FieldCache::new(&field, cx, cz);
                 let ox = cx * CHUNK_SX as i32;
                 let oz = cz * CHUNK_SZ as i32;
+                let field = feature_region(&world, ox, oz);
                 for wz in oz..(oz + CHUNK_SZ as i32) {
                     for wx in ox..(ox + CHUNK_SX as i32) {
-                        let Some(candidate) =
-                            tree_candidate_at(&mut cache, &carvers, &CASCADE, seed, wx, wz)
-                        else {
+                        let Some(candidate) = tree_candidate_at(&field, seed, wx, wz) else {
                             continue;
                         };
-                        if tree_spacing_allows(
-                            candidate, &mut cache, &carvers, &CASCADE, seed, wx, wz,
-                        ) {
+                        if tree_spacing_allows(candidate, &field, seed, wx, wz) {
                             origins.push((wx, wz));
                         }
                     }
@@ -336,15 +329,19 @@ mod tests {
     #[test]
     fn forest_like_tree_density_values_are_thinned() {
         assert_eq!(data::features::tree_density(Biome::Forest), 0.055);
-        assert_eq!(data::features::tree_density(Biome::BirchForest), 0.040);
-        assert_eq!(data::features::tree_density(Biome::Taiga), 0.014);
-        assert_eq!(data::features::tree_density(Biome::SnowyTaiga), 0.011);
+        assert_eq!(data::features::tree_density(Biome::BirchForest), 0.045);
+        assert_eq!(data::features::tree_density(Biome::Taiga), 0.026);
+        assert_eq!(data::features::tree_density(Biome::SnowyTaiga), 0.020);
+        assert_eq!(data::features::tree_density(Biome::Jungle), 0.070);
+        assert_eq!(data::features::tree_density(Biome::DarkForest), 0.075);
     }
 
     #[test]
     fn tree_origin_spacing_rule_enforces_three_block_radius() {
+        // Sample a wide area so we cross enough forested biomes to collect a
+        // meaningful tree population (near origin many regions are plains/ocean).
         for seed in [1u32, 7, 42, 0x1234_5678] {
-            let origins = accepted_tree_origins(seed, 4);
+            let origins = accepted_tree_origins(seed, 10);
             assert!(
                 origins.len() > 10,
                 "spacing test sampled too few tree origins for seed {seed:#x}"

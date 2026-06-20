@@ -4,10 +4,10 @@ use crate::block::Block;
 use crate::mathh::IVec3;
 use crate::worldgen::feature::FeatureCtx;
 
-/// Canonical Minecraft fancy-oak leaf disc (`WorldGenBigTree.crossSection`): a
-/// flat horizontal disc of leaves at world Y `y`, radius `radius` (float). The
-/// `(|dx|+0.5)² + (|dz|+0.5)² <= radius²` test rounds the corners exactly like
-/// vanilla; the loop bound `(radius + 0.618).floor()` matches its integer reach.
+/// Canonical fancy-oak leaf disc: a flat horizontal disc of leaves at world Y
+/// `y`, radius `radius` (float). The `(|dx|+0.5)² + (|dz|+0.5)² <= radius²` test
+/// rounds the corners; the loop bound `(radius + 0.618).floor()` matches the
+/// reference disc's integer reach.
 /// Over Air/Water only (== `set_leaf`).
 pub fn leaf_disc(ctx: &mut FeatureCtx, center: IVec3, radius: f32, leaf: Block) {
     let ri = (radius + 0.618).floor() as i32;

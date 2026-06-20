@@ -34,6 +34,10 @@ pub enum SurfaceCond {
     SurfaceAboveY(i32),
     /// y is within N blocks below the column's surface top (depth <= N).
     DepthFromTop(u32),
+    /// The evaluated voxel's world Y is in `[lo, hi)`. Absolute-Y strata — used
+    /// for badlands terracotta banding, where the colour layers are horizontal
+    /// across the whole biome regardless of local surface height.
+    YBand(i32, i32),
     /// The column's surface is at or below sea level.
     Underwater,
 }
@@ -54,6 +58,7 @@ impl SurfaceCond {
             SurfaceCond::BelowY(n) => c.y < *n,
             SurfaceCond::SurfaceAboveY(n) => c.surf_y > *n,
             SurfaceCond::DepthFromTop(n) => c.depth_from_top <= *n,
+            SurfaceCond::YBand(lo, hi) => c.y >= *lo && c.y < *hi,
             SurfaceCond::Underwater => c.surf_y <= SEA_LEVEL,
         }
     }

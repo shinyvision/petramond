@@ -1,6 +1,6 @@
 //! Foliage placers — build a tree's leaves around the trunk's attach points.
 //!
-//! Canopies follow the canonical Minecraft oak silhouette: two wide layers with
+//! Canopies follow the canonical broadleaf-oak silhouette: two wide layers with
 //! trimmed corners, a narrower layer, and a small cap — not a sphere. Iteration
 //! order and the per-cell RNG draws are fixed so cross-chunk seam replay stays
 //! deterministic (a tree rooted in a neighbour materialises identically here).
@@ -48,7 +48,7 @@ fn leaf_layer(
     }
 }
 
-/// Canonical Minecraft oak canopy (vanilla `BlobFoliagePlacer`, radius 2).
+/// Canonical broadleaf oak canopy (a blob foliage placer, radius 2).
 ///
 /// Four leaf layers attach one block ABOVE the top log (`topY = topLog + 1`) and
 /// run `topY-3 ..= topY`. Per-layer radius, bottom→top, is `[r, r, r-1, r-1]`:
@@ -126,6 +126,37 @@ impl FoliagePlacer for DroopyFoliage {
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct - 1, cz + lz), leaf);
             }
+        }
+    }
+}
+
+/// Conifer canopy (spruce / pine): a narrow spire of stacked square layers that
+/// widen toward the bottom in a two-step cycle, giving the classic drooping
+/// "skirts" and a single-leaf tip. Covers the upper trunk so taigas read as
+/// pointed evergreens, not round blobs.
+pub struct ConicalSpruceFoliage;
+
+impl FoliagePlacer for ConicalSpruceFoliage {
+    fn place(
+        &self,
+        ctx: &mut FeatureCtx,
+        attach: &[IVec3],
+        radius: i32,
+        leaf: Block,
+        rng: &mut FeatureRng,
+    ) {
+        let a = attach[0];
+        let max_r = radius.max(2);
+        // Single-leaf tip one block above the top log.
+        ctx.set_leaf(IVec3::new(a.x, a.y + 1, a.z), leaf);
+        // Descend from the top log: radius steps 0,0,1,1,2,2,... (clamped), so the
+        // cone widens downward; alternate layers narrow by one for the skirts.
+        let layers = 4 + max_r * 2;
+        for i in 0..layers {
+            let y = a.y - i;
+            let grow = (i / 2).min(max_r);
+            let r = if i % 2 == 1 { (grow - 1).max(0) } else { grow };
+            leaf_layer(ctx, a.x, y, a.z, r, leaf, 0.25, rng);
         }
     }
 }

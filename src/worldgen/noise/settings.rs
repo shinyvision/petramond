@@ -1,9 +1,7 @@
-//! Const noise-sampler settings — the float-parity oracle for `HeightField`.
+//! Const noise-sampler settings for `HeightField`.
 //!
-//! Salts, octaves, and frequencies copied verbatim from the pre-Strata
-//! `gen.rs::WorldNoise::new`. These are the single source of truth for sampler
-//! construction; changing any value here changes generated terrain (and breaks
-//! the genparity gate by design).
+//! Salts, octaves, and frequencies are the single source of truth for sampler
+//! construction. Changing any value here changes generated terrain by design.
 
 /// Per-sampler seed salts, added to the world seed. Verbatim from gen.rs.
 pub const SALT_TEMP: u32 = 0x111;
@@ -30,6 +28,15 @@ pub const WEIRD_FREQ: f64 = 0.0055;
 pub const JAG_OCTAVES: usize = 3;
 pub const JAG_FREQ: f64 = 0.012;
 
+// Climate and landform sample frequencies. Temperature/humidity stay broad
+// enough for readable climate provinces, but not so broad that one forest or
+// savanna dominates an entire generated map. Erosion/depth are shared by biome
+// selection and height shaping; keep these aligned with `HeightField::climate`.
+pub const TEMP_SAMPLE_FREQ: f64 = 0.00160;
+pub const HUMID_SAMPLE_FREQ: f64 = 0.00195;
+pub const EROSION_SAMPLE_FREQ: f64 = 0.000_80;
+pub const DEPTH_SAMPLE_FREQ: f64 = 0.0011;
+
 // River network. A smooth fbm whose ZERO-CONTOUR is the river: `river_strength`
 // carves where |sample| is small, so rivers are the long winding curves of the
 // noise's zero set (connected meanders), not a threshold on a ridged sampler
@@ -45,7 +52,7 @@ pub const JAG_FREQ: f64 = 0.012;
 // centre floods — a narrow channel inside a wide, constant-slope valley.
 pub const RIVER_OCTAVES: usize = 2;
 pub const RIVER_FREQ: f64 = 0.000_75;
-pub const RIVER_HALF: f32 = 15.0;
+pub const RIVER_HALF: f32 = 18.0;
 
 // River meander + width variation. The clean zero-contour of a smooth fbm draws
 // geometric arcs; domain-warping the sample point (a medium-frequency field
@@ -56,7 +63,7 @@ pub const RIVER_WARP_FREQ: f64 = 0.018;
 pub const RIVER_WARP_AMP: f64 = 26.0;
 pub const RIVER_WIDTH_VAR: f32 = 0.35;
 
-// --- Worldgen v2 ("Strata-Relief II") additions ---
+// --- Relief shaping additions ---
 
 /// 3-D overhang carve: a single bare OpenSimplex sampled once per band voxel.
 /// Horizontal frequency is broad (wide shelves); vertical is finer so the warped
@@ -86,3 +93,27 @@ pub const CRAG_FREQ: f64 = 0.013;
 /// irregular ridge systems instead of radially-symmetric smooth domes.
 pub const WARP_FREQ: f64 = 0.0042;
 pub const WARP_AMP: f64 = 64.0;
+
+// --- Caves ---
+//
+// Two flavours, both pure 3-D noise functions of world position (so caves are
+// seamless across chunks with no inter-chunk state):
+//   - SPAGHETTI: two decorrelated OpenSimplex fields, carved where BOTH are near
+//     zero. Each "near zero" set is a 2-D sheet; their intersection is a 1-D
+//     winding curve, i.e. a tunnel. Anisotropic Y keeps tunnels mostly horizontal.
+//   - CHEESE: a single low-frequency field dipping below a threshold -> occasional
+//     large caverns.
+pub const SALT_CAVE_A: u32 = 0xE01;
+pub const SALT_CAVE_B: u32 = 0xE02;
+pub const SALT_CAVE_C: u32 = 0xE03;
+pub const CAVE_FREQ_XZ: f64 = 0.019;
+pub const CAVE_FREQ_Y: f64 = 0.028;
+/// Tunnel half-thickness in noise units: larger = wider tunnels, more of them.
+pub const CAVE_TUNNEL_R: f64 = 0.075;
+pub const CAVE_CHEESE_FREQ: f64 = 0.013;
+/// Cheese carves where the field drops below this (more negative = rarer rooms).
+pub const CAVE_CHEESE_T: f64 = -0.52;
+/// Cave carving Y band: keep a solid floor below and solid rock under the surface
+/// skin above (no surface holes, no breaking the world floor).
+pub const CAVE_MIN_Y: i32 = 5;
+pub const CAVE_SURFACE_BUFFER: i32 = 6;

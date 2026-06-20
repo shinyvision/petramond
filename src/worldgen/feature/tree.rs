@@ -41,7 +41,7 @@ impl Feature for TreeFeature {
     }
 }
 
-/// Big "fancy oak" (== vanilla `WorldGenBigTree`): a SINGLE-column trunk (the 2×2
+/// Big "fancy oak": a SINGLE-column trunk (the 2×2
 /// trunk belongs to dark oak / jungle, not oak), a handful of limbs angling up
 /// and out to leaf blobs, and a rounded central crown of stacked leaf discs.
 pub struct GiantOakFeature {

@@ -4,45 +4,46 @@ use super::Biome;
 pub(super) const DEEP_OCEAN_MAX_Y: i32 = 46;
 pub(super) const OCEAN_MAX_Y: i32 = 61;
 pub(super) const BEACH_MAX_Y: i32 = 64;
+pub(super) const DEEP_OCEAN_CONT_MAX: f32 = 0.28;
+pub(super) const OCEAN_CONT_MAX: f32 = 0.46;
+pub(super) const BEACH_CONT_MIN: f32 = 0.40;
+pub(super) const BEACH_CONT_MAX: f32 = 0.58;
 pub(super) const BEACH_WEIRDNESS_MIN: f32 = -0.05;
 pub(super) const BEACH_TEMP_MIN: f32 = 0.30;
-pub(super) const MOUNTAIN_MIN_Y: i32 = 100;
-pub(super) const FOOTHILLS_MIN_Y: i32 = 88;
+pub(super) const MOUNTAIN_MIN_Y: i32 = 92;
+pub(super) const FOOTHILLS_MIN_Y: i32 = 80;
 pub(super) const SNOWY_PEAK_TEMP_MAX: f32 = 0.30;
 pub(super) const WETLAND_MAX_ABOVE_SEA: i32 = 6;
+pub(super) const INLAND_WETLAND_MAX_ABOVE_SEA: i32 = 18;
 pub(super) const WETLAND_HUMIDITY_MIN: f32 = 0.60;
-pub(super) const SWAMP_HUMIDITY_MIN: f32 = 0.74;
+pub(super) const SWAMP_HUMIDITY_MIN: f32 = 0.70;
+pub(super) const WETLAND_BASIN_MIN: f32 = 0.28;
+pub(super) const SWAMP_BASIN_MIN: f32 = 0.44;
 pub(super) const COLD_TEMP_MAX: f32 = 0.30;
-pub(super) const HOT_TEMP_MIN: f32 = 0.70;
+pub(super) const HOT_TEMP_MIN: f32 = 0.66;
 pub(super) const HUMID_HUMIDITY_MIN: f32 = 0.58;
 pub(super) const MESIC_HUMIDITY_MIN: f32 = 0.40;
 pub(super) const TAIGA_TEMP_MAX: f32 = 0.38;
 pub(super) const BIRCH_TEMP_MIN: f32 = 0.62;
 pub(super) const TEMPERATE_DRY_DEFAULT: Biome = Biome::Plains;
 
-pub(super) const COLD_LOWLAND_BANDS: &[HumidityBand] = &[
-    HumidityBand {
-        max_humidity: 0.42,
-        biome: Biome::SnowyTundra,
-    },
-    HumidityBand {
-        max_humidity: f32::INFINITY,
-        biome: Biome::SnowyTaiga,
-    },
-];
-
 pub(super) const HOT_LOWLAND_BANDS: &[HumidityBand] = &[
     HumidityBand {
-        max_humidity: 0.32,
+        max_humidity: 0.42,
         biome: Biome::Desert,
     },
     HumidityBand {
-        max_humidity: 0.55,
+        max_humidity: 0.58,
         biome: Biome::Savanna,
     },
     HumidityBand {
-        max_humidity: f32::INFINITY,
+        max_humidity: 0.80,
         biome: Biome::Forest,
+    },
+    // Hot + very humid lowland reads as jungle.
+    HumidityBand {
+        max_humidity: f32::INFINITY,
+        biome: Biome::Jungle,
     },
 ];
 
@@ -182,6 +183,102 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         grass_color: [0.30, 0.62, 0.24],
         foliage_color: [0.26, 0.58, 0.20],
         water_color: [0.14, 0.42, 0.58],
+    },
+    BiomeDef {
+        biome: Biome::Jungle,
+        name: "jungle",
+        fog_color: [0.46, 0.74, 0.62],
+        grass_color: [0.22, 0.74, 0.10],
+        foliage_color: [0.18, 0.66, 0.06],
+        water_color: [0.14, 0.52, 0.74],
+    },
+    BiomeDef {
+        biome: Biome::Badlands,
+        name: "badlands",
+        fog_color: [0.86, 0.66, 0.45],
+        grass_color: [0.62, 0.50, 0.18],
+        foliage_color: [0.58, 0.46, 0.16],
+        water_color: [0.14, 0.46, 0.74],
+    },
+    BiomeDef {
+        biome: Biome::DarkForest,
+        name: "dark_forest",
+        fog_color: [0.42, 0.58, 0.62],
+        grass_color: [0.20, 0.50, 0.14],
+        foliage_color: [0.16, 0.44, 0.10],
+        water_color: [0.10, 0.40, 0.66],
+    },
+    BiomeDef {
+        biome: Biome::OldGrowthTaiga,
+        name: "old_growth_taiga",
+        fog_color: [0.56, 0.66, 0.66],
+        grass_color: [0.34, 0.58, 0.30],
+        foliage_color: [0.30, 0.54, 0.28],
+        water_color: [0.12, 0.42, 0.66],
+    },
+    BiomeDef {
+        biome: Biome::CherryGrove,
+        name: "cherry_grove",
+        fog_color: [0.92, 0.80, 0.86],
+        grass_color: [0.42, 0.78, 0.40],
+        foliage_color: [0.52, 0.80, 0.46],
+        water_color: [0.20, 0.60, 0.86],
+    },
+    BiomeDef {
+        biome: Biome::Meadow,
+        name: "meadow",
+        fog_color: [0.66, 0.84, 0.96],
+        grass_color: [0.36, 0.80, 0.30],
+        foliage_color: [0.32, 0.74, 0.26],
+        water_color: [0.16, 0.52, 0.86],
+    },
+    BiomeDef {
+        biome: Biome::Grove,
+        name: "grove",
+        fog_color: [0.78, 0.84, 0.90],
+        grass_color: [0.50, 0.66, 0.50],
+        foliage_color: [0.42, 0.62, 0.44],
+        water_color: [0.16, 0.48, 0.80],
+    },
+    BiomeDef {
+        biome: Biome::SnowySlopes,
+        name: "snowy_slopes",
+        fog_color: [0.82, 0.86, 0.92],
+        grass_color: [0.70, 0.80, 0.74],
+        foliage_color: [0.64, 0.78, 0.70],
+        water_color: [0.18, 0.50, 0.82],
+    },
+    BiomeDef {
+        biome: Biome::IceSpikes,
+        name: "ice_spikes",
+        fog_color: [0.80, 0.88, 0.94],
+        grass_color: [0.70, 0.82, 0.82],
+        foliage_color: [0.64, 0.80, 0.80],
+        water_color: [0.22, 0.56, 0.86],
+    },
+    BiomeDef {
+        biome: Biome::MushroomFields,
+        name: "mushroom_fields",
+        fog_color: [0.66, 0.58, 0.66],
+        grass_color: [0.56, 0.42, 0.54],
+        foliage_color: [0.50, 0.38, 0.50],
+        water_color: [0.14, 0.46, 0.74],
+    },
+    BiomeDef {
+        biome: Biome::WindsweptHills,
+        name: "windswept_hills",
+        fog_color: [0.64, 0.74, 0.82],
+        grass_color: [0.46, 0.64, 0.42],
+        foliage_color: [0.40, 0.60, 0.38],
+        water_color: [0.12, 0.46, 0.80],
+    },
+    BiomeDef {
+        biome: Biome::StonyPeaks,
+        name: "stony_peaks",
+        fog_color: [0.74, 0.76, 0.78],
+        grass_color: [0.56, 0.62, 0.54],
+        foliage_color: [0.50, 0.58, 0.50],
+        water_color: [0.16, 0.50, 0.82],
     },
 ];
 

@@ -119,6 +119,128 @@ static DEEP_OCEAN_FLOOR: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Block(Block::Stone),
 ]);
 
+// Old-growth taiga / grove floor: podzol cap over dirt over stone.
+static PODZOL_TOP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::Underwater,
+        then: &SurfaceRule::Block(Block::Dirt),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(0),
+        then: &SurfaceRule::Block(Block::Podzol),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(3),
+        then: &SurfaceRule::Block(Block::Dirt),
+    },
+    SurfaceRule::Block(Block::Stone),
+]);
+
+// Mushroom fields: mycelium cap over dirt over stone.
+static MYCELIUM_TOP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::Underwater,
+        then: &SurfaceRule::Block(Block::Dirt),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(0),
+        then: &SurfaceRule::Block(Block::Mycelium),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(3),
+        then: &SurfaceRule::Block(Block::Dirt),
+    },
+    SurfaceRule::Block(Block::Stone),
+]);
+
+// Ice spikes: snow-block cap with a packed-ice underlayer over stone.
+static ICE_TOP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::Underwater,
+        then: &SurfaceRule::Block(Block::PackedIce),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(1),
+        then: &SurfaceRule::Block(Block::SnowBlock),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(3),
+        then: &SurfaceRule::Block(Block::PackedIce),
+    },
+    SurfaceRule::Block(Block::Stone),
+]);
+
+// Stony peaks: bare stone, calcite cap on the very highest columns.
+static STONY_CALCITE_CAP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(0),
+        then: &SurfaceRule::Block(Block::Calcite),
+    },
+    SurfaceRule::Block(Block::Stone),
+]);
+static STONY_TOP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::SurfaceAboveY(150),
+        then: &STONY_CALCITE_CAP,
+    },
+    SurfaceRule::Block(Block::Stone),
+]);
+
+// Badlands: a thin red-sand cap over horizontal terracotta strata (banded by
+// absolute world Y so the layers read as continuous mesa bands across the biome),
+// red sandstone below sea level. No grass — `no-grass-below-sea` is moot here.
+static BADLANDS_TOP: SurfaceRule = SurfaceRule::Sequence(&[
+    SurfaceRule::Condition {
+        when: SurfaceCond::Underwater,
+        then: &SurfaceRule::Block(Block::RedSandstone),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::DepthFromTop(0),
+        then: &SurfaceRule::Block(Block::RedSand),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(64, 67),
+        then: &SurfaceRule::Block(Block::WhiteTerracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(67, 70),
+        then: &SurfaceRule::Block(Block::Terracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(70, 73),
+        then: &SurfaceRule::Block(Block::OrangeTerracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(73, 76),
+        then: &SurfaceRule::Block(Block::Terracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(76, 80),
+        then: &SurfaceRule::Block(Block::YellowTerracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(80, 84),
+        then: &SurfaceRule::Block(Block::BrownTerracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(84, 88),
+        then: &SurfaceRule::Block(Block::Terracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(88, 92),
+        then: &SurfaceRule::Block(Block::RedTerracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(92, 96),
+        then: &SurfaceRule::Block(Block::Terracotta),
+    },
+    SurfaceRule::Condition {
+        when: SurfaceCond::YBand(96, 220),
+        then: &SurfaceRule::Block(Block::OrangeTerracotta),
+    },
+    SurfaceRule::Block(Block::RedSandstone),
+]);
+
 // Wetland / swamp: sand at/under the waterline, grass + dirt above.
 static WETLAND_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
@@ -205,6 +327,54 @@ pub static BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::Wetland,
         surface: &WETLAND_TOP,
     },
+    BiomeDef {
+        biome: Biome::Jungle,
+        surface: &PLAINS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::Badlands,
+        surface: &BADLANDS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::DarkForest,
+        surface: &PLAINS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::OldGrowthTaiga,
+        surface: &PODZOL_TOP,
+    },
+    BiomeDef {
+        biome: Biome::CherryGrove,
+        surface: &PLAINS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::Meadow,
+        surface: &PLAINS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::Grove,
+        surface: &SNOW_TOP,
+    },
+    BiomeDef {
+        biome: Biome::SnowySlopes,
+        surface: &SNOW_TOP,
+    },
+    BiomeDef {
+        biome: Biome::IceSpikes,
+        surface: &ICE_TOP,
+    },
+    BiomeDef {
+        biome: Biome::MushroomFields,
+        surface: &MYCELIUM_TOP,
+    },
+    BiomeDef {
+        biome: Biome::WindsweptHills,
+        surface: &FOOTHILLS_TOP,
+    },
+    BiomeDef {
+        biome: Biome::StonyPeaks,
+        surface: &STONY_TOP,
+    },
 ];
 
 /// Look up a biome's definition by id — O(1), because `BIOME_DEFS` is ordered to
@@ -226,10 +396,10 @@ mod tests {
     #[test]
     fn defs_are_id_ordered() {
         // O(1) `def()` relies on row i holding the biome whose id == i.
-        for id in 0u8..=16 {
+        for id in 0u8..=28 {
             let b = Biome::from_id(id);
             assert_eq!(BIOME_DEFS[id as usize].biome, b, "row {id} != {b:?}");
         }
-        assert_eq!(BIOME_DEFS.len(), 17);
+        assert_eq!(BIOME_DEFS.len(), 29);
     }
 }

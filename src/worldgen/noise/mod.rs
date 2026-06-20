@@ -8,6 +8,7 @@
 
 pub mod height;
 pub mod settings;
+pub mod spline;
 
 pub use height::HeightField;
 
@@ -49,5 +50,10 @@ impl WorldNoise {
     /// Debug: raw weirdness sample at a column.
     pub fn debug_weirdness(&self, x: i32, z: i32) -> f64 {
         self.field.debug_weirdness(x, z)
+    }
+
+    /// Debug: landform weights (mountain, foothill, rolling, plateau, wet_basin).
+    pub fn debug_landform(&self, x: i32, z: i32) -> (f32, f32, f32, f32, f32) {
+        self.field.debug_landform(x, z)
     }
 }

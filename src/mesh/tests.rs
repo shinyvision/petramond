@@ -20,6 +20,37 @@ fn shade_table_matches_face_shade() {
     assert_eq!(SHADES, [1.00, 0.85, 0.75, 0.55]);
 }
 
+/// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
+/// drawn in both windings, and does NOT cull its supporting block's faces.
+#[test]
+fn cross_plant_emits_double_sided_billboards() {
+    let air = |_: i32, _: i32, _: i32| 0u8;
+    let biome0 = |_: i32, _: i32| 0u8;
+    let light = |_: i32, _: i32, _: i32| SKY_FULL;
+
+    // Bare stone cube at an interior voxel: all 6 faces drawn (air neighbours).
+    let mut bare = Chunk::new(0, 0);
+    bare.set_block_raw(8, 64, 8, Block::Stone.id());
+    let m0 = build_mesh(&bare, air, biome0, light);
+    assert_eq!(m0.opaque.len(), 24, "interior stone cube should emit 6 quads");
+
+    // Same, plus a short-grass plant on top.
+    let mut withplant = Chunk::new(0, 0);
+    withplant.set_block_raw(8, 64, 8, Block::Stone.id());
+    withplant.set_block_raw(8, 65, 8, Block::ShortGrass.id());
+    let m1 = build_mesh(&withplant, air, biome0, light);
+
+    // Plant adds exactly 2 planes x 4 verts = 8 verts, and 2 planes x (6 front +
+    // 6 back) = 24 indices. The stone's faces are untouched (plant is non-opaque).
+    assert_eq!(m1.opaque.len() - m0.opaque.len(), 8, "plant should add 8 verts");
+    assert_eq!(
+        m1.opaque_idx.len() - m0.opaque_idx.len(),
+        24,
+        "plant should add 24 indices (both windings)"
+    );
+    assert!(m1.transparent.is_empty(), "plant must not feed the alpha pass");
+}
+
 /// Leaves must render in the OPAQUE pass, not the alpha-blended one. Proof: a
 /// chunk that has leaves but NO water must produce an empty transparent buffer
 /// (only water feeds it now) and a non-empty opaque buffer.

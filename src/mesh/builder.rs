@@ -1,9 +1,9 @@
 use crate::atlas::Tile;
 use crate::biome::Biome;
-use crate::block::Block;
+use crate::block::{Block, RenderShape};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
 
-use super::face::{quad_for, should_flip, vertex_ao, Face, FACES};
+use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::vertex::{ChunkMesh, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -37,8 +37,16 @@ enum TintKind {
 fn tile_tint(tile: Tile) -> Option<TintKind> {
     match tile {
         Tile::GrassTop => Some(TintKind::Grass),
+        Tile::ShortGrass => Some(TintKind::Grass),
+        Tile::Fern => Some(TintKind::Grass),
         Tile::Water => Some(TintKind::Water),
         Tile::OakLeaves => Some(TintKind::Foliage),
+        Tile::AcaciaLeaves => Some(TintKind::Foliage),
+        Tile::BirchLeaves => Some(TintKind::Foliage),
+        Tile::DarkOakLeaves => Some(TintKind::Foliage),
+        Tile::JungleLeaves => Some(TintKind::Foliage),
+        Tile::MangroveLeaves => Some(TintKind::Foliage),
+        Tile::SpruceLeaves => Some(TintKind::Foliage),
         _ => None,
     }
 }
@@ -183,6 +191,36 @@ pub fn build_mesh_with_options(
                     continue;
                 }
 
+                // Cross-model plants: two diagonal billboard quads in the opaque
+                // (cutout) pass, then skip the cube face loop. They never cull or
+                // get culled (non-opaque), carry no directional shade or AO, and
+                // sample their own cell's skylight.
+                if block.render_shape() == RenderShape::Cross {
+                    let ci = z * CHUNK_SX + x;
+                    let tile = block.tiles()[0];
+                    let tint = match tile_tint(tile) {
+                        Some(TintKind::Grass) => tint_grass[ci],
+                        Some(TintKind::Foliage) => tint_foliage[ci],
+                        Some(TintKind::Water) => tint_water[ci],
+                        None => [1.0, 1.0, 1.0],
+                    };
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let l = neighbour_light(wx, y as i32, wz) as u32;
+                    let sky6 = ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    emit_cross(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx as f32,
+                        y as f32,
+                        wz as f32,
+                        tile,
+                        tint,
+                        sky6,
+                    );
+                    continue;
+                }
+
                 // Only water is alpha-blended; leaves render in the OPAQUE pass
                 // (crisp/cutout, no see-through ghosting) per the "fully opaque" rule.
                 let is_water = block == Block::Water;
@@ -260,7 +298,7 @@ pub fn build_mesh_with_options(
                         (t, None, tint)
                     };
 
-                    // Water top face: lower the top by 0.1 to mimic MC water surface.
+                    // Water top face: lower the top by 0.1 for a recessed liquid surface.
                     let y_adjust = if is_water && matches!(face, Face::PosY) {
                         -0.10
                     } else {
@@ -394,5 +432,37 @@ pub fn build_mesh_with_options(
         far_opaque: vec![],
         far_opaque_idx: vec![],
         mesh_dirty: true,
+    }
+}
+
+/// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)
+/// buffer, each drawn in BOTH windings so the plant is visible from both sides
+/// under back-face culling. Flat-lit (AO = 3, shade index 0 = "top", no
+/// directional darkening), biome-tinted for grass/fern; `fs_opaque`'s alpha
+/// discard handles the transparent texels exactly like leaves.
+fn emit_cross(
+    opaque: &mut Vec<Vertex>,
+    opaque_idx: &mut Vec<u32>,
+    bx: f32,
+    y: f32,
+    bz: f32,
+    tile: Tile,
+    tint: [f32; 3],
+    sky6: u32,
+) {
+    // packed: 0..8 tile | 8..10 corner | 10..12 shade(0) | 12..20 overlay |
+    //         20 has-overlay(0) | 21..23 AO | 23..29 skylight.
+    let face_bits = tile as u32;
+    for plane in cross_quads(bx, y, bz) {
+        let start = opaque.len() as u32;
+        for (corner, p) in plane.into_iter().enumerate() {
+            opaque.push(Vertex {
+                pos: p,
+                tint,
+                packed: face_bits | ((corner as u32) << 8) | (3u32 << 21) | (sky6 << 23),
+            });
+        }
+        opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        opaque_idx.extend_from_slice(&[start, start + 2, start + 1, start, start + 3, start + 2]);
     }
 }

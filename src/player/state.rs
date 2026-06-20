@@ -6,7 +6,7 @@ use crate::world::World;
 pub const HALF_W: f32 = 0.3;
 /// Full body height.
 pub const HEIGHT: f32 = 1.8;
-/// Eye height above the feet (matches Minecraft's 1.62).
+/// Eye height above the feet (1.62).
 pub const EYE: f32 = 1.62;
 /// Largest physics sub-step; `app` splits a frame's `dt` into chunks this size
 /// so a long stall can't make one update step move (and tunnel) too far.

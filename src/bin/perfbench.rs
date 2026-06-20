@@ -61,9 +61,9 @@ fn main() {
             let g = ChunkGenerator::new(seed);
             let mut sink = 0u64;
             for &(cx, cz) in &coords {
-                let mut cache = g.field_cache(cx, cz);
-                let mut c = g.generate(cx, cz, &mut cache);
-                g.place_features(&mut c, &mut cache);
+                let region = g.region(cx, cz);
+                let mut c = g.generate(&region, cx, cz);
+                g.place_features(&mut c, &region);
                 sink ^= c.block_raw(0, 64, 0) as u64;
             }
             std::hint::black_box(sink);
