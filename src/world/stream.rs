@@ -101,6 +101,7 @@ impl World {
         let mut ingested: Vec<ChunkPos> = Vec::with_capacity(n);
         for (pos, chunk) in fresh {
             self.chunks.insert(pos, chunk);
+            self.invalidate_section_visibility(pos);
             self.queue_dirty_mesh(pos);
             ingested.push(pos);
         }

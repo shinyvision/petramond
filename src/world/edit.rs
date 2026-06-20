@@ -17,15 +17,18 @@ impl World {
         let lx = (wx & 0x0F) as usize;
         let lz = (wz & 0x0F) as usize;
         let pos = ChunkPos::new(cx, cz);
-        let Some(c) = self.chunks.get_mut(&pos) else {
-            return false;
-        };
-        c.set_block(lx, wy as usize, lz, b);
+        {
+            let Some(c) = self.chunks.get_mut(&pos) else {
+                return false;
+            };
+            c.set_block(lx, wy as usize, lz, b);
 
-        // This chunk's blocks changed, so its cached self-contained skylight must
-        // be refreshed before any mesh samples it.
-        let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(c);
-        c.set_skylight(band, ylo, yhi);
+            // This chunk's blocks changed, so its cached self-contained skylight
+            // must be refreshed before any mesh samples it.
+            let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(c);
+            c.set_skylight(band, ylo, yhi);
+        }
+        self.invalidate_section_visibility(pos);
 
         // Re-mesh the 3x3 so border faces re-sample this chunk's changed edge
         // light and cross-chunk face culling remains correct.

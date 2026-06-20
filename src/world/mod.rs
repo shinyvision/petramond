@@ -9,6 +9,8 @@ mod mesh_queue;
 mod query;
 mod store;
 mod stream;
+mod visibility;
 
 pub use query::WorldQuery;
 pub use store::{World, RENDER_DIST};
+pub use visibility::{SectionConnectivity, SectionFace, SectionPos, SECTION_FACES};

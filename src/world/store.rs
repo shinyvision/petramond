@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::chunk::{Chunk, ChunkPos};
+use crate::chunk::{Chunk, ChunkPos, SECTION_COUNT};
 use crate::mesh::ChunkMesh;
 use crate::worker::WorkerPool;
 
 use super::mesh_queue::DirtyMeshQueue;
+use super::visibility::SectionConnectivity;
 
 pub const RENDER_DIST: i32 = 16;
 
@@ -31,6 +32,8 @@ pub struct World {
     /// Chunks queued for gen (waiting on result).
     pub pending: HashMap<ChunkPos, ()>,
     pub render_dist: i32,
+    pub section_visibility: HashMap<ChunkPos, [SectionConnectivity; SECTION_COUNT]>,
+    pub visibility_revision: u64,
     pub(super) dirty_meshes: DirtyMeshQueue,
     pub(super) last_load_target: Option<LoadTarget>,
 }
@@ -44,6 +47,8 @@ impl World {
             worker: WorkerPool::new(seed),
             pending: HashMap::new(),
             render_dist,
+            section_visibility: HashMap::new(),
+            visibility_revision: 0,
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
         }
@@ -78,5 +83,8 @@ impl World {
         self.meshes.remove(&pos);
         self.pending.remove(&pos);
         self.dirty_meshes.remove(pos);
+        if self.section_visibility.remove(&pos).is_some() {
+            self.bump_visibility_revision();
+        }
     }
 }

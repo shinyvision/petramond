@@ -178,8 +178,9 @@ impl App {
         let time = (now % 3600.0) as f32;
 
         renderer.update_uniforms(&self.cam, fog, time, underwater);
-        renderer.set_selection(self.look.map(|h| h.block));
+        renderer.set_selection(self.look.map(|h| h.outline));
         renderer.sync_meshes(&mut self.world);
+        renderer.update_section_visibility(&mut self.world);
         renderer.render();
     }
 

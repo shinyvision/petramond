@@ -6,7 +6,8 @@ use super::{
     },
     *,
 };
-use crate::mathh::{IVec3, Vec3};
+use crate::block::Block;
+use crate::mathh::{IVec3, SelectionShape, Vec3};
 
 /// No water anywhere -- the dry-land predicate every physics test uses.
 fn dry(_x: i32, _y: i32, _z: i32) -> bool {
@@ -644,6 +645,62 @@ fn raycast_eye_inside_solid_returns_zero_normal() {
     let eye = Vec3::new(0.5, 64.5, 0.5);
     let hit = Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).unwrap();
     assert_eq!(hit.normal, IVec3::ZERO);
+}
+
+#[test]
+fn raycast_hits_opaque_plant_texel() {
+    let blocks = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (2, 64, 0) {
+            Block::Poppy
+        } else {
+            Block::Air
+        }
+    };
+    let eye = Vec3::new(0.5, 64.25, 0.5);
+    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks).unwrap();
+    assert_eq!(hit.block, IVec3::new(2, 64, 0));
+    assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
+    assert!(matches!(hit.outline, SelectionShape::Cross { .. }));
+}
+
+#[test]
+fn raycast_short_grass_uses_full_block_outline() {
+    let blocks = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (2, 64, 0) {
+            Block::ShortGrass
+        } else {
+            Block::Air
+        }
+    };
+    let eye = Vec3::new(0.5, 64.25, 0.5);
+    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks).unwrap();
+    assert!(matches!(hit.outline, SelectionShape::Box { .. }));
+}
+
+#[test]
+fn raycast_ignores_transparent_plant_texel() {
+    let blocks = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (2, 64, 0) {
+            Block::Poppy
+        } else {
+            Block::Air
+        }
+    };
+    let eye = Vec3::new(0.5, 64.95, 0.5);
+    assert!(Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks).is_none());
+}
+
+#[test]
+fn raycast_through_transparent_plant_texel_hits_block_behind() {
+    let blocks = |x: i32, y: i32, z: i32| match (x, y, z) {
+        (2, 64, 0) => Block::Poppy,
+        (3, 64, 0) => Block::Stone,
+        _ => Block::Air,
+    };
+    let eye = Vec3::new(0.5, 64.95, 0.5);
+    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks).unwrap();
+    assert_eq!(hit.block, IVec3::new(3, 64, 0));
+    assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
 }
 
 #[test]

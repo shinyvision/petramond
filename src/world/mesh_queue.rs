@@ -75,6 +75,7 @@ impl World {
                     c.set_skylight(band, ylo, yhi);
                 }
             }
+            self.invalidate_section_visibility(pos);
         }
 
         // Mesh building is a pure function of the chunk plus immutable neighbour

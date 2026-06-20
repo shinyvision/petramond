@@ -1,10 +1,10 @@
 use crate::atlas::Tile;
 use crate::biome::Biome;
 use crate::block::{Block, RenderShape};
-use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
+use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
 
 use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
-use super::vertex::{ChunkMesh, Vertex};
+use super::vertex::{ChunkMesh, MeshIndexSection, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LeafMeshMode {
@@ -117,6 +117,7 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     if far.opaque_idx.len() < mesh.opaque_idx.len() {
         mesh.far_opaque = far.opaque;
         mesh.far_opaque_idx = far.opaque_idx;
+        mesh.far_opaque_sections = far.opaque_sections;
     }
     mesh
 }
@@ -148,8 +149,10 @@ fn build_mesh_with_context(
 ) -> ChunkMesh {
     let mut opaque = vec![];
     let mut opaque_idx = vec![];
+    let mut opaque_sections = [MeshIndexSection::default(); SECTION_COUNT];
     let mut transparent = vec![];
     let mut transparent_idx = vec![];
+    let mut transparent_sections = [MeshIndexSection::default(); SECTION_COUNT];
 
     let (ox, oz) = chunk.chunk_origin_world();
 
@@ -245,6 +248,7 @@ fn build_mesh_with_context(
                     let wz = oz + z as i32;
                     let l = neighbour_light(wx, y as i32, wz) as u32;
                     let sky6 = ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let first_index = opaque_idx.len() as u32;
                     emit_cross(
                         &mut opaque,
                         &mut opaque_idx,
@@ -254,6 +258,12 @@ fn build_mesh_with_context(
                         tile,
                         tint,
                         sky6,
+                    );
+                    extend_section(
+                        &mut opaque_sections,
+                        section_for_y(y),
+                        first_index,
+                        opaque_idx.len() as u32 - first_index,
                     );
                     continue;
                 }
@@ -424,10 +434,14 @@ fn build_mesh_with_context(
                         | (ov_flag << 20);
                     let corners = [p0, p1, p2, p3];
 
-                    let (vbuf, ibuf) = if is_water {
-                        (&mut transparent, &mut transparent_idx)
+                    let (vbuf, ibuf, sections) = if is_water {
+                        (
+                            &mut transparent,
+                            &mut transparent_idx,
+                            &mut transparent_sections,
+                        )
                     } else {
-                        (&mut opaque, &mut opaque_idx)
+                        (&mut opaque, &mut opaque_idx, &mut opaque_sections)
                     };
 
                     let start = vbuf.len() as u32;
@@ -443,6 +457,7 @@ fn build_mesh_with_context(
                     }
                     // Flip the triangulation so the split runs along the darker
                     // diagonal -- keeps the AO gradient symmetric (no bright bleed).
+                    let first_index = ibuf.len() as u32;
                     if should_flip(ao) {
                         ibuf.extend_from_slice(&[
                             start,
@@ -462,6 +477,12 @@ fn build_mesh_with_context(
                             start + 3,
                         ]);
                     }
+                    extend_section(
+                        sections,
+                        section_for_y(y),
+                        first_index,
+                        ibuf.len() as u32 - first_index,
+                    );
                 }
             }
         }
@@ -470,12 +491,46 @@ fn build_mesh_with_context(
     ChunkMesh {
         opaque,
         opaque_idx,
+        opaque_sections,
         transparent,
         transparent_idx,
+        transparent_sections,
         far_opaque: vec![],
         far_opaque_idx: vec![],
+        far_opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
         mesh_dirty: true,
     }
+}
+
+#[inline]
+fn section_for_y(y: usize) -> usize {
+    (y / SECTION_SIZE).min(SECTION_COUNT - 1)
+}
+
+fn extend_section(
+    sections: &mut [MeshIndexSection; SECTION_COUNT],
+    section: usize,
+    first_index: u32,
+    index_count: u32,
+) {
+    if index_count == 0 {
+        return;
+    }
+    let existing = &mut sections[section];
+    if existing.index_count == 0 {
+        *existing = MeshIndexSection {
+            first_index,
+            index_count,
+        };
+        return;
+    }
+
+    let first = existing.first_index.min(first_index);
+    let end = (existing.first_index + existing.index_count).max(first_index + index_count);
+    *existing = MeshIndexSection {
+        first_index: first,
+        index_count: end - first,
+    };
 }
 
 /// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)

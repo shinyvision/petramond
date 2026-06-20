@@ -1,8 +1,10 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
+mod crosshair;
 mod pipeline;
 mod renderer;
 mod resources;
+mod section_cull;
 mod selection;
 mod uniforms;
 

@@ -17,7 +17,7 @@ pub use builder::{
     LeafMeshMode, MeshOptions,
 };
 pub use skylight::compute_chunk_skylight;
-pub use vertex::{ChunkMesh, Vertex, SHADES};
+pub use vertex::{ChunkMesh, MeshIndexSection, Vertex, SHADES};
 
 #[cfg(test)]
 mod tests;

@@ -4,6 +4,8 @@ use crate::mesh::Vertex;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
+use super::crosshair::MAX_CROSSHAIR_VERTICES;
+use super::selection::MAX_OUTLINE_VERTICES;
 use super::uniforms::{Uniforms, UV_RECTS_LEN};
 
 pub(super) struct PipelineResources {
@@ -16,6 +18,8 @@ pub(super) struct PipelineResources {
     pub outline_pipe: wgpu::RenderPipeline,
     pub outline_bind: wgpu::BindGroup,
     pub outline_vbuf: wgpu::Buffer,
+    pub crosshair_pipe: wgpu::RenderPipeline,
+    pub crosshair_vbuf: wgpu::Buffer,
 }
 
 pub(super) fn create_pipeline_resources(
@@ -33,6 +37,10 @@ pub(super) fn create_pipeline_resources(
     let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("sky shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+    });
+    let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("crosshair shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/crosshair.wgsl").into()),
     });
 
     // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
@@ -380,10 +388,76 @@ pub(super) fn create_pipeline_resources(
         multiview: None,
         cache: None,
     });
-    // 24 vertices x vec3<f32> = 288 bytes (12 edges).
+    // Selection outline vertices x vec3<f32>.
     let outline_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("outline vbuf"),
-        size: 24 * 12,
+        size: (MAX_OUTLINE_VERTICES * 12) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // --- Center crosshair pipeline. ---
+    // The fragment shader outputs white and the color blend computes
+    // `white * (1 - dst) + dst * 0`, which inverts the pixels under the
+    // crosshair instead of drawing a fixed light/dark color.
+    let crosshair_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("crosshair layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+    let crosshair_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: 8, // vec2<f32>
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 0,
+            shader_location: 0,
+        }],
+    };
+    let invert_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::OneMinusDst,
+            dst_factor: wgpu::BlendFactor::Zero,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let crosshair_targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: Some(invert_blend),
+        write_mask: wgpu::ColorWrites::COLOR,
+    })];
+    let crosshair_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("crosshair pipe"),
+        layout: Some(&crosshair_layout),
+        vertex: wgpu::VertexState {
+            module: &crosshair_shader,
+            entry_point: Some("vs_crosshair"),
+            compilation_options: Default::default(),
+            buffers: &[crosshair_vbuf_layout],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &crosshair_shader,
+            entry_point: Some("fs_crosshair"),
+            compilation_options: Default::default(),
+            targets: &crosshair_targets,
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    });
+    let crosshair_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("crosshair vbuf"),
+        size: (MAX_CROSSHAIR_VERTICES * 8) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -398,6 +472,8 @@ pub(super) fn create_pipeline_resources(
         outline_pipe,
         outline_bind,
         outline_vbuf,
+        crosshair_pipe,
+        crosshair_vbuf,
     }
 }
 
@@ -659,6 +735,64 @@ mod gpu_validation {
                 entry_point: Some("fs_sky"),
                 compilation_options: Default::default(),
                 targets: &targets,
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // Validate the crosshair pipeline, including the destination-color blend
+        // used to invert the pixels under the crosshair.
+        let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("crosshair shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/crosshair.wgsl").into()),
+        });
+        let crosshair_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+        let crosshair_vbuf_layout = wgpu::VertexBufferLayout {
+            array_stride: 8,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 0,
+            }],
+        };
+        let crosshair_targets = [Some(wgpu::ColorTargetState {
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::OneMinusDst,
+                    dst_factor: wgpu::BlendFactor::Zero,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            write_mask: wgpu::ColorWrites::COLOR,
+        })];
+        let _crosshair_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&crosshair_layout),
+            vertex: wgpu::VertexState {
+                module: &crosshair_shader,
+                entry_point: Some("vs_crosshair"),
+                compilation_options: Default::default(),
+                buffers: &[crosshair_vbuf_layout],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &crosshair_shader,
+                entry_point: Some("fs_crosshair"),
+                compilation_options: Default::default(),
+                targets: &crosshair_targets,
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,

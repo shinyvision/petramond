@@ -1,6 +1,27 @@
 //! Atlas plumbing: load build-time PNG into RGBA bytes + tile lookup.
 
+use std::sync::OnceLock;
+
 include!(concat!(env!("OUT_DIR"), "/atlas_data.rs"));
+
+const TILE_SIZE: usize = TILE as usize;
+const ALPHA_CUTOFF: u8 = 128;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TileAlphaBounds {
+    pub u_min: f32,
+    pub u_max: f32,
+    /// Bottom-up texture-space v, matching plant model vertical coordinates.
+    pub v_min: f32,
+    pub v_max: f32,
+}
+
+struct TileAlphaData {
+    rows: [[u16; TILE_SIZE]; TILE_COUNT],
+    bounds: [Option<TileAlphaBounds>; TILE_COUNT],
+}
+
+static TILE_ALPHA: OnceLock<TileAlphaData> = OnceLock::new();
 
 pub fn atlas_png_path() -> &'static str {
     env!("LLAMACRAFT_ATLAS_PNG")
@@ -140,6 +161,69 @@ pub fn tile_uv(tile: Tile) -> [f32; 4] {
     // every block boundary look offset/overlapping. Full-tile UVs sample all 16
     // texels at full width and tile seamlessly across blocks.
     [u0, v0, u1, v1]
+}
+
+/// True when a bottom-up tile coordinate lands on a texel that survives the
+/// cutout alpha test used by `fs_opaque`.
+pub fn tile_alpha_opaque(tile: Tile, u: f32, v_bottom_up: f32) -> bool {
+    let data = tile_alpha_data();
+    let x = texel_coord(u);
+    let y = texel_coord(1.0 - v_bottom_up);
+    data.rows[tile.index()][y] & (1u16 << x) != 0
+}
+
+pub fn tile_alpha_bounds(tile: Tile) -> Option<TileAlphaBounds> {
+    tile_alpha_data().bounds[tile.index()]
+}
+
+fn tile_alpha_data() -> &'static TileAlphaData {
+    TILE_ALPHA.get_or_init(build_tile_alpha_data)
+}
+
+fn build_tile_alpha_data() -> TileAlphaData {
+    let (rgba, w, _) = decode_atlas();
+    let mut rows = [[0u16; TILE_SIZE]; TILE_COUNT];
+    let mut bounds = [None; TILE_COUNT];
+
+    for &tile in Tile::ALL {
+        let (col, row) = tile.grid();
+        let base_x = (col * TILE) as usize;
+        let base_y = (row * TILE) as usize;
+        let mut min_x = TILE_SIZE;
+        let mut min_y = TILE_SIZE;
+        let mut max_x = 0usize;
+        let mut max_y = 0usize;
+        let mut any = false;
+
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let i = ((base_y + y) * w as usize + base_x + x) * 4;
+                if rgba[i + 3] >= ALPHA_CUTOFF {
+                    rows[tile.index()][y] |= 1u16 << x;
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                    any = true;
+                }
+            }
+        }
+
+        if any {
+            bounds[tile.index()] = Some(TileAlphaBounds {
+                u_min: min_x as f32 / TILE_SIZE as f32,
+                u_max: (max_x + 1) as f32 / TILE_SIZE as f32,
+                v_min: (TILE_SIZE - max_y - 1) as f32 / TILE_SIZE as f32,
+                v_max: (TILE_SIZE - min_y) as f32 / TILE_SIZE as f32,
+            });
+        }
+    }
+
+    TileAlphaData { rows, bounds }
+}
+
+fn texel_coord(v: f32) -> usize {
+    (v.clamp(0.0, 1.0 - f32::EPSILON) * TILE_SIZE as f32).floor() as usize
 }
 
 #[cfg(test)]

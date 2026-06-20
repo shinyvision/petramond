@@ -1,17 +1,35 @@
 use crate::camera::{Camera, Frustum};
-use crate::chunk::{ChunkPos, CHUNK_SY};
+use crate::chunk::{ChunkPos, CHUNK_SY, SECTION_COUNT, SECTION_SIZE};
+use crate::mathh::SelectionShape;
+use crate::mesh::MeshIndexSection;
 use crate::world::World;
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
+use super::crosshair::crosshair_vertices;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{create_atlas, create_depth, upload_mesh, GpuMesh};
+use super::section_cull::SectionVisibilityCache;
 use super::selection::outline_vertices;
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 
 const FAR_LEAF_LOD_FADE_START: f32 = 128.0;
 const FAR_LEAF_LOD_FADE_END: f32 = 192.0;
+const MIN_SECTION_CULL_INDEX_SAVINGS: u32 = 2_048;
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct RenderStats {
+    pub frustum_chunks: u32,
+    pub drawn_chunks: u32,
+    pub visible_sections: u32,
+    pub opaque_draws: u32,
+    pub transparent_draws: u32,
+    pub opaque_indices: u64,
+    pub transparent_indices: u64,
+    pub section_culled_indices: u64,
+    pub section_culling_active: bool,
+}
 
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
@@ -28,13 +46,18 @@ pub struct Renderer {
     /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
     pub outline_pipe: wgpu::RenderPipeline,
     pub outline_bind: wgpu::BindGroup,
-    /// 24 line vertices (12 cube edges) for the selection box; rewritten only
-    /// when the selected block changes (see `selection` / `selection_drawn`).
+    /// Line vertices for the selection outline; rewritten only when the selected
+    /// target changes (see `selection` / `selection_drawn`).
     pub outline_vbuf: wgpu::Buffer,
-    /// Currently-targeted block (min corner), or None when nothing is targeted.
-    pub selection: Option<glam::IVec3>,
-    /// The block whose geometry currently sits in `outline_vbuf`.
-    selection_drawn: Option<glam::IVec3>,
+    pub outline_vertex_count: u32,
+    pub crosshair_pipe: wgpu::RenderPipeline,
+    pub crosshair_vbuf: wgpu::Buffer,
+    pub crosshair_vertex_count: u32,
+    crosshair_drawn_size: (u32, u32),
+    /// Currently-targeted outline shape, or None when nothing is targeted.
+    pub selection: Option<SelectionShape>,
+    /// The target whose geometry currently sits in `outline_vbuf`.
+    selection_drawn: Option<SelectionShape>,
     pub uniform_buf: wgpu::Buffer,
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
@@ -46,10 +69,12 @@ pub struct Renderer {
     /// Camera world position, refreshed in `update_uniforms`; used to sort
     /// chunk draws front-to-back (opaque) / back-to-front (transparent).
     pub cam_pos: glam::Vec3,
+    section_visibility: SectionVisibilityCache,
     /// Background clear colour, kept in sync with the fog colour each frame (sky/
     /// biome fog above water, deep blue when submerged) so the horizon matches the
     /// fog the terrain fades into.
     pub clear_color: [f32; 3],
+    pub last_stats: RenderStats,
 }
 
 pub async fn new_renderer_from_target(
@@ -197,6 +222,11 @@ async fn new_renderer_inner(
         outline_pipe: pipelines.outline_pipe,
         outline_bind: pipelines.outline_bind,
         outline_vbuf: pipelines.outline_vbuf,
+        outline_vertex_count: 0,
+        crosshair_pipe: pipelines.crosshair_pipe,
+        crosshair_vbuf: pipelines.crosshair_vbuf,
+        crosshair_vertex_count: 0,
+        crosshair_drawn_size: (0, 0),
         selection: None,
         selection_drawn: None,
         uniform_buf,
@@ -206,7 +236,9 @@ async fn new_renderer_inner(
         chunk_meshes: HashMap::new(),
         frustum: Frustum::permissive(),
         cam_pos: glam::Vec3::ZERO,
+        section_visibility: SectionVisibilityCache::default(),
         clear_color: [0.60, 0.82, 1.00],
+        last_stats: RenderStats::default(),
     }
 }
 
@@ -219,6 +251,7 @@ impl Renderer {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
         self.depth = create_depth(&self.device, width, height);
+        self.crosshair_drawn_size = (0, 0);
     }
 
     pub fn update_uniforms(
@@ -251,10 +284,10 @@ impl Renderer {
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
     }
 
-    /// Set (or clear) the block highlighted by the selection outline. Cheap: the
+    /// Set (or clear) the target highlighted by the selection outline. Cheap: the
     /// vertex buffer is only re-uploaded in `render` when the target changes.
-    pub fn set_selection(&mut self, block: Option<glam::IVec3>) {
-        self.selection = block;
+    pub fn set_selection(&mut self, shape: Option<SelectionShape>) {
+        self.selection = shape;
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?
@@ -292,6 +325,10 @@ impl Renderer {
         }
     }
 
+    pub fn update_section_visibility(&mut self, world: &mut World) {
+        self.section_visibility.update(world, self.cam_pos);
+    }
+
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(t) => t,
@@ -301,12 +338,32 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        if self.crosshair_drawn_size != (self.config.width, self.config.height) {
+            let verts = crosshair_vertices(self.config.width, self.config.height);
+            self.crosshair_vertex_count = verts.count;
+            if verts.count > 0 {
+                self.queue.write_buffer(
+                    &self.crosshair_vbuf,
+                    0,
+                    bytemuck::cast_slice(&verts.vertices[..verts.count as usize]),
+                );
+            }
+            self.crosshair_drawn_size = (self.config.width, self.config.height);
+        }
+
         // Refresh the outline vertex buffer only when the target changed.
         if self.selection != self.selection_drawn {
-            if let Some(b) = self.selection {
-                let verts = outline_vertices(b);
-                self.queue
-                    .write_buffer(&self.outline_vbuf, 0, bytemuck::cast_slice(&verts));
+            self.outline_vertex_count = 0;
+            if let Some(shape) = self.selection {
+                let outline = outline_vertices(shape);
+                self.outline_vertex_count = outline.count;
+                if outline.count > 0 {
+                    self.queue.write_buffer(
+                        &self.outline_vbuf,
+                        0,
+                        bytemuck::cast_slice(&outline.vertices[..outline.count as usize]),
+                    );
+                }
             }
             self.selection_drawn = self.selection;
         }
@@ -322,10 +379,18 @@ impl Renderer {
         // overdraw, which is the dominant GPU cost in dense voxel terrain. The
         // transparent pass draws farthest-first for correct back-to-front alpha.
         let cam = self.cam_pos;
+        let section_culling_active = self.section_visibility.is_active();
+        let mut frustum_chunks = 0u32;
         let mut order: Vec<(f32, &GpuMesh)> = self
             .chunk_meshes
             .values()
-            .filter(|gm| self.chunk_visible(gm))
+            .filter(|gm| {
+                if !self.chunk_visible(gm) {
+                    return false;
+                }
+                frustum_chunks += 1;
+                !section_culling_active || self.section_visibility.chunk_mask(gm.pos).is_some()
+            })
             .map(|gm| {
                 let (ox, oz) = gm.origin;
                 let c = glam::Vec3::new(ox as f32 + 8.0, CHUNK_SY as f32 * 0.5, oz as f32 + 8.0);
@@ -333,6 +398,13 @@ impl Renderer {
             })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut stats = RenderStats {
+            frustum_chunks,
+            drawn_chunks: order.len() as u32,
+            visible_sections: self.section_visibility.visible_section_count(),
+            section_culling_active,
+            ..Default::default()
+        };
         let cc = self.clear_color;
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -389,14 +461,20 @@ impl Renderer {
                 // near -> far (early-Z)
                 let use_far_leaf_lod =
                     far_leaf_lod_active(*dist_sq, gm.origin, gm.far_opaque_idx_count > 0);
-                let (vbuf, ibuf, idx_count) = if use_far_leaf_lod {
+                let (vbuf, ibuf, idx_count, sections) = if use_far_leaf_lod {
                     (
                         &gm.far_opaque_vbuf,
                         &gm.far_opaque_ibuf,
                         gm.far_opaque_idx_count,
+                        &gm.far_opaque_sections,
                     )
                 } else {
-                    (&gm.opaque_vbuf, &gm.opaque_ibuf, gm.opaque_idx_count)
+                    (
+                        &gm.opaque_vbuf,
+                        &gm.opaque_ibuf,
+                        gm.opaque_idx_count,
+                        &gm.opaque_sections,
+                    )
                 };
                 if idx_count == 0 {
                     continue;
@@ -404,7 +482,23 @@ impl Renderer {
                 if let (Some(vb), Some(ib)) = (vbuf, ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..idx_count, 0, 0..1);
+                    if let Some(mask) = self.section_visibility.chunk_mask(gm.pos) {
+                        let ranges =
+                            section_draw_ranges(self.frustum, gm.origin, idx_count, sections, mask);
+                        if ranges.is_empty() {
+                            continue;
+                        }
+                        for (start, end) in ranges.iter() {
+                            stats.opaque_draws += 1;
+                            pass.draw_indexed(start..end, 0, 0..1);
+                        }
+                        stats.opaque_indices += ranges.submitted as u64;
+                        stats.section_culled_indices += (idx_count - ranges.submitted) as u64;
+                    } else {
+                        stats.opaque_draws += 1;
+                        stats.opaque_indices += idx_count as u64;
+                        pass.draw_indexed(0..idx_count, 0, 0..1);
+                    }
                 }
             }
         }
@@ -442,14 +536,36 @@ impl Renderer {
                     }
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..gm.transparent_idx_count, 0, 0..1);
+                    if let Some(mask) = self.section_visibility.chunk_mask(gm.pos) {
+                        let ranges = section_draw_ranges(
+                            self.frustum,
+                            gm.origin,
+                            gm.transparent_idx_count,
+                            &gm.transparent_sections,
+                            mask,
+                        );
+                        if ranges.is_empty() {
+                            continue;
+                        }
+                        for (start, end) in ranges.iter() {
+                            stats.transparent_draws += 1;
+                            pass.draw_indexed(start..end, 0, 0..1);
+                        }
+                        stats.transparent_indices += ranges.submitted as u64;
+                        stats.section_culled_indices +=
+                            (gm.transparent_idx_count - ranges.submitted) as u64;
+                    } else {
+                        stats.transparent_draws += 1;
+                        stats.transparent_indices += gm.transparent_idx_count as u64;
+                        pass.draw_indexed(0..gm.transparent_idx_count, 0, 0..1);
+                    }
                 }
             }
         }
         // Selection outline, last: load color + depth, depth-test (no write) so
         // it draws over terrain/water at the targeted block but stays occluded
         // behind nearer geometry.
-        if self.selection.is_some() {
+        if self.selection.is_some() && self.outline_vertex_count > 0 {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("outline pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -475,11 +591,126 @@ impl Renderer {
             pass.set_pipeline(&self.outline_pipe);
             pass.set_bind_group(0, &self.outline_bind, &[]);
             pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
-            pass.draw(0..24, 0..1);
+            pass.draw(0..self.outline_vertex_count, 0..1);
+        }
+        if self.crosshair_vertex_count > 0 {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("crosshair pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.crosshair_pipe);
+            pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
+            pass.draw(0..self.crosshair_vertex_count, 0..1);
         }
         self.queue.submit(std::iter::once(enc.finish()));
+        self.last_stats = stats;
         frame.present();
     }
+}
+
+struct SectionDrawRanges {
+    ranges: [(u32, u32); SECTION_COUNT],
+    len: usize,
+    submitted: u32,
+}
+
+impl SectionDrawRanges {
+    fn new() -> Self {
+        Self {
+            ranges: [(0, 0); SECTION_COUNT],
+            len: 0,
+            submitted: 0,
+        }
+    }
+
+    fn full(index_count: u32) -> Self {
+        let mut out = Self::new();
+        if index_count > 0 {
+            out.ranges[0] = (0, index_count);
+            out.len = 1;
+            out.submitted = index_count;
+        }
+        out
+    }
+
+    fn push(&mut self, start: u32, end: u32) {
+        if start >= end {
+            return;
+        }
+        if self.len > 0 && self.ranges[self.len - 1].1 == start {
+            self.ranges[self.len - 1].1 = end;
+        } else {
+            self.ranges[self.len] = (start, end);
+            self.len += 1;
+        }
+        self.submitted += end - start;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.ranges[..self.len].iter().copied()
+    }
+}
+
+fn section_draw_ranges(
+    frustum: Frustum,
+    origin: (i32, i32),
+    full_idx_count: u32,
+    sections: &[MeshIndexSection; SECTION_COUNT],
+    visible_mask: u16,
+) -> SectionDrawRanges {
+    let mut out = SectionDrawRanges::new();
+    for (section_idx, section) in sections.iter().enumerate() {
+        if visible_mask & (1u16 << section_idx) == 0 || section.index_count == 0 {
+            continue;
+        }
+        if !section_visible(frustum, origin, section_idx) {
+            continue;
+        }
+        out.push(
+            section.first_index,
+            section.first_index + section.index_count,
+        );
+    }
+
+    if out.is_empty() || out.submitted >= full_idx_count {
+        return out;
+    }
+    if out.len == 1 {
+        return out;
+    }
+
+    let saved = full_idx_count - out.submitted;
+    let saves_enough_indices = saved >= MIN_SECTION_CULL_INDEX_SAVINGS;
+    let saves_enough_ratio = (out.submitted as u64) * 4 <= (full_idx_count as u64) * 3;
+    if saves_enough_indices && saves_enough_ratio {
+        out
+    } else {
+        SectionDrawRanges::full(full_idx_count)
+    }
+}
+
+fn section_visible(frustum: Frustum, origin: (i32, i32), section_idx: usize) -> bool {
+    let (ox, oz) = origin;
+    let y0 = (section_idx * SECTION_SIZE) as f32;
+    let y1 = ((section_idx + 1) * SECTION_SIZE).min(CHUNK_SY) as f32;
+    let min = glam::Vec3::new(ox as f32, y0, oz as f32);
+    let max = glam::Vec3::new((ox + 16) as f32, y1, (oz + 16) as f32);
+    frustum.aabb_visible(min, max)
 }
 
 fn far_leaf_lod_active(dist_sq: f32, origin: (i32, i32), has_far_lod: bool) -> bool {
@@ -514,6 +745,68 @@ fn chunk_lod_threshold(origin: (i32, i32)) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn section_draw_ranges_keep_single_visible_section() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[2] = MeshIndexSection {
+            first_index: 120,
+            index_count: 60,
+        };
+
+        let ranges = section_draw_ranges(frustum, (0, 0), 480, &sections, 1u16 << 2);
+
+        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(120, 180)]);
+        assert_eq!(ranges.submitted, 60);
+    }
+
+    #[test]
+    fn section_draw_ranges_fall_back_when_fragmented_savings_are_small() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[0] = MeshIndexSection {
+            first_index: 0,
+            index_count: 100,
+        };
+        sections[2] = MeshIndexSection {
+            first_index: 200,
+            index_count: 100,
+        };
+
+        let ranges = section_draw_ranges(frustum, (0, 0), 360, &sections, 0b0101);
+
+        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(0, 360)]);
+        assert_eq!(ranges.submitted, 360);
+    }
+
+    #[test]
+    fn section_draw_ranges_keep_fragmented_ranges_when_savings_are_large() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[0] = MeshIndexSection {
+            first_index: 0,
+            index_count: 600,
+        };
+        sections[8] = MeshIndexSection {
+            first_index: 8_000,
+            index_count: 600,
+        };
+
+        let ranges = section_draw_ranges(
+            frustum,
+            (0, 0),
+            12_000,
+            &sections,
+            (1u16 << 0) | (1u16 << 8),
+        );
+
+        assert_eq!(
+            ranges.iter().collect::<Vec<_>>(),
+            vec![(0, 600), (8_000, 8_600)]
+        );
+        assert_eq!(ranges.submitted, 1_200);
+    }
 
     #[test]
     fn far_leaf_lod_stays_near_and_converges_far() {

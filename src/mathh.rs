@@ -2,6 +2,34 @@
 
 pub use glam::{IVec2, IVec3, Mat4, Quat, Vec2, Vec3, Vec4};
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum SelectionShape {
+    Box {
+        min: Vec3,
+        max: Vec3,
+    },
+    Cross {
+        origin: IVec3,
+        u_min: f32,
+        u_max: f32,
+        v_min: f32,
+        v_max: f32,
+    },
+}
+
+impl SelectionShape {
+    pub fn full_block(block: IVec3) -> Self {
+        Self::Box {
+            min: Vec3::new(block.x as f32, block.y as f32, block.z as f32),
+            max: Vec3::new(
+                block.x as f32 + 1.0,
+                block.y as f32 + 1.0,
+                block.z as f32 + 1.0,
+            ),
+        }
+    }
+}
+
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }

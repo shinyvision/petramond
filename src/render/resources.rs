@@ -1,6 +1,6 @@
 use crate::atlas::decode_atlas_mips;
-use crate::chunk::ChunkPos;
-use crate::mesh::ChunkMesh;
+use crate::chunk::{ChunkPos, SECTION_COUNT};
+use crate::mesh::{ChunkMesh, MeshIndexSection};
 
 use wgpu::util::DeviceExt;
 
@@ -8,12 +8,16 @@ pub struct GpuMesh {
     pub opaque_vbuf: Option<wgpu::Buffer>,
     pub opaque_ibuf: Option<wgpu::Buffer>,
     pub opaque_idx_count: u32,
+    pub opaque_sections: [MeshIndexSection; SECTION_COUNT],
     pub far_opaque_vbuf: Option<wgpu::Buffer>,
     pub far_opaque_ibuf: Option<wgpu::Buffer>,
     pub far_opaque_idx_count: u32,
+    pub far_opaque_sections: [MeshIndexSection; SECTION_COUNT],
     pub transparent_vbuf: Option<wgpu::Buffer>,
     pub transparent_ibuf: Option<wgpu::Buffer>,
     pub transparent_idx_count: u32,
+    pub transparent_sections: [MeshIndexSection; SECTION_COUNT],
+    pub pos: ChunkPos,
     pub origin: (i32, i32),
 }
 
@@ -163,12 +167,16 @@ pub(super) fn upload_mesh(device: &wgpu::Device, mesh: &ChunkMesh, pos: ChunkPos
         opaque_vbuf,
         opaque_ibuf,
         opaque_idx_count: mesh.opaque_idx.len() as u32,
+        opaque_sections: mesh.opaque_sections,
         far_opaque_vbuf,
         far_opaque_ibuf,
         far_opaque_idx_count: mesh.far_opaque_idx.len() as u32,
+        far_opaque_sections: mesh.far_opaque_sections,
         transparent_vbuf,
         transparent_ibuf,
         transparent_idx_count: mesh.transparent_idx.len() as u32,
+        transparent_sections: mesh.transparent_sections,
+        pos,
         origin: (pos.cx * 16, pos.cz * 16),
     }
 }

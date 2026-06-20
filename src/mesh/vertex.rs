@@ -1,3 +1,5 @@
+use crate::chunk::SECTION_COUNT;
+
 /// Per-face directional shade factors, indexed by `Face::shade_idx`. The vertex
 /// shader (`block.wgsl`) holds a byte-identical copy; `tests::shade_table_*`
 /// locks the two in sync. Top brightest, bottom darkest.
@@ -22,16 +24,25 @@ pub struct Vertex {
     pub packed: u32,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MeshIndexSection {
+    pub first_index: u32,
+    pub index_count: u32,
+}
+
 pub struct ChunkMesh {
     pub opaque: Vec<Vertex>,
     pub opaque_idx: Vec<u32>,
+    pub opaque_sections: [MeshIndexSection; SECTION_COUNT],
     pub transparent: Vec<Vertex>,
     pub transparent_idx: Vec<u32>,
+    pub transparent_sections: [MeshIndexSection; SECTION_COUNT],
     /// Optional opaque LOD used for far chunks. This keeps the normal mesh
     /// byte-identical nearby while allowing far foliage to cull leaf-to-leaf
     /// internals once texture mips make the cutouts read as a dense canopy.
     pub far_opaque: Vec<Vertex>,
     pub far_opaque_idx: Vec<u32>,
+    pub far_opaque_sections: [MeshIndexSection; SECTION_COUNT],
     /// True until GPU upload has happened. Set by `build_mesh`, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
@@ -42,10 +53,13 @@ impl ChunkMesh {
         Self {
             opaque: vec![],
             opaque_idx: vec![],
+            opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
             transparent: vec![],
             transparent_idx: vec![],
+            transparent_sections: [MeshIndexSection::default(); SECTION_COUNT],
             far_opaque: vec![],
             far_opaque_idx: vec![],
+            far_opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
             mesh_dirty: false,
         }
     }

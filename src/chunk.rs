@@ -5,6 +5,8 @@ use crate::block::Block;
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
 pub const CHUNK_SY: usize = 256;
+pub const SECTION_SIZE: usize = 16;
+pub const SECTION_COUNT: usize = CHUNK_SY / SECTION_SIZE;
 
 /// World Y index where chunk column begins (chunks stack vertically too,
 /// but we currently use a single 256-tall slab per column).
