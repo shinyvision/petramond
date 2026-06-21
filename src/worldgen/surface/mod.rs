@@ -13,7 +13,9 @@ use crate::chunk::SEA_LEVEL;
 use rule::{SurfaceCtx, SurfaceRule};
 
 const RIVER_WATERLINE_INFLUENCE: f32 = 0.05;
-const RIVER_INNER_BANK_INFLUENCE: f32 = 0.42;
+// River influence now plateaus near 1 across the channel + floodplain (the valley
+// carve), so the inner-bank knee is pushed out to keep banks from over-sanding.
+const RIVER_INNER_BANK_INFLUENCE: f32 = 0.55;
 const RIVER_WATERLINE_MARGIN: i32 = 1;
 const RIVER_INNER_BANK_MARGIN: i32 = 3;
 

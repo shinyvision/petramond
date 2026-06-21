@@ -16,7 +16,7 @@ pub const SEA_LEVEL: i32 = 63;
 
 /// Per-biome `(base_height, height_variation)` for the density blend. Mutated
 /// variants fall back to their base biome's values.
-fn biome_height(id: i32) -> (f32, f32) {
+pub(crate) fn biome_height(id: i32) -> (f32, f32) {
     match id {
         0 => (-1.0, 0.1),    // ocean
         1 => (0.125, 0.05),  // plains

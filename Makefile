@@ -12,7 +12,7 @@
 CARGO      ?= cargo
 PORT       ?= 8070
 BROWSER    ?= xdg-open
-SEED       ?= 0x12345678
+SEED       ?= 0x72890188
 RD         ?= 16
 WEB_DIR    := web
 SRV_LOG    := /tmp/llamacraft_dev_server.log

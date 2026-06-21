@@ -18,6 +18,7 @@ pub mod noise;
 pub mod proto;
 pub mod river;
 pub mod rng;
+pub mod spawn;
 pub mod surface;
 
 pub use noise::WorldNoise;

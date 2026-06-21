@@ -256,17 +256,25 @@ impl App {
     }
 }
 
+/// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
+/// (Windows' `WHEEL_DELTA` / 120, as winit normalizes it), so a notched wheel
+/// still advances exactly one slot per click. Hi-res / free-spin mice (the MX
+/// Master) emit fractions of a notch many times a frame; requiring a whole
+/// notch per slot — and carrying the sub-slot remainder forward — couples
+/// selection to how far the wheel actually turned instead of lurching a slot on
+/// every micro-event.
+const SCROLL_NOTCHES_PER_SLOT: f32 = 1.0;
+
 impl PointerState {
+    /// Whole hotbar slots to move this frame, draining the accumulator by the
+    /// notches consumed and keeping the sub-slot remainder for next frame. The
+    /// result is frame-rate independent: a slow, deliberate roll yields one slot
+    /// per notch; a hard flick yields several; a jittery nudge under a notch
+    /// yields none.
     fn take_scroll_step(&mut self) -> i32 {
-        let step = if self.scroll_delta > 0.0 {
-            1
-        } else if self.scroll_delta < 0.0 {
-            -1
-        } else {
-            0
-        };
-        self.scroll_delta = 0.0;
-        step
+        let steps = (self.scroll_delta / SCROLL_NOTCHES_PER_SLOT).trunc();
+        self.scroll_delta -= steps * SCROLL_NOTCHES_PER_SLOT;
+        steps as i32
     }
 
     fn clear_edges(&mut self) {
@@ -389,6 +397,46 @@ mod tests {
         app.handle_control(Control::ToggleInventory, true);
         app.handle_control(Control::SelectHotbar(6), true);
         assert_eq!(app.game.inventory().active_slot(), 2);
+    }
+
+    #[test]
+    fn scroll_step_needs_a_full_notch() {
+        let mut p = PointerState::default();
+        // Sub-notch travel accumulates without moving the selection...
+        p.scroll_delta = 0.4;
+        assert_eq!(p.take_scroll_step(), 0);
+        p.scroll_delta += 0.4;
+        assert_eq!(p.take_scroll_step(), 0);
+        // ...until a whole notch is reached: one step, remainder carried.
+        p.scroll_delta += 0.4;
+        assert_eq!(p.take_scroll_step(), 1);
+        assert!((p.scroll_delta - 0.2).abs() < 1e-4);
+    }
+
+    #[test]
+    fn scroll_step_is_proportional_and_signed() {
+        let mut p = PointerState::default();
+        p.scroll_delta = 3.0;
+        assert_eq!(p.take_scroll_step(), 3);
+        assert_eq!(p.scroll_delta, 0.0);
+
+        p.scroll_delta = -2.5;
+        assert_eq!(p.take_scroll_step(), -2);
+        assert!((p.scroll_delta + 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn scroll_step_carries_remainder_across_frames() {
+        // A free-spin wheel emits a stream of tiny deltas; the slot must advance
+        // once per accumulated notch, not once per micro-event.
+        let mut p = PointerState::default();
+        let mut steps = 0;
+        for _ in 0..25 {
+            p.scroll_delta += 0.1;
+            steps += p.take_scroll_step();
+        }
+        assert_eq!(steps, 2); // 25 * 0.1 = 2.5 notches -> 2 whole slots
+        assert!((p.scroll_delta - 0.5).abs() < 1e-4);
     }
 
     fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {

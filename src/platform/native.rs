@@ -129,7 +129,7 @@ impl ApplicationHandler for NativeHost {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                app.add_scroll_delta(-wheel_delta_y(delta));
+                app.add_scroll_delta(-wheel_notches(delta));
             }
             WindowEvent::CursorMoved { position, .. } => {
                 app.set_cursor_position(position.x as f32, position.y as f32);
@@ -178,7 +178,7 @@ impl ApplicationHandler for NativeHost {
                 app.add_pointer_motion(dx as f32, dy as f32);
             }
             DeviceEvent::MouseWheel { delta } => {
-                app.add_scroll_delta(-wheel_delta_y(delta));
+                app.add_scroll_delta(-wheel_notches(delta));
             }
             _ => {}
         }
@@ -196,9 +196,14 @@ impl ApplicationHandler for NativeHost {
     }
 }
 
-fn wheel_delta_y(delta: MouseScrollDelta) -> f32 {
+/// A scroll event as a count of wheel notches (`1.0` == one detent). winit
+/// already divides Windows' raw `WHEEL_DELTA` (120) into `LineDelta`, so a
+/// classic detent is `1.0` and a hi-res / free-spin wheel reports the fractions
+/// that sum to it. Pixel-precise devices report `PixelDelta`, normalized through
+/// [`super::PIXELS_PER_NOTCH`] so both paths feed the accumulator the same unit.
+fn wheel_notches(delta: MouseScrollDelta) -> f32 {
     match delta {
         MouseScrollDelta::LineDelta(_, y) => y,
-        MouseScrollDelta::PixelDelta(p) => p.y as f32,
+        MouseScrollDelta::PixelDelta(p) => p.y as f32 / super::PIXELS_PER_NOTCH,
     }
 }

@@ -43,7 +43,8 @@ pub struct GameInput {
     pub gameplay_enabled: bool,
     pub movement: MovementInput,
     pub look_delta: (f32, f32),
-    /// -1 for previous slot, +1 for next slot, 0 for no scroll this frame.
+    /// Whole wheel notches scrolled this frame (signed): negative selects
+    /// previous slots, positive selects next, 0 for none. Wraps within the hotbar.
     pub hotbar_scroll: i32,
     /// Level state: primary button held for mining.
     pub break_held: bool,
@@ -81,12 +82,23 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(cam: Camera, seed: u32, render_dist: i32) -> Self {
-        let feet = Vec3::new(cam.pos.x, cam.pos.y - player::EYE, cam.pos.z);
+    pub fn new(mut cam: Camera, seed: u32, render_dist: i32) -> Self {
+        // Spawn on the nearest exposed solid surface to the origin (drops to the
+        // nearest coast if the origin is open ocean). The camera's incoming
+        // position is a placeholder; override it so chunk streaming centres on the
+        // real spawn from frame one. Stand the feet on top of the surface block.
+        let fallback_world = CascadeWorld::new(seed);
+        let surface = crate::worldgen::spawn::find_spawn(&fallback_world, seed);
+        let feet = Vec3::new(
+            surface.x as f32 + 0.5,
+            (surface.y + 1) as f32,
+            surface.z as f32 + 0.5,
+        );
+        cam.pos = Vec3::new(feet.x, feet.y + player::EYE, feet.z);
         Self {
             cam,
             world: World::new(seed, render_dist),
-            fallback_world: CascadeWorld::new(seed),
+            fallback_world,
             player: Player::new(feet),
             look: None,
             mining: MiningState::new(),
@@ -224,9 +236,7 @@ impl Game {
 
     fn apply_hotbar_input(&mut self, input: &GameInput) {
         if input.gameplay_enabled && input.hotbar_scroll != 0 {
-            self.player
-                .inventory
-                .scroll_active(input.hotbar_scroll.signum());
+            self.player.inventory.scroll_active(input.hotbar_scroll);
         }
     }
 

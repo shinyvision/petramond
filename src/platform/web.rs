@@ -265,15 +265,15 @@ fn wire_input(host: Rc<RefCell<WebHost>>) -> Result<(), JsValue> {
     on_move.forget();
 
     // Mouse wheel -> hotbar scroll. `WheelEvent.deltaY` is positive on wheel-down
-    // already, matching the App's shared convention (positive == wheel-down), so
-    // accumulate it directly. `preventDefault` stops the page from scrolling.
+    // already, matching the App's shared convention (positive == wheel-down).
+    // `preventDefault` stops the page from scrolling.
     let g_wheel = host.clone();
     let canvas_wheel = host.borrow().canvas.clone();
     let on_wheel = Closure::<dyn FnMut(WheelEvent)>::new(move |ev: WheelEvent| {
         ev.prevent_default();
         let mut g = g_wheel.borrow_mut();
         if let Some(s) = g.state.as_mut() {
-            s.app.add_scroll_delta(ev.delta_y() as f32);
+            s.app.add_scroll_delta(wheel_notches(&ev));
         }
     });
     canvas_wheel.add_event_listener_with_callback("wheel", on_wheel.as_ref().unchecked_ref())?;
@@ -295,4 +295,17 @@ fn wire_input(host: Rc<RefCell<WebHost>>) -> Result<(), JsValue> {
     on_resize.forget();
 
     Ok(())
+}
+
+/// A `wheel` event as a count of notches (`1.0` == one detent), in the App's
+/// "positive == wheel-down" convention. Pixel-mode deltas — what hi-res /
+/// free-spin mice and trackpads report, often a few px per event — are scaled by
+/// [`super::PIXELS_PER_NOTCH`] so they accumulate toward a slot instead of
+/// jumping one per event. Line- and page-mode deltas already approximate notches.
+fn wheel_notches(ev: &WheelEvent) -> f32 {
+    let dy = ev.delta_y() as f32;
+    match ev.delta_mode() {
+        WheelEvent::DOM_DELTA_PIXEL => dy / super::PIXELS_PER_NOTCH,
+        _ => dy,
+    }
 }
