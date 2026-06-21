@@ -16,48 +16,63 @@ pub const SEA_LEVEL: i32 = 63;
 
 /// Per-biome `(base_height, height_variation)` for the density blend. Mutated
 /// variants fall back to their base biome's values.
+///
+/// Low land biomes carry a `+0.08` base-height offset over the reference MC values
+/// (so plains/forest/etc. read `0.205`/`0.18`/… instead of `0.125`/`0.1`/…). This
+/// raises the *mean* of their natural surface-height distribution ~+2 blocks so the
+/// lower tail no longer spends 20-38% of its time below the y64 waterline (which
+/// read as a swamp). It is a pure vertical OFFSET into the density-baseline blend —
+/// `base_height -> depth -> baseline = 8.5 + depth*4` — so it SHIFTS the surface up
+/// without touching `height_variation` (the relief amplitude): rolling preserved,
+/// occasional natural ponds retained, no flattening. Calibrated empirically against
+/// `genmap relief` (the knee where the worst interior seeds land ~5-12% below-64
+/// with STDEV ~unchanged). Intentionally-wet biomes (ocean/river/swamp/beach/…) and
+/// already-high biomes (hills/mountains/plateaus) are NOT offset.
 pub(crate) fn biome_height(id: i32) -> (f32, f32) {
+    /// Base-height lift applied to low land biomes only (see fn docs).
+    const LOW_LIFT: f32 = 0.08;
+    let lo = |b: f32, v: f32| (b + LOW_LIFT, v);
     match id {
         0 => (-1.0, 0.1),    // ocean
-        1 => (0.125, 0.05),  // plains
-        2 => (0.125, 0.05),  // desert
+        1 => lo(0.125, 0.05), // plains
+        2 => lo(0.125, 0.05), // desert
         3 => (1.0, 0.5),     // mountains
-        4 => (0.1, 0.2),     // forest
-        5 => (0.2, 0.2),     // taiga
+        4 => lo(0.1, 0.2),   // forest
+        5 => lo(0.2, 0.2),   // taiga
         6 => (-0.2, 0.1),    // swamp
         7 => (-0.5, 0.0),    // river
         10 => (-1.0, 0.1),   // frozen_ocean
         11 => (-0.5, 0.0),   // frozen_river
-        12 => (0.125, 0.05), // snowy_tundra
+        12 => lo(0.125, 0.05), // snowy_tundra
         13 => (0.45, 0.3),   // snowy_mountains
-        14 => (0.2, 0.3),    // mushroom_fields
+        14 => lo(0.2, 0.3),  // mushroom_fields
         15 => (0.0, 0.025),  // mushroom_field_shore
         16 => (0.0, 0.025),  // beach
         17 => (0.45, 0.3),   // desert_hills
         18 => (0.45, 0.3),   // wooded_hills
         19 => (0.45, 0.3),   // taiga_hills
         20 => (0.8, 0.3),    // mountain_edge
-        21 => (0.1, 0.2),    // jungle
+        21 => lo(0.1, 0.2),  // jungle
         22 => (0.45, 0.3),   // jungle_hills
-        23 => (0.1, 0.2),    // jungle_edge
+        23 => lo(0.1, 0.2),  // jungle_edge
         24 => (-1.8, 0.1),   // deep_ocean
         25 => (0.1, 0.8),    // stone_shore
         26 => (0.0, 0.025),  // snowy_beach
-        27 => (0.1, 0.2),    // birch_forest
+        27 => lo(0.1, 0.2),  // birch_forest
         28 => (0.45, 0.3),   // birch_forest_hills
-        29 => (0.1, 0.2),    // dark_forest
-        30 => (0.2, 0.2),    // snowy_taiga
+        29 => lo(0.1, 0.2),  // dark_forest
+        30 => lo(0.2, 0.2),  // snowy_taiga
         31 => (0.45, 0.3),   // snowy_taiga_hills
         32 => (0.2, 0.2),    // giant_tree_taiga
         33 => (0.45, 0.3),   // giant_tree_taiga_hills
         34 => (1.0, 0.5),    // wooded_mountains
-        35 => (0.125, 0.05), // savanna
+        35 => lo(0.125, 0.05), // savanna
         36 => (1.5, 0.025),  // savanna_plateau
-        37 => (0.1, 0.2),    // badlands
+        37 => lo(0.1, 0.2),  // badlands
         38 => (1.5, 0.025),  // wooded_badlands_plateau
         39 => (1.5, 0.025),  // badlands_plateau
         _ if id >= 128 => biome_height(id - 128),
-        _ => (0.1, 0.2),
+        _ => lo(0.1, 0.2),
     }
 }
 

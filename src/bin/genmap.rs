@@ -749,6 +749,190 @@ fn flood_audit(seed: u32) {
     );
 }
 
+/// Lowland-relief diagnostic. Over the *land-biome* columns (everything except the
+/// intended-wet biomes: ocean/deep/river/frozen/beach/swamp/mushroom) in a large
+/// window, reports the post-lift surface-height stdev, the share pinned to exactly
+/// the clamp floor (y64) — the dead-flat-plateau signature — a coarse height
+/// histogram, and the NON-river flooded-land share (land columns left below the
+/// waterline by something other than an explicit river, i.e. the pond-maze metric).
+///
+/// Uses the generator's post-lift region directly (same data the chunk fill sees),
+/// so it measures exactly what ships. Land = `!keep_wet(biome_id)`.
+fn relief_audit(seed: u32) {
+    use llamacraft::worldgen::classic::world::{keep_wet, CascadeWorld};
+    use llamacraft::worldgen::driver::ChunkGenerator;
+    let gen = ChunkGenerator::new(seed);
+    let r: i32 = 12; // 24x24 chunks = 384x384 blocks
+
+    // --- natural reference: raw density heightmap (no rivers, no lift) over the
+    // same land columns. This is the gradient the terrain noise actually produces
+    // (what state-1 had before any flooding fix); its stdev is the relief target.
+    {
+        let cw = CascadeWorld::new(seed);
+        let raw = cw.region(-r * 16, -r * 16, (r * 32) as usize, (r * 32) as usize);
+        let mut rl: Vec<i32> = Vec::new();
+        for i in 0..raw.surf.len() {
+            if !keep_wet(raw.biome_ids[i]) {
+                rl.push(raw.surf[i]);
+            }
+        }
+        if !rl.is_empty() {
+            let n = rl.len() as f64;
+            let m = rl.iter().map(|&y| y as f64).sum::<f64>() / n;
+            let sd = (rl.iter().map(|&y| (y as f64 - m).powi(2)).sum::<f64>() / n).sqrt();
+            let below = rl.iter().filter(|&&y| y < 64).count();
+            rl.sort_unstable();
+            let p = |q: f64| rl[((rl.len() - 1) as f64 * q) as usize];
+            println!(
+                "seed {seed:#x} RAW (natural target, no lift): land cols {}  p10 {} p50 {} p90 {}  mean {:.2}  STDEV {:.3}  below-64 {:.1}%",
+                rl.len(),
+                p(0.10),
+                p(0.50),
+                p(0.90),
+                m,
+                sd,
+                below as f64 / n * 100.0
+            );
+        }
+    }
+
+    let mut land: Vec<i32> = Vec::new();
+    let mut at64 = 0u64; // land columns sitting exactly at y64
+    let mut flooded_nonriver = 0u64; // land below waterline, not an explicit river
+    let mut flooded_river = 0u64; // land below waterline because of a river
+    let mut land_total = 0u64;
+    for cz in -r..r {
+        for cx in -r..r {
+            let region = gen.region(cx, cz);
+            let (ox, oz) = (cx * 16, cz * 16);
+            for lz in 0..16i32 {
+                for lx in 0..16i32 {
+                    let wx = ox + lx;
+                    let wz = oz + lz;
+                    let i = (wz - region.z0) as usize * region.w + (wx - region.x0) as usize;
+                    let bid = region.biome_ids[i];
+                    if keep_wet(bid) {
+                        continue; // intended-wet biome — not lowland relief.
+                    }
+                    let surf = region.surf[i];
+                    let infl = region.rivers[i].influence;
+                    land_total += 1;
+                    land.push(surf);
+                    if surf == 64 {
+                        at64 += 1;
+                    }
+                    // Waterline is chunk SEA_LEVEL = 64; a land column with top
+                    // solid < 64 gets water laid over it.
+                    if surf < 64 {
+                        if infl > 0.05 {
+                            flooded_river += 1;
+                        } else {
+                            flooded_nonriver += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if land.is_empty() {
+        println!("seed {seed:#x}: no land-biome columns in window");
+        return;
+    }
+    let n = land.len() as f64;
+    let mean = land.iter().map(|&y| y as f64).sum::<f64>() / n;
+    let var = land.iter().map(|&y| (y as f64 - mean).powi(2)).sum::<f64>() / n;
+    let std = var.sqrt();
+    let mut sorted = land.clone();
+    sorted.sort_unstable();
+    let pct = |p: f64| sorted[((sorted.len() - 1) as f64 * p) as usize];
+    // coarse histogram, 2-block buckets from 62..=80
+    let mut hist = [0u64; 10]; // buckets [62,64),[64,66),...,[80,82)
+    for &y in &land {
+        let b = ((y - 62).clamp(0, 19) / 2) as usize;
+        hist[b.min(9)] += 1;
+    }
+    println!("seed {seed:#x}: land-biome relief over {} cols ({}x{} blocks)", land_total, r * 32, r * 32);
+    println!(
+        "  surf-Y: min {} p10 {} p50 {} p90 {} max {}  mean {:.2}  STDEV {:.3}",
+        sorted[0],
+        pct(0.10),
+        pct(0.50),
+        pct(0.90),
+        sorted[sorted.len() - 1],
+        mean,
+        std
+    );
+    println!(
+        "  at-exactly-y64: {:.2}% ({}/{})   <- dead-flat-plateau signature",
+        at64 as f64 / n * 100.0,
+        at64,
+        land_total
+    );
+    println!(
+        "  flooded-land: NON-river {:.3}% ({}), river {:.3}% ({})   <- pond-maze metric = NON-river",
+        flooded_nonriver as f64 / n * 100.0,
+        flooded_nonriver,
+        flooded_river as f64 / n * 100.0,
+        flooded_river
+    );
+    let labels = ["62-63", "64-65", "66-67", "68-69", "70-71", "72-73", "74-75", "76-77", "78-79", "80+"];
+    let bars: Vec<String> = labels
+        .iter()
+        .zip(hist.iter())
+        .map(|(l, &c)| format!("{l}:{:.1}%", c as f64 / n * 100.0))
+        .collect();
+    println!("  hist  {}", bars.join("  "));
+
+    // --- the decisive sub-band metric: restrict to land columns whose RAW (no
+    // lift, no rivers) surf was BELOW the waterline — the band the old hard clamp
+    // collapsed to a single y64 (stdev 0). Report raw vs lifted stdev there. A real
+    // relief fix keeps lifted stdev > 0 here (rolling shore + puddles); the clamp
+    // would read 0. This is what distinguishes "fixed" from "reproduced the clamp".
+    {
+        let cw = CascadeWorld::new(seed);
+        let raw = cw.region(-r * 16, -r * 16, (r * 32) as usize, (r * 32) as usize);
+        let mut raw_b: Vec<i32> = Vec::new();
+        let mut lift_b: Vec<i32> = Vec::new();
+        for cz in -r..r {
+            for cx in -r..r {
+                let region = gen.region(cx, cz);
+                for lz in 0..16i32 {
+                    for lx in 0..16i32 {
+                        let wx = cx * 16 + lx;
+                        let wz = cz * 16 + lz;
+                        let ri = (wz - raw.z0) as usize * raw.w + (wx - raw.x0) as usize;
+                        if keep_wet(raw.biome_ids[ri]) || raw.surf[ri] >= 64 {
+                            continue; // only the below-sea land band the clamp touched
+                        }
+                        let gi = (wz - region.z0) as usize * region.w + (wx - region.x0) as usize;
+                        // skip explicit-river columns (their water is intended)
+                        if region.rivers[gi].influence > 0.05 {
+                            continue;
+                        }
+                        raw_b.push(raw.surf[ri]);
+                        lift_b.push(region.surf[gi]);
+                    }
+                }
+            }
+        }
+        if !raw_b.is_empty() {
+            let sd = |v: &[i32]| {
+                let nn = v.len() as f64;
+                let m = v.iter().map(|&y| y as f64).sum::<f64>() / nn;
+                (v.iter().map(|&y| (y as f64 - m).powi(2)).sum::<f64>() / nn).sqrt()
+            };
+            let puddles = lift_b.iter().filter(|&&y| y < 64).count();
+            println!(
+                "  SUB-SEA band ({} cols, raw<64): raw STDEV {:.3} -> lifted STDEV {:.3}  (hard-clamp would be 0.000)  puddles {:.2}%",
+                raw_b.len(),
+                sd(&raw_b),
+                sd(&lift_b),
+                puddles as f64 / lift_b.len() as f64 * 100.0
+            );
+        }
+    }
+}
+
 /// Hillshaded top-down relief: colour each column by its top block, then light it
 /// by the surface-height gradient (Lambert against a NW light). Jagged terrain
 /// shows as sharp speckled relief; smooth domes show as soft gradients — so this
@@ -1008,6 +1192,7 @@ fn main() {
             proj as f32,
         ),
         "flood" => flood_audit(seed),
+        "relief" => relief_audit(seed),
         "river" => render_river(seed, &out),
         "bench" => bench(seed, arg.unwrap_or(24)),
         _ => render_topdown(seed, &out, false),

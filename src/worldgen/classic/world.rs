@@ -15,6 +15,21 @@ use super::terrain::TerrainGen;
 
 const CHUNK: usize = 16;
 
+/// Biomes whose water is intended (ocean, deep ocean, river, frozen ocean/river,
+/// mushroom shore, beach, snowy beach) and so whose sub-sea surface is genuine
+/// water, not land that happened to fall below the waterline. Mutated `+128`
+/// variants fold to their base. Used by tooling (`genmap relief`) to separate
+/// land-biome relief from intended-wet columns.
+#[inline]
+pub fn keep_wet(biome_id: i32) -> bool {
+    let base = if biome_id >= 128 {
+        biome_id - 128
+    } else {
+        biome_id
+    };
+    matches!(base, 0 | 6 | 7 | 10 | 11 | 15 | 16 | 24 | 26)
+}
+
 /// One chunk's biome-driven terrain: top-solid surface height and per-block MC
 /// biome id, both row-major `x + z*16`.
 pub struct ChunkCells {
