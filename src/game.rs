@@ -74,6 +74,7 @@ pub struct Game {
     look: Option<RaycastHit>,
     mining: MiningState,
     dropped: Vec<DroppedItem>,
+    dropped_light_revision: u64,
     particles: ParticleSystem,
     spawn_counter: u32,
     mining_dust_t: f32,
@@ -103,6 +104,7 @@ impl Game {
             look: None,
             mining: MiningState::new(),
             dropped: Vec::new(),
+            dropped_light_revision: 0,
             particles: ParticleSystem::new(),
             spawn_counter: 0,
             mining_dust_t: 0.0,
@@ -122,6 +124,7 @@ impl Game {
 
         self.tick_entities(dt);
         self.tick_mesh_budget();
+        self.refresh_dropped_item_lights_after_world_light_update();
 
         GameEvents {
             placed_block,
@@ -429,6 +432,17 @@ impl Game {
         self.particles.tick(dt, &self.world);
     }
 
+    fn refresh_dropped_item_lights_after_world_light_update(&mut self) {
+        let revision = self.world.lighting_revision();
+        if self.dropped_light_revision == revision {
+            return;
+        }
+        for drop in &mut self.dropped {
+            drop.skylight = sky6_at_pos(&self.world, drop.pos);
+        }
+        self.dropped_light_revision = revision;
+    }
+
     fn map_item_entities(&mut self) {
         self.item_entity_instances.clear();
         self.item_entity_instances
@@ -605,6 +619,43 @@ mod tests {
         ));
         game.tick_entities(0.001);
         assert_eq!(game.dropped.len(), 1);
+    }
+
+    #[test]
+    fn stationary_dropped_item_resamples_after_chunk_light_bake_installs() {
+        let mut game = game();
+        game.world.chunks.clear();
+        game.world.meshes.clear();
+        game.world.pending.clear();
+
+        let pos = crate::chunk::ChunkPos::new(0, 0);
+        game.world
+            .chunks
+            .insert(pos, crate::chunk::Chunk::new(0, 0));
+        game.dropped_light_revision = game.world.lighting_revision();
+
+        let mut drop = DroppedItem::new(
+            Vec3::new(1.5, 5.5, 1.5),
+            ItemStack::new(crate::item::ItemType::Dirt, 1),
+            4,
+        );
+        drop.vel = Vec3::ZERO;
+        drop.skylight = 0;
+        game.dropped.push(drop);
+
+        let before = game.world.lighting_revision();
+        for _ in 0..200 {
+            game.world.tick_mesh_budget(1);
+            game.refresh_dropped_item_lights_after_world_light_update();
+            if game.world.lighting_revision() != before {
+                break;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        assert_ne!(game.world.lighting_revision(), before);
+        assert_eq!(game.dropped[0].skylight, 63);
     }
 
     #[test]

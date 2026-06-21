@@ -26,15 +26,13 @@ pub struct TreeFeature {
     pub log: Block,
     pub leaf: Block,
     pub height: (i32, i32),
-    pub radius: i32,
     pub footprint: i32,
 }
 
 impl Feature for TreeFeature {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
         let attach = self.trunk.place(ctx, origin, self.height, self.log, rng);
-        self.foliage
-            .place(ctx, &attach, self.radius, self.leaf, rng);
+        self.foliage.place(ctx, &attach, self.leaf, rng);
     }
     fn max_footprint(&self) -> i32 {
         self.footprint

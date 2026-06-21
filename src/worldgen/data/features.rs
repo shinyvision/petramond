@@ -8,38 +8,64 @@ use crate::biome::Biome;
 use crate::block::Block;
 
 use crate::worldgen::feature::placers::foliage::{
-    CanopyOakFoliage, ConicalSpruceFoliage, DroopyFoliage, FlatSparseFoliage,
+    BlobFoliage, ConiferFoliage, DroopyFoliage, FlatSparseFoliage,
 };
 use crate::worldgen::feature::placers::trunk::{LeaningTrunk, StraightTrunk};
 use crate::worldgen::feature::tree::{GiantOakFeature, TreeFeature};
 use crate::worldgen::feature::ConfiguredFeature;
 use crate::worldgen::rng::FeatureRng;
 
-// Shared placer instances (zero-sized).
+// Shared trunk placers (zero-sized strategies; height is per-tree config).
 static STRAIGHT: StraightTrunk = StraightTrunk;
 static LEANING: LeaningTrunk = LeaningTrunk;
-static CANOPY: CanopyOakFoliage = CanopyOakFoliage;
-static DROOPY: DroopyFoliage = DroopyFoliage;
-static FLAT: FlatSparseFoliage = FlatSparseFoliage;
-static SPRUCE_CONE: ConicalSpruceFoliage = ConicalSpruceFoliage;
+
+// Foliage configs — each carries its own shape params. Trees name one; identical
+// configs are shared, divergence is just a new literal here (no new impl).
+static BLOB_SMALL: BlobFoliage = BlobFoliage {
+    base_radius: 2,
+    top_radius: 1,
+    corner_cut: 0.5,
+};
+static BLOB_LARGE: BlobFoliage = BlobFoliage {
+    base_radius: 3,
+    top_radius: 2,
+    corner_cut: 0.5,
+};
+static DROOPY: DroopyFoliage = DroopyFoliage {
+    radius: 2,
+    ragged: 0.15,
+    drip_skip: 0.45,
+};
+static FLAT: FlatSparseFoliage = FlatSparseFoliage {
+    upper_radius: 3,
+    upper_skip: 0.30,
+    lower_radius: 2,
+    lower_skip: 0.40,
+};
+static CONIFER_SMALL: ConiferFoliage = ConiferFoliage {
+    radius: 2,
+    skirt_ragged: 0.25,
+};
+static CONIFER_TALL: ConiferFoliage = ConiferFoliage {
+    radius: 3,
+    skirt_ragged: 0.25,
+};
 
 // Tree shapes.
 static OAK_SMALL_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &CANOPY,
+    foliage: &BLOB_SMALL,
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 6),
-    radius: 2,
     footprint: 3, // min trunk height 5
 };
 static OAK_LEAN_F: TreeFeature = TreeFeature {
     trunk: &LEANING,
-    foliage: &CANOPY,
+    foliage: &BLOB_SMALL,
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 7),
-    radius: 2,
     footprint: 3,
 };
 static OAK_SWAMP_F: TreeFeature = TreeFeature {
@@ -48,7 +74,6 @@ static OAK_SWAMP_F: TreeFeature = TreeFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 7),
-    radius: 2,
     footprint: 3,
 };
 static OAK_SAVANNA_F: TreeFeature = TreeFeature {
@@ -57,7 +82,6 @@ static OAK_SAVANNA_F: TreeFeature = TreeFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 7),
-    radius: 3,
     footprint: 3,
 };
 // Big single-trunk fancy oak; limbs+crown reach ~5, footprint declared honestly.
@@ -71,38 +95,34 @@ static OAK_BIG_F: GiantOakFeature = GiantOakFeature {
 // --- Species trees: same composition, different materials + silhouette. ---
 static SPRUCE_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &SPRUCE_CONE,
+    foliage: &CONIFER_SMALL,
     log: Block::SpruceLog,
     leaf: Block::SpruceLeaves,
     height: (6, 10),
-    radius: 2,
     footprint: 3,
 };
 static SPRUCE_TALL_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &SPRUCE_CONE,
+    foliage: &CONIFER_TALL,
     log: Block::SpruceLog,
     leaf: Block::SpruceLeaves,
     height: (9, 13),
-    radius: 3,
     footprint: 4,
 };
 static BIRCH_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &CANOPY,
+    foliage: &BLOB_SMALL,
     log: Block::BirchLog,
     leaf: Block::BirchLeaves,
     height: (6, 8),
-    radius: 2,
     footprint: 3,
 };
 static JUNGLE_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &CANOPY,
+    foliage: &BLOB_LARGE,
     log: Block::JungleLog,
     leaf: Block::JungleLeaves,
     height: (7, 11),
-    radius: 3,
     footprint: 4,
 };
 static ACACIA_F: TreeFeature = TreeFeature {
@@ -111,25 +131,22 @@ static ACACIA_F: TreeFeature = TreeFeature {
     log: Block::AcaciaLog,
     leaf: Block::AcaciaLeaves,
     height: (5, 8),
-    radius: 3,
     footprint: 4,
 };
 static DARK_OAK_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &CANOPY,
+    foliage: &BLOB_LARGE,
     log: Block::DarkOakLog,
     leaf: Block::DarkOakLeaves,
     height: (6, 8),
-    radius: 3,
     footprint: 4,
 };
 static CHERRY_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
-    foliage: &CANOPY,
+    foliage: &BLOB_LARGE,
     log: Block::CherryLog,
     leaf: Block::CherryLeaves,
     height: (6, 9),
-    radius: 3,
     footprint: 4,
 };
 

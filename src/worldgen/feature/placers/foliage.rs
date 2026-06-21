@@ -1,9 +1,16 @@
 //! Foliage placers — build a tree's leaves around the trunk's attach points.
 //!
-//! Canopies follow the canonical broadleaf-oak silhouette: two wide layers with
-//! trimmed corners, a narrower layer, and a small cap — not a sphere. Iteration
-//! order and the per-cell RNG draws are fixed so cross-chunk seam replay stays
-//! deterministic (a tree rooted in a neighbour materialises identically here).
+//! Each placer is a *family* of canopy shape (broadleaf blob, conifer cone,
+//! droopy swamp, flat umbrella). The per-tree differences — width, raggedness,
+//! drip chance — are FIELDS on the placer, so a new look is a data row in
+//! `data::features` (a new `BlobFoliage { .. }`), not a new impl. A genuinely
+//! new *shape* (different layer profile, entangled branches) is a new placer or
+//! a bespoke `Feature` instead.
+//!
+//! Iteration order and the per-cell RNG draws are fixed so cross-chunk seam
+//! replay stays deterministic (a tree rooted in a neighbour materialises
+//! identically here). Parameterising never reorders or adds draws: each field
+//! simply names a constant the loop already consumed.
 
 use crate::block::Block;
 use crate::mathh::IVec3;
@@ -11,14 +18,7 @@ use crate::worldgen::feature::FeatureCtx;
 use crate::worldgen::rng::FeatureRng;
 
 pub trait FoliagePlacer: Send + Sync {
-    fn place(
-        &self,
-        ctx: &mut FeatureCtx,
-        attach: &[IVec3],
-        radius: i32,
-        leaf: Block,
-        rng: &mut FeatureRng,
-    );
+    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng);
 }
 
 /// Place a square leaf layer of the given radius at world Y `y`, centred on
@@ -48,32 +48,43 @@ fn leaf_layer(
     }
 }
 
-/// Canonical broadleaf oak canopy (a blob foliage placer, radius 2).
-///
-/// Four leaf layers attach one block ABOVE the top log (`topY = topLog + 1`) and
-/// run `topY-3 ..= topY`. Per-layer radius, bottom→top, is `[r, r, r-1, r-1]`:
-/// the two BOTTOM layers are the wide 5×5 squares, the two top layers are 3×3 —
-/// a fuller, rounder blob than a single wide layer. The ONLY cells ever removed
-/// are the four extreme corners (`|dx|==r && |dz|==r`): always on the very top
-/// layer, 50% on the others. (We deliberately do NOT trim the whole outer ring —
-/// that over-thins the canopy into the scraggly look this replaces.)
-pub struct CanopyOakFoliage;
+/// Place the four cardinal-neighbour leaves around `(cx, y, cz)` — a
+/// deterministic '+' with no ragged trimming (every face is always filled). The
+/// centre cell is left to the trunk log, which `set_leaf` won't overwrite.
+fn plus_ring(ctx: &mut FeatureCtx, cx: i32, y: i32, cz: i32, leaf: Block) {
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        ctx.set_leaf(IVec3::new(cx + dx, y, cz + dz), leaf);
+    }
+}
 
-impl FoliagePlacer for CanopyOakFoliage {
-    fn place(
-        &self,
-        ctx: &mut FeatureCtx,
-        attach: &[IVec3],
-        radius: i32,
-        leaf: Block,
-        rng: &mut FeatureRng,
-    ) {
+/// Broadleaf-oak-style blob canopy: four square leaf layers attaching one block
+/// ABOVE the top log (`topY = topLog + 1`), running `topY-3 ..= topY`. The two
+/// BOTTOM layers use `base_radius`, the two TOP layers use `top_radius` (a
+/// fuller, rounder blob than a single wide layer). The ONLY cells ever removed
+/// are the four extreme corners (`|dx|==r && |dz|==r`): always on the very top
+/// layer, and with probability `corner_cut` on the others. (We deliberately do
+/// NOT trim the whole outer ring — that over-thins the canopy into a scraggly
+/// look.) Shared by oak/birch (small) and jungle/dark-oak/cherry (large); a new
+/// width or raggedness is a new data row, not a new impl.
+///
+/// `base_radius` / `top_radius` must be ≥ 1.
+pub struct BlobFoliage {
+    pub base_radius: i32,
+    pub top_radius: i32,
+    pub corner_cut: f32,
+}
+
+impl FoliagePlacer for BlobFoliage {
+    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
         let a = attach[0];
-        let r = radius.max(1);
-        let rn = (r - 1).max(1); // narrowed (upper) radius
         let top_y = a.y + 1; // leaves attach one block above the highest log
                              // (dy from top, layer radius) bottom→top: wide, wide, narrow, narrow.
-        let layers = [(-3, r), (-2, r), (-1, rn), (0, rn)];
+        let layers = [
+            (-3, self.base_radius),
+            (-2, self.base_radius),
+            (-1, self.top_radius),
+            (0, self.top_radius),
+        ];
         for (dy, lr) in layers {
             let y = top_y + dy;
             let is_top = dy == 0;
@@ -81,8 +92,8 @@ impl FoliagePlacer for CanopyOakFoliage {
                 for lz in -lr..=lr {
                     if lx.abs() == lr && lz.abs() == lr {
                         // Only the 4 extreme corners are removable: always on the
-                        // top layer, 50% elsewhere (one draw per corner cell).
-                        if is_top || rng.chance(0.5) {
+                        // top layer, `corner_cut` elsewhere (one draw per corner).
+                        if is_top || rng.chance(self.corner_cut) {
                             continue;
                         }
                     }
@@ -93,35 +104,35 @@ impl FoliagePlacer for CanopyOakFoliage {
     }
 }
 
-/// Droopy swamp canopy: a wide flat layer at the trunk top, a small cap above,
-/// and leaves that hang one block down from the outer ring (the swamp "drip").
-pub struct DroopyFoliage;
+/// Droopy swamp canopy: a wide flat main layer at the trunk top, a small cap one
+/// block above (`radius - 1`), and leaves that hang one block down from the outer
+/// ring (the swamp "drip"). `ragged` trims the main layer's edge; `drip_skip` is
+/// the chance to omit each individual hanging drip.
+pub struct DroopyFoliage {
+    pub radius: i32,
+    pub ragged: f32,
+    pub drip_skip: f32,
+}
 
 impl FoliagePlacer for DroopyFoliage {
-    fn place(
-        &self,
-        ctx: &mut FeatureCtx,
-        attach: &[IVec3],
-        _radius: i32,
-        leaf: Block,
-        rng: &mut FeatureRng,
-    ) {
+    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
         let a = attach[0];
         let (cx, cz, ct) = (a.x, a.z, a.y);
+        let r = self.radius;
         // Wide main layer + a small cap.
-        leaf_layer(ctx, cx, ct, cz, 2, leaf, 0.15, rng);
-        leaf_layer(ctx, cx, ct + 1, cz, 1, leaf, 0.0, rng);
+        leaf_layer(ctx, cx, ct, cz, r, leaf, self.ragged, rng);
+        leaf_layer(ctx, cx, ct + 1, cz, r - 1, leaf, 0.0, rng);
         // Hanging drips: from each outer-ring cell of the main layer, sometimes
         // extend one leaf straight down.
-        for lx in -2i32..=2 {
-            for lz in -2i32..=2 {
-                if lx.abs() == 2 && lz.abs() == 2 {
+        for lx in -r..=r {
+            for lz in -r..=r {
+                if lx.abs() == r && lz.abs() == r {
                     continue;
                 }
-                if !(lx.abs() == 2 || lz.abs() == 2) {
+                if !(lx.abs() == r || lz.abs() == r) {
                     continue; // outer ring only
                 }
-                if rng.chance(0.45) {
+                if rng.chance(self.drip_skip) {
                     continue;
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct - 1, cz + lz), leaf);
@@ -130,71 +141,118 @@ impl FoliagePlacer for DroopyFoliage {
     }
 }
 
-/// Conifer canopy (spruce / pine): a narrow spire of stacked square layers that
-/// widen toward the bottom in a two-step cycle, giving the classic drooping
-/// "skirts" and a single-leaf tip. Covers the upper trunk so taigas read as
-/// pointed evergreens, not round blobs.
-pub struct ConicalSpruceFoliage;
+/// Conifer canopy (spruce / pine): a deterministic pointed top — a single-leaf
+/// tip, a '+'-crown hugging the top log, and a second '+' on the third block
+/// down (all four faces always filled) — over widening ragged "skirts" that give
+/// the classic drooping evergreen silhouette. `radius` controls how wide/tall the
+/// skirts grow (clamped to ≥2 so the pointed top stays intact); `skirt_ragged`
+/// is the outer-ring trim chance per skirt.
+pub struct ConiferFoliage {
+    pub radius: i32,
+    pub skirt_ragged: f32,
+}
 
-impl FoliagePlacer for ConicalSpruceFoliage {
-    fn place(
-        &self,
-        ctx: &mut FeatureCtx,
-        attach: &[IVec3],
-        radius: i32,
-        leaf: Block,
-        rng: &mut FeatureRng,
-    ) {
+impl FoliagePlacer for ConiferFoliage {
+    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
         let a = attach[0];
-        let max_r = radius.max(2);
-        // Single-leaf tip one block above the top log.
-        ctx.set_leaf(IVec3::new(a.x, a.y + 1, a.z), leaf);
-        // Descend from the top log: radius steps 0,0,1,1,2,2,... (clamped), so the
-        // cone widens downward; alternate layers narrow by one for the skirts.
+        let max_r = self.radius.max(2);
+
+        // Deterministic pointed top, so a spruce is never bald or lopsided up
+        // there: a single-leaf tip, a '+'-crown around the top log, and a second
+        // '+' on the third block down. Both rings are ALWAYS four full faces (no
+        // ragged trimming); their centres are trunk logs that `set_leaf` keeps.
+        ctx.set_leaf(IVec3::new(a.x, a.y + 1, a.z), leaf); // tip
+        plus_ring(ctx, a.x, a.y, a.z, leaf); // crown (1st block from top)
+        plus_ring(ctx, a.x, a.y - 2, a.z, leaf); // 3rd block from top
+
+        // Widening ragged skirts below the top three blocks: a two-step
+        // wide/narrow cycle for the drooping conifer silhouette. The top is
+        // placed above, so descent starts at the first skirt. Iteration and
+        // per-cell draw order are fixed for deterministic cross-chunk replay.
         let layers = 4 + max_r * 2;
-        for i in 0..layers {
+        for i in 4..layers {
             let y = a.y - i;
             let grow = (i / 2).min(max_r);
             let r = if i % 2 == 1 { (grow - 1).max(0) } else { grow };
-            leaf_layer(ctx, a.x, y, a.z, r, leaf, 0.25, rng);
+            leaf_layer(ctx, a.x, y, a.z, r, leaf, self.skirt_ragged, rng);
         }
     }
 }
 
-/// Flat sparse savanna canopy (acacia-like silhouette using oak blocks): a thin
-/// diamond umbrella spread above a tall trunk, with gaps so it reads as airy.
-pub struct FlatSparseFoliage;
+#[cfg(test)]
+mod spruce_tests {
+    use super::*;
+    use crate::chunk::Chunk;
+    use crate::worldgen::rng::FeatureRng;
+
+    /// A spruce must ALWAYS get its full pointed top regardless of the RNG: a
+    /// single-leaf tip, a four-face '+'-crown around the top log, and a four-face
+    /// '+' on the third block from the top. (Skirts below stay ragged.)
+    #[test]
+    fn spruce_crown_and_third_block_are_deterministic_plus() {
+        const FACES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        for radius in [2, 3] {
+            for seed in [1u32, 7, 42, 1000, 31337] {
+                let mut chunk = Chunk::new(0, 0);
+                let (cx, cz, base, h) = (8i32, 8i32, 64i32, 9i32);
+                for i in 0..h {
+                    let p = ((base + i) as usize, cx as usize, cz as usize);
+                    chunk.set_block_raw(p.1, p.0, p.2, Block::SpruceLog.id());
+                }
+                let top = IVec3::new(cx, base + h - 1, cz);
+                let mut rng = FeatureRng::positional(seed, 0xABCD, cx, 0, cz);
+                let mut ctx = FeatureCtx::new(&mut chunk);
+                let cone = ConiferFoliage { radius, skirt_ragged: 0.25 };
+                cone.place(&mut ctx, &[top], Block::SpruceLeaves, &mut rng);
+
+                let leaf = |x: i32, y: i32, z: i32| {
+                    chunk.block_raw(x as usize, y as usize, z as usize) == Block::SpruceLeaves.id()
+                };
+                assert!(leaf(cx, top.y + 1, cz), "r{radius} seed {seed}: missing tip");
+                for (dx, dz) in FACES {
+                    assert!(leaf(cx + dx, top.y, cz + dz), "r{radius} seed {seed}: crown face {dx},{dz}");
+                    assert!(leaf(cx + dx, top.y - 2, cz + dz), "r{radius} seed {seed}: 3rd-block face {dx},{dz}");
+                }
+            }
+        }
+    }
+}
+
+/// Flat sparse savanna canopy (acacia-like silhouette): a thin diamond umbrella
+/// spread above a tall trunk, with gaps so it reads as airy. `upper_*` is the
+/// raised umbrella disc; `lower_*` is a sparser ring one block below it.
+pub struct FlatSparseFoliage {
+    pub upper_radius: i32,
+    pub upper_skip: f32,
+    pub lower_radius: i32,
+    pub lower_skip: f32,
+}
 
 impl FoliagePlacer for FlatSparseFoliage {
-    fn place(
-        &self,
-        ctx: &mut FeatureCtx,
-        attach: &[IVec3],
-        _radius: i32,
-        leaf: Block,
-        rng: &mut FeatureRng,
-    ) {
+    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
         let a = attach[0];
         let (cx, cz, ct) = (a.x, a.z, a.y);
-        // Upper disc: diamond radius 3, sparse.
-        for lx in -3i32..=3 {
-            for lz in -3i32..=3 {
-                if lx.abs() + lz.abs() > 3 {
+        // Upper disc: sparse diamond.
+        let ur = self.upper_radius;
+        for lx in -ur..=ur {
+            for lz in -ur..=ur {
+                if lx.abs() + lz.abs() > ur {
                     continue;
                 }
-                if rng.chance(0.30) {
+                if rng.chance(self.upper_skip) {
                     continue;
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct + 1, cz + lz), leaf);
             }
         }
-        // Lower ring: diamond radius 2, sparser.
-        for lx in -2i32..=2 {
-            for lz in -2i32..=2 {
-                if lx.abs() + lz.abs() > 2 {
+        // Lower ring: sparser diamond.
+        let lr = self.lower_radius;
+        for lx in -lr..=lr {
+            for lz in -lr..=lr {
+                if lx.abs() + lz.abs() > lr {
                     continue;
                 }
-                if rng.chance(0.40) {
+                if rng.chance(self.lower_skip) {
                     continue;
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct, cz + lz), leaf);

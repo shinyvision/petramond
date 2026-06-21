@@ -171,6 +171,7 @@ impl World {
                 c.set_skylight(res.band, res.ylo, res.yhi);
                 c.dirty = true;
             }
+            self.bump_lighting_revision();
             self.dirty_meshes.push(res.pos);
         }
     }
@@ -228,6 +229,7 @@ mod tests {
         assert!(!chunk.dirty);
         assert!(!chunk.light_dirty);
         assert!(!world.meshes.get(&pos).unwrap().is_empty());
+        assert!(world.lighting_revision() > 0);
     }
 
     fn tick_until_meshed(world: &mut World, pos: ChunkPos) {

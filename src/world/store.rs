@@ -35,6 +35,7 @@ pub struct World {
     pub render_dist: i32,
     pub section_visibility: HashMap<ChunkPos, [SectionConnectivity; SECTION_COUNT]>,
     pub visibility_revision: u64,
+    pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
     pub(super) dirty_meshes: DirtyMeshQueue,
     pub(super) last_load_target: Option<LoadTarget>,
@@ -51,10 +52,20 @@ impl World {
             render_dist,
             section_visibility: HashMap::new(),
             visibility_revision: 0,
+            lighting_revision: 0,
             light_bakes: LightBakeQueue::new(),
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
         }
+    }
+
+    #[inline]
+    pub fn lighting_revision(&self) -> u64 {
+        self.lighting_revision
+    }
+
+    pub(super) fn bump_lighting_revision(&mut self) {
+        self.lighting_revision = self.lighting_revision.wrapping_add(1);
     }
 
     pub(super) fn mark_dirty_pos(&mut self, pos: ChunkPos) {
