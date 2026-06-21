@@ -38,6 +38,9 @@ pub struct Player {
     /// or head-bonk). Gates the apex easing so only a genuine jump arc is
     /// softened — walking off a ledge or bonking a ceiling falls at full gravity.
     pub(super) jumping: bool,
+    /// The player's 36-slot inventory (9 hotbar + 27 main). Owns the active
+    /// hotbar selection that drives the held item and placement.
+    pub inventory: crate::inventory::Inventory,
 }
 
 impl Player {
@@ -48,6 +51,7 @@ impl Player {
             on_ground: false,
             mode: PlayerMode::Survival,
             jumping: false,
+            inventory: crate::inventory::Inventory::new(),
         }
     }
 
@@ -83,6 +87,14 @@ impl Player {
     #[inline]
     pub fn eye(&self) -> Vec3 {
         Vec3::new(self.pos.x, self.pos.y + EYE, self.pos.z)
+    }
+
+    /// Centre of the body AABB (feet + half height). Used as the pickup-radius
+    /// centre so a drop resting at the player's feet is measured from the body,
+    /// not the eye (contract §6: "within pickup radius of player AABB").
+    #[inline]
+    pub fn body_center(&self) -> Vec3 {
+        Vec3::new(self.pos.x, self.pos.y + HEIGHT * 0.5, self.pos.z)
     }
 
     /// AABB min corner.

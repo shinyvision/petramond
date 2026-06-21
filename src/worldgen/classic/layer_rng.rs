@@ -10,6 +10,7 @@
 //!     draws.
 //!   - **start seed** — `step(start_salt, 0)` ([`start_seed`]); the base a cell's
 //!     seed is derived from.
+//!
 //! A cell's seed is `start_seed + x` then `step` by `z, x, z` ([`cell_seed`]); a
 //! bounded draw is `(seed >> 24) mod n` with a floor-mod sign-fix ([`first_int`]).
 //!

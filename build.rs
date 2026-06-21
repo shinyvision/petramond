@@ -120,6 +120,20 @@ const TILES: &[(&str, &str)] = &[
     ("dead_bush", "dead_bush.png"),
     ("brown_mushroom", "brown_mushroom.png"),
     ("red_mushroom", "red_mushroom.png"),
+    // Block-breaking overlay stages (Survival 0.1). Appended last so all
+    // preceding tile ids stay stable (chunk/save compatibility; tests enforce).
+    // 16x16 grayscale+alpha cracks; sampled by the break-overlay pass over the
+    // mined face. Generates Tile::DestroyStage0 .. Tile::DestroyStage9.
+    ("destroy_stage_0", "destroy_stage_0.png"),
+    ("destroy_stage_1", "destroy_stage_1.png"),
+    ("destroy_stage_2", "destroy_stage_2.png"),
+    ("destroy_stage_3", "destroy_stage_3.png"),
+    ("destroy_stage_4", "destroy_stage_4.png"),
+    ("destroy_stage_5", "destroy_stage_5.png"),
+    ("destroy_stage_6", "destroy_stage_6.png"),
+    ("destroy_stage_7", "destroy_stage_7.png"),
+    ("destroy_stage_8", "destroy_stage_8.png"),
+    ("destroy_stage_9", "destroy_stage_9.png"),
 ];
 
 fn main() {
@@ -135,7 +149,7 @@ fn main() {
     let count = TILES.len() as u32;
     // Square-ish atlas. cols = ceil(sqrt(n)); rows = ceil(n/cols).
     let cols = (count as f32).sqrt().ceil() as u32;
-    let rows = (count + cols - 1) / cols;
+    let rows = count.div_ceil(cols);
     let atlas_w = cols * TILE;
     let atlas_h = rows * TILE;
 

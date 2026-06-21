@@ -27,10 +27,11 @@ thread_local! {
 }
 
 // --- Skylight (flood-fill, cached per chunk) -------------------
-// Each chunk's skylight is computed from ITS OWN blocks (no neighbour reads),
-// stored on the Chunk, and recomputed only when that chunk changes (see
-// world.rs). Light is on an x2 integer scale (`SKY_FULL` = 30 = level 15): open
-// sky = 15. Two terms:
+// Each chunk stores only its own 16x16 light band. The standalone helper computes
+// that band from the chunk alone; the world path computes it from the chunk plus
+// a loaded one-chunk halo so horizontal flood light can cross chunk borders.
+// Light is on an x2 integer scale (`SKY_FULL` = 30 = level 15): open sky = 15.
+// Two terms:
 //
 //  * Vertical sky descent (pass 1, per column) is VOLUMETRIC: a running
 //    attenuation `rate` ratchets up the moment skylight enters cover and then
@@ -48,14 +49,17 @@ thread_local! {
 //    cells stay frozen so a neighbouring shaft cannot flatten their depth
 //    gradient.
 //
-// Being self-contained, horizontal light does NOT bleed across chunk borders --
-// the dominant vertical sky term stays seamless (per-column); only secondary
-// bleed into enclosed spaces can step at a border, and per-vertex border faces
-// blend both sides to soften it.
+// The neighbor-aware solve keeps the cached output local, but lets secondary
+// bleed step through loaded neighbor blocks before the center band is copied out.
 
 /// How far below the lowest surface to keep solving, so overhang/cave-mouth spill
 /// light is captured. Anything deeper just floors to the dark minimum.
 const LIGHT_MARGIN_DOWN: i32 = 24;
+
+/// Horizontal halo used by the world bake. Normal air/water bleed costs two x2
+/// light units per block, so every possible one-level-per-block cross-border
+/// source fits inside the immediate loaded neighbor chunks.
+const LIGHT_HALO_CHUNKS: i32 = 1;
 
 // Medium codes for the flood buffer.
 const M_AIR: u8 = 0; // descent keeps the running rate; horizontal step costs 1 level
@@ -63,33 +67,69 @@ const M_LEAF: u8 = 1; // canopy: sets descent rate >= 0.5/block; horizontal step
 const M_WATER: u8 = 2; // water: sets descent rate to 1/block; horizontal step costs 1
 const M_OPAQUE: u8 = 3; // full cube: blocks light, breaks sky shafts
 
-/// Compute the skylight band for `chunk` from its own blocks. Returns the flat
-/// band buffer (x2 light, indexed like blocks with Y offset by `ylo`) plus the
-/// band `[ylo, yhi]`. Pure integer flood-fill, order-independent -> deterministic.
-/// Reuses per-thread scratch. Call when the chunk's blocks change; the result is
-/// stored via `Chunk::set_skylight` and reused across mesh rebuilds.
+/// Compute a standalone skylight band for `chunk` from its own blocks. Returns
+/// the flat band buffer (x2 light, indexed like blocks with Y offset by `ylo`)
+/// plus the band `[ylo, yhi]`. Pure integer flood-fill, order-independent ->
+/// deterministic. Reuses per-thread scratch.
 pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
-    const SX: i32 = CHUNK_SX as i32;
-    const SZ: i32 = CHUNK_SZ as i32;
+    compute_chunk_skylight_inner(chunk, 0, |_, _| None)
+}
 
-    // Vertical band from this chunk's own heightmap.
+/// Compute the skylight band for `chunk`, allowing horizontal flood light to
+/// move through currently loaded neighbor chunks. Missing neighbors are treated
+/// as closed boundaries, so unloaded terrain cannot inject temporary cave light.
+pub fn compute_chunk_skylight_with_neighbors<'a>(
+    chunk: &'a Chunk,
+    neighbour_chunk: impl Fn(i32, i32) -> Option<&'a Chunk>,
+) -> (Box<[u8]>, i32, i32) {
+    compute_chunk_skylight_inner(chunk, LIGHT_HALO_CHUNKS, neighbour_chunk)
+}
+
+fn compute_chunk_skylight_inner<'a>(
+    chunk: &'a Chunk,
+    halo_chunks: i32,
+    neighbour_chunk: impl Fn(i32, i32) -> Option<&'a Chunk>,
+) -> (Box<[u8]>, i32, i32) {
+    let grid_chunks = halo_chunks * 2 + 1;
+    let sx = CHUNK_SX as i32 * grid_chunks;
+    let sz = CHUNK_SZ as i32 * grid_chunks;
+    let origin_x = -halo_chunks * CHUNK_SX as i32;
+    let origin_z = -halo_chunks * CHUNK_SZ as i32;
+
+    let mut chunk_grid = Vec::with_capacity((grid_chunks * grid_chunks) as usize);
+    for dcz in -halo_chunks..=halo_chunks {
+        for dcx in -halo_chunks..=halo_chunks {
+            let c = if dcx == 0 && dcz == 0 {
+                Some(chunk)
+            } else {
+                neighbour_chunk(chunk.cx + dcx, chunk.cz + dcz)
+            };
+            chunk_grid.push(c);
+        }
+    }
+
+    // Vertical band from the loaded solve area. A tall neighbor must raise the
+    // solve top, otherwise the halo could incorrectly seed light below that
+    // neighbor's unseen roof.
     let mut hmax = 0i32;
     let mut hmin = CHUNK_SY as i32 - 1;
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            let h = chunk.surface_y(x, z);
-            if h > hmax {
-                hmax = h;
-            }
-            if h < hmin {
-                hmin = h;
+    for c in chunk_grid.iter().flatten() {
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                let h = c.surface_y(x, z);
+                if h > hmax {
+                    hmax = h;
+                }
+                if h < hmin {
+                    hmin = h;
+                }
             }
         }
     }
     let yhi = (hmax + 1).min(CHUNK_SY as i32 - 1);
     let ylo = (hmin - LIGHT_MARGIN_DOWN).max(0);
     let bh = (yhi - ylo + 1).max(1);
-    let vol = (SX * SZ * bh) as usize;
+    let vol = (sx * sz * bh) as usize;
 
     // Temporary buffers from per-thread scratch (medium, sky, and step are fully
     // overwritten by the fill pass; buckets are cleared). The result band is
@@ -119,7 +159,16 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     // 2 so a neighbouring skylight shaft bleeds into them like it does under an
     // opaque roof, but at the leaf half-rate.
 
-    let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * SZ + z) * SX + x) as usize };
+    let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * sz + z) * sx + x) as usize };
+    let chunk_at = |rx: i32, rz: i32| -> Option<&Chunk> {
+        let dcx = rx >> 4;
+        let dcz = rz >> 4;
+        if dcx < -halo_chunks || dcx > halo_chunks || dcz < -halo_chunks || dcz > halo_chunks {
+            return None;
+        }
+        let gi = ((dcz + halo_chunks) * grid_chunks + (dcx + halo_chunks)) as usize;
+        chunk_grid[gi]
+    };
 
     // Pass 1: fill medium + seed the VOLUMETRIC sky descent. Descend each column
     // from the band top carrying a running `rate` (attenuation per block of
@@ -128,22 +177,34 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     // draining through the air below -- so it gets darker the deeper you go under
     // cover. The first opaque block ends the column (no sky below it; `medium`
     // keeps filling so pass 2 can re-enter caves from the side).
-    for z in 0..SZ {
-        for x in 0..SX {
+    for z in 0..sz {
+        for x in 0..sx {
+            let rx = origin_x + x;
+            let rz = origin_z + z;
+            let owner = chunk_at(rx, rz);
             let mut blocked = false;
             let mut cur = SKY_FULL;
             let mut rate = 0u8; // per-block descent attenuation, x2 (0 open / 1 leaf / 2 water)
             let mut wy = yhi;
             while wy >= ylo {
-                let b = Block::from_id(chunk.block_raw(x as usize, wy as usize, z as usize));
-                let m = if b.is_opaque() {
-                    M_OPAQUE
-                } else if b == Block::Water {
-                    M_WATER
-                } else if b == Block::OakLeaves {
-                    M_LEAF
-                } else {
-                    M_AIR
+                let m = match owner {
+                    Some(c) => {
+                        let b = Block::from_id(c.block_raw(
+                            (rx & 0x0F) as usize,
+                            wy as usize,
+                            (rz & 0x0F) as usize,
+                        ));
+                        if b.is_opaque() {
+                            M_OPAQUE
+                        } else if b == Block::Water {
+                            M_WATER
+                        } else if b == Block::OakLeaves {
+                            M_LEAF
+                        } else {
+                            M_AIR
+                        }
+                    }
+                    None => M_OPAQUE,
                 };
                 let i = idx(x, wy - ylo, z);
                 medium[i] = m;
@@ -175,9 +236,9 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
         }
     }
 
-    // Pass 2: bucketed Dijkstra (bright -> dark) within the 16x16xbh box. Normal
-    // covered neighbours cost 2, leaf-covered neighbours cost 1, and opaque cells
-    // are impassable. Frozen pass-1 cells still SOURCE light into enclosed
+    // Pass 2: bucketed Dijkstra (bright -> dark) within the solved box. Normal
+    // covered neighbours cost 2, leaf-covered neighbours cost 1, and opaque
+    // cells are impassable. Frozen pass-1 cells still SOURCE light into enclosed
     // neighbours but are never raised. Staleness check skips voxels already
     // improved past their bucket. Final values are order-independent.
     let mut level = SKY_FULL as i32;
@@ -187,10 +248,10 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
             if light2[iu] != level as u8 {
                 continue;
             }
-            let x = (i % SX as u32) as i32;
-            let rem = i / SX as u32;
-            let z = (rem % SZ as u32) as i32;
-            let ay = (rem / SZ as u32) as i32;
+            let x = (i % sx as u32) as i32;
+            let rem = i / sx as u32;
+            let z = (rem % sz as u32) as i32;
+            let ay = (rem / sz as u32) as i32;
             for (dx, dy, dz) in [
                 (1, 0, 0),
                 (-1, 0, 0),
@@ -202,7 +263,7 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
                 let nx = x + dx;
                 let ny = ay + dy;
                 let nz = z + dz;
-                if nx < 0 || nx >= SX || ny < 0 || ny >= bh || nz < 0 || nz >= SZ {
+                if !(0..sx).contains(&nx) || ny < 0 || ny >= bh || !(0..sz).contains(&nz) {
                     continue;
                 }
                 let ni = idx(nx, ny, nz);
@@ -235,5 +296,18 @@ pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
         s.buckets = buckets;
     });
 
-    (light2.into_boxed_slice(), ylo, yhi)
+    let out_vol = (CHUNK_SX as i32 * CHUNK_SZ as i32 * bh) as usize;
+    let mut out = vec![0u8; out_vol];
+    let center_x0 = -origin_x;
+    let center_z0 = -origin_z;
+    for ay in 0..bh {
+        for z in 0..CHUNK_SZ as i32 {
+            for x in 0..CHUNK_SX as i32 {
+                let oi = ((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize;
+                out[oi] = light2[idx(center_x0 + x, ay, center_z0 + z)];
+            }
+        }
+    }
+
+    (out.into_boxed_slice(), ylo, yhi)
 }

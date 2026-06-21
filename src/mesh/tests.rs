@@ -32,7 +32,11 @@ fn cross_plant_emits_double_sided_billboards() {
     let mut bare = Chunk::new(0, 0);
     bare.set_block_raw(8, 64, 8, Block::Stone.id());
     let m0 = build_mesh(&bare, air, biome0, light);
-    assert_eq!(m0.opaque.len(), 24, "interior stone cube should emit 6 quads");
+    assert_eq!(
+        m0.opaque.len(),
+        24,
+        "interior stone cube should emit 6 quads"
+    );
 
     // Same, plus a short-grass plant on top.
     let mut withplant = Chunk::new(0, 0);
@@ -42,13 +46,20 @@ fn cross_plant_emits_double_sided_billboards() {
 
     // Plant adds exactly 2 planes x 4 verts = 8 verts, and 2 planes x (6 front +
     // 6 back) = 24 indices. The stone's faces are untouched (plant is non-opaque).
-    assert_eq!(m1.opaque.len() - m0.opaque.len(), 8, "plant should add 8 verts");
+    assert_eq!(
+        m1.opaque.len() - m0.opaque.len(),
+        8,
+        "plant should add 8 verts"
+    );
     assert_eq!(
         m1.opaque_idx.len() - m0.opaque_idx.len(),
         24,
         "plant should add 24 indices (both windings)"
     );
-    assert!(m1.transparent.is_empty(), "plant must not feed the alpha pass");
+    assert!(
+        m1.transparent.is_empty(),
+        "plant must not feed the alpha pass"
+    );
 }
 
 /// Leaves must render in the OPAQUE pass, not the alpha-blended one. Proof: a
@@ -245,6 +256,52 @@ fn skylight_tunnel_falls_off_by_one_per_block() {
     assert_eq!(sky.at(11, 3, 8), SKY_FULL - 6);
     // Monotonically darker deeper in.
     assert!(sky.at(13, 3, 8) < sky.at(9, 3, 8));
+}
+
+#[test]
+fn skylight_flood_crosses_loaded_chunk_border() {
+    let mut west = Chunk::new(0, 0);
+    let mut east = Chunk::new(1, 0);
+    for c in [&mut west, &mut east] {
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                for y in 0..=6 {
+                    c.set_block(x, y, z, Block::Stone);
+                }
+            }
+        }
+    }
+
+    // The light source is an open shaft at the east edge of the west chunk.
+    for y in 1..=6 {
+        west.set_block(CHUNK_SX - 1, y, 8, Block::Air);
+    }
+    // The tunnel starts in the east chunk, just across the chunk border.
+    for x in 0..=4 {
+        east.set_block(x, 3, 8, Block::Air);
+    }
+
+    let isolated = solo_skylight(&east);
+    assert_eq!(
+        isolated.at(0, 3, 8),
+        0,
+        "without neighbor reads the border tunnel has no local sky source"
+    );
+
+    let (band, ylo, yhi) = compute_chunk_skylight_with_neighbors(&east, |cx, cz| {
+        if cx == west.cx && cz == west.cz {
+            Some(&west)
+        } else if cx == east.cx && cz == east.cz {
+            Some(&east)
+        } else {
+            None
+        }
+    });
+    let sky = TestSky { band, ylo, yhi };
+
+    assert_eq!(sky.at(0, 3, 8), SKY_FULL - 2);
+    assert_eq!(sky.at(1, 3, 8), SKY_FULL - 4);
+    assert_eq!(sky.at(2, 3, 8), SKY_FULL - 6);
 }
 
 /// Build an opaque-walled vertical shaft of `fill` from y=1..=8 over a floor,
@@ -585,10 +642,10 @@ mod parallel_parity_tests {
     use rayon::prelude::*;
     use std::collections::HashMap;
 
-    /// The skylight bake runs under rayon (`World::poll`), so it must be
-    /// deterministic: same blocks -> byte-identical band, regardless of thread or
-    /// repetition (guards the per-thread `SKY_SCRATCH` being fully reset each call
-    /// and the flood being order-independent).
+    /// The skylight bake may run on worker/rayon threads in tools and tests, so
+    /// it must be deterministic: same blocks -> byte-identical band, regardless
+    /// of thread or repetition (guards the per-thread `SKY_SCRATCH` being fully
+    /// reset each call and the flood being order-independent).
     #[test]
     fn skylight_bake_is_deterministic_serial_vs_parallel() {
         let seed = 0x1234_5678u32;

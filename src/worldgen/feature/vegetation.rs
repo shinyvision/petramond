@@ -77,14 +77,22 @@ fn pick_plant(
         if !matches!(biome, Desert | Badlands | Beach) || !rng.chance(0.007) {
             return None;
         }
-        return Some(if rng.next_i32(0, 99) < 45 { DeadBush } else { Cactus });
+        return Some(if rng.next_i32(0, 99) < 45 {
+            DeadBush
+        } else {
+            Cactus
+        });
     }
     // Mushroom-island mycelium: dense mushrooms.
     if surf == Mycelium {
         if !rng.chance(0.10) {
             return None;
         }
-        return Some(if rng.next_i32(0, 99) < 55 { RedMushroom } else { BrownMushroom });
+        return Some(if rng.next_i32(0, 99) < 55 {
+            RedMushroom
+        } else {
+            BrownMushroom
+        });
     }
     // Podzol (old-growth taiga / grove): ferns + mushrooms.
     if surf == Podzol {
@@ -139,8 +147,7 @@ fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32) -> f32 {
     let z0 = fz.floor() as i32;
     let tx = smoothstep(0.0, 1.0, fx - x0 as f32);
     let tz = smoothstep(0.0, 1.0, fz - z0 as f32);
-    let corner =
-        |ix: i32, iz: i32| FeatureRng::positional(seed, salt, ix, 0, iz).next_f32();
+    let corner = |ix: i32, iz: i32| FeatureRng::positional(seed, salt, ix, 0, iz).next_f32();
     let c00 = corner(x0, z0);
     let c10 = corner(x0 + 1, z0);
     let c01 = corner(x0, z0 + 1);

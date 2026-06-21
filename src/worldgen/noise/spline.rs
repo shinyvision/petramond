@@ -105,7 +105,10 @@ mod tests {
             prev = a;
             e += 0.05;
         }
-        assert!(erosion_amp(0.0) > erosion_amp(1.0) * 10.0, "not enough flat/steep contrast");
+        assert!(
+            erosion_amp(0.0) > erosion_amp(1.0) * 10.0,
+            "not enough flat/steep contrast"
+        );
     }
 
     #[test]

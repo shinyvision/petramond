@@ -81,22 +81,6 @@ impl World {
             return 0;
         }
 
-        // Bake each fresh chunk's skylight once from its own blocks. Meshing and
-        // re-meshing only sample this cached band until a block edit re-bakes it.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            fresh.par_iter_mut().for_each(|(_, c)| {
-                let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(c);
-                c.set_skylight(band, ylo, yhi);
-            });
-        }
-        #[cfg(target_arch = "wasm32")]
-        for (_, c) in fresh.iter_mut() {
-            let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(c);
-            c.set_skylight(band, ylo, yhi);
-        }
-
         let n = fresh.len();
         let mut ingested: Vec<ChunkPos> = Vec::with_capacity(n);
         for (pos, chunk) in fresh {
@@ -106,9 +90,10 @@ impl World {
             ingested.push(pos);
         }
 
-        // Mark the surrounding 3x3 dirty so neighbours re-mesh against the new
-        // terrain and edge light. Their cached skylight remains self-contained.
+        // Mark the surrounding 3x3 dirty so neighbors re-light and re-mesh
+        // against the new terrain and border flood.
         for pos in &ingested {
+            self.mark_light_dirty_neighborhood(*pos, true);
             self.mark_dirty_neighborhood(*pos, false);
         }
         n

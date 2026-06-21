@@ -1,4 +1,4 @@
-use crate::chunk::{ChunkPos, CHUNK_SY};
+use crate::chunk::{ChunkPos, CHUNK_SY, SKY_FULL};
 use crate::mesh::ChunkMesh;
 
 use super::store::World;
@@ -37,6 +37,27 @@ impl World {
 
     pub fn chunk_block(&self, wx: i32, wy: i32, wz: i32) -> u8 {
         WorldQuery::chunk_block(self, wx, wy, wz)
+    }
+
+    /// Cached skylight at a world voxel on the x2 scale (`SKY_FULL` = light 15).
+    /// Missing chunks read as open sky, matching mesh-border fallback behavior.
+    pub fn skylight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        if wy < 0 {
+            return 0;
+        }
+        if wy >= CHUNK_SY as i32 {
+            return SKY_FULL;
+        }
+        match self.chunks.get(&ChunkPos::new(wx >> 4, wz >> 4)) {
+            Some(c) => c.skylight_at((wx & 0x0F) as usize, wy, (wz & 0x0F) as usize),
+            None => SKY_FULL,
+        }
+    }
+
+    /// Cached skylight converted to the 6-bit packed vertex scale (`0..=63`).
+    pub fn skylight6_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        let l = self.skylight_at_world(wx, wy, wz) as u32;
+        ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63) as u8
     }
 
     /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its

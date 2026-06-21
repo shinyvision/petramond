@@ -95,8 +95,7 @@ impl TerrainGen {
         let mut q = [0.0f32; 25];
         for i in -2i32..=2 {
             for j in -2i32..=2 {
-                q[((i + 2) + (j + 2) * 5) as usize] =
-                    10.0 / ((i * i + j * j) as f32 + 0.2).sqrt();
+                q[((i + 2) + (j + 2) * 5) as usize] = 10.0 / ((i * i + j * j) as f32 + 0.2).sqrt();
             }
         }
         Self {
@@ -144,10 +143,12 @@ impl TerrainGen {
             684.412 / 160.0,
             684.412 / 80.0,
         );
-        self.min
-            .sample_region(&mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
-        self.max
-            .sample_region(&mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
+        self.min.sample_region(
+            &mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
+        );
+        self.max.sample_region(
+            &mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
+        );
 
         let mut p = vec![0.0f64; nx * nz * 33];
         let mut didx = 0;
@@ -329,6 +330,9 @@ mod tests {
                 diffs += 1;
             }
         }
-        assert_eq!(diffs, 0, "terrain heightmap differs from real Minecraft in {diffs}/256 columns");
+        assert_eq!(
+            diffs, 0,
+            "terrain heightmap differs from real Minecraft in {diffs}/256 columns"
+        );
     }
 }

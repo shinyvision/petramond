@@ -542,7 +542,7 @@ fn nearest_hit(x: f32, z: f32, paths: &[RiverPath]) -> Option<RiverHit> {
                 depth: a.depth + (b.depth - a.depth) * t,
             };
             let score = distance / MAX_QUERY_RADIUS;
-            if best.map_or(true, |(best_score, _)| score < best_score) {
+            if best.is_none_or(|(best_score, _)| score < best_score) {
                 best = Some((score, hit));
             }
         }

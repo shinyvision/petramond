@@ -882,9 +882,8 @@ impl Layer for Hills {
 
 #[inline]
 fn is_all4_jfto(n: [i32; 4]) -> bool {
-    n.iter().all(|&v| {
-        category(v) == JUNGLE || v == FOREST || v == TAIGA || is_oceanic(v)
-    })
+    n.iter()
+        .all(|&v| category(v) == JUNGLE || v == FOREST || v == TAIGA || is_oceanic(v))
 }
 
 // Shore: beaches, jungle edges, stone/snowy shores, badlands→desert margins.
@@ -1085,7 +1084,10 @@ mod tests {
         // Reference values dumped from the per-layer oracle (continent layer).
         assert_eq!(Continent::new(1).gen(0, 0, 4, 2), [1, 0, 1, 1, 0, 0, 0, 0]);
         assert_eq!(Continent::new(42).gen(0, 0, 4, 2), [1, 0, 0, 1, 1, 0, 0, 0]);
-        assert_eq!(Continent::new(12345).gen(0, 0, 4, 2), [1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            Continent::new(12345).gen(0, 0, 4, 2),
+            [1, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 
     #[test]
@@ -1104,13 +1106,17 @@ mod tests {
     fn fuzzy_zoom_matches_reference() {
         assert_eq!(
             fuzzy_zoom(1).gen(0, 0, 8, 4),
-            [1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-             0, 0, 0]
+            [
+                1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
         );
         assert_eq!(
             fuzzy_zoom(42).gen(0, 0, 8, 4),
-            [1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-             0, 0, 0]
+            [
+                1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
         );
     }
 
@@ -1132,13 +1138,17 @@ mod tests {
     fn land_matches_reference() {
         assert_eq!(
             land_2048(1).gen(0, 0, 8, 4),
-            [1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0,
-             0, 1, 1]
+            [
+                1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0,
+                0, 0, 1, 1
+            ]
         );
         assert_eq!(
             land_2048(42).gen(0, 0, 8, 4),
-            [1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0,
-             0, 0, 0]
+            [
+                1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1,
+                0, 0, 0, 0
+            ]
         );
     }
 
@@ -1146,8 +1156,10 @@ mod tests {
     fn land_matches_reference_offset_area() {
         assert_eq!(
             land_2048(1).gen(-5, -3, 6, 5),
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-             1]
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0,
+                0, 1
+            ]
         );
     }
 
@@ -1203,18 +1215,24 @@ mod tests {
     fn biome_edge_matches_reference() {
         assert_eq!(
             biome_edge_stack(0).gen(0, 0, 8, 4),
-            [1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 3, 0, 0,
-             0, 0, 0]
+            [
+                1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 3, 0,
+                0, 0, 0, 0
+            ]
         );
         assert_eq!(
             biome_edge_stack(1).gen(0, 0, 8, 4),
-            [0, 0, 0, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21, 21,
-             1, 4, 4, 4, 4, 21, 21, 21]
+            [
+                0, 0, 0, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21,
+                21, 1, 4, 4, 4, 4, 21, 21, 21
+            ]
         );
         assert_eq!(
             biome_edge_stack(42).gen(0, 0, 8, 4),
-            [12, 12, 12, 30, 30, 30, 30, 12, 12, 12, 12, 12, 30, 30, 30, 12, 12, 12, 12, 12, 30, 30,
-             12, 12, 12, 12, 12, 12, 30, 12, 12, 12]
+            [
+                12, 12, 12, 30, 30, 30, 30, 12, 12, 12, 12, 12, 30, 30, 30, 12, 12, 12, 12, 12, 30,
+                30, 12, 12, 12, 12, 12, 12, 30, 12, 12, 12
+            ]
         );
     }
 
@@ -1252,8 +1270,12 @@ mod tests {
     }
 
     fn main_branch(seed: i64) -> Box<dyn Layer> {
-        let l: Box<dyn Layer> =
-            Box::new(Hills::new(seed, 1000, biome_edge_stack(seed), hills_branch(seed)));
+        let l: Box<dyn Layer> = Box::new(Hills::new(
+            seed,
+            1000,
+            biome_edge_stack(seed),
+            hills_branch(seed),
+        ));
         let l: Box<dyn Layer> = Box::new(Sunflower::new(seed, 1001, l));
         let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
         let l: Box<dyn Layer> = Box::new(Land::new(seed, 3, l));
@@ -1276,7 +1298,12 @@ mod tests {
     }
 
     fn river_mix(seed: i64) -> Box<dyn Layer> {
-        Box::new(RiverMix::new(seed, 100, main_branch(seed), river_branch(seed)))
+        Box::new(RiverMix::new(
+            seed,
+            100,
+            main_branch(seed),
+            river_branch(seed),
+        ))
     }
 
     fn full_biomes(seed: i64) -> Box<dyn Layer> {

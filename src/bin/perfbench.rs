@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
-use llamacraft::mesh::{build_mesh, compute_chunk_skylight};
+use llamacraft::mesh::{build_mesh, compute_chunk_skylight_with_neighbors};
 use llamacraft::worldgen::generate_chunk;
 
 fn main() {
@@ -76,16 +76,22 @@ fn main() {
         );
     }
 
-    // ---- skylight bake (self-contained per chunk, cached on the Chunk) ----
-    // This is the expensive flood-fill, now done ONCE per chunk (at ingest in the
-    // real app) instead of inside every mesh build.
+    // ---- skylight bake (neighbor-aware per chunk, cached on the Chunk) ----
+    // This is the expensive flood-fill, now done only when blocks/loaded borders
+    // change in the real app instead of inside every mesh build.
     {
         let mut sky_ns = u128::MAX;
         for _ in 0..iters {
             let t = Instant::now();
-            for c in chunks.values_mut() {
-                let (band, ylo, yhi) = compute_chunk_skylight(c);
-                c.set_skylight(band, ylo, yhi);
+            for &(cx, cz) in &coords {
+                let (band, ylo, yhi) = {
+                    let c = &chunks[&(cx, cz)];
+                    compute_chunk_skylight_with_neighbors(c, |nx, nz| chunks.get(&(nx, nz)))
+                };
+                chunks
+                    .get_mut(&(cx, cz))
+                    .unwrap()
+                    .set_skylight(band, ylo, yhi);
             }
             sky_ns = sky_ns.min(t.elapsed().as_nanos());
         }

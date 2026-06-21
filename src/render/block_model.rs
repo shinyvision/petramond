@@ -1,0 +1,537 @@
+//! Geometry helpers that build small meshes in the 28-byte [`mesh::Vertex`]
+//! format for the held-item hand, dropped item-entities, and the isometric
+//! inventory icons.
+//!
+//! These all reuse the block atlas + `tile_uv()` table the chunk mesher uses, so
+//! a held log / dropped log / log icon are textured identically to the world
+//! block. The default helpers draw full-bright for inventory icons; the `_lit`
+//! variants pack sampled world skylight for hand/items while keeping AO = 3.
+//!
+//! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
+//! The 28-byte vertex packs into one `u32`:
+//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 skylight`.
+//! For the textured path ([`cube_textured`], [`billboard_quad`]) we set the tile,
+//! corner, shade, AO = 3, skylight = 63.
+//!
+//! ### Out-of-world foliage tint + grass-side overlay
+//! Icons / held items / dropped cubes have no biome context, so foliage greens
+//! using a single fixed temperate colour from [`foliage_tint`]. Each cube face is
+//! classified exactly like the chunk mesher: grass-top / short-grass / fern get
+//! the grass tint; all leaves get the foliage tint; grass-block SIDES render as a
+//! dirt base plus the tinted grayscale `GrassSideOverlay` — its tile is packed in
+//! bits 12..20 with the has-overlay flag at **bit 20** (the same overlay-composite
+//! path the chunk mesher uses, which `model3d.wgsl` mirrors). Note bit 20 is
+//! overloaded: in the textured path it means "has grass-side overlay"; the
+//! solid-color path ([`cube_solid`]) reuses the same bit for [`SOLID_COLOR_FLAG`].
+//! The two never collide because a solid cuboid carries no tile/overlay and the
+//! shader reads the flag only on the appropriate branch.
+//!
+//! ### Solid-color sentinel ([`SOLID_COLOR_FLAG`])
+//! The skin hand has no texture. [`cube_solid`] packs the RGB tint into the
+//! `tint` field (as every textured vertex already carries a tint) and sets the
+//! reserved flag at **bit 20** (the chunk mesher's "has-overlay" bit, which has
+//! no meaning in the model3d pipeline). The STEP 2 model3d fragment shader reads
+//! this bit: when set it outputs the interpolated `tint` directly (solid color,
+//! atlas ignored); when clear it samples the atlas at the reconstructed uv. Keep
+//! this convention identical between this module and `model3d.wgsl`.
+
+use super::foliage_tint::{self, FaceMaterial};
+use super::lighting;
+use crate::atlas::Tile;
+use crate::mesh::Vertex;
+
+use glam::Vec3;
+
+/// Bit 20 of `Vertex::packed`: when set, the model3d fragment shader treats the
+/// vertex's `tint` as the final solid color and ignores the atlas. Mirrors the
+/// chunk-mesher "has-overlay" bit position, which is unused by the model3d pass.
+pub const SOLID_COLOR_FLAG: u32 = 1 << 20;
+
+/// Max AO (no occlusion) packed into bits 21..23.
+const FULL_AO: u32 = 3 << 21;
+
+/// Per-face shade index into [`SHADES`], matching the chunk mesher's
+/// `Face::shade_idx`: top = 0 (brightest), sides Z = 1, sides X = 2, bottom = 3.
+/// We bake the same directional shading into hand/icon cubes so they read with
+/// the familiar "top bright, bottom dark" voxel look even though they are
+/// otherwise full-bright.
+#[derive(Copy, Clone)]
+enum Face {
+    PosX,
+    NegX,
+    PosY,
+    NegY,
+    PosZ,
+    NegZ,
+}
+
+impl Face {
+    #[inline]
+    fn shade_idx(self) -> u32 {
+        match self {
+            Face::PosY => 0,
+            Face::PosZ | Face::NegZ => 1,
+            Face::PosX | Face::NegX => 2,
+            Face::NegY => 3,
+        }
+    }
+
+    /// 4 corners CCW as seen from outside, for a unit cube at `origin` scaled by
+    /// `size`. Corner order matches `mesh::builder::quad_for` so the shared
+    /// `corner_uv` (0->bl, 1->br, 2->tr, 3->tl) maps tiles upright.
+    #[inline]
+    fn quad(self, o: Vec3, s: f32) -> [[f32; 3]; 4] {
+        let (x, y, z) = (o.x, o.y, o.z);
+        let p = |dx: f32, dy: f32, dz: f32| [x + dx * s, y + dy * s, z + dz * s];
+        match self {
+            Face::PosX => [
+                p(1.0, 0.0, 1.0),
+                p(1.0, 0.0, 0.0),
+                p(1.0, 1.0, 0.0),
+                p(1.0, 1.0, 1.0),
+            ],
+            Face::NegX => [
+                p(0.0, 0.0, 0.0),
+                p(0.0, 0.0, 1.0),
+                p(0.0, 1.0, 1.0),
+                p(0.0, 1.0, 0.0),
+            ],
+            Face::PosY => [
+                p(0.0, 1.0, 1.0),
+                p(1.0, 1.0, 1.0),
+                p(1.0, 1.0, 0.0),
+                p(0.0, 1.0, 0.0),
+            ],
+            Face::NegY => [
+                p(0.0, 0.0, 0.0),
+                p(1.0, 0.0, 0.0),
+                p(1.0, 0.0, 1.0),
+                p(0.0, 0.0, 1.0),
+            ],
+            Face::PosZ => [
+                p(0.0, 0.0, 1.0),
+                p(1.0, 0.0, 1.0),
+                p(1.0, 1.0, 1.0),
+                p(0.0, 1.0, 1.0),
+            ],
+            Face::NegZ => [
+                p(1.0, 0.0, 0.0),
+                p(0.0, 0.0, 0.0),
+                p(0.0, 1.0, 0.0),
+                p(1.0, 1.0, 0.0),
+            ],
+        }
+    }
+}
+
+const ALL_FACES: [Face; 6] = [
+    Face::PosX,
+    Face::NegX,
+    Face::PosY,
+    Face::NegY,
+    Face::PosZ,
+    Face::NegZ,
+];
+
+#[inline]
+fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
+    let (ov_tile, ov_flag) = match mat.overlay_tile {
+        Some(o) => (o as u32, 1u32),
+        None => (0, 0),
+    };
+    (mat.base_tile as u32)
+        | (face.shade_idx() << 10)
+        | (ov_tile << 12)
+        | (ov_flag << 20)
+        | FULL_AO
+        | lighting::skylight_bits(skylight)
+}
+
+#[inline]
+fn face_bits_solid_lit(face: Face, skylight: u8) -> u32 {
+    (face.shade_idx() << 10) | FULL_AO | lighting::skylight_bits(skylight) | SOLID_COLOR_FLAG
+}
+
+/// Append a textured quad (4 verts, 6 indices) to `verts`/`indices`.
+#[inline]
+fn push_quad(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    tint: [f32; 3],
+    base_bits: u32,
+) {
+    let start = verts.len() as u32;
+    for (corner, pos) in corners.into_iter().enumerate() {
+        verts.push(Vertex {
+            pos,
+            tint,
+            packed: base_bits | ((corner as u32) << 8),
+        });
+    }
+    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+}
+
+/// Append a full-bright textured cube spanning `[origin, origin + size]`, per-face
+/// tiles `[top, bottom, side]` (matching `Block::tiles()`), into the caller-owned
+/// `verts`/`indices` (capacity reused, nothing cleared). Indices are re-based onto
+/// the running vertex count so this composes with prior geometry. 24 verts / 36
+/// indices, back-face culled (CCW front faces).
+///
+/// Each face is foliage-tinted out-of-world via [`foliage_tint::face_material`],
+/// mirroring the chunk mesher: a grass block tints its top green and renders its
+/// sides as dirt + a tinted grass-side overlay, leaves tint with the foliage
+/// colour, and everything else stays untinted.
+pub fn push_cube_textured(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tiles: [Tile; 3],
+    origin: Vec3,
+    size: f32,
+) {
+    push_cube_textured_lit(verts, indices, tiles, origin, size, lighting::FULL_SKYLIGHT);
+}
+
+pub(super) fn push_cube_textured_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tiles: [Tile; 3],
+    origin: Vec3,
+    size: f32,
+    skylight: u8,
+) {
+    let [top, bottom, side] = tiles;
+    for face in ALL_FACES {
+        let tile = match face {
+            Face::PosY => top,
+            Face::NegY => bottom,
+            _ => side,
+        };
+        let mat = foliage_tint::face_material(tile);
+        push_quad(
+            verts,
+            indices,
+            face.quad(origin, size),
+            mat.tint,
+            face_bits_textured_lit(mat, face, skylight),
+        );
+    }
+}
+
+/// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles
+/// `[top, bottom, side]` (matching `Block::tiles()`). Used by the held block and
+/// the isometric slot icon. 24 verts / 36 indices, back-face culled (CCW front
+/// faces). For hot paths that bake many cubes per frame prefer the append-style
+/// [`push_cube_textured`] which reuses caller buffers.
+pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
+    let mut verts = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    push_cube_textured(&mut verts, &mut indices, tiles, origin, size);
+    (verts, indices)
+}
+
+/// Append a full-bright solid-color cuboid spanning `[origin, origin + size]` with
+/// RGB `tint` into the caller-owned `verts`/`indices` (capacity reused). The
+/// model3d fragment shader reads [`SOLID_COLOR_FLAG`] and outputs `tint` directly.
+/// 24 verts / 36 indices.
+pub fn push_cube_solid(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tint: [f32; 3],
+    origin: Vec3,
+    size: f32,
+) {
+    push_cube_solid_lit(verts, indices, tint, origin, size, lighting::FULL_SKYLIGHT);
+}
+
+pub(super) fn push_cube_solid_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tint: [f32; 3],
+    origin: Vec3,
+    size: f32,
+    skylight: u8,
+) {
+    for face in ALL_FACES {
+        push_quad(
+            verts,
+            indices,
+            face.quad(origin, size),
+            tint,
+            face_bits_solid_lit(face, skylight),
+        );
+    }
+}
+
+/// A full-bright solid-color cuboid spanning `[origin, origin + size]` with RGB
+/// `tint`. The skin hand uses this. 24 verts / 36 indices. Prefer
+/// [`push_cube_solid`] in hot paths.
+pub fn cube_solid(tint: [f32; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
+    let mut verts = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    push_cube_solid(&mut verts, &mut indices, tint, origin, size);
+    (verts, indices)
+}
+
+/// Camera basis vectors for building world-space camera-facing billboards. The
+/// renderer derives these from the view matrix each frame (the camera's right and
+/// up axes) so a billboard quad always faces the viewer.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BillboardBasis {
+    pub right: Vec3,
+    pub up: Vec3,
+}
+
+/// Append a **double-sided**, camera-facing billboard quad (8 verts / 12 indices)
+/// for `tile`, centred at world `center` and `size` across, oriented by the camera
+/// `basis`. Full-bright and untinted; reuses the textured packing so the opaque
+/// block pipeline samples the tile (its `< 0.5` alpha discard cuts out the cross
+/// plant cleanly). Used by world item-entities (sprite kind).
+///
+/// Both windings are emitted so the sprite is visible regardless of which way the
+/// camera basis winds the quad — the item-entity pass shares the back-face-culling
+/// opaque pipeline, so a single-sided quad could silently vanish if the basis sign
+/// ever regressed. Double-siding is cheap (8 verts) and removes that risk.
+pub(super) fn push_billboard_world_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tile: Tile,
+    center: Vec3,
+    size: f32,
+    basis: BillboardBasis,
+    skylight: u8,
+) {
+    let h = size * 0.5;
+    let r = basis.right * h;
+    let u = basis.up * h;
+    // Corners CCW from the camera's view: bl, br, tr, tl (matches corner_uv).
+    let bl = (center - r - u).to_array();
+    let br = (center + r - u).to_array();
+    let tr = (center + r + u).to_array();
+    let tl = (center - r + u).to_array();
+    // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
+    // short-grass sprites get the fixed grass tint (flowers stay untinted).
+    let tint = foliage_tint::face_material(tile).tint;
+    let base = (tile as u32)
+        | (Face::PosY.shade_idx() << 10)
+        | FULL_AO
+        | lighting::skylight_bits(skylight);
+    // Front winding (faces the camera) + reversed winding (faces away), so the
+    // sprite never culls from either side.
+    push_quad(verts, indices, [bl, br, tr, tl], tint, base);
+    push_quad(verts, indices, [br, bl, tl, tr], tint, base);
+}
+
+/// Append a flat, upright, double-sided billboard quad of one `tile`, centered on
+/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright, into
+/// the caller-owned `verts`/`indices` (capacity reused). Emitted in both windings
+/// so it is visible from either side under back-face culling. 8 verts / 12 indices.
+pub fn push_billboard_quad(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tile: Tile,
+    center: Vec3,
+    size: f32,
+) {
+    let h = size * 0.5;
+    // Front-facing (+Z) winding: 0 bl, 1 br, 2 tr, 3 tl (matches corner_uv).
+    let front = [
+        [center.x - h, center.y - h, center.z],
+        [center.x + h, center.y - h, center.z],
+        [center.x + h, center.y + h, center.z],
+        [center.x - h, center.y + h, center.z],
+    ];
+    // Back-facing winding: same positions, reversed so CCW points the other way.
+    let back = [
+        [center.x + h, center.y - h, center.z],
+        [center.x - h, center.y - h, center.z],
+        [center.x - h, center.y + h, center.z],
+        [center.x + h, center.y + h, center.z],
+    ];
+    // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
+    // short-grass sprites get the fixed grass tint (flowers stay untinted).
+    let tint = foliage_tint::face_material(tile).tint;
+    let base = (tile as u32)
+        | (Face::PosY.shade_idx() << 10)
+        | FULL_AO
+        | lighting::skylight_bits(lighting::FULL_SKYLIGHT);
+    push_quad(verts, indices, front, tint, base);
+    push_quad(verts, indices, back, tint, base);
+}
+
+/// A flat, upright, double-sided billboard quad of one `tile`, centered on
+/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright.
+/// Used for sprite-kind (cross-plant) item icons and the held flat item. 8 verts
+/// / 12 indices. Prefer [`push_billboard_quad`] in hot paths.
+pub fn billboard_quad(tile: Tile, center: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
+    let mut verts = Vec::with_capacity(8);
+    let mut indices = Vec::with_capacity(12);
+    push_billboard_quad(&mut verts, &mut indices, tile, center, size);
+    (verts, indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mesh::SHADES;
+
+    #[test]
+    fn cube_textured_has_24_verts_36_indices() {
+        let (v, i) = cube_textured(
+            [Tile::OakLogTop, Tile::OakLogTop, Tile::OakLogSide],
+            Vec3::ZERO,
+            1.0,
+        );
+        assert_eq!(v.len(), 24);
+        assert_eq!(i.len(), 36);
+    }
+
+    #[test]
+    fn cube_textured_uses_per_face_tiles() {
+        // Distinct top/bottom/side so we can check each face samples the right tile.
+        let tiles = [Tile::GrassTop, Tile::Dirt, Tile::Stone];
+        let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
+        // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
+        // 4 verts per face; the tile id is bits 0..8 of `packed`.
+        let face_tile = |face_idx: usize| (v[face_idx * 4].packed & 0xFF) as u8;
+        // PosX (side), NegX (side)
+        assert_eq!(face_tile(0), Tile::Stone as u8);
+        assert_eq!(face_tile(1), Tile::Stone as u8);
+        // PosY (top), NegY (bottom)
+        assert_eq!(face_tile(2), Tile::GrassTop as u8);
+        assert_eq!(face_tile(3), Tile::Dirt as u8);
+        // PosZ (side), NegZ (side)
+        assert_eq!(face_tile(4), Tile::Stone as u8);
+        assert_eq!(face_tile(5), Tile::Stone as u8);
+    }
+
+    #[test]
+    fn cube_textured_is_full_bright() {
+        let (v, _) = cube_textured([Tile::Stone; 3], Vec3::ZERO, 1.0);
+        for vert in &v {
+            // skylight (bits 23..29) is full (63).
+            assert_eq!((vert.packed >> 23) & 0x3F, 63);
+            // AO (bits 21..23) is full (3).
+            assert_eq!((vert.packed >> 21) & 0x3, 3);
+            // textured path never sets the solid-color flag.
+            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+        }
+    }
+
+    #[test]
+    fn cube_textured_face_shade_indices_match_mesher() {
+        let (v, _) = cube_textured([Tile::Stone; 3], Vec3::ZERO, 1.0);
+        let shade = |face_idx: usize| (v[face_idx * 4].packed >> 10) & 0x3;
+        assert_eq!(shade(0), 2); // PosX
+        assert_eq!(shade(1), 2); // NegX
+        assert_eq!(shade(2), 0); // PosY (top, brightest)
+        assert_eq!(shade(3), 3); // NegY (bottom, darkest)
+        assert_eq!(shade(4), 1); // PosZ
+        assert_eq!(shade(5), 1); // NegZ
+                                 // SHADES table is the brightness these indices reference.
+        const { assert!(SHADES[0] > SHADES[3]) };
+    }
+
+    #[test]
+    fn cube_solid_sets_flag_and_carries_tint() {
+        let tint = [0.9, 0.7, 0.6];
+        let (v, i) = cube_solid(tint, Vec3::ZERO, 1.0);
+        assert_eq!(v.len(), 24);
+        assert_eq!(i.len(), 36);
+        for vert in &v {
+            assert_eq!(vert.packed & SOLID_COLOR_FLAG, SOLID_COLOR_FLAG);
+            assert_eq!(vert.tint, tint);
+            assert_eq!((vert.packed >> 23) & 0x3F, 63);
+        }
+    }
+
+    #[test]
+    fn billboard_quad_is_double_sided() {
+        let (v, i) = billboard_quad(Tile::Poppy, Vec3::ZERO, 1.0);
+        assert_eq!(v.len(), 8); // two quads (front + back)
+        assert_eq!(i.len(), 12);
+        for vert in &v {
+            assert_eq!((vert.packed & 0xFF) as u8, Tile::Poppy as u8);
+            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+        }
+    }
+
+    #[test]
+    fn cube_textured_tints_grass_top_and_overlays_sides() {
+        // Block::Grass tiles = [GrassTop, Dirt, GrassSide].
+        let (v, _) = cube_textured(
+            [Tile::GrassTop, Tile::Dirt, Tile::GrassSide],
+            Vec3::ZERO,
+            1.0,
+        );
+        let grass = foliage_tint::default_grass_color();
+        // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
+        // Top face (PosY = index 2): GrassTop tinted green, no overlay.
+        let top = &v[2 * 4];
+        assert_eq!((top.packed & 0xFF) as u8, Tile::GrassTop as u8);
+        assert_eq!(top.tint, grass);
+        assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
+
+        // Side faces (PosX 0, NegX 1, PosZ 4, NegZ 5): dirt base + tinted
+        // grass-side overlay (bit 20 = has-overlay), overlay tile in bits 12..20.
+        for idx in [0usize, 1, 4, 5] {
+            let s = &v[idx * 4];
+            assert_eq!(
+                (s.packed & 0xFF) as u8,
+                Tile::Dirt as u8,
+                "side base = dirt"
+            );
+            // Bit 20 (overlay flag) set; overlay tile = GrassSideOverlay.
+            assert_eq!(
+                s.packed & SOLID_COLOR_FLAG,
+                SOLID_COLOR_FLAG,
+                "side has overlay flag"
+            );
+            assert_eq!(
+                ((s.packed >> 12) & 0xFF) as u8,
+                Tile::GrassSideOverlay as u8,
+                "side overlay tile = grass-side overlay"
+            );
+            assert_eq!(s.tint, grass, "side overlay tinted green");
+        }
+
+        // Bottom face (NegY = index 3): plain dirt, untinted, no overlay.
+        let bot = &v[3 * 4];
+        assert_eq!((bot.packed & 0xFF) as u8, Tile::Dirt as u8);
+        assert_eq!(bot.tint, foliage_tint::NO_TINT);
+        assert_eq!(bot.packed & SOLID_COLOR_FLAG, 0);
+    }
+
+    #[test]
+    fn cube_textured_leaves_use_foliage_tint() {
+        let (v, _) = cube_textured([Tile::OakLeaves; 3], Vec3::ZERO, 1.0);
+        let foliage = foliage_tint::default_foliage_color();
+        for vert in &v {
+            assert_eq!((vert.packed & 0xFF) as u8, Tile::OakLeaves as u8);
+            assert_eq!(vert.tint, foliage);
+            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");
+        }
+    }
+
+    #[test]
+    fn flower_billboard_stays_untinted() {
+        let (v, _) = billboard_quad(Tile::Poppy, Vec3::ZERO, 1.0);
+        for vert in &v {
+            assert_eq!(
+                vert.tint,
+                foliage_tint::NO_TINT,
+                "flowers are not biome-tinted"
+            );
+            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+        }
+    }
+
+    #[test]
+    fn fern_billboard_gets_grass_tint() {
+        let (v, _) = billboard_quad(Tile::Fern, Vec3::ZERO, 1.0);
+        let grass = foliage_tint::default_grass_color();
+        for vert in &v {
+            assert_eq!(vert.tint, grass, "ferns tint with the grass colour");
+        }
+    }
+}

@@ -31,8 +31,22 @@ struct ScatterConfig {
     y_max: i32,
 }
 
-const fn c(block: Block, salt: u64, count: i32, size: i32, y_min: i32, y_max: i32) -> ScatterConfig {
-    ScatterConfig { block, salt, count, size, y_min, y_max }
+const fn c(
+    block: Block,
+    salt: u64,
+    count: i32,
+    size: i32,
+    y_min: i32,
+    y_max: i32,
+) -> ScatterConfig {
+    ScatterConfig {
+        block,
+        salt,
+        count,
+        size,
+        y_min,
+        y_max,
+    }
 }
 
 /// Vein table. Stone variants are broad and shallow-to-mid; ores follow rough
@@ -84,7 +98,15 @@ pub fn place_underground(chunk: &mut Chunk, seed: u32) {
 /// A roughly-spherical blob of `~size` Stone cells turned into `block`, with a
 /// small per-vein radius jitter so veins read irregular rather than as clean
 /// spheres. Writes are Stone-only and chunk-clipped.
-fn place_vein(ctx: &mut FeatureCtx, ox: i32, oy: i32, oz: i32, size: i32, block: Block, rng: &mut FeatureRng) {
+fn place_vein(
+    ctx: &mut FeatureCtx,
+    ox: i32,
+    oy: i32,
+    oz: i32,
+    size: i32,
+    block: Block,
+    rng: &mut FeatureRng,
+) {
     // radius for a sphere of `size` cells: r = cbrt(3*size / 4pi).
     let base_r = ((size as f32) * 3.0 / (4.0 * std::f32::consts::PI)).cbrt();
     let r = (base_r * (0.85 + 0.4 * rng.next_f32())).max(0.7);

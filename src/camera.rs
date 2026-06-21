@@ -81,7 +81,7 @@ impl Camera {
             fov_y: 70f32.to_radians(),
             aspect,
             near: 0.1,
-            far: 32.0 * 17.0 * 24 as f32 * 2.0 * 2f32, // large enough for fog
+            far: 32.0 * 17.0 * 24f32 * 2.0 * 2f32, // large enough for fog
         }
     }
 

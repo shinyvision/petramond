@@ -195,6 +195,7 @@ fn build_tile_alpha_data() -> TileAlphaData {
         let mut max_y = 0usize;
         let mut any = false;
 
+        #[allow(clippy::needless_range_loop)]
         for y in 0..TILE_SIZE {
             for x in 0..TILE_SIZE {
                 let i = ((base_y + y) * w as usize + base_x + x) * 4;

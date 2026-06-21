@@ -110,7 +110,7 @@ impl<'a> FeatureCtx<'a> {
     fn local(&self, p: IVec3) -> Option<(usize, usize, usize)> {
         let lx = p.x - self.ox;
         let lz = p.z - self.oz;
-        if lx < 0 || lx >= 16 || lz < 0 || lz >= 16 || p.y < 0 || p.y >= CHUNK_SY as i32 {
+        if !(0..16).contains(&lx) || !(0..16).contains(&lz) || p.y < 0 || p.y >= CHUNK_SY as i32 {
             return None;
         }
         Some((lx as usize, p.y as usize, lz as usize))

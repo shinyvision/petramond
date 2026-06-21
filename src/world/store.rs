@@ -4,6 +4,7 @@ use crate::chunk::{Chunk, ChunkPos, SECTION_COUNT};
 use crate::mesh::ChunkMesh;
 use crate::worker::WorkerPool;
 
+use super::light_queue::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
 use super::visibility::SectionConnectivity;
 
@@ -34,6 +35,7 @@ pub struct World {
     pub render_dist: i32,
     pub section_visibility: HashMap<ChunkPos, [SectionConnectivity; SECTION_COUNT]>,
     pub visibility_revision: u64,
+    pub(super) light_bakes: LightBakeQueue,
     pub(super) dirty_meshes: DirtyMeshQueue,
     pub(super) last_load_target: Option<LoadTarget>,
 }
@@ -49,6 +51,7 @@ impl World {
             render_dist,
             section_visibility: HashMap::new(),
             visibility_revision: 0,
+            light_bakes: LightBakeQueue::new(),
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
         }
@@ -58,6 +61,12 @@ impl World {
         if let Some(chunk) = self.chunks.get_mut(&pos) {
             chunk.dirty = true;
             self.dirty_meshes.push(pos);
+        }
+    }
+
+    pub(super) fn mark_light_dirty_pos(&mut self, pos: ChunkPos) {
+        if let Some(chunk) = self.chunks.get_mut(&pos) {
+            chunk.mark_light_dirty();
         }
     }
 
@@ -78,11 +87,25 @@ impl World {
         }
     }
 
+    pub(super) fn mark_light_dirty_neighborhood(&mut self, center: ChunkPos, include_center: bool) {
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if !include_center && dx == 0 && dz == 0 {
+                    continue;
+                }
+                self.mark_light_dirty_pos(ChunkPos::new(center.cx + dx, center.cz + dz));
+            }
+        }
+    }
+
     pub(super) fn remove_chunk(&mut self, pos: ChunkPos) {
         self.chunks.remove(&pos);
         self.meshes.remove(&pos);
         self.pending.remove(&pos);
         self.dirty_meshes.remove(pos);
+        self.light_bakes.cancel(pos);
+        self.mark_light_dirty_neighborhood(pos, false);
+        self.mark_dirty_neighborhood(pos, false);
         if self.section_visibility.remove(&pos).is_some() {
             self.bump_visibility_revision();
         }

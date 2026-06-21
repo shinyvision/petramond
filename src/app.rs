@@ -1,245 +1,277 @@
-//! App loop shared between native and web (after wgpu surface init).
+//! Application shell shared by native and web.
 //!
-//! Owns World + Camera + Renderer, drives input -> movement -> world update
-//! -> render. The platform shell handles window/event loop and surfaces.
+//! The app owns window-level state: current screen, input aggregation, cursor
+//! policy, frame time, and renderer handoff. The voxel demo itself lives in
+//! `game`, and first-person hand animation lives in the renderer presentation
+//! layer.
 
-use crate::block::Block;
+mod input;
+mod screen;
+
+pub use screen::{AppScreen, CursorPolicy};
+
+use crate::app::input::{ControlEvent, InputController};
 use crate::camera::Camera;
-use crate::mathh::{IVec3, Vec3};
-use crate::player::{self, Input, Player, RaycastHit};
-use crate::render::Renderer;
-use crate::world::World;
-use crate::worldgen::classic::world::CascadeWorld;
-
-/// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
-/// is underwater.
-const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
+use crate::controls::{Control, PointerButton};
+use crate::game::{Game, GameInput};
+use crate::render::{HeldItemFrame, Renderer, UiFrame};
 
 pub struct App {
-    pub cam: Camera,
-    pub world: World,
-    fallback_world: CascadeWorld,
-    pub player: Player,
-    /// Block currently under the crosshair (within reach), refreshed each tick.
-    pub look: Option<RaycastHit>,
-    pub last: f64,
-    pub keys: KeyState,
-    pub mouse: MouseState,
+    game: Game,
+    last: f64,
+    input: InputController,
+    pointer: PointerState,
+    screen: AppScreen,
+    /// Set when the inventory opens so the UI cursor is centred on the next tick,
+    /// where the renderer surface size is known.
+    recenter_cursor: bool,
 }
 
-#[derive(Default, Copy, Clone)]
-pub struct KeyState {
-    pub w: bool,
-    a: bool,
-    s: bool,
-    d: bool,
-    pub space: bool,
-    shift: bool,
-    ctrl: bool,
-    y: bool,
-    mode_toggle_chord: bool,
-}
-
-#[derive(Default, Copy, Clone)]
-pub struct MouseState {
-    pub dx: f32,
-    pub dy: f32,
-    pub grabbing: bool,
-    /// Edge-triggered click flags: set by the platform on button-press,
-    /// consumed (and cleared) once per `tick` so one click = one action.
-    pub left_click: bool,
-    pub right_click: bool,
+#[derive(Default, Copy, Clone, Debug)]
+struct PointerState {
+    dx: f32,
+    dy: f32,
+    grabbing: bool,
+    left_click: bool,
+    right_click: bool,
+    left_held: bool,
+    scroll_delta: f32,
+    cursor_x: f32,
+    cursor_y: f32,
 }
 
 impl App {
     pub fn new(cam: Camera, seed: u32, render_dist: i32) -> Self {
-        // Spawn the player so the camera (passed in as the eye position) lands at
-        // the requested spot: feet sit `EYE` below the eye.
-        let feet = Vec3::new(cam.pos.x, cam.pos.y - player::EYE, cam.pos.z);
         Self {
-            cam,
-            world: World::new(seed, render_dist),
-            fallback_world: CascadeWorld::new(seed),
-            player: Player::new(feet),
-            look: None,
+            game: Game::new(cam, seed, render_dist),
             last: now_seconds(),
-            keys: KeyState::default(),
-            mouse: MouseState::default(),
+            input: InputController::default(),
+            pointer: PointerState::default(),
+            screen: AppScreen::Game,
+            recenter_cursor: false,
         }
     }
 
-    /// Advance one frame. `dt_override` lets web supply a fixed step.
+    #[inline]
+    pub fn screen(&self) -> AppScreen {
+        self.screen
+    }
+
+    #[inline]
+    pub fn inventory_open(&self) -> bool {
+        self.screen.inventory_open()
+    }
+
+    #[inline]
+    pub fn cursor_policy(&self) -> CursorPolicy {
+        CursorPolicy::for_screen(self.screen)
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.game.set_aspect(width as f32 / height.max(1) as f32);
+    }
+
+    /// Apply a shared control event. Returns false only when the app did not
+    /// consume the control, e.g. Escape with no screen open on native.
+    pub fn handle_control(&mut self, control: Control, down: bool) -> bool {
+        let Some(event) = self.input.set_control(control, down) else {
+            return true;
+        };
+
+        match event {
+            ControlEvent::ToggleInventory => {
+                self.toggle_inventory();
+                true
+            }
+            ControlEvent::TogglePlayerMode => {
+                self.game.toggle_player_mode();
+                true
+            }
+            ControlEvent::CloseScreen => self.close_screen(),
+            ControlEvent::SelectHotbar(slot) => {
+                if self.screen.gameplay_enabled() {
+                    self.game.set_active_hotbar(slot);
+                }
+                true
+            }
+        }
+    }
+
+    pub fn set_pointer_grabbed(&mut self, grabbed: bool) {
+        self.pointer.grabbing = grabbed;
+    }
+
+    pub fn add_pointer_motion(&mut self, dx: f32, dy: f32) {
+        self.pointer.dx += dx;
+        self.pointer.dy += dy;
+        self.pointer.grabbing = true;
+    }
+
+    pub fn set_cursor_position(&mut self, x: f32, y: f32) {
+        self.pointer.cursor_x = x;
+        self.pointer.cursor_y = y;
+    }
+
+    pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
+        match (button, down) {
+            (PointerButton::Primary, true) => {
+                self.pointer.left_click = true;
+                self.pointer.left_held = true;
+                self.pointer.grabbing = true;
+            }
+            (PointerButton::Primary, false) => {
+                self.pointer.left_held = false;
+            }
+            (PointerButton::Secondary, true) => {
+                self.pointer.right_click = true;
+                self.pointer.grabbing = true;
+            }
+            (PointerButton::Secondary, false) => {}
+        }
+    }
+
+    pub fn add_scroll_delta(&mut self, delta: f32) {
+        self.pointer.scroll_delta += delta;
+    }
+
     pub fn tick(&mut self, renderer: &mut Renderer) {
         let now = now_seconds();
         let dt = (now - self.last) as f32;
         self.last = now;
 
-        // Apply mouse look.
-        if self.mouse.grabbing {
-            const SENS: f32 = 0.0025;
-            self.cam
-                .rotate(-self.mouse.dx * SENS, -self.mouse.dy * SENS);
+        let screen_size = renderer.screen_size();
+        if self.recenter_cursor {
+            self.pointer.cursor_x = screen_size.0 as f32 * 0.5;
+            self.pointer.cursor_y = screen_size.1 as f32 * 0.5;
+            self.recenter_cursor = false;
         }
-        self.mouse.dx = 0.0;
-        self.mouse.dy = 0.0;
 
-        // Build movement intent from keys, relative to where we're looking.
-        // Survival walking is horizontal; spectator movement uses the full
-        // pitched camera forward plus explicit Space/Shift vertical flight.
-        let f = self.cam.forward();
-        let spectator = self.player.is_spectator();
-        let fwd = if spectator {
-            f
-        } else {
-            Vec3::new(f.x, 0.0, f.z).normalize_or_zero()
-        };
-        let right = self.cam.right(); // already horizontal
-        let mut wishdir = Vec3::ZERO;
-        if self.keys.w {
-            wishdir += fwd;
+        if self.pointer.left_click && self.route_screen_click(screen_size) {
+            self.pointer.left_click = false;
         }
-        if self.keys.s {
-            wishdir -= fwd;
-        }
-        if self.keys.d {
-            wishdir += right;
-        }
-        if self.keys.a {
-            wishdir -= right;
-        }
-        if spectator {
-            if self.keys.space {
-                wishdir += Vec3::Y;
-            }
-            if self.keys.shift {
-                wishdir -= Vec3::Y;
-            }
-        }
-        let input = Input {
-            wishdir: wishdir.normalize_or_zero(),
-            jump: self.keys.space,
-            sprint: self.keys.ctrl,
-        };
 
-        // Advance physics in fixed sub-steps so a long frame (or a backgrounded
-        // tab on web) can't move the player far enough to tunnel. `dt` is also
-        // capped so we never spin through a huge backlog after a stall. The
-        // load-gate is checked once per frame here (column membership can't
-        // change mid-frame) rather than inside every sub-step.
-        if spectator || self.player.columns_loaded(&self.world) {
-            let mut remaining = dt.min(0.25);
-            while remaining > 0.0 {
-                let step = remaining.min(player::DT_MAX);
-                self.player.update(step, &self.world, input);
-                remaining -= step;
-            }
-        }
-        // Camera eye follows the player.
-        self.cam.pos = self.player.eye();
+        let game_input = self.take_game_input();
+        let events = self.game.tick(dt, &game_input);
+        self.pointer.clear_edges();
 
-        // World update around the player's chunk column.
-        let cam_cx = (self.cam.pos.x as i32) >> 4;
-        let cam_cz = (self.cam.pos.z as i32) >> 4;
-        self.world.update_load(cam_cx, cam_cz);
-        let _ = self.world.poll();
+        let environment = self.game.environment(now);
+        renderer.update_uniforms(
+            self.game.camera(),
+            environment.fog,
+            environment.time,
+            environment.underwater,
+        );
+        renderer.set_selection(self.game.selection());
+        renderer.set_break_overlay(self.game.break_overlay_view());
+        renderer.set_held_item(HeldItemFrame {
+            item: self.game.selected_item(),
+            mining: self.game.is_mining(),
+            broke_block: events.broke_block,
+            placed: events.placed_block,
+            dt,
+        });
+        renderer.set_held_item_light(self.game.held_item_skylight());
 
-        // Crosshair raycast, then break/place against the hit (consume clicks).
-        self.look = Player::raycast(self.cam.pos, self.cam.forward(), &self.world);
-        self.handle_block_actions();
+        renderer.set_item_entities(self.game.item_entity_instances());
+        renderer.set_particles(self.game.particle_instances());
+        renderer.set_ui(UiFrame {
+            open: self.screen.inventory_open(),
+            inv: self.game.inventory(),
+            screen: screen_size,
+            cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
+        });
 
-        // Native meshes a big burst per frame in parallel (rayon); wasm stays
-        // conservative on its single thread. Done AFTER edits so a break/place
-        // is remeshed and visible this same frame.
-        #[cfg(not(target_arch = "wasm32"))]
-        const MESH_BUDGET: usize = 32;
-        #[cfg(target_arch = "wasm32")]
-        const MESH_BUDGET: usize = 6;
-        self.world.tick_mesh_budget(MESH_BUDGET);
-
-        // Is the camera eye inside a water block? Drives the underwater shader
-        // (blue darkening + dense fog + caustics) and the matching clear colour.
-        let eye = self.cam.pos;
-        let underwater = Block::from_id(self.world.chunk_block(
-            eye.x.floor() as i32,
-            eye.y.floor() as i32,
-            eye.z.floor() as i32,
-        )) == Block::Water;
-
-        // Fog colour: blended nearby biome fog above water, or a deep murky blue
-        // when submerged so distant terrain dissolves into the water.
-        let fog = if underwater {
-            UNDERWATER_FOG_COLOR
-        } else {
-            self.blended_sky_fog_color(eye.x, eye.z)
-        };
-
-        // Seconds since start (wrapped to keep the value small) drive the animated
-        // underwater caustics in the shader.
-        let time = (now % 3600.0) as f32;
-
-        renderer.update_uniforms(&self.cam, fog, time, underwater);
-        renderer.set_selection(self.look.map(|h| h.outline));
-        renderer.sync_meshes(&mut self.world);
-        renderer.update_section_visibility(&mut self.world);
+        renderer.sync_meshes(self.game.world_mut());
+        renderer.update_section_visibility(self.game.world_mut());
         renderer.render();
     }
 
-    /// Apply any pending left/right clicks to the targeted block. Left = break
-    /// (instant), right = place Stone in the empty cell against the hit face.
-    fn handle_block_actions(&mut self) {
-        if self.mouse.left_click {
-            if let Some(h) = self.look {
-                self.world
-                    .set_block_world(h.block.x, h.block.y, h.block.z, Block::Air);
-            }
+    fn take_game_input(&mut self) -> GameInput {
+        let gameplay_enabled = self.screen.gameplay_enabled();
+        let look_delta = if gameplay_enabled && self.pointer.grabbing {
+            (self.pointer.dx, self.pointer.dy)
+        } else {
+            (0.0, 0.0)
+        };
+        self.pointer.dx = 0.0;
+        self.pointer.dy = 0.0;
+
+        let hotbar_scroll = if gameplay_enabled {
+            self.pointer.take_scroll_step()
+        } else {
+            self.pointer.scroll_delta = 0.0;
+            0
+        };
+
+        GameInput {
+            gameplay_enabled,
+            movement: self.input.movement(),
+            look_delta,
+            hotbar_scroll,
+            break_held: self.pointer.left_held,
+            place_clicked: self.pointer.right_click,
         }
-        if self.mouse.right_click {
-            if let Some(h) = self.look {
-                // normal == 0 means the eye was inside a block: nowhere to place.
-                if h.normal != IVec3::ZERO {
-                    let p = h.block + h.normal;
-                    // Place into any replaceable cell (air or water -- building
-                    // into water displaces it), if the player isn't standing there.
-                    let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
-                    if target.is_replaceable() && !self.player.intersects_block(p) {
-                        self.world.set_block_world(p.x, p.y, p.z, Block::Stone);
-                    }
-                }
-            }
-        }
-        self.mouse.left_click = false;
-        self.mouse.right_click = false;
     }
 
-    fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
-        use crate::biome::{blended_fog_color, Biome};
-
-        blended_fog_color(x, z, |wx, wz| {
-            if let Some(id) = self.world.column_biome(wx, wz) {
-                return Biome::from_id(id);
-            }
-
-            self.fallback_world.biome_at(wx, wz)
-        })
+    fn toggle_inventory(&mut self) {
+        if self.screen.inventory_open() {
+            self.close_inventory();
+        } else {
+            self.open_inventory();
+        }
     }
 
-    pub fn set_key(&mut self, code: &str, down: bool) {
-        match code {
-            "KeyW" => self.keys.w = down,
-            "KeyA" => self.keys.a = down,
-            "KeyS" => self.keys.s = down,
-            "KeyD" => self.keys.d = down,
-            "Space" => self.keys.space = down,
-            "ShiftLeft" | "ShiftRight" => self.keys.shift = down,
-            "ControlLeft" | "ControlRight" => self.keys.ctrl = down,
-            "KeyY" => self.keys.y = down,
-            _ => {}
+    fn open_inventory(&mut self) {
+        self.screen = AppScreen::Inventory;
+        self.pointer.grabbing = false;
+        self.recenter_cursor = true;
+    }
+
+    fn close_inventory(&mut self) {
+        self.screen = AppScreen::Game;
+        self.pointer.grabbing = true;
+    }
+
+    fn close_screen(&mut self) -> bool {
+        if self.screen.inventory_open() {
+            self.close_inventory();
+            true
+        } else {
+            false
         }
-        let chord = self.keys.ctrl && self.keys.y;
-        if chord && !self.keys.mode_toggle_chord {
-            self.player.toggle_mode();
+    }
+
+    fn route_screen_click(&mut self, screen: (u32, u32)) -> bool {
+        if !self.screen.inventory_open() {
+            return false;
         }
-        self.keys.mode_toggle_chord = chord;
+        if let Some(i) = crate::render::slot_at_cursor(
+            screen,
+            true,
+            (self.pointer.cursor_x, self.pointer.cursor_y),
+        ) {
+            self.game.click_inventory_slot(i);
+        }
+        true
+    }
+}
+
+impl PointerState {
+    fn take_scroll_step(&mut self) -> i32 {
+        let step = if self.scroll_delta > 0.0 {
+            1
+        } else if self.scroll_delta < 0.0 {
+            -1
+        } else {
+            0
+        };
+        self.scroll_delta = 0.0;
+        step
+    }
+
+    fn clear_edges(&mut self) {
+        self.left_click = false;
+        self.right_click = false;
     }
 }
 
@@ -263,6 +295,8 @@ fn now_seconds() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controls::Control;
+    use crate::mathh::Vec3;
     use crate::player::PlayerMode;
 
     fn app() -> App {
@@ -272,25 +306,129 @@ mod tests {
     #[test]
     fn ctrl_y_toggles_player_mode_once_per_chord() {
         let mut app = app();
-        assert_eq!(app.player.mode(), PlayerMode::Survival);
+        assert_eq!(app.game.player_mode(), PlayerMode::Survival);
 
-        app.set_key("ControlLeft", true);
-        app.set_key("KeyY", true);
-        assert_eq!(app.player.mode(), PlayerMode::Spectator);
+        app.handle_control(Control::Sprint, true);
+        app.handle_control(Control::TogglePlayerMode, true);
+        assert_eq!(app.game.player_mode(), PlayerMode::Spectator);
 
-        // Repeated keydown events while the chord remains held must not bounce
-        // rapidly between modes.
-        app.set_key("KeyY", true);
-        app.set_key("ControlLeft", true);
-        assert_eq!(app.player.mode(), PlayerMode::Spectator);
+        app.handle_control(Control::TogglePlayerMode, true);
+        app.handle_control(Control::Sprint, true);
+        assert_eq!(app.game.player_mode(), PlayerMode::Spectator);
 
-        app.set_key("KeyY", false);
-        app.set_key("KeyY", true);
-        assert_eq!(app.player.mode(), PlayerMode::Survival);
+        app.handle_control(Control::TogglePlayerMode, false);
+        app.handle_control(Control::TogglePlayerMode, true);
+        assert_eq!(app.game.player_mode(), PlayerMode::Survival);
 
-        app.set_key("ControlLeft", false);
-        app.set_key("KeyY", false);
-        app.set_key("KeyY", true);
-        assert_eq!(app.player.mode(), PlayerMode::Survival);
+        app.handle_control(Control::Sprint, false);
+        app.handle_control(Control::TogglePlayerMode, false);
+        app.handle_control(Control::TogglePlayerMode, true);
+        assert_eq!(app.game.player_mode(), PlayerMode::Survival);
+    }
+
+    #[test]
+    fn inventory_toggle_is_once_per_press() {
+        let mut app = app();
+        assert!(!app.inventory_open());
+
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(app.inventory_open());
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(app.inventory_open());
+
+        app.handle_control(Control::ToggleInventory, false);
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(!app.inventory_open());
+    }
+
+    #[test]
+    fn opening_inventory_releases_grab() {
+        let mut app = app();
+        app.set_pointer_grabbed(true);
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(app.inventory_open());
+        assert!(!app.pointer.grabbing);
+    }
+
+    #[test]
+    fn escape_closes_open_inventory_and_regrabs() {
+        let mut app = app();
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(app.inventory_open());
+        assert!(!app.pointer.grabbing);
+
+        assert!(app.handle_control(Control::CloseScreen, true));
+        assert!(!app.inventory_open());
+        assert!(app.pointer.grabbing);
+    }
+
+    #[test]
+    fn escape_with_inventory_closed_is_not_consumed() {
+        let mut app = app();
+        assert!(!app.inventory_open());
+        assert!(!app.handle_control(Control::CloseScreen, true));
+        assert!(!app.inventory_open());
+    }
+
+    #[test]
+    fn digit_controls_select_hotbar_slot() {
+        let mut app = app();
+        app.handle_control(Control::SelectHotbar(4), true);
+        assert_eq!(app.game.inventory().active_slot(), 4);
+        app.handle_control(Control::SelectHotbar(0), true);
+        assert_eq!(app.game.inventory().active_slot(), 0);
+        app.handle_control(Control::SelectHotbar(8), true);
+        assert_eq!(app.game.inventory().active_slot(), 8);
+    }
+
+    #[test]
+    fn digit_controls_ignored_while_inventory_open() {
+        let mut app = app();
+        app.handle_control(Control::SelectHotbar(2), true);
+        assert_eq!(app.game.inventory().active_slot(), 2);
+        app.handle_control(Control::ToggleInventory, true);
+        app.handle_control(Control::SelectHotbar(6), true);
+        assert_eq!(app.game.inventory().active_slot(), 2);
+    }
+
+    fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {
+        for y in 0..screen.1 {
+            for x in 0..screen.0 {
+                let c = (x as f32 + 0.5, y as f32 + 0.5);
+                if crate::render::slot_at_cursor(screen, true, c) == Some(slot) {
+                    return c;
+                }
+            }
+        }
+        panic!("no cursor position maps to slot {slot}");
+    }
+
+    #[test]
+    fn route_inventory_click_open_picks_up_slot_stack() {
+        let mut app = app();
+        app.handle_control(Control::ToggleInventory, true);
+        assert!(app.inventory_open());
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+
+        assert!(app.game.inventory().cursor().is_none());
+        let item0 = app.game.inventory().slot(0).unwrap().item;
+
+        let consumed = app.route_screen_click(screen);
+        assert!(consumed);
+        assert!(app.game.inventory().slot(0).is_none());
+        assert_eq!(app.game.inventory().cursor().unwrap().item, item0);
+    }
+
+    #[test]
+    fn route_inventory_click_closed_is_a_noop() {
+        let mut app = app();
+        assert!(!app.inventory_open());
+        let before = app.game.inventory().slot(0).map(|s| s.count);
+        let consumed = app.route_screen_click((1280, 720));
+        assert!(!consumed);
+        assert!(app.game.inventory().cursor().is_none());
+        assert_eq!(app.game.inventory().slot(0).map(|s| s.count), before);
     }
 }

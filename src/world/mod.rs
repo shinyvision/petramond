@@ -5,6 +5,7 @@
 //! API stable while the implementation is split by responsibility.
 
 mod edit;
+mod light_queue;
 mod mesh_queue;
 mod query;
 mod store;

@@ -1,9 +1,12 @@
 //! Block registry + per-face tile mapping.
 
 use crate::atlas::Tile;
+use crate::item::{DropSpec, ItemType};
 
 mod data;
 mod definition;
+
+pub use definition::BlockMaterial;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -154,6 +157,39 @@ impl Block {
         self.def().tiles
     }
 
+    /// Mining material class (drives tool requirement + future tool tiers).
+    #[inline]
+    pub fn material(self) -> BlockMaterial {
+        self.def().material
+    }
+
+    /// Base break-time scalar in "hardness units". `0.0` = instant; `< 0.0` =
+    /// unbreakable (never a mining target). See `crate::mining` for the model.
+    #[inline]
+    pub fn hardness(self) -> f32 {
+        self.def().hardness
+    }
+
+    /// What this block yields when harvested. `DropSpec::NONE` = no drop.
+    #[inline]
+    pub fn drop_spec(self) -> DropSpec {
+        self.def().drop
+    }
+
+    /// The inventory item that represents this block (`Air -> Air`).
+    #[inline]
+    pub fn to_item(self) -> ItemType {
+        ItemType::from_block(self)
+    }
+
+    /// Whether this block cannot be hand-harvested in 0.1 (Stone/Ore yield nothing
+    /// without a tool; tools are a future addition). It still breaks — it just
+    /// drops nothing. Mirrors the harvest gate in `crate::mining`.
+    #[inline]
+    pub fn requires_tool(self) -> bool {
+        matches!(self.material(), BlockMaterial::Stone | BlockMaterial::Ore)
+    }
+
     #[inline]
     fn def(self) -> &'static definition::BlockDef {
         data::def(self)
@@ -162,8 +198,9 @@ impl Block {
 
 #[cfg(test)]
 mod tests {
-    use super::{data, Block};
+    use super::{data, Block, BlockMaterial};
     use crate::atlas::Tile;
+    use crate::item::ItemType;
 
     #[test]
     fn ids_are_stable_and_append_only() {
@@ -293,6 +330,86 @@ mod tests {
         assert!(Block::OakLeaves.occludes_ao());
         assert!(Block::OakLeaves.is_transparent());
         assert!(!Block::OakLeaves.is_replaceable());
+    }
+
+    #[test]
+    fn metadata_matches_contract() {
+        // Wood: hardness 2.0 (5 s by hand), drops self, hand-harvestable.
+        assert_eq!(Block::OakLog.material(), BlockMaterial::Wood);
+        assert_eq!(Block::OakLog.hardness(), 2.0);
+        assert!(!Block::OakLog.requires_tool());
+        assert_eq!(Block::OakLog.drop_spec().drops, &[(ItemType::OakLog, 1.0)]);
+
+        // Stone family requires a tool and (per the mining model) yields nothing by
+        // hand, but the drop spec itself is still "self @ 1.0".
+        assert_eq!(Block::Stone.material(), BlockMaterial::Stone);
+        assert_eq!(Block::Stone.hardness(), 1.5);
+        assert!(Block::Stone.requires_tool());
+        assert_eq!(Block::Stone.drop_spec().drops, &[(ItemType::Stone, 1.0)]);
+
+        // Ores require a tool and are harder.
+        assert_eq!(Block::CoalOre.material(), BlockMaterial::Ore);
+        assert_eq!(Block::CoalOre.hardness(), 3.0);
+        assert!(Block::CoalOre.requires_tool());
+
+        // Leaves: soft foliage, drop self.
+        assert_eq!(Block::OakLeaves.material(), BlockMaterial::Foliage);
+        assert_eq!(Block::OakLeaves.hardness(), 0.2);
+        assert!(!Block::OakLeaves.requires_tool());
+
+        // Dirt family.
+        assert_eq!(Block::Grass.material(), BlockMaterial::Dirt);
+        assert_eq!(Block::Grass.hardness(), 0.5);
+        assert_eq!(Block::Grass.drop_spec().drops, &[(ItemType::Grass, 1.0)]);
+
+        // Cross-plants: instant, Plant material, never require a tool.
+        for plant in [
+            Block::Poppy,
+            Block::Fern,
+            Block::RedMushroom,
+            Block::DeadBush,
+        ] {
+            assert_eq!(plant.material(), BlockMaterial::Plant, "{plant:?}");
+            assert_eq!(plant.hardness(), 0.0, "{plant:?}");
+            assert!(!plant.requires_tool(), "{plant:?}");
+            assert_eq!(plant.drop_spec().drops.len(), 1, "{plant:?}");
+        }
+
+        // ShortGrass: instant, drops NOTHING (matches the goal's "grass does not drop").
+        assert_eq!(Block::ShortGrass.material(), BlockMaterial::Plant);
+        assert_eq!(Block::ShortGrass.hardness(), 0.0);
+        assert!(Block::ShortGrass.drop_spec().drops.is_empty());
+
+        // Air / Water: unbreakable, no material, no drop, never need a tool.
+        for b in [Block::Air, Block::Water] {
+            assert_eq!(b.material(), BlockMaterial::None, "{b:?}");
+            assert_eq!(b.hardness(), -1.0, "{b:?}");
+            assert!(b.drop_spec().drops.is_empty(), "{b:?}");
+            assert!(!b.requires_tool(), "{b:?}");
+        }
+
+        // to_item mirrors the item conversion.
+        assert_eq!(Block::Stone.to_item(), ItemType::Stone);
+        assert_eq!(Block::Air.to_item(), ItemType::Air);
+    }
+
+    #[test]
+    fn every_block_has_consistent_metadata() {
+        for &block in Block::ALL {
+            let spec = block.drop_spec();
+            // Drop chances are valid probabilities and every dropped item maps to a
+            // real (non-Air) item.
+            for &(item, chance) in spec.drops {
+                assert!(
+                    (0.0..=1.0).contains(&chance),
+                    "{block:?} drop chance {chance} out of range"
+                );
+                assert_ne!(item, ItemType::Air, "{block:?} drops Air");
+            }
+            // requires_tool() is exactly the Stone/Ore material set.
+            let by_material = matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore);
+            assert_eq!(block.requires_tool(), by_material, "{block:?}");
+        }
     }
 
     #[test]

@@ -148,27 +148,17 @@ pub static OAK_SAVANNA: ConfiguredFeature = ConfiguredFeature {
 pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_BIG_F,
 };
-pub static SPRUCE: ConfiguredFeature = ConfiguredFeature {
-    feature: &SPRUCE_F,
-};
+pub static SPRUCE: ConfiguredFeature = ConfiguredFeature { feature: &SPRUCE_F };
 pub static SPRUCE_TALL: ConfiguredFeature = ConfiguredFeature {
     feature: &SPRUCE_TALL_F,
 };
-pub static BIRCH: ConfiguredFeature = ConfiguredFeature {
-    feature: &BIRCH_F,
-};
-pub static JUNGLE: ConfiguredFeature = ConfiguredFeature {
-    feature: &JUNGLE_F,
-};
-pub static ACACIA: ConfiguredFeature = ConfiguredFeature {
-    feature: &ACACIA_F,
-};
+pub static BIRCH: ConfiguredFeature = ConfiguredFeature { feature: &BIRCH_F };
+pub static JUNGLE: ConfiguredFeature = ConfiguredFeature { feature: &JUNGLE_F };
+pub static ACACIA: ConfiguredFeature = ConfiguredFeature { feature: &ACACIA_F };
 pub static DARK_OAK: ConfiguredFeature = ConfiguredFeature {
     feature: &DARK_OAK_F,
 };
-pub static CHERRY: ConfiguredFeature = ConfiguredFeature {
-    feature: &CHERRY_F,
-};
+pub static CHERRY: ConfiguredFeature = ConfiguredFeature { feature: &CHERRY_F };
 
 /// Per-biome tree density (probability per column). A pure data knob.
 pub fn tree_density(b: Biome) -> f32 {

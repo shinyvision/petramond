@@ -50,8 +50,8 @@ impl ImprovedNoise {
         let b = rng.next_double() * 256.0;
         let c = rng.next_double() * 256.0;
         let mut perm = [0u8; 257];
-        for i in 0..256 {
-            perm[i] = i as u8;
+        for (i, slot) in perm.iter_mut().enumerate().take(256) {
+            *slot = i as u8;
         }
         for i in 0..256 {
             let j = (rng.next_int_bound(256 - i as i32) + i as i32) as usize;
@@ -139,11 +139,7 @@ impl ImprovedNoise {
                     let tz = fade(dz);
                     let b_ = p[p[ax] as usize].wrapping_add(az as u8) as usize;
                     let d_ = p[p[ax + 1] as usize].wrapping_add(az as u8) as usize;
-                    let v1 = lerp(
-                        tx,
-                        grad(p[b_], dx, 0.0, dz),
-                        grad(p[d_], dx - 1.0, 0.0, dz),
-                    );
+                    let v1 = lerp(tx, grad(p[b_], dx, 0.0, dz), grad(p[d_], dx - 1.0, 0.0, dz));
                     let v2 = lerp(
                         tx,
                         grad(p[b_ + 1], dx, 0.0, dz - 1.0),
@@ -183,11 +179,7 @@ impl ImprovedNoise {
                             let bb = p[ax + 1].wrapping_add(ay as u8);
                             let bba = p[bb as usize].wrapping_add(az as u8) as usize;
                             let bbb = p[bb as usize + 1].wrapping_add(az as u8) as usize;
-                            e1 = lerp(
-                                tx,
-                                grad(p[aaa], dx, dy, dz),
-                                grad(p[bba], dx - 1.0, dy, dz),
-                            );
+                            e1 = lerp(tx, grad(p[aaa], dx, dy, dz), grad(p[bba], dx - 1.0, dy, dz));
                             e2 = lerp(
                                 tx,
                                 grad(p[aab], dx, dy - 1.0, dz),
@@ -331,7 +323,11 @@ mod tests {
         // same point as `sample`, which is KAT-verified.
         let mut out = [0.0f64; 3];
         n.populate(&mut out, 5.5, 0.0, 7.5, 1, 3, 1, 1.0, 1.0, 1.0, 1.0);
-        assert_eq!(out[0], n.sample(5.5, 0.0, 7.5), "populate 3D disagrees with sample");
+        assert_eq!(
+            out[0],
+            n.sample(5.5, 0.0, 7.5),
+            "populate 3D disagrees with sample"
+        );
     }
 
     #[test]

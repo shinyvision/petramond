@@ -46,15 +46,18 @@ pub struct Chunk {
     /// Biome id per (x,z) column (Biome::from_id).
     pub biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
     pub dirty: bool,
-    /// Cached self-contained skylight (x2 scale), a `16 x 16 x (sky_yhi-sky_ylo+1)`
-    /// band indexed like `blocks` but with Y offset by `sky_ylo`. Computed from
-    /// THIS chunk's blocks only (see `mesh::compute_chunk_skylight`) and reused
-    /// across mesh rebuilds until the chunk changes. Empty until first computed.
+    /// Cached skylight (x2 scale), a `16 x 16 x (sky_yhi-sky_ylo+1)` band
+    /// indexed like `blocks` but with Y offset by `sky_ylo`. The world bake may
+    /// include loaded neighbor chunks so flood light crosses borders, but only
+    /// this chunk's band is stored here. Empty until first computed.
     pub skylight: Box<[u8]>,
     pub sky_ylo: i32,
     pub sky_yhi: i32,
     /// Set when blocks change; cleared when the skylight band is recomputed.
     pub light_dirty: bool,
+    /// Bumped whenever this chunk's cached light needs a new bake. Async light
+    /// workers echo this value back so stale results can be discarded.
+    pub light_revision: u64,
 }
 
 impl Chunk {
@@ -73,6 +76,7 @@ impl Chunk {
             sky_ylo: 0,
             sky_yhi: 0,
             light_dirty: true,
+            light_revision: 0,
         }
     }
 
@@ -100,6 +104,29 @@ impl Chunk {
         self.light_dirty = false;
     }
 
+    pub fn mark_light_dirty(&mut self) {
+        self.light_dirty = true;
+        self.light_revision = self.light_revision.wrapping_add(1);
+    }
+
+    /// Clone just the terrain data needed by the skylight solver. The cached
+    /// light band itself is intentionally dropped to keep worker jobs smaller.
+    pub fn snapshot_for_light_bake(&self) -> Self {
+        Self {
+            cx: self.cx,
+            cz: self.cz,
+            blocks: self.blocks.clone(),
+            heightmap: self.heightmap.clone(),
+            biomes: self.biomes.clone(),
+            dirty: false,
+            skylight: Vec::new().into_boxed_slice(),
+            sky_ylo: 0,
+            sky_yhi: 0,
+            light_dirty: true,
+            light_revision: self.light_revision,
+        }
+    }
+
     pub fn block(&self, x: usize, y: usize, z: usize) -> Block {
         Block::from_id(self.blocks[idx(x, y, z)])
     }
@@ -114,7 +141,7 @@ impl Chunk {
         self.blocks[i] = id;
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
-        self.light_dirty = true;
+        self.mark_light_dirty();
     }
 
     pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
@@ -122,7 +149,7 @@ impl Chunk {
         self.blocks[i] = id;
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
-        self.light_dirty = true;
+        self.mark_light_dirty();
     }
 
     fn update_heightmap_after_set(&mut self, x: usize, y: usize, z: usize, id: u8) {
@@ -190,7 +217,7 @@ impl Chunk {
             }
         }
         self.dirty = true;
-        self.light_dirty = true;
+        self.mark_light_dirty();
     }
 }
 

@@ -25,6 +25,10 @@ WEB_READY  := http://localhost:$(PORT)/
 # ----------------------------------------------------------------------------
 run: run-native
 
+dev:
+	LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
+		$(CARGO) run --bin llamacraft_native
+
 run-native: build-native
 	LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
 		$(CARGO) run --release --bin llamacraft_native

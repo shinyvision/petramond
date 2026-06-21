@@ -55,26 +55,36 @@ impl World {
             return;
         }
 
+        self.drain_finished_light_bakes();
+
         // `World::chunks` is public for compatibility, so callers can still
         // mutate chunks directly. Reconcile the private queue with the public
         // dirty flag before consuming it so those edits keep the old scan-based
         // semantics while queued writes remain deduplicated.
         self.dirty_meshes.enqueue_loaded_dirty(&self.chunks);
 
-        let to_mesh = self.dirty_meshes.pop_dirty(&self.chunks, max_per_frame);
-        if to_mesh.is_empty() {
+        let candidates = self.dirty_meshes.pop_dirty(&self.chunks, max_per_frame);
+        if candidates.is_empty() {
             return;
         }
 
         // Safety net that makes `light_dirty` the single source of truth for the
-        // skylight cache: never mesh a chunk from stale light.
-        for &pos in &to_mesh {
-            if let Some(c) = self.chunks.get_mut(&pos) {
-                if c.light_dirty {
-                    let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(c);
-                    c.set_skylight(band, ylo, yhi);
-                }
+        // skylight cache: never mesh a chunk from stale light, and never sample a
+        // stale neighbor light band while building its border vertices. Dirty
+        // light now bakes off-thread, so blocked mesh candidates are requeued.
+        let mut to_mesh = Vec::with_capacity(candidates.len());
+        for pos in candidates {
+            if self.request_light_dependencies(pos) {
+                self.dirty_meshes.push(pos);
+            } else {
+                to_mesh.push(pos);
             }
+        }
+        if to_mesh.is_empty() {
+            return;
+        }
+
+        for &pos in &to_mesh {
             self.invalidate_section_visibility(pos);
         }
 
@@ -147,6 +157,46 @@ impl World {
             }
         }
     }
+
+    fn drain_finished_light_bakes(&mut self) {
+        while let Some(res) = self.light_bakes.try_recv() {
+            let fresh = self
+                .chunks
+                .get(&res.pos)
+                .is_some_and(|c| c.light_dirty && c.light_revision == res.revision);
+            if !fresh {
+                continue;
+            }
+            if let Some(c) = self.chunks.get_mut(&res.pos) {
+                c.set_skylight(res.band, res.ylo, res.yhi);
+                c.dirty = true;
+            }
+            self.dirty_meshes.push(res.pos);
+        }
+    }
+
+    /// Queue every dirty light band a mesh would read from its 3x3 sampling
+    /// neighbourhood. Returns true when the mesh must wait for async light.
+    fn request_light_dependencies(&mut self, pos: ChunkPos) -> bool {
+        let mut light_to_bake = Vec::new();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let p = ChunkPos::new(pos.cx + dx, pos.cz + dz);
+                if self.chunks.get(&p).is_some_and(|c| c.light_dirty) {
+                    light_to_bake.push(p);
+                }
+            }
+        }
+        if light_to_bake.is_empty() {
+            return false;
+        }
+        light_to_bake.sort_by_key(|p| (p.cz, p.cx));
+        light_to_bake.dedup();
+        for p in light_to_bake {
+            self.light_bakes.request(p, &self.chunks);
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -172,12 +222,29 @@ mod tests {
         mutate(world.chunks.get_mut(&pos).unwrap());
         assert!(world.chunks.get(&pos).unwrap().dirty);
 
-        world.tick_mesh_budget(1);
+        tick_until_meshed(&mut world, pos);
 
         let chunk = world.chunks.get(&pos).unwrap();
         assert!(!chunk.dirty);
         assert!(!chunk.light_dirty);
         assert!(!world.meshes.get(&pos).unwrap().is_empty());
+    }
+
+    fn tick_until_meshed(world: &mut World, pos: ChunkPos) {
+        for _ in 0..200 {
+            world.tick_mesh_budget(1);
+            if world
+                .chunks
+                .get(&pos)
+                .is_some_and(|c| !c.dirty && !c.light_dirty)
+                && world.meshes.get(&pos).is_some_and(|m| !m.is_empty())
+            {
+                return;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("chunk was not meshed after async light bake");
     }
 
     #[test]

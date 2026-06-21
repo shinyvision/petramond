@@ -1,14 +1,49 @@
 use crate::atlas::Tile;
+use crate::item::DropSpec;
 
 use super::Block;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct BlockDef {
     pub block: Block,
     pub flags: BlockFlags,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
+    /// Mining material class (drives tool requirement + future tool tiers).
+    pub material: BlockMaterial,
+    /// Base break time scalar in "hardness units"; `0.0` = instant, `< 0.0` =
+    /// unbreakable (never a mining target). See `crate::mining` for the model.
+    pub hardness: f32,
+    /// What this block yields when harvested. `DropSpec::NONE` = no drop.
+    pub drop: DropSpec,
 }
+
+/// Mining material class of a block. Drives whether a block can be hand-harvested
+/// (`Stone`/`Ore` require a tool — future) and groups blocks for tool tiers.
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BlockMaterial {
+    None,
+    Dirt,
+    Sand,
+    Stone,
+    Ore,
+    Wood,
+    Foliage,
+    Plant,
+    Other,
+}
+
+/// `drops self @ 1.0` helper: a one-entry [`DropSpec`] yielding the block's own
+/// item with certainty. The slices are `'static` so they can live in [`BlockDef`].
+macro_rules! drops_self {
+    ($item:ident) => {
+        DropSpec {
+            drops: &[(ItemType::$item, 1.0)],
+        }
+    };
+}
+pub(super) use drops_self;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct BlockFlags(u8);
