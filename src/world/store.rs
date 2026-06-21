@@ -6,6 +6,7 @@ use crate::worker::WorkerPool;
 
 use super::light_queue::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
+use super::tick::TickState;
 use super::visibility::SectionConnectivity;
 
 pub const RENDER_DIST: i32 = 16;
@@ -39,6 +40,8 @@ pub struct World {
     pub(super) light_bakes: LightBakeQueue,
     pub(super) dirty_meshes: DirtyMeshQueue,
     pub(super) last_load_target: Option<LoadTarget>,
+    /// Fixed-timestep simulation state: block updates + scheduled block ticks.
+    pub(super) sim: TickState,
 }
 
 impl World {
@@ -56,6 +59,7 @@ impl World {
             light_bakes: LightBakeQueue::new(),
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
+            sim: TickState::default(),
         }
     }
 

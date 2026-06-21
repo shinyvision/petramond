@@ -41,6 +41,12 @@ pub struct Chunk {
     pub cx: i32,
     pub cz: i32,
     blocks: Box<[u8]>,
+    /// Per-block water state, parallel to `blocks`, only meaningful where the
+    /// block is `Water`. Encodes the flow `falloff` (0 = source/full, 1..=8 =
+    /// distance from a source) plus a `FALLING` bit (see `world::water`).
+    /// `None` until the column first holds non-source flowing water, so still
+    /// oceans/rivers (all-source, meta 0) never pay the extra 64 KiB.
+    water: Option<Box<[u8]>>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -69,6 +75,7 @@ impl Chunk {
             cx,
             cz,
             blocks,
+            water: None,
             heightmap,
             biomes,
             dirty: true,
@@ -116,6 +123,9 @@ impl Chunk {
             cx: self.cx,
             cz: self.cz,
             blocks: self.blocks.clone(),
+            // Water meta does not affect skylight (water is transparent), so the
+            // bake never reads it -- drop it to keep the snapshot small.
+            water: None,
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -139,6 +149,7 @@ impl Chunk {
         let i = idx(x, y, z);
         let id = b.id();
         self.blocks[i] = id;
+        self.clear_water_meta(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -147,9 +158,51 @@ impl Chunk {
     pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
         let i = idx(x, y, z);
         self.blocks[i] = id;
+        self.clear_water_meta(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
+    }
+
+    /// Water-flow metadata at a local voxel (0 where the cell is not flowing
+    /// water or the column has never held flowing water). See `world::water`.
+    #[inline]
+    pub fn water_meta(&self, x: usize, y: usize, z: usize) -> u8 {
+        match &self.water {
+            Some(w) => w[idx(x, y, z)],
+            None => 0,
+        }
+    }
+
+    /// Set a water cell (block + flow meta) WITHOUT marking skylight dirty: water
+    /// is transparent and never changes the skylight band, so flow updates only
+    /// need a remesh. Marks the chunk mesh-dirty. `meta` is ignored (treated as
+    /// 0) when `b` is not water.
+    pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
+        let i = idx(x, y, z);
+        let id = b.id();
+        self.blocks[i] = id;
+        let meta = if b == Block::Water { meta } else { 0 };
+        self.store_water_meta(i, meta);
+        self.update_heightmap_after_set(x, y, z, id);
+        self.dirty = true;
+    }
+
+    #[inline]
+    fn clear_water_meta(&mut self, i: usize) {
+        if let Some(w) = self.water.as_mut() {
+            w[i] = 0;
+        }
+    }
+
+    #[inline]
+    fn store_water_meta(&mut self, i: usize, meta: u8) {
+        if meta == 0 {
+            self.clear_water_meta(i);
+            return;
+        }
+        self.water
+            .get_or_insert_with(|| vec![0u8; VOLUME].into_boxed_slice())[i] = meta;
     }
 
     fn update_heightmap_after_set(&mut self, x: usize, y: usize, z: usize, id: u8) {

@@ -19,6 +19,10 @@ struct Uniforms {
     inv_view_proj: mat4x4<f32>,
 };
 
+// Underwater multiply tint — kept in sync with block.wgsl so dust submerged with
+// the player reads the same blue darkening as the terrain around it.
+const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
+
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // Unused by particles (uv is absolute, per-vertex) but declared so this pipeline
 // can reuse the block pipeline's `uniform_bind` bind group unchanged.
@@ -63,5 +67,10 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     if (a < 0.5) { discard; }
     // shade = per-face directional shading; tint multiplies the atlas colour
     // (white = no change; foliage-green greens a grass/leaf fleck).
-    return vec4<f32>(tex.rgb * in.tint * in.shade, 1.0);
+    var color = tex.rgb * in.tint * in.shade;
+    // Submerged with the player: blue darkening to match the underwater terrain.
+    if (u.fog.w > 0.5) {
+        color = color * WATER_TINT;
+    }
+    return vec4<f32>(color, 1.0);
 }

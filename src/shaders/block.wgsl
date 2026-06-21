@@ -6,7 +6,14 @@ struct Uniforms {
     fog:       vec4<f32>, // (start, end, time, underwater)
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    // Animated-water flipbook: (still_base_tile, flow_base_tile, frame_count, _).
+    water_anim: vec4<u32>,
 };
+
+// Flipbook playback speed (frames/second) for still vs flowing water. Flowing
+// water reads a touch faster so it visibly streams.
+const WATER_STILL_FPS: f32 = 8.0;
+const WATER_FLOW_FPS: f32 = 12.0;
 
 // Skylight floor: a fully sky-occluded surface fades to this fraction of its lit
 // value rather than to black. FINAL_MIN is the absolute darkest pixel ("very
@@ -17,15 +24,8 @@ const FINAL_MIN: f32 = 0.02;
 const SKY_GAMMA: f32 = 3.0;
 
 // Underwater look: a multiply tint (darker + blue) applied to everything seen
-// while submerged, plus animated caustics added on lit surfaces. The caustic is
-// cheap layered sine "ridges" drifting over time, sampled in world space so the
-// dappled light is continuous across block boundaries.
+// while submerged.
 const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
-const CAUSTIC_COLOR: vec3<f32> = vec3<f32>(0.45, 0.85, 1.0);
-// Caustics are deliberately *barely* noticeable: just a faint shimmer on lit
-// surfaces, not a bold dappled pattern.
-const CAUSTIC_STRENGTH: f32 = 0.12;
-const CAUSTIC_SCALE: f32 = 0.55;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
@@ -64,15 +64,13 @@ fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
     return vec2<f32>(r.x, r.y);
 }
 
-// Animated caustic ridges in [0,1]: layered sines combined into thin bright
-// filaments, sharpened by a cubic. p is a world-space xz position; t is seconds.
-fn caustic(p: vec2<f32>, t: f32) -> f32 {
-    let q = p * CAUSTIC_SCALE;
-    let a = sin(q.x + t * 1.3) + sin(q.y - t * 1.1);
-    let b = sin((q.x + q.y) * 0.7 + t * 1.7) + sin((q.x - q.y) * 0.9 - t * 1.5);
-    let v = (a + b) * 0.25 + 0.5;
-    let s = clamp(v, 0.0, 1.0);
-    return pow(s, 3.0);
+// Per-corner UV in unit-tile space [0,1]^2 (same corner order as `corner_uv`),
+// used to rotate the flowing-water tile about its centre.
+fn corner_local(corner: u32) -> vec2<f32> {
+    if (corner == 0u) { return vec2<f32>(0.0, 1.0); }
+    if (corner == 1u) { return vec2<f32>(1.0, 1.0); }
+    if (corner == 2u) { return vec2<f32>(1.0, 0.0); }
+    return vec2<f32>(0.0, 0.0);
 }
 
 @vertex
@@ -87,7 +85,47 @@ fn vs_main(in: VsIn) -> VsOut {
     let ao = (in.packed >> 21u) & 0x3u;
     let sky6 = (in.packed >> 23u) & 0x3Fu;
 
-    out.uv = corner_uv(uv_rects[tile], corner);
+    // Animate water: WaterStill / WaterFlow are the first of `frame_count`
+    // consecutive flipbook tiles; advance base + frame over time.
+    var atile = tile;
+    let frames = u.water_anim.z;
+    if (frames > 0u && (tile == u.water_anim.x || tile == u.water_anim.y)) {
+        var fps = WATER_STILL_FPS;
+        if (tile == u.water_anim.y) { fps = WATER_FLOW_FPS; }
+        atile = tile + (u32(floor(u.fog.z * fps)) % frames);
+    }
+
+    var uv = corner_uv(uv_rects[atile], corner);
+    // The flow tile carries shader-side data in `overlay_tile` (no grass overlay
+    // on water): top faces rotate toward the flow heading; side faces crop to the
+    // water height. Still-water tops/bottoms are not the flow tile, so untouched.
+    if (tile == u.water_anim.y) {
+        let r = uv_rects[atile];
+        if (shade_idx == 0u) {
+            // TOP: rotate the tile about its centre by the flow heading so a cell
+            // streaming into a corner points diagonally, not snapped to a cardinal.
+            // Scale by 1/(|cos|+|sin|) so the rotated square stays inscribed in the
+            // tile (no bleed into neighbours); cardinals are unscaled.
+            let a = (f32(overlay_tile) / 256.0 - 0.5) * 6.2831853;
+            let rel = corner_local(corner) - vec2<f32>(0.5, 0.5);
+            let cs = cos(a);
+            let sn = sin(a);
+            let inv = 1.0 / (abs(cs) + abs(sn));
+            let rr = vec2<f32>(rel.x * cs - rel.y * sn, rel.x * sn + rel.y * cs) * inv
+                + vec2<f32>(0.5, 0.5);
+            uv = vec2<f32>(r.x, r.y) + rr * vec2<f32>(r.z - r.x, r.w - r.y);
+        } else if (shade_idx == 1u || shade_idx == 2u) {
+            // SIDE: map the tile's V to this vertex's height within its cell, so a
+            // partial sheet (thin flow) or a trimmed exposed step shows the matching
+            // slice of the texture instead of squishing/stretching the full tile.
+            // v0 at the cell top, v1 at the bottom. A full-height top vertex lands on
+            // an integer Y (fract 0), so treat that as height 1.
+            var lh = in.pos.y - floor(in.pos.y);
+            if ((corner == 2u || corner == 3u) && lh < 0.001) { lh = 1.0; }
+            uv.y = r.y + (1.0 - lh) * (r.w - r.y);
+        }
+    }
+    out.uv = uv;
     out.uv2 = corner_uv(uv_rects[overlay_tile], corner);
     out.overlay = (in.packed >> 20u) & 0x1u;
 
@@ -125,12 +163,9 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         rgb = base.rgb * in.tint;
     }
     var color = rgb * in.light;
-    // Underwater: blue darkening + animated caustics. The caustic is scaled by the
-    // surface's own light so shadowed/deep areas stay dark.
+    // Underwater: blue darkening multiply.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
-        let c = caustic(in.world_pos.xz, u.fog.z) * in.light;
-        color = color + CAUSTIC_COLOR * (c * CAUSTIC_STRENGTH);
     }
     let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
     let out = mix(color, u.fog_color.rgb, f);

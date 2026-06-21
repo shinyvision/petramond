@@ -9,9 +9,12 @@
 //! — is a stack-local in `generate`. Output is therefore a pure function of
 //! `(seed, cx, cz)`, independent of thread or call order.
 
+use std::sync::Arc;
+
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 
+use super::classic::terrain::NoiseCache;
 use super::classic::world::{map_biome, CascadeWorld, RegionCells};
 use super::ctx::ColumnGrid;
 use super::data::biomes::def;
@@ -36,6 +39,19 @@ impl ChunkGenerator {
             seed,
             field: HeightField::new(seed),
             world: CascadeWorld::new(seed),
+            rivers: RiverSystem::new(seed),
+            surface: SurfaceSystem,
+        }
+    }
+
+    /// As [`Self::new`] but the terrain noise is sampled through a shared
+    /// [`NoiseCache`]. The worker pool gives every thread's generator the same
+    /// cache so overlapping chunk regions sample each lattice column once.
+    pub fn with_cache(seed: u32, cache: Arc<NoiseCache>) -> Self {
+        Self {
+            seed,
+            field: HeightField::new(seed),
+            world: CascadeWorld::with_cache(seed, cache),
             rivers: RiverSystem::new(seed),
             surface: SurfaceSystem,
         }

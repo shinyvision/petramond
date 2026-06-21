@@ -1,7 +1,18 @@
-use crate::chunk::{Chunk, ChunkPos};
+use std::collections::HashSet;
+
+use crate::block::Block;
+use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use crate::mathh::IVec3;
 use crate::worker::GenRequest;
 
 use super::store::{LoadTarget, World};
+
+const CHUNK_LAYER: usize = CHUNK_SX * CHUNK_SZ;
+
+#[inline]
+fn block_index(x: usize, y: usize, z: usize) -> usize {
+    y * CHUNK_LAYER + z * CHUNK_SX + x
+}
 
 impl World {
     /// Update loaded chunk set around camera (in chunk coords).
@@ -96,6 +107,257 @@ impl World {
             self.mark_light_dirty_neighborhood(*pos, true);
             self.mark_dirty_neighborhood(*pos, false);
         }
+        self.queue_post_generation_block_updates(&ingested);
         n
+    }
+
+    /// Queue block updates for reactive generated blocks whose final loaded
+    /// neighbourhood already says they need work. This runs after a batch is
+    /// inserted so same-batch chunk borders are visible.
+    fn queue_post_generation_block_updates(&mut self, ingested: &[ChunkPos]) -> usize {
+        let mut updates = Vec::new();
+        let fresh: HashSet<ChunkPos> = ingested.iter().copied().collect();
+
+        for &pos in ingested {
+            self.collect_generated_water_updates(pos, &mut updates);
+            self.collect_existing_neighbor_water_updates(pos, &fresh, &mut updates);
+        }
+
+        let mut queued = 0;
+        for pos in updates {
+            if self.queue_block_update(pos) {
+                queued += 1;
+            }
+        }
+        queued
+    }
+
+    /// Generated water starts as still source water. It only needs an initial
+    /// update when the loaded neighbourhood gives it somewhere productive to go:
+    /// down into air, or horizontally into air. Air above is just a normal water
+    /// surface and does not cause flow.
+    fn collect_generated_water_updates(&self, pos: ChunkPos, out: &mut Vec<IVec3>) {
+        let Some(chunk) = self.chunks.get(&pos) else {
+            return;
+        };
+        let blocks = chunk.blocks_slice();
+        let air = Block::Air.id();
+        let water = Block::Water.id();
+        let west = self
+            .chunks
+            .get(&ChunkPos::new(pos.cx - 1, pos.cz))
+            .map(Chunk::blocks_slice);
+        let east = self
+            .chunks
+            .get(&ChunkPos::new(pos.cx + 1, pos.cz))
+            .map(Chunk::blocks_slice);
+        let north = self
+            .chunks
+            .get(&ChunkPos::new(pos.cx, pos.cz - 1))
+            .map(Chunk::blocks_slice);
+        let south = self
+            .chunks
+            .get(&ChunkPos::new(pos.cx, pos.cz + 1))
+            .map(Chunk::blocks_slice);
+        let (ox, oz) = chunk.chunk_origin_world();
+
+        for y in 0..CHUNK_SY {
+            let y_base = y * CHUNK_LAYER;
+            for z in 0..CHUNK_SZ {
+                let row = y_base + z * CHUNK_SX;
+                for x in 0..CHUNK_SX {
+                    let i = row + x;
+                    if blocks[i] != water {
+                        continue;
+                    }
+
+                    let needs_update = (y > 0 && blocks[i - CHUNK_LAYER] == air)
+                        || if x > 0 {
+                            blocks[i - 1] == air
+                        } else {
+                            west.is_some_and(|b| b[block_index(CHUNK_SX - 1, y, z)] == air)
+                        }
+                        || if x + 1 < CHUNK_SX {
+                            blocks[i + 1] == air
+                        } else {
+                            east.is_some_and(|b| b[block_index(0, y, z)] == air)
+                        }
+                        || if z > 0 {
+                            blocks[i - CHUNK_SX] == air
+                        } else {
+                            north.is_some_and(|b| b[block_index(x, y, CHUNK_SZ - 1)] == air)
+                        }
+                        || if z + 1 < CHUNK_SZ {
+                            blocks[i + CHUNK_SX] == air
+                        } else {
+                            south.is_some_and(|b| b[block_index(x, y, 0)] == air)
+                        };
+
+                    if needs_update {
+                        out.push(IVec3::new(ox + x as i32, y as i32, oz + z as i32));
+                    }
+                }
+            }
+        }
+    }
+
+    /// A chunk can arrive beside older source water that previously had no loaded
+    /// target to flow into. Scan only the four shared border planes and wake that
+    /// older water when the new chunk exposes air.
+    fn collect_existing_neighbor_water_updates(
+        &self,
+        pos: ChunkPos,
+        fresh: &HashSet<ChunkPos>,
+        out: &mut Vec<IVec3>,
+    ) {
+        let Some(chunk) = self.chunks.get(&pos) else {
+            return;
+        };
+        let blocks = chunk.blocks_slice();
+        let air = Block::Air.id();
+        let water = Block::Water.id();
+        let (ox, oz) = chunk.chunk_origin_world();
+
+        let west_pos = ChunkPos::new(pos.cx - 1, pos.cz);
+        if !fresh.contains(&west_pos) {
+            if let Some(neighbor) = self.chunks.get(&west_pos) {
+                let nblocks = neighbor.blocks_slice();
+                let wx = ox - 1;
+                for y in 0..CHUNK_SY {
+                    for z in 0..CHUNK_SZ {
+                        if blocks[block_index(0, y, z)] == air
+                            && nblocks[block_index(CHUNK_SX - 1, y, z)] == water
+                        {
+                            out.push(IVec3::new(wx, y as i32, oz + z as i32));
+                        }
+                    }
+                }
+            }
+        }
+
+        let east_pos = ChunkPos::new(pos.cx + 1, pos.cz);
+        if !fresh.contains(&east_pos) {
+            if let Some(neighbor) = self.chunks.get(&east_pos) {
+                let nblocks = neighbor.blocks_slice();
+                let wx = ox + CHUNK_SX as i32;
+                for y in 0..CHUNK_SY {
+                    for z in 0..CHUNK_SZ {
+                        if blocks[block_index(CHUNK_SX - 1, y, z)] == air
+                            && nblocks[block_index(0, y, z)] == water
+                        {
+                            out.push(IVec3::new(wx, y as i32, oz + z as i32));
+                        }
+                    }
+                }
+            }
+        }
+
+        let north_pos = ChunkPos::new(pos.cx, pos.cz - 1);
+        if !fresh.contains(&north_pos) {
+            if let Some(neighbor) = self.chunks.get(&north_pos) {
+                let nblocks = neighbor.blocks_slice();
+                let wz = oz - 1;
+                for y in 0..CHUNK_SY {
+                    for x in 0..CHUNK_SX {
+                        if blocks[block_index(x, y, 0)] == air
+                            && nblocks[block_index(x, y, CHUNK_SZ - 1)] == water
+                        {
+                            out.push(IVec3::new(ox + x as i32, y as i32, wz));
+                        }
+                    }
+                }
+            }
+        }
+
+        let south_pos = ChunkPos::new(pos.cx, pos.cz + 1);
+        if !fresh.contains(&south_pos) {
+            if let Some(neighbor) = self.chunks.get(&south_pos) {
+                let nblocks = neighbor.blocks_slice();
+                let wz = oz + CHUNK_SZ as i32;
+                for y in 0..CHUNK_SY {
+                    for x in 0..CHUNK_SX {
+                        if blocks[block_index(x, y, CHUNK_SZ - 1)] == air
+                            && nblocks[block_index(x, y, 0)] == water
+                        {
+                            out.push(IVec3::new(ox + x as i32, y as i32, wz));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flat_chunk(cx: i32, cz: i32) -> Chunk {
+        let mut chunk = Chunk::new(cx, cz);
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                chunk.set_block(x, 64, z, Block::Stone);
+            }
+        }
+        chunk
+    }
+
+    fn run_ticks(world: &mut World, n: u32) {
+        for _ in 0..n {
+            world.game_tick();
+        }
+    }
+
+    fn block(world: &World, x: i32, y: i32, z: i32) -> Block {
+        Block::from_id(world.chunk_block(x, y, z))
+    }
+
+    #[test]
+    fn post_generation_updates_start_generated_water_flow() {
+        let mut world = World::new(0, 0);
+        let pos = ChunkPos::new(0, 0);
+        let mut chunk = flat_chunk(pos.cx, pos.cz);
+        chunk.set_block(8, 65, 8, Block::Water);
+        world.chunks.insert(pos, chunk);
+
+        assert_eq!(world.queue_post_generation_block_updates(&[pos]), 1);
+        run_ticks(&mut world, super::super::water::WATER_FLOW_DELAY as u32 + 2);
+
+        assert_eq!(block(&world, 9, 65, 8), Block::Water);
+    }
+
+    #[test]
+    fn post_generation_updates_existing_neighbor_water_at_new_air_border() {
+        let mut world = World::new(0, 0);
+        let west_pos = ChunkPos::new(0, 0);
+        let east_pos = ChunkPos::new(1, 0);
+        let mut west = flat_chunk(west_pos.cx, west_pos.cz);
+        west.set_block(CHUNK_SX - 1, 65, 8, Block::Water);
+
+        world.chunks.insert(west_pos, west);
+        world
+            .chunks
+            .insert(east_pos, flat_chunk(east_pos.cx, east_pos.cz));
+
+        assert_eq!(world.queue_post_generation_block_updates(&[east_pos]), 1);
+        run_ticks(&mut world, super::super::water::WATER_FLOW_DELAY as u32 + 2);
+
+        assert_eq!(block(&world, 16, 65, 8), Block::Water);
+    }
+
+    #[test]
+    fn post_generation_updates_ignore_water_with_only_air_above() {
+        let mut world = World::new(0, 0);
+        let pos = ChunkPos::new(0, 0);
+        let mut chunk = flat_chunk(pos.cx, pos.cz);
+        let p = (8, 65, 8);
+        chunk.set_block(p.0, p.1, p.2, Block::Water);
+        chunk.set_block(p.0 - 1, p.1, p.2, Block::Stone);
+        chunk.set_block(p.0 + 1, p.1, p.2, Block::Stone);
+        chunk.set_block(p.0, p.1, p.2 - 1, Block::Stone);
+        chunk.set_block(p.0, p.1, p.2 + 1, Block::Stone);
+        world.chunks.insert(pos, chunk);
+
+        assert_eq!(world.queue_post_generation_block_updates(&[pos]), 0);
     }
 }

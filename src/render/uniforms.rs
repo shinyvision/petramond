@@ -19,7 +19,11 @@ pub const UV_RECTS_LEN: usize = 256;
 pub struct Uniforms {
     pub view_proj: [[f32; 4]; 4],
     pub cam_pos: [f32; 4], // padded to 16
-    pub fog: [f32; 4],     // (start, end, _, _)
+    pub fog: [f32; 4],     // (start, end, time, underwater)
     pub fog_color: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
+    /// Animated-water flipbook control for the block shader:
+    /// `(water_still_base_tile, water_flow_base_tile, frame_count, _)`. The
+    /// shader advances `base + floor(time*fps) % frames` over these two tiles.
+    pub water_anim: [u32; 4],
 }

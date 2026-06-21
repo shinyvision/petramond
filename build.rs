@@ -136,6 +136,17 @@ const TILES: &[(&str, &str)] = &[
     ("destroy_stage_9", "destroy_stage_9.png"),
 ];
 
+/// Animated flipbook tiles (name, file, frame_count). The source PNG is a
+/// vertical strip of `frames` square cells; each is resampled to 16x16 and laid
+/// out as `frames` CONSECUTIVE atlas tiles starting at the base tile. The base
+/// `Tile` reports its frame count via `Tile::anim_frames`; the block shader
+/// advances `base + frame` over time (see `block.wgsl`). Appended after the
+/// static tiles so all existing tile ids stay stable.
+const ANIM_TILES: &[(&str, &str, u32)] = &[
+    ("water_still", "water_still.png", 32),
+    ("water_flow", "water_flow.png", 32),
+];
+
 fn main() {
     println!("cargo:rerun-if-changed=assets/textures");
     println!("cargo:rerun-if-changed=build.rs");
@@ -146,7 +157,50 @@ fn main() {
     let atlas_png = out_dir.join("atlas.png");
     let atlas_rs = out_dir.join("atlas_data.rs");
 
-    let count = TILES.len() as u32;
+    // Flatten static tiles (one frame each) and animated tiles (a vertical
+    // flipbook expanded into consecutive 16x16 frames) into one ordered list of
+    // (name, 16x16 RGBA) cells. `anim_meta` records each animated base's frame
+    // count for the generated `Tile::anim_frames`.
+    let load_16 = |file: &str| -> image::RgbaImage {
+        let path = in_dir.join(file);
+        if !path.exists() {
+            panic!("missing texture: {}", path.display());
+        }
+        let img = image::open(&path)
+            .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
+            .to_rgba8();
+        image::imageops::resize(&img, TILE, TILE, image::imageops::FilterType::Nearest)
+    };
+
+    let mut cells: Vec<(String, image::RgbaImage)> = Vec::new();
+    for (name, file) in TILES {
+        cells.push((name.to_string(), load_16(file)));
+    }
+    let mut anim_meta: Vec<(String, u32)> = Vec::new();
+    for (name, file, frames) in ANIM_TILES {
+        let path = in_dir.join(file);
+        if !path.exists() {
+            panic!("missing texture: {}", path.display());
+        }
+        let strip = image::open(&path)
+            .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
+            .to_rgba8();
+        let (sw, sh) = (strip.width(), strip.height());
+        let fh = sh / frames;
+        for i in 0..*frames {
+            let frame = image::imageops::crop_imm(&strip, 0, i * fh, sw, fh).to_image();
+            let tile = image::imageops::resize(&frame, TILE, TILE, image::imageops::FilterType::Nearest);
+            let cell_name = if i == 0 {
+                name.to_string()
+            } else {
+                format!("{name}_{i}")
+            };
+            cells.push((cell_name, tile));
+        }
+        anim_meta.push((to_camel(name), *frames));
+    }
+
+    let count = cells.len() as u32;
     // Square-ish atlas. cols = ceil(sqrt(n)); rows = ceil(n/cols).
     let cols = (count as f32).sqrt().ceil() as u32;
     let rows = count.div_ceil(cols);
@@ -157,17 +211,7 @@ fn main() {
     let mut buf = vec![0u8; (atlas_w * atlas_h * 4) as usize];
 
     let mut entries: Vec<(String, u32, u32)> = Vec::new();
-    for (i, (name, file)) in TILES.iter().enumerate() {
-        let path = in_dir.join(file);
-        if !path.exists() {
-            panic!("missing texture: {}", path.display());
-        }
-        // Use `image` crate to load + resize to 16x16 RGBA.
-        let img = image::open(&path)
-            .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
-            .to_rgba8();
-        let resized =
-            image::imageops::resize(&img, TILE, TILE, image::imageops::FilterType::Nearest);
+    for (i, (name, resized)) in cells.iter().enumerate() {
         let tile_col = i as u32 % cols;
         let tile_row = i as u32 / cols;
         let base_x = tile_col * TILE;
@@ -222,6 +266,14 @@ fn main() {
         ));
     }
     src.push_str("        }\n    }\n");
+    src.push_str("    /// Flipbook frame count for an animated tile (0 = static). The frames\n");
+    src.push_str("    /// occupy this tile's index and the next `n-1` consecutive tiles, so\n");
+    src.push_str("    /// the shader samples `base + frame` to animate.\n");
+    src.push_str("    pub fn anim_frames(self) -> u32 {\n        match self {\n");
+    for (camel, frames) in &anim_meta {
+        src.push_str(&format!("            Tile::{} => {},\n", camel, frames));
+    }
+    src.push_str("            _ => 0,\n        }\n    }\n");
     src.push_str("}\n\n");
     src.push_str(&format!(
         "pub const TILE_COUNT: usize = {};\n",

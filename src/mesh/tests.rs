@@ -106,6 +106,7 @@ fn edge_water_mesh(east_chunk_loaded: bool) -> ChunkMesh {
     build_mesh_lods_with_loaded_neighbors(
         &chunk,
         |_, _, _| 0u8,
+        |_, _, _| 0u8,
         |_, _| 0u8,
         |_, _, _| SKY_FULL,
         |cx, cz| cx == 0 && cz == 0 || east_chunk_loaded && cx == 1 && cz == 0,
@@ -127,8 +128,155 @@ fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
         20,
         "unloaded neighbour culls only the streaming-edge water side"
     );
-    assert_eq!(loaded_air.transparent_idx.len(), 36);
-    assert_eq!(unloaded.transparent_idx.len(), 30);
+    // The TOP face is emitted in both windings (back-face-culled transparent pass
+    // keeps the surface visible from below), so each adds 6 extra indices.
+    assert_eq!(loaded_air.transparent_idx.len(), 36 + 6);
+    assert_eq!(unloaded.transparent_idx.len(), 30 + 6);
+}
+
+/// Still water uses the still tile and renders at the (recessed) full height;
+/// flowing water uses the animated flow tile and renders lower, so the surface
+/// slopes. Locks the mesher's water tile selection + variable-height geometry.
+#[test]
+fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
+    use crate::atlas::Tile;
+
+    let still_id = Tile::WaterStill as u32;
+    let flow_id = Tile::WaterFlow as u32;
+
+    // A 5x5 pool of sources on a stone floor at y=64, plus one explicitly
+    // flowing cell (falloff 4) at the east rim that opens onto air.
+    let mut chunk = Chunk::new(0, 0);
+    for z in 6..=10 {
+        for x in 6..=10 {
+            chunk.set_block(x, 64, z, Block::Stone);
+            chunk.set_water(x, 65, z, Block::Water, 0); // source
+        }
+    }
+    chunk.set_block(11, 64, 8, Block::Stone);
+    chunk.set_water(11, 65, 8, Block::Water, 4); // flowing, opens east onto air
+
+    let air = |_: i32, _: i32, _: i32| 0u8;
+    let water0 = |_: i32, _: i32, _: i32| 0u8;
+    let biome0 = |_: i32, _: i32| 0u8;
+    let light = |_: i32, _: i32, _: i32| SKY_FULL;
+    let mesh =
+        build_mesh_lods_with_loaded_neighbors(&chunk, air, water0, biome0, light, |_, _| true);
+
+    // Decode the upward-facing tile for each top vertex (those raised above the
+    // cell floor). Collect tile ids and the lowest/highest surface heights.
+    let mut saw_still = false;
+    let mut saw_flow = false;
+    let mut min_top = f32::INFINITY;
+    let mut max_top: f32 = 0.0;
+    for v in &mesh.transparent {
+        let tile = v.packed & 0xFFu32;
+        // Top vertices sit above the cell base (y=65); skip the side/bottom ones.
+        if v.pos[1] > 65.05 {
+            min_top = min_top.min(v.pos[1]);
+            max_top = max_top.max(v.pos[1]);
+        }
+        if tile == still_id {
+            saw_still = true;
+        } else if tile == flow_id {
+            saw_flow = true;
+        }
+    }
+
+    assert!(
+        saw_still,
+        "interior still sources should use the still tile"
+    );
+    assert!(saw_flow, "the flowing rim cell should use the flow tile");
+    // Full sources sit at the recessed 0.875; the falloff-4 cell is well below.
+    assert!(
+        max_top <= 65.9,
+        "water tops are recessed below the full block (got {max_top})"
+    );
+    assert!(
+        min_top < 65.6,
+        "the flowing cell should slope notably lower than a source (got {min_top})"
+    );
+}
+
+/// A submerged (capped) water cell must render its side face toward a shorter
+/// open-surface neighbour — the exposed vertical step — so a 1-deep flow stepping
+/// down doesn't show the floor through the height gap.
+#[test]
+fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
+    let mut chunk = Chunk::new(0, 0);
+    chunk.set_block(8, 63, 8, Block::Stone);
+    chunk.set_block(9, 63, 8, Block::Stone);
+    // 2-deep column at x=8 -> the y=64 cell is capped (water above) and full.
+    chunk.set_water(8, 64, 8, Block::Water, 0);
+    chunk.set_water(8, 65, 8, Block::Water, 0);
+    // Shorter open-surface flowing cell next door (air above it).
+    chunk.set_water(9, 64, 8, Block::Water, 3);
+
+    let mesh = build_mesh_lods_with_loaded_neighbors(
+        &chunk,
+        |_, _, _| 0u8,
+        |_, _, _| 0u8,
+        |_, _| 0u8,
+        |_, _, _| SKY_FULL,
+        |_, _| true,
+    );
+
+    // The capped cell's east face lives on the x=9 plane. It is rendered (not
+    // culled water<->water) as a BAND: trimmed at the bottom to the neighbour's
+    // recessed surface (~0.79 here) and full at the top, so the submerged part
+    // (water behind water) isn't drawn. The trimmed bottom edge is the only water
+    // vertex on that plane strictly inside (64, 65); a culled or full-height face
+    // would have none there.
+    let band_bottom = mesh.transparent.iter().any(|v| {
+        (v.pos[0] - 9.0).abs() < 1e-3 && shade_idx(v) == 2 && v.pos[1] > 64.05 && v.pos[1] < 64.95
+    });
+    assert!(
+        band_bottom,
+        "submerged cell must render its exposed step as a trimmed band above the neighbour"
+    );
+}
+
+/// Falling water is also full-height. When it diverges beside a thinner
+/// same-level flow, its internal side must render the exposed step; otherwise the
+/// two water meshes do not meet and the floor/terrain shows through as a wedge.
+#[test]
+fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
+    const FALLING_META: u8 = 0x80;
+
+    let mut chunk = Chunk::new(0, 0);
+    chunk.set_block(8, 63, 8, Block::Stone);
+    chunk.set_block(9, 63, 8, Block::Stone);
+    chunk.set_water(8, 64, 8, Block::Water, FALLING_META);
+    chunk.set_water(9, 64, 8, Block::Water, 3);
+
+    let mesh = build_mesh_lods_with_loaded_neighbors(
+        &chunk,
+        |_, _, _| 0u8,
+        |_, _, _| 0u8,
+        |_, _| 0u8,
+        |_, _, _| SKY_FULL,
+        |_, _| true,
+    );
+
+    let step = mesh
+        .transparent
+        .iter()
+        .filter(|v| (v.pos[0] - 9.0).abs() < 1e-3 && shade_idx(v) == 2)
+        .collect::<Vec<_>>();
+
+    assert!(
+        step.iter().any(|v| (v.pos[1] - 65.0).abs() < 1e-3),
+        "falling water step must reach the full cell top"
+    );
+    assert!(
+        step.iter().any(|v| v.pos[1] > 64.05 && v.pos[1] < 64.95),
+        "falling water step must be trimmed to the neighbour's lower surface"
+    );
+}
+
+fn shade_idx(v: &Vertex) -> u32 {
+    (v.packed >> 10) & 0x3
 }
 
 /// Sampler over a computed skylight band, for the skylight unit tests.

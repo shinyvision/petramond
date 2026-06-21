@@ -346,6 +346,7 @@ async fn new_renderer_inner(
             fog: [FOG_START, FOG_END, 0.0, 0.0],
             fog_color: [0.60, 0.82, 1.00, 1.0],
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            water_anim: crate::atlas::water_anim_uniform(),
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -504,6 +505,7 @@ impl Renderer {
             fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
             fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
+            water_anim: crate::atlas::water_anim_uniform(),
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
@@ -1063,6 +1065,80 @@ impl Renderer {
             pass.set_index_buffer(self.item_entity_ibuf.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..self.item_entity_index_count, 0, 0..1);
         }
+        // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
+        // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so
+        // water must be able to blend in front of it (a crack on a submerged block
+        // shows THROUGH the water, not over it). ALPHA blend; depth LessEqual /
+        // no-write with a CPU-inflated cube so the crack sits just proud of the
+        // face (no z-fight). Reuses uniform_bind (view_proj + uv_rects) + atlas_bind.
+        if self.break_index_count > 0 {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("break overlay pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.break_pipe);
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_vertex_buffer(0, self.break_vbuf.slice(..));
+            pass.set_index_buffer(self.break_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.break_index_count, 0, 0..1);
+        }
+        // PARTICLE PASS (§8 3b): tiny 3D terrain particle cubes. Drawn BEFORE the
+        // transparent water pass (but after the break overlay, so they sit in front
+        // of the crack): they are alpha-CUTOUT solids that DEPTH-TEST + DEPTH-WRITE,
+        // so water blends over the ones behind it (underwater dust reads as
+        // submerged) while ones in front of the water still occlude it. Reuses
+        // uniform_bind + atlas_bind. 24 verts / 36 indices per cube.
+        if self.particle_vertex_count > 0 {
+            let index_count = self.particle_vertex_count / super::particles::VERTS_PER_CUBE as u32
+                * super::particles::INDICES_PER_CUBE as u32;
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("particle pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.particle_pipe);
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_vertex_buffer(0, self.particle_vbuf.slice(..));
+            pass.set_index_buffer(self.particle_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..index_count, 0, 0..1);
+        }
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("transparent pass"),
@@ -1126,79 +1202,6 @@ impl Renderer {
         }
         // Restore the reusable draw-order buffer (capacity retained for next frame).
         self.draw_order = order;
-        // BREAK-OVERLAY PASS (§8 4b): the destroy crack over the targeted block.
-        // Runs BEFORE the particle pass so mining/break particles draw IN FRONT of
-        // the breaking-stage overlay. ALPHA blend; depth LessEqual / no-write with a
-        // CPU-inflated cube so the crack sits just proud of the face (no z-fight).
-        // Reuses uniform_bind (view_proj + uv_rects) + atlas_bind.
-        if self.break_index_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("break overlay pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.break_pipe);
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.break_vbuf.slice(..));
-            pass.set_index_buffer(self.break_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.break_index_count, 0, 0..1);
-        }
-        // PARTICLE PASS (§8 3b): tiny 3D terrain particle cubes, after the
-        // transparent + break-overlay passes and before the outline. So mining/break
-        // particles draw IN FRONT of the break-overlay. Alpha CUTOUT (discard a<0.5)
-        // so cubes are solid and DEPTH-TESTED + DEPTH-WRITTEN: correctly occluded by
-        // terrain, visible from any angle including above, and self-sorting. Reuses
-        // uniform_bind + atlas_bind. 24 verts / 36 indices per cube.
-        if self.particle_vertex_count > 0 {
-            let index_count = self.particle_vertex_count / super::particles::VERTS_PER_CUBE as u32
-                * super::particles::INDICES_PER_CUBE as u32;
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("particle pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.particle_pipe);
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.particle_vbuf.slice(..));
-            pass.set_index_buffer(self.particle_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..index_count, 0, 0..1);
-        }
         // Selection outline, after particles: load color + depth, depth-test (no
         // write) so it draws over terrain/water at the targeted block but stays
         // occluded behind nearer geometry.

@@ -9,9 +9,11 @@
 use crate::biome::Biome;
 use crate::worldgen::river::RiverColumn;
 
+use std::sync::Arc;
+
 use super::biome::layers::Layer;
 use super::biome::stack::{land_mix, land_voronoi};
-use super::terrain::TerrainGen;
+use super::terrain::{NoiseCache, TerrainGen};
 
 const CHUNK: usize = 16;
 
@@ -46,9 +48,15 @@ pub struct CascadeWorld {
 
 impl CascadeWorld {
     pub fn new(seed: u32) -> Self {
+        Self::with_cache(seed, Arc::new(NoiseCache::new()))
+    }
+
+    /// As [`Self::new`] but the terrain generator shares an external noise cache,
+    /// so several generators (one per worker thread) pool their column samples.
+    pub fn with_cache(seed: u32, cache: Arc<NoiseCache>) -> Self {
         let s = seed as i64;
         Self {
-            terrain: TerrainGen::new(s),
+            terrain: TerrainGen::with_cache(s, cache),
             land_voronoi: land_voronoi(s),
             land_mix: land_mix(s),
         }

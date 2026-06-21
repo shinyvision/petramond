@@ -40,6 +40,8 @@ fn tile_tint(tile: Tile) -> Option<TintKind> {
         Tile::ShortGrass => Some(TintKind::Grass),
         Tile::Fern => Some(TintKind::Grass),
         Tile::Water => Some(TintKind::Water),
+        Tile::WaterStill => Some(TintKind::Water),
+        Tile::WaterFlow => Some(TintKind::Water),
         Tile::OakLeaves => Some(TintKind::Foliage),
         Tile::AcaciaLeaves => Some(TintKind::Foliage),
         Tile::BirchLeaves => Some(TintKind::Foliage),
@@ -66,6 +68,7 @@ pub fn build_mesh(
     build_mesh_with_context(
         chunk,
         neighbour_block,
+        |_, _, _| 0,
         neighbour_biome,
         neighbour_light,
         |_, _| true,
@@ -82,15 +85,21 @@ pub fn build_mesh_lods(
     build_mesh_lods_with_loaded_neighbors(
         chunk,
         neighbour_block,
+        |_, _, _| 0,
         neighbour_biome,
         neighbour_light,
         |_, _| true,
     )
 }
 
+/// `neighbour_water(wx, wy, wz)` returns the flowing-water metadata byte at a
+/// world voxel (0 = source/none), routed to the owning chunk just like
+/// `neighbour_block`, so water surface heights and flow direction read correctly
+/// across chunk borders.
 pub fn build_mesh_lods_with_loaded_neighbors(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
@@ -98,6 +107,7 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     let mut mesh = build_mesh_with_context(
         chunk,
         &neighbour_block,
+        &neighbour_water,
         &neighbour_biome,
         &neighbour_light,
         &neighbour_chunk_loaded,
@@ -109,6 +119,7 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     let far = build_mesh_with_context(
         chunk,
         &neighbour_block,
+        &neighbour_water,
         &neighbour_biome,
         &neighbour_light,
         &neighbour_chunk_loaded,
@@ -132,6 +143,7 @@ pub fn build_mesh_with_options(
     build_mesh_with_context(
         chunk,
         neighbour_block,
+        |_, _, _| 0,
         neighbour_biome,
         neighbour_light,
         |_, _| true,
@@ -142,6 +154,7 @@ pub fn build_mesh_with_options(
 fn build_mesh_with_context(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
@@ -174,6 +187,40 @@ fn build_mesh_with_context(
             neighbour_block(wx, wy, wz)
         };
         Block::from_id(id)
+    };
+
+    // Flowing-water metadata at a world voxel: this chunk in-bounds, else the
+    // neighbour lookup (0 = source/none).
+    let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+        if wy < 0 || wy >= CHUNK_SY as i32 {
+            return 0;
+        }
+        let lx = wx - ox;
+        let lz = wz - oz;
+        if lx >= 0 && lx < CHUNK_SX as i32 && lz >= 0 && lz < CHUNK_SZ as i32 {
+            chunk.water_meta(lx as usize, wy as usize, lz as usize)
+        } else {
+            neighbour_water(wx, wy, wz)
+        }
+    };
+    // Fluid surface height (0..1) of the water cell at a world voxel, or `None`
+    // if it is not water. Water with water directly above fills to the top.
+    let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
+        if block_at(wx, wy, wz) != Block::Water {
+            return None;
+        }
+        let above = block_at(wx, wy + 1, wz) == Block::Water;
+        Some(crate::world::water::fluid_height(
+            water_at(wx, wy, wz),
+            above,
+        ))
+    };
+    let water_fills_cell = |wx: i32, wy: i32, wz: i32| -> bool {
+        if block_at(wx, wy, wz) != Block::Water {
+            return false;
+        }
+        let above = block_at(wx, wy + 1, wz) == Block::Water;
+        crate::world::water::fills_cell(water_at(wx, wy, wz), above)
     };
 
     // Precompute biome-blended tint (5x5 window) per column, per kind.
@@ -278,6 +325,55 @@ fn build_mesh_with_context(
                 let base_x = x as f32 + ox as f32;
                 let base_z = z as f32 + oz as f32;
 
+                // Water surface: per-corner heights (so neighbouring cells join
+                // into one continuous sloped sheet) plus the top tile + rotation
+                // derived from the flow direction.
+                let mut water_h = [[1.0f32; 2]; 2];
+                let mut water_top_tile = Tile::WaterStill;
+                let mut water_top_angle = 0u32;
+                // Full-height water (capped from above, or a falling column) fills
+                // to the top and its sides render full height rather than sloping.
+                let water_full =
+                    is_water && water_fills_cell(ox + x as i32, y as i32, oz + z as i32);
+                if is_water {
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let yy = y as i32;
+                    // 2x2 corner heights, indexed [cx][cz]: average the up-to-4
+                    // water cells meeting at each corner.
+                    for cx in 0..2i32 {
+                        for cz in 0..2i32 {
+                            let mut sum = 0.0;
+                            let mut cnt = 0;
+                            for ox2 in (cx - 1)..=cx {
+                                for oz2 in (cz - 1)..=cz {
+                                    if let Some(h) = fluid_at(wx + ox2, yy, wz + oz2) {
+                                        sum += h;
+                                        cnt += 1;
+                                    }
+                                }
+                            }
+                            water_h[cx as usize][cz as usize] =
+                                if cnt == 0 { 1.0 } else { sum / cnt as f32 };
+                        }
+                    }
+                    // Flow vector from the surface gradient: shared with entity
+                    // physics so current push matches the texture heading.
+                    let flow =
+                        crate::world::water::surface_flow_dir(wx, yy, wz, &block_at, &fluid_at);
+                    if flow.length_squared() > 0.0 {
+                        water_top_tile = Tile::WaterFlow;
+                        // Continuous flow heading: the shader rotates the flow tile
+                        // by this angle so a cell streaming into a corner points
+                        // diagonally, not snapped to a cardinal. atan2(x, z)
+                        // keeps +Z=0/-X=-90/+X=+90/-Z=180 so the cardinals match the
+                        // texture's built-in down-flow. Quantized to 8 bits.
+                        let a = flow.x.atan2(flow.z);
+                        let frac = a / std::f32::consts::TAU + 0.5;
+                        water_top_angle = ((frac * 256.0) as i32).rem_euclid(256) as u32;
+                    }
+                }
+
                 for face in FACES {
                     let (dx, dy, dz) = face.dir();
                     let nx = x as i32 + dx;
@@ -311,7 +407,13 @@ fn build_mesh_with_context(
                     // leaf<->leaf faces are intentionally NOT culled -- every leaf
                     // cube draws all its faces, giving a dense canopy you can't see
                     // through to the sky. Water additionally culls against itself.
-                    if nb.is_opaque() {
+                    //
+                    // Exception: water's TOP face is kept even under an opaque
+                    // block. The surface sits recessed below the block, so culling
+                    // it punches a hole (the floor shows through where a block caps
+                    // the water). Water's bottom/side faces against opaque still cull.
+                    let is_water_top = is_water && matches!(face, Face::PosY);
+                    if nb.is_opaque() && !is_water_top {
                         continue;
                     }
                     let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
@@ -324,17 +426,41 @@ fn build_mesh_with_context(
                     {
                         continue;
                     }
+                    // Set on the one water-water side face we DON'T cull: a
+                    // full-height cell's exposed step over a shorter neighbour.
+                    // Its bottom is trimmed to the neighbour's surface (below) so
+                    // the submerged part — water behind water — isn't drawn twice.
+                    let mut water_exposed_step = false;
                     if is_water && nb == Block::Water {
-                        continue;
+                        // Cull faces between two water cells, EXCEPT a submerged
+                        // or falling cell's SIDE toward an open-surface neighbour:
+                        // this cell is full to the top while the neighbour's
+                        // surface is recessed, so the height difference is an
+                        // exposed vertical step. Cull it and the floor shows
+                        // through the gap; render it to bridge the two surfaces.
+                        let nb_full = water_fills_cell(ox + nx, y as i32, oz + nz);
+                        if is_side && water_full && !nb_full {
+                            water_exposed_step = true;
+                        } else {
+                            continue;
+                        }
                     }
 
                     // Material for this face: base tile + optional biome-tinted
-                    // overlay + tint. Grass block SIDES render as dirt + a
-                    // grayscale grass overlay tinted by the same biome grass
-                    // colour as the top, so side grass matches the top (the
-                    // pre-greened grass_block_side never did). Everything else is
-                    // the face's own tile, tinted only for grass-top/foliage/water.
-                    let (base_tile, overlay_tile, tint) = if block == Block::Grass && is_side {
+                    // overlay + tint + texture rotation. Water tops use the still
+                    // or flow tile (rotated toward the flow); water sides always
+                    // use the downward-flowing tile. Grass block SIDES render as
+                    // dirt + a grayscale grass overlay tinted by the same biome
+                    // grass colour as the top. Everything else is the face's own
+                    // tile, tinted only for grass-top/foliage/water.
+                    let (base_tile, overlay_tile, tint) = if is_water {
+                        let t = match face {
+                            Face::PosY => water_top_tile,
+                            Face::NegY => Tile::WaterStill,
+                            _ => Tile::WaterFlow,
+                        };
+                        (t, None, tint_water[ci])
+                    } else if block == Block::Grass && is_side {
                         (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass[ci])
                     } else {
                         let t = match face {
@@ -351,18 +477,31 @@ fn build_mesh_with_context(
                         (t, None, tint)
                     };
 
-                    // Water top face: lower the top by 0.1 for a recessed liquid surface.
-                    let y_adjust = if is_water && matches!(face, Face::PosY) {
-                        -0.10
-                    } else {
-                        0.0
-                    };
-
                     // Build quad vertices in CCW order when viewed from outside.
                     // Positions are in world space (baked chunk origin) so each
                     // chunk renders at its actual world coordinates.
-                    let base_y = y as f32 + y_adjust;
-                    let [p0, p1, p2, p3] = quad_for(face, base_x, base_y, base_z);
+                    let base_y = y as f32;
+                    let [mut p0, mut p1, mut p2, mut p3] = quad_for(face, base_x, base_y, base_z);
+
+                    // Water vertices: TOP verts go to their corner's surface height
+                    // so the top slopes and every side's top edge meets it exactly
+                    // (a watertight, connected sheet). A full-height cell is full
+                    // to the top, so its faces span the whole block.
+                    //   - Exposed-step faces additionally pull their BOTTOM verts up
+                    //     to the neighbour's surface (= the shared corner height), so
+                    //     only the band above the neighbour is drawn (no water-behind-
+                    //     water double-blend).
+                    if is_water {
+                        for p in [&mut p0, &mut p1, &mut p2, &mut p3] {
+                            let cx = ((p[0] - base_x) as usize).min(1);
+                            let cz = ((p[2] - base_z) as usize).min(1);
+                            if p[1] > base_y + 0.5 {
+                                p[1] = base_y + if water_full { 1.0 } else { water_h[cx][cz] };
+                            } else if water_exposed_step {
+                                p[1] = base_y + water_h[cx][cz];
+                            }
+                        }
+                    }
 
                     // Per-vertex ambient occlusion AND smooth skylight share one
                     // neighbourhood: for each corner, the front voxel F = block+
@@ -424,9 +563,19 @@ fn build_mesh_with_context(
                     //   23..29 skylight
                     // The shader selects uvs from the CPU-baked tile_uv() table by
                     // (tile, corner): 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
+                    // Water has no grass overlay, so a flowing TOP face reuses its
+                    // per-face overlay-tile bits to carry the quantized flow heading
+                    // (the `has-overlay` flag stays 0, so the fragment shader never
+                    // composites an overlay). Side faces derive their texture V from
+                    // the vertex height in the shader, so they need no data here.
+                    let water_ov: u32 = if is_water && matches!(face, Face::PosY) {
+                        water_top_angle
+                    } else {
+                        0
+                    };
                     let (ov_tile, ov_flag) = match overlay_tile {
                         Some(o) => (o as u32, 1u32),
-                        None => (0, 0),
+                        None => (water_ov, 0u32),
                     };
                     let face_bits = (base_tile as u32)
                         | (face.shade_idx() << 10)
@@ -458,23 +607,18 @@ fn build_mesh_with_context(
                     // Flip the triangulation so the split runs along the darker
                     // diagonal -- keeps the AO gradient symmetric (no bright bleed).
                     let first_index = ibuf.len() as u32;
-                    if should_flip(ao) {
-                        ibuf.extend_from_slice(&[
-                            start,
-                            start + 1,
-                            start + 3,
-                            start + 1,
-                            start + 2,
-                            start + 3,
-                        ]);
+                    let tris: [u32; 6] = if should_flip(ao) {
+                        [start, start + 1, start + 3, start + 1, start + 2, start + 3]
                     } else {
+                        [start, start + 1, start + 2, start, start + 2, start + 3]
+                    };
+                    ibuf.extend_from_slice(&tris);
+                    // The transparent pass is back-face culled, so the water SURFACE
+                    // (top face) also needs the reverse winding to stay visible from
+                    // underneath when submerged. Side/bottom faces stay single-sided.
+                    if is_water && matches!(face, Face::PosY) {
                         ibuf.extend_from_slice(&[
-                            start,
-                            start + 1,
-                            start + 2,
-                            start,
-                            start + 2,
-                            start + 3,
+                            tris[0], tris[2], tris[1], tris[3], tris[5], tris[4],
                         ]);
                     }
                     extend_section(

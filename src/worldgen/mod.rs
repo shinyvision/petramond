@@ -73,6 +73,42 @@ mod tests {
     use crate::block::Block;
     use crate::chunk::{CHUNK_SX, CHUNK_SZ, SEA_LEVEL};
 
+    /// A generator whose shared noise cache has been warmed by neighbouring chunks
+    /// must produce byte-identical output to a generator that computes every column
+    /// fresh — proving the cache only memoizes and never affects results, whatever
+    /// order chunks are generated in (the property the worker pool relies on).
+    #[test]
+    fn shared_noise_cache_does_not_change_output() {
+        use crate::worldgen::classic::terrain::NoiseCache;
+        use std::sync::Arc;
+
+        let seed = 0x1234_5678;
+        let warmed = driver::ChunkGenerator::with_cache(seed, Arc::new(NoiseCache::new()));
+        // Warm the cache with a spread of chunks so the target chunks' lattice
+        // columns are served from the cache (incl. promotion paths).
+        for cz in -2..=2 {
+            for cx in -2..=2 {
+                let _ = generate_chunk_with(&warmed, cx, cz);
+            }
+        }
+        let fresh = driver::ChunkGenerator::new(seed); // independent private cache
+
+        for (cx, cz) in [(0, 0), (1, -1), (2, 2), (-2, 1), (10, -8)] {
+            let warm_chunk = generate_chunk_with(&warmed, cx, cz);
+            let fresh_chunk = generate_chunk_with(&fresh, cx, cz);
+            assert_eq!(
+                warm_chunk.blocks_slice(),
+                fresh_chunk.blocks_slice(),
+                "blocks differ with warm cache at ({cx},{cz})"
+            );
+            assert_eq!(
+                &warm_chunk.heightmap[..],
+                &fresh_chunk.heightmap[..],
+                "heightmap differs with warm cache at ({cx},{cz})"
+            );
+        }
+    }
+
     #[test]
     fn generate_chunk_with_matches_one_shot() {
         let seed = 0x1234_5678;

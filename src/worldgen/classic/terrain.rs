@@ -8,11 +8,100 @@
 //! the interpolated density is positive the block is solid, else water below sea
 //! level. The surface skin (grass/sand/…) is applied in a later pass.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use super::lcg::LcgRandom;
 use super::noise::OctaveNoise;
 
 /// Sea level.
 pub const SEA_LEVEL: i32 = 63;
+
+/// Number of independent lock shards. The worker pool hammers the cache from
+/// every thread (~80 lookups/chunk); sharding by cell keeps those on different
+/// locks so threads rarely block each other.
+const NOISE_CACHE_SHARDS: usize = 32;
+
+/// Soft cap on live columns PER SHARD per generation before rotating. At ~800 B/
+/// column, two generations, and `SHARDS` shards, worst-case footprint is
+/// ~`2 * SHARDS * CAP * 800 B` ≈ 64 MB. Comfortably covers a full render-distance
+/// disc fill (the window over which overlapping chunk regions reuse a column).
+const NOISE_CACHE_CAP_PER_SHARD: usize = 1_250;
+
+/// Concurrent, generational cache of per-column octave noise keyed by
+/// `(seed, cellx, cellz)` (absolute 4-block lattice cell). Shared by all worker
+/// threads so each column the overlapping 32×32 chunk regions need is sampled
+/// once instead of ~5× (margin + neighbour overlap). The seed is in the key so a
+/// mid-session world change can't return stale noise.
+///
+/// Each shard keeps two generations so memory is bounded without periodically
+/// dropping the hot set: lookups promote a `previous`-generation hit back into
+/// `current`, and `current` rotates into `previous` (old `previous` dropped) once
+/// it fills.
+pub struct NoiseCache {
+    shards: [Mutex<CacheGen>; NOISE_CACHE_SHARDS],
+}
+
+struct CacheGen {
+    current: HashMap<(i64, i32, i32), ColumnNoise>,
+    previous: HashMap<(i64, i32, i32), ColumnNoise>,
+}
+
+impl CacheGen {
+    fn new() -> Self {
+        Self {
+            current: HashMap::new(),
+            previous: HashMap::new(),
+        }
+    }
+}
+
+impl NoiseCache {
+    pub fn new() -> Self {
+        Self {
+            shards: std::array::from_fn(|_| Mutex::new(CacheGen::new())),
+        }
+    }
+
+    #[inline]
+    fn shard(&self, key: (i64, i32, i32)) -> &Mutex<CacheGen> {
+        // Mix the cell coords; the seed is constant within a world so it would not
+        // contribute to shard spread.
+        let h = (key.1 as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (key.2 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        &self.shards[(h >> 32) as usize % NOISE_CACHE_SHARDS]
+    }
+
+    /// Hit → the cached column (promoted out of `previous` if found there). Miss →
+    /// `None`. The expensive sample happens unlocked in the caller, then [`Self::put`].
+    fn get(&self, key: (i64, i32, i32)) -> Option<ColumnNoise> {
+        let mut g = self.shard(key).lock().unwrap();
+        if let Some(v) = g.current.get(&key).copied() {
+            return Some(v);
+        }
+        if let Some(v) = g.previous.get(&key).copied() {
+            g.current.insert(key, v); // survive the next rotation
+            return Some(v);
+        }
+        None
+    }
+
+    fn put(&self, key: (i64, i32, i32), val: ColumnNoise) {
+        let mut g = self.shard(key).lock().unwrap();
+        g.current.insert(key, val);
+        if g.current.len() >= NOISE_CACHE_CAP_PER_SHARD {
+            let full = std::mem::take(&mut g.current);
+            g.previous = full;
+        }
+    }
+}
+
+impl Default for NoiseCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Per-biome `(base_height, height_variation)` for the density blend. Mutated
 /// variants fall back to their base biome's values.
@@ -87,18 +176,40 @@ fn clamped_lerp(lo: f64, hi: f64, t: f64) -> f64 {
     }
 }
 
+/// The four octave-noise fields sampled at one 4-block lattice cell column: the
+/// 2-D `depth` scalar plus the three 33-deep 3-D stacks (`main`/`min`/`max`).
+/// Computed at the cell's own absolute coordinate, so it is a pure function of
+/// `(cellx, cellz)` and reusable by every overlapping chunk region — the unit
+/// [`NoiseCache`] stores.
+#[derive(Clone, Copy)]
+pub struct ColumnNoise {
+    pub depth: f64,
+    pub main: [f64; 33],
+    pub min: [f64; 33],
+    pub max: [f64; 33],
+}
+
 /// The overworld terrain noise: the seven octave generators (built in the
 /// reference's exact RNG-consuming order) and the parabolic biome-weight kernel.
 pub struct TerrainGen {
+    seed: i64,
     min: OctaveNoise,
     max: OctaveNoise,
     main: OctaveNoise,
     depth: OctaveNoise,
     q: [f32; 25],
+    cache: Arc<NoiseCache>,
 }
 
 impl TerrainGen {
+    /// Build with a fresh private noise cache (one-shot / tooling callers).
     pub fn new(seed: i64) -> Self {
+        Self::with_cache(seed, Arc::new(NoiseCache::new()))
+    }
+
+    /// Build sharing an existing noise cache (the worker pool hands every thread's
+    /// generator the same `Arc` so they pool their column samples).
+    pub fn with_cache(seed: i64, cache: Arc<NoiseCache>) -> Self {
         let mut r = LcgRandom::new(seed);
         let min = OctaveNoise::new(&mut r, 16); // i: lower limit
         let max = OctaveNoise::new(&mut r, 16); // j: upper limit
@@ -114,21 +225,145 @@ impl TerrainGen {
             }
         }
         Self {
+            seed,
             min,
             max,
             main,
             depth,
             q,
+            cache,
         }
     }
 
-    /// Fill the density field for a block region whose origin `(x0,z0)` and size
-    /// `(w,h)` are multiples of 4. `cw = w/4`, `ch = h/4` are the cell counts; the
-    /// field has `(cw+1)*(ch+1)*33` points. `biomes` is the scale-4 (pre-voronoi)
-    /// biome grid at origin `(x0/4 - 2, z0/4 - 2)` with row stride `bstride`
-    /// (`>= cw + 5`). Because the octave noise is a pure function of absolute
-    /// coordinates, a region produces the bit-identical field of any sub-chunk it
-    /// covers — so one region pass replaces many per-chunk passes.
+    /// Per-column octave-noise sample at an absolute 4-block lattice cell. Computes
+    /// the four field columns at the cell's OWN coordinate (`xs=zs=1`), so the
+    /// result is a pure function of `(cellx, cellz)`, independent of the requesting
+    /// region. That origin-independence is what lets overlapping chunk regions
+    /// share one computed column (see [`super::super::noise::cache`]).
+    pub fn column_noise(&self, cellx: i32, cellz: i32) -> ColumnNoise {
+        let mut depth = [0.0f64; 1];
+        self.depth
+            .sample_region_2d(&mut depth, cellx, cellz, 1, 1, 200.0, 200.0, 0.5);
+        let mut main = [0.0f64; 33];
+        self.main.sample_region(
+            &mut main,
+            cellx,
+            0,
+            cellz,
+            1,
+            33,
+            1,
+            684.412 / 80.0,
+            684.412 / 160.0,
+            684.412 / 80.0,
+        );
+        let mut min = [0.0f64; 33];
+        self.min
+            .sample_region(&mut min, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412);
+        let mut max = [0.0f64; 33];
+        self.max
+            .sample_region(&mut max, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412);
+        ColumnNoise {
+            depth: depth[0],
+            main,
+            min,
+            max,
+        }
+    }
+
+    /// Fill the density field for a block region, pulling each lattice column's
+    /// octave noise through `fetch` — a cache-or-compute hook keyed by absolute
+    /// cell. `(x0,z0)`/`(w,h)` multiples of 4; `cw=w/4`, `ch=h/4`; field is
+    /// `(cw+1)*(ch+1)*33` row-major `(x*nz+z)*33+y`. `biomes` is the scale-4 grid
+    /// at `(x0/4-2, z0/4-2)` with row stride `bstride` (`>= cw+5`). The biome blend
+    /// + density combine are unchanged; only noise acquisition is now per-column.
+    fn density_region_with<F: FnMut(i32, i32) -> ColumnNoise>(
+        &self,
+        x0: i32,
+        z0: i32,
+        cw: usize,
+        ch: usize,
+        biomes: &[i32],
+        bstride: usize,
+        mut fetch: F,
+    ) -> Vec<f64> {
+        let (x0c, z0c) = (x0 >> 2, z0 >> 2); // x0/4 (x0 is a multiple of 4)
+        let (nx, nz) = (cw + 1, ch + 1);
+        let mut p = vec![0.0f64; nx * nz * 33];
+        let mut pidx = 0;
+        for x in 0..nx {
+            for z in 0..nz {
+                let cn = fetch(x0c + x as i32, z0c + z as i32);
+                let center = biomes[(x + 2) + (z + 2) * bstride];
+                let (c_base, _) = biome_height(center);
+                let mut s_acc = 0.0f32;
+                let mut d_acc = 0.0f32;
+                let mut wsum = 0.0f32;
+                for dx in -2i32..=2 {
+                    for dz in -2i32..=2 {
+                        let bi = ((x as i32 + dx + 2) as usize)
+                            + ((z as i32 + dz + 2) as usize) * bstride;
+                        let (b_base, b_var) = biome_height(biomes[bi]);
+                        let mut w = self.q[((dx + 2) + (dz + 2) * 5) as usize] / (b_base + 2.0);
+                        if b_base > c_base {
+                            w /= 2.0;
+                        }
+                        s_acc += b_var * w;
+                        d_acc += b_base * w;
+                        wsum += w;
+                    }
+                }
+                s_acc /= wsum;
+                d_acc /= wsum;
+                let scale = (s_acc * 0.9 + 0.1) as f64;
+                let mut depth = ((d_acc * 4.0 - 1.0) / 8.0) as f64;
+
+                let mut dn = cn.depth / 8000.0;
+                if dn < 0.0 {
+                    dn = -dn * 0.3;
+                }
+                dn = dn * 3.0 - 2.0;
+                if dn < 0.0 {
+                    dn /= 2.0;
+                    if dn < -1.0 {
+                        dn = -1.0;
+                    }
+                    dn /= 1.4;
+                    dn /= 2.0;
+                } else {
+                    if dn > 1.0 {
+                        dn = 1.0;
+                    }
+                    dn /= 8.0;
+                }
+                depth += dn * 0.2;
+                depth = depth * 8.5 / 8.0;
+                let baseline = 8.5 + depth * 4.0;
+
+                for y in 0..33 {
+                    let mut ybias = (y as f64 - baseline) * 12.0 * 128.0 / 256.0 / scale;
+                    if ybias < 0.0 {
+                        ybias *= 4.0;
+                    }
+                    let lo = cn.min[y] / 512.0;
+                    let hi = cn.max[y] / 512.0;
+                    let sel = (cn.main[y] / 10.0 + 1.0) / 2.0;
+                    let mut val = clamped_lerp(lo, hi, sel) - ybias;
+                    if y > 29 {
+                        let t = (y - 29) as f64 / 3.0;
+                        val = val * (1.0 - t) + (-10.0) * t;
+                    }
+                    p[pidx] = val;
+                    pidx += 1;
+                }
+            }
+        }
+        p
+    }
+
+    /// Production density region: each lattice column is fetched from the shared
+    /// noise cache, sampled + stored only on a miss. Output is identical to the
+    /// uncached canonical path — the cache only memoizes [`Self::column_noise`].
     fn density_region(
         &self,
         x0: i32,
@@ -138,7 +373,31 @@ impl TerrainGen {
         biomes: &[i32],
         bstride: usize,
     ) -> Vec<f64> {
-        let (x0c, z0c) = (x0 >> 2, z0 >> 2); // x0/4 (x0 is a multiple of 4)
+        let cache = &self.cache;
+        let seed = self.seed;
+        self.density_region_with(x0, z0, cw, ch, biomes, bstride, |cx, cz| {
+            let key = (seed, cx, cz);
+            cache.get(key).unwrap_or_else(|| {
+                let v = self.column_noise(cx, cz);
+                cache.put(key, v);
+                v
+            })
+        })
+    }
+
+    /// Reference (pre-cache) batched density sampler — kept only to prove the
+    /// per-column path yields the identical integer heightmap.
+    #[cfg(test)]
+    fn density_region_batched(
+        &self,
+        x0: i32,
+        z0: i32,
+        cw: usize,
+        ch: usize,
+        biomes: &[i32],
+        bstride: usize,
+    ) -> Vec<f64> {
+        let (x0c, z0c) = (x0 >> 2, z0 >> 2);
         let (nx, nz) = (cw + 1, ch + 1);
         let mut depth_r = vec![0.0f64; nx * nz];
         let mut main_r = vec![0.0f64; nx * 33 * nz];
@@ -158,27 +417,25 @@ impl TerrainGen {
             684.412 / 160.0,
             684.412 / 80.0,
         );
-        self.min.sample_region(
-            &mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
-        );
-        self.max.sample_region(
-            &mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
-        );
+        self.min
+            .sample_region(&mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
+        self.max
+            .sample_region(&mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
 
         let mut p = vec![0.0f64; nx * nz * 33];
         let mut didx = 0;
         let mut pidx = 0;
-        for x in 0..nx {
-            for z in 0..nz {
-                let center = biomes[(x + 2) + (z + 2) * bstride];
+        for _x in 0..nx {
+            for _z in 0..nz {
+                let center = biomes[(_x + 2) + (_z + 2) * bstride];
                 let (c_base, _) = biome_height(center);
                 let mut s_acc = 0.0f32;
                 let mut d_acc = 0.0f32;
                 let mut wsum = 0.0f32;
                 for dx in -2i32..=2 {
                     for dz in -2i32..=2 {
-                        let bi = ((x as i32 + dx + 2) as usize)
-                            + ((z as i32 + dz + 2) as usize) * bstride;
+                        let bi = ((_x as i32 + dx + 2) as usize)
+                            + ((_z as i32 + dz + 2) as usize) * bstride;
                         let (b_base, b_var) = biome_height(biomes[bi]);
                         let mut w = self.q[((dx + 2) + (dz + 2) * 5) as usize] / (b_base + 2.0);
                         if b_base > c_base {
@@ -251,8 +508,16 @@ impl TerrainGen {
         bstride: usize,
     ) -> Vec<i32> {
         let (cw, ch) = (w / 4, h / 4);
-        let nz = ch + 1; // density z-stride in cells (points per column)
         let p = self.density_region(x0, z0, cw, ch, biomes, bstride);
+        Self::heightmap_from_density(&p, w, h, cw, ch)
+    }
+
+    /// Trilinearly interpolate a density field (`(cw+1)*(ch+1)*33`, layout
+    /// `(x*nz+z)*33+y`) into a per-column top-solid-Y heightmap (`x + z*w`).
+    /// Split out of [`Self::region_heightmap`] so the noise path is independent of
+    /// the interpolation, and so parity tests can run it on any density field.
+    fn heightmap_from_density(p: &[f64], w: usize, h: usize, cw: usize, ch: usize) -> Vec<i32> {
+        let nz = ch + 1; // density z-stride in cells (points per column)
         let mut hm = vec![-1i32; w * h];
         for sx in 0..cw {
             for sz in 0..ch {
@@ -308,6 +573,40 @@ impl TerrainGen {
 mod tests {
     use super::*;
     use crate::worldgen::classic::biome::stack::river_mix;
+
+    /// The per-column (cache-ready) density path must produce the IDENTICAL integer
+    /// heightmap as the original batched region sample, over a large sweep of
+    /// realistic chunk regions and seeds. The raw f64 noise differs by ~1e-11
+    /// (FP operation order), but that is far below what the heightmap can resolve,
+    /// so the generated terrain is unchanged. Locks that invariant permanently.
+    #[test]
+    fn per_column_density_matches_batched_heightmap() {
+        use crate::worldgen::classic::biome::stack::land_mix;
+        let (w, h) = (32usize, 32usize); // matches the generator's chunk+margin region
+        let (cw, ch) = (w / 4, h / 4);
+        let bstride = w / 4 + 5;
+        for &seed in &[0x1234_5678i64, 1, 7, 42] {
+            let t = TerrainGen::new(seed);
+            let lm = land_mix(seed);
+            // A contiguous 24x24 chunk block plus a couple of far-flung origins.
+            let mut coords: Vec<(i32, i32)> = (-12..12)
+                .flat_map(|cz| (-12..12).map(move |cx| (cx, cz)))
+                .collect();
+            coords.extend_from_slice(&[(500, -500), (-1234, 777), (9001, 9001)]);
+            for (cx, cz) in coords {
+                let (x0, z0) = (cx * 16 - 8, cz * 16 - 8);
+                let biomes = lm.gen((x0 >> 2) as i64 - 2, (z0 >> 2) as i64 - 2, bstride, bstride);
+                let p_new = t.density_region(x0, z0, cw, ch, &biomes, bstride);
+                let p_old = t.density_region_batched(x0, z0, cw, ch, &biomes, bstride);
+                let hm_new = TerrainGen::heightmap_from_density(&p_new, w, h, cw, ch);
+                let hm_old = TerrainGen::heightmap_from_density(&p_old, w, h, cw, ch);
+                assert_eq!(
+                    hm_new, hm_old,
+                    "heightmap diverged at chunk ({cx},{cz}) seed {seed:#x}"
+                );
+            }
+        }
+    }
 
     /// The real 1.8.9 terrain heightmap (top solid terrain block, excluding water/
     /// snow/decoration) for seed 12345, chunk (-5, 5), flat `x + z*16`.

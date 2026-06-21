@@ -46,6 +46,11 @@ const SWIM_ACCEL: f32 = 16.0;
 /// Horizontal drag while submerged with no input: the fraction of speed shed per
 /// reference frame (heavy, so water stops you quickly when you let go).
 const WATER_FRICTION: f32 = 0.30;
+/// Target horizontal drift speed from flowing water. This is deliberately below
+/// swim speed: currents should move an idle body but not take control away.
+const WATER_CURRENT_SPEED: f32 = 0.75;
+/// How quickly flowing water contributes its drift speed.
+const WATER_CURRENT_ACCEL: f32 = 9.0;
 /// Upward swim speed reached while holding the jump key underwater.
 const SWIM_RISE: f32 = 3.0;
 /// Gentle downward drift speed while submerged and not swimming up (buoyant, far
@@ -59,6 +64,9 @@ const SWIM_VACCEL: f32 = 14.0;
 /// shallow wading still walks. Probing the body (not the eye) lets the head break
 /// the surface and gravity resume, so you bob at the waterline.
 pub(super) const WATER_PROBE_Y: f32 = 0.6;
+/// Probe just above the feet so shallow flowing sheets can nudge a walking
+/// player even when they are not deep enough to switch to swim physics.
+const WADING_CURRENT_PROBE_Y: f32 = 0.05;
 /// Upward boost given when swimming toward a 1-block ledge you can climb onto: a
 /// bit below a full land jump (`JUMP_V0`) but well above the gentle swim rise, so
 /// you crest the surface with enough speed to land on the block instead of bobbing
@@ -112,15 +120,33 @@ impl Player {
         let solid = |x: i32, y: i32, z: i32| Self::solid_world(world, x, y, z);
         let water =
             |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)) == Block::Water;
-        self.update_core(dt, &solid, &water, input);
+        let water_flow = |x: i32, y: i32, z: i32| world.water_flow_dir_at(x, y, z);
+        self.update_core_with_current(dt, &solid, &water, &water_flow, input);
     }
 
     /// Physics integration against arbitrary solidity + water predicates, so the
     /// feel can be unit-tested without a World. See [`Player::update`].
+    #[cfg(test)]
     pub(super) fn update_core<F, W>(&mut self, dt: f32, solid: &F, water: &W, input: Input)
     where
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
+    {
+        let still_water = |_: i32, _: i32, _: i32| Vec3::ZERO;
+        self.update_core_with_current(dt, solid, water, &still_water, input);
+    }
+
+    pub(super) fn update_core_with_current<F, W, C>(
+        &mut self,
+        dt: f32,
+        solid: &F,
+        water: &W,
+        water_flow: &C,
+        input: Input,
+    ) where
+        F: Fn(i32, i32, i32) -> bool,
+        W: Fn(i32, i32, i32) -> bool,
+        C: Fn(i32, i32, i32) -> Vec3,
     {
         if self.is_spectator() {
             self.update_spectator(dt, input);
@@ -133,11 +159,18 @@ impl Player {
         // wading in shallow water still walks but deeper water switches to buoyant
         // swim physics. Probing the body (not the eye) means the head can break the
         // surface and gravity resumes -> you bob at the waterline.
-        let in_water = water(
-            self.pos.x.floor() as i32,
-            (self.pos.y + WATER_PROBE_Y).floor() as i32,
-            self.pos.z.floor() as i32,
-        );
+        let water_x = self.pos.x.floor() as i32;
+        let water_z = self.pos.z.floor() as i32;
+        let swim_y = (self.pos.y + WATER_PROBE_Y).floor() as i32;
+        let feet_y = (self.pos.y + WADING_CURRENT_PROBE_Y).floor() as i32;
+        let in_water = water(water_x, swim_y, water_z);
+        let flow_dir = if in_water {
+            water_flow(water_x, swim_y, water_z)
+        } else if water(water_x, feet_y, water_z) {
+            water_flow(water_x, feet_y, water_z)
+        } else {
+            Vec3::ZERO
+        };
 
         // --- Vertical. In water: ease toward a rise (holding jump) or a gentle
         // sink target -- buoyant and slow. On land: the original jump impulse +
@@ -288,6 +321,16 @@ impl Player {
             }
         }
 
+        let (vx, vz) = add_flow_push(
+            self.vel.x,
+            self.vel.z,
+            flow_dir,
+            WATER_CURRENT_SPEED,
+            WATER_CURRENT_ACCEL * dt,
+        );
+        self.vel.x = vx;
+        self.vel.z = vz;
+
         let dx = self.vel.x * dt;
         let dz = self.vel.z * dt;
         if self.sweep(Axis::X, dx, solid) {
@@ -342,6 +385,22 @@ fn move_toward(x: f32, z: f32, tx: f32, tz: f32, max_delta: f32) -> (f32, f32) {
         let scale = max_delta / dist_sq.sqrt();
         (x + dx * scale, z + dz * scale)
     }
+}
+
+/// Add a capped push along a water-flow direction without slowing bodies that
+/// already have at least that much velocity along the current.
+#[inline]
+fn add_flow_push(x: f32, z: f32, dir: Vec3, target_speed: f32, max_delta: f32) -> (f32, f32) {
+    let len_sq = dir.x * dir.x + dir.z * dir.z;
+    if len_sq <= 1e-12 || target_speed <= 0.0 || max_delta <= 0.0 {
+        return (x, z);
+    }
+    let inv_len = len_sq.sqrt().recip();
+    let nx = dir.x * inv_len;
+    let nz = dir.z * inv_len;
+    let along = x * nx + z * nz;
+    let add = (target_speed - along).clamp(0.0, max_delta);
+    (x + nx * add, z + nz * add)
 }
 
 /// Move the scalar `v` toward `target` by at most `max_delta`, clamping onto the

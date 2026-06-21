@@ -21,6 +21,9 @@ pub struct Vertex {
     /// 10..12 = shade index (into `SHADES`), 12..20 = overlay tile,
     /// 20 = has-overlay flag, 21..23 = AO level (0 dark .. 3 bright),
     /// 23..29 = skylight level (0 dark .. 63 full sky).
+    /// For flowing water (no grass overlay) the 12..20 bits instead carry
+    /// shader-side flow data: a top face's quantized flow heading, or a side
+    /// face's height crop (see `mesh::builder` / `block.wgsl`).
     pub packed: u32,
 }
 

@@ -315,10 +315,13 @@ pub(super) fn create_pipeline_resources(
             compilation_options: Default::default(),
             targets: &transparent_targets,
         }),
-        // Double-sided: water faces must be visible from underneath (looking up at
-        // the surface while submerged) as well as from above.
+        // Back-face cull water SIDE faces: otherwise a side face (e.g. an exposed
+        // step over shallower water) shows its back as a dark sheet from the
+        // water side, "in front of" the water that is actually there. The TOP
+        // face is emitted in BOTH windings by the mesher, so the surface stays
+        // visible from underneath (looking up while submerged) even with culling.
         primitive: wgpu::PrimitiveState {
-            cull_mode: None,
+            cull_mode: Some(wgpu::Face::Back),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

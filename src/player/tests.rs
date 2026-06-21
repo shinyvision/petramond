@@ -820,6 +820,33 @@ fn swim_open_water_no_boost() {
     );
 }
 
+#[test]
+fn flowing_water_pushes_idle_player_along_current() {
+    let water = |_x: i32, y: i32, _z: i32| y == 64;
+    let flow = |_x: i32, y: i32, _z: i32| {
+        if y == 64 {
+            Vec3::X
+        } else {
+            Vec3::ZERO
+        }
+    };
+    let no_solid = |_x: i32, _y: i32, _z: i32| false;
+    let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
+
+    pl.update_core_with_current(0.05, &no_solid, &water, &flow, Input::default());
+
+    assert!(
+        pl.vel.x > 0.0,
+        "current should add +X velocity: {}",
+        pl.vel.x
+    );
+    assert!(
+        pl.pos.x > 0.5,
+        "current should move the player: {}",
+        pl.pos.x
+    );
+}
+
 /// Falling back into the water against the ledge wall (Space still held, still
 /// facing the ledge) must NOT relaunch: the downward fall velocity is preserved
 /// so the player sinks, instead of the boost discarding it and firing again

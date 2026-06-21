@@ -9,7 +9,7 @@ use crate::camera::Camera;
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
-use crate::mathh::{IVec3, SelectionShape, Vec3};
+use crate::mathh::{lerp, IVec3, SelectionShape, Vec3};
 use crate::mining::MiningState;
 use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
 use crate::render::{BreakOverlayView, ItemEntityInstance, ParticleInstance};
@@ -20,11 +20,26 @@ use crate::worldgen::classic::world::CascadeWorld;
 /// is underwater.
 const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
 
+/// Require the camera eye to sit this far below an open water surface before the
+/// underwater shader/fog kicks in. This keeps shallow flowing films from tinting
+/// the view when the eye is only barely clipping their rendered surface.
+const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
+
 /// Seconds a dropped item survives before despawning if never collected.
 const ITEM_DESPAWN_SECS: f32 = 300.0;
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
+
+/// Fixed simulation timestep: 20 game ticks per second, independent of frame
+/// rate. World simulation (block updates, scheduled ticks, water flow) advances
+/// in whole steps of this size.
+const TICK_DT: f32 = 0.05;
+
+/// Most fixed ticks run in a single frame before the leftover is dropped. Caps
+/// catch-up after a stall so the sim never spirals trying to replay lost time —
+/// it just runs the late tick and reschedules from now (per the design).
+const MAX_TICKS_PER_FRAME: u32 = 4;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MovementInput {
@@ -80,6 +95,8 @@ pub struct Game {
     mining_dust_t: f32,
     item_entity_instances: Vec<ItemEntityInstance>,
     particle_instances: Vec<ParticleInstance>,
+    /// Wall-clock seconds banked toward the next fixed simulation tick.
+    tick_accumulator: f32,
 }
 
 impl Game {
@@ -110,6 +127,7 @@ impl Game {
             mining_dust_t: 0.0,
             item_entity_instances: Vec::new(),
             particle_instances: Vec::new(),
+            tick_accumulator: 0.0,
         }
     }
 
@@ -122,6 +140,8 @@ impl Game {
         self.look = Player::raycast(self.cam.pos, self.cam.forward(), &self.world);
         let (placed_block, broke_block) = self.handle_block_actions(dt, input);
 
+        self.run_fixed_ticks(dt);
+
         self.tick_entities(dt);
         self.tick_mesh_budget();
         self.refresh_dropped_item_lights_after_world_light_update();
@@ -129,6 +149,25 @@ impl Game {
         GameEvents {
             placed_block,
             broke_block,
+        }
+    }
+
+    /// Advance the world simulation in fixed 50 ms steps, decoupled from the
+    /// frame rate: 0 steps on a fast frame, several to catch up on a slow one
+    /// (capped — never two running at once, the late one just runs and the clock
+    /// resyncs). Player movement, camera, and rendering stay per-frame above.
+    fn run_fixed_ticks(&mut self, dt: f32) {
+        // Ignore absurd deltas (first frame, tab regaining focus) so a long pause
+        // doesn't dump a burst of ticks; clamp keeps at most one step pending.
+        self.tick_accumulator += dt.clamp(0.0, 1.0);
+        let mut ran = 0;
+        while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
+            self.world.game_tick();
+            self.tick_accumulator -= TICK_DT;
+            ran += 1;
+        }
+        if self.tick_accumulator > TICK_DT {
+            self.tick_accumulator = TICK_DT;
         }
     }
 
@@ -206,11 +245,7 @@ impl Game {
 
     pub fn environment(&self, now: f64) -> GameEnvironment {
         let eye = self.cam.pos;
-        let underwater = Block::from_id(self.world.chunk_block(
-            eye.x.floor() as i32,
-            eye.y.floor() as i32,
-            eye.z.floor() as i32,
-        )) == Block::Water;
+        let underwater = camera_eye_underwater(&self.world, eye);
 
         let fog = if underwater {
             UNDERWATER_FOG_COLOR
@@ -492,6 +527,72 @@ fn sky6_at_block(world: &World, pos: IVec3) -> u8 {
     world.skylight6_at_world(pos.x, pos.y, pos.z)
 }
 
+fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {
+    let cell = voxel_at(eye);
+    if Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)) != Block::Water {
+        return false;
+    }
+
+    // Water above means this is an interior water volume, not the open surface.
+    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)) == Block::Water {
+        return true;
+    }
+
+    let surface_y = water_surface_y_at(world, cell, eye.x, eye.z);
+    eye.y < surface_y - UNDERWATER_SURFACE_MARGIN
+}
+
+fn water_surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32) -> f32 {
+    if water_fills_cell_at(world, cell.x, cell.y, cell.z) {
+        return cell.y as f32 + 1.0;
+    }
+
+    let mut h = [[1.0f32; 2]; 2];
+
+    // Match the water mesher's corner-height rule: each top vertex averages the
+    // water cells meeting that corner, so flowing water forms one sloped sheet.
+    for cx in 0..2i32 {
+        for cz in 0..2i32 {
+            let mut sum = 0.0;
+            let mut cnt = 0;
+            for ox in (cx - 1)..=cx {
+                for oz in (cz - 1)..=cz {
+                    if let Some(height) = fluid_height_at(world, cell.x + ox, cell.y, cell.z + oz) {
+                        sum += height;
+                        cnt += 1;
+                    }
+                }
+            }
+            h[cx as usize][cz as usize] = if cnt == 0 { 1.0 } else { sum / cnt as f32 };
+        }
+    }
+
+    let fx = (eye_x - cell.x as f32).clamp(0.0, 1.0);
+    let fz = (eye_z - cell.z as f32).clamp(0.0, 1.0);
+    let z0 = lerp(h[0][0], h[1][0], fx);
+    let z1 = lerp(h[0][1], h[1][1], fx);
+    cell.y as f32 + lerp(z0, z1, fz)
+}
+
+fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
+    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+        return None;
+    }
+    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
+    Some(crate::world::water::fluid_height(
+        world.water_meta_world(wx, wy, wz),
+        water_above,
+    ))
+}
+
+fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
+    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+        return false;
+    }
+    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
+    crate::world::water::fills_cell(world.water_meta_world(wx, wy, wz), water_above)
+}
+
 fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> u8 {
     if let Some(n) = normal {
         return sky6_at_block(world, pos + n);
@@ -533,6 +634,101 @@ mod tests {
             normal,
             outline: SelectionShape::full_block(pos),
         }
+    }
+
+    fn install_empty_chunk(game: &mut Game) {
+        let pos = crate::chunk::ChunkPos::new(0, 0);
+        game.world.chunks.clear();
+        game.world.meshes.clear();
+        game.world.pending.clear();
+        game.world
+            .chunks
+            .insert(pos, crate::chunk::Chunk::new(0, 0));
+    }
+
+    fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
+        let chunk = game
+            .world
+            .chunks
+            .get_mut(&crate::chunk::ChunkPos::new(pos.x >> 4, pos.z >> 4))
+            .expect("test chunk must be installed");
+        chunk.set_water(
+            (pos.x & 0x0F) as usize,
+            pos.y as usize,
+            (pos.z & 0x0F) as usize,
+            Block::Water,
+            meta,
+        );
+    }
+
+    #[test]
+    fn underwater_shader_uses_flowing_water_surface_height() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(4, 64, 4);
+        set_test_water(&mut game, p, 1); // flowing edge: the thinnest water film
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+        assert!(!game.environment(0.0).underwater);
+
+        let surface = p.y as f32 + crate::world::water::fluid_height(1, false);
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
+            p.z as f32 + 0.5,
+        );
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn underwater_shader_waits_until_confidently_below_source_surface() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(5, 64, 5);
+        set_test_water(&mut game, p, 0);
+
+        let surface = p.y as f32 + crate::world::water::fluid_height(0, false);
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, surface + 0.01, p.z as f32 + 0.5);
+        assert!(!game.environment(0.0).underwater);
+
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN * 0.5,
+            p.z as f32 + 0.5,
+        );
+        assert!(!game.environment(0.0).underwater);
+
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
+            p.z as f32 + 0.5,
+        );
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn capped_water_cell_is_underwater_even_near_its_top() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(6, 64, 6);
+        set_test_water(&mut game, p, 0);
+        set_test_water(&mut game, p + IVec3::Y, 0);
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.99, p.z as f32 + 0.5);
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn underwater_shader_treats_falling_water_as_full_height() {
+        const FALLING_META: u8 = 0x80;
+
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(7, 64, 7);
+        set_test_water(&mut game, p, FALLING_META);
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+        assert!(game.environment(0.0).underwater);
     }
 
     #[test]

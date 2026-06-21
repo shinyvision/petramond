@@ -148,6 +148,19 @@ fn div_round(n: u32, d: u32) -> u8 {
     ((n + d / 2) / d).min(255) as u8
 }
 
+/// Packs the animated-water flipbook control for the block shader's `water_anim`
+/// uniform: `(still_base_tile, flow_base_tile, frame_count, 0)`. The two bases
+/// are the tile ids the mesher assigns to still/flow water tops & sides; the
+/// shader cycles `base + frame` over `frame_count` consecutive atlas tiles.
+pub fn water_anim_uniform() -> [u32; 4] {
+    [
+        Tile::WaterStill as u32,
+        Tile::WaterFlow as u32,
+        Tile::WaterStill.anim_frames(),
+        0,
+    ]
+}
+
 /// Tile grid -> normalized UV rect (u0,v0,u1,v1) for a tile.
 pub fn tile_uv(tile: Tile) -> [f32; 4] {
     let (col, row) = tile.grid();

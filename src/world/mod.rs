@@ -10,7 +10,9 @@ mod mesh_queue;
 mod query;
 mod store;
 mod stream;
+mod tick;
 mod visibility;
+pub(crate) mod water;
 
 pub use query::WorldQuery;
 pub use store::{World, RENDER_DIST};

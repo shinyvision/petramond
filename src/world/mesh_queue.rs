@@ -116,6 +116,15 @@ impl World {
                     None => 0,
                 }
             };
+            let nb_water = |wx: i32, wy: i32, wz: i32| -> u8 {
+                if wy < 0 || wy >= CHUNK_SY as i32 {
+                    return 0;
+                }
+                match owner(wx >> 4, wz >> 4) {
+                    Some(c) => c.water_meta((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize),
+                    None => 0,
+                }
+            };
             let nb_biome = |wx: i32, wz: i32| -> u8 {
                 match owner(wx >> 4, wz >> 4) {
                     Some(c) => c.biome_at((wx & 0x0F) as usize, (wz & 0x0F) as usize),
@@ -137,7 +146,9 @@ impl World {
             let nb_loaded = |cx: i32, cz: i32| -> bool { owner(cx, cz).is_some() };
             Some((
                 pos,
-                build_mesh_lods_with_loaded_neighbors(chunk, nb, nb_biome, nb_light, nb_loaded),
+                build_mesh_lods_with_loaded_neighbors(
+                    chunk, nb, nb_water, nb_biome, nb_light, nb_loaded,
+                ),
             ))
         };
 

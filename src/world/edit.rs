@@ -30,6 +30,10 @@ impl World {
         // and cross-chunk face culling remain correct.
         self.mark_light_dirty_neighborhood(pos, true);
         self.mark_dirty_neighborhood(pos, true);
+
+        // Announce the change so reactive neighbours (e.g. water) re-evaluate on
+        // the next game tick.
+        self.notify_block_and_neighbors(wx, wy, wz);
         true
     }
 }

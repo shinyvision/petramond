@@ -38,6 +38,10 @@ const MAGNET_RAMP_SPEED: f32 = 10.0;
 const GROUND_DAMP_PER_SEC: f32 = 6.0;
 /// Air drag applied to horizontal velocity each second (mild).
 const AIR_DAMP_PER_SEC: f32 = 0.8;
+/// Target horizontal drift speed from flowing water for item entities.
+const WATER_CURRENT_SPEED: f32 = 0.65;
+/// How quickly water current contributes its drift speed to item entities.
+const WATER_CURRENT_ACCEL: f32 = 8.0;
 /// Angular speed of the idle spin, in radians/second.
 const SPIN_SPEED: f32 = 2.0;
 
@@ -93,19 +97,31 @@ impl DroppedItem {
     /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
     /// (or a far target) to disable magnetism.
     pub fn tick(&mut self, dt: f32, world: &World, magnet_target: Option<Vec3>) {
-        self.integrate(dt, magnet_target, &|p| {
-            Block::from_id(world.chunk_block(p.x, p.y, p.z)).is_solid()
-        });
+        let solid_at = |p: IVec3| Block::from_id(world.chunk_block(p.x, p.y, p.z)).is_solid();
+        let flow_at = |p: IVec3| world.water_flow_dir_at(p.x, p.y, p.z);
+        self.integrate_with_flow(dt, magnet_target, &solid_at, &flow_at);
     }
 
     /// Pure integration behind [`tick`](Self::tick). `solid_at` reports whether a
     /// block cell is solid. Split out so tests can drive the full physics against
     /// a stub world (a real `World` spins up a worker pool).
+    #[cfg(test)]
     fn integrate(
         &mut self,
         dt: f32,
         magnet_target: Option<Vec3>,
         solid_at: &impl Fn(IVec3) -> bool,
+    ) {
+        let still_water = |_: IVec3| Vec3::ZERO;
+        self.integrate_with_flow(dt, magnet_target, solid_at, &still_water);
+    }
+
+    fn integrate_with_flow(
+        &mut self,
+        dt: f32,
+        magnet_target: Option<Vec3>,
+        solid_at: &impl Fn(IVec3) -> bool,
+        flow_at: &impl Fn(IVec3) -> Vec3,
     ) {
         self.age += dt;
         self.spin = (self.spin + SPIN_SPEED * dt) % std::f32::consts::TAU;
@@ -130,6 +146,13 @@ impl DroppedItem {
                 return;
             }
         }
+
+        self.vel = add_flow_push(
+            self.vel,
+            flow_at(voxel_at(self.pos)),
+            WATER_CURRENT_SPEED,
+            WATER_CURRENT_ACCEL * dt,
+        );
 
         // Gravity.
         self.vel.y += GRAVITY * dt;
@@ -224,6 +247,27 @@ impl DroppedItem {
     }
 }
 
+fn voxel_at(pos: Vec3) -> IVec3 {
+    IVec3::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    )
+}
+
+fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec3 {
+    let len_sq = dir.x * dir.x + dir.z * dir.z;
+    if len_sq <= 1e-12 || target_speed <= 0.0 || max_delta <= 0.0 {
+        return vel;
+    }
+    let inv_len = len_sq.sqrt().recip();
+    let nx = dir.x * inv_len;
+    let nz = dir.z * inv_len;
+    let along = vel.x * nx + vel.z * nz;
+    let add = (target_speed - along).clamp(0.0, max_delta);
+    Vec3::new(vel.x + nx * add, vel.y, vel.z + nz * add)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +313,24 @@ mod tests {
         d.integrate(0.1, None, &empty);
         assert!(d.pos.y < before, "free fall should lower the item");
         assert!(d.vel.y < 0.0, "downward velocity accrues");
+    }
+
+    #[test]
+    fn flowing_water_pushes_item_entities_along_current() {
+        let mut d = DroppedItem::new(Vec3::new(0.5, 1.5, 0.5), stack(), 15);
+        d.vel = Vec3::ZERO;
+        let flow = |p: IVec3| {
+            if p.y == 1 {
+                Vec3::Z
+            } else {
+                Vec3::ZERO
+            }
+        };
+
+        d.integrate_with_flow(0.1, None, &empty, &flow);
+
+        assert!(d.vel.z > 0.0, "current should add +Z velocity: {}", d.vel.z);
+        assert!(d.pos.z > 0.5, "current should move the item: {}", d.pos.z);
     }
 
     #[test]

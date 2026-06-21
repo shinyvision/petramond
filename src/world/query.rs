@@ -39,6 +39,18 @@ impl World {
         WorldQuery::chunk_block(self, wx, wy, wz)
     }
 
+    /// Water-flow metadata at a world voxel (0 where the cell is not flowing
+    /// water or its chunk is unloaded). See `world::water` for the encoding.
+    pub fn water_meta_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        if wy < 0 || wy >= CHUNK_SY as i32 {
+            return 0;
+        }
+        match self.chunks.get(&ChunkPos::new(wx >> 4, wz >> 4)) {
+            Some(c) => c.water_meta((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize),
+            None => 0,
+        }
+    }
+
     /// Cached skylight at a world voxel on the x2 scale (`SKY_FULL` = light 15).
     /// Missing chunks read as open sky, matching mesh-border fallback behavior.
     pub fn skylight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
