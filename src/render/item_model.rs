@@ -16,20 +16,24 @@
 //! matrix. Full-bright; each face carries a directional `shade` so the depth
 //! reads (front brightest, back dim, side walls mid).
 
+use super::foliage_tint;
 use super::lighting;
 use crate::atlas::{tile_alpha_opaque, tile_uv, Tile};
 
 /// One vertex of the extruded item mesh consumed by the `item3d` pipeline:
-/// explicit position, atlas UV, and a directional shade multiplier.
+/// explicit position, atlas UV, a directional shade multiplier, and an RGB tint
+/// (foliage-green for a held fern / short grass, white otherwise — the grayscale
+/// fern tile would read gray without it, same as the icon / dropped-item paths).
 /// `#[repr(C)]` + `bytemuck` so the renderer can upload it straight to the GPU;
-/// the vertex layout (pos f32x3 @0, uv f32x2 @12, shade f32 @20) is declared in
-/// `pipeline.rs` and mirrored by `item3d.wgsl`'s `VsIn`.
+/// the vertex layout (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24) is
+/// declared in `pipeline.rs` and mirrored by `item3d.wgsl`'s `VsIn`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ItemVertex {
     pub pos: [f32; 3],
     pub uv: [f32; 2],
     pub shade: f32,
+    pub tint: [f32; 3],
 }
 
 /// Texels per side of an item tile (the alpha mask is sampled on this grid).
@@ -86,7 +90,13 @@ fn py(ty: i32) -> f32 {
 }
 
 #[inline]
-fn push_quad(out: &mut Vec<ItemVertex>, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 4], shade: f32) {
+fn push_quad(
+    out: &mut Vec<ItemVertex>,
+    corners: [[f32; 3]; 4],
+    uvs: [[f32; 2]; 4],
+    shade: f32,
+    tint: [f32; 3],
+) {
     // Two triangles (0,1,2)(0,2,3). The item3d pipeline disables back-face cull,
     // so winding need not be consistent across the mixed front/back/wall faces.
     for &i in &[0usize, 1, 2, 0, 2, 3] {
@@ -94,6 +104,7 @@ fn push_quad(out: &mut Vec<ItemVertex>, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 
             pos: corners[i],
             uv: uvs[i],
             shade,
+            tint,
         });
     }
 }
@@ -112,6 +123,11 @@ pub fn build_extruded_item(tile: Tile, out: &mut Vec<ItemVertex>) -> u32 {
 pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<ItemVertex>) -> u32 {
     out.clear();
 
+    // Foliage tint for the whole sprite: grass-green for a held fern / short grass,
+    // white (no-op) for flowers / tools / blocks. The fern tile is grayscale and
+    // would read gray in-hand without this — matches the dropped-item + icon paths
+    // (both via `foliage_tint::face_material`).
+    let tint = foliage_tint::face_material(tile).tint;
     let light = lighting::sky_light_factor(skylight);
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
@@ -129,6 +145,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
         ],
         [[fu0, fv1], [fu1, fv1], [fu1, fv0], [fu0, fv0]],
         SHADE_FRONT * light,
+        tint,
     );
     // BACK face (-Z), wound the other way so it faces -Z.
     push_quad(
@@ -141,6 +158,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
         ],
         [[fu1, fv1], [fu0, fv1], [fu0, fv0], [fu1, fv0]],
         SHADE_BACK * light,
+        tint,
     );
 
     // SIDE WALLS: for every opaque texel, emit a depth-spanning wall quad on each
@@ -169,6 +187,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     [[xl, yb, zb], [xl, yb, zf], [xl, yt, zf], [xl, yt, zb]],
                     [uc, uc, uc, uc],
                     SHADE_SIDE * light,
+                    tint,
                 );
             }
             // RIGHT edge wall (neighbour tx+1 transparent): plane x = xr.
@@ -178,6 +197,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     [[xr, yb, zf], [xr, yb, zb], [xr, yt, zb], [xr, yt, zf]],
                     [uc, uc, uc, uc],
                     SHADE_SIDE * light,
+                    tint,
                 );
             }
             // TOP edge wall (neighbour ty-1 transparent): plane y = yt.
@@ -187,6 +207,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     [[xl, yt, zf], [xr, yt, zf], [xr, yt, zb], [xl, yt, zb]],
                     [uc, uc, uc, uc],
                     SHADE_SIDE * light,
+                    tint,
                 );
             }
             // BOTTOM edge wall (neighbour ty+1 transparent): plane y = yb.
@@ -196,6 +217,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     [[xl, yb, zb], [xr, yb, zb], [xr, yb, zf], [xl, yb, zf]],
                     [uc, uc, uc, uc],
                     SHADE_SIDE * light,
+                    tint,
                 );
             }
         }

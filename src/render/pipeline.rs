@@ -788,6 +788,12 @@ pub(super) fn create_pipeline_resources(
             offset: 20,
             shader_location: 2,
         },
+        // tint (foliage-green for fern / short grass, white otherwise)
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 24,
+            shader_location: 3,
+        },
     ];
     let item3d_vbuf_layout = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<super::item_model::ItemVertex>() as u64,
@@ -1698,6 +1704,12 @@ mod gpu_validation {
                 offset: 20,
                 shader_location: 2,
             },
+            // tint (foliage-green for fern / short grass, white otherwise)
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 24,
+                shader_location: 3,
+            },
         ];
         let item3d_vbuf_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<crate::render::item_model::ItemVertex>() as u64,
@@ -1972,10 +1984,11 @@ mod gpu_validation {
         const { assert!(TILE_COUNT <= 256) };
         // Stride sanity: the compressed vertex is exactly 28 bytes.
         assert_eq!(std::mem::size_of::<Vertex>(), 28);
-        // item3d vertex stride must match its declared attribute layout (24).
+        // item3d vertex stride must match its declared attribute layout
+        // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24 = 36 bytes).
         assert_eq!(
             std::mem::size_of::<crate::render::item_model::ItemVertex>(),
-            24
+            36
         );
     }
 }

@@ -29,12 +29,14 @@ struct VsIn {
     @location(0) pos:   vec3<f32>,
     @location(1) uv:    vec2<f32>,
     @location(2) shade: f32,
+    @location(3) tint:  vec3<f32>,
 };
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv:    vec2<f32>,
     @location(1) shade: f32,
+    @location(2) tint:  vec3<f32>,
 };
 
 @vertex
@@ -43,6 +45,7 @@ fn vs_item(in: VsIn) -> VsOut {
     out.clip = m.mvp * vec4<f32>(in.pos, 1.0);
     out.uv = in.uv;
     out.shade = in.shade;
+    out.tint = in.tint;
     return out;
 }
 
@@ -51,6 +54,7 @@ fn fs_item(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv);
     // Cutout: drop transparent texels so the stepped silhouette stays crisp.
     if (tex.a < 0.5) { discard; }
-    // Full-bright * per-face directional shade.
-    return vec4<f32>(tex.rgb * in.shade, tex.a);
+    // Full-bright * per-face directional shade * foliage tint (grass-green for a
+    // held fern / short grass; white = no-op for flowers / tools / blocks).
+    return vec4<f32>(tex.rgb * in.shade * in.tint, tex.a);
 }

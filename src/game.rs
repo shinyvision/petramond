@@ -143,7 +143,7 @@ impl Game {
 
         // Restore the saved player, or spawn on the nearest exposed solid surface
         // to the origin (drops to the nearest coast if the origin is open ocean).
-        let player = match &level {
+        let mut player = match &level {
             Some(l) => {
                 let mut p = Player::new(l.player_pos);
                 p.set_mode(l.player_mode);
@@ -771,13 +771,18 @@ impl Game {
     fn map_item_entities(&mut self) {
         self.item_entity_instances.clear();
         self.item_entity_instances
-            .extend(self.world.item_entities().iter().map(|d| ItemEntityInstance {
-                pos: d.pos,
-                item: d.stack.item,
-                count: d.stack.count,
-                spin: d.spin,
-                skylight: d.skylight,
-            }));
+            .extend(
+                self.world
+                    .item_entities()
+                    .iter()
+                    .map(|d| ItemEntityInstance {
+                        pos: d.pos,
+                        item: d.stack.item,
+                        count: d.stack.count,
+                        spin: d.spin,
+                        skylight: d.skylight,
+                    }),
+            );
     }
 
     fn map_particles(&mut self) {
@@ -1196,7 +1201,12 @@ mod tests {
         game.player.inventory = filled_inventory();
         // Drag a stack onto the cursor first.
         game.player.inventory.click_slot(0);
-        let held = game.player.inventory.cursor().expect("cursor holds a stack").count;
+        let held = game
+            .player
+            .inventory
+            .cursor()
+            .expect("cursor holds a stack")
+            .count;
         assert!(game.world.item_entities().is_empty());
         game.throw_cursor_stack();
         assert!(game.player.inventory.cursor().is_none(), "cursor emptied");
@@ -1248,7 +1258,10 @@ mod tests {
         // 5 + 20 + 30 = 55 onto the cursor, both dirt sources emptied.
         assert_eq!(game.inventory().cursor().unwrap().count, 55);
         assert!(game.inventory().slot(2).is_none());
-        assert!(game.inventory().slot(crate::inventory::HOTBAR_LEN).is_none());
+        assert!(game
+            .inventory()
+            .slot(crate::inventory::HOTBAR_LEN)
+            .is_none());
         assert_eq!(game.inventory().slot(5).unwrap().item, ItemType::Stone);
     }
 
@@ -1288,7 +1301,10 @@ mod tests {
         game.drop_selected_item(true);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, before);
-        assert!(game.player.inventory.selected().is_none(), "held slot emptied");
+        assert!(
+            game.player.inventory.selected().is_none(),
+            "held slot emptied"
+        );
     }
 
     #[test]
@@ -1323,7 +1339,10 @@ mod tests {
             game.player.inventory.click_slot(0); // pick the stack onto the cursor
             assert!(!game.threw_item);
             throw(&mut game);
-            assert!(game.threw_item, "inventory drag-out should flick the hand forward");
+            assert!(
+                game.threw_item,
+                "inventory drag-out should flick the hand forward"
+            );
         }
     }
 
@@ -1527,10 +1546,7 @@ mod tests {
         let mut game = game();
         game.spawn_drops(IVec3::new(0, 64, 0), Block::IronOre, 15);
         assert_eq!(game.world.item_entities().len(), 1);
-        assert_eq!(
-            game.world.item_entities()[0].stack.item,
-            ItemType::RawIron
-        );
+        assert_eq!(game.world.item_entities()[0].stack.item, ItemType::RawIron);
     }
 
     #[test]
