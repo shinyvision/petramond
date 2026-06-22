@@ -50,6 +50,13 @@ pub struct WorldSave {
     /// as we save. The load path consults it to choose load-from-disk vs
     /// regenerate.
     manifest: HashSet<ChunkPos>,
+    /// Chunk coords whose written record currently carries item entities. A
+    /// chunk leaves the set when re-saved without drops. The persist decision
+    /// consults it so a chunk whose drops were picked up (or despawned) is
+    /// rewritten to clear its now-stale record, instead of leaving the disk copy
+    /// to resurrect them on the next load. Populated both when we save a record
+    /// with drops and when we read one back (so cross-session staleness is seen).
+    entities_on_disk: HashSet<ChunkPos>,
 }
 
 /// The result of opening (or creating) a world.
@@ -65,6 +72,21 @@ impl WorldSave {
         self.manifest.contains(&pos)
     }
 
+    /// `true` if `pos`'s written record currently carries item entities — so a
+    /// save that now finds the chunk drop-free must rewrite it, or the stale
+    /// record resurrects those drops on the next load.
+    pub fn record_holds_drops(&self, pos: ChunkPos) -> bool {
+        self.entities_on_disk.contains(&pos)
+    }
+
+    /// Note that `pos`'s on-disk record carries item entities, learned by reading
+    /// it back. Mirrors what [`save_chunks`](Self::save_chunks) records when it
+    /// writes drops, so a record saved in a *previous* session is still rewritten
+    /// once its drops are gone.
+    pub fn note_record_holds_drops(&mut self, pos: ChunkPos) {
+        self.entities_on_disk.insert(pos);
+    }
+
     /// Queue modified chunks for compression + region write (non-blocking).
     pub fn save_chunks(&mut self, snaps: Vec<ChunkSnapshot>) {
         if snaps.is_empty() {
@@ -72,6 +94,15 @@ impl WorldSave {
         }
         for s in &snaps {
             self.manifest.insert(s.pos);
+            // Track whether the record we're about to write carries drops (matching
+            // `encode_snapshot`'s FLAG_HAS_ENTITIES). A chunk that loses its drops
+            // is then re-saved once to clear the record (see the persist decisions
+            // in `world::stream`/`world::store`).
+            if s.entities.is_empty() {
+                self.entities_on_disk.remove(&s.pos);
+            } else {
+                self.entities_on_disk.insert(s.pos);
+            }
         }
         let _ = self.tx.send(IoMsg::SaveChunks(snaps));
     }
@@ -148,7 +179,7 @@ pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
 
 /// Open (or create) a world at an explicit directory. Backs [`open`]; tests use
 /// it directly against a temp dir so they never touch the real data dir.
-fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
+pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let region_dir = dir.join("region");
     std::fs::create_dir_all(&region_dir)?;
 
@@ -184,6 +215,7 @@ fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             load_rx,
             handle: Some(handle),
             manifest,
+            entities_on_disk: HashSet::new(),
         },
         level,
     })
@@ -217,7 +249,10 @@ fn write_chunks(region_dir: &Path, snaps: Vec<ChunkSnapshot>) {
     use std::collections::HashMap;
     let mut by_region: HashMap<(i32, i32), Vec<ChunkSnapshot>> = HashMap::new();
     for s in snaps {
-        by_region.entry(region::region_of(s.pos)).or_default().push(s);
+        by_region
+            .entry(region::region_of(s.pos))
+            .or_default()
+            .push(s);
     }
     for ((rx, rz), group) in by_region {
         let path = region::region_path(region_dir, rx, rz);
@@ -320,7 +355,10 @@ mod tests {
             assert_eq!(level.player_pos, Vec3::new(80.0, 70.0, -40.0));
             assert_eq!(level.inventory.active_slot(), 4);
 
-            assert!(opened.save.manifest_contains(pos), "manifest sees saved chunk");
+            assert!(
+                opened.save.manifest_contains(pos),
+                "manifest sees saved chunk"
+            );
 
             let loaded = load_blocking(&opened.save, pos).expect("chunk loads from disk");
             let chunk = loaded.chunk.expect("chunk record decodes");
@@ -331,9 +369,64 @@ mod tests {
             // The item entity comes back with its chunk, lifetime intact.
             assert_eq!(loaded.entities.len(), 1);
             assert_eq!(loaded.entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
-            assert_eq!(loaded.entities[0].ticks_lived, 2500, "remaining lifetime persisted");
+            assert_eq!(
+                loaded.entities[0].ticks_lived, 2500,
+                "remaining lifetime persisted"
+            );
         }
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The unload/reload dupe, at the save layer: a chunk record written with a
+    /// drop, then re-saved drop-free (the drop was picked up), must not bring the
+    /// drop back on reload — and `record_holds_drops` must track the transition.
+    #[test]
+    fn re_saving_a_drop_free_chunk_clears_its_stale_record() {
+        let dir = temp_world_dir("clear-stale-drops");
+        let pos = ChunkPos::new(2, -4);
+
+        let mut opened = open_at(dir.clone()).expect("open fresh");
+
+        // Unload-with-item: the record is written carrying one drop.
+        let mut chunk = Chunk::new(pos.cx, pos.cz);
+        chunk.set_block(1, 64, 1, Block::Stone);
+        let mut snap = ChunkSnapshot::from_chunk(&chunk);
+        snap.entities.push(DroppedItem::new(
+            Vec3::new(33.0, 65.0, -63.0),
+            ItemStack::new(ItemType::Dirt, 3),
+            1,
+        ));
+        opened.save.save_chunks(vec![snap]);
+        assert!(
+            opened.save.record_holds_drops(pos),
+            "record now carries a drop"
+        );
+
+        let with_item = load_blocking(&opened.save, pos).expect("loads with item");
+        assert_eq!(with_item.entities.len(), 1, "drop is present before pickup");
+
+        // Pickup-then-unload: the chunk is re-saved with no drops. The channel is
+        // ordered, so this write lands before the load below reads it back.
+        let empty = ChunkSnapshot::from_chunk(&chunk); // entities default to empty
+        opened.save.save_chunks(vec![empty]);
+        assert!(
+            !opened.save.record_holds_drops(pos),
+            "rewrite cleared the flag"
+        );
+
+        let after = load_blocking(&opened.save, pos).expect("loads after pickup");
+        assert!(
+            after.entities.is_empty(),
+            "the stale drop must not resurrect"
+        );
+        // The chunk's own edits survive the rewrite (only the drop was cleared).
+        assert_eq!(
+            after.chunk.expect("chunk decodes").block_raw(1, 64, 1),
+            Block::Stone.id()
+        );
+
+        opened.save.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -50,11 +50,13 @@ impl World {
     }
 
     /// Per-frame physics for active items: gravity, collision, spin, and the
-    /// pickup magnet toward `magnet_target` (the player chest). Drops past the
-    /// pickup delay are magnetised. Skylight is refreshed only when a drop crosses
-    /// a voxel cell. With a save attached, a drop sitting over a not-yet-loaded
-    /// chunk is frozen so it can't fall through missing terrain (in-memory worlds
-    /// with no save always simulate, matching the test setups).
+    /// pickup magnet toward `magnet_target` (the player chest). Only drops marked
+    /// by [`request_item_pickups`](Self::request_item_pickups) are magnetised, so
+    /// inventory capacity is planned before movement starts.
+    /// Skylight is refreshed only when a drop crosses a voxel cell. With a save
+    /// attached, a drop sitting over a not-yet-loaded chunk is frozen so it can't
+    /// fall through missing terrain (in-memory worlds with no save always
+    /// simulate, matching the test setups).
     pub fn tick_item_physics(&mut self, dt: f32, magnet_target: Vec3) {
         if self.dropped.is_empty() {
             return;
@@ -69,7 +71,7 @@ impl World {
                     continue;
                 }
             }
-            let magnet = (it.ticks_lived >= ITEM_PICKUP_DELAY_TICKS).then_some(magnet_target);
+            let magnet = it.pickup_requested.then_some(magnet_target);
             let before = voxel_at(it.pos);
             it.tick(dt, self, magnet);
             let after = voxel_at(it.pos);
@@ -104,11 +106,57 @@ impl World {
         }
     }
 
-    /// Per fixed game-tick pickup: offer each eligible item (past the pickup delay
-    /// and within the player's absorb radius) to `deposit`, which returns any
-    /// leftover that didn't fit the inventory. Fully absorbed items are removed.
-    /// `deposit` is a closure so the world stays decoupled from the inventory.
-    pub fn collect_item_pickups(
+    /// Per fixed game-tick pickup planning. Eligible drops are those past the
+    /// pickup delay and inside the player's attract radius. For each candidate,
+    /// `request` returns how many items are reserved by the inventory simulation:
+    /// `0` leaves the drop alone, the full count requests the whole entity, and a
+    /// partial count splits that many items into a requested entity while leaving
+    /// the remainder unrequested.
+    ///
+    /// Already-requested drops are planned first. That keeps a split-off stack from
+    /// being duplicated every tick while it is flying toward the player.
+    pub fn request_item_pickups(
+        &mut self,
+        player_pos: Vec3,
+        mut request: impl FnMut(ItemStack) -> u8,
+    ) {
+        let len = self.dropped.len();
+        let was_requested: Vec<bool> = self.dropped.iter().map(|d| d.pickup_requested).collect();
+        let mut split_offs = Vec::new();
+
+        for i in 0..len {
+            if !was_requested[i] {
+                continue;
+            }
+            if !self.pickup_request_candidate(i, player_pos) {
+                self.dropped[i].clear_pickup_request();
+                continue;
+            }
+            let count = request(self.dropped[i].stack).min(self.dropped[i].stack.count);
+            if count == 0 {
+                self.dropped[i].clear_pickup_request();
+            } else {
+                self.apply_pickup_request(i, count, &mut split_offs);
+            }
+        }
+
+        for i in 0..len {
+            if was_requested[i] || !self.pickup_request_candidate(i, player_pos) {
+                continue;
+            }
+            let count = request(self.dropped[i].stack).min(self.dropped[i].stack.count);
+            if count > 0 {
+                self.apply_pickup_request(i, count, &mut split_offs);
+            }
+        }
+
+        self.dropped.extend(split_offs);
+    }
+
+    /// Per fixed game-tick pickup absorption. Only requested drops can be
+    /// collected. `deposit` returns any leftover that did not fit; a leftover drop
+    /// has its request cleared so the next planner pass can decide what to do.
+    pub fn collect_requested_item_pickups(
         &mut self,
         player_pos: Vec3,
         mut deposit: impl FnMut(ItemStack) -> Option<ItemStack>,
@@ -116,20 +164,51 @@ impl World {
         let mut i = self.dropped.len();
         while i > 0 {
             i -= 1;
-            if self.dropped[i].ticks_lived < ITEM_PICKUP_DELAY_TICKS {
+            if !self.dropped[i].pickup_requested {
                 continue;
             }
-            if self.dropped[i].within_pickup(player_pos) {
-                match deposit(self.dropped[i].stack) {
-                    None => {
-                        self.dropped.swap_remove(i);
-                    }
-                    Some(leftover) => {
-                        self.dropped[i].stack = leftover;
-                    }
+            if !self.dropped[i].within_pickup(player_pos) {
+                continue;
+            }
+            match deposit(self.dropped[i].stack) {
+                None => {
+                    self.dropped.swap_remove(i);
+                }
+                Some(leftover) if leftover.is_empty() => {
+                    self.dropped.swap_remove(i);
+                }
+                Some(leftover) => {
+                    self.dropped[i].stack = leftover;
+                    self.dropped[i].clear_pickup_request();
                 }
             }
         }
+    }
+
+    fn pickup_request_candidate(&self, i: usize, player_pos: Vec3) -> bool {
+        let item = &self.dropped[i];
+        item.ticks_lived >= ITEM_PICKUP_DELAY_TICKS
+            && !item.stack.is_empty()
+            && item.within_attract(player_pos)
+    }
+
+    fn apply_pickup_request(&mut self, i: usize, count: u8, split_offs: &mut Vec<DroppedItem>) {
+        debug_assert!(count > 0);
+        let stack_count = self.dropped[i].stack.count;
+        if count >= stack_count {
+            self.dropped[i].request_pickup();
+            return;
+        }
+
+        // Clone the full physics state so the requested part starts exactly where
+        // the source stack is. The remainder is left unrequested and therefore
+        // will not be pulled by the magnet.
+        let mut split = self.dropped[i].clone();
+        split.stack.count = count;
+        split.request_pickup();
+        self.dropped[i].stack.count -= count;
+        self.dropped[i].clear_pickup_request();
+        split_offs.push(split);
     }
 
     /// Recompute every active item's cached skylight (after a world light update).
@@ -219,15 +298,21 @@ mod tests {
         let player = Vec3::new(0.5, 64.0, 0.5);
         w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
         let mut collected = 0u32;
-        w.collect_item_pickups(player, |s| {
+        w.request_item_pickups(player, |s| s.count);
+        w.collect_requested_item_pickups(player, |s| {
             collected += s.count as u32;
             None
         });
         assert_eq!(collected, 0, "the pickup delay blocks collection");
         assert_eq!(w.item_entities().len(), 1);
+        assert!(
+            !w.item_entities()[0].pickup_requested,
+            "delayed drops are not requested"
+        );
 
         w.item_entities_mut()[0].ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-        w.collect_item_pickups(player, |s| {
+        w.request_item_pickups(player, |s| s.count);
+        w.collect_requested_item_pickups(player, |s| {
             collected += s.count as u32;
             None
         });
@@ -236,17 +321,190 @@ mod tests {
     }
 
     #[test]
-    fn pickup_keeps_leftover_that_did_not_fit() {
+    fn pickup_splits_off_only_the_part_that_fits() {
         let mut w = World::new(0, 0);
         let player = Vec3::new(0.5, 64.0, 0.5);
-        let mut item =
-            DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
+        let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
+        item.ticks_lived = 1234; // past the delay, with a partly-elapsed despawn timer
+        let origin_pos = item.pos;
+        let origin_vel = item.vel; // the outward pop from `new`
+        w.spawn_item(item);
+        // The planned inventory can take only 6 of the 10.
+        w.request_item_pickups(player, |_| 6);
+
+        // Two drops now: the reduced original and the requested split.
+        assert_eq!(w.item_entities().len(), 2);
+        let original = w
+            .item_entities()
+            .iter()
+            .find(|d| !d.pickup_requested)
+            .expect("original kept, despawn timer untouched");
+        assert_eq!(
+            original.stack.count, 4,
+            "original reduced by the part that fit"
+        );
+        assert_eq!(
+            original.ticks_lived, 1234,
+            "original despawn timer untouched"
+        );
+        let split = w
+            .item_entities()
+            .iter()
+            .find(|d| d.pickup_requested)
+            .expect("split drop requested");
+        assert_eq!(
+            split.stack.count, 6,
+            "split carries exactly the part that fit"
+        );
+        assert_eq!(split.stack.item, ItemType::Dirt);
+        assert_eq!(split.ticks_lived, 1234, "split keeps the source lifetime");
+        // Spawned exactly on the original, with its velocity — not just nearby.
+        assert_eq!(
+            split.pos, origin_pos,
+            "split spawns exactly where the original is"
+        );
+        assert_eq!(
+            split.vel, origin_vel,
+            "split inherits the original's velocity"
+        );
+    }
+
+    #[test]
+    fn pickup_replans_existing_request_before_splitting_more() {
+        let mut w = World::new(0, 0);
+        let player = Vec3::new(0.5, 64.0, 0.5);
+        let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
         item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
         w.spawn_item(item);
-        // The "inventory" only accepts part of the stack, returning a leftover.
-        w.collect_item_pickups(player, |s| Some(ItemStack::new(s.item, 4)));
-        assert_eq!(w.item_entities().len(), 1, "leftover stays in the world");
-        assert_eq!(w.item_entities()[0].stack.count, 4);
+
+        let mut remaining = 6;
+        w.request_item_pickups(player, |s| {
+            let count = remaining.min(s.count);
+            remaining -= count;
+            count
+        });
+        assert_eq!(w.item_entities().len(), 2);
+
+        // Next tick has the same six slots still reserved by the already-requested
+        // split. The planner must keep that request instead of splitting six more
+        // from the original remainder.
+        let mut remaining = 6;
+        w.request_item_pickups(player, |s| {
+            let count = remaining.min(s.count);
+            remaining -= count;
+            count
+        });
+
+        assert_eq!(w.item_entities().len(), 2, "no duplicate split-off");
+        let requested: u32 = w
+            .item_entities()
+            .iter()
+            .filter(|d| d.pickup_requested)
+            .map(|d| d.stack.count as u32)
+            .sum();
+        let unrequested: u32 = w
+            .item_entities()
+            .iter()
+            .filter(|d| !d.pickup_requested)
+            .map(|d| d.stack.count as u32)
+            .sum();
+        assert_eq!(requested, 6);
+        assert_eq!(unrequested, 4);
+    }
+
+    #[test]
+    fn a_split_drop_tracks_the_original_instead_of_drifting() {
+        // Regression: the split used to spawn at rest while the original kept its
+        // velocity, so once the magnet let go they fell on different arcs and
+        // landed apart. Cloning the physics state keeps them locked together.
+        let mut w = World::new(0, 0);
+        let mut item = DroppedItem::new(
+            Vec3::new(0.5, 80.0, 0.5),
+            ItemStack::new(ItemType::Dirt, 10),
+            7,
+        );
+        item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
+        item.vel = Vec3::new(3.0, 0.0, 1.0); // sideways drift a position-only split would lose
+        let player = Vec3::new(0.5, 80.0, 0.5);
+        w.spawn_item(item);
+        w.request_item_pickups(player, |_| 6);
+        assert_eq!(w.item_entities().len(), 2);
+
+        // Free physics with the magnet target far away (no pull): both drops must
+        // follow the same arc and stay in the exact same place.
+        let far = Vec3::new(1000.0, 80.0, 0.5);
+        for _ in 0..30 {
+            w.tick_item_physics(1.0 / 60.0, far);
+        }
+        let p0 = w.item_entities()[0].pos;
+        let p1 = w.item_entities()[1].pos;
+        assert_eq!(p0, p1, "split and original stay co-located, not nearby");
+    }
+
+    #[test]
+    fn pickup_leaves_a_drop_with_no_room() {
+        let mut w = World::new(0, 0);
+        let player = Vec3::new(0.5, 64.0, 0.5);
+        let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
+        item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
+        w.spawn_item(item);
+        w.request_item_pickups(player, |_| 0);
+        w.collect_requested_item_pickups(player, |_| None);
+        assert_eq!(
+            w.item_entities().len(),
+            1,
+            "a full inventory leaves the drop"
+        );
+        assert_eq!(w.item_entities()[0].stack.count, 10, "untouched");
+        assert!(
+            !w.item_entities()[0].pickup_requested,
+            "unrequested drops are left alone"
+        );
+    }
+
+    /// A drop that was not requested must not be magnetised: with the magnet off
+    /// it falls under gravity rather than being sucked up to the player and pinned
+    /// there with nowhere to go.
+    #[test]
+    fn magnet_skips_a_drop_that_was_not_requested() {
+        let mut w = World::new(0, 0);
+        let target = Vec3::new(0.5, 65.0, 0.5);
+        let mut item = drop_at(0.5, 0.5);
+        item.pos = Vec3::new(0.5, 64.5, 0.5); // 0.5 below the target, within attract range
+        item.vel = Vec3::ZERO;
+        item.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
+        w.spawn_item(item);
+
+        let before_y = w.item_entities()[0].pos.y;
+        w.tick_item_physics(1.0 / 60.0, target);
+        let after_y = w.item_entities()[0].pos.y;
+        assert!(
+            after_y < before_y,
+            "an unrequested drop should fall, not rise toward the player: {before_y} -> {after_y}"
+        );
+    }
+
+    /// Once requested, the same drop is magnetised up toward the player target
+    /// above it.
+    #[test]
+    fn magnet_pulls_a_requested_drop() {
+        let mut w = World::new(0, 0);
+        let target = Vec3::new(0.5, 65.0, 0.5);
+        let mut item = drop_at(0.5, 0.5);
+        item.pos = Vec3::new(0.5, 64.5, 0.5);
+        item.vel = Vec3::ZERO;
+        item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
+        w.spawn_item(item);
+        w.request_item_pickups(target, |s| s.count);
+        assert!(w.item_entities()[0].pickup_requested);
+
+        let before_y = w.item_entities()[0].pos.y;
+        w.tick_item_physics(1.0 / 60.0, target);
+        let after_y = w.item_entities()[0].pos.y;
+        assert!(
+            after_y > before_y,
+            "a requested drop should be pulled up toward the player: {before_y} -> {after_y}"
+        );
     }
 
     #[test]

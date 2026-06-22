@@ -100,7 +100,13 @@ impl World {
         let mut snaps = Vec::new();
         for (pos, c) in self.chunks.iter_mut() {
             let entities = by_chunk.remove(pos).unwrap_or_default();
-            if c.modified || !entities.is_empty() {
+            // Rewrite a chunk whose record still holds drops it no longer carries,
+            // so the stale record can't resurrect them after a quit/reopen.
+            let record_holds_drops = self
+                .save
+                .as_ref()
+                .is_some_and(|s| s.record_holds_drops(*pos));
+            if c.modified || !entities.is_empty() || record_holds_drops {
                 let mut snap = ChunkSnapshot::from_chunk(c);
                 snap.entities = entities;
                 snaps.push(snap);
@@ -173,5 +179,38 @@ impl World {
         if self.section_visibility.remove(&pos).is_some() {
             self.bump_visibility_revision();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flush_rewrites_a_chunk_whose_record_holds_a_picked_up_drop() {
+        // The quit/reopen variant of the dupe: the autosave/quit flush must also
+        // rewrite a chunk whose record holds a drop the chunk no longer carries.
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-flushtest-{}-rewrite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut opened = crate::save::open_at(dir.clone()).expect("open temp world");
+
+        let pos = ChunkPos::new(0, 0);
+        opened.save.note_record_holds_drops(pos); // as the load path would
+        let mut world = World::new(0, 1);
+        world.attach_save(opened.save);
+        world.chunks.insert(pos, Chunk::new(pos.cx, pos.cz));
+
+        world.flush_modified_chunks();
+
+        assert!(
+            !world.save().expect("save").record_holds_drops(pos),
+            "flush must rewrite the chunk and clear its stale drop record"
+        );
+
+        drop(world); // join the save I/O thread before removing the dir
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

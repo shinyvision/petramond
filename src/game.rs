@@ -926,10 +926,27 @@ impl Game {
     fn item_pickup_tick(&mut self) {
         self.world.tick_item_lifetime();
         let player_pos = self.player.body_center();
+        // Plan first against a cloned inventory, reserving capacity without
+        // mutating the real slots. Only requested drops are allowed to magnet.
+        let mut planned = self.player.inventory.clone();
+        self.world.request_item_pickups(player_pos, |stack| {
+            let count = planned.fits_count(stack);
+            if count > 0 {
+                let leftover = planned.add(ItemStack::new(stack.item, count));
+                debug_assert!(
+                    leftover.is_none(),
+                    "fits_count overestimated pickup capacity"
+                );
+            }
+            count
+        });
+
         // Borrow-split: the world owns the drops, the player owns the inventory.
+        // Actual inventory mutation only happens after a requested drop reaches the
+        // absorb radius.
         let inventory = &mut self.player.inventory;
         self.world
-            .collect_item_pickups(player_pos, |stack| inventory.add(stack));
+            .collect_requested_item_pickups(player_pos, |stack| inventory.add(stack));
     }
 
     fn refresh_dropped_item_lights_after_world_light_update(&mut self) {
@@ -1285,6 +1302,82 @@ mod tests {
     }
 
     #[test]
+    fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
+        let mut game = game();
+        // Room for exactly one more dirt: 63 dirt in one slot, every other slot
+        // full of a different item.
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Dirt, 63));
+        for _ in 0..(crate::inventory::TOTAL_SLOTS - 1) {
+            inv.add(ItemStack::new(ItemType::Stone, 64));
+        }
+        game.player.inventory = inv;
+
+        let centre = game.player.body_center();
+        let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 5), 1);
+        drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
+        game.world.spawn_item(drop);
+
+        // One tick plans the partial pickup and absorbs the requested split because
+        // the stack is already inside the pickup radius.
+        game.item_pickup_tick();
+
+        assert_eq!(
+            count_item(&game.player.inventory, ItemType::Dirt),
+            64,
+            "took exactly the one dirt that fit"
+        );
+        let loose: u32 = game
+            .world
+            .item_entities()
+            .iter()
+            .filter(|d| d.stack.item == ItemType::Dirt)
+            .map(|d| d.stack.count as u32)
+            .sum();
+        assert_eq!(
+            loose, 4,
+            "the four that didn't fit stay in the world, not discarded"
+        );
+    }
+
+    #[test]
+    fn pickup_planning_reserves_capacity_before_magnetizing() {
+        let mut game = game();
+        // Room for exactly one dirt, but two dirt drops are inside the attract
+        // radius. Planning should request only one of them.
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Dirt, 63));
+        for _ in 0..(crate::inventory::TOTAL_SLOTS - 1) {
+            inv.add(ItemStack::new(ItemType::Stone, 64));
+        }
+        game.player.inventory = inv;
+
+        let chest = game.player.body_center();
+        for (seed, offset) in [
+            (1, Vec3::new(crate::entity::ATTRACT_RADIUS - 0.1, 0.0, 0.0)),
+            (2, Vec3::new(0.0, 0.0, crate::entity::ATTRACT_RADIUS - 0.1)),
+        ] {
+            let mut drop =
+                DroppedItem::new(chest + offset, ItemStack::new(ItemType::Dirt, 1), seed);
+            drop.vel = Vec3::ZERO;
+            drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
+            game.world.spawn_item(drop);
+        }
+
+        game.item_pickup_tick();
+
+        assert_eq!(count_item(&game.player.inventory, ItemType::Dirt), 63);
+        let requested: u32 = game
+            .world
+            .item_entities()
+            .iter()
+            .filter(|d| d.pickup_requested)
+            .map(|d| d.stack.count as u32)
+            .sum();
+        assert_eq!(requested, 1, "only the item that fits is requested");
+    }
+
+    #[test]
     fn fresh_dropped_item_waits_out_pickup_delay() {
         let mut game = game();
         let item = crate::item::ItemType::Poppy;
@@ -1316,6 +1409,8 @@ mod tests {
         drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // skip the delay so the magnet engages now
         game.world.spawn_item(drop);
         let d0 = (game.world.item_entities()[0].pos - chest).length();
+        game.item_pickup_tick();
+        assert!(game.world.item_entities()[0].pickup_requested);
         game.tick_entities(1.0 / 60.0);
         if !game.world.item_entities().is_empty() {
             let d1 = (game.world.item_entities()[0].pos - chest).length();
@@ -1326,8 +1421,8 @@ mod tests {
             if game.world.item_entities().is_empty() {
                 break;
             }
-            game.tick_entities(1.0 / 60.0);
             game.item_pickup_tick();
+            game.tick_entities(1.0 / 60.0);
         }
         assert!(game.world.item_entities().is_empty());
         assert_eq!(count_item(&game.player.inventory, item), before + 1);

@@ -375,6 +375,30 @@ impl Inventory {
         need <= empties * stack.item.max_stack_size() as u32
     }
 
+    /// How many of `stack` would actually be absorbed if added now — summing the
+    /// space in matching partial stacks and empty slots, capped at `stack.count`.
+    /// `0` means none fit, `stack.count` means the whole stack fits. Used by the
+    /// pickup path to peel off exactly the portion that fits a near-full inventory.
+    pub fn fits_count(&self, stack: ItemStack) -> u8 {
+        if stack.is_empty() {
+            return 0;
+        }
+        let want = stack.count as u32;
+        let cap = stack.item.max_stack_size() as u32;
+        let mut room: u32 = 0;
+        for slot in &self.slots {
+            room += match slot {
+                None => cap,
+                Some(existing) if existing.can_stack_with(&stack) => existing.space_left() as u32,
+                Some(_) => 0,
+            };
+            if room >= want {
+                return stack.count;
+            }
+        }
+        room.min(want) as u8
+    }
+
     /// Place a crafted `stack` onto the cursor: succeeds when the cursor is empty
     /// (it becomes `stack`) or holds the same item with room for the WHOLE stack.
     /// Returns whether it was placed — i.e. whether the craft may proceed.
@@ -947,6 +971,50 @@ mod tests {
         }
         assert!(inv.can_add(item(ItemType::Dirt, 4)));
         assert!(!inv.can_add(item(ItemType::Dirt, 5)));
+    }
+
+    #[test]
+    fn fits_count_reports_how_many_would_land() {
+        // Empty inventory: the whole stack fits.
+        let mut inv = empty_inv();
+        assert_eq!(inv.fits_count(item(ItemType::Dirt, 40)), 40);
+
+        // One slot at 63 dirt, the rest full of stone: room for exactly one dirt.
+        inv.slots[0] = Some(item(ItemType::Dirt, 63));
+        for i in 1..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        assert_eq!(inv.fits_count(item(ItemType::Dirt, 5)), 1, "only one space");
+        assert_eq!(
+            inv.fits_count(item(ItemType::Dirt, 1)),
+            1,
+            "exactly fills it"
+        );
+
+        // That slot now maxed: no room at all.
+        inv.slots[0] = Some(item(ItemType::Dirt, 64));
+        assert_eq!(inv.fits_count(item(ItemType::Dirt, 5)), 0);
+
+        // Two partial matching stacks accumulate their room (2 + 4 = 6 spaces).
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Dirt, 62)); // room 2
+        inv.slots[1] = Some(item(ItemType::Dirt, 60)); // room 4
+        for i in 2..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        assert_eq!(
+            inv.fits_count(item(ItemType::Dirt, 10)),
+            6,
+            "summed partial room"
+        );
+        assert_eq!(
+            inv.fits_count(item(ItemType::Dirt, 3)),
+            3,
+            "capped at the stack"
+        );
+
+        // An empty stack fits nothing.
+        assert_eq!(inv.fits_count(item(ItemType::Dirt, 0)), 0);
     }
 
     #[test]

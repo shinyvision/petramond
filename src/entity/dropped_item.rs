@@ -67,6 +67,10 @@ pub struct DroppedItem {
     /// delay and drives the despawn timer; persisted with the owning chunk so the
     /// remaining lifetime survives an unload/reload. NOT touched by physics.
     pub ticks_lived: u32,
+    /// Transient reservation from the pickup planner. Requested drops are the only
+    /// ones that the magnet may pull toward the player; save/load deliberately
+    /// reconstructs this as `false` so reservations are recomputed from inventory.
+    pub pickup_requested: bool,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
 }
@@ -91,6 +95,7 @@ impl DroppedItem {
             stack,
             skylight: 63,
             ticks_lived: 0,
+            pickup_requested: false,
             // Stagger the starting spin so a pile of drops isn't phase-locked.
             spin: hash_signed(s ^ 0x3C3C) * std::f32::consts::PI,
         }
@@ -111,8 +116,20 @@ impl DroppedItem {
             stack,
             skylight: 63,
             ticks_lived: 0,
+            pickup_requested: false,
             spin: 0.0,
         }
+    }
+
+    /// Mark this drop as reserved for player pickup. The world pickup planner owns
+    /// when this flag is set; physics only consumes the decision.
+    pub fn request_pickup(&mut self) {
+        self.pickup_requested = true;
+    }
+
+    /// Release this drop from the pickup magnet.
+    pub fn clear_pickup_request(&mut self) {
+        self.pickup_requested = false;
     }
 
     /// Advance physics by `dt`: gravity, axis-resolved block collision, and spin.
@@ -166,7 +183,12 @@ impl DroppedItem {
                     // attract radius, ~0 right at the target).
                     let closeness = 1.0 - (dist / ATTRACT_RADIUS);
                     let speed = MAGNET_BASE_SPEED + MAGNET_RAMP_SPEED * closeness;
-                    self.vel = (to / dist) * speed;
+                    // The pull is position-based (the step below), so the drop keeps
+                    // no velocity of its own. If the magnet releases it mid-flight —
+                    // the inventory filled as it closed in, e.g. the other half of a
+                    // split was absorbed first — it then falls straight from rest
+                    // instead of being flung away by a leftover magnet velocity.
+                    self.vel = Vec3::ZERO;
                     // Don't overshoot the target in a single step.
                     let step = (speed * dt).min(dist);
                     self.pos += (to / dist) * step;
@@ -482,6 +504,22 @@ mod tests {
         assert!(
             dist <= 1.0 + 1e-4,
             "item should not overshoot the target: {dist}"
+        );
+    }
+
+    #[test]
+    fn magnet_leaves_no_velocity_to_fling_a_released_drop() {
+        // The magnet pulls by position and clears velocity, so a drop it releases
+        // mid-flight (the inventory filled as it closed in) drops from rest rather
+        // than rocketing off with a leftover magnet velocity.
+        let mut d = DroppedItem::new(Vec3::new(0.0, 1.0, 0.0), stack(), 1);
+        d.vel = Vec3::new(5.0, 5.0, 5.0); // a prior velocity the magnet must clear
+        let target = Vec3::ZERO; // within ATTRACT_RADIUS (dist 1.0)
+        d.integrate(1.0 / 60.0, Some(target), &empty);
+        assert_eq!(
+            d.vel,
+            Vec3::ZERO,
+            "a magnetised drop carries no velocity to fling when released"
         );
     }
 

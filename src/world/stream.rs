@@ -79,10 +79,17 @@ impl World {
             let mut snaps = Vec::new();
             for &pos in &to_drop {
                 let entities = self.take_items_in_chunk(pos);
+                // A chunk whose record holds drops must be rewritten even when it
+                // now has none (they were picked up or despawned), or the stale
+                // record resurrects them on reload — the unload/reload dupe.
+                let record_holds_drops = self
+                    .save
+                    .as_ref()
+                    .is_some_and(|s| s.record_holds_drops(pos));
                 let Some(chunk) = self.chunks.get(&pos) else {
                     continue;
                 };
-                if chunk.modified || !entities.is_empty() {
+                if chunk.modified || !entities.is_empty() || record_holds_drops {
                     let mut snap = ChunkSnapshot::from_chunk(chunk);
                     snap.entities = entities;
                     snaps.push(snap);
@@ -128,6 +135,14 @@ impl World {
             }
             match loaded.chunk {
                 Some(chunk) => {
+                    // The record carried drops: remember that, so a later flush
+                    // that finds this chunk drop-free rewrites the record instead
+                    // of leaving stale drops to resurrect (cross-session dupe).
+                    if !loaded.entities.is_empty() {
+                        if let Some(save) = self.save.as_mut() {
+                            save.note_record_holds_drops(pos);
+                        }
+                    }
                     self.dropped.extend(loaded.entities);
                     fresh.push((pos, chunk));
                 }
@@ -412,5 +427,37 @@ mod tests {
         world.chunks.insert(pos, chunk);
 
         assert_eq!(world.queue_post_generation_block_updates(&[pos]), 0);
+    }
+
+    #[test]
+    fn unloading_rewrites_a_chunk_whose_record_holds_a_picked_up_drop() {
+        // The reported repro: a chunk saved with a drop, the drop since picked up,
+        // must be re-saved on the next unload so the stale record can't resurrect
+        // it on reload.
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-streamtest-{}-unload-rewrite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut opened = crate::save::open_at(dir.clone()).expect("open temp world");
+
+        let pos = ChunkPos::new(0, 0);
+        // The save already holds a drop for this chunk (as a prior unload-with-item
+        // left it); the chunk is back in memory now, drop-free and unmodified.
+        opened.save.note_record_holds_drops(pos); // mirrors the load path
+        let mut world = World::new(0, 1);
+        world.attach_save(opened.save);
+        world.chunks.insert(pos, Chunk::new(pos.cx, pos.cz));
+
+        // Stream far away so the chunk unloads.
+        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
+
+        assert!(
+            !world.save().expect("save").record_holds_drops(pos),
+            "unload must rewrite the chunk and clear its stale drop record"
+        );
+
+        drop(world); // join the save I/O thread before removing the dir
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
