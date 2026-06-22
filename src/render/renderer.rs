@@ -1058,9 +1058,11 @@ impl Renderer {
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so
         // water must be able to blend in front of it (a crack on a submerged block
-        // shows THROUGH the water, not over it). ALPHA blend; depth LessEqual /
-        // no-write with a CPU-inflated cube so the crack sits just proud of the
-        // face (no z-fight). Reuses uniform_bind (view_proj + uv_rects) + atlas_bind.
+        // shows THROUGH the water, not over it). MULTIPLY blend; depth LessEqual /
+        // no-write over a cube built COINCIDENT with the block faces (no inflation,
+        // so the decal never misaligns), with a small polygon offset toward the
+        // camera (BREAK_DEPTH_BIAS) so it wins the depth tie cleanly. Reuses
+        // uniform_bind (view_proj + uv_rects) + atlas_bind.
         if self.break_index_count > 0 {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("break overlay pass"),

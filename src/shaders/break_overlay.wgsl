@@ -1,17 +1,19 @@
 // break_overlay: the cracked-block destroy overlay.
 //
-// Draws the targeted block's cube faces (slightly inflated, built CPU-side)
-// textured with a Tile::DestroyStage{0..9} grayscale crack and MULTIPLY-blends it
-// over the world (result = src.rgb * dst.rgb) so the cracks darken the block face
-// instead of alpha-compositing a flat overlay. group(0): Uniforms (view_proj at
-// binding 0) + the shared
-// uv_rects table (binding 1) — the SAME bind group as the block pipeline. group(1)
-// is the block atlas (the destroy tiles live in it).
+// Draws the targeted block's cube faces (built CPU-side at the block's exact
+// integer cell, coincident with the chunk mesh — no inflation) textured with a
+// Tile::DestroyStage{0..9} grayscale crack and MULTIPLY-blends it over the world
+// (result = src.rgb * dst.rgb) so the cracks darken the block face instead of
+// alpha-compositing a flat overlay. group(0): Uniforms (view_proj at binding 0) +
+// the shared uv_rects table (binding 1) — the SAME bind group as the block
+// pipeline. group(1) is the block atlas (the destroy tiles live in it).
 //
 // Vertex format is the shared 28-byte mesh::Vertex. We only need uv reconstruction
 // (SELECT from uv_rects — never recompute), so this is a trimmed copy of the block
-// vertex stage. Depth LessEqual / no-write + a small inflation keep the crack just
-// proud of the face without z-fighting.
+// vertex stage. The crack cube is coincident with the block faces; the pipeline
+// draws it depth LessEqual / no-write with a small polygon offset toward the camera
+// (BREAK_DEPTH_BIAS in pipeline.rs) so the decal wins the depth tie cleanly — see
+// that constant for why the offset is needed (the mesher's per-AO diagonal flip).
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -35,6 +37,7 @@ struct VsIn {
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) dist: f32,
 };
 
 // Same corner mapping as block.wgsl: 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
@@ -52,6 +55,9 @@ fn vs_break(in: VsIn) -> VsOut {
     let tile = in.packed & 0xFFu;
     let corner = (in.packed >> 8u) & 0x3u;
     out.uv = corner_uv(uv_rects[tile], corner);
+    // World-space camera distance, for the fog fade in the fragment stage (matches
+    // block.wgsl so the crack fades on the same curve as the surface it sits on).
+    out.dist = length(u.cam_pos.xyz - in.pos);
     return out;
 }
 
@@ -63,5 +69,12 @@ fn fs_break(in: VsOut) -> @location(0) vec4<f32> {
     // so mix toward the crack colour by its own alpha. Output alpha is unused (the
     // blend preserves the destination alpha).
     let tex = textureSample(atlas, samp, in.uv);
-    return vec4<f32>(mix(vec3<f32>(1.0), tex.rgb, tex.a), 1.0);
+    var crack = mix(vec3<f32>(1.0), tex.rgb, tex.a);
+    // Fog fade: the block underneath has already faded toward fog_color (mix in
+    // block.wgsl), incl. the tight blue underwater fog. Fade the crack's darkening
+    // toward 1.0 (multiply identity) on that same fog curve so it melts into the
+    // murk with the surface instead of staying a hard dark pattern floating in fog.
+    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    crack = mix(crack, vec3<f32>(1.0), f);
+    return vec4<f32>(crack, 1.0);
 }

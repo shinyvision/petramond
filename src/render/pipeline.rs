@@ -26,10 +26,22 @@ pub(super) const MAX_MODEL3D_INDICES: u64 = 8192;
 /// item). A 16×16 sprite extrudes to front+back + boundary walls; a dense flower
 /// silhouette is well under this (non-indexed triangle list, 6 verts/quad).
 pub(super) const MAX_ITEM3D_VERTICES: u64 = 4096;
-/// Vertices in the break-overlay dynamic vbuf: exactly one inflated cube (24).
+/// Vertices in the break-overlay dynamic vbuf: exactly one block-sized cube (24).
 pub(super) const MAX_BREAK_VERTICES: u64 = 24;
 /// Indices in the break-overlay dynamic ibuf: one cube (36).
 pub(super) const MAX_BREAK_INDICES: u64 = 36;
+/// Polygon offset for the break-overlay decal: nudge the crack toward the camera
+/// (depth is standard near=0/far=1, so negative = closer) so it reliably wins the
+/// `LessEqual` depth tie against the coincident block face despite the mesher's
+/// per-AO triangulation flip. The `constant` term covers head-on faces (depth slope
+/// ~0); the `slope_scale` term covers glancing angles. Mirrors Minecraft's
+/// crumbling/break layer offset (`polygonOffset(-1.0, -10.0)`): a few ULP — far too
+/// small to overcome a genuinely closer surface or to read as parallax.
+const BREAK_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: -10,
+    slope_scale: -1.0,
+    clamp: 0.0,
+};
 /// Max vertices in the item-entity dynamic vbuf. A stack draws up to 5 layered
 /// copies (120 verts per cube / 40 per sprite), so this is sized 5× the old
 /// single-copy budget to still cover ~170 simultaneously-visible dropped items
@@ -88,9 +100,9 @@ pub(super) struct PipelineResources {
     pub item3d_vbuf: wgpu::Buffer,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
-    /// LessEqual / no-write, geometry slightly inflated.
+    /// LessEqual / no-write over geometry coincident with the block faces.
     pub break_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for the break overlay (one inflated cube).
+    /// Reusable dynamic vbuf for the break overlay (one block-sized cube).
     pub break_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for the break overlay (one cube).
     pub break_ibuf: wgpu::Buffer,
@@ -835,8 +847,10 @@ pub(super) fn create_pipeline_resources(
     // --- Break-overlay pipeline (the destroy crack). ---
     // Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
     // (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
-    // unchanged. Same 28-byte vertex as the block pipe. Alpha-blended; depth
-    // LessEqual / no-write; the cube is CPU-inflated to win the depth tie.
+    // unchanged. Same 28-byte vertex as the block pipe. MULTIPLY-blended; depth
+    // LessEqual / no-write; the cube is built coincident with the block faces and a
+    // small polygon offset (BREAK_DEPTH_BIAS) wins the depth tie on the surface, so
+    // the crack reads cleanly with no inflation and no z-fighting.
     let break_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("break overlay shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/break_overlay.wgsl").into()),
@@ -894,7 +908,15 @@ pub(super) fn create_pipeline_resources(
             depth_write_enabled: false,
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
+            // The crack cube is COINCIDENT with the block faces, but the chunk
+            // mesher flips each face's triangulation diagonal per-AO (see
+            // `should_flip` in mesh::face) while this cube always splits 0->2. Two
+            // different triangulations of the same plane interpolate depth a ULP
+            // apart per pixel, which speckle-fights under a plain LessEqual. A small
+            // polygon offset toward the camera (negative constant + slope) makes the
+            // crack win that tie everywhere, with no geometric inflation to misalign
+            // the decal at glancing angles.
+            bias: BREAK_DEPTH_BIAS,
         }),
         multisample: wgpu::MultisampleState {
             count: sample_count,
@@ -1173,6 +1195,33 @@ pub(super) fn create_pipeline_resources(
         ui_pipe,
         ui_bind,
         ui_vbuf,
+    }
+}
+
+#[cfg(test)]
+mod depth_bias_tests {
+    use super::BREAK_DEPTH_BIAS;
+
+    /// The break-overlay crack cube is COINCIDENT with the block faces, so it wins
+    /// the depth `LessEqual` tie only via a polygon offset toward the camera. Depth
+    /// is standard (near=0/far=1, closer = smaller), so both offset terms MUST be
+    /// negative — a positive or zero bias would leave the decal at/behind the block
+    /// surface, and the crack would z-fight or vanish entirely. Guard the sign so a
+    /// future "cleanup" can't silently break it. The magnitude is intentionally
+    /// untested: per the WebGPU/Vulkan spec the float-depth bias unit is
+    /// implementation-defined, so any exact-magnitude assertion would be GPU-specific.
+    #[test]
+    fn break_depth_bias_pulls_the_crack_toward_the_camera() {
+        assert!(
+            BREAK_DEPTH_BIAS.constant < 0,
+            "constant bias must be negative (toward camera), got {}",
+            BREAK_DEPTH_BIAS.constant
+        );
+        assert!(
+            BREAK_DEPTH_BIAS.slope_scale < 0.0,
+            "slope-scaled bias must be negative (toward camera), got {}",
+            BREAK_DEPTH_BIAS.slope_scale
+        );
     }
 }
 
@@ -1745,7 +1794,9 @@ mod gpu_validation {
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                // Must mirror the runtime `break_pipe`: polygon offset so the
+                // coincident crack decal wins the LessEqual tie (see BREAK_DEPTH_BIAS).
+                bias: BREAK_DEPTH_BIAS,
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,

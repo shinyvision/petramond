@@ -1,10 +1,20 @@
 //! Block-break crack overlay geometry.
 //!
-//! From a [`BreakOverlayView`] (target block + crack stage 0..9), builds the
-//! six faces of that block's cube, each textured with the matching
-//! `Tile::DestroyStage{stage}` and slightly **inflated** so the crack sits just
-//! proud of the block face (no z-fighting). The dedicated `break_overlay.wgsl`
-//! pipeline samples that grayscale crack tile and alpha-blends it over the world.
+//! From a [`BreakOverlayView`] (target block + crack stage 0..9), builds the six
+//! faces of that block's **exact** unit cube, each textured with the matching
+//! `Tile::DestroyStage{stage}`. The cube is built at the block's integer world
+//! coordinates with no inflation, so every face is *coincident* with the chunk
+//! mesh's face for that block — same `quad_for` corners, same world positions.
+//! The dedicated `break_overlay.wgsl` pipeline draws it depth `LessEqual` /
+//! no-write so the crack lands on the block surface (no inflation to misalign the
+//! decal at glancing angles).
+//!
+//! Coincident corners are *not* enough on their own: the chunk mesher flips each
+//! face's triangulation diagonal per-AO (`should_flip` in `mesh::face`) while this
+//! cube always splits 0->2, so the two surfaces interpolate depth a ULP apart per
+//! pixel and would speckle-fight. The break pipeline therefore applies a small
+//! polygon offset toward the camera (`BREAK_DEPTH_BIAS`) so the crack wins that tie
+//! everywhere.
 //!
 //! Geometry is in WORLD space (the break pipeline's vertex shader transforms by
 //! `view_proj`, like the block pipeline) and full-bright. Built into a
@@ -16,10 +26,6 @@ use super::block_model::push_cube_textured;
 use super::BreakOverlayView;
 use crate::atlas::Tile;
 use crate::mesh::Vertex;
-
-/// How far (metres) the crack cube is inflated past the block faces so the overlay
-/// wins the depth `LessEqual` test against the block surface without z-fighting.
-const INFLATE: f32 = 0.003;
 
 /// The destroy tile for crack `stage` (clamped 0..=9), as a [`Tile`].
 #[inline]
@@ -33,6 +39,12 @@ fn destroy_tile(stage: u8) -> Tile {
 /// Build the crack overlay cube for `view` into `verts` / `indices` (cleared
 /// first, capacity reused). Returns the index count (always 36, one cube). All six
 /// faces use the same destroy tile so the crack reads from every angle.
+///
+/// The cube spans the block's exact `[block, block + 1]` cell with no inflation,
+/// so each face lands on the same integer-coordinate plane the chunk mesh emitted
+/// for that block. The pipeline's depth `LessEqual` + a small polygon offset
+/// (`BREAK_DEPTH_BIAS`) put the crack on the surface without z-fighting (see the
+/// module docs for why the offset is needed).
 pub fn build_break_overlay(
     view: &BreakOverlayView,
     verts: &mut Vec<Vertex>,
@@ -41,14 +53,12 @@ pub fn build_break_overlay(
     verts.clear();
     indices.clear();
     let tile = destroy_tile(view.stage);
-    // Origin = block min corner minus the inflation; size = 1 + 2*inflate so the
-    // cube straddles the block symmetrically.
     let origin = Vec3::new(
-        view.block.x as f32 - INFLATE,
-        view.block.y as f32 - INFLATE,
-        view.block.z as f32 - INFLATE,
+        view.block.x as f32,
+        view.block.y as f32,
+        view.block.z as f32,
     );
-    push_cube_textured(verts, indices, [tile; 3], origin, 1.0 + 2.0 * INFLATE);
+    push_cube_textured(verts, indices, [tile; 3], origin, 1.0);
     indices.len() as u32
 }
 
@@ -66,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_one_inflated_cube_with_the_stage_tile() {
+    fn builds_one_coincident_cube_with_the_stage_tile() {
         let mut v = Vec::new();
         let mut i = Vec::new();
         let view = BreakOverlayView {
@@ -81,7 +91,9 @@ mod tests {
         for vert in &v {
             assert_eq!((vert.packed & 0xFF) as u8, want);
         }
-        // Inflated: the cube spans slightly beyond [3,4] on x.
+        // Coincident, not inflated: the cube spans the block cell [3,4] on x
+        // *exactly*, so its faces sit on the chunk mesh's faces and the crack wins
+        // the depth tie via LessEqual instead of poking proud of the surface.
         let min_x = v
             .iter()
             .map(|vert| vert.pos[0])
@@ -90,10 +102,8 @@ mod tests {
             .iter()
             .map(|vert| vert.pos[0])
             .fold(f32::NEG_INFINITY, f32::max);
-        assert!(
-            min_x < 3.0 && max_x > 4.0,
-            "cube should be inflated past the block"
-        );
+        assert_eq!(min_x, 3.0, "cube min lands exactly on the block boundary");
+        assert_eq!(max_x, 4.0, "cube max lands exactly on the block boundary");
     }
 
     #[test]
