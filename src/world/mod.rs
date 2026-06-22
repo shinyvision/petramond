@@ -6,6 +6,7 @@
 
 mod edit;
 mod entities;
+mod furnace;
 mod light_queue;
 mod mesh_queue;
 mod query;

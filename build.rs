@@ -155,6 +155,15 @@ const TILES: &[(&str, &str)] = &[
     ("raw_iron", "raw_iron.png"),
     ("raw_copper", "raw_copper.png"),
     ("coal", "coal.png"),
+    // Furnace update (Survival 0.1): furnace block faces + the "on" front shown
+    // while burning, and the two smelted ingots. Appended last so every preceding
+    // tile id stays stable.
+    ("furnace_top", "furnace_top.png"),
+    ("furnace_front", "furnace_front.png"),
+    ("furnace_front_on", "furnace_front_on.png"),
+    ("furnace_side", "furnace_side.png"),
+    ("iron_ingot", "iron_ingot.png"),
+    ("copper_ingot", "copper_ingot.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

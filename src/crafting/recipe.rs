@@ -7,6 +7,15 @@
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
+/// A smelting recipe: one `input` item produces `result` when smelted in a
+/// furnace. Looked up by input item (see [`Recipes::smelt`]). Separate from the
+/// grid [`Recipe`]s because it isn't matched over a crafting grid.
+#[derive(Clone, Copy, Debug)]
+pub struct SmeltingRecipe {
+    pub input: ItemType,
+    pub result: ItemStack,
+}
+
 /// One cell's requirement: an exact item, or any item carrying a tag (tag
 /// membership is defined in item data — see [`ItemType::has_tag`]).
 #[derive(Clone, Debug)]
@@ -65,17 +74,20 @@ impl Recipe {
     }
 }
 
-/// The loaded recipe set, searched in declaration order (first match wins).
+/// The loaded recipe set: grid (crafting) recipes searched in declaration order,
+/// plus the smelting table looked up by input item.
 #[derive(Default)]
 pub struct Recipes {
     list: Vec<Recipe>,
+    smelting: Vec<SmeltingRecipe>,
 }
 
 impl Recipes {
-    pub fn new(list: Vec<Recipe>) -> Self {
-        Recipes { list }
+    pub fn new(list: Vec<Recipe>, smelting: Vec<SmeltingRecipe>) -> Self {
+        Recipes { list, smelting }
     }
 
+    /// Number of grid (crafting) recipes.
     pub fn len(&self) -> usize {
         self.list.len()
     }
@@ -84,10 +96,18 @@ impl Recipes {
         self.list.is_empty()
     }
 
-    /// The result of the first recipe that matches `grid` (a `cols×cols` square),
-    /// or `None` if nothing matches.
+    /// The result of the first grid recipe that matches `grid` (a `cols×cols`
+    /// square), or `None` if nothing matches.
     pub fn find(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<ItemStack> {
         self.list.iter().find_map(|r| r.matches(grid, cols))
+    }
+
+    /// The smelted product of `input`, or `None` if it has no smelting recipe.
+    pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
+        self.smelting
+            .iter()
+            .find(|r| r.input == input)
+            .map(|r| r.result)
     }
 }
 

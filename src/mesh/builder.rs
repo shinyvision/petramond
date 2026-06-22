@@ -2,8 +2,20 @@ use crate::atlas::Tile;
 use crate::biome::Biome;
 use crate::block::{Block, RenderShape};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
+use crate::furnace::Facing;
 
 use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
+
+/// The horizontal cube face a furnace's front points to, for its [`Facing`].
+#[inline]
+fn facing_face(facing: Facing) -> Face {
+    match facing {
+        Facing::North => Face::NegZ,
+        Facing::South => Face::PosZ,
+        Facing::West => Face::NegX,
+        Facing::East => Face::PosX,
+    }
+}
 use super::vertex::{ChunkMesh, MeshIndexSection, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -321,6 +333,18 @@ fn build_mesh_with_context(
 
                 // Choose tile for each face.
                 let [tile_top, tile_bot, tile_side] = block.tiles();
+                // A furnace shows its front (lit/unlit) only on the face it was
+                // placed facing; the other three horizontal faces use furnace_side.
+                // Read from this chunk's own furnace map (in-chunk only — facing
+                // never affects cross-border culling).
+                let furnace_faces = (block == Block::Furnace).then(|| {
+                    let front = if chunk.is_furnace_lit(x, y, z) {
+                        Tile::FurnaceFrontOn
+                    } else {
+                        Tile::FurnaceFront
+                    };
+                    (facing_face(chunk.furnace_facing(x, y, z)), front)
+                });
                 let ci = z * CHUNK_SX + x;
                 let base_x = x as f32 + ox as f32;
                 let base_z = z as f32 + oz as f32;
@@ -466,7 +490,11 @@ fn build_mesh_with_context(
                         let t = match face {
                             Face::PosY => tile_top,
                             Face::NegY => tile_bot,
-                            _ => tile_side,
+                            _ => match furnace_faces {
+                                Some((front_face, front_tile)) if face == front_face => front_tile,
+                                Some(_) => Tile::FurnaceSide,
+                                None => tile_side,
+                            },
                         };
                         let tint = match tile_tint(t) {
                             Some(TintKind::Grass) => tint_grass[ci],

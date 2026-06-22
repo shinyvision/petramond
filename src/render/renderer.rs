@@ -63,6 +63,9 @@ pub struct UiSnapshot {
     pub result: Option<(ItemType, u8)>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
     pub cursor: Option<(ItemType, u8)>,
+    /// The open furnace's slots + progress gauges, or `None` when the open panel is
+    /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
+    pub furnace: Option<super::FurnaceView>,
 }
 
 impl Default for UiSnapshot {
@@ -77,6 +80,7 @@ impl Default for UiSnapshot {
             craft: [None; crate::crafting::MAX_CELLS],
             result: None,
             cursor: None,
+            furnace: None,
         }
     }
 }
@@ -548,6 +552,7 @@ impl Renderer {
             *cell = v.craft.get(i).copied().flatten().map(|s| (s.item, s.count));
         }
         self.ui.result = v.craft_result.map(|s| (s.item, s.count));
+        self.ui.furnace = v.furnace;
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?

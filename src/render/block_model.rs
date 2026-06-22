@@ -38,6 +38,7 @@
 use super::foliage_tint::{self, FaceMaterial};
 use super::lighting;
 use crate::atlas::Tile;
+use crate::block::Block;
 use crate::mesh::Vertex;
 
 use glam::Vec3;
@@ -200,13 +201,54 @@ pub(super) fn push_cube_textured_lit(
     size: f32,
     skylight: u8,
 ) {
+    push_cube_faces_lit(verts, indices, expand_tiles(tiles), origin, size, skylight);
+}
+
+/// Expand the `[top, bottom, side]` model into the 6 per-face tiles in `ALL_FACES`
+/// order, with `side` on every horizontal face. The inverse mapping of
+/// [`push_cube_textured_lit`].
+#[inline]
+fn expand_tiles(tiles: [Tile; 3]) -> [Tile; 6] {
     let [top, bottom, side] = tiles;
-    for face in ALL_FACES {
-        let tile = match face {
-            Face::PosY => top,
-            Face::NegY => bottom,
-            _ => side,
-        };
+    // ALL_FACES: PosX, NegX, PosY, NegY, PosZ, NegZ.
+    [side, side, top, bottom, side, side]
+}
+
+/// The 6 per-face tiles (`ALL_FACES` order) for drawing `block` as an inventory /
+/// held / dropped-item cube. Most blocks just expand their `[top, bottom, side]`
+/// model; the furnace puts its front on a single visible face so the item reads as
+/// a furnace instead of four mouths (the placed block is meshed directionally).
+pub(super) fn block_icon_faces(block: Block) -> [Tile; 6] {
+    let mut faces = expand_tiles(block.tiles());
+    if block == Block::Furnace {
+        // Index 4 = PosZ, one of the two side faces the isometric icon presents.
+        faces[4] = Tile::FurnaceFront;
+    }
+    faces
+}
+
+/// Append a full-bright textured cube with explicit per-face tiles (`ALL_FACES`
+/// order). Like [`push_cube_textured`] but each of the 6 faces can differ — used
+/// for directional item cubes (e.g. the furnace front). 24 verts / 36 indices.
+pub(super) fn push_cube_faces(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    origin: Vec3,
+    size: f32,
+) {
+    push_cube_faces_lit(verts, indices, faces, origin, size, lighting::FULL_SKYLIGHT);
+}
+
+pub(super) fn push_cube_faces_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    origin: Vec3,
+    size: f32,
+    skylight: u8,
+) {
+    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
         push_quad(
             verts,
@@ -403,6 +445,32 @@ mod tests {
         // PosZ (side), NegZ (side)
         assert_eq!(face_tile(4), Tile::Stone as u8);
         assert_eq!(face_tile(5), Tile::Stone as u8);
+    }
+
+    #[test]
+    fn block_icon_faces_default_expands_top_bottom_side() {
+        // A normal block just expands its 3-tile model: side on every horizontal.
+        let faces = block_icon_faces(Block::OakLog);
+        let [top, bottom, side] = Block::OakLog.tiles();
+        assert_eq!(faces, [side, side, top, bottom, side, side]);
+    }
+
+    #[test]
+    fn furnace_icon_shows_front_on_exactly_one_face() {
+        // The reported bug was four fronts; the item must show the front once, with
+        // furnace_side on the other three horizontal faces (top/bottom are the top).
+        let faces = block_icon_faces(Block::Furnace);
+        assert_eq!(faces[2], Tile::FurnaceTop, "PosY top");
+        assert_eq!(faces[3], Tile::FurnaceTop, "NegY bottom");
+        assert_eq!(faces[4], Tile::FurnaceFront, "front on PosZ (visible in the icon)");
+        for i in [0usize, 1, 5] {
+            assert_eq!(faces[i], Tile::FurnaceSide, "face {i} is a plain side");
+        }
+        assert_eq!(
+            faces.iter().filter(|&&t| t == Tile::FurnaceFront).count(),
+            1,
+            "exactly one front face, not four"
+        );
     }
 
     #[test]

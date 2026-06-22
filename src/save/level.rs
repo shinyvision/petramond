@@ -2,10 +2,10 @@
 //! (position, velocity, mode, full inventory), and the game-tick counter.
 
 use crate::inventory::{Inventory, TOTAL_SLOTS};
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 use crate::mathh::Vec3;
 use crate::player::{Player, PlayerMode};
-use crate::save::codec::{Reader, Writer};
+use crate::save::codec::{get_item_slot, put_item_slot, Reader, Writer};
 
 const VERSION: u32 = 1;
 
@@ -31,9 +31,9 @@ pub fn encode(seed: u32, player: &Player, tick: u64) -> Vec<u8> {
     });
     b.put_u64(tick);
     for slot in player.inventory.raw_slots() {
-        put_slot(&mut b, slot.as_ref());
+        put_item_slot(&mut b, *slot);
     }
-    put_slot(&mut b, player.inventory.cursor());
+    put_item_slot(&mut b, player.inventory.cursor().copied());
     b.put_u8(player.inventory.active_slot());
     b
 }
@@ -54,9 +54,9 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
 
     let mut slots: [Option<ItemStack>; TOTAL_SLOTS] = [None; TOTAL_SLOTS];
     for slot in slots.iter_mut() {
-        *slot = get_slot(&mut r)?;
+        *slot = get_item_slot(&mut r)?;
     }
-    let cursor = get_slot(&mut r)?;
+    let cursor = get_item_slot(&mut r)?;
     let active = r.u8()?;
     let inventory = Inventory::from_parts(slots, cursor, active);
 
@@ -78,30 +78,6 @@ fn put_vec3(b: &mut Vec<u8>, v: Vec3) {
 
 fn get_vec3(r: &mut Reader) -> Option<Vec3> {
     Some(Vec3::new(r.f32()?, r.f32()?, r.f32()?))
-}
-
-/// A slot is two bytes: item id + count. Empty is encoded as id 0 (`Air`).
-fn put_slot(b: &mut Vec<u8>, slot: Option<&ItemStack>) {
-    match slot {
-        Some(s) if !s.is_empty() => {
-            b.put_u8(s.item.id());
-            b.put_u8(s.count);
-        }
-        _ => {
-            b.put_u8(0);
-            b.put_u8(0);
-        }
-    }
-}
-
-fn get_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
-    let id = r.u8()?;
-    let count = r.u8()?;
-    if id == 0 || count == 0 {
-        Some(None)
-    } else {
-        Some(Some(ItemStack::new(ItemType::from_id(id), count)))
-    }
 }
 
 #[cfg(test)]

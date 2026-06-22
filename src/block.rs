@@ -94,6 +94,8 @@ pub enum Block {
     CherryPlanks,
     MangrovePlanks,
     CraftingTable,
+    // --- Furnace update (id 82). ---
+    Furnace,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
@@ -121,7 +123,7 @@ impl Block {
     }
 
     #[inline]
-    pub fn id(self) -> u8 {
+    pub const fn id(self) -> u8 {
         self as u8
     }
 
@@ -333,6 +335,7 @@ mod tests {
             Block::CherryPlanks,
             Block::MangrovePlanks,
             Block::CraftingTable,
+            Block::Furnace,
         ];
 
         assert_eq!(Block::ALL, expected);

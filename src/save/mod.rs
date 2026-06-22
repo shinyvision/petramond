@@ -10,6 +10,7 @@
 
 mod codec;
 pub mod entities;
+mod furnace;
 pub mod level;
 mod region;
 

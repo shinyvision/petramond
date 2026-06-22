@@ -16,6 +16,7 @@
 //!   2. pours straight down if there is space below;
 //!   3. spreads horizontally, preferring the direction of the nearest downhill
 //!      drop within [`SLOPE_FIND_DIST`], else all four cardinals.
+//!
 //! Every cell it sets announces itself to its neighbours, so the sheet advances
 //! one ring per flow delay and naturally crosses chunk borders.
 

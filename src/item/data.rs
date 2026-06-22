@@ -110,6 +110,9 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::RawIron,
     ItemType::RawCopper,
     ItemType::Coal,
+    ItemType::IronIngot,
+    ItemType::CopperIngot,
+    ItemType::Furnace,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -713,18 +716,39 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Raw Iron",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Smeltable],
     },
     ItemDef {
         item: ItemType::RawCopper,
         name: "Raw Copper",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Smeltable],
     },
     ItemDef {
         item: ItemType::Coal,
         name: "Coal",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[ItemTag::Fuel],
+    },
+    ItemDef {
+        item: ItemType::IronIngot,
+        name: "Iron Ingot",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::CopperIngot,
+        name: "Copper Ingot",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::Furnace,
+        name: "Furnace",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
         tags: &[],

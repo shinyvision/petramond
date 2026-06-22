@@ -6,17 +6,23 @@
 //! lot (flate2 / miniz_oxide, pure Rust). Heightmap and skylight are recomputed
 //! on load, so they're never written.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
 use crate::entity::DroppedItem;
+use crate::furnace::Furnace;
+use crate::item::{ItemStack, ItemType};
 
 const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
-/// Current chunk-record version. A record appends a length-prefixed item-entity
-/// list when `FLAG_HAS_ENTITIES` is set in the flags byte.
+/// Current chunk-record version. Extra sections (item entities, furnaces) are
+/// gated by flag bits and appended at the end, so adding one keeps the version
+/// stable: old code ignores trailing bytes it doesn't recognise, and new code
+/// reads a missing section as empty when its flag is clear.
 const CHUNK_REC_VERSION: u8 = 2;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
+const FLAG_HAS_FURNACES: u8 = 0x04;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -29,6 +35,9 @@ pub struct ChunkSnapshot {
     /// Item entities resting in this chunk, captured at save time so their
     /// lifetime timers persist with the chunk. Empty for the common case.
     pub entities: Vec<DroppedItem>,
+    /// Furnace block-entities in this chunk, keyed by local block index, so their
+    /// contents + smelting progress persist. Empty for the common chunk.
+    pub furnaces: HashMap<u16, Furnace>,
 }
 
 impl ChunkSnapshot {
@@ -41,6 +50,7 @@ impl ChunkSnapshot {
             biomes: Box::from(c.biomes_slice()),
             water: c.water_slice().map(Box::from),
             entities: Vec::new(),
+            furnaces: c.furnaces().clone(),
         }
     }
 }
@@ -112,6 +122,34 @@ impl Writer for Vec<u8> {
     }
 }
 
+/// Encode one inventory/container slot as `[item id, count]`, with `[0, 0]` for an
+/// empty or absent slot. Shared by the `level` (inventory/cursor) and `furnace`
+/// codecs so the 2-byte slot format lives in exactly one place.
+pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
+    match slot {
+        Some(s) if !s.is_empty() => {
+            buf.put_u8(s.item.id());
+            buf.put_u8(s.count);
+        }
+        _ => {
+            buf.put_u8(0);
+            buf.put_u8(0);
+        }
+    }
+}
+
+/// Decode a slot written by [`put_item_slot`]: `None` on truncated input,
+/// `Some(None)` for an empty slot, else the stack.
+pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
+    let id = r.u8()?;
+    let count = r.u8()?;
+    if id == 0 || count == 0 {
+        Some(None)
+    } else {
+        Some(Some(ItemStack::new(ItemType::from_id(id), count)))
+    }
+}
+
 /// zlib-compress a payload.
 pub fn deflate(payload: &[u8]) -> Vec<u8> {
     let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
@@ -141,6 +179,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.entities.is_empty() {
         flags |= FLAG_HAS_ENTITIES;
     }
+    if !s.furnaces.is_empty() {
+        flags |= FLAG_HAS_FURNACES;
+    }
     payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
@@ -149,6 +190,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     }
     if !s.entities.is_empty() {
         super::entities::put_entities(&mut payload, &s.entities);
+    }
+    if !s.furnaces.is_empty() {
+        super::furnace::put_furnaces(&mut payload, &s.furnaces);
     }
     deflate(&payload)
 }
@@ -175,14 +219,21 @@ pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<Dropped
     } else {
         Vec::new()
     };
-    Some((Chunk::from_saved(cx, cz, blocks, biomes, water), entities))
+    let furnaces = if flags & FLAG_HAS_FURNACES != 0 {
+        super::furnace::get_furnaces(&mut r)?
+    } else {
+        HashMap::new()
+    };
+    Some((
+        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces),
+        entities,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block::Block;
-    use crate::item::{ItemStack, ItemType};
     use crate::mathh::Vec3;
 
     #[test]
@@ -228,6 +279,38 @@ mod tests {
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].stack, ItemStack::new(ItemType::Stone, 7));
         assert_eq!(entities[0].ticks_lived, 1234, "remaining lifetime survives the save");
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_furnaces() {
+        let mut c = Chunk::new(1, 1);
+        c.set_block(2, 65, 3, Block::Furnace);
+        c.insert_furnace(
+            2,
+            65,
+            3,
+            crate::furnace::Furnace {
+                input: Some(ItemStack::new(ItemType::RawCopper, 12)),
+                fuel: Some(ItemStack::new(ItemType::Coal, 1)),
+                output: None,
+                cook_progress: 200,
+                burn_remaining: 1000,
+                burn_max: 4800,
+                facing: crate::furnace::Facing::West,
+            },
+        );
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities) = decode_chunk(1, 1, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(2, 65, 3), Block::Furnace.id());
+        let f = back.furnace_at(2, 65, 3).expect("furnace restored");
+        assert_eq!(f.input, Some(ItemStack::new(ItemType::RawCopper, 12)));
+        assert_eq!(f.fuel, Some(ItemStack::new(ItemType::Coal, 1)));
+        assert_eq!(f.cook_progress, 200);
+        assert_eq!(f.burn_remaining, 1000);
+        assert_eq!(f.facing, crate::furnace::Facing::West, "facing persists");
+        assert!(f.is_lit(), "a saved burning furnace reloads lit");
     }
 
     #[test]

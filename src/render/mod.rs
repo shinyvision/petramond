@@ -46,6 +46,10 @@ pub use ui::cursor_in_panel;
 /// click on a craft input cell / result slot routes to the right action.
 pub use ui::{craft_slot_at_cursor, CraftHit, CraftKind};
 
+/// Furnace-slot hit-test (input / fuel / output), shared with the App so a click
+/// in the open furnace screen routes to the right slot.
+pub use ui::{furnace_slot_at_cursor, FurnaceHit};
+
 use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Vec3};
 
@@ -135,6 +139,20 @@ pub struct ParticleInstance {
     pub skylight: u8,
 }
 
+/// A furnace's view for the open furnace screen: its three slots plus the two
+/// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so the renderer
+/// snapshots it by value with no borrow.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct FurnaceView {
+    pub input: Option<ItemStack>,
+    pub fuel: Option<ItemStack>,
+    pub output: Option<ItemStack>,
+    /// Smelt progress (drives the arrow): 0 at the start of an item, 1 when done.
+    pub cook01: f32,
+    /// Remaining fuel of the current burn (drives the flame): 1 full → 0 spent.
+    pub burn01: f32,
+}
+
 /// Per-frame UI state handed to the renderer. Borrows the `Inventory` for the
 /// duration of the [`Renderer::set_ui`] call only; the renderer snapshots the
 /// small bits it needs into owned state so it never holds a borrow across frames.
@@ -147,6 +165,9 @@ pub struct UiFrame<'a> {
     pub craft: &'a [Option<ItemStack>],
     /// The crafting result preview for the result slot.
     pub craft_result: Option<ItemStack>,
+    /// The open furnace's slots + gauges, or `None` when the open panel is not a
+    /// furnace. When `Some`, the furnace panel replaces the crafting grid.
+    pub furnace: Option<FurnaceView>,
     /// Screen size in physical pixels `(width, height)`.
     pub screen: (u32, u32),
     /// Cursor position in physical pixels `(x, y)` (for the open-inventory cursor

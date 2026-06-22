@@ -114,6 +114,14 @@ pub enum ItemType {
     RawIron,
     RawCopper,
     Coal,
+    // --- Furnace update: smelted ingots (item-only) and the Furnace block-item.
+    // Appended at the END so every id above stays frozen. Unlike the earlier
+    // block-items, `ItemType::Furnace` does NOT share `Block::Furnace`'s id — the
+    // block↔item mapping is made explicit in `from_block` / `as_block` instead of
+    // assuming id equality (see `LEGACY_BLOCK_ITEMS`). ---
+    IronIngot,
+    CopperIngot,
+    Furnace,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -150,6 +158,10 @@ impl DropSpec {
 pub enum ItemTag {
     /// Any wood-type planks (mirrors Minecraft's `#planks`).
     Planks,
+    /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
+    Fuel,
+    /// Anything a furnace can smelt — shift-clicked into the input slot.
+    Smeltable,
 }
 
 impl ItemTag {
@@ -158,6 +170,8 @@ impl ItemTag {
     pub fn from_key(key: &str) -> Option<ItemTag> {
         match key {
             "planks" => Some(ItemTag::Planks),
+            "fuel" => Some(ItemTag::Fuel),
+            "smeltable" => Some(ItemTag::Smeltable),
             _ => None,
         }
     }
@@ -200,6 +214,13 @@ impl ItemType {
     /// All item types in id order (mirrors [`Block::ALL`]).
     pub const ALL: &'static [ItemType] = data::ALL_ITEMS;
 
+    /// Size of the original 0.1 block-item prefix: item ids `[0, LEGACY_BLOCK_ITEMS)`
+    /// are block-items that share their block's id (`Air..=CraftingTable`). Block-items
+    /// added afterwards are appended past the item-only range and mapped explicitly in
+    /// [`from_block`](Self::from_block)/[`as_block`](Self::as_block), so growing the
+    /// block list never shifts an item id. Pinned by `item_block_id_parity`.
+    const LEGACY_BLOCK_ITEMS: usize = Block::CraftingTable.id() as usize + 1;
+
     /// Stable numeric id, identical to the matching block's id.
     #[inline]
     pub fn id(self) -> u8 {
@@ -212,22 +233,31 @@ impl ItemType {
         data::from_id(id)
     }
 
-    /// The block-item for a block (1:1; `Air -> Air`). Because item ids mirror
-    /// block ids, this is just an id conversion.
+    /// The block-item for a block, or `None` if the block has no inventory item.
+    /// The original 0.1 block-items (`[0, LEGACY_BLOCK_ITEMS)`) share their block's
+    /// id, so for them this is a plain id conversion; block-items added later are
+    /// appended past the item-only range and mapped explicitly here, so adding a
+    /// block never shifts an existing item id. `Air -> Air`.
     #[inline]
     pub fn from_block(b: Block) -> ItemType {
-        Self::from_id(b.id())
+        match b {
+            Block::Furnace => ItemType::Furnace,
+            _ => Self::from_id(b.id()),
+        }
     }
 
     /// The block this item places, or `None` for an item-only item (tools, raw
-    /// drops). Block-items occupy the low id range shared with `Block`, so the
-    /// check is a range test followed by the id conversion.
+    /// drops, ingots). The frozen id-equal prefix `[0, LEGACY_BLOCK_ITEMS)` maps by
+    /// id; later block-items (appended past the item-only items) are matched
+    /// explicitly so their item id need not equal their block id.
     #[inline]
     pub fn as_block(self) -> Option<Block> {
-        if (self.id() as usize) < Block::ALL.len() {
-            Some(Block::from_id(self.id()))
-        } else {
-            None
+        match self {
+            ItemType::Furnace => Some(Block::Furnace),
+            _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => {
+                Some(Block::from_id(self.id()))
+            }
+            _ => None,
         }
     }
 
@@ -239,6 +269,18 @@ impl ItemType {
         match self {
             ItemType::WoodenPickaxe => 1,
             ItemType::StonePickaxe => 2,
+            _ => 0,
+        }
+    }
+
+    /// How many game ticks this item burns as furnace fuel (`0` = not a fuel).
+    /// A property of the item — a furnace consuming it reads this, like mining
+    /// reads [`pickaxe_tier`](Self::pickaxe_tier). One piece of coal burns 4800
+    /// ticks (= eight 600-tick smelts).
+    #[inline]
+    pub fn fuel_burn_ticks(self) -> u16 {
+        match self {
+            ItemType::Coal => 4800,
             _ => 0,
         }
     }
@@ -315,7 +357,9 @@ impl ItemType {
             RawIron => Tile::RawIron,
             RawCopper => Tile::RawCopper,
             Coal => Tile::Coal,
-            // Block-items resolve via `as_block`; never reach here.
+            IronIngot => Tile::IronIngot,
+            CopperIngot => Tile::CopperIngot,
+            // Block-items (incl. Furnace) resolve via `as_block`; never reach here.
             _ => Tile::Stick,
         }
     }
@@ -457,6 +501,9 @@ mod tests {
             ItemType::RawIron,
             ItemType::RawCopper,
             ItemType::Coal,
+            ItemType::IronIngot,
+            ItemType::CopperIngot,
+            ItemType::Furnace,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -478,18 +525,40 @@ mod tests {
 
     #[test]
     fn item_block_id_parity() {
-        // Block-items occupy the low ids shared 1:1 with `Block` (prefix parity);
-        // item-only variants live past the block range and map to no block.
-        assert!(ItemType::ALL.len() >= Block::ALL.len());
+        // Every block round-trips through its block-item — whether or not the item
+        // id equals the block id.
         for &block in Block::ALL {
-            let item = ItemType::from_block(block);
-            assert_eq!(item.id(), block.id(), "{block:?}");
-            assert_eq!(item.as_block(), Some(block), "{block:?}");
+            assert_eq!(
+                ItemType::from_block(block).as_block(),
+                Some(block),
+                "{block:?} should round-trip block -> item -> block"
+            );
         }
-        for &item in ItemType::ALL {
-            if (item.id() as usize) >= Block::ALL.len() {
-                assert_eq!(item.as_block(), None, "{item:?} should be item-only");
+        // The frozen 0.1 prefix is still id-equal; the furnace block-item is
+        // deliberately decoupled (its item id is appended, not the block id) — that
+        // split is the point, so growing the block list never shifts an item id.
+        for &block in Block::ALL {
+            if (block.id() as usize) < ItemType::LEGACY_BLOCK_ITEMS {
+                assert_eq!(ItemType::from_block(block).id(), block.id(), "{block:?}");
             }
+        }
+        assert_ne!(
+            ItemType::Furnace.id(),
+            Block::Furnace.id(),
+            "furnace item id is decoupled from its block id"
+        );
+        // Item-only items (tools, raw drops, ingots) place no block.
+        for item in [
+            ItemType::Stick,
+            ItemType::WoodenPickaxe,
+            ItemType::StonePickaxe,
+            ItemType::RawIron,
+            ItemType::RawCopper,
+            ItemType::Coal,
+            ItemType::IronIngot,
+            ItemType::CopperIngot,
+        ] {
+            assert_eq!(item.as_block(), None, "{item:?} should be item-only");
         }
         // Air round-trips both ways.
         assert_eq!(ItemType::from_block(Block::Air), ItemType::Air);
@@ -576,6 +645,18 @@ mod tests {
         // Tag names resolve from the recipe key.
         assert_eq!(ItemTag::from_key("planks"), Some(Planks));
         assert_eq!(ItemTag::from_key("bogus"), None);
+
+        // Furnace routing tags: coal is fuel; raw ores are smeltable; the products
+        // are neither (so a finished ingot doesn't shift back into the furnace).
+        assert!(ItemType::Coal.has_tag(ItemTag::Fuel));
+        assert!(!ItemType::Coal.has_tag(ItemTag::Smeltable));
+        assert!(ItemType::RawIron.has_tag(ItemTag::Smeltable));
+        assert!(ItemType::RawCopper.has_tag(ItemTag::Smeltable));
+        assert!(!ItemType::RawIron.has_tag(ItemTag::Fuel));
+        assert!(!ItemType::IronIngot.has_tag(ItemTag::Smeltable));
+        assert!(!ItemType::IronIngot.has_tag(ItemTag::Fuel));
+        assert_eq!(ItemTag::from_key("fuel"), Some(ItemTag::Fuel));
+        assert_eq!(ItemTag::from_key("smeltable"), Some(ItemTag::Smeltable));
     }
 
     #[test]

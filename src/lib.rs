@@ -14,6 +14,7 @@ pub mod chunk;
 pub mod controls;
 pub mod crafting;
 pub mod entity;
+pub mod furnace;
 pub mod game;
 pub mod inventory;
 pub mod item;

@@ -1,5 +1,5 @@
 /// Face direction enum.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Face {
     PosX,
     NegX,

@@ -15,7 +15,7 @@
 
 use glam::Vec3;
 
-use super::block_model::{push_cube_textured_lit, BillboardBasis};
+use super::block_model::{block_icon_faces, push_cube_faces_lit, BillboardBasis};
 use super::ItemEntityInstance;
 use crate::item::ItemRenderKind;
 use crate::mesh::Vertex;
@@ -63,9 +63,9 @@ pub fn build_item_entities(
         let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
         match inst.item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
-                let tiles = block.tiles();
+                let faces = block_icon_faces(block);
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    push_spinning_cube(verts, indices, inst, tiles, offset);
+                    push_spinning_cube(verts, indices, inst, faces, offset);
                 }
             }
             ItemRenderKind::Sprite(tile) => {
@@ -104,7 +104,7 @@ fn push_spinning_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     inst: &ItemEntityInstance,
-    tiles: [crate::atlas::Tile; 3],
+    faces: [crate::atlas::Tile; 6],
     offset: Vec3,
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
@@ -112,10 +112,10 @@ fn push_spinning_cube(
     // caller's buffers (no temporary Vec), then rotate the just-appended verts in
     // place about Y and translate them to the world centre.
     let start = verts.len();
-    push_cube_textured_lit(
+    push_cube_faces_lit(
         verts,
         indices,
-        tiles,
+        faces,
         Vec3::splat(-half),
         ITEM_CUBE_SIZE,
         inst.skylight,

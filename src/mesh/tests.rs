@@ -892,3 +892,49 @@ mod parallel_parity_tests {
         }
     }
 }
+
+/// A placed furnace shows its front on exactly the face it was placed facing and
+/// `furnace_side` on the other three horizontal faces (top + bottom use the top
+/// tile). Pins the directional fix for "front rendered on all four sides".
+#[test]
+fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
+    use crate::atlas::Tile;
+    use crate::furnace::{Facing, Furnace};
+    let air = |_: i32, _: i32, _: i32| 0u8;
+    let biome0 = |_: i32, _: i32| 0u8;
+    let light = |_: i32, _: i32, _: i32| SKY_FULL;
+
+    let mut chunk = Chunk::new(0, 0);
+    chunk.set_block(8, 64, 8, Block::Furnace);
+    chunk.insert_furnace(
+        8,
+        64,
+        8,
+        Furnace {
+            facing: Facing::East,
+            ..Default::default()
+        },
+    );
+
+    let count = |mesh: &ChunkMesh, tile: Tile| {
+        mesh.opaque
+            .iter()
+            .filter(|v| v.packed & 0xFF == tile as u32)
+            .count()
+    };
+
+    // Unlit: 6 faces × 4 verts — 1 front, 3 sides, 2 top/bottom.
+    let m = build_mesh(&chunk, air, biome0, light);
+    assert_eq!(count(&m, Tile::FurnaceFront), 4, "front on exactly the facing face");
+    assert_eq!(count(&m, Tile::FurnaceSide), 12, "side on the other three faces");
+    assert_eq!(count(&m, Tile::FurnaceTop), 8, "top + bottom");
+    assert_eq!(count(&m, Tile::FurnaceFrontOn), 0, "no lit front while unlit");
+
+    // Lit: the facing face swaps to the glowing front; the sides do not glow.
+    chunk.furnace_at_mut(8, 64, 8).unwrap().burn_remaining = 100;
+    chunk.dirty = true;
+    let lit = build_mesh(&chunk, air, biome0, light);
+    assert_eq!(count(&lit, Tile::FurnaceFrontOn), 4, "lit front on the facing face only");
+    assert_eq!(count(&lit, Tile::FurnaceFront), 0);
+    assert_eq!(count(&lit, Tile::FurnaceSide), 12, "sides never glow");
+}

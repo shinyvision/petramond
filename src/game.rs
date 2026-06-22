@@ -8,12 +8,13 @@ use crate::block::Block;
 use crate::camera::Camera;
 use crate::crafting::{load_recipes, CraftGrid, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
+use crate::furnace::{Facing, Furnace};
 use crate::inventory::Inventory;
-use crate::item::{ItemStack, ItemType};
+use crate::item::{ItemStack, ItemTag, ItemType};
 use crate::mathh::{lerp, IVec3, SelectionShape, Vec3};
 use crate::mining::MiningState;
 use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
-use crate::render::{BreakOverlayView, ItemEntityInstance, ParticleInstance};
+use crate::render::{BreakOverlayView, FurnaceView, ItemEntityInstance, ParticleInstance};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
@@ -75,6 +76,9 @@ pub struct GameEvents {
     /// The player right-clicked a placed crafting table this frame. The app shell
     /// reacts by opening the 3×3 crafting screen (the game can't own screens).
     pub open_crafting_table: bool,
+    /// The player right-clicked a placed furnace this frame (its world position).
+    /// The app shell reacts by opening the furnace screen.
+    pub open_furnace: Option<IVec3>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -118,6 +122,12 @@ pub struct Game {
     /// Set when the player right-clicks a placed crafting table, so the next
     /// [`tick`](Self::tick) asks the app shell to open the 3×3 screen. One-shot.
     request_open_table: bool,
+    /// Set to a furnace's position when right-clicked, so the next
+    /// [`tick`](Self::tick) asks the app shell to open the furnace screen. One-shot.
+    request_open_furnace: Option<IVec3>,
+    /// The position of the furnace whose screen is currently open (the GUI reads and
+    /// edits the furnace stored there); `None` when no furnace screen is up.
+    open_furnace: Option<IVec3>,
 }
 
 impl Game {
@@ -143,7 +153,7 @@ impl Game {
 
         // Restore the saved player, or spawn on the nearest exposed solid surface
         // to the origin (drops to the nearest coast if the origin is open ocean).
-        let mut player = match &level {
+        let player = match &level {
             Some(l) => {
                 let mut p = Player::new(l.player_pos);
                 p.set_mode(l.player_mode);
@@ -188,6 +198,8 @@ impl Game {
             recipes: load_recipes(),
             craft: CraftGrid::new(),
             request_open_table: false,
+            request_open_furnace: None,
+            open_furnace: None,
         }
     }
 
@@ -237,6 +249,8 @@ impl Game {
             threw_item: std::mem::take(&mut self.threw_item),
             // Set this tick by handle_block_actions when a table was right-clicked.
             open_crafting_table: std::mem::take(&mut self.request_open_table),
+            // Set when a furnace was right-clicked.
+            open_furnace: std::mem::take(&mut self.request_open_furnace),
         }
     }
 
@@ -251,6 +265,8 @@ impl Game {
         let mut ran = 0;
         while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
             self.world.game_tick();
+            // Furnaces smelt on the same 20 TPS clock (recipes live in `Game`).
+            self.world.tick_furnaces(&self.recipes);
             // Item collection is paced by the simulation clock, not the frame
             // rate: "a game tick decides the player picks it up".
             self.item_pickup_tick();
@@ -343,6 +359,22 @@ impl Game {
         self.craft.recompute(&self.recipes);
     }
 
+    /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
+    /// reads and edits. Defensively creates an empty entity if the block lacks one
+    /// (placement always inserts one, so this is belt-and-braces).
+    pub fn open_furnace_screen(&mut self, pos: IVec3) {
+        if self.world.furnace_at(pos).is_none() {
+            self.world.insert_furnace(pos, Facing::default());
+        }
+        self.open_furnace = Some(pos);
+    }
+
+    /// End the furnace-screen session. The furnace keeps its contents (unlike the
+    /// crafting grid, which empties back into the inventory on close).
+    pub fn close_furnace(&mut self) {
+        self.open_furnace = None;
+    }
+
     /// Close the crafting grid: return every input item to the inventory (any
     /// overflow is thrown into the world), then clear the result.
     pub fn close_crafting(&mut self) {
@@ -423,6 +455,115 @@ impl Game {
             self.craft.consume_one();
             self.craft.recompute(&self.recipes);
         }
+    }
+
+    /// The view of the currently-open furnace for the UI (its slots + the two
+    /// progress gauges), or `None` if no furnace screen is up or it has unloaded.
+    pub fn open_furnace_view(&self) -> Option<FurnaceView> {
+        let pos = self.open_furnace?;
+        let f = self.world.furnace_at(pos)?;
+        Some(FurnaceView {
+            input: f.input,
+            fuel: f.fuel,
+            output: f.output,
+            cook01: f.cook_fraction(),
+            burn01: f.burn_fraction(),
+        })
+    }
+
+    /// Run `edit` on the open furnace's contents, then mark its chunk modified so the
+    /// change persists (an idle furnace wouldn't otherwise be re-saved). No-op when
+    /// no furnace screen is open or the furnace has unloaded.
+    fn edit_open_furnace(&mut self, edit: impl FnOnce(&mut Inventory, &mut Furnace)) {
+        let Some(pos) = self.open_furnace else { return };
+        if let Some(f) = self.world.furnace_at_mut(pos) {
+            edit(&mut self.player.inventory, f);
+        }
+        self.world.mark_furnace_modified(pos);
+    }
+
+    /// Left-click the furnace input (smeltable) slot: cursor pick/drop/merge/swap.
+    pub fn furnace_click_input(&mut self) {
+        self.edit_open_furnace(|inv, f| inv.click_external_slot(&mut f.input));
+    }
+
+    /// Right-click the furnace input slot: split / place-one.
+    pub fn furnace_right_click_input(&mut self) {
+        self.edit_open_furnace(|inv, f| inv.right_click_external_slot(&mut f.input));
+    }
+
+    /// Left-click the furnace fuel slot: cursor pick/drop/merge/swap.
+    pub fn furnace_click_fuel(&mut self) {
+        self.edit_open_furnace(|inv, f| inv.click_external_slot(&mut f.fuel));
+    }
+
+    /// Right-click the furnace fuel slot: split / place-one.
+    pub fn furnace_right_click_fuel(&mut self) {
+        self.edit_open_furnace(|inv, f| inv.right_click_external_slot(&mut f.fuel));
+    }
+
+    /// Click the furnace output: take-only — move the whole product onto the cursor
+    /// if it fits (cursor empty, or the same item with room). You can't deposit into
+    /// the output, so this is the only way to interact with it.
+    pub fn furnace_take_output(&mut self) {
+        self.edit_open_furnace(|inv, f| {
+            if let Some(out) = f.output {
+                if inv.try_stack_onto_cursor(out) {
+                    f.output = None;
+                }
+            }
+        });
+    }
+
+    /// Shift-click the furnace input slot: move its stack to the inventory (whatever
+    /// doesn't fit stays put).
+    pub fn furnace_shift_input(&mut self) {
+        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.input));
+    }
+
+    /// Shift-click the furnace fuel slot: move its stack to the inventory.
+    pub fn furnace_shift_fuel(&mut self) {
+        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.fuel));
+    }
+
+    /// Shift-click the furnace output slot: move the product to the inventory.
+    pub fn furnace_shift_output(&mut self) {
+        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.output));
+    }
+
+    /// Shift-click inventory slot `i` while the furnace screen is open: a
+    /// [`Fuel`](ItemTag::Fuel) stack goes to the fuel slot and a
+    /// [`Smeltable`](ItemTag::Smeltable) stack to the input slot (leftover stays in
+    /// the inventory). Items that are neither fall back to the normal hotbar↔grid
+    /// move, so shift-click still does something sensible for them.
+    pub fn furnace_shift_from_inventory(&mut self, i: usize) {
+        let Some(pos) = self.open_furnace else { return };
+        let Some(stack) = self.player.inventory.slot(i).copied() else {
+            return;
+        };
+        let to_fuel = stack.item.has_tag(ItemTag::Fuel);
+        let to_input = stack.item.has_tag(ItemTag::Smeltable);
+        if !to_fuel && !to_input {
+            self.player.inventory.shift_move_slot(i);
+            return;
+        }
+        // `world` and `player` are disjoint fields, so the furnace slot and the
+        // inventory slot can be borrowed together for the move.
+        {
+            let Some(furnace) = self.world.furnace_at_mut(pos) else {
+                return;
+            };
+            let Some(src) = self.player.inventory.slot_mut(i) else {
+                return;
+            };
+            let dst = if to_fuel {
+                &mut furnace.fuel
+            } else {
+                &mut furnace.input
+            };
+            move_stack(src, dst);
+        }
+        self.world.mark_furnace_modified(pos);
     }
 
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
@@ -640,6 +781,15 @@ impl Game {
             let light = break_light(&self.world, event.pos, hit_normal);
             self.world
                 .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
+            // A broken furnace scatters whatever it held, regardless of tool (the
+            // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
+            if event.block == Block::Furnace {
+                if let Some(f) = self.world.take_furnace(event.pos) {
+                    for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
+                        self.spawn_item_stack(event.pos, stack, light);
+                    }
+                }
+            }
             self.particles
                 .spawn_break_burst_lit(event.pos, event.block, light);
             if event.harvested {
@@ -663,26 +813,30 @@ impl Game {
             self.mining_dust_t = 0.0;
         }
 
-        // Right-click a placed crafting table to open it (interact) rather than
-        // placing into the cell — unless sneaking, which falls through so the
-        // player can still build on top of a table.
-        let open_table =
-            input.place_clicked && !input.movement.sneak && self.targeting_crafting_table();
-        if open_table {
-            self.request_open_table = true;
-        }
-        let placed = !open_table && input.place_clicked && self.try_place();
+        // Right-clicking a placed interactable block (crafting table, furnace) opens
+        // its screen rather than placing into the cell — unless sneaking, which
+        // falls through so the player can still build against it.
+        let interact = input.place_clicked && !input.movement.sneak;
+        let interacted = interact && self.try_open_interactable();
+        let placed = !interacted && input.place_clicked && self.try_place();
         (placed, broke_block)
     }
 
-    /// Whether the current look target is a placed crafting table.
-    fn targeting_crafting_table(&self) -> bool {
-        match self.look {
-            Some(h) => {
-                Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z))
-                    == Block::CraftingTable
+    /// If the look target is an interactable block, request its screen and return
+    /// `true` (consuming the right-click). A crafting table opens the 3×3 grid; a
+    /// furnace opens the furnace screen at that position.
+    fn try_open_interactable(&mut self) -> bool {
+        let Some(h) = self.look else { return false };
+        match Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z)) {
+            Block::CraftingTable => {
+                self.request_open_table = true;
+                true
             }
-            None => false,
+            Block::Furnace => {
+                self.request_open_furnace = Some(h.block);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -706,6 +860,12 @@ impl Game {
             && !self.player.intersects_block(p)
             && self.world.set_block_world(p.x, p.y, p.z, block)
         {
+            // A placed furnace gets an empty block-entity from the moment it exists,
+            // its front oriented to face the player.
+            if block == Block::Furnace {
+                self.world
+                    .insert_furnace(p, facing_from_forward(self.cam.forward()));
+            }
             self.player.inventory.decrement_selected();
             true
         } else {
@@ -734,6 +894,19 @@ impl Game {
             drop.skylight = skylight;
             self.world.spawn_item(drop);
         }
+    }
+
+    /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
+    /// furnace scattering its contents). No-op for an empty stack.
+    fn spawn_item_stack(&mut self, pos: IVec3, stack: ItemStack, skylight: u8) {
+        if stack.is_empty() {
+            return;
+        }
+        let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
+        self.spawn_counter = self.spawn_counter.wrapping_add(1);
+        let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+        drop.skylight = skylight;
+        self.world.spawn_item(drop);
     }
 
     /// Per-frame entity update: item-entity physics (gravity, collision, pickup
@@ -812,6 +985,51 @@ impl Game {
 
             self.fallback_world.biome_at(wx, wz)
         })
+    }
+}
+
+/// The furnace facing for a block placed while looking along `forward`: the front
+/// (mouth) points back toward the player — opposite the camera's horizontal look
+/// direction — snapped to the nearest cardinal.
+fn facing_from_forward(forward: Vec3) -> Facing {
+    let (fx, fz) = (-forward.x, -forward.z);
+    if fx.abs() >= fz.abs() {
+        if fx >= 0.0 {
+            Facing::East
+        } else {
+            Facing::West
+        }
+    } else if fz >= 0.0 {
+        Facing::South
+    } else {
+        Facing::North
+    }
+}
+
+/// Move `slot`'s whole stack into `inv`, leaving any part that didn't fit behind
+/// (furnace shift-click). No-op on an empty slot.
+fn transfer_to_inventory(inv: &mut Inventory, slot: &mut Option<ItemStack>) {
+    if let Some(stack) = slot.take() {
+        *slot = inv.add(stack);
+    }
+}
+
+/// Move `src`'s stack into `dst` (a single furnace slot): merge onto a matching
+/// item up to its max, or fill an empty slot; whatever doesn't fit stays in `src`.
+/// A different item in `dst` blocks the move. No-op on an empty `src`.
+fn move_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
+    let Some(mut incoming) = src.take() else {
+        return;
+    };
+    match dst {
+        None => *dst = Some(incoming),
+        Some(existing) if existing.can_stack_with(&incoming) => {
+            let moved = existing.space_left().min(incoming.count);
+            existing.count += moved;
+            incoming.count -= moved;
+            *src = (incoming.count > 0).then_some(incoming);
+        }
+        Some(_) => *src = Some(incoming),
     }
 }
 
@@ -1557,5 +1775,83 @@ mod tests {
         assert_eq!(drops.len(), 1);
         assert_eq!(drops[0].stack.item, ItemType::RawCopper);
         assert!((2..=4).contains(&drops[0].stack.count), "2–4 raw copper");
+    }
+
+    #[test]
+    fn furnace_shift_routes_fuel_and_smeltable_to_their_slots() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let pos = IVec3::new(2, 64, 2);
+        game.world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        game.world.insert_furnace(pos, Facing::North);
+        game.open_furnace_screen(pos);
+
+        // Hotbar: coal (slot 0), raw iron (slot 1), oak planks (slot 2 — neither tag).
+        game.player.inventory = Inventory::new();
+        game.add_to_inventory(ItemStack::new(ItemType::Coal, 5));
+        game.add_to_inventory(ItemStack::new(ItemType::RawIron, 3));
+        game.add_to_inventory(ItemStack::new(ItemType::OakPlanks, 4));
+
+        // Coal -> fuel slot.
+        game.furnace_shift_from_inventory(0);
+        assert!(game.inventory().slot(0).is_none(), "coal left the inventory");
+        assert_eq!(
+            game.world.furnace_at(pos).unwrap().fuel,
+            Some(ItemStack::new(ItemType::Coal, 5)),
+            "coal went to the fuel slot"
+        );
+
+        // Raw iron -> input slot.
+        game.furnace_shift_from_inventory(1);
+        assert!(game.inventory().slot(1).is_none(), "raw iron left the inventory");
+        assert_eq!(
+            game.world.furnace_at(pos).unwrap().input,
+            Some(ItemStack::new(ItemType::RawIron, 3)),
+            "raw iron went to the input slot"
+        );
+
+        // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
+        // back to the ordinary hotbar->main-grid shuffle.
+        game.furnace_shift_from_inventory(2);
+        assert!(game.inventory().slot(2).is_none(), "plank moved out of the hotbar slot");
+        let f = game.world.furnace_at(pos).unwrap();
+        assert_ne!(f.input.map(|s| s.item), Some(ItemType::OakPlanks));
+        assert_ne!(f.fuel.map(|s| s.item), Some(ItemType::OakPlanks));
+        // It landed in the main grid (first slot of the 27-slot region).
+        assert_eq!(
+            game.inventory().slot(crate::inventory::HOTBAR_LEN).map(|s| s.item),
+            Some(ItemType::OakPlanks),
+        );
+    }
+
+    #[test]
+    fn furnace_shift_merges_into_a_partly_filled_slot() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let pos = IVec3::new(3, 64, 3);
+        game.world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        game.world.insert_furnace(pos, Facing::North);
+        // Seed the fuel slot with some coal already.
+        game.world.furnace_at_mut(pos).unwrap().fuel = Some(ItemStack::new(ItemType::Coal, 60));
+        game.open_furnace_screen(pos);
+
+        game.player.inventory = Inventory::new();
+        game.add_to_inventory(ItemStack::new(ItemType::Coal, 10));
+        game.furnace_shift_from_inventory(0);
+
+        // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
+        assert_eq!(game.world.furnace_at(pos).unwrap().fuel.unwrap().count, 64);
+        assert_eq!(game.inventory().slot(0).map(|s| s.count), Some(6));
+    }
+
+    #[test]
+    fn furnace_front_faces_the_player_on_placement() {
+        // The front points opposite the look direction (back toward the player).
+        assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, 1.0)), Facing::North);
+        assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, -1.0)), Facing::South);
+        assert_eq!(facing_from_forward(Vec3::new(1.0, 0.0, 0.0)), Facing::West);
+        assert_eq!(facing_from_forward(Vec3::new(-1.0, 0.0, 0.0)), Facing::East);
+        // A pitched, mostly-horizontal look snaps to the dominant horizontal axis.
+        assert_eq!(facing_from_forward(Vec3::new(0.2, -0.9, 0.95)), Facing::North);
     }
 }

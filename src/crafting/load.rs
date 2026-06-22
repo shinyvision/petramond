@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
-use super::recipe::{Ingredient, Recipe, Recipes};
+use super::recipe::{Ingredient, Recipe, Recipes, SmeltingRecipe};
 
 /// Embedded fallback, so the game always has recipes even when run outside the
 /// project tree. The on-disk copy, when found, takes priority.
@@ -39,6 +39,19 @@ enum RawRecipe {
         #[serde(default = "one")]
         count: u8,
     },
+    /// A furnace smelt: one `ingredient` item produces `result`.
+    Smelting {
+        ingredient: String,
+        result: String,
+        #[serde(default = "one")]
+        count: u8,
+    },
+}
+
+/// A converted recipe sorted into the grid list or the smelting table.
+enum Converted {
+    Grid(Recipe),
+    Smelt(SmeltingRecipe),
 }
 
 fn one() -> u8 {
@@ -49,7 +62,8 @@ fn one() -> u8 {
 /// back to the embedded copy. Malformed individual recipes are logged and
 /// skipped rather than aborting the world load.
 pub fn load_recipes() -> Recipes {
-    Recipes::new(parse(&read_recipes_text()))
+    let (grid, smelting) = parse(&read_recipes_text());
+    Recipes::new(grid, smelting)
 }
 
 fn read_recipes_text() -> String {
@@ -80,26 +94,38 @@ fn candidate_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn parse(text: &str) -> Vec<Recipe> {
+fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>) {
     let file: RawFile = match serde_json::from_str(text) {
         Ok(f) => f,
         Err(e) => {
             log::error!("recipes.json is not valid JSON: {e}");
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
     };
-    let mut out = Vec::with_capacity(file.recipes.len());
+    let mut grid = Vec::new();
+    let mut smelting = Vec::new();
     for (i, raw) in file.recipes.into_iter().enumerate() {
         match convert(raw) {
-            Ok(r) => out.push(r),
+            Ok(Converted::Grid(r)) => grid.push(r),
+            Ok(Converted::Smelt(r)) => smelting.push(r),
             Err(e) => log::error!("skipping recipe #{i}: {e}"),
         }
     }
-    out
+    (grid, smelting)
 }
 
-fn convert(raw: RawRecipe) -> Result<Recipe, String> {
+fn convert(raw: RawRecipe) -> Result<Converted, String> {
     match raw {
+        RawRecipe::Smelting {
+            ingredient,
+            result,
+            count,
+        } => {
+            let input = item_from_key(&ingredient)
+                .ok_or_else(|| format!("unknown smelting ingredient '{ingredient}'"))?;
+            let result = item_stack(&result, count)?;
+            Ok(Converted::Smelt(SmeltingRecipe { input, result }))
+        }
         RawRecipe::Shapeless {
             ingredients,
             result,
@@ -120,10 +146,10 @@ fn convert(raw: RawRecipe) -> Result<Recipe, String> {
                     super::MAX_CELLS
                 ));
             }
-            Ok(Recipe::Shapeless {
+            Ok(Converted::Grid(Recipe::Shapeless {
                 ingredients,
                 result,
-            })
+            }))
         }
         RawRecipe::Shaped {
             pattern,
@@ -161,12 +187,12 @@ fn convert(raw: RawRecipe) -> Result<Recipe, String> {
                     }
                 }
             }
-            Ok(Recipe::Shaped {
+            Ok(Converted::Grid(Recipe::Shaped {
                 width,
                 height,
                 cells,
                 result,
-            })
+            }))
         }
     }
 }
@@ -210,15 +236,30 @@ mod tests {
     #[test]
     fn embedded_recipes_parse_without_error() {
         // The shipped recipes.json must convert fully (no skipped recipes).
-        let parsed = parse(EMBEDDED);
+        let (grid, smelting) = parse(EMBEDDED);
         let raw: RawFile = serde_json::from_str(EMBEDDED).expect("valid json");
         assert_eq!(
-            parsed.len(),
+            grid.len() + smelting.len(),
             raw.recipes.len(),
             "every shipped recipe should convert"
         );
-        // Sanity: at least the 8 plank recipes + table + sticks + 2 pickaxes.
-        assert!(parsed.len() >= 12);
+        // Sanity: at least the 8 plank recipes + table + sticks + 2 pickaxes + furnace.
+        assert!(grid.len() >= 13);
+        // Iron + copper smelting at minimum.
+        assert!(smelting.len() >= 2);
+    }
+
+    #[test]
+    fn smelting_recipes_parse_and_skip_unknown() {
+        let text = r#"{ "recipes": [
+            { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
+            { "type": "smelting", "ingredient": "mystery", "result": "iron_ingot" }
+        ] }"#;
+        let (grid, smelting) = parse(text);
+        assert!(grid.is_empty());
+        assert_eq!(smelting.len(), 1, "the unknown-ingredient recipe is skipped");
+        assert_eq!(smelting[0].input, ItemType::RawIron);
+        assert_eq!(smelting[0].result, ItemStack::new(ItemType::IronIngot, 1));
     }
 
     #[test]
@@ -253,6 +294,8 @@ mod tests {
             { "type": "shaped", "pattern": ["X"], "key": {}, "result": "stick" }
         ] }"#;
         // Only the first (valid) recipe survives; the other two are skipped.
-        assert_eq!(parse(text).len(), 1);
+        let (grid, smelting) = parse(text);
+        assert_eq!(grid.len(), 1);
+        assert!(smelting.is_empty());
     }
 }

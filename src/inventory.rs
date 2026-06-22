@@ -54,6 +54,14 @@ impl Inventory {
         self.slots.get(i).and_then(Option::as_ref)
     }
 
+    /// Mutable handle to slot `i`'s cell (`None` if out of range), for moving a
+    /// stack directly between the inventory and an external slot such as a furnace
+    /// slot. The cursor is not involved.
+    #[inline]
+    pub fn slot_mut(&mut self, i: usize) -> Option<&mut Option<ItemStack>> {
+        self.slots.get_mut(i)
+    }
+
     /// The stack in hotbar slot `i` (`0..HOTBAR_LEN`). Identical to `slot(i)`.
     #[inline]
     pub fn hotbar(&self, i: usize) -> Option<&ItemStack> {

@@ -20,7 +20,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::block_model::{push_cube_solid_lit, push_cube_textured_lit};
+use super::block_model::{block_icon_faces, push_cube_faces_lit, push_cube_solid_lit};
 #[cfg(test)]
 use super::lighting;
 use super::{HeldItemFrame, HeldItemView};
@@ -157,10 +157,11 @@ pub(super) fn build_hand_lit(
         Some(item) => match item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
                 // Held block: a corner toward the camera (three-quarter view).
-                push_cube_textured_lit(
+                // Per-face tiles so the furnace shows its front, not four mouths.
+                push_cube_faces_lit(
                     verts,
                     indices,
-                    block.tiles(),
+                    block_icon_faces(block),
                     Vec3::new(-0.5, -0.5, -0.5),
                     1.0,
                     skylight,
@@ -873,7 +874,7 @@ mod tests {
     #[test]
     #[ignore = "visual preview harness; run explicitly to regenerate /tmp PNGs"]
     fn render_held_item_preview() {
-        use crate::atlas::{tile_uv, Tile};
+        use crate::atlas::tile_uv;
         use crate::item::ItemType;
         use glam::Vec4;
 

@@ -13,6 +13,11 @@
     { "type": "shaped", "pattern": ["##", "##"], "key": { "#": "#planks" }, "result": "crafting_table", "count": 1 },
 
     { "type": "shaped", "pattern": ["PPP", " S ", " S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_pickaxe", "count": 1 },
-    { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 }
+    { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 },
+
+    { "type": "shaped", "pattern": ["CCC", "C C", "CKC"], "key": { "C": "cobblestone", "K": "coal" }, "result": "furnace", "count": 1 },
+
+    { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
+    { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" }
   ]
 }

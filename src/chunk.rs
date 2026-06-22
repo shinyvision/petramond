@@ -1,6 +1,10 @@
 //! Chunk storage: 16x16x256 voxel column.
 
+use std::collections::HashMap;
+
 use crate::block::Block;
+use crate::furnace::{Facing, Furnace};
+use crate::item::{ItemStack, ItemType};
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
@@ -47,6 +51,11 @@ pub struct Chunk {
     /// `None` until the column first holds non-source flowing water, so still
     /// oceans/rivers (all-source, meta 0) never pay the extra 64 KiB.
     water: Option<Box<[u8]>>,
+    /// Furnace block-entities in this chunk, keyed by local block index
+    /// (`idx(x,y,z)` fits a u16 — max 65535). A furnace never moves, so it's owned
+    /// outright by its chunk: it ticks here, persists in this chunk's save record,
+    /// and the mesher reads its lit state locally. Empty for the common chunk.
+    furnaces: HashMap<u16, Furnace>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -79,6 +88,7 @@ impl Chunk {
             cz,
             blocks,
             water: None,
+            furnaces: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -130,6 +140,8 @@ impl Chunk {
             // Water meta does not affect skylight (water is transparent), so the
             // bake never reads it -- drop it to keep the snapshot small.
             water: None,
+            // Furnaces don't affect skylight either; the bake never needs them.
+            furnaces: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -284,6 +296,91 @@ impl Chunk {
         self.water.as_deref()
     }
 
+    // --- Furnace block-entities -------------------------------------------------
+
+    /// Local block-index key for the furnace map (`idx` fits a u16; see field doc).
+    #[inline]
+    fn furnace_key(x: usize, y: usize, z: usize) -> u16 {
+        idx(x, y, z) as u16
+    }
+
+    /// The furnace stored at a local voxel, if any.
+    #[inline]
+    pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
+        self.furnaces.get(&Self::furnace_key(x, y, z))
+    }
+
+    /// Mutable handle to the furnace at a local voxel (for GUI edits).
+    #[inline]
+    pub fn furnace_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Furnace> {
+        self.furnaces.get_mut(&Self::furnace_key(x, y, z))
+    }
+
+    /// Install `furnace` at a local voxel (block placement). Marks the chunk
+    /// modified so the furnace persists from the moment it is placed.
+    pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace) {
+        self.furnaces.insert(Self::furnace_key(x, y, z), furnace);
+        self.modified = true;
+    }
+
+    /// Remove and return the furnace at a local voxel (block break), if any.
+    pub fn take_furnace(&mut self, x: usize, y: usize, z: usize) -> Option<Furnace> {
+        let removed = self.furnaces.remove(&Self::furnace_key(x, y, z));
+        if removed.is_some() {
+            self.modified = true;
+        }
+        removed
+    }
+
+    /// Whether the furnace at a local voxel is currently lit — read by the mesher to
+    /// pick the burning front texture. `false` when there is no furnace there.
+    #[inline]
+    pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
+        self.furnace_at(x, y, z).is_some_and(Furnace::is_lit)
+    }
+
+    /// The facing of the furnace at a local voxel (which way its front points), or
+    /// `North` if there is no furnace there. Read by the mesher to texture the front
+    /// face vs the sides.
+    #[inline]
+    pub fn furnace_facing(&self, x: usize, y: usize, z: usize) -> Facing {
+        self.furnace_at(x, y, z).map_or(Facing::default(), |f| f.facing)
+    }
+
+    /// The furnace map, for saving (parallel to `blocks_slice`).
+    #[inline]
+    pub fn furnaces(&self) -> &HashMap<u16, Furnace> {
+        &self.furnaces
+    }
+
+    /// Advance every furnace in this chunk one game tick. `smelt(item)` yields an
+    /// item's smelted product, supplied by the world layer from the recipe set so
+    /// storage stays recipe-agnostic. Marks the chunk modified when any furnace
+    /// state changed, and mesh-dirty when any furnace's lit state flipped (a texture
+    /// change). No-op for the common furnace-free chunk.
+    pub fn tick_furnaces(&mut self, smelt: impl Fn(ItemType) -> Option<ItemStack>) {
+        if self.furnaces.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        let mut relit = false;
+        for f in self.furnaces.values_mut() {
+            let was_lit = f.is_lit();
+            if f.tick(&smelt) {
+                changed = true;
+            }
+            if f.is_lit() != was_lit {
+                relit = true;
+            }
+        }
+        if changed {
+            self.modified = true;
+        }
+        if relit {
+            self.dirty = true;
+        }
+    }
+
     /// Rebuild a chunk from saved arrays: block ids, biome ids, and optional
     /// water metadata. The heightmap is recomputed and skylight is left for the
     /// async bake. `modified` starts false — it already matches what's on disk.
@@ -293,6 +390,7 @@ impl Chunk {
         blocks: Box<[u8]>,
         biomes_src: &[u8],
         water: Option<Box<[u8]>>,
+        furnaces: HashMap<u16, Furnace>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -301,6 +399,7 @@ impl Chunk {
             cz,
             blocks,
             water,
+            furnaces,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,

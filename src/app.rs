@@ -191,6 +191,12 @@ impl App {
         if events.open_crafting_table && self.screen.gameplay_enabled() {
             self.open_crafting_table();
         }
+        // Right-clicking a placed furnace opens its screen at that position.
+        if let Some(pos) = events.open_furnace {
+            if self.screen.gameplay_enabled() {
+                self.open_furnace(pos);
+            }
+        }
         self.pointer.clear_edges();
 
         let environment = self.game.environment(now);
@@ -220,6 +226,7 @@ impl App {
             inv: self.game.inventory(),
             craft: self.game.craft_grid().cells(),
             craft_result: self.game.craft_grid().result().copied(),
+            furnace: self.game.open_furnace_view(),
             screen: screen_size,
             cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
         });
@@ -275,6 +282,12 @@ impl App {
         self.game.open_crafting(3);
     }
 
+    /// Open the furnace screen for the furnace at `pos` (after right-clicking it).
+    fn open_furnace(&mut self, pos: crate::mathh::IVec3) {
+        self.enter_menu(AppScreen::Furnace);
+        self.game.open_furnace_screen(pos);
+    }
+
     /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
@@ -288,7 +301,10 @@ impl App {
     /// Close any open menu: return crafting-grid items to the inventory, drop back
     /// to gameplay, and re-grab the pointer.
     fn close_menu(&mut self) {
+        // Both are safe to call regardless of which menu was open: a furnace screen
+        // leaves the craft grid empty, and the inventory/table leaves no open furnace.
         self.game.close_crafting();
+        self.game.close_furnace();
         self.screen = AppScreen::Game;
         self.pointer.grabbing = true;
     }
@@ -334,9 +350,17 @@ impl App {
     fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
         let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
         let shift = self.modifiers.shift;
-        // Crafting slots (input cells + result) take priority over the inventory
-        // slots they sit above in the panel.
-        if let Some(hit) = crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
+        // The open panel's own slots take priority over the inventory grid below.
+        // The furnace screen has its three slots; the crafting screens have the
+        // input cells + result.
+        if self.screen.is_furnace() {
+            if let Some(hit) = crate::render::furnace_slot_at_cursor(screen, cursor) {
+                self.pointer.reset_click_streak();
+                self.route_furnace_click(hit, button, shift);
+                return;
+            }
+        } else if let Some(hit) =
+            crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
         {
             self.pointer.reset_click_streak();
             self.route_craft_click(hit, button, shift);
@@ -345,7 +369,14 @@ impl App {
         match crate::render::slot_at_cursor(screen, true, cursor) {
             Some(slot) => {
                 if shift {
-                    self.game.shift_click_inventory_slot(slot);
+                    // In the furnace screen, shift-click sends #fuel / #smeltable
+                    // stacks into the right furnace slot; elsewhere it shuffles
+                    // between the hotbar and the main grid.
+                    if self.screen.is_furnace() {
+                        self.game.furnace_shift_from_inventory(slot);
+                    } else {
+                        self.game.shift_click_inventory_slot(slot);
+                    }
                     self.pointer.reset_click_streak();
                 } else {
                     match button {
@@ -400,6 +431,48 @@ impl App {
                     self.game.craft_shift_result();
                 } else {
                     self.game.craft_take_result();
+                }
+            }
+        }
+    }
+
+    /// Apply a click on a furnace slot. Input and fuel behave like ordinary slots
+    /// (shift quick-moves to the inventory; left/right place / split / swap). The
+    /// output is take-only: any click moves the product onto the cursor (shift sends
+    /// it to the inventory).
+    fn route_furnace_click(
+        &mut self,
+        hit: crate::render::FurnaceHit,
+        button: PointerButton,
+        shift: bool,
+    ) {
+        use crate::render::FurnaceHit;
+        match hit {
+            FurnaceHit::Input => {
+                if shift {
+                    self.game.furnace_shift_input();
+                } else {
+                    match button {
+                        PointerButton::Primary => self.game.furnace_click_input(),
+                        PointerButton::Secondary => self.game.furnace_right_click_input(),
+                    }
+                }
+            }
+            FurnaceHit::Fuel => {
+                if shift {
+                    self.game.furnace_shift_fuel();
+                } else {
+                    match button {
+                        PointerButton::Primary => self.game.furnace_click_fuel(),
+                        PointerButton::Secondary => self.game.furnace_right_click_fuel(),
+                    }
+                }
+            }
+            FurnaceHit::Output => {
+                if shift {
+                    self.game.furnace_shift_output();
+                } else {
+                    self.game.furnace_take_output();
                 }
             }
         }

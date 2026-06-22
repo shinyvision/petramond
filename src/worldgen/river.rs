@@ -197,8 +197,8 @@ impl RiverSystem {
         // of a cell, so two sources two cells apart are >= 1.40*CELL_BLOCKS apart.
         // Keeping spacing below that means any pair closer than MIN_SOURCE_SPACING
         // is necessarily in adjacent (±1) cells, so the window can't miss one.
-        debug_assert!(MIN_SOURCE_SPACING < 1.40 * CELL_BLOCKS as f32);
-        debug_assert!(INFLUENCE_CAP < MAX_QUERY_RADIUS);
+        const _: () = assert!(MIN_SOURCE_SPACING < 1.40 * CELL_BLOCKS as f32);
+        const _: () = assert!(INFLUENCE_CAP < MAX_QUERY_RADIUS);
 
         let mut rng = FeatureRng::positional(seed, SOURCE_SALT, 0, 0, 0);
         let angle = rng.next_f32() * std::f32::consts::TAU;

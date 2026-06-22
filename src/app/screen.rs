@@ -4,6 +4,8 @@ pub enum AppScreen {
     Inventory,
     /// The 3×3 crafting-table screen, opened by right-clicking a placed table.
     CraftingTable,
+    /// The furnace screen, opened by right-clicking a placed furnace.
+    Furnace,
 }
 
 impl AppScreen {
@@ -33,6 +35,13 @@ impl AppScreen {
             AppScreen::CraftingTable => crate::render::CraftKind::Table,
             _ => crate::render::CraftKind::Inventory,
         }
+    }
+
+    /// Whether the open menu is the furnace screen — drives furnace-specific click
+    /// routing and the furnace panel/slots/gauges in place of the crafting grid.
+    #[inline]
+    pub fn is_furnace(self) -> bool {
+        matches!(self, AppScreen::Furnace)
     }
 }
 

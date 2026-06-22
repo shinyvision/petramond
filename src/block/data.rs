@@ -100,6 +100,7 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::CherryPlanks,
     Block::MangrovePlanks,
     Block::CraftingTable,
+    Block::Furnace,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -853,6 +854,19 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Wood,
         hardness: 2.5,
         drop: drops_self!(CraftingTable),
+    },
+    BlockDef {
+        block: Block::Furnace,
+        flags: FULL_CUBE_FLAGS,
+        // [top, bottom, side]: the placed furnace is meshed directionally (front on
+        // the facing face, `furnace_side` on the others — see mesh::builder), so the
+        // default side is `furnace_side`. The inventory/held item cube puts the
+        // front on one visible face via `render::block_model::block_icon_faces`.
+        tiles: [Tile::FurnaceTop, Tile::FurnaceTop, Tile::FurnaceSide],
+        // Stone material → needs at least a wooden pickaxe to harvest.
+        material: BlockMaterial::Stone,
+        hardness: 3.5,
+        drop: drops_self!(Furnace),
     },
 ];
 
