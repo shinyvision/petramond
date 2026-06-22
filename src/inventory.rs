@@ -226,6 +226,24 @@ impl Inventory {
     pub fn is_empty(&self) -> bool {
         self.cursor.is_none() && self.slots.iter().all(Option::is_none)
     }
+
+    /// All slots in order (`[0,9)` hotbar, `[9,36)` main grid). For saving.
+    pub fn raw_slots(&self) -> &[Option<ItemStack>; TOTAL_SLOTS] {
+        &self.slots
+    }
+
+    /// Reconstruct an inventory from saved parts (`active` clamped to the hotbar).
+    pub fn from_parts(
+        slots: [Option<ItemStack>; TOTAL_SLOTS],
+        cursor: Option<ItemStack>,
+        active: u8,
+    ) -> Self {
+        Self {
+            slots,
+            cursor,
+            active: active.min(HOTBAR_LEN as u8 - 1),
+        }
+    }
 }
 
 #[cfg(test)]

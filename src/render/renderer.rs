@@ -247,21 +247,9 @@ pub async fn new_renderer_with_instance(
     new_renderer_inner(instance, surface, width, height).await
 }
 
-/// Instance descriptor that picks appropriate backends per platform:
-/// native = all (Vulkan/Metal/DX12/GL); web = WebGPU with WebGL fallback.
+/// Instance descriptor selecting all native backends (Vulkan/Metal/DX12/GL).
 pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
-    #[cfg(target_arch = "wasm32")]
-    {
-        wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
-            ..Default::default()
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        wgpu::InstanceDescriptor::default()
-    }
+    wgpu::InstanceDescriptor::default()
 }
 
 pub async fn new_renderer(surface: wgpu::Surface<'static>, width: u32, height: u32) -> Renderer {
@@ -280,10 +268,9 @@ async fn new_renderer_inner(
     width: u32,
     height: u32,
 ) -> Renderer {
-    // Try a high-performance adapter first; on browsers without WebGPU this
-    // may still succeed via the WebGL fallback. If it fails entirely (no
-    // adapter compatible with the surface), retry with force_fallback_adapter
-    // to accept the software/lowest-tier adapter rather than panicking.
+    // Try a high-performance adapter first. If it fails entirely (no adapter
+    // compatible with the surface), retry with force_fallback_adapter to accept
+    // the software/lowest-tier adapter rather than panicking.
     let adapter = match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -294,9 +281,6 @@ async fn new_renderer_inner(
     {
         Ok(a) => a,
         Err(_) => {
-            #[cfg(target_arch = "wasm32")]
-            web_sys::console::warn_1(&"wgpu: primary adapter unavailable; trying fallback".into());
-            #[cfg(not(target_arch = "wasm32"))]
             eprintln!("wgpu: primary adapter unavailable; trying fallback");
             instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
@@ -305,23 +289,14 @@ async fn new_renderer_inner(
                     force_fallback_adapter: true,
                 })
                 .await
-                .expect("no wgpu adapter available (WebGPU/WebGL both failed)")
+                .expect("no compatible wgpu adapter available")
         }
     };
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
-            required_limits: {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    wgpu::Limits::downlevel_webgl2_defaults().using_alignment(adapter.limits())
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    wgpu::Limits::default().using_alignment(adapter.limits())
-                }
-            },
+            required_limits: wgpu::Limits::default().using_alignment(adapter.limits()),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,

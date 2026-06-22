@@ -32,7 +32,7 @@ impl FeatureRng {
 
     /// Positional seeding: mix (seed, salt, world coords) with a splitmix64
     /// finalizer, then step the same xorshift64 stream. Pure function of the
-    /// inputs, bit-identical on x86-64 and wasm32 (all `wrapping` u64 ops).
+    /// inputs, bit-identical across platforms (all `wrapping` u64 ops).
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
         let mut z = (seed as u64)
             ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)

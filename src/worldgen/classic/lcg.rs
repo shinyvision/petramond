@@ -5,8 +5,8 @@
 //! The output is pinned bit-for-bit to a well-known 48-bit LCG parameterization
 //! so generation is a stable, exactly-reproducible function of the seed. The
 //! known-answer vectors in the tests lock that output: any change to the algorithm
-//! breaks them, which guards determinism across refactors and platforms (x86-64
-//! and wasm32 produce identical streams — all ops are `wrapping` on `u64`).
+//! breaks them, which guards determinism across refactors and platforms: all
+//! ops are `wrapping` on `u64`, so the stream is identical everywhere.
 
 /// LCG multiplier. Standard, well-tested 48-bit LCG parameterization.
 const MULTIPLIER: u64 = 0x5DEECE66D;

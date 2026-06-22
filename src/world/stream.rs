@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::block::Block;
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::mathh::IVec3;
+use crate::save::ChunkSnapshot;
 use crate::worker::GenRequest;
 
 use super::store::{LoadTarget, World};
@@ -45,11 +46,18 @@ impl World {
                 if self.pending.contains_key(&pos) {
                     continue;
                 }
-                self.worker.submit(GenRequest {
-                    cx: pos.cx,
-                    cz: pos.cz,
-                    seed: self.seed,
-                });
+                // Prefer a saved (player-modified) chunk over regenerating it.
+                if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+                    if let Some(save) = self.save.as_ref() {
+                        save.request_load(pos);
+                    }
+                } else {
+                    self.worker.submit(GenRequest {
+                        cx: pos.cx,
+                        cz: pos.cz,
+                        seed: self.seed,
+                    });
+                }
                 self.pending.insert(pos, ());
             }
         }
@@ -63,6 +71,18 @@ impl World {
             .filter(|p| (p.cx - center.cx).abs() > keep || (p.cz - center.cz).abs() > keep)
             .cloned()
             .collect();
+        // Persist any player-modified chunks before they leave memory.
+        if self.save.is_some() {
+            let snaps: Vec<ChunkSnapshot> = to_drop
+                .iter()
+                .filter_map(|p| self.chunks.get(p))
+                .filter(|c| c.modified)
+                .map(ChunkSnapshot::from_chunk)
+                .collect();
+            if let Some(save) = self.save.as_mut() {
+                save.save_chunks(snaps);
+            }
+        }
         for pos in to_drop {
             self.remove_chunk(pos);
         }
@@ -87,6 +107,26 @@ impl World {
                 continue;
             }
             fresh.push((pos, res.chunk));
+        }
+        // Drain chunks read back from disk. A missing/corrupt record falls back
+        // to generation so the player still sees terrain.
+        while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
+            let pos = loaded.pos;
+            self.pending.remove(&pos);
+            if !self.within_current_keep_radius(pos) {
+                continue;
+            }
+            match loaded.chunk {
+                Some(chunk) => fresh.push((pos, chunk)),
+                None => {
+                    self.worker.submit(GenRequest {
+                        cx: pos.cx,
+                        cz: pos.cz,
+                        seed: self.seed,
+                    });
+                    self.pending.insert(pos, ());
+                }
+            }
         }
         if fresh.is_empty() {
             return 0;

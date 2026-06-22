@@ -200,6 +200,7 @@ impl World {
                 return false;
             };
             c.set_water(lx, pos.y as usize, lz, block, meta);
+            c.modified = true;
         }
         self.invalidate_section_visibility(cpos);
         self.queue_dirty_mesh(cpos);

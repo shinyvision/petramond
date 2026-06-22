@@ -97,30 +97,66 @@ pub struct Game {
     particle_instances: Vec<ParticleInstance>,
     /// Wall-clock seconds banked toward the next fixed simulation tick.
     tick_accumulator: f32,
+    /// Wall-clock seconds since the last background autosave.
+    autosave_t: f32,
 }
 
 impl Game {
-    pub fn new(mut cam: Camera, seed: u32, render_dist: i32) -> Self {
-        // Spawn on the nearest exposed solid surface to the origin (drops to the
-        // nearest coast if the origin is open ocean). The camera's incoming
-        // position is a placeholder; override it so chunk streaming centres on the
-        // real spawn from frame one. Stand the feet on top of the surface block.
+    pub fn new(mut cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
+        // Open (or create) the on-disk world. A returning world supplies its own
+        // seed, player and entities; a fresh one uses `new_seed` and a found spawn.
+        let (save, level, saved_entities) = if world_name.is_empty() {
+            // Empty name = in-memory only (used by tests; never touches disk).
+            (None, None, Vec::new())
+        } else {
+            match crate::save::open(world_name) {
+                Ok(o) => (Some(o.save), o.level, o.entities),
+                Err(e) => {
+                    log::warn!("save disabled: could not open world '{world_name}': {e}");
+                    (None, None, Vec::new())
+                }
+            }
+        };
+        let seed = level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
+
         let fallback_world = CascadeWorld::new(seed);
-        let surface = crate::worldgen::spawn::find_spawn(&fallback_world, seed);
-        let feet = Vec3::new(
-            surface.x as f32 + 0.5,
-            (surface.y + 1) as f32,
-            surface.z as f32 + 0.5,
-        );
-        cam.pos = Vec3::new(feet.x, feet.y + player::EYE, feet.z);
+
+        // Restore the saved player, or spawn on the nearest exposed solid surface
+        // to the origin (drops to the nearest coast if the origin is open ocean).
+        let player = match &level {
+            Some(l) => {
+                let mut p = Player::new(l.player_pos);
+                p.set_mode(l.player_mode);
+                p.vel = l.player_vel; // assign after set_mode, which zeroes vel
+                p.inventory = l.inventory.clone();
+                p
+            }
+            None => {
+                let surface = crate::worldgen::spawn::find_spawn(&fallback_world, seed);
+                let feet = Vec3::new(
+                    surface.x as f32 + 0.5,
+                    (surface.y + 1) as f32,
+                    surface.z as f32 + 0.5,
+                );
+                Player::new(feet)
+            }
+        };
+        // Centre chunk streaming on the real player position from frame one.
+        cam.pos = Vec3::new(player.pos.x, player.pos.y + player::EYE, player.pos.z);
+
+        let mut world = World::new(seed, render_dist);
+        if let Some(s) = save {
+            world.attach_save(s);
+        }
+
         Self {
             cam,
-            world: World::new(seed, render_dist),
+            world,
             fallback_world,
-            player: Player::new(feet),
+            player,
             look: None,
             mining: MiningState::new(),
-            dropped: Vec::new(),
+            dropped: saved_entities,
             dropped_light_revision: 0,
             particles: ParticleSystem::new(),
             spawn_counter: 0,
@@ -128,6 +164,30 @@ impl Game {
             item_entity_instances: Vec::new(),
             particle_instances: Vec::new(),
             tick_accumulator: 0.0,
+            autosave_t: 0.0,
+        }
+    }
+
+    /// Persist everything: flush modified chunks to the save thread, then write
+    /// `level.dat` (seed + player + inventory) and `entities.dat` (dropped items).
+    /// A no-op without an attached save.
+    pub fn save_all(&mut self) {
+        self.world.flush_modified_chunks();
+        if let Some(save) = self.world.save() {
+            save.save_level(crate::save::level::encode(self.world.seed, &self.player, 0));
+            save.save_entities(crate::save::entities::encode(&self.dropped));
+        }
+    }
+
+    fn maybe_autosave(&mut self, dt: f32) {
+        const AUTOSAVE_SECS: f32 = 30.0;
+        if self.world.save().is_none() {
+            return;
+        }
+        self.autosave_t += dt;
+        if self.autosave_t >= AUTOSAVE_SECS {
+            self.autosave_t = 0.0;
+            self.save_all();
         }
     }
 
@@ -145,6 +205,8 @@ impl Game {
         self.tick_entities(dt);
         self.tick_mesh_budget();
         self.refresh_dropped_item_lights_after_world_light_update();
+
+        self.maybe_autosave(dt);
 
         GameEvents {
             placed_block,
@@ -338,10 +400,7 @@ impl Game {
     }
 
     fn tick_mesh_budget(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
         const MESH_BUDGET: usize = 32;
-        #[cfg(target_arch = "wasm32")]
-        const MESH_BUDGET: usize = 6;
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
 
@@ -439,6 +498,22 @@ impl Game {
         let mut i = self.dropped.len();
         while i > 0 {
             i -= 1;
+            // After loading a saved world, restored drops may sit over chunks
+            // that haven't streamed back in yet. Freeze any such drop — no
+            // physics, ageing, despawn, or pickup — until its column returns, so
+            // it can't fall through not-yet-generated terrain. Mirrors the
+            // player's `columns_loaded` gate. Gated on a save being attached: a
+            // freshly generated world only ever spawns drops in loaded chunks, and
+            // unit tests simulate drops in a deliberately empty (no-save) world.
+            if self.world.save().is_some() {
+                let dp = self.dropped[i].pos;
+                if !self
+                    .world
+                    .chunk_loaded((dp.x.floor() as i32) >> 4, (dp.z.floor() as i32) >> 4)
+                {
+                    continue;
+                }
+            }
             let before_cell = voxel_at(self.dropped[i].pos);
             self.dropped[i].tick(dt, &self.world, Some(player_pos));
             let after_cell = voxel_at(self.dropped[i].pos);
@@ -625,7 +700,7 @@ mod tests {
     use super::*;
 
     fn game() -> Game {
-        Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1, 1)
+        Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
     }
 
     fn hit(pos: IVec3, normal: IVec3) -> RaycastHit {
@@ -846,7 +921,6 @@ mod tests {
             if game.world.lighting_revision() != before {
                 break;
             }
-            #[cfg(not(target_arch = "wasm32"))]
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 

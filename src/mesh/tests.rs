@@ -782,7 +782,6 @@ fn ao_varies_across_generated_terrain() {
 /// (chunk, neighbour reads) with no shared mutable state, so rayon only reorders
 /// independent work. This locks that invariant down objectively (perfbench
 /// meshes serially and never exercises the rayon path).
-#[cfg(not(target_arch = "wasm32"))]
 mod parallel_parity_tests {
     use super::*;
     use crate::chunk::{Chunk, CHUNK_SY, SKY_FULL};

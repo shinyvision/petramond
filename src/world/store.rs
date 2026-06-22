@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::chunk::{Chunk, ChunkPos, SECTION_COUNT};
 use crate::mesh::ChunkMesh;
+use crate::save::{ChunkSnapshot, WorldSave};
 use crate::worker::WorkerPool;
 
 use super::light_queue::LightBakeQueue;
@@ -42,6 +43,8 @@ pub struct World {
     pub(super) last_load_target: Option<LoadTarget>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
+    /// On-disk save handle (`None` if saving is disabled / failed to open).
+    pub(super) save: Option<WorldSave>,
 }
 
 impl World {
@@ -60,6 +63,39 @@ impl World {
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
             sim: TickState::default(),
+            save: None,
+        }
+    }
+
+    /// Attach an on-disk save: enables chunk persistence (load-from-disk in the
+    /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
+    pub fn attach_save(&mut self, save: WorldSave) {
+        self.save = Some(save);
+    }
+
+    pub fn save(&self) -> Option<&WorldSave> {
+        self.save.as_ref()
+    }
+
+    pub fn save_mut(&mut self) -> Option<&mut WorldSave> {
+        self.save.as_mut()
+    }
+
+    /// Snapshot every modified chunk to the save thread and clear the flags.
+    /// Called on autosave and on quit; a no-op without an attached save.
+    pub fn flush_modified_chunks(&mut self) {
+        if self.save.is_none() {
+            return;
+        }
+        let mut snaps = Vec::new();
+        for c in self.chunks.values_mut() {
+            if c.modified {
+                snaps.push(ChunkSnapshot::from_chunk(c));
+                c.modified = false;
+            }
+        }
+        if let Some(save) = self.save.as_mut() {
+            save.save_chunks(snaps);
         }
     }
 

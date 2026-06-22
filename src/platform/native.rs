@@ -32,28 +32,37 @@ pub fn run() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(RENDER_DIST);
+    let world_name = std::env::var("LLAMACRAFT_WORLD").unwrap_or_else(|_| "world".to_string());
 
-    let mut host = NativeHost::new(seed, rd);
+    let mut host = NativeHost::new(world_name, seed, rd);
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
+
+    // Final save on quit: queue the writes, then dropping `host` joins the save
+    // thread so everything is flushed before the process exits.
+    if let Some(app) = host.app.as_mut() {
+        app.save_on_exit();
+    }
 }
 
 struct NativeHost {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     app: Option<App>,
+    world_name: String,
     seed: u32,
     render_dist: i32,
     next_frame: Instant,
 }
 
 impl NativeHost {
-    fn new(seed: u32, render_dist: i32) -> Self {
+    fn new(world_name: String, seed: u32, render_dist: i32) -> Self {
         Self {
             window: None,
             renderer: None,
             app: None,
+            world_name,
             seed,
             render_dist,
             next_frame: Instant::now(),
@@ -78,7 +87,7 @@ impl ApplicationHandler for NativeHost {
             Vec3::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
         );
-        let app = App::new(cam, self.seed, self.render_dist);
+        let app = App::new(cam, &self.world_name, self.seed, self.render_dist);
 
         let _ = window.set_cursor_grab(CursorGrabMode::Confined);
         window.set_cursor_visible(false);

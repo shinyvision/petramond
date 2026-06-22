@@ -7,7 +7,6 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 const TILE: u32 = 16;
 
@@ -288,10 +287,4 @@ fn main() {
         atlas_png.display()
     );
     println!("cargo:rustc-env=LLAMACRAFT_ATLAS_DIR={}", out_dir.display());
-
-    // Try to also copy atlas into web/ for inspection (best-effort).
-    let _ = Command::new("cp")
-        .arg(&atlas_png)
-        .arg(manifest_dir.join("web/atlas.png"))
-        .status();
 }

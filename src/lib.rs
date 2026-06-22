@@ -1,7 +1,7 @@
 //! Llamacraft: noise-driven voxel world with biomes, trees, rivers.
 //!
-//! Native + wasm32 (web) targets. Worldgen runs off the render thread:
-//! native = OS thread pool (rayon), web = dedicated `Worker`.
+//! Native desktop target. Worldgen runs off the render thread via an OS thread
+//! pool (rayon).
 
 #![allow(clippy::too_many_arguments)]
 
@@ -22,6 +22,7 @@ pub mod mining;
 pub mod platform;
 pub mod player;
 pub mod render;
+pub mod save;
 pub mod worker;
 pub mod world;
 pub mod worldgen;

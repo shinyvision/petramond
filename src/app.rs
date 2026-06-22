@@ -1,4 +1,4 @@
-//! Application shell shared by native and web.
+//! Application shell for the native desktop host.
 //!
 //! The app owns window-level state: current screen, input aggregation, cursor
 //! policy, frame time, and renderer handoff. The voxel demo itself lives in
@@ -41,15 +41,21 @@ struct PointerState {
 }
 
 impl App {
-    pub fn new(cam: Camera, seed: u32, render_dist: i32) -> Self {
+    pub fn new(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
         Self {
-            game: Game::new(cam, seed, render_dist),
+            game: Game::new(cam, world_name, seed, render_dist),
             last: now_seconds(),
             input: InputController::default(),
             pointer: PointerState::default(),
             screen: AppScreen::Game,
             recenter_cursor: false,
         }
+    }
+
+    /// Flush the world to disk on quit. The `WorldSave` I/O thread is joined when
+    /// the `App` (and the `World` it owns) drops, after this queues the writes.
+    pub fn save_on_exit(&mut self) {
+        self.game.save_all();
     }
 
     #[inline]
@@ -283,21 +289,12 @@ impl PointerState {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn now_seconds() -> f64 {
     use std::sync::OnceLock;
     use std::time::Instant;
 
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn now_seconds() -> f64 {
-    web_sys::window()
-        .and_then(|window| window.performance())
-        .map(|performance| performance.now() / 1000.0)
-        .unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -308,7 +305,7 @@ mod tests {
     use crate::player::PlayerMode;
 
     fn app() -> App {
-        App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1, 1)
+        App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
     }
 
     #[test]

@@ -52,6 +52,9 @@ pub struct Chunk {
     /// Biome id per (x,z) column (Biome::from_id).
     pub biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
     pub dirty: bool,
+    /// Set true by runtime edits (block place/break, water flow) and never by
+    /// generation, so only player-touched chunks are written to disk.
+    pub modified: bool,
     /// Cached skylight (x2 scale), a `16 x 16 x (sky_yhi-sky_ylo+1)` band
     /// indexed like `blocks` but with Y offset by `sky_ylo`. The world bake may
     /// include loaded neighbor chunks so flood light crosses borders, but only
@@ -79,6 +82,7 @@ impl Chunk {
             heightmap,
             biomes,
             dirty: true,
+            modified: false,
             skylight: Vec::new().into_boxed_slice(),
             sky_ylo: 0,
             sky_yhi: 0,
@@ -129,6 +133,7 @@ impl Chunk {
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
+            modified: false,
             skylight: Vec::new().into_boxed_slice(),
             sky_ylo: 0,
             sky_yhi: 0,
@@ -271,6 +276,43 @@ impl Chunk {
         }
         self.dirty = true;
         self.mark_light_dirty();
+    }
+
+    /// Bulk water-flow metadata for saving (`None` if the column never held
+    /// flowing water). Parallel to `blocks_slice`.
+    pub fn water_slice(&self) -> Option<&[u8]> {
+        self.water.as_deref()
+    }
+
+    /// Rebuild a chunk from saved arrays: block ids, biome ids, and optional
+    /// water metadata. The heightmap is recomputed and skylight is left for the
+    /// async bake. `modified` starts false — it already matches what's on disk.
+    pub fn from_saved(
+        cx: i32,
+        cz: i32,
+        blocks: Box<[u8]>,
+        biomes_src: &[u8],
+        water: Option<Box<[u8]>>,
+    ) -> Self {
+        let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
+        biomes.copy_from_slice(biomes_src);
+        let mut c = Self {
+            cx,
+            cz,
+            blocks,
+            water,
+            heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
+            biomes,
+            dirty: true,
+            modified: false,
+            skylight: Vec::new().into_boxed_slice(),
+            sky_ylo: 0,
+            sky_yhi: 0,
+            light_dirty: true,
+            light_revision: 0,
+        };
+        c.recompute_heightmap();
+        c
     }
 }
 

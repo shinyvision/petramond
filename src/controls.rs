@@ -53,7 +53,6 @@ pub fn control_from_code(code: &str) -> Option<Control> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> {
     use winit::keyboard::KeyCode;
 

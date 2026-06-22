@@ -245,23 +245,12 @@ impl Rng {
 }
 
 /// A fresh 64-bit value from OS entropy, varying per process (and per call).
-/// Native draws from `RandomState`'s OS-seeded hash keys; web uses `getrandom`,
-/// which is backed by `crypto.getRandomValues`.
-#[cfg(not(target_arch = "wasm32"))]
+/// Drawn from `RandomState`'s OS-seeded hash keys.
 fn os_random_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     std::collections::hash_map::RandomState::new()
         .build_hasher()
         .finish()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn os_random_u64() -> u64 {
-    let mut buf = [0u8; 8];
-    match getrandom::getrandom(&mut buf) {
-        Ok(()) => u64::from_le_bytes(buf),
-        Err(_) => 0xA55A_F00D_1234_5678, // entropy unavailable: stable fallback.
-    }
 }
 
 #[cfg(test)]

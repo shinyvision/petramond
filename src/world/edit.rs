@@ -23,6 +23,7 @@ impl World {
                 return false;
             };
             c.set_block(lx, wy as usize, lz, b);
+            c.modified = true;
         }
         self.invalidate_section_visibility(pos);
 

@@ -137,7 +137,7 @@ pub(super) fn create_pipeline_resources(
     // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
     // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
     // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
-    // on every backend (incl. WebGL2). Never updated after creation.
+    // on every backend. Never updated after creation.
     const _: () = assert!(TILE_COUNT <= UV_RECTS_LEN);
     let mut uv_rects = [[0f32; 4]; UV_RECTS_LEN];
     for &t in Tile::ALL {
@@ -1173,7 +1173,6 @@ pub(super) fn create_pipeline_resources(
 }
 
 #[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
 mod gpu_validation {
     use super::*;
     use crate::render::instance_descriptor;

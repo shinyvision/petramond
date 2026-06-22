@@ -1,6 +1,5 @@
-# Native build tuning. Scoped to the host triple ONLY so the wasm32 web build is
-# left completely untouched (do NOT move these into a [build] table — that would
-# also re-tune wasm32 and other targets).
+# Native build tuning. Scoped to the host triple ONLY (do NOT move these into a
+# [build] table — that would also re-tune any cross-compile / other targets).
 #
 # `x86-64-v3` = the Haswell/Zen-era baseline: AVX2 + FMA + BMI2. This is committed
 # because it runs on essentially every CPU since ~2015. It enables VEX encoding,

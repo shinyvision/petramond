@@ -152,14 +152,10 @@ impl World {
             ))
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
         let built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> = {
             use rayon::prelude::*;
             to_mesh.into_par_iter().filter_map(build_one).collect()
         };
-        #[cfg(target_arch = "wasm32")]
-        let built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> =
-            to_mesh.into_iter().filter_map(build_one).collect();
 
         for (pos, mesh) in built {
             self.meshes.insert(pos, mesh);
@@ -254,7 +250,6 @@ mod tests {
             {
                 return;
             }
-            #[cfg(not(target_arch = "wasm32"))]
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         panic!("chunk was not meshed after async light bake");
