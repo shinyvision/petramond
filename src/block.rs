@@ -83,6 +83,17 @@ pub enum Block {
     DeadBush,
     BrownMushroom,
     RedMushroom,
+    // --- Crafting update: crafted / placeable blocks (ids 70..). ---
+    Cobblestone,
+    OakPlanks,
+    SprucePlanks,
+    BirchPlanks,
+    JunglePlanks,
+    AcaciaPlanks,
+    DarkOakPlanks,
+    CherryPlanks,
+    MangrovePlanks,
+    CraftingTable,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
@@ -182,12 +193,38 @@ impl Block {
         ItemType::from_block(self)
     }
 
-    /// Whether this block cannot be hand-harvested in 0.1 (Stone/Ore yield nothing
-    /// without a tool; tools are a future addition). It still breaks — it just
-    /// drops nothing. Mirrors the harvest gate in `crate::mining`.
+    /// Whether this block cannot be hand-harvested (Stone/Ore yield nothing
+    /// without a pickaxe). It still breaks — it just drops nothing. Equivalent to
+    /// `harvest_tier() >= 1`; mirrors the harvest gate in `crate::mining`.
     #[inline]
     pub fn requires_tool(self) -> bool {
         matches!(self.material(), BlockMaterial::Stone | BlockMaterial::Ore)
+    }
+
+    /// Minimum pickaxe tier (`0` = hand, `1` = wooden, `2` = stone) needed to
+    /// HARVEST this block — i.e. to get a drop AND to mine it faster than by hand.
+    /// A pickaxe below this tier breaks the block at the bare-hand rate and yields
+    /// nothing (matching the goal's redstone/diamond rule). Everything that is
+    /// hand-harvestable (dirt, wood, plants, planks…) is tier `0`.
+    ///
+    /// A `match`, not a `BlockDef` field, so the cube rows stay untouched — only
+    /// the ores that deviate from "Stone/Ore ⇒ wooden" are listed (mirrors how
+    /// `render_shape` lists only the plants).
+    #[inline]
+    pub fn harvest_tier(self) -> u8 {
+        use Block::*;
+        match self {
+            // Above stone tier: needs an iron pickaxe (which doesn't exist yet),
+            // so a wooden/stone pickaxe breaks them at hand speed for no drop.
+            GoldOre | RedstoneOre | LapisOre | DiamondOre | EmeraldOre => 3,
+            // Stone pickaxe ores.
+            IronOre | CopperOre => 2,
+            // Everything else: wooden pickaxe for any stone/ore, hand otherwise.
+            _ => match self.material() {
+                BlockMaterial::Stone | BlockMaterial::Ore => 1,
+                _ => 0,
+            },
+        }
     }
 
     #[inline]
@@ -200,7 +237,16 @@ impl Block {
 mod tests {
     use super::{data, Block, BlockMaterial};
     use crate::atlas::Tile;
-    use crate::item::ItemType;
+    use crate::item::{Drop, ItemType};
+
+    /// One exact drop: `count` of `item`. Test shorthand for the `Drop` literal.
+    fn drop1(item: ItemType) -> Drop {
+        Drop {
+            item,
+            min: 1,
+            max: 1,
+        }
+    }
 
     #[test]
     fn ids_are_stable_and_append_only() {
@@ -277,6 +323,16 @@ mod tests {
             Block::DeadBush,
             Block::BrownMushroom,
             Block::RedMushroom,
+            Block::Cobblestone,
+            Block::OakPlanks,
+            Block::SprucePlanks,
+            Block::BirchPlanks,
+            Block::JunglePlanks,
+            Block::AcaciaPlanks,
+            Block::DarkOakPlanks,
+            Block::CherryPlanks,
+            Block::MangrovePlanks,
+            Block::CraftingTable,
         ];
 
         assert_eq!(Block::ALL, expected);
@@ -338,19 +394,39 @@ mod tests {
         assert_eq!(Block::OakLog.material(), BlockMaterial::Wood);
         assert_eq!(Block::OakLog.hardness(), 2.0);
         assert!(!Block::OakLog.requires_tool());
-        assert_eq!(Block::OakLog.drop_spec().drops, &[(ItemType::OakLog, 1.0)]);
+        assert_eq!(Block::OakLog.harvest_tier(), 0);
+        assert_eq!(Block::OakLog.drop_spec().drops, &[drop1(ItemType::OakLog)]);
 
-        // Stone family requires a tool and (per the mining model) yields nothing by
-        // hand, but the drop spec itself is still "self @ 1.0".
+        // Stone needs a wooden pickaxe (tier 1) and, when harvested, yields
+        // cobblestone rather than itself.
         assert_eq!(Block::Stone.material(), BlockMaterial::Stone);
         assert_eq!(Block::Stone.hardness(), 1.5);
         assert!(Block::Stone.requires_tool());
-        assert_eq!(Block::Stone.drop_spec().drops, &[(ItemType::Stone, 1.0)]);
+        assert_eq!(Block::Stone.harvest_tier(), 1);
+        assert_eq!(
+            Block::Stone.drop_spec().drops,
+            &[drop1(ItemType::Cobblestone)]
+        );
 
-        // Ores require a tool and are harder.
+        // Ores require a tool and are harder. Coal is wooden-tier; iron/copper
+        // need a stone pickaxe; redstone/diamond sit above the stone tier.
         assert_eq!(Block::CoalOre.material(), BlockMaterial::Ore);
         assert_eq!(Block::CoalOre.hardness(), 3.0);
         assert!(Block::CoalOre.requires_tool());
+        assert_eq!(Block::CoalOre.harvest_tier(), 1);
+        assert_eq!(Block::CoalOre.drop_spec().drops, &[drop1(ItemType::Coal)]);
+        assert_eq!(Block::IronOre.harvest_tier(), 2);
+        assert_eq!(Block::IronOre.drop_spec().drops, &[drop1(ItemType::RawIron)]);
+        assert_eq!(Block::CopperOre.harvest_tier(), 2);
+        assert_eq!(
+            Block::CopperOre.drop_spec().drops,
+            &[Drop {
+                item: ItemType::RawCopper,
+                min: 2,
+                max: 4,
+            }]
+        );
+        assert_eq!(Block::DiamondOre.harvest_tier(), 3);
 
         // Leaves: soft foliage, drop self.
         assert_eq!(Block::OakLeaves.material(), BlockMaterial::Foliage);
@@ -360,7 +436,7 @@ mod tests {
         // Dirt family.
         assert_eq!(Block::Grass.material(), BlockMaterial::Dirt);
         assert_eq!(Block::Grass.hardness(), 0.5);
-        assert_eq!(Block::Grass.drop_spec().drops, &[(ItemType::Grass, 1.0)]);
+        assert_eq!(Block::Grass.drop_spec().drops, &[drop1(ItemType::Grass)]);
 
         // Cross-plants: instant, Plant material, never require a tool.
         for plant in [
@@ -397,18 +473,21 @@ mod tests {
     fn every_block_has_consistent_metadata() {
         for &block in Block::ALL {
             let spec = block.drop_spec();
-            // Drop chances are valid probabilities and every dropped item maps to a
-            // real (non-Air) item.
-            for &(item, chance) in spec.drops {
+            // Every dropped item is a real (non-Air) item with a sane count range.
+            for d in spec.drops {
+                assert_ne!(d.item, ItemType::Air, "{block:?} drops Air");
                 assert!(
-                    (0.0..=1.0).contains(&chance),
-                    "{block:?} drop chance {chance} out of range"
+                    d.min >= 1 && d.min <= d.max,
+                    "{block:?} bad drop count {}..{}",
+                    d.min,
+                    d.max
                 );
-                assert_ne!(item, ItemType::Air, "{block:?} drops Air");
             }
-            // requires_tool() is exactly the Stone/Ore material set.
+            // requires_tool() is exactly the Stone/Ore material set, and matches
+            // "needs at least a wooden pickaxe" (harvest_tier >= 1).
             let by_material = matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore);
             assert_eq!(block.requires_tool(), by_material, "{block:?}");
+            assert_eq!(block.requires_tool(), block.harvest_tier() >= 1, "{block:?}");
         }
     }
 

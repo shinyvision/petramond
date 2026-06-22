@@ -49,12 +49,18 @@ pub struct RenderStats {
 #[derive(Clone, Debug)]
 pub struct UiSnapshot {
     pub open: bool,
+    /// Which crafting layout the open panel shows (only meaningful when `open`).
+    pub panel: super::ui::CraftKind,
     pub screen: (u32, u32),
     pub cursor_px: (f32, f32),
     pub active: u8,
     /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid):
     /// `(item, count)`, or `None` for an empty slot.
     pub slots: [Option<(ItemType, u8)>; TOTAL_SLOTS],
+    /// The crafting input cells (only the first `panel.cols()²` are drawn).
+    pub craft: [Option<(ItemType, u8)>; crate::crafting::MAX_CELLS],
+    /// The crafting result preview, drawn in the result slot.
+    pub result: Option<(ItemType, u8)>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
     pub cursor: Option<(ItemType, u8)>,
 }
@@ -63,10 +69,13 @@ impl Default for UiSnapshot {
     fn default() -> Self {
         UiSnapshot {
             open: false,
+            panel: super::ui::CraftKind::Inventory,
             screen: (0, 0),
             cursor_px: (0.0, 0.0),
             active: 0,
             slots: [None; TOTAL_SLOTS],
+            craft: [None; crate::crafting::MAX_CELLS],
+            result: None,
             cursor: None,
         }
     }
@@ -526,6 +535,7 @@ impl Renderer {
     /// holds a borrow of the game `Inventory`.
     pub fn set_ui(&mut self, v: UiFrame) {
         self.ui.open = v.open;
+        self.ui.panel = v.panel;
         self.ui.screen = v.screen;
         self.ui.cursor_px = v.cursor_px;
         self.ui.active = v.inv.active_slot();
@@ -533,6 +543,11 @@ impl Renderer {
             *slot = v.inv.slot(i).map(|s| (s.item, s.count));
         }
         self.ui.cursor = v.inv.cursor().map(|s| (s.item, s.count));
+        // Snapshot the crafting grid (cells past the live range stay cleared).
+        for (i, cell) in self.ui.craft.iter_mut().enumerate() {
+            *cell = v.craft.get(i).copied().flatten().map(|s| (s.item, s.count));
+        }
+        self.ui.result = v.craft_result.map(|s| (s.item, s.count));
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?

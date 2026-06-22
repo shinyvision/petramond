@@ -6,6 +6,7 @@
 
 use crate::block::Block;
 use crate::camera::Camera;
+use crate::crafting::{load_recipes, CraftGrid, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -71,6 +72,9 @@ pub struct GameEvents {
     /// An item/stack left the hand for the world this frame — a Q drop or an
     /// inventory drag-out. Drives the same first-person place jab as a placement.
     pub threw_item: bool,
+    /// The player right-clicked a placed crafting table this frame. The app shell
+    /// reacts by opening the 3×3 crafting screen (the game can't own screens).
+    pub open_crafting_table: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -105,6 +109,15 @@ pub struct Game {
     /// drag-out) so the next [`tick`](Self::tick) reports it for the hand's place
     /// jab. Consumed (reset) each tick.
     threw_item: bool,
+    /// Loaded crafting recipes (from `assets/recipes.json`), used to compute the
+    /// crafting result preview.
+    recipes: Recipes,
+    /// The active crafting grid (2×2 in the inventory, 3×3 at a table) + its
+    /// cached result. Empty whenever no crafting screen is open.
+    craft: CraftGrid,
+    /// Set when the player right-clicks a placed crafting table, so the next
+    /// [`tick`](Self::tick) asks the app shell to open the 3×3 screen. One-shot.
+    request_open_table: bool,
 }
 
 impl Game {
@@ -172,6 +185,9 @@ impl Game {
             tick_accumulator: 0.0,
             autosave_t: 0.0,
             threw_item: false,
+            recipes: load_recipes(),
+            craft: CraftGrid::new(),
+            request_open_table: false,
         }
     }
 
@@ -219,6 +235,8 @@ impl Game {
             broke_block,
             // Throws happen via input handlers before this tick; report and clear.
             threw_item: std::mem::take(&mut self.threw_item),
+            // Set this tick by handle_block_actions when a table was right-clicked.
+            open_crafting_table: std::mem::take(&mut self.request_open_table),
         }
     }
 
@@ -310,6 +328,101 @@ impl Game {
     /// main grid. See [`Inventory::shift_move_slot`].
     pub fn shift_click_inventory_slot(&mut self, slot: usize) {
         self.player.inventory.shift_move_slot(slot);
+    }
+
+    /// The active crafting grid (for the UI to read cells + result preview).
+    #[inline]
+    pub fn craft_grid(&self) -> &CraftGrid {
+        &self.craft
+    }
+
+    /// Configure the crafting grid for a screen of `cols×cols` (2 = inventory,
+    /// 3 = table) and clear it. Called when a crafting screen opens.
+    pub fn open_crafting(&mut self, cols: usize) {
+        self.craft.reset(cols);
+        self.craft.recompute(&self.recipes);
+    }
+
+    /// Close the crafting grid: return every input item to the inventory (any
+    /// overflow is thrown into the world), then clear the result.
+    pub fn close_crafting(&mut self) {
+        for i in 0..self.craft.capacity() {
+            if let Some(stack) = self.craft.take_cell(i) {
+                if let Some(leftover) = self.player.inventory.add(stack) {
+                    self.throw_item(leftover);
+                }
+            }
+        }
+        self.craft.recompute(&self.recipes);
+    }
+
+    /// Left-click a crafting input cell (cursor pick/drop/merge/swap), then
+    /// refresh the result preview.
+    pub fn craft_click_slot(&mut self, i: usize) {
+        if i >= self.craft.capacity() {
+            return;
+        }
+        self.player
+            .inventory
+            .click_external_slot(self.craft.cell_mut(i));
+        self.craft.recompute(&self.recipes);
+    }
+
+    /// Right-click a crafting input cell (split / place-one), then refresh.
+    pub fn craft_right_click_slot(&mut self, i: usize) {
+        if i >= self.craft.capacity() {
+            return;
+        }
+        self.player
+            .inventory
+            .right_click_external_slot(self.craft.cell_mut(i));
+        self.craft.recompute(&self.recipes);
+    }
+
+    /// Shift-click a crafting input cell: move its whole stack to the inventory
+    /// (whatever doesn't fit stays in the cell), then refresh.
+    pub fn craft_shift_slot(&mut self, i: usize) {
+        if i >= self.craft.capacity() {
+            return;
+        }
+        if let Some(stack) = self.craft.take_cell(i) {
+            if let Some(leftover) = self.player.inventory.add(stack) {
+                *self.craft.cell_mut(i) = Some(leftover);
+            }
+        }
+        self.craft.recompute(&self.recipes);
+    }
+
+    /// Take one craft from the result slot onto the cursor: places the result on
+    /// the cursor (stacking onto a matching held stack with room) and consumes one
+    /// item from every occupied input cell. No-op if there's no result or the
+    /// cursor can't accept the whole result.
+    pub fn craft_take_result(&mut self) {
+        let Some(result) = self.craft.result().copied() else {
+            return;
+        };
+        if self.player.inventory.try_stack_onto_cursor(result) {
+            self.craft.consume_one();
+            self.craft.recompute(&self.recipes);
+        }
+    }
+
+    /// Shift-click the result: craft as many times as possible straight into the
+    /// inventory, stopping when an ingredient runs out or the next result won't
+    /// fully fit. The hotbar/main grid both receive results (via `add`).
+    pub fn craft_shift_result(&mut self) {
+        // Bounded by the grid contents: each craft consumes ≥1 from every cell.
+        for _ in 0..(64 * crate::crafting::MAX_CELLS) {
+            let Some(result) = self.craft.result().copied() else {
+                break;
+            };
+            if !self.player.inventory.can_add(result) {
+                break;
+            }
+            self.player.inventory.add(result);
+            self.craft.consume_one();
+            self.craft.recompute(&self.recipes);
+        }
     }
 
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
@@ -490,18 +603,35 @@ impl Game {
     }
 
     fn handle_block_actions(&mut self, dt: f32, input: &GameInput) -> (bool, bool) {
+        // The held pickaxe tier (0 = hand) gates mining speed + whether drops fall.
+        let tool_tier = self
+            .player
+            .inventory
+            .selected()
+            .map_or(0, |s| s.item.pickaxe_tier());
+
         if !input.gameplay_enabled {
-            self.mining
-                .update(dt, self.look.as_ref(), input.break_held, true, &self.world);
+            self.mining.update(
+                dt,
+                self.look.as_ref(),
+                input.break_held,
+                true,
+                &self.world,
+                tool_tier,
+            );
             self.mining_dust_t = 0.0;
             return (false, false);
         }
 
         let mut broke_block = false;
-        if let Some(event) =
-            self.mining
-                .update(dt, self.look.as_ref(), input.break_held, false, &self.world)
-        {
+        if let Some(event) = self.mining.update(
+            dt,
+            self.look.as_ref(),
+            input.break_held,
+            false,
+            &self.world,
+            tool_tier,
+        ) {
             broke_block = true;
             let hit_normal = self
                 .look
@@ -533,7 +663,27 @@ impl Game {
             self.mining_dust_t = 0.0;
         }
 
-        (input.place_clicked && self.try_place(), broke_block)
+        // Right-click a placed crafting table to open it (interact) rather than
+        // placing into the cell — unless sneaking, which falls through so the
+        // player can still build on top of a table.
+        let open_table =
+            input.place_clicked && !input.movement.sneak && self.targeting_crafting_table();
+        if open_table {
+            self.request_open_table = true;
+        }
+        let placed = !open_table && input.place_clicked && self.try_place();
+        (placed, broke_block)
+    }
+
+    /// Whether the current look target is a placed crafting table.
+    fn targeting_crafting_table(&self) -> bool {
+        match self.look {
+            Some(h) => {
+                Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z))
+                    == Block::CraftingTable
+            }
+            None => false,
+        }
     }
 
     fn try_place(&mut self) -> bool {
@@ -565,13 +715,21 @@ impl Game {
 
     fn spawn_drops(&mut self, pos: IVec3, block: Block, skylight: u8) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
-        for &(item, chance) in block.drop_spec().drops {
+        for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            let roll = crate::entity::hash01(self.spawn_counter as u64);
-            if chance < 1.0 && roll >= chance {
+            // Roll a count in [min, max] (a fixed amount when min == max, e.g. the
+            // 2–4 raw copper from copper ore).
+            let count = if d.min >= d.max {
+                d.min
+            } else {
+                let r = crate::entity::hash01(self.spawn_counter as u64);
+                let span = (d.max - d.min + 1) as f32;
+                (d.min + (r * span) as u8).min(d.max)
+            };
+            if count == 0 {
                 continue;
             }
-            let stack = ItemStack::new(item, 1);
+            let stack = ItemStack::new(d.item, count);
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
             drop.skylight = skylight;
             self.world.spawn_item(drop);
@@ -1310,5 +1468,78 @@ mod tests {
             .filter(|s| s.item == item)
             .map(|s| s.count as u32)
             .sum()
+    }
+
+    /// Put `stack` into the first craft cell by routing it through the cursor
+    /// (inventory slot 0 → cursor → craft cell), as the UI clicks would.
+    fn place_in_craft_cell(game: &mut Game, cell: usize, stack: ItemStack) {
+        game.add_to_inventory(stack);
+        game.click_inventory_slot(0); // pick the stack onto the cursor
+        game.craft_click_slot(cell); // drop it into the craft cell
+    }
+
+    #[test]
+    fn crafting_planks_from_log_via_result_slot() {
+        let mut game = game();
+        game.open_crafting(2);
+        place_in_craft_cell(&mut game, 0, ItemStack::new(ItemType::OakLog, 1));
+        assert_eq!(
+            game.craft_grid().result().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
+        // Take the result: 4 planks onto the cursor, the log consumed, no result.
+        game.craft_take_result();
+        assert_eq!(
+            game.inventory().cursor().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
+        assert!(game.craft_grid().result().is_none());
+        assert!(game.craft_grid().is_empty());
+    }
+
+    #[test]
+    fn shift_crafting_consumes_every_log_in_the_cell() {
+        let mut game = game();
+        game.open_crafting(2);
+        // A cell holding 3 logs shift-crafts three times (one log per craft).
+        place_in_craft_cell(&mut game, 0, ItemStack::new(ItemType::OakLog, 3));
+        game.craft_shift_result();
+        assert!(game.craft_grid().is_empty(), "all logs consumed");
+        assert_eq!(count_item(&game.player.inventory, ItemType::OakPlanks), 12);
+    }
+
+    #[test]
+    fn closing_crafting_returns_grid_items_to_inventory() {
+        let mut game = game();
+        game.open_crafting(3);
+        place_in_craft_cell(&mut game, 4, ItemStack::new(ItemType::OakLog, 5));
+        assert!(game.inventory().cursor().is_none());
+        game.close_crafting();
+        assert_eq!(count_item(&game.player.inventory, ItemType::OakLog), 5);
+        assert!(game.craft_grid().cell(4).is_none());
+    }
+
+    #[test]
+    fn stone_pickaxe_harvests_iron_as_raw_iron() {
+        // Mining only spawns drops when harvested; the drop item comes from the
+        // block's drop spec. Iron ore yields raw iron (here via spawn_drops, which
+        // the mining path calls on a harvested break).
+        let mut game = game();
+        game.spawn_drops(IVec3::new(0, 64, 0), Block::IronOre, 15);
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack.item,
+            ItemType::RawIron
+        );
+    }
+
+    #[test]
+    fn copper_ore_drops_two_to_four_raw_copper() {
+        let mut game = game();
+        game.spawn_drops(IVec3::new(1, 64, 1), Block::CopperOre, 15);
+        let drops = game.world.item_entities();
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].stack.item, ItemType::RawCopper);
+        assert!((2..=4).contains(&drops[0].stack.count), "2–4 raw copper");
     }
 }

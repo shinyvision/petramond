@@ -23,21 +23,25 @@ pub enum GuiSprite {
     InventoryPanel,
     /// A single slot frame (80×80) for the main-grid slots.
     SlotFrame,
+    /// The crafting-table panel sheet (256×256; 176×166 art in the top-left,
+    /// adding the 3×3 grid). Drawn centered when a crafting table is open.
+    CraftingTablePanel,
 }
 
 /// All GUI sprites in atlas-layout order. Used for compositing + iteration.
-const GUI_SPRITES: [GuiSprite; 4] = [
+const GUI_SPRITES: [GuiSprite; 5] = [
     GuiSprite::Hotbar,
     GuiSprite::HotbarSelection,
     GuiSprite::InventoryPanel,
     GuiSprite::SlotFrame,
+    GuiSprite::CraftingTablePanel,
 ];
 
 /// Width / height (px) of the composited GUI atlas. Sprites are packed in a
 /// single row at fixed offsets (see [`GuiSprite::atlas_offset_px`]); height is the
 /// tallest sprite. Keep these in sync with the offsets/sizes below.
-pub const GUI_ATLAS_W: u32 = 542; // 182 + 24 + 256 + 80
-pub const GUI_ATLAS_H: u32 = 256; // tallest sprite (inventory panel)
+pub const GUI_ATLAS_W: u32 = 798; // 182 + 24 + 256 + 80 + 256
+pub const GUI_ATLAS_H: u32 = 256; // tallest sprite (inventory / table panel)
 
 impl GuiSprite {
     /// Source pixel size `(w, h)` of this sprite (matches its PNG dimensions).
@@ -51,6 +55,7 @@ impl GuiSprite {
             GuiSprite::HotbarSelection => (24, 23),
             GuiSprite::InventoryPanel => (256, 256),
             GuiSprite::SlotFrame => (80, 80),
+            GuiSprite::CraftingTablePanel => (256, 256),
         }
     }
 
@@ -66,7 +71,7 @@ impl GuiSprite {
     #[inline]
     pub fn art_size_px(self) -> (u32, u32) {
         match self {
-            GuiSprite::InventoryPanel => (176, 166),
+            GuiSprite::InventoryPanel | GuiSprite::CraftingTablePanel => (176, 166),
             other => other.size_px(),
         }
     }
@@ -81,6 +86,7 @@ impl GuiSprite {
             GuiSprite::HotbarSelection => (182, 0),
             GuiSprite::InventoryPanel => (206, 0),
             GuiSprite::SlotFrame => (462, 0),
+            GuiSprite::CraftingTablePanel => (542, 0),
         }
     }
 
@@ -99,6 +105,9 @@ impl GuiSprite {
             }
             GuiSprite::SlotFrame => {
                 include_bytes!("../../assets/textures/gui/slot_frame.png")
+            }
+            GuiSprite::CraftingTablePanel => {
+                include_bytes!("../../assets/textures/gui/crafting_table.png")
             }
         }
     }

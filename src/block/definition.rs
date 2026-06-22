@@ -34,12 +34,16 @@ pub enum BlockMaterial {
     Other,
 }
 
-/// `drops self @ 1.0` helper: a one-entry [`DropSpec`] yielding the block's own
-/// item with certainty. The slices are `'static` so they can live in [`BlockDef`].
+/// `drops self ×1` helper: a one-entry [`DropSpec`] yielding exactly one of the
+/// block's own item. The slices are `'static` so they can live in [`BlockDef`].
 macro_rules! drops_self {
     ($item:ident) => {
         DropSpec {
-            drops: &[(ItemType::$item, 1.0)],
+            drops: &[Drop {
+                item: ItemType::$item,
+                min: 1,
+                max: 1,
+            }],
         }
     };
 }

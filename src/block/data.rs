@@ -1,5 +1,5 @@
 use crate::atlas::Tile;
-use crate::item::{DropSpec, ItemType};
+use crate::item::{Drop, DropSpec, ItemType};
 
 use super::definition::{drops_self, BlockDef, BlockFlags, BlockMaterial};
 use super::Block;
@@ -90,6 +90,16 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::DeadBush,
     Block::BrownMushroom,
     Block::RedMushroom,
+    Block::Cobblestone,
+    Block::OakPlanks,
+    Block::SprucePlanks,
+    Block::BirchPlanks,
+    Block::JunglePlanks,
+    Block::AcaciaPlanks,
+    Block::DarkOakPlanks,
+    Block::CherryPlanks,
+    Block::MangrovePlanks,
+    Block::CraftingTable,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -123,7 +133,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         tiles: [Tile::Stone, Tile::Stone, Tile::Stone],
         material: BlockMaterial::Stone,
         hardness: 1.5,
-        drop: drops_self!(Stone),
+        // Mined stone yields cobblestone (needs a wooden pickaxe — see harvest_tier).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::Cobblestone,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::Sand,
@@ -539,7 +556,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         tiles: [Tile::CoalOre, Tile::CoalOre, Tile::CoalOre],
         material: BlockMaterial::Ore,
         hardness: 3.0,
-        drop: drops_self!(CoalOre),
+        // Coal ore → one coal (wooden pickaxe or better).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::Coal,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::IronOre,
@@ -547,7 +571,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         tiles: [Tile::IronOre, Tile::IronOre, Tile::IronOre],
         material: BlockMaterial::Ore,
         hardness: 3.0,
-        drop: drops_self!(IronOre),
+        // Iron ore → one raw iron (needs a stone pickaxe — see harvest_tier).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::RawIron,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::CopperOre,
@@ -555,7 +586,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         tiles: [Tile::CopperOre, Tile::CopperOre, Tile::CopperOre],
         material: BlockMaterial::Ore,
         hardness: 3.0,
-        drop: drops_self!(CopperOre),
+        // Copper ore → 2–4 raw copper (needs a stone pickaxe).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::RawCopper,
+                min: 2,
+                max: 4,
+            }],
+        },
     },
     BlockDef {
         block: Block::GoldOre,
@@ -720,6 +758,101 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Plant,
         hardness: 0.0,
         drop: drops_self!(RedMushroom),
+    },
+    // --- Crafting update: crafted/placeable blocks. ---
+    BlockDef {
+        block: Block::Cobblestone,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::Cobblestone, Tile::Cobblestone, Tile::Cobblestone],
+        material: BlockMaterial::Stone,
+        hardness: 2.0,
+        drop: drops_self!(Cobblestone),
+    },
+    BlockDef {
+        block: Block::OakPlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::OakPlanks, Tile::OakPlanks, Tile::OakPlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(OakPlanks),
+    },
+    BlockDef {
+        block: Block::SprucePlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::SprucePlanks, Tile::SprucePlanks, Tile::SprucePlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(SprucePlanks),
+    },
+    BlockDef {
+        block: Block::BirchPlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::BirchPlanks, Tile::BirchPlanks, Tile::BirchPlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(BirchPlanks),
+    },
+    BlockDef {
+        block: Block::JunglePlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::JunglePlanks, Tile::JunglePlanks, Tile::JunglePlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(JunglePlanks),
+    },
+    BlockDef {
+        block: Block::AcaciaPlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::AcaciaPlanks, Tile::AcaciaPlanks, Tile::AcaciaPlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(AcaciaPlanks),
+    },
+    BlockDef {
+        block: Block::DarkOakPlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [
+            Tile::DarkOakPlanks,
+            Tile::DarkOakPlanks,
+            Tile::DarkOakPlanks,
+        ],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(DarkOakPlanks),
+    },
+    BlockDef {
+        block: Block::CherryPlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [Tile::CherryPlanks, Tile::CherryPlanks, Tile::CherryPlanks],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(CherryPlanks),
+    },
+    BlockDef {
+        block: Block::MangrovePlanks,
+        flags: FULL_CUBE_FLAGS,
+        tiles: [
+            Tile::MangrovePlanks,
+            Tile::MangrovePlanks,
+            Tile::MangrovePlanks,
+        ],
+        material: BlockMaterial::Wood,
+        hardness: 2.0,
+        drop: drops_self!(MangrovePlanks),
+    },
+    BlockDef {
+        block: Block::CraftingTable,
+        flags: FULL_CUBE_FLAGS,
+        // [top, bottom, side]: the 3-tile model uses one side texture for all
+        // four faces, so the recognizable front art is shown on every side.
+        tiles: [
+            Tile::CraftingTableTop,
+            Tile::OakPlanks,
+            Tile::CraftingTableFront,
+        ],
+        material: BlockMaterial::Wood,
+        hardness: 2.5,
+        drop: drops_self!(CraftingTable),
     },
 ];
 

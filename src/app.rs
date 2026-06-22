@@ -187,6 +187,10 @@ impl App {
 
         let game_input = self.take_game_input();
         let events = self.game.tick(dt, &game_input);
+        // Right-clicking a placed crafting table opens its 3×3 screen.
+        if events.open_crafting_table && self.screen.gameplay_enabled() {
+            self.open_crafting_table();
+        }
         self.pointer.clear_edges();
 
         let environment = self.game.environment(now);
@@ -211,8 +215,11 @@ impl App {
         renderer.set_item_entities(self.game.item_entity_instances());
         renderer.set_particles(self.game.particle_instances());
         renderer.set_ui(UiFrame {
-            open: self.screen.inventory_open(),
+            open: self.screen.ui_open(),
+            panel: self.screen.craft_kind(),
             inv: self.game.inventory(),
+            craft: self.game.craft_grid().cells(),
+            craft_result: self.game.craft_grid().result().copied(),
             screen: screen_size,
             cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
         });
@@ -250,30 +257,45 @@ impl App {
     }
 
     fn toggle_inventory(&mut self) {
-        if self.screen.inventory_open() {
-            self.close_inventory();
+        if self.screen.ui_open() {
+            self.close_menu();
         } else {
             self.open_inventory();
         }
     }
 
     fn open_inventory(&mut self) {
-        self.screen = AppScreen::Inventory;
+        self.enter_menu(AppScreen::Inventory);
+        self.game.open_crafting(2);
+    }
+
+    /// Open the 3×3 crafting-table screen (after right-clicking a placed table).
+    fn open_crafting_table(&mut self) {
+        self.enter_menu(AppScreen::CraftingTable);
+        self.game.open_crafting(3);
+    }
+
+    /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
+    /// cursor next tick, and clear any stale click streak so the first click
+    /// can't register a phantom double.
+    fn enter_menu(&mut self, screen: AppScreen) {
+        self.screen = screen;
         self.pointer.grabbing = false;
         self.recenter_cursor = true;
-        // Each inventory session starts with no click history, so a stale slot
-        // can't combine with the first click to register a phantom double.
         self.pointer.reset_click_streak();
     }
 
-    fn close_inventory(&mut self) {
+    /// Close any open menu: return crafting-grid items to the inventory, drop back
+    /// to gameplay, and re-grab the pointer.
+    fn close_menu(&mut self) {
+        self.game.close_crafting();
         self.screen = AppScreen::Game;
         self.pointer.grabbing = true;
     }
 
     fn close_screen(&mut self) -> bool {
-        if self.screen.inventory_open() {
-            self.close_inventory();
+        if self.screen.ui_open() {
+            self.close_menu();
             true
         } else {
             false
@@ -284,7 +306,7 @@ impl App {
     /// (i.e. the inventory was open). No-op when closed. `now` timestamps the click
     /// for double-click detection.
     fn route_screen_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        if !self.screen.inventory_open() {
+        if !self.screen.ui_open() {
             return false;
         }
         self.route_inventory_click(screen, PointerButton::Primary, now);
@@ -295,7 +317,7 @@ impl App {
     /// (i.e. the inventory was open) — so a closed-inventory right-click falls
     /// through to block placement. No-op when closed.
     fn route_screen_right_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        if !self.screen.inventory_open() {
+        if !self.screen.ui_open() {
             return false;
         }
         self.route_inventory_click(screen, PointerButton::Secondary, now);
@@ -312,6 +334,14 @@ impl App {
     fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
         let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
         let shift = self.modifiers.shift;
+        // Crafting slots (input cells + result) take priority over the inventory
+        // slots they sit above in the panel.
+        if let Some(hit) = crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
+        {
+            self.pointer.reset_click_streak();
+            self.route_craft_click(hit, button, shift);
+            return;
+        }
         match crate::render::slot_at_cursor(screen, true, cursor) {
             Some(slot) => {
                 if shift {
@@ -346,6 +376,32 @@ impl App {
             self.game.collect_to_cursor();
         } else {
             self.game.click_inventory_slot(slot);
+        }
+    }
+
+    /// Apply a click on a crafting slot. Input cells behave like inventory slots
+    /// (shift quick-moves to the inventory; left/right place / split / swap). The
+    /// result slot takes one craft to the cursor, or shift-crafts as many as fit.
+    fn route_craft_click(&mut self, hit: crate::render::CraftHit, button: PointerButton, shift: bool) {
+        use crate::render::CraftHit;
+        match hit {
+            CraftHit::Input(i) => {
+                if shift {
+                    self.game.craft_shift_slot(i);
+                } else {
+                    match button {
+                        PointerButton::Primary => self.game.craft_click_slot(i),
+                        PointerButton::Secondary => self.game.craft_right_click_slot(i),
+                    }
+                }
+            }
+            CraftHit::Result => {
+                if shift {
+                    self.game.craft_shift_result();
+                } else {
+                    self.game.craft_take_result();
+                }
+            }
         }
     }
 }
@@ -571,6 +627,82 @@ mod tests {
             }
         }
         panic!("no cursor position maps to slot {slot}");
+    }
+
+    fn cursor_over_craft(
+        screen: (u32, u32),
+        kind: crate::render::CraftKind,
+        hit: crate::render::CraftHit,
+    ) -> (f32, f32) {
+        for y in 0..screen.1 {
+            for x in 0..screen.0 {
+                let c = (x as f32 + 0.5, y as f32 + 0.5);
+                if crate::render::craft_slot_at_cursor(kind, screen, c) == Some(hit) {
+                    return c;
+                }
+            }
+        }
+        panic!("no cursor position maps to craft {hit:?}");
+    }
+
+    #[test]
+    fn craft_slot_clicks_route_through_to_crafting() {
+        use crate::render::{CraftHit, CraftKind};
+        let mut app = app();
+        // Give the player one oak log and open the inventory (2×2 crafting).
+        app.game.add_to_inventory(ItemStack::new(ItemType::OakLog, 1));
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280u32, 720u32);
+
+        // Pick the log up from inventory slot 0.
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.route_screen_click(screen, 0.0);
+        assert!(app.game.inventory().cursor().is_some());
+
+        // Drop it into the first 2×2 craft input cell -> planks preview appears.
+        let cc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Input(0));
+        app.set_cursor_position(cc.0, cc.1);
+        app.route_screen_click(screen, 0.1);
+        assert!(app.game.inventory().cursor().is_none(), "log placed into the craft cell");
+        assert_eq!(
+            app.game.craft_grid().result().map(|s| s.item),
+            Some(ItemType::OakPlanks)
+        );
+
+        // Click the result slot: 4 planks land on the cursor, ingredients consumed.
+        let rc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Result);
+        app.set_cursor_position(rc.0, rc.1);
+        app.route_screen_click(screen, 0.2);
+        assert_eq!(
+            app.game.inventory().cursor().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
+        assert!(app.game.craft_grid().result().is_none());
+    }
+
+    #[test]
+    fn closing_a_menu_returns_craft_grid_items_to_inventory() {
+        let mut app = app();
+        app.game.add_to_inventory(ItemStack::new(ItemType::OakLog, 2));
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280u32, 720u32);
+        // Move the logs onto the cursor and into a craft cell.
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.route_screen_click(screen, 0.0);
+        let cc = cursor_over_craft(screen, crate::render::CraftKind::Inventory, crate::render::CraftHit::Input(0));
+        app.set_cursor_position(cc.0, cc.1);
+        app.route_screen_click(screen, 0.1);
+        // Close with Escape: the logs return to the inventory.
+        assert!(app.handle_control(Control::CloseScreen, true));
+        assert!(!app.inventory_open());
+        let logs: u32 = (0..crate::inventory::TOTAL_SLOTS)
+            .filter_map(|i| app.game.inventory().slot(i))
+            .filter(|s| s.item == ItemType::OakLog)
+            .map(|s| s.count as u32)
+            .sum();
+        assert_eq!(logs, 2, "craft-grid logs came back to the inventory");
     }
 
     #[test]

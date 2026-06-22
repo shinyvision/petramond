@@ -193,22 +193,36 @@ pub(super) fn build_hand_lit(
 /// the same swing / place-pop animation folded in as the rest of the hand.
 /// `None` for bare hand or a held block (those go through [`build_hand`]).
 pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
-    let ItemRenderKind::Sprite(tile) = view.item?.render_kind() else {
+    let item = view.item?;
+    let ItemRenderKind::Sprite(tile) = item.render_kind() else {
         return None;
     };
-    // Three-quarter tilt: yaw + a small pitch so the front/back faces and the
-    // stepped side walls all read. The extruded mesh is a unit, origin-centred
-    // slab, so this scale sizes it like a held item — a touch larger than a held
-    // block so the flat sprite reads clearly in hand and its extrusion shows.
-    let s = 0.85;
-    let base_model = Mat4::from_scale_rotation_translation(
-        Vec3::splat(s),
-        Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.25) * Quat::from_rotation_z(-0.15),
-        Vec3::ZERO,
-    );
+    // First-person hold of a sprite item. The extruded sprite is a unit, origin-
+    // centred slab built upright; the item's own [`held_pose`](crate::item::ItemType::held_pose)
+    // (item data) tilts it before it's seated in the hand:
+    //   * roll (Z), applied FIRST in the sprite's own plane, lays the long axis
+    //     diagonally for a swung tool (pickaxes); it's 0 for upright items;
+    //   * yaw (Y) then swings the slab past head-on to a steep, near-side-on angle
+    //     so the EXTRUDED THICKNESS — not the flat face — reads, for a chunky 3D
+    //     look; pitch (X) is a spare tilt, flat for now.
+    // `nudge` lifts/shifts it within the shared held anchor so it sits at the
+    // screen's lower-right (sprite-only; the anchor is unchanged for held blocks).
+    // `s` sizes the slab like a held item.
+    let pose = item.held_pose();
+    let s = 1.0;
+    let nudge = Vec3::new(0.10, 0.10, 0.0);
+    let base_model = Mat4::from_scale(Vec3::splat(s))
+        * Mat4::from_quat(
+            Quat::from_rotation_y(pose.yaw)
+                * Quat::from_rotation_x(pose.pitch)
+                * Quat::from_rotation_z(pose.roll),
+        );
     Some((
         tile,
-        hand_view_proj(aspect) * held_item_placement(view, aspect) * base_model,
+        hand_view_proj(aspect)
+            * held_item_placement(view, aspect)
+            * Mat4::from_translation(nudge)
+            * base_model,
     ))
 }
 
@@ -434,8 +448,14 @@ mod tests {
             placed: true,
             dt: 1.0 / 60.0,
         });
-        assert_eq!(view.item, None, "hand is empty after placing the last block");
-        assert!(view.swing > 0.0, "the emptied hand still plays the place swing");
+        assert_eq!(
+            view.item, None,
+            "hand is empty after placing the last block"
+        );
+        assert!(
+            view.swing > 0.0,
+            "the emptied hand still plays the place swing"
+        );
         assert_eq!(view.swing_scale, PLACE_SWING_SCALE);
     }
 
@@ -800,8 +820,14 @@ mod tests {
         let mid = fist(0.5);
         // The fist drives toward screen centre (smaller x) and into the screen
         // (more negative z): a forward punch, not the old sideways wipe.
-        assert!(mid.x < rest.x, "fist should swing toward center: {mid:?} vs {rest:?}");
-        assert!(mid.z < rest.z, "fist should punch into the screen: {mid:?} vs {rest:?}");
+        assert!(
+            mid.x < rest.x,
+            "fist should swing toward center: {mid:?} vs {rest:?}"
+        );
+        assert!(
+            mid.z < rest.z,
+            "fist should punch into the screen: {mid:?} vs {rest:?}"
+        );
 
         // The shoulder pivot barely moves — the arm hinges, it doesn't slide.
         assert!(
@@ -837,5 +863,153 @@ mod tests {
         // The softer place jab also moves the hand, but less than a full punch.
         assert_ne!(a, c, "place swing must move the hand");
         assert_ne!(b, c, "the place jab is softer than the mining punch");
+    }
+
+    /// Visual preview harness (NOT an assertion): rasterizes held sprite items via
+    /// the REAL `held_sprite` MVP (so it reflects each item's per-item `held_pose`)
+    /// to PNGs — pose looks right in source but wrong on screen, so render to
+    /// verify. Run: `cargo test --lib -- --ignored --nocapture render_held_item_preview`.
+    /// Writes /tmp/held_<item>.png (full 16:9) + _zoom.png (auto-framed 2x).
+    #[test]
+    #[ignore = "visual preview harness; run explicitly to regenerate /tmp PNGs"]
+    fn render_held_item_preview() {
+        use crate::atlas::{tile_uv, Tile};
+        use crate::item::ItemType;
+        use glam::Vec4;
+
+        let targets = [
+            (ItemType::StonePickaxe, "stone_pickaxe.png"),
+            (ItemType::Poppy, "poppy.png"),
+        ];
+        const W: usize = 1280;
+        const H: usize = 720;
+        let aspect = W as f32 / H as f32;
+        let bg = [74u8, 100, 64];
+
+        for (item, file) in targets {
+            let view = HeldItemView {
+                item: Some(item),
+                swing: 0.0,
+                swing_scale: 1.0,
+            };
+            let (tile, mvp) = held_sprite(&view, aspect).expect("sprite item");
+            let mut verts = Vec::new();
+            crate::render::item_model::build_extruded_item_lit(
+                tile,
+                lighting::FULL_SKYLIGHT,
+                &mut verts,
+            );
+            let src = format!("{}/assets/textures/{}", env!("CARGO_MANIFEST_DIR"), file);
+            let img = image::open(&src).expect("texture").to_rgba8();
+            let (tw, th) = img.dimensions();
+            let [au0, av0, au1, av1] = tile_uv(tile);
+
+            let mut color = vec![0u8; W * H * 3];
+            for px in color.chunks_mut(3) {
+                px.copy_from_slice(&bg);
+            }
+            let mut zbuf = vec![f32::INFINITY; W * H];
+            let (mut bx0, mut by0, mut bx1, mut by1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            let project = |p: [f32; 3]| -> [f32; 4] {
+                let clip = mvp * Vec4::new(p[0], p[1], p[2], 1.0);
+                let invw = 1.0 / clip.w;
+                [
+                    (clip.x * invw * 0.5 + 0.5) * W as f32,
+                    (1.0 - (clip.y * invw * 0.5 + 0.5)) * H as f32,
+                    clip.z * invw,
+                    invw,
+                ]
+            };
+            for tri in verts.chunks_exact(3) {
+                let shade = tri[0].shade;
+                let s = [
+                    project(tri[0].pos),
+                    project(tri[1].pos),
+                    project(tri[2].pos),
+                ];
+                let uvw = [
+                    [tri[0].uv[0] * s[0][3], tri[0].uv[1] * s[0][3]],
+                    [tri[1].uv[0] * s[1][3], tri[1].uv[1] * s[1][3]],
+                    [tri[2].uv[0] * s[2][3], tri[2].uv[1] * s[2][3]],
+                ];
+                for v in &s {
+                    bx0 = bx0.min(v[0]);
+                    by0 = by0.min(v[1]);
+                    bx1 = bx1.max(v[0]);
+                    by1 = by1.max(v[1]);
+                }
+                let (x0, y0, x1, y1, x2, y2) =
+                    (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
+                let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+                if area.abs() < 1e-6 {
+                    continue;
+                }
+                let inv_area = 1.0 / area;
+                let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
+                let maxx = x0.max(x1).max(x2).ceil().min(W as f32 - 1.0) as usize;
+                let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
+                let maxy = y0.max(y1).max(y2).ceil().min(H as f32 - 1.0) as usize;
+                for y in miny..=maxy {
+                    for x in minx..=maxx {
+                        let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                        let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
+                        let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
+                        let w2 = 1.0 - w0 - w1;
+                        if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                            continue;
+                        }
+                        let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
+                        let idx = y * W + x;
+                        if z >= zbuf[idx] {
+                            continue;
+                        }
+                        let invw = w0 * s[0][3] + w1 * s[1][3] + w2 * s[2][3];
+                        let u = (w0 * uvw[0][0] + w1 * uvw[1][0] + w2 * uvw[2][0]) / invw;
+                        let v = (w0 * uvw[0][1] + w1 * uvw[1][1] + w2 * uvw[2][1]) / invw;
+                        let lu = (u - au0) / (au1 - au0);
+                        let lv = (v - av0) / (av1 - av0);
+                        let sx = (lu * tw as f32).clamp(0.0, tw as f32 - 1.0) as u32;
+                        let sy = (lv * th as f32).clamp(0.0, th as f32 - 1.0) as u32;
+                        let texel = img.get_pixel(sx, sy).0;
+                        if texel[3] < 128 {
+                            continue;
+                        }
+                        zbuf[idx] = z;
+                        let o = idx * 3;
+                        color[o] = (texel[0] as f32 * shade) as u8;
+                        color[o + 1] = (texel[1] as f32 * shade) as u8;
+                        color[o + 2] = (texel[2] as f32 * shade) as u8;
+                    }
+                }
+            }
+            let name = format!("{item:?}").to_lowercase();
+            let full = format!("/tmp/held_{name}.png");
+            image::save_buffer(&full, &color, W as u32, H as u32, image::ColorType::Rgb8)
+                .expect("save full");
+            let pad = 24.0;
+            let cx0 = (bx0 - pad).max(0.0) as usize;
+            let cy0 = (by0 - pad).max(0.0) as usize;
+            let cx1 = ((bx1 + pad).min(W as f32 - 1.0)) as usize;
+            let cy1 = ((by1 + pad).min(H as f32 - 1.0)) as usize;
+            let (cw, ch) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
+            let mut crop = vec![0u8; cw * 2 * ch * 2 * 3];
+            for y in 0..ch * 2 {
+                for x in 0..cw * 2 {
+                    let srcp = ((cy0 + y / 2) * W + (cx0 + x / 2)) * 3;
+                    let dst = (y * cw * 2 + x) * 3;
+                    crop[dst..dst + 3].copy_from_slice(&color[srcp..srcp + 3]);
+                }
+            }
+            let zoom = format!("/tmp/held_{name}_zoom.png");
+            image::save_buffer(
+                &zoom,
+                &crop,
+                (cw * 2) as u32,
+                (ch * 2) as u32,
+                image::ColorType::Rgb8,
+            )
+            .expect("save zoom");
+            println!("wrote {full} + {zoom}  (roll={:.2})", item.held_pose().roll);
+        }
     }
 }

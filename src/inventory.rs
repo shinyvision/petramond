@@ -216,35 +216,33 @@ impl Inventory {
         if i >= TOTAL_SLOTS {
             return;
         }
+        Self::apply_left_click(&mut self.cursor, &mut self.slots[i]);
+    }
 
-        match (self.cursor.take(), self.slots[i].take()) {
-            // Both empty: nothing to do.
+    /// Left-click drag/drop against an EXTERNAL slot (a crafting input cell that
+    /// lives outside the inventory array). Same pick/drop/merge/swap semantics as
+    /// [`click_slot`](Self::click_slot), but the slot is borrowed in.
+    pub fn click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
+        Self::apply_left_click(&mut self.cursor, slot);
+    }
+
+    /// The shared left-click rule between the cursor and a single slot: pick a
+    /// slot up, drop into an empty slot, merge same items, else swap.
+    fn apply_left_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
+        match (cursor.take(), slot.take()) {
             (None, None) => {}
-
-            // Cursor empty, slot full: pick the slot up.
-            (None, Some(slot)) => {
-                self.cursor = Some(slot);
-            }
-
-            // Cursor full, slot empty: drop into the slot.
-            (Some(cur), None) => {
-                self.slots[i] = Some(cur);
-            }
-
-            // Both full.
-            (Some(mut cur), Some(mut slot)) => {
-                if slot.can_stack_with(&cur) && slot.space_left() > 0 {
-                    // Same item, slot has room: merge cursor into slot.
-                    let moved = slot.space_left().min(cur.count);
-                    slot.count += moved;
-                    cur.count -= moved;
-                    self.slots[i] = Some(slot);
-                    // Keep any remainder on the cursor.
-                    self.cursor = if cur.count > 0 { Some(cur) } else { None };
+            (None, Some(s)) => *cursor = Some(s),
+            (Some(c), None) => *slot = Some(c),
+            (Some(mut c), Some(mut s)) => {
+                if s.can_stack_with(&c) && s.space_left() > 0 {
+                    let moved = s.space_left().min(c.count);
+                    s.count += moved;
+                    c.count -= moved;
+                    *slot = Some(s);
+                    *cursor = (c.count > 0).then_some(c);
                 } else {
-                    // Different item, or slot full: swap.
-                    self.slots[i] = Some(cur);
-                    self.cursor = Some(slot);
+                    *slot = Some(c);
+                    *cursor = Some(s);
                 }
             }
         }
@@ -307,42 +305,82 @@ impl Inventory {
         if i >= TOTAL_SLOTS {
             return;
         }
+        Self::apply_right_click(&mut self.cursor, &mut self.slots[i]);
+    }
 
-        match (self.cursor.take(), self.slots[i].take()) {
-            // Both empty: nothing to do.
+    /// Right-click drag/drop against an EXTERNAL slot (a crafting input cell).
+    /// Same split / place-one / drip-one semantics as
+    /// [`right_click_slot`](Self::right_click_slot).
+    pub fn right_click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
+        Self::apply_right_click(&mut self.cursor, slot);
+    }
+
+    /// The shared right-click rule: split a slot in half onto the cursor, place
+    /// one held item into an empty/matching slot, else no-op.
+    fn apply_right_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
+        match (cursor.take(), slot.take()) {
             (None, None) => {}
-
-            // Cursor empty, slot full: split off the larger half onto the cursor.
-            (None, Some(mut slot)) => {
+            (None, Some(mut s)) => {
                 // ceil(count / 2): the dragged half is the larger one.
-                let take = slot.count - slot.count / 2;
-                let item = slot.item;
-                slot.count -= take;
-                self.cursor = Some(ItemStack::new(item, take));
-                self.slots[i] = (slot.count > 0).then_some(slot);
+                let take = s.count - s.count / 2;
+                let item = s.item;
+                s.count -= take;
+                *cursor = Some(ItemStack::new(item, take));
+                *slot = (s.count > 0).then_some(s);
             }
-
-            // Cursor full, slot empty: place a single item.
-            (Some(mut cur), None) => {
-                self.slots[i] = Some(ItemStack::new(cur.item, 1));
-                cur.count -= 1;
-                self.cursor = (cur.count > 0).then_some(cur);
+            (Some(mut c), None) => {
+                *slot = Some(ItemStack::new(c.item, 1));
+                c.count -= 1;
+                *cursor = (c.count > 0).then_some(c);
             }
-
-            // Both full.
-            (Some(mut cur), Some(mut slot)) => {
-                if slot.can_stack_with(&cur) && slot.space_left() > 0 {
-                    // Same item, slot has room: move a single item into it.
-                    slot.count += 1;
-                    cur.count -= 1;
-                    self.slots[i] = Some(slot);
-                    self.cursor = (cur.count > 0).then_some(cur);
+            (Some(mut c), Some(mut s)) => {
+                if s.can_stack_with(&c) && s.space_left() > 0 {
+                    s.count += 1;
+                    c.count -= 1;
+                    *slot = Some(s);
+                    *cursor = (c.count > 0).then_some(c);
                 } else {
-                    // Different item, or slot full: leave both untouched.
-                    self.slots[i] = Some(slot);
-                    self.cursor = Some(cur);
+                    *slot = Some(s);
+                    *cursor = Some(c);
                 }
             }
+        }
+    }
+
+    /// Whether `stack` would fit ENTIRELY into the inventory (matching partial
+    /// stacks first, then empty slots). Used by shift-crafting to refuse a craft
+    /// that wouldn't fully fit. An empty stack always "fits".
+    pub fn can_add(&self, stack: ItemStack) -> bool {
+        if stack.is_empty() {
+            return true;
+        }
+        let mut need = stack.count as u32;
+        for s in self.slots.iter().flatten() {
+            if s.can_stack_with(&stack) {
+                need = need.saturating_sub(s.space_left() as u32);
+            }
+        }
+        if need == 0 {
+            return true;
+        }
+        let empties = self.slots.iter().filter(|s| s.is_none()).count() as u32;
+        need <= empties * stack.item.max_stack_size() as u32
+    }
+
+    /// Place a crafted `stack` onto the cursor: succeeds when the cursor is empty
+    /// (it becomes `stack`) or holds the same item with room for the WHOLE stack.
+    /// Returns whether it was placed — i.e. whether the craft may proceed.
+    pub fn try_stack_onto_cursor(&mut self, stack: ItemStack) -> bool {
+        match &mut self.cursor {
+            None => {
+                self.cursor = Some(stack);
+                true
+            }
+            Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
+                cur.count += stack.count;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -869,5 +907,54 @@ mod tests {
         let mut inv = empty_inv();
         inv.shift_move_slot(5);
         assert!(inv.slot(5).is_none());
+    }
+
+    #[test]
+    fn click_external_slot_matches_internal_semantics() {
+        // The external-slot click logic must mirror click_slot exactly.
+        let mut inv = empty_inv();
+        let mut ext: Option<ItemStack> = Some(item(ItemType::Stone, 10));
+        // cursor empty, slot full -> pick up.
+        inv.click_external_slot(&mut ext);
+        assert!(ext.is_none());
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 10)));
+        // cursor full, slot empty -> drop.
+        inv.click_external_slot(&mut ext);
+        assert_eq!(ext, Some(item(ItemType::Stone, 10)));
+        assert!(inv.cursor().is_none());
+        // right-click split off the larger half.
+        inv.right_click_external_slot(&mut ext);
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 5)));
+        assert_eq!(ext, Some(item(ItemType::Stone, 5)));
+    }
+
+    #[test]
+    fn can_add_checks_full_fit() {
+        let mut inv = empty_inv();
+        assert!(inv.can_add(item(ItemType::Dirt, 64)));
+        // Fill the grid: slot 0 a partial dirt (room for 4), the rest full stone.
+        inv.slots[0] = Some(item(ItemType::Dirt, 60));
+        for i in 1..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        assert!(inv.can_add(item(ItemType::Dirt, 4)));
+        assert!(!inv.can_add(item(ItemType::Dirt, 5)));
+    }
+
+    #[test]
+    fn try_stack_onto_cursor_rules() {
+        let mut inv = empty_inv();
+        // Empty cursor takes the stack.
+        assert!(inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::OakPlanks, 4)));
+        // Same item with room stacks on.
+        assert!(inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
+        assert_eq!(inv.cursor().unwrap().count, 8);
+        // A different item is refused.
+        assert!(!inv.try_stack_onto_cursor(item(ItemType::Stick, 1)));
+        // No room for the WHOLE batch is refused (62 + 4 > 64).
+        inv.cursor = Some(item(ItemType::OakPlanks, 62));
+        assert!(!inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
+        assert_eq!(inv.cursor().unwrap().count, 62);
     }
 }

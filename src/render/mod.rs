@@ -42,7 +42,11 @@ pub use ui::slot_at_cursor;
 /// placement the renderer draws with.
 pub use ui::cursor_in_panel;
 
-use crate::item::ItemType;
+/// Crafting layout kind + the crafting-slot hit-test, shared with the App so a
+/// click on a craft input cell / result slot routes to the right action.
+pub use ui::{craft_slot_at_cursor, CraftHit, CraftKind};
+
+use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Vec3};
 
 /// The block-break overlay to draw this frame: a cracked-texture quad over
@@ -136,7 +140,13 @@ pub struct ParticleInstance {
 /// small bits it needs into owned state so it never holds a borrow across frames.
 pub struct UiFrame<'a> {
     pub open: bool,
+    /// Which crafting layout the open panel shows (2×2 inventory vs 3×3 table).
+    pub panel: CraftKind,
     pub inv: &'a crate::inventory::Inventory,
+    /// The active crafting input cells (`len == panel.cols()²`).
+    pub craft: &'a [Option<ItemStack>],
+    /// The crafting result preview for the result slot.
+    pub craft_result: Option<ItemStack>,
     /// Screen size in physical pixels `(width, height)`.
     pub screen: (u32, u32),
     /// Cursor position in physical pixels `(x, y)` (for the open-inventory cursor

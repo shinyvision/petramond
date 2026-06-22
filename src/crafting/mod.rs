@@ -1,0 +1,187 @@
+//! Crafting: recipe matching over an N×N grid, plus the grid state owned by the
+//! crafting screens.
+//!
+//! Recipes are authored in `assets/recipes.json` and loaded at world load (see
+//! [`load_recipes`]). The player always has a 2×2 grid in the inventory; a placed
+//! crafting table opens a 3×3 grid. Taking the result consumes one item from
+//! every occupied input cell, as in Minecraft.
+
+mod load;
+mod recipe;
+
+pub use load::load_recipes;
+pub use recipe::{Ingredient, Recipe, Recipes};
+
+use crate::item::ItemStack;
+
+/// Largest crafting grid side (3×3 at a table; 2×2 in the inventory).
+pub const MAX_GRID: usize = 3;
+/// Largest crafting grid cell count.
+pub const MAX_CELLS: usize = MAX_GRID * MAX_GRID;
+
+/// The crafting input grid + its cached result preview.
+///
+/// A square `cols×cols` grid (2 in the inventory, 3 at a table) stored in a fixed
+/// `MAX_CELLS` array; only the first `cols*cols` cells are live. `result` is
+/// recomputed from the recipe set whenever the grid changes and drives both the
+/// UI preview and the take/​shift-craft actions.
+#[derive(Clone, Debug)]
+pub struct CraftGrid {
+    cells: [Option<ItemStack>; MAX_CELLS],
+    cols: usize,
+    result: Option<ItemStack>,
+}
+
+impl Default for CraftGrid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CraftGrid {
+    pub fn new() -> Self {
+        CraftGrid {
+            cells: [None; MAX_CELLS],
+            cols: 2,
+            result: None,
+        }
+    }
+
+    /// Grid side length (2 or 3).
+    #[inline]
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+
+    /// Number of live input cells (`cols * cols`).
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.cols * self.cols
+    }
+
+    /// Input cell `i` (`0..capacity`), or `None`.
+    #[inline]
+    pub fn cell(&self, i: usize) -> Option<&ItemStack> {
+        if i < self.capacity() {
+            self.cells[i].as_ref()
+        } else {
+            None
+        }
+    }
+
+    /// The live input cells as a slice (`len == capacity`).
+    #[inline]
+    pub fn cells(&self) -> &[Option<ItemStack>] {
+        &self.cells[..self.capacity()]
+    }
+
+    /// Mutable handle to input cell `i` (`0..capacity`), for the cursor click
+    /// logic. Panics if `i >= MAX_CELLS`; callers stay within `capacity`.
+    #[inline]
+    pub fn cell_mut(&mut self, i: usize) -> &mut Option<ItemStack> {
+        &mut self.cells[i]
+    }
+
+    /// Take input cell `i` out, leaving it empty.
+    #[inline]
+    pub fn take_cell(&mut self, i: usize) -> Option<ItemStack> {
+        self.cells.get_mut(i).and_then(Option::take)
+    }
+
+    /// The current result preview (what taking the result yields), or `None`.
+    #[inline]
+    pub fn result(&self) -> Option<&ItemStack> {
+        self.result.as_ref()
+    }
+
+    /// Switch the grid to `cols×cols` and clear it. Called when a screen opens.
+    pub fn reset(&mut self, cols: usize) {
+        self.cols = cols.clamp(2, MAX_GRID);
+        self.cells = [None; MAX_CELLS];
+        self.result = None;
+    }
+
+    /// Recompute the cached result from `recipes` against the current grid.
+    pub fn recompute(&mut self, recipes: &Recipes) {
+        self.result = recipes.find(self.cells(), self.cols);
+    }
+
+    /// Consume one item from every occupied input cell (a single craft), clearing
+    /// emptied cells. The caller recomputes the result afterward.
+    pub fn consume_one(&mut self) {
+        for cell in self.cells[..self.cols * self.cols].iter_mut() {
+            if let Some(stack) = cell {
+                stack.count -= 1;
+                if stack.count == 0 {
+                    *cell = None;
+                }
+            }
+        }
+    }
+
+    /// `true` if every input cell is empty.
+    pub fn is_empty(&self) -> bool {
+        self.cells().iter().all(Option::is_none)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::item::ItemType;
+
+    fn recipes() -> Recipes {
+        load_recipes()
+    }
+
+    #[test]
+    fn two_by_two_planks_then_table() {
+        let recipes = recipes();
+        let mut grid = CraftGrid::new();
+        grid.reset(2);
+        // One oak log anywhere → 4 oak planks preview.
+        *grid.cell_mut(0) = Some(ItemStack::new(ItemType::OakLog, 1));
+        grid.recompute(&recipes);
+        assert_eq!(grid.result().map(|s| (s.item, s.count)), Some((ItemType::OakPlanks, 4)));
+
+        // Fill the 2×2 with planks → crafting table preview.
+        grid.reset(2);
+        for i in 0..4 {
+            *grid.cell_mut(i) = Some(ItemStack::new(ItemType::OakPlanks, 1));
+        }
+        grid.recompute(&recipes);
+        assert_eq!(grid.result().map(|s| s.item), Some(ItemType::CraftingTable));
+
+        // Consuming one craft empties each occupied cell by one (all were 1).
+        grid.consume_one();
+        assert!(grid.is_empty());
+        grid.recompute(&recipes);
+        assert!(grid.result().is_none());
+    }
+
+    #[test]
+    fn pickaxe_only_in_three_by_three() {
+        let recipes = recipes();
+        // Pickaxe layout: planks across the top, sticks down the centre.
+        let mut grid = CraftGrid::new();
+        grid.reset(3);
+        for c in 0..3 {
+            *grid.cell_mut(c) = Some(ItemStack::new(ItemType::OakPlanks, 1));
+        }
+        *grid.cell_mut(4) = Some(ItemStack::new(ItemType::Stick, 1));
+        *grid.cell_mut(7) = Some(ItemStack::new(ItemType::Stick, 1));
+        grid.recompute(&recipes);
+        assert_eq!(grid.result().map(|s| s.item), Some(ItemType::WoodenPickaxe));
+    }
+
+    #[test]
+    fn reset_changes_size_and_clears() {
+        let mut grid = CraftGrid::new();
+        grid.reset(3);
+        assert_eq!(grid.capacity(), 9);
+        *grid.cell_mut(8) = Some(ItemStack::new(ItemType::Stone, 1));
+        grid.reset(2);
+        assert_eq!(grid.capacity(), 4);
+        assert!(grid.is_empty());
+    }
+}

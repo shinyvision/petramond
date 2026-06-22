@@ -1,14 +1,15 @@
 //! Item model: the inventory-space counterpart of `Block`.
 //!
-//! Every non-`Air` block has a matching `ItemType` variant in the SAME order and
-//! with the SAME name, so item ids mirror block ids exactly (both start at
-//! `Air = 0`). This 1:1 parity lets `ItemType::from_block` / `as_block` be plain
-//! id conversions and keeps the two enums append-only in lock-step.
+//! Item ids mirror block ids for the block-items: every `Block` has an `ItemType`
+//! of the SAME id (both start at `Air = 0`), so `from_block` / `as_block` are
+//! plain id conversions over the block range. Beyond that range live the
+//! item-only variants (tools, raw drops) that have NO block — `as_block` returns
+//! `None` and they render as flat sprites. Both enums stay append-only.
 //!
 //! Per-item static data (`name`, `max_stack_size`) lives in an id-ordered table
-//! (`data::ITEM_DEFS`), mirroring `block/data.rs`. Behaviour that is derivable
-//! from the underlying `Block` (`render_kind`) is computed via `Block`, not
-//! stored, so adding a block-item never needs a second source of truth.
+//! (`data::ITEM_DEFS`), mirroring `block/data.rs`. Behaviour derivable from the
+//! underlying `Block` (`render_kind` for block-items) is computed via `Block`;
+//! item-only sprites + pickaxe tiers are small matches, not table columns.
 
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
@@ -95,20 +96,71 @@ pub enum ItemType {
     DeadBush,
     BrownMushroom,
     RedMushroom,
+    // --- Crafting update: block-items, mirroring the new Block ids 70..79. ---
+    Cobblestone,
+    OakPlanks,
+    SprucePlanks,
+    BirchPlanks,
+    JunglePlanks,
+    AcaciaPlanks,
+    DarkOakPlanks,
+    CherryPlanks,
+    MangrovePlanks,
+    CraftingTable,
+    // --- Item-only variants (no Block): tools + raw drops. `as_block()` = None. ---
+    Stick,
+    WoodenPickaxe,
+    StonePickaxe,
+    RawIron,
+    RawCopper,
+    Coal,
 }
 
-/// What a block drops when harvested. `(item, chance)`; an empty slice = no drop.
+/// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
+/// rolled at spawn time; `min == max` is an exact count.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Drop {
+    pub item: ItemType,
+    pub min: u8,
+    pub max: u8,
+}
+
+/// What a block drops when harvested (with a sufficient tool, per the mining
+/// model). An empty slice = no drop.
 ///
 /// Lives here (not in `block/`) so block defs can reference it without an
 /// ownership tangle (block defs already depend on the item crate path).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DropSpec {
-    pub drops: &'static [(ItemType, f32)],
+    pub drops: &'static [Drop],
 }
 
 impl DropSpec {
     /// No drop at all (e.g. air, water, short grass).
     pub const NONE: DropSpec = DropSpec { drops: &[] };
+}
+
+/// A named group of items shared across recipes (e.g. any wood planks). Tags are
+/// a PROPERTY OF ITEMS: each item lists its tags in its [`ItemDef`](definition::ItemDef)
+/// data row, a recipe references a tag by name, and the crafting matcher asks each
+/// item whether it carries the tag (see [`ItemType::has_tag`]). Keeping membership
+/// in item data (not the recipe loader) means a new item joins a group by editing
+/// its data row, never any recipe code.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ItemTag {
+    /// Any wood-type planks (mirrors Minecraft's `#planks`).
+    Planks,
+}
+
+impl ItemTag {
+    /// Resolve a tag's registry name (the text after `#` in a recipe) to its tag,
+    /// or `None` if unknown.
+    pub fn from_key(key: &str) -> Option<ItemTag> {
+        match key {
+            "planks" => Some(ItemTag::Planks),
+            _ => None,
+        }
+    }
 }
 
 /// How an item is drawn in inventory slots and in-hand.
@@ -119,6 +171,29 @@ pub enum ItemRenderKind {
     /// A flat sprite (cross-plant blocks like flowers/grass, and future tools):
     /// render the tile flat in slots, held as a flat billboard item.
     Sprite(Tile),
+}
+
+/// First-person hold orientation for a [`Sprite`](ItemRenderKind::Sprite) item:
+/// the Euler tilt (radians) applied to the upright, origin-centred extruded slab
+/// before it's seated in the hand (see [`crate::render`]'s `held_sprite`). A long
+/// tool is laid diagonally like a swung handle (`roll != 0`); a small item stands
+/// upright (`roll == 0`). Per-item so each item can declare how it's held.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct HeldPose {
+    pub pitch: f32,
+    pub yaw: f32,
+    pub roll: f32,
+}
+
+impl HeldPose {
+    /// Upright hold for an ordinary sprite item (flowers, raw drops): no roll, so
+    /// it stands straight up in the hand. The shared default carried by every
+    /// item that isn't a tool with its own pose.
+    pub const DEFAULT: HeldPose = HeldPose {
+        pitch: 0.0,
+        yaw: 1.8,
+        roll: 0.0,
+    };
 }
 
 impl ItemType {
@@ -144,17 +219,58 @@ impl ItemType {
         Self::from_id(b.id())
     }
 
-    /// The block this item places (every 0.1 item maps back to a block, so this
-    /// is always `Some`; kept as `Option` for future non-block items).
+    /// The block this item places, or `None` for an item-only item (tools, raw
+    /// drops). Block-items occupy the low id range shared with `Block`, so the
+    /// check is a range test followed by the id conversion.
     #[inline]
     pub fn as_block(self) -> Option<Block> {
-        Some(Block::from_id(self.id()))
+        if (self.id() as usize) < Block::ALL.len() {
+            Some(Block::from_id(self.id()))
+        } else {
+            None
+        }
     }
 
-    /// Maximum number of this item per stack (64 for all current block-items).
+    /// Pickaxe mining tier: `0` = not a pickaxe (mines at the hand rate), `1` =
+    /// wooden, `2` = stone. Drives tool-gated mining — see [`Block::harvest_tier`]
+    /// and [`crate::mining::break_time`].
+    #[inline]
+    pub fn pickaxe_tier(self) -> u8 {
+        match self {
+            ItemType::WoodenPickaxe => 1,
+            ItemType::StonePickaxe => 2,
+            _ => 0,
+        }
+    }
+
+    /// Whether this item belongs to `tag`. Membership is item data — each item's
+    /// [`ItemDef`](definition::ItemDef) lists its tags — so recipes can require a
+    /// group (e.g. any `#planks`) without naming every member, and a new item joins
+    /// a group by editing its data row, never any recipe code.
+    #[inline]
+    pub fn has_tag(self, tag: ItemTag) -> bool {
+        self.def().tags.contains(&tag)
+    }
+
+    /// Maximum number of this item per stack. Durable items never stack (one per
+    /// slot); everything else uses its table value.
     #[inline]
     pub fn max_stack_size(self) -> u8 {
-        self.def().max_stack_size
+        if self.is_durable() {
+            1
+        } else {
+            self.def().max_stack_size
+        }
+    }
+
+    /// Whether this item carries durability. A durable item never stacks (one per
+    /// slot) — that limit is a CONSEQUENCE of durability, not of being a "tool".
+    /// Durability isn't consumed yet, but the model is correct: a future durable
+    /// non-tool item would also not stack, for the same reason. The pickaxes are
+    /// the only durable items so far.
+    #[inline]
+    pub fn is_durable(self) -> bool {
+        matches!(self, ItemType::WoodenPickaxe | ItemType::StonePickaxe)
     }
 
     /// Human-readable display name.
@@ -163,16 +279,44 @@ impl ItemType {
         self.def().name
     }
 
-    /// How to draw this item: `BlockCube` for full cubes, `Sprite(tile)` for
-    /// cross-model plants. Derived from the underlying block's render shape so
-    /// there is a single source of truth.
+    /// How to draw this item. Block-items follow their block's render shape
+    /// (`BlockCube` for full cubes, `Sprite` for cross-model plants); item-only
+    /// items are always flat sprites pulled from [`item_sprite`](Self::item_sprite).
     #[inline]
     pub fn render_kind(self) -> ItemRenderKind {
-        // Every 0.1 item maps to a block (incl. Air -> Air).
-        let block = Block::from_id(self.id());
-        match block.render_shape() {
-            RenderShape::Cube => ItemRenderKind::BlockCube(block),
-            RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
+        match self.as_block() {
+            Some(block) => match block.render_shape() {
+                RenderShape::Cube => ItemRenderKind::BlockCube(block),
+                RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
+            },
+            None => ItemRenderKind::Sprite(self.item_sprite()),
+        }
+    }
+
+    /// First-person hold orientation for this item when held as a sprite (tools,
+    /// flowers, raw drops), read from its [`ItemDef`](definition::ItemDef) row.
+    /// Pickaxes are laid diagonally like a swung tool; everything else carries
+    /// [`HeldPose::DEFAULT`] (upright). Only meaningful for `Sprite` render-kind
+    /// items — block-cube items use the cube hold transform instead.
+    #[inline]
+    pub fn held_pose(self) -> HeldPose {
+        self.def().held_pose
+    }
+
+    /// The flat atlas sprite for an item-only item (tools + raw drops).
+    /// Block-items get their icon from the underlying block and never call this.
+    #[inline]
+    fn item_sprite(self) -> Tile {
+        use ItemType::*;
+        match self {
+            Stick => Tile::Stick,
+            WoodenPickaxe => Tile::WoodenPickaxe,
+            StonePickaxe => Tile::StonePickaxe,
+            RawIron => Tile::RawIron,
+            RawCopper => Tile::RawCopper,
+            Coal => Tile::Coal,
+            // Block-items resolve via `as_block`; never reach here.
+            _ => Tile::Stick,
         }
     }
 
@@ -297,6 +441,22 @@ mod tests {
             ItemType::DeadBush,
             ItemType::BrownMushroom,
             ItemType::RedMushroom,
+            ItemType::Cobblestone,
+            ItemType::OakPlanks,
+            ItemType::SprucePlanks,
+            ItemType::BirchPlanks,
+            ItemType::JunglePlanks,
+            ItemType::AcaciaPlanks,
+            ItemType::DarkOakPlanks,
+            ItemType::CherryPlanks,
+            ItemType::MangrovePlanks,
+            ItemType::CraftingTable,
+            ItemType::Stick,
+            ItemType::WoodenPickaxe,
+            ItemType::StonePickaxe,
+            ItemType::RawIron,
+            ItemType::RawCopper,
+            ItemType::Coal,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -318,17 +478,104 @@ mod tests {
 
     #[test]
     fn item_block_id_parity() {
-        // Every block maps to an item with the same id and back, and the two
-        // enums have the same length (1:1 parity).
-        assert_eq!(ItemType::ALL.len(), Block::ALL.len());
+        // Block-items occupy the low ids shared 1:1 with `Block` (prefix parity);
+        // item-only variants live past the block range and map to no block.
+        assert!(ItemType::ALL.len() >= Block::ALL.len());
         for &block in Block::ALL {
             let item = ItemType::from_block(block);
             assert_eq!(item.id(), block.id(), "{block:?}");
             assert_eq!(item.as_block(), Some(block), "{block:?}");
         }
+        for &item in ItemType::ALL {
+            if (item.id() as usize) >= Block::ALL.len() {
+                assert_eq!(item.as_block(), None, "{item:?} should be item-only");
+            }
+        }
         // Air round-trips both ways.
         assert_eq!(ItemType::from_block(Block::Air), ItemType::Air);
         assert_eq!(ItemType::Air.as_block(), Some(Block::Air));
+    }
+
+    #[test]
+    fn item_only_items_render_as_sprites_and_carry_pickaxe_tiers() {
+        for item in [
+            ItemType::Stick,
+            ItemType::WoodenPickaxe,
+            ItemType::StonePickaxe,
+            ItemType::RawIron,
+            ItemType::RawCopper,
+            ItemType::Coal,
+        ] {
+            assert_eq!(item.as_block(), None, "{item:?}");
+            assert!(
+                matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                "{item:?} should render as a sprite"
+            );
+        }
+        // Pickaxe tiers gate tool mining; everything else is hand tier 0.
+        assert_eq!(ItemType::WoodenPickaxe.pickaxe_tier(), 1);
+        assert_eq!(ItemType::StonePickaxe.pickaxe_tier(), 2);
+        assert_eq!(ItemType::Stick.pickaxe_tier(), 0);
+        assert_eq!(ItemType::Cobblestone.pickaxe_tier(), 0);
+    }
+
+    #[test]
+    fn held_pose_is_diagonal_for_pickaxes_upright_otherwise() {
+        // Pickaxes hang diagonally in the hand (rolled like a swung handle)...
+        for pick in [ItemType::WoodenPickaxe, ItemType::StonePickaxe] {
+            assert_ne!(
+                pick.held_pose().roll,
+                0.0,
+                "{pick:?} should hang diagonally"
+            );
+        }
+        // ...every other sprite-held item stands upright (no roll).
+        for upright in [
+            ItemType::Poppy,
+            ItemType::Stick,
+            ItemType::RawIron,
+            ItemType::Dandelion,
+        ] {
+            assert_eq!(
+                upright.held_pose().roll,
+                0.0,
+                "{upright:?} should stand upright"
+            );
+        }
+    }
+
+    #[test]
+    fn durable_items_do_not_stack() {
+        // The stack limit of 1 follows from durability, not from being a "tool".
+        for durable in [ItemType::WoodenPickaxe, ItemType::StonePickaxe] {
+            assert!(durable.is_durable(), "{durable:?}");
+            assert_eq!(durable.max_stack_size(), 1, "{durable:?}");
+            // ItemStack clamps to the durable limit.
+            assert_eq!(ItemStack::new(durable, 5).count, 1);
+        }
+        // Non-durable items keep their table stack size (sticks, raw drops, blocks).
+        for stackable in [ItemType::Stick, ItemType::RawIron, ItemType::Cobblestone] {
+            assert!(!stackable.is_durable(), "{stackable:?}");
+            assert_eq!(stackable.max_stack_size(), 64, "{stackable:?}");
+        }
+    }
+
+    #[test]
+    fn item_tags_are_item_data() {
+        use ItemTag::Planks;
+        for p in [
+            ItemType::OakPlanks,
+            ItemType::SprucePlanks,
+            ItemType::MangrovePlanks,
+        ] {
+            assert!(p.has_tag(Planks), "{p:?}");
+        }
+        // Logs and sticks are not planks.
+        assert!(!ItemType::OakLog.has_tag(Planks));
+        assert!(!ItemType::Stick.has_tag(Planks));
+        // Tag names resolve from the recipe key.
+        assert_eq!(ItemTag::from_key("planks"), Some(Planks));
+        assert_eq!(ItemTag::from_key("bogus"), None);
     }
 
     #[test]

@@ -1,0 +1,18 @@
+{
+  "recipes": [
+    { "type": "shapeless", "ingredients": ["oak_log"], "result": "oak_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["spruce_log"], "result": "spruce_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["birch_log"], "result": "birch_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["jungle_log"], "result": "jungle_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["acacia_log"], "result": "acacia_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["dark_oak_log"], "result": "dark_oak_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["cherry_log"], "result": "cherry_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["mangrove_log"], "result": "mangrove_planks", "count": 4 },
+
+    { "type": "shaped", "pattern": ["#", "#"], "key": { "#": "#planks" }, "result": "stick", "count": 4 },
+    { "type": "shaped", "pattern": ["##", "##"], "key": { "#": "#planks" }, "result": "crafting_table", "count": 1 },
+
+    { "type": "shaped", "pattern": ["PPP", " S ", " S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_pickaxe", "count": 1 },
+    { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 }
+  ]
+}

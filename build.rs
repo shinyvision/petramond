@@ -133,6 +133,28 @@ const TILES: &[(&str, &str)] = &[
     ("destroy_stage_7", "destroy_stage_7.png"),
     ("destroy_stage_8", "destroy_stage_8.png"),
     ("destroy_stage_9", "destroy_stage_9.png"),
+    // Crafting update (Survival 0.1): crafted blocks + flat item sprites. Appended
+    // last so every preceding tile id stays stable (tile ids aren't persisted, but
+    // the convention keeps diffs minimal). Block tiles render as cubes; the item
+    // tiles below are flat sprites referenced by `ItemType::item_sprite`.
+    ("cobblestone", "cobblestone.png"),
+    ("oak_planks", "oak_planks.png"),
+    ("spruce_planks", "spruce_planks.png"),
+    ("birch_planks", "birch_planks.png"),
+    ("jungle_planks", "jungle_planks.png"),
+    ("acacia_planks", "acacia_planks.png"),
+    ("dark_oak_planks", "dark_oak_planks.png"),
+    ("cherry_planks", "cherry_planks.png"),
+    ("mangrove_planks", "mangrove_planks.png"),
+    ("crafting_table_top", "crafting_table_top.png"),
+    ("crafting_table_front", "crafting_table_front.png"),
+    // Flat item sprites (tools + drops): drawn as billboards in slots / in-hand.
+    ("stick", "stick.png"),
+    ("wooden_pickaxe", "wooden_pickaxe.png"),
+    ("stone_pickaxe", "stone_pickaxe.png"),
+    ("raw_iron", "raw_iron.png"),
+    ("raw_copper", "raw_copper.png"),
+    ("coal", "coal.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

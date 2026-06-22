@@ -2,13 +2,14 @@
 //! timed break, producing a [`BreakEvent`] the frame a block finishes breaking.
 //!
 //! The model is deliberately small and pure: progress is a single `elapsed`
-//! accumulator measured against `block.hardness() * SECONDS_PER_HARDNESS_HAND`.
-//! Changing the target, releasing the button, opening the inventory, or losing
-//! the raycast all reset progress. Instant blocks (`hardness == 0`) break the
-//! first qualifying frame and never display a break overlay.
+//! accumulator measured against [`break_time`]. Changing the target, releasing
+//! the button, opening the inventory, switching tools, or losing the raycast all
+//! reset progress. Instant blocks (`hardness == 0`) break the first qualifying
+//! frame and never display a break overlay.
 //!
-//! Tools are a future addition; [`SECONDS_PER_HARDNESS_TOOL`] is documented for
-//! that anchor but unused in 0.1, so everything mines at the hand rate.
+//! Tools: a held pickaxe whose tier meets the block's [`Block::harvest_tier`]
+//! mines it faster (Minecraft's wood ×2 / stone ×4) and unlocks the drop; an
+//! insufficient or wrong-kind tool mines at the bare-hand rate for no drop.
 
 use crate::block::Block;
 use crate::mathh::IVec3;
@@ -18,9 +19,6 @@ use crate::world::World;
 /// Seconds of mining per unit of hardness, bare-handed. Anchors wood
 /// (`hardness 2.0`) to a 5.0 s break, matching the survival goal.
 pub const SECONDS_PER_HARDNESS_HAND: f32 = 2.5;
-/// Seconds of mining per unit of hardness with a tool. Documented anchor only —
-/// tools do not exist in 0.1, so this is currently unused.
-pub const SECONDS_PER_HARDNESS_TOOL: f32 = 1.875;
 /// Number of distinct break-overlay stages (`0..BREAK_STAGES`).
 pub const BREAK_STAGES: u8 = 10;
 
@@ -32,6 +30,9 @@ pub const BREAK_STAGES: u8 = 10;
 pub struct MiningState {
     target: Option<IVec3>,
     block: Option<Block>,
+    /// Pickaxe tier in use on this target (`0` = hand). Cached so a tool switch
+    /// mid-break restarts progress and the overlay reads the right break time.
+    tool_tier: u8,
     elapsed: f32,
 }
 
@@ -58,9 +59,12 @@ impl MiningState {
     /// - `mining_held`: left mouse button currently held down (not edge).
     /// - `inventory_open`: gates mining off entirely while the inventory is open.
     /// - `world`: looked up to resolve the targeted block.
+    /// - `tool_tier`: pickaxe tier of the held item (`0` = hand). Drives break
+    ///   speed + whether the block is harvested.
     ///
     /// Returns `Some(BreakEvent)` exactly on the frame the block breaks; resets
-    /// progress whenever the target changes or the button releases.
+    /// progress whenever the target changes, the tool changes, or the button
+    /// releases.
     pub fn update(
         &mut self,
         dt: f32,
@@ -68,8 +72,9 @@ impl MiningState {
         mining_held: bool,
         inventory_open: bool,
         world: &World,
+        tool_tier: u8,
     ) -> Option<BreakEvent> {
-        self.update_core(dt, look, mining_held, inventory_open, &|p| {
+        self.update_core(dt, look, mining_held, inventory_open, tool_tier, &|p| {
             Block::from_id(world.chunk_block(p.x, p.y, p.z))
         })
     }
@@ -83,6 +88,7 @@ impl MiningState {
         look: Option<&RaycastHit>,
         mining_held: bool,
         inventory_open: bool,
+        tool_tier: u8,
         block_at: &impl Fn(IVec3) -> Block,
     ) -> Option<BreakEvent> {
         // Not mining, inventory open, or nothing targeted -> reset and bail.
@@ -103,21 +109,25 @@ impl MiningState {
             return None;
         }
 
-        // New target (or first frame on this cell): restart the timer.
-        if self.target != Some(pos) {
+        // New target, OR a tool switch on the same cell: restart the timer (the
+        // break time depends on the tool, so switching mid-break starts over).
+        if self.target != Some(pos) || self.tool_tier != tool_tier {
             self.target = Some(pos);
             self.block = Some(block);
+            self.tool_tier = tool_tier;
             self.elapsed = 0.0;
         }
 
         self.elapsed += dt;
 
-        let break_time = break_time(block);
+        let break_time = break_time(block, tool_tier);
         if self.elapsed >= break_time {
             let event = BreakEvent {
                 pos,
                 block,
-                harvested: !block.requires_tool(),
+                // Harvested only when the tool can mine this block's tier; below
+                // that, it breaks but drops nothing (redstone/diamond by pickaxe).
+                harvested: block.harvest_tier() <= tool_tier,
             };
             self.reset();
             return Some(event);
@@ -132,7 +142,7 @@ impl MiningState {
         let target = self.target?;
         let block = self.block?;
         // Instant blocks never show an overlay.
-        let break_time = break_time(block);
+        let break_time = break_time(block, self.tool_tier);
         if break_time <= 0.0 || self.elapsed <= 0.0 {
             return None;
         }
@@ -157,19 +167,39 @@ impl MiningState {
     fn reset(&mut self) {
         self.target = None;
         self.block = None;
+        self.tool_tier = 0;
         self.elapsed = 0.0;
     }
 }
 
-/// Total seconds to break `block` by hand. `0.0` for instant blocks; callers
-/// must not pass unbreakable blocks (`hardness < 0`).
+/// Total seconds to break `block` with a pickaxe of `tool_tier` (`0` = hand).
+/// `0.0` for instant blocks; callers must not pass unbreakable blocks
+/// (`hardness < 0`). A pickaxe whose tier meets the block's
+/// [`Block::harvest_tier`] divides the hand time by [`pickaxe_speed`]; an
+/// insufficient or wrong-kind tool mines at the bare-hand rate.
 #[inline]
-pub fn break_time(block: Block) -> f32 {
+pub fn break_time(block: Block, tool_tier: u8) -> f32 {
     let h = block.hardness();
     if h <= 0.0 {
-        0.0
+        return 0.0;
+    }
+    let base = h * SECONDS_PER_HARDNESS_HAND;
+    let tier = block.harvest_tier();
+    if tier >= 1 && tool_tier >= tier {
+        base / pickaxe_speed(tool_tier)
     } else {
-        h * SECONDS_PER_HARDNESS_HAND
+        base
+    }
+}
+
+/// Mining-speed multiplier of a pickaxe tier over the bare hand (Minecraft's
+/// wood ×2, stone ×4). Only applied once the tool can actually harvest the block.
+#[inline]
+fn pickaxe_speed(tool_tier: u8) -> f32 {
+    match tool_tier {
+        0 => 1.0,
+        1 => 2.0,
+        _ => 4.0,
     }
 }
 
@@ -200,7 +230,7 @@ mod tests {
         }
     }
 
-    /// Drive `update_core` with a constant single-block world.
+    /// Drive `update_core` bare-handed with a constant single-block world.
     fn step(
         state: &mut MiningState,
         dt: f32,
@@ -209,16 +239,29 @@ mod tests {
         inv_open: bool,
         block: Block,
     ) -> Option<BreakEvent> {
-        state.update_core(dt, look, held, inv_open, &|_| block)
+        state.update_core(dt, look, held, inv_open, 0, &|_| block)
+    }
+
+    /// Like [`step`] but with a pickaxe of `tool_tier` in hand.
+    fn step_with_tool(
+        state: &mut MiningState,
+        dt: f32,
+        look: Option<&RaycastHit>,
+        held: bool,
+        inv_open: bool,
+        tool_tier: u8,
+        block: Block,
+    ) -> Option<BreakEvent> {
+        state.update_core(dt, look, held, inv_open, tool_tier, &|_| block)
     }
 
     #[test]
     fn break_time_anchors_match_contract() {
         // Wood: hardness 2.0 -> 5.0 s by hand.
-        assert_eq!(break_time(Block::OakLog), 5.0);
+        assert_eq!(break_time(Block::OakLog, 0), 5.0);
         // Instant plants: 0.0 s.
-        assert_eq!(break_time(Block::Poppy), 0.0);
-        assert_eq!(break_time(Block::ShortGrass), 0.0);
+        assert_eq!(break_time(Block::Poppy, 0), 0.0);
+        assert_eq!(break_time(Block::ShortGrass, 0), 0.0);
     }
 
     #[test]
@@ -277,7 +320,7 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(5, 5, 5);
         let hit = hit_at(pos);
-        let total = break_time(Block::Stone); // 1.5 * 2.5 = 3.75 s
+        let total = break_time(Block::Stone, 0); // 1.5 * 2.5 = 3.75 s
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
@@ -296,7 +339,7 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(2, 2, 2);
         let hit = hit_at(pos);
-        let total = break_time(Block::Dirt); // 0.5 * 2.5 = 1.25 s
+        let total = break_time(Block::Dirt, 0); // 0.5 * 2.5 = 1.25 s
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
@@ -312,7 +355,7 @@ mod tests {
 
     #[test]
     fn overlay_stage_climbs_zero_to_nine() {
-        let total = break_time(Block::Stone);
+        let total = break_time(Block::Stone, 0);
         // Just-started progress is stage 0.
         assert_eq!(overlay_stage(0.0001, total), 0);
         // Just-before-break is stage 9.
@@ -338,7 +381,7 @@ mod tests {
         let pos = IVec3::new(7, 8, 9);
         let hit = hit_at(pos);
         // Mine ~half of stone's break time.
-        let total = break_time(Block::Stone);
+        let total = break_time(Block::Stone, 0);
         let half = total / 2.0;
         let dt = 0.05;
         let mut t = 0.0;
@@ -423,5 +466,65 @@ mod tests {
         assert!(step(&mut state, 1.0, Some(&hit), true, false, Block::Water).is_none());
         assert!(!state.is_mining());
         assert_eq!(state.target(), None);
+    }
+
+    #[test]
+    fn pickaxe_speeds_and_harvest_gate_by_tier() {
+        // Wooden pickaxe halves stone's hand time; a stone pickaxe quarters it.
+        assert_eq!(break_time(Block::Stone, 0), 3.75);
+        assert_eq!(break_time(Block::Stone, 1), 3.75 / 2.0);
+        assert_eq!(break_time(Block::Stone, 2), 3.75 / 4.0);
+        // Iron needs a stone pickaxe: a wooden one mines it at the hand rate.
+        assert_eq!(
+            break_time(Block::IronOre, 1),
+            break_time(Block::IronOre, 0)
+        );
+        assert_eq!(break_time(Block::IronOre, 2), 7.5 / 4.0);
+        // Diamond sits above the stone tier: even a stone pickaxe is hand speed.
+        assert_eq!(
+            break_time(Block::DiamondOre, 2),
+            break_time(Block::DiamondOre, 0)
+        );
+    }
+
+    #[test]
+    fn break_event_harvest_flag_follows_tool_tier() {
+        let hit = hit_at(IVec3::new(1, 1, 1));
+        let dt = 0.05;
+        let mine = |tool: u8, block: Block| {
+            let mut state = MiningState::new();
+            let total = break_time(block, tool);
+            for _ in 0..((total / dt) as usize + 2) {
+                if let Some(e) = step_with_tool(&mut state, dt, Some(&hit), true, false, tool, block)
+                {
+                    return e;
+                }
+            }
+            panic!("{block:?} should break with tool {tool}");
+        };
+        // Wooden pickaxe harvests stone; a bare hand breaks it for nothing.
+        assert!(mine(1, Block::Stone).harvested);
+        assert!(!mine(0, Block::Stone).harvested);
+        // Iron needs a stone pickaxe — a wooden one yields nothing.
+        assert!(!mine(1, Block::IronOre).harvested);
+        assert!(mine(2, Block::IronOre).harvested);
+        // Diamond yields nothing to any pickaxe we can make.
+        assert!(!mine(2, Block::DiamondOre).harvested);
+    }
+
+    #[test]
+    fn switching_tools_resets_progress() {
+        let mut state = MiningState::new();
+        let hit = hit_at(IVec3::new(2, 2, 2));
+        // Mine stone bare-handed for a while.
+        for _ in 0..10 {
+            step(&mut state, 0.1, Some(&hit), true, false, Block::Stone);
+        }
+        let (_, before) = state.overlay().unwrap();
+        assert!(before > 0);
+        // Pull out a pickaxe on the same cell: progress restarts this frame.
+        step_with_tool(&mut state, 0.1, Some(&hit), true, false, 1, Block::Stone);
+        let (_, stage) = state.overlay().unwrap();
+        assert_eq!(stage, 0, "a tool switch resets elapsed to one frame of dt");
     }
 }

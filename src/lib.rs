@@ -12,6 +12,7 @@ pub mod block;
 pub mod camera;
 pub mod chunk;
 pub mod controls;
+pub mod crafting;
 pub mod entity;
 pub mod game;
 pub mod inventory;
