@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::camera::Camera;
-use crate::controls::{control_from_key_code, Control, PointerButton};
+use crate::controls::{control_from_key_code, Control, Modifiers, PointerButton};
 use crate::mathh::Vec3;
 use crate::render::{new_renderer_from_target, Renderer};
 use crate::world::RENDER_DIST;
@@ -136,6 +136,15 @@ impl ApplicationHandler for NativeHost {
                         event_loop.exit();
                     }
                 }
+            }
+            WindowEvent::ModifiersChanged(mods) => {
+                // Physical Ctrl/Shift state, tracked apart from the rebindable
+                // Sprint/Sneak controls so UI modifiers don't follow a rebind.
+                let state = mods.state();
+                app.set_modifiers(Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                });
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 app.add_scroll_delta(-wheel_notches(delta));

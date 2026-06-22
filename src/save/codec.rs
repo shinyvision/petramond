@@ -9,10 +9,14 @@
 use std::io::{Read, Write};
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
+use crate::entity::DroppedItem;
 
 const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
-const CHUNK_REC_VERSION: u8 = 1;
+/// Current chunk-record version. A record appends a length-prefixed item-entity
+/// list when `FLAG_HAS_ENTITIES` is set in the flags byte.
+const CHUNK_REC_VERSION: u8 = 2;
 const FLAG_HAS_WATER: u8 = 0x01;
+const FLAG_HAS_ENTITIES: u8 = 0x02;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -22,15 +26,21 @@ pub struct ChunkSnapshot {
     pub blocks: Box<[u8]>,
     pub biomes: Box<[u8]>,
     pub water: Option<Box<[u8]>>,
+    /// Item entities resting in this chunk, captured at save time so their
+    /// lifetime timers persist with the chunk. Empty for the common case.
+    pub entities: Vec<DroppedItem>,
 }
 
 impl ChunkSnapshot {
+    /// Snapshot a chunk's terrain with no entities attached. The world save paths
+    /// set [`entities`](Self::entities) afterwards from the active item list.
     pub fn from_chunk(c: &Chunk) -> Self {
         Self {
             pos: ChunkPos::new(c.cx, c.cz),
             blocks: Box::from(c.blocks_slice()),
             biomes: Box::from(c.biomes_slice()),
             water: c.water_slice().map(Box::from),
+            entities: Vec::new(),
         }
     }
 }
@@ -118,23 +128,35 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Compress a chunk snapshot into a record: `[version, flags, blocks, biomes,
-/// water?]`, zlib-deflated.
+/// water?, entities?]`, zlib-deflated. The entity list is appended only when the
+/// chunk holds drops (`FLAG_HAS_ENTITIES`), so terrain-only chunks pay nothing.
 pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(2 + s.blocks.len() + s.biomes.len() + extra);
     payload.put_u8(CHUNK_REC_VERSION);
-    payload.put_u8(if s.water.is_some() { FLAG_HAS_WATER } else { 0 });
+    let mut flags = 0u8;
+    if s.water.is_some() {
+        flags |= FLAG_HAS_WATER;
+    }
+    if !s.entities.is_empty() {
+        flags |= FLAG_HAS_ENTITIES;
+    }
+    payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
     if let Some(w) = &s.water {
         payload.extend_from_slice(w);
     }
+    if !s.entities.is_empty() {
+        super::entities::put_entities(&mut payload, &s.entities);
+    }
     deflate(&payload)
 }
 
-/// Decode a compressed chunk record back into a `Chunk` at `(cx, cz)`.
-/// `None` on corrupt / wrong-version / wrong-length data.
-pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<Chunk> {
+/// Decode a compressed chunk record into a `Chunk` at `(cx, cz)` plus any item
+/// entities stored with it. `None` on corrupt / wrong-version / wrong-length
+/// data.
+pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<DroppedItem>)> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
     if r.u8()? != CHUNK_REC_VERSION {
@@ -148,13 +170,20 @@ pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<Chunk> {
     } else {
         None
     };
-    Some(Chunk::from_saved(cx, cz, blocks, biomes, water))
+    let entities = if flags & FLAG_HAS_ENTITIES != 0 {
+        super::entities::get_entities(&mut r)?
+    } else {
+        Vec::new()
+    };
+    Some((Chunk::from_saved(cx, cz, blocks, biomes, water), entities))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block::Block;
+    use crate::item::{ItemStack, ItemType};
+    use crate::mathh::Vec3;
 
     #[test]
     fn chunk_record_roundtrips() {
@@ -166,7 +195,7 @@ mod tests {
 
         let snap = ChunkSnapshot::from_chunk(&c);
         let blob = encode_snapshot(&snap);
-        let back = decode_chunk(-3, 7, &blob).expect("decodes");
+        let (back, entities) = decode_chunk(-3, 7, &blob).expect("decodes");
 
         assert_eq!(back.cx, -3);
         assert_eq!(back.cz, 7);
@@ -178,6 +207,27 @@ mod tests {
         // Heightmap is recomputed, not stored.
         assert_eq!(back.surface_y(0, 0), 70);
         assert!(!back.modified);
+        assert!(entities.is_empty(), "no entities attached");
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_entities() {
+        let mut c = Chunk::new(2, 2);
+        c.set_block(8, 64, 8, Block::Dirt);
+        let mut snap = ChunkSnapshot::from_chunk(&c);
+        let mut drop = DroppedItem::new(
+            Vec3::new(40.5, 65.0, 40.5),
+            ItemStack::new(ItemType::Stone, 7),
+            1,
+        );
+        drop.ticks_lived = 1234;
+        snap.entities.push(drop);
+
+        let blob = encode_snapshot(&snap);
+        let (_back, entities) = decode_chunk(2, 2, &blob).expect("decodes");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].stack, ItemStack::new(ItemType::Stone, 7));
+        assert_eq!(entities[0].ticks_lived, 1234, "remaining lifetime survives the save");
     }
 
     #[test]
@@ -187,7 +237,7 @@ mod tests {
         let snap = ChunkSnapshot::from_chunk(&c);
         assert!(snap.water.is_none());
         let blob = encode_snapshot(&snap);
-        let back = decode_chunk(0, 0, &blob).expect("decodes");
+        let (back, _) = decode_chunk(0, 0, &blob).expect("decodes");
         assert_eq!(back.water_meta(8, 64, 8), 0);
     }
 

@@ -244,6 +244,21 @@ pub fn slot_at_cursor(screen: (u32, u32), open: bool, cursor_px: (f32, f32)) -> 
     None
 }
 
+/// Whether `cursor_px` lies within the open inventory panel rectangle (the
+/// classic 176×166 art, centred). Used by the App to tell a click on the panel
+/// from a "confidently outside the inventory" click that throws the held stack.
+/// Uses the same [`panel_origin`] placement and auto [`gui_scale`] the panel is
+/// drawn with. Always `false` for a degenerate zero-size screen.
+pub fn cursor_in_panel(screen: (u32, u32), cursor_px: (f32, f32)) -> bool {
+    if screen.0 == 0 || screen.1 == 0 {
+        return false;
+    }
+    let scale = gui_scale(screen);
+    let (ox, oy) = panel_origin(screen, scale);
+    let (px, py) = cursor_px;
+    px >= ox && px < ox + PANEL_W * scale && py >= oy && py < oy + PANEL_H * scale
+}
+
 /// Convert a physical-pixel point (top-left origin, y down) to NDC (y up).
 #[inline]
 fn to_ndc(screen: (u32, u32), x: f32, y: f32) -> [f32; 2] {
@@ -706,6 +721,35 @@ mod tests {
         // Top-left corner is outside every slot in both states.
         assert_eq!(slot_at_cursor((1280, 720), false, (0.0, 0.0)), None);
         assert_eq!(slot_at_cursor((1280, 720), true, (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn cursor_in_panel_matches_panel_rect() {
+        let screen = (1280u32, 720u32);
+        let scale = gui_scale(screen);
+        let (ox, oy) = panel_origin(screen, scale);
+        // Panel centre is inside.
+        assert!(cursor_in_panel(
+            screen,
+            (ox + PANEL_W * scale * 0.5, oy + PANEL_H * scale * 0.5)
+        ));
+        // Screen corner is confidently outside.
+        assert!(!cursor_in_panel(screen, (0.0, 0.0)));
+        // Just past the right edge is outside.
+        assert!(!cursor_in_panel(
+            screen,
+            (ox + PANEL_W * scale + 1.0, oy + 1.0)
+        ));
+        // Every open slot lies within the panel it's drawn in.
+        for i in 0..TOTAL_SLOTS {
+            let r = slot_rect(i, screen, true, scale).unwrap();
+            assert!(
+                cursor_in_panel(screen, (r.x + r.w * 0.5, r.y + r.h * 0.5)),
+                "slot {i} centre should be inside the panel"
+            );
+        }
+        // Degenerate screen: never inside.
+        assert!(!cursor_in_panel((0, 0), (0.0, 0.0)));
     }
 
     /// An empty reusable build buffer for the tests.

@@ -10,8 +10,7 @@
 //! Storage is a fixed `[Option<ItemStack>; 36]` array — no heap allocation per
 //! call. `ItemStack` is `Copy`, so all moves are cheap value moves.
 
-use crate::block::Block;
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 
 /// Number of hotbar slots (the always-visible bottom row).
 pub const HOTBAR_LEN: usize = 9;
@@ -19,23 +18,6 @@ pub const HOTBAR_LEN: usize = 9;
 pub const MAIN_LEN: usize = 27;
 /// Total slot count: hotbar `[0, 9)` + main grid `[9, 36)`.
 pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN; // 36
-
-/// The blocks placed into the hotbar by [`Inventory::new`]'s demo starter set.
-///
-/// Nine placeable blocks, one stack of 64 each. `Poppy` and `Fern` are
-/// cross-plant blocks, included so the flat-sprite item path (slots / held
-/// billboard) is exercised out of the box.
-const DEMO_HOTBAR: [Block; HOTBAR_LEN] = [
-    Block::Grass,
-    Block::Dirt,
-    Block::Stone,
-    Block::OakLog,
-    Block::OakLeaves,
-    Block::Sand,
-    Block::Gravel,
-    Block::Poppy,
-    Block::Fern,
-];
 
 /// A 36-slot inventory with a cursor-held stack and an active hotbar slot.
 ///
@@ -56,16 +38,11 @@ impl Default for Inventory {
 }
 
 impl Inventory {
-    /// A fresh inventory with the demo starter set: the nine hotbar slots filled
-    /// with a stack of 64 of each [`DEMO_HOTBAR`] block, main grid empty, no
-    /// cursor stack, active slot `0`.
+    /// A fresh, empty inventory: every slot empty, no cursor stack, active slot
+    /// `0`. The player collects items by breaking blocks in the world.
     pub fn new() -> Self {
-        let mut slots: [Option<ItemStack>; TOTAL_SLOTS] = [None; TOTAL_SLOTS];
-        for (slot, &block) in slots.iter_mut().zip(DEMO_HOTBAR.iter()) {
-            *slot = Some(ItemStack::new(ItemType::from_block(block), 64));
-        }
         Inventory {
-            slots,
+            slots: [None; TOTAL_SLOTS],
             cursor: None,
             active: 0,
         }
@@ -123,13 +100,24 @@ impl Inventory {
     /// Returns the leftover (`Some` only if every matching/empty slot filled up
     /// before `stack` was exhausted), or `None` if it was fully absorbed. An
     /// empty input stack is a no-op returning `None`.
-    pub fn add(&mut self, mut stack: ItemStack) -> Option<ItemStack> {
+    pub fn add(&mut self, stack: ItemStack) -> Option<ItemStack> {
+        // The whole inventory in slot order: hotbar `[0, 9)` then main `[9, 36)`.
+        self.add_to_range(stack, 0, TOTAL_SLOTS)
+    }
+
+    /// Like [`add`](Self::add) but restricted to slots `[start, end)`: merge into
+    /// matching non-full stacks first, then the first empty slot, both in
+    /// ascending slot order (left-to-right, top-to-bottom). Returns the leftover,
+    /// or `None` if fully absorbed. Empty input is a no-op returning `None`.
+    /// Used by [`add`](Self::add) (whole range) and shift-click transfer (one
+    /// region at a time).
+    fn add_to_range(&mut self, mut stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
         if stack.is_empty() {
             return None;
         }
 
         // Pass 1: top up existing matching, non-full stacks in slot order.
-        for existing in self.slots.iter_mut().flatten() {
+        for existing in self.slots[start..end].iter_mut().flatten() {
             if existing.can_stack_with(&stack) {
                 let space = existing.space_left();
                 if space > 0 {
@@ -144,7 +132,7 @@ impl Inventory {
         }
 
         // Pass 2: drop the remainder into empty slots, one full stack at a time.
-        for slot in self.slots.iter_mut() {
+        for slot in self.slots[start..end].iter_mut() {
             if slot.is_none() {
                 let put = stack.count.min(stack.item.max_stack_size());
                 *slot = Some(ItemStack::new(stack.item, put));
@@ -156,6 +144,26 @@ impl Inventory {
         }
 
         Some(stack)
+    }
+
+    /// Take a single item off the active hotbar slot (for the in-game drop key),
+    /// shrinking it by one and clearing the slot when it empties. Returns a
+    /// 1-count stack of the held item, or `None` if the slot is empty.
+    pub fn take_selected_one(&mut self) -> Option<ItemStack> {
+        let i = self.active as usize;
+        let stack = self.slots[i].as_mut()?;
+        let item = stack.item;
+        stack.count -= 1;
+        if stack.count == 0 {
+            self.slots[i] = None;
+        }
+        Some(ItemStack::new(item, 1))
+    }
+
+    /// Take the entire active hotbar slot stack out (for the Ctrl+drop key),
+    /// clearing the slot. Returns `None` if the slot is empty.
+    pub fn take_selected_all(&mut self) -> Option<ItemStack> {
+        self.slots[self.active as usize].take()
     }
 
     /// Remove one item from the active hotbar slot (e.g. after placing a block).
@@ -174,6 +182,26 @@ impl Inventory {
     #[inline]
     pub fn cursor(&self) -> Option<&ItemStack> {
         self.cursor.as_ref()
+    }
+
+    /// Take the whole cursor-held stack out, clearing the cursor. Returns `None`
+    /// if the cursor was empty. Used to throw the held stack into the world.
+    pub fn take_cursor(&mut self) -> Option<ItemStack> {
+        self.cursor.take()
+    }
+
+    /// Take a single item off the cursor-held stack, shrinking it by one (and
+    /// clearing the cursor when the last item leaves). Returns a 1-count stack of
+    /// the held item, or `None` if the cursor was empty. Used to throw one item
+    /// out at a time.
+    pub fn take_cursor_one(&mut self) -> Option<ItemStack> {
+        let cur = self.cursor.as_mut()?;
+        let item = cur.item;
+        cur.count -= 1;
+        if cur.count == 0 {
+            self.cursor = None;
+        }
+        Some(ItemStack::new(item, 1))
     }
 
     /// Left-click drag/drop interaction on slot `i` (whole-stack semantics):
@@ -222,6 +250,125 @@ impl Inventory {
         }
     }
 
+    /// Double-click "collect all": with a stack held on the cursor, pull matching
+    /// items out of every slot into the cursor until it reaches the item's max
+    /// stack size. Loose items are consolidated first — pass 1 drains only partial
+    /// (non-full) stacks, and only if the cursor still has room does pass 2 break
+    /// into full stacks. Within each pass slots are visited in order (hotbar
+    /// `[0, 9)` then main grid `[9, 36)`); emptied slots are cleared. No-op when
+    /// the cursor is empty or already full.
+    ///
+    /// This is the fast-double-click gather: the first click picks a stack up onto
+    /// the cursor (see [`click_slot`](Self::click_slot)), and a quick second click
+    /// on the same slot calls this instead of dropping the stack back down.
+    pub fn collect_to_cursor(&mut self) {
+        let Some(mut cursor) = self.cursor.take() else {
+            return;
+        };
+        // Two passes so loose partials are merged before any full stack is split:
+        // pass 1 skips full stacks, pass 2 (only reached if room remains) takes
+        // from them too.
+        for take_full in [false, true] {
+            for slot in self.slots.iter_mut() {
+                let space = cursor.space_left();
+                if space == 0 {
+                    break;
+                }
+                let Some(existing) = slot.as_mut() else {
+                    continue;
+                };
+                if !existing.can_stack_with(&cursor) {
+                    continue;
+                }
+                // Pass 1 leaves full stacks intact; pass 2 may break into them.
+                if !take_full && existing.count >= existing.item.max_stack_size() {
+                    continue;
+                }
+                let moved = space.min(existing.count);
+                cursor.count += moved;
+                existing.count -= moved;
+                if existing.count == 0 {
+                    *slot = None;
+                }
+            }
+        }
+        self.cursor = Some(cursor);
+    }
+
+    /// Right-click drag/drop interaction on slot `i`:
+    ///  - cursor empty, slot has a stack → split it: the larger half (`ceil`)
+    ///    goes onto the cursor, the rest stays (a 5-stack leaves 2, drags 3)
+    ///  - cursor full, slot empty → drop ONE item into the slot
+    ///  - cursor full, slot same item with room → add ONE to the slot
+    ///  - cursor full, slot different item / already at max → no-op
+    ///
+    /// Out-of-range `i` and the both-empty case are no-ops.
+    pub fn right_click_slot(&mut self, i: usize) {
+        if i >= TOTAL_SLOTS {
+            return;
+        }
+
+        match (self.cursor.take(), self.slots[i].take()) {
+            // Both empty: nothing to do.
+            (None, None) => {}
+
+            // Cursor empty, slot full: split off the larger half onto the cursor.
+            (None, Some(mut slot)) => {
+                // ceil(count / 2): the dragged half is the larger one.
+                let take = slot.count - slot.count / 2;
+                let item = slot.item;
+                slot.count -= take;
+                self.cursor = Some(ItemStack::new(item, take));
+                self.slots[i] = (slot.count > 0).then_some(slot);
+            }
+
+            // Cursor full, slot empty: place a single item.
+            (Some(mut cur), None) => {
+                self.slots[i] = Some(ItemStack::new(cur.item, 1));
+                cur.count -= 1;
+                self.cursor = (cur.count > 0).then_some(cur);
+            }
+
+            // Both full.
+            (Some(mut cur), Some(mut slot)) => {
+                if slot.can_stack_with(&cur) && slot.space_left() > 0 {
+                    // Same item, slot has room: move a single item into it.
+                    slot.count += 1;
+                    cur.count -= 1;
+                    self.slots[i] = Some(slot);
+                    self.cursor = (cur.count > 0).then_some(cur);
+                } else {
+                    // Different item, or slot full: leave both untouched.
+                    self.slots[i] = Some(slot);
+                    self.cursor = Some(cur);
+                }
+            }
+        }
+    }
+
+    /// Shift-click transfer: move the whole stack in slot `i` to the OTHER region
+    /// — a hotbar stack goes to the main grid and a main-grid stack to the hotbar
+    /// — merging into matching stacks first then the first empty slot, filling in
+    /// ascending slot order (left-to-right, top-to-bottom). Any part that doesn't
+    /// fit stays behind; if nothing fits the click is effectively ignored. No-op
+    /// on an empty or out-of-range slot. The cursor is not involved.
+    pub fn shift_move_slot(&mut self, i: usize) {
+        if i >= TOTAL_SLOTS {
+            return;
+        }
+        let Some(stack) = self.slots[i].take() else {
+            return;
+        };
+        // Hotbar `[0, 9)` ships to the main grid; the main grid ships to the hotbar.
+        let (start, end) = if i < HOTBAR_LEN {
+            (HOTBAR_LEN, TOTAL_SLOTS)
+        } else {
+            (0, HOTBAR_LEN)
+        };
+        // Whatever doesn't fit in the destination region stays in the source slot.
+        self.slots[i] = self.add_to_range(stack, start, end);
+    }
+
     /// `true` if every slot and the cursor are empty.
     pub fn is_empty(&self) -> bool {
         self.cursor.is_none() && self.slots.iter().all(Option::is_none)
@@ -249,35 +396,29 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::ItemType;
 
     fn item(t: ItemType, n: u8) -> ItemStack {
         ItemStack::new(t, n)
     }
 
     #[test]
-    fn new_has_demo_hotbar() {
+    fn new_is_empty() {
         let inv = Inventory::new();
         assert_eq!(inv.active_slot(), 0);
         assert!(inv.cursor().is_none());
-        // Nine full hotbar stacks of the demo blocks.
-        for (i, &block) in DEMO_HOTBAR.iter().enumerate() {
-            let s = inv.hotbar(i).expect("demo hotbar slot filled");
-            assert_eq!(s.item, ItemType::from_block(block));
-            assert_eq!(s.count, 64);
+        // Every slot starts empty: the player gathers items from the world.
+        for i in 0..TOTAL_SLOTS {
+            assert!(inv.slot(i).is_none(), "slot {i} should be empty");
         }
-        // Main grid is empty.
-        for i in HOTBAR_LEN..TOTAL_SLOTS {
-            assert!(inv.slot(i).is_none(), "main slot {i} should be empty");
-        }
-        // Includes the two cross-plants for the sprite path.
-        assert_eq!(inv.hotbar(7).unwrap().item, ItemType::Poppy);
-        assert_eq!(inv.hotbar(8).unwrap().item, ItemType::Fern);
-        assert!(!inv.is_empty());
+        assert!(inv.is_empty());
     }
 
     #[test]
     fn selected_follows_active() {
-        let mut inv = Inventory::new();
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Grass, 1));
+        inv.slots[2] = Some(item(ItemType::Stone, 1));
         assert_eq!(inv.selected().unwrap().item, ItemType::Grass);
         inv.set_active(2);
         assert_eq!(inv.selected().unwrap().item, ItemType::Stone);
@@ -485,5 +626,248 @@ mod tests {
         inv.cursor = None;
         inv.slots[10] = Some(item(ItemType::Dirt, 1));
         assert!(!inv.is_empty());
+    }
+
+    fn empty_inv() -> Inventory {
+        let mut inv = Inventory::new();
+        for i in 0..TOTAL_SLOTS {
+            inv.slots[i] = None;
+        }
+        inv
+    }
+
+    #[test]
+    fn right_click_splits_odd_stack_dragging_larger_half() {
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Stone, 5));
+        // 5 -> drag ceil(5/2)=3, leave 2 behind.
+        inv.right_click_slot(0);
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 3)));
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Stone, 2)));
+    }
+
+    #[test]
+    fn right_click_splits_even_stack_in_half() {
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Stone, 8));
+        inv.right_click_slot(0);
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 4)));
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Stone, 4)));
+    }
+
+    #[test]
+    fn right_click_single_item_picks_it_up() {
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Stone, 1));
+        inv.right_click_slot(0);
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 1)));
+        assert!(inv.slot(0).is_none());
+    }
+
+    #[test]
+    fn right_click_places_one_into_empty_slot() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+        inv.right_click_slot(3);
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 1)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 3)));
+    }
+
+    #[test]
+    fn right_click_adds_one_to_matching_slot() {
+        let mut inv = empty_inv();
+        inv.slots[3] = Some(item(ItemType::Dirt, 10));
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+        inv.right_click_slot(3);
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 11)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 3)));
+    }
+
+    #[test]
+    fn right_click_last_held_item_clears_cursor() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 1));
+        inv.right_click_slot(3);
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 1)));
+        assert!(inv.cursor().is_none());
+    }
+
+    #[test]
+    fn right_click_different_item_or_full_is_noop() {
+        // Different item: leave both untouched.
+        let mut inv = empty_inv();
+        inv.slots[3] = Some(item(ItemType::Stone, 5));
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+        inv.right_click_slot(3);
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Stone, 5)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 4)));
+        // Same item but slot already full: no room, leave both untouched.
+        let mut inv = empty_inv();
+        inv.slots[3] = Some(item(ItemType::Dirt, 64));
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+        inv.right_click_slot(3);
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 64)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 4)));
+    }
+
+    #[test]
+    fn collect_to_cursor_gathers_matching_until_full() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 5));
+        inv.slots[0] = Some(item(ItemType::Dirt, 10)); // hotbar
+        inv.slots[3] = Some(item(ItemType::Dirt, 20)); // hotbar
+        inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 40)); // main grid
+        inv.slots[2] = Some(item(ItemType::Stone, 30)); // different item: untouched
+
+        inv.collect_to_cursor();
+
+        // 5 + 10 + 20 + 40 = 75, capped at 64, with 11 dirt left behind.
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
+        assert!(inv.slot(0).is_none(), "first partial fully drained");
+        assert!(inv.slot(3).is_none(), "second partial fully drained");
+        assert_eq!(inv.slot(HOTBAR_LEN).unwrap().count, 11, "last source keeps the remainder");
+        assert_eq!(inv.slot(2), Some(&item(ItemType::Stone, 30)), "other items untouched");
+    }
+
+    #[test]
+    fn collect_to_cursor_drains_partials_before_breaking_full_stacks() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 1));
+        inv.slots[0] = Some(item(ItemType::Dirt, 64)); // full stack, before the partial
+        inv.slots[1] = Some(item(ItemType::Dirt, 5)); // partial
+
+        inv.collect_to_cursor();
+
+        // Partial taken first (1 + 5 = 6); the cursor then pulls the remaining 58
+        // from the full stack, leaving it with 6 rather than splitting it first.
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
+        assert!(inv.slot(1).is_none(), "partial consumed");
+        assert_eq!(inv.slot(0).unwrap().count, 6, "full stack broken only for the remainder");
+    }
+
+    #[test]
+    fn collect_to_cursor_leaves_full_stacks_intact_when_partials_suffice() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 60));
+        inv.slots[0] = Some(item(ItemType::Dirt, 64)); // full
+        inv.slots[1] = Some(item(ItemType::Dirt, 4)); // exactly tops the cursor off
+
+        inv.collect_to_cursor();
+
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
+        assert!(inv.slot(1).is_none(), "partial consumed to fill the cursor");
+        assert_eq!(inv.slot(0).unwrap().count, 64, "full stack never touched");
+    }
+
+    #[test]
+    fn collect_to_cursor_is_noop_when_cursor_empty_or_full() {
+        // Empty cursor: nothing to fill, slots untouched.
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Dirt, 10));
+        inv.collect_to_cursor();
+        assert!(inv.cursor().is_none());
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 10)));
+
+        // Full cursor: no room, slots untouched.
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 64));
+        inv.slots[0] = Some(item(ItemType::Dirt, 10));
+        inv.collect_to_cursor();
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 10)));
+    }
+
+    #[test]
+    fn collect_to_cursor_ignores_non_matching_items() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 5));
+        inv.slots[0] = Some(item(ItemType::Stone, 64));
+        inv.slots[1] = Some(item(ItemType::Sand, 30));
+        inv.collect_to_cursor();
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 5)), "nothing to gather");
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Stone, 64)));
+        assert_eq!(inv.slot(1), Some(&item(ItemType::Sand, 30)));
+    }
+
+    #[test]
+    fn take_cursor_all_and_one() {
+        let mut inv = empty_inv();
+        inv.cursor = Some(item(ItemType::Dirt, 3));
+        assert_eq!(inv.take_cursor_one(), Some(item(ItemType::Dirt, 1)));
+        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 2)));
+        assert_eq!(inv.take_cursor(), Some(item(ItemType::Dirt, 2)));
+        assert!(inv.cursor().is_none());
+        // Empty cursor: both are None.
+        assert!(inv.take_cursor().is_none());
+        assert!(inv.take_cursor_one().is_none());
+        // Taking the last item clears the cursor.
+        inv.cursor = Some(item(ItemType::Stone, 1));
+        assert_eq!(inv.take_cursor_one(), Some(item(ItemType::Stone, 1)));
+        assert!(inv.cursor().is_none());
+    }
+
+    #[test]
+    fn take_selected_one_and_all_from_active_slot() {
+        let mut inv = empty_inv();
+        inv.slots[2] = Some(item(ItemType::Stone, 3));
+        inv.set_active(2);
+        assert_eq!(inv.take_selected_one(), Some(item(ItemType::Stone, 1)));
+        assert_eq!(inv.slot(2), Some(&item(ItemType::Stone, 2)));
+        assert_eq!(inv.take_selected_all(), Some(item(ItemType::Stone, 2)));
+        assert!(inv.slot(2).is_none());
+        // Empty active slot: both return None.
+        assert!(inv.take_selected_one().is_none());
+        assert!(inv.take_selected_all().is_none());
+    }
+
+    #[test]
+    fn take_selected_one_clears_slot_at_zero() {
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Dirt, 1));
+        inv.set_active(0);
+        assert_eq!(inv.take_selected_one(), Some(item(ItemType::Dirt, 1)));
+        assert!(inv.slot(0).is_none());
+    }
+
+    #[test]
+    fn shift_move_hotbar_to_main_grid_uses_first_empty() {
+        let mut inv = empty_inv();
+        inv.slots[2] = Some(item(ItemType::Stone, 20)); // hotbar
+        inv.shift_move_slot(2);
+        assert!(inv.slot(2).is_none(), "source slot emptied");
+        // First main-grid slot is index HOTBAR_LEN (9).
+        assert_eq!(inv.slot(HOTBAR_LEN), Some(&item(ItemType::Stone, 20)));
+    }
+
+    #[test]
+    fn shift_move_main_to_hotbar_merges_then_fills() {
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::Dirt, 60)); // hotbar, room for 4
+        inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 10)); // main grid
+        inv.shift_move_slot(HOTBAR_LEN);
+        // 4 merge into slot 0 (to 64), remaining 6 fill the next empty hotbar slot.
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 64)));
+        assert_eq!(inv.slot(1), Some(&item(ItemType::Dirt, 6)));
+        assert!(inv.slot(HOTBAR_LEN).is_none());
+    }
+
+    #[test]
+    fn shift_move_leaves_remainder_when_destination_full() {
+        let mut inv = empty_inv();
+        // Fill the whole main grid with non-matching full stacks.
+        for i in HOTBAR_LEN..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.slots[0] = Some(item(ItemType::Dirt, 30)); // hotbar source
+        inv.shift_move_slot(0);
+        // No room in the main grid: the stack stays put (click ignored).
+        assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 30)));
+    }
+
+    #[test]
+    fn shift_move_empty_slot_is_noop() {
+        let mut inv = empty_inv();
+        inv.shift_move_slot(5);
+        assert!(inv.slot(5).is_none());
     }
 }

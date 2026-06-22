@@ -5,6 +5,7 @@
 //! API stable while the implementation is split by responsibility.
 
 mod edit;
+mod entities;
 mod light_queue;
 mod mesh_queue;
 mod query;
@@ -13,6 +14,8 @@ mod stream;
 mod tick;
 mod visibility;
 pub(crate) mod water;
+
+pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 pub use query::WorldQuery;
 pub use store::{World, RENDER_DIST};

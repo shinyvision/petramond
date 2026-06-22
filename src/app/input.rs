@@ -7,6 +7,10 @@ pub enum ControlEvent {
     TogglePlayerMode,
     CloseScreen,
     SelectHotbar(u8),
+    /// Drop the held item this press (edge-triggered). Whether it's one item or
+    /// the whole stack is decided by the App from the physical Ctrl modifier, not
+    /// here — keeping the drop key independent of the sprint binding.
+    DropItem,
 }
 
 #[derive(Default)]
@@ -21,6 +25,7 @@ pub struct InputController {
     toggle_mode_key: bool,
     toggle_mode_chord: bool,
     inventory_toggle_held: bool,
+    drop_item_held: bool,
 }
 
 impl InputController {
@@ -65,6 +70,13 @@ impl InputController {
             }
             Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
             Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),
+            Control::DropItem => {
+                // Edge-triggered: one drop per press. The whole-stack vs single
+                // choice is the App's, read from the physical Ctrl modifier.
+                let edge = down && !self.drop_item_held;
+                self.drop_item_held = down;
+                edge.then_some(ControlEvent::DropItem)
+            }
         };
 
         event.or_else(|| self.mode_chord_event())
@@ -106,6 +118,25 @@ mod tests {
         assert_eq!(
             input.set_control(Control::ToggleInventory, true),
             Some(ControlEvent::ToggleInventory)
+        );
+    }
+
+    #[test]
+    fn drop_item_is_edge_triggered() {
+        let mut input = InputController::default();
+        // One event per press.
+        assert_eq!(
+            input.set_control(Control::DropItem, true),
+            Some(ControlEvent::DropItem)
+        );
+        // Holding Q does not repeat the drop.
+        assert_eq!(input.set_control(Control::DropItem, true), None);
+        assert_eq!(input.set_control(Control::DropItem, false), None);
+        // Next press fires again. Whole-stack vs single (the Ctrl modifier) is the
+        // App's concern, no longer encoded in the event.
+        assert_eq!(
+            input.set_control(Control::DropItem, true),
+            Some(ControlEvent::DropItem)
         );
     }
 

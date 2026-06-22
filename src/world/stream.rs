@@ -71,14 +71,23 @@ impl World {
             .filter(|p| (p.cx - center.cx).abs() > keep || (p.cz - center.cz).abs() > keep)
             .cloned()
             .collect();
-        // Persist any player-modified chunks before they leave memory.
+        // Persist any player-modified chunk, and any chunk holding item entities,
+        // before it leaves memory. Draining the entities into the save record is
+        // what pauses their lifetime timers (they stop being simulated) until the
+        // chunk loads again.
         if self.save.is_some() {
-            let snaps: Vec<ChunkSnapshot> = to_drop
-                .iter()
-                .filter_map(|p| self.chunks.get(p))
-                .filter(|c| c.modified)
-                .map(ChunkSnapshot::from_chunk)
-                .collect();
+            let mut snaps = Vec::new();
+            for &pos in &to_drop {
+                let entities = self.take_items_in_chunk(pos);
+                let Some(chunk) = self.chunks.get(&pos) else {
+                    continue;
+                };
+                if chunk.modified || !entities.is_empty() {
+                    let mut snap = ChunkSnapshot::from_chunk(chunk);
+                    snap.entities = entities;
+                    snaps.push(snap);
+                }
+            }
             if let Some(save) = self.save.as_mut() {
                 save.save_chunks(snaps);
             }
@@ -109,7 +118,8 @@ impl World {
             fresh.push((pos, res.chunk));
         }
         // Drain chunks read back from disk. A missing/corrupt record falls back
-        // to generation so the player still sees terrain.
+        // to generation so the player still sees terrain. Item entities stored in
+        // the record rejoin the active set (their paused timers resume).
         while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
             let pos = loaded.pos;
             self.pending.remove(&pos);
@@ -117,7 +127,10 @@ impl World {
                 continue;
             }
             match loaded.chunk {
-                Some(chunk) => fresh.push((pos, chunk)),
+                Some(chunk) => {
+                    self.dropped.extend(loaded.entities);
+                    fresh.push((pos, chunk));
+                }
                 None => {
                     self.worker.submit(GenRequest {
                         cx: pos.cx,

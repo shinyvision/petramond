@@ -45,6 +45,12 @@ const WATER_CURRENT_ACCEL: f32 = 8.0;
 /// Angular speed of the idle spin, in radians/second.
 const SPIN_SPEED: f32 = 2.0;
 
+/// Forward launch speed (m/s) of an item thrown out of the inventory.
+const THROW_SPEED: f32 = 4.0;
+/// Extra upward speed (m/s) added to a throw so the toss arcs clear of the
+/// player instead of dropping straight at their feet.
+const THROW_UP: f32 = 1.5;
+
 /// A free-floating stack of items in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DroppedItem {
@@ -56,8 +62,11 @@ pub struct DroppedItem {
     /// drop crosses voxel cells, avoiding per-frame world-light lookups for
     /// long-lived item piles.
     pub skylight: u8,
-    /// Seconds since spawn; drives despawn and bob.
-    pub age: f32,
+    /// Game ticks this item has been alive (advanced once per fixed tick by the
+    /// world entity step, paused while its chunk is unloaded). Gates the pickup
+    /// delay and drives the despawn timer; persisted with the owning chunk so the
+    /// remaining lifetime survives an unload/reload. NOT touched by physics.
+    pub ticks_lived: u32,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
 }
@@ -81,15 +90,35 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
-            age: 0.0,
+            ticks_lived: 0,
             // Stagger the starting spin so a pile of drops isn't phase-locked.
             spin: hash_signed(s ^ 0x3C3C) * std::f32::consts::PI,
         }
     }
 
-    /// Advance physics by `dt`: gravity, axis-resolved block collision, spin and
-    /// age. Items rest on solid ground and have horizontal velocity damped while
-    /// grounded.
+    /// Spawn a stack thrown out of the inventory at `pos`, flying along `dir`
+    /// (the player's look direction) with a small upward arc. Unlike [`new`], the
+    /// launch is deliberate rather than a random pop, so the toss reads as "the
+    /// player threw this". `ticks_lived` starts at 0 so the shared pickup delay
+    /// keeps the thrower from instantly vacuuming it back up. A zero `dir` drops it
+    /// straight up (degenerate look direction).
+    pub fn thrown(pos: Vec3, stack: ItemStack, dir: Vec3) -> Self {
+        let d = dir.normalize_or_zero();
+        let vel = Vec3::new(d.x * THROW_SPEED, d.y * THROW_SPEED + THROW_UP, d.z * THROW_SPEED);
+        DroppedItem {
+            pos,
+            vel,
+            stack,
+            skylight: 63,
+            ticks_lived: 0,
+            spin: 0.0,
+        }
+    }
+
+    /// Advance physics by `dt`: gravity, axis-resolved block collision, and spin.
+    /// Items rest on solid ground and have horizontal velocity damped while
+    /// grounded. The lifetime counter (`ticks_lived`) is advanced separately by
+    /// the per-tick world step, not here.
     ///
     /// `magnet_target` is the player chest (body-centre) the item is sucked into:
     /// once the item is within [`ATTRACT_RADIUS`] of it the normal physics are
@@ -123,7 +152,6 @@ impl DroppedItem {
         solid_at: &impl Fn(IVec3) -> bool,
         flow_at: &impl Fn(IVec3) -> Vec3,
     ) {
-        self.age += dt;
         self.spin = (self.spin + SPIN_SPEED * dt) % std::f32::consts::TAU;
 
         // Magnet phase: if a target is within the attract radius, fly straight at
@@ -293,7 +321,17 @@ mod tests {
         assert!(d.vel.y > 0.0, "should pop upward");
         let horiz = (d.vel.x * d.vel.x + d.vel.z * d.vel.z).sqrt();
         assert!(horiz > 0.0, "should have some outward kick");
-        assert_eq!(d.age, 0.0);
+        assert_eq!(d.ticks_lived, 0);
+    }
+
+    #[test]
+    fn thrown_launches_along_look_direction_with_upward_arc() {
+        let d = DroppedItem::thrown(Vec3::ZERO, stack(), Vec3::new(1.0, 0.0, 0.0));
+        assert!(d.vel.x > 0.0, "throws forward along +X: {}", d.vel.x);
+        assert!(d.vel.y > 0.0, "has a small upward arc: {}", d.vel.y);
+        assert_eq!(d.vel.z, 0.0);
+        assert_eq!(d.ticks_lived, 0, "fresh throw starts the lifetime at zero");
+        assert_eq!(d.stack, stack());
     }
 
     #[test]
@@ -371,11 +409,12 @@ mod tests {
     }
 
     #[test]
-    fn age_accumulates() {
+    fn physics_does_not_touch_the_lifetime_counter() {
+        // The lifetime advances on the world tick step, never in physics.
         let mut d = DroppedItem::new(Vec3::ZERO, stack(), 9);
         d.integrate(0.5, None, &empty);
         d.integrate(0.5, None, &empty);
-        assert!((d.age - 1.0).abs() < 1e-5);
+        assert_eq!(d.ticks_lived, 0);
     }
 
     #[test]

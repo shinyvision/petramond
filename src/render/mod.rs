@@ -36,6 +36,12 @@ pub use block_model::{
 /// math the renderer draws with.
 pub use ui::slot_at_cursor;
 
+/// Pure UI layout hit-test: whether the cursor is over the open inventory panel
+/// rectangle. Shared with the App to tell a "drop outside the inventory" click
+/// (throw the held stack) from a click on the panel itself. Uses the same panel
+/// placement the renderer draws with.
+pub use ui::cursor_in_panel;
+
 use crate::item::ItemType;
 use glam::{IVec3, Vec3};
 
@@ -50,16 +56,18 @@ pub struct BreakOverlayView {
 }
 
 /// The first-person held item to draw this frame. `item == None` draws the bare
-/// skin hand. `swing` (0..1) drives the mining-punch animation; `place_pop`
-/// (0..1) drives the one-shot place nudge. The renderer presentation layer owns
+/// skin hand. `swing` (0..1) drives the punch animation (mining and placing
+/// both); `swing_scale` (0..1) scales its amplitude so a placement reads as a
+/// softer version of the mining punch. The renderer presentation layer owns
 /// these visual animation phases.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemView {
     pub item: Option<ItemType>,
-    /// 0..1 mining punch phase (sawtooth while mining).
+    /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
     pub swing: f32,
-    /// 0..1 one-shot place-pop phase.
-    pub place_pop: f32,
+    /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
+    /// the gentler place jab. Ignored when `swing == 0.0`.
+    pub swing_scale: f32,
 }
 
 impl Default for HeldItemView {
@@ -67,7 +75,7 @@ impl Default for HeldItemView {
         HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         }
     }
 }
@@ -80,17 +88,22 @@ pub struct HeldItemFrame {
     pub mining: bool,
     /// True on the frame a block breaks, including instant hardness-0 blocks.
     pub broke_block: bool,
+    /// True on the frame the hand expels an item into the world — placing a block
+    /// or throwing/dropping a stack — which plays the softer place jab.
     pub placed: bool,
     pub dt: f32,
 }
 
 /// A dropped item-entity to draw in the world this frame: a small spinning +
 /// bobbing cube (or billboard for sprite-kind items) at `pos`, rotated by `spin`
-/// radians about Y. The App fills a slice of these from its `DroppedItem`s.
+/// radians about Y. The App fills a slice of these from its `DroppedItem`s. A
+/// stack draws as several offset, layered copies (capped at 5) per `count`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ItemEntityInstance {
     pub pos: Vec3,
     pub item: ItemType,
+    /// Stack size. Drives how many layered geometries the pile draws (1..=5).
+    pub count: u8,
     /// Y-axis spin in radians.
     pub spin: f32,
     /// 6-bit skylight sampled from the world at the dropped item's position.

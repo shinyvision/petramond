@@ -14,8 +14,9 @@
 //!
 //! The hand is drawn over the world (no depth attachment), so it uses its OWN
 //! fixed first-person perspective rather than the world camera — the returned MVP
-//! is a complete clip-space transform. The mining punch (`swing` 0..1 sawtooth)
-//! and one-shot place pop (`place_pop` 0..1) are folded into that transform here.
+//! is a complete clip-space transform. The punch (`swing` 0..1 sawtooth while
+//! mining, one-shot for a break/place) and its `swing_scale` amplitude (softer
+//! for a place than a mining hit) are folded into that transform here.
 
 use glam::{Mat4, Quat, Vec3};
 
@@ -41,17 +42,19 @@ const VANILLA_ARM_ANCHOR_NDC_X: f32 = 0.71;
 const VANILLA_ARM_ANCHOR_NDC_Y: f32 = -0.75;
 
 /// Mining-punch swings per second. Drives the looping hand swing phase while the
-/// sim reports active mining.
+/// sim reports active mining, and the one-shot break/place jab speed.
 const HAND_SWING_HZ: f32 = 4.2;
 
-/// Duration of the one-shot place jab, in seconds.
-const PLACE_ANIM_SECS: f32 = 0.25;
+/// Amplitude of the place jab relative to a full mining punch. Placing reuses the
+/// punch motion at this reduced strength so it reads as "similar but softer".
+const PLACE_SWING_SCALE: f32 = 0.62;
 
 #[derive(Copy, Clone, Debug)]
 pub(super) struct HeldItemAnimator {
     swing_t: f32,
     swing_finishing: bool,
-    place_anim_t: f32,
+    /// Amplitude of the swing currently in flight (see [`HeldItemView::swing_scale`]).
+    swing_scale: f32,
 }
 
 impl Default for HeldItemAnimator {
@@ -59,7 +62,7 @@ impl Default for HeldItemAnimator {
         Self {
             swing_t: 0.0,
             swing_finishing: false,
-            place_anim_t: 1.0,
+            swing_scale: 1.0,
         }
     }
 }
@@ -67,33 +70,41 @@ impl Default for HeldItemAnimator {
 impl HeldItemAnimator {
     pub fn update(&mut self, frame: HeldItemFrame) -> HeldItemView {
         let dt = frame.dt.max(0.0);
+
+        // A placement plays one softer swing — the same punch motion as mining,
+        // at reduced amplitude. Restart the phase so the jab reads cleanly even
+        // mid-recovery; when the placement empties the hand it carries straight
+        // onto the bare arm, since both placements read this same `swing` phase.
+        if frame.placed {
+            self.swing_t = 0.0;
+            self.swing_finishing = true;
+            self.swing_scale = PLACE_SWING_SCALE;
+        }
+
         if frame.mining {
             self.swing_finishing = false;
+            self.swing_scale = 1.0;
             self.swing_t = (self.swing_t + dt * HAND_SWING_HZ).fract();
         } else {
-            self.swing_finishing |= frame.broke_block;
-        }
-
-        if !frame.mining && (self.swing_finishing || self.swing_t > 0.0) {
-            let next = self.swing_t + dt * HAND_SWING_HZ;
-            if next >= 1.0 {
-                self.swing_t = 0.0;
-                self.swing_finishing = false;
-            } else {
-                self.swing_t = next;
+            if frame.broke_block {
+                self.swing_finishing = true;
+                self.swing_scale = 1.0;
             }
-        }
-
-        if frame.placed {
-            self.place_anim_t = 0.0;
-        } else {
-            self.place_anim_t = (self.place_anim_t + dt / PLACE_ANIM_SECS).min(1.0);
+            if self.swing_finishing || self.swing_t > 0.0 {
+                let next = self.swing_t + dt * HAND_SWING_HZ;
+                if next >= 1.0 {
+                    self.swing_t = 0.0;
+                    self.swing_finishing = false;
+                } else {
+                    self.swing_t = next;
+                }
+            }
         }
 
         HeldItemView {
             item: frame.item,
             swing: self.swing_t,
-            place_pop: (1.0 - self.place_anim_t).clamp(0.0, 1.0),
+            swing_scale: self.swing_scale,
         }
     }
 }
@@ -219,30 +230,45 @@ fn radians(degrees: f32) -> f32 {
     degrees * std::f32::consts::PI / 180.0
 }
 
-fn vanilla_arm_swing_translation(swing: f32) -> Vec3 {
-    let s = swing.clamp(0.0, 1.0);
-    let root = s.sqrt();
-    let f2 = -0.3 * (root * std::f32::consts::PI).sin();
-    let f3 = 0.4 * (root * std::f32::consts::TAU).sin();
-    let f4 = -0.4 * (s * std::f32::consts::PI).sin();
-    Vec3::new(f2 + 0.64000005, f3 - 0.6, f4 - 0.71999997)
-}
-
-fn vanilla_player_arm_pose(swing: f32) -> Mat4 {
-    let s = swing.clamp(0.0, 1.0);
-    let root = s.sqrt();
-    let f5 = (s * s * std::f32::consts::PI).sin();
-    let f6 = (root * std::f32::consts::PI).sin();
-
-    Mat4::from_translation(vanilla_arm_swing_translation(s))
+/// Static rest orientation of the bare-arm cuboid (no swing): rises from the
+/// lower-right toward centre, tilted up, broad back-of-hand face to the camera.
+/// This is Minecraft's `renderPlayerArm` transform chain with the swing terms
+/// dropped — the punch is layered on separately in [`bare_arm_placement`] so the
+/// empty hand jabs forward like a held item instead of wiping sideways.
+fn arm_rest_pose() -> Mat4 {
+    Mat4::from_translation(Vec3::new(0.64000005, -0.6, -0.71999997))
         * Mat4::from_rotation_y(radians(45.0))
-        * Mat4::from_rotation_y(radians(f6 * 70.0))
-        * Mat4::from_rotation_z(radians(f5 * -20.0))
         * Mat4::from_translation(Vec3::new(-1.0, 3.6, 3.5))
         * Mat4::from_rotation_z(radians(120.0))
         * Mat4::from_rotation_x(radians(200.0))
         * Mat4::from_rotation_y(radians(-135.0))
         * Mat4::from_translation(Vec3::new(5.6, 0.0, 0.0))
+}
+
+/// Forearm-local shoulder pivot: the bottom (`-Y`) end of the 4x12x4 arm cuboid,
+/// which the rest pose sends off-screen toward the lower-right. The punch swings
+/// the fist (`+Y` end) about this point so the cuboid hinges like a real arm.
+const ARM_SHOULDER_LOCAL: Vec3 = Vec3::new(0.0, -6.0, 0.0);
+
+/// Peak forward-jab angle of the bare-arm punch, in degrees. A rotation about the
+/// arm-local `-Z` axis at the shoulder, which (through the rest pose) drives the
+/// fist toward screen centre and into the screen — a forward punch, not a sweep.
+const ARM_PUNCH_DEG: f32 = 62.0;
+/// Secondary roll folded into the punch so the cuboid doesn't hinge flatly; gives
+/// the wrist a little twist as the fist comes forward.
+const ARM_PUNCH_ROLL_DEG: f32 = 16.0;
+
+/// Bare-arm forward jab about the shoulder, mirroring the held-item punch feel:
+/// a fast strike out (peaks early, near `swing` 0.2) easing back to rest at 1.0.
+/// `amp` scales the throw (1.0 mining, less for the gentler place jab). Built in
+/// the arm-local frame; the caller pivots it at [`ARM_SHOULDER_LOCAL`].
+fn arm_punch_rotation(swing: f32, amp: f32) -> Quat {
+    let s = swing.clamp(0.0, 1.0);
+    // Punchy, asymmetric envelope: 0 at the ends, peaks early at s~=0.2 so the
+    // jab snaps out then recovers — same sqrt-eased shape the held item uses.
+    let strike = (std::f32::consts::PI * s.sqrt()).sin() * amp;
+    Quat::from_rotation_z(radians(-ARM_PUNCH_DEG * strike))
+        * Quat::from_rotation_x(radians(-ARM_PUNCH_ROLL_DEG * strike))
 }
 
 fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
@@ -253,49 +279,42 @@ fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
         BARE_ARM_DEPTH,
         aspect,
     );
-    let mut placement = Mat4::from_translation(anchor)
+    let rest = Mat4::from_translation(anchor)
         * Mat4::from_scale(Vec3::splat(VANILLA_ARM_SCALE))
-        * vanilla_player_arm_pose(view.swing);
+        * arm_rest_pose();
 
-    if view.place_pop > 0.0 {
-        let p = view.place_pop.clamp(0.0, 1.0);
-        let pop = p * p * (3.0 - 2.0 * p);
-        placement = Mat4::from_translation(Vec3::new(0.0, -0.05 * pop, -0.28 * pop))
-            * Mat4::from_rotation_x(-0.25 * pop)
-            * placement;
-    }
-
-    placement
+    // Hinge the fist about the shoulder so the empty hand punches forward. A
+    // placement that just emptied the hand reuses this same jab, softened.
+    let punch = Mat4::from_translation(ARM_SHOULDER_LOCAL)
+        * Mat4::from_quat(arm_punch_rotation(view.swing, view.swing_scale))
+        * Mat4::from_translation(-ARM_SHOULDER_LOCAL);
+    rest * punch
 }
 
-/// Place held item models in the lower-right and apply swing / place-pop animation.
+/// Place held item models in the lower-right and apply the punch animation. The
+/// swing serves both mining (full throw) and placing (softer, via `swing_scale`).
 fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
     let aspect = aspect.max(0.0001);
     let rest = view_pos_from_ndc(REST_NDC_X, REST_NDC_Y, HAND_DEPTH, aspect);
     let mut pos = rest;
     let mut rot = Quat::IDENTITY;
 
-    if view.place_pop > 0.0 {
-        let p = view.place_pop.clamp(0.0, 1.0);
-        let pop = p * p * (3.0 - 2.0 * p);
-        pos += Vec3::new(0.0, -0.05 * pop, -0.28 * pop);
-        rot = Quat::from_rotation_x(-0.25 * pop) * rot;
-    }
-
     if view.swing > 0.0 {
         let s = view.swing.clamp(0.0, 1.0);
+        let amp = view.swing_scale;
         let root_sin = (std::f32::consts::PI * s.sqrt()).sin();
         let swing_sin = (std::f32::consts::PI * s).sin();
         let swing_sq_sin = (std::f32::consts::PI * s * s).sin();
 
-        pos += Vec3::new(
-            -0.30 * root_sin,
-            0.40 * (std::f32::consts::TAU * s.sqrt()).sin(),
-            -0.40 * swing_sin,
-        );
-        let attack = Quat::from_rotation_y(radians(45.0 + swing_sq_sin * -20.0))
-            * Quat::from_rotation_z(radians(root_sin * -20.0))
-            * Quat::from_rotation_x(radians(root_sin * -80.0))
+        pos += amp
+            * Vec3::new(
+                -0.30 * root_sin,
+                0.40 * (std::f32::consts::TAU * s.sqrt()).sin(),
+                -0.40 * swing_sin,
+            );
+        let attack = Quat::from_rotation_y(radians(45.0 + amp * swing_sq_sin * -20.0))
+            * Quat::from_rotation_z(radians(amp * root_sin * -20.0))
+            * Quat::from_rotation_x(radians(amp * root_sin * -80.0))
             * Quat::from_rotation_y(radians(-45.0));
         rot = attack * rot;
     }
@@ -375,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn animator_turns_place_event_into_one_shot_pop() {
+    fn animator_turns_place_event_into_one_softer_swing() {
         let mut anim = HeldItemAnimator::default();
         let placed = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
@@ -384,16 +403,53 @@ mod tests {
             placed: true,
             dt: 1.0 / 60.0,
         });
-        assert_eq!(placed.place_pop, 1.0);
+        // A place starts a one-shot swing at the reduced place amplitude...
+        assert!(placed.swing > 0.0, "place should begin a swing");
+        assert_eq!(placed.swing_scale, PLACE_SWING_SCALE);
+        assert!(
+            PLACE_SWING_SCALE < 1.0,
+            "place jab must be softer than a mining punch"
+        );
 
+        // ...which completes and returns to rest within one swing period.
         let settled = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
             mining: false,
             broke_block: false,
             placed: false,
-            dt: PLACE_ANIM_SECS,
+            dt: 1.0 / HAND_SWING_HZ,
         });
-        assert_eq!(settled.place_pop, 0.0);
+        assert_eq!(settled.swing, 0.0);
+    }
+
+    #[test]
+    fn animator_place_swing_carries_onto_emptied_hand() {
+        // Placing the last block empties the hand the same frame (item -> None).
+        // The swing must still fire so the bare arm animates the placement.
+        let mut anim = HeldItemAnimator::default();
+        let view = anim.update(HeldItemFrame {
+            item: None,
+            mining: false,
+            broke_block: false,
+            placed: true,
+            dt: 1.0 / 60.0,
+        });
+        assert_eq!(view.item, None, "hand is empty after placing the last block");
+        assert!(view.swing > 0.0, "the emptied hand still plays the place swing");
+        assert_eq!(view.swing_scale, PLACE_SWING_SCALE);
+    }
+
+    #[test]
+    fn animator_mining_punch_is_full_strength() {
+        let mut anim = HeldItemAnimator::default();
+        let view = anim.update(HeldItemFrame {
+            item: None,
+            mining: true,
+            broke_block: false,
+            placed: false,
+            dt: 1.0 / 60.0,
+        });
+        assert_eq!(view.swing_scale, 1.0, "mining is the full-strength punch");
     }
 
     #[test]
@@ -401,7 +457,7 @@ mod tests {
         let view = HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -424,7 +480,7 @@ mod tests {
         let view = HeldItemView {
             item: Some(ItemType::OakLog),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -441,7 +497,7 @@ mod tests {
         let view = HeldItemView {
             item: Some(ItemType::Stone),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
 
@@ -460,7 +516,7 @@ mod tests {
         let view = HeldItemView {
             item: Some(ItemType::Poppy),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -475,7 +531,7 @@ mod tests {
         let poppy = HeldItemView {
             item: Some(ItemType::Poppy),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
         assert_eq!(tile as u8, crate::atlas::Tile::Poppy as u8);
@@ -499,12 +555,12 @@ mod tests {
         let block = HeldItemView {
             item: Some(ItemType::Stone),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let bare = HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&block, 1.5, &mut v, &mut i);
@@ -569,7 +625,7 @@ mod tests {
         let view = HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         for screen in screens {
@@ -608,7 +664,7 @@ mod tests {
         let view = HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         let mvp = build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -669,7 +725,7 @@ mod tests {
         let rest_view = HeldItemView {
             item: None,
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
         let early_view = HeldItemView {
             swing: 0.25,
@@ -728,43 +784,58 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_player_arm_pose_uses_official_swing_offsets() {
-        let s = 0.5f32;
-        let root = s.sqrt();
-        let expected = Vec3::new(
-            -0.3 * (root * std::f32::consts::PI).sin() + 0.64000005,
-            0.4 * (root * std::f32::consts::TAU).sin() - 0.6,
-            -0.4 * (s * std::f32::consts::PI).sin() - 0.71999997,
-        );
-        let actual = vanilla_arm_swing_translation(s);
+    fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
+        let aspect = 16.0 / 9.0;
+        let fist_local = Vec3::new(0.0, 6.0, 0.0); // +Y end of the arm cuboid
+        let view = |swing| HeldItemView {
+            item: None,
+            swing,
+            swing_scale: 1.0,
+        };
+        let fist = |swing| bare_arm_placement(&view(swing), aspect).transform_point3(fist_local);
+        let shoulder =
+            |swing| bare_arm_placement(&view(swing), aspect).transform_point3(ARM_SHOULDER_LOCAL);
+
+        let rest = fist(0.0);
+        let mid = fist(0.5);
+        // The fist drives toward screen centre (smaller x) and into the screen
+        // (more negative z): a forward punch, not the old sideways wipe.
+        assert!(mid.x < rest.x, "fist should swing toward center: {mid:?} vs {rest:?}");
+        assert!(mid.z < rest.z, "fist should punch into the screen: {mid:?} vs {rest:?}");
+
+        // The shoulder pivot barely moves — the arm hinges, it doesn't slide.
         assert!(
-            (actual - expected).length() < 1e-6,
-            "vanilla arm swing translation must match the official constants"
+            (shoulder(0.5) - shoulder(0.0)).length() < 1e-4,
+            "shoulder is the fixed pivot of the punch"
         );
+
+        // The strike returns home: phase 1.0 matches the rest pose.
         assert!(
-            expected.x < 0.64000005,
-            "swing moves the right arm toward center"
+            (fist(1.0) - rest).length() < 1e-3,
+            "punch should ease back to rest at phase 1.0"
         );
-        assert!(expected.z < -0.71999997, "swing thrusts the arm forward");
     }
 
     #[test]
-    fn swing_and_pop_change_the_mvp() {
+    fn swing_and_place_change_the_mvp() {
         let rest = HeldItemView {
             item: Some(ItemType::Stone),
             swing: 0.0,
-            place_pop: 0.0,
+            swing_scale: 1.0,
         };
-        let mid_swing = HeldItemView { swing: 0.5, ..rest };
-        let popping = HeldItemView {
-            place_pop: 0.5,
+        let mid_punch = HeldItemView { swing: 0.5, ..rest };
+        let mid_place = HeldItemView {
+            swing: 0.5,
+            swing_scale: PLACE_SWING_SCALE,
             ..rest
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         let a = build_hand(&rest, 1.5, &mut v, &mut i);
-        let b = build_hand(&mid_swing, 1.5, &mut v, &mut i);
-        let c = build_hand(&popping, 1.5, &mut v, &mut i);
+        let b = build_hand(&mid_punch, 1.5, &mut v, &mut i);
+        let c = build_hand(&mid_place, 1.5, &mut v, &mut i);
         assert_ne!(a, b, "mid-swing must move the hand");
-        assert_ne!(a, c, "place pop must move the hand");
+        // The softer place jab also moves the hand, but less than a full punch.
+        assert_ne!(a, c, "place swing must move the hand");
+        assert_ne!(b, c, "the place jab is softer than the mining punch");
     }
 }

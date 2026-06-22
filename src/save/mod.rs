@@ -28,15 +28,16 @@ use crate::entity::DroppedItem;
 enum IoMsg {
     SaveChunks(Vec<ChunkSnapshot>),
     SaveLevel(Vec<u8>),
-    SaveEntities(Vec<u8>),
     Load(ChunkPos),
     Shutdown,
 }
 
-/// A chunk read back from disk (`chunk` is `None` if absent / corrupt).
+/// A chunk read back from disk (`chunk` is `None` if absent / corrupt) plus any
+/// item entities stored in its record (empty if absent / corrupt / none saved).
 pub struct LoadedChunk {
     pub pos: ChunkPos,
     pub chunk: Option<Chunk>,
+    pub entities: Vec<DroppedItem>,
 }
 
 /// Live handle to a world's on-disk save and its I/O thread.
@@ -55,8 +56,6 @@ pub struct OpenedWorld {
     pub save: WorldSave,
     /// `Some` if a `level.dat` already existed (a returning world).
     pub level: Option<LevelData>,
-    /// Dropped items restored from `entities.dat` (empty for a new world).
-    pub entities: Vec<DroppedItem>,
 }
 
 impl WorldSave {
@@ -78,10 +77,6 @@ impl WorldSave {
 
     pub fn save_level(&self, bytes: Vec<u8>) {
         let _ = self.tx.send(IoMsg::SaveLevel(bytes));
-    }
-
-    pub fn save_entities(&self, bytes: Vec<u8>) {
-        let _ = self.tx.send(IoMsg::SaveEntities(bytes));
     }
 
     /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
@@ -159,10 +154,6 @@ fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let level = std::fs::read(dir.join("level.dat"))
         .ok()
         .and_then(|b| level::decode(&b));
-    let entities = std::fs::read(dir.join("entities.dat"))
-        .ok()
-        .and_then(|b| entities::decode(&b))
-        .unwrap_or_default();
 
     // Build the load manifest from existing region headers.
     let mut manifest = HashSet::new();
@@ -194,7 +185,6 @@ fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             manifest,
         },
         level,
-        entities,
     })
 }
 
@@ -208,12 +198,13 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedChunk>) {
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
             }
-            IoMsg::SaveEntities(bytes) => {
-                let _ = write_atomic(&dir.join("entities.dat"), &bytes);
-            }
             IoMsg::Load(pos) => {
-                let chunk = load_chunk(&region_dir, pos);
-                let _ = load_tx.send(LoadedChunk { pos, chunk });
+                let (chunk, entities) = load_chunk(&region_dir, pos);
+                let _ = load_tx.send(LoadedChunk {
+                    pos,
+                    chunk,
+                    entities,
+                });
             }
             IoMsg::Shutdown => break,
         }
@@ -239,12 +230,18 @@ fn write_chunks(region_dir: &Path, snaps: Vec<ChunkSnapshot>) {
     }
 }
 
-fn load_chunk(region_dir: &Path, pos: ChunkPos) -> Option<Chunk> {
-    let (rx, rz) = region::region_of(pos);
-    let path = region::region_path(region_dir, rx, rz);
-    let records = region::read_region(&path).ok()?;
-    let blob = records.get(&region::local_index(pos))?;
-    codec::decode_chunk(pos.cx, pos.cz, blob)
+fn load_chunk(region_dir: &Path, pos: ChunkPos) -> (Option<Chunk>, Vec<DroppedItem>) {
+    let decoded = (|| {
+        let (rx, rz) = region::region_of(pos);
+        let path = region::region_path(region_dir, rx, rz);
+        let records = region::read_region(&path).ok()?;
+        let blob = records.get(&region::local_index(pos))?;
+        codec::decode_chunk(pos.cx, pos.cz, blob)
+    })();
+    match decoded {
+        Some((chunk, entities)) => (Some(chunk), entities),
+        None => (None, Vec::new()),
+    }
 }
 
 /// Atomic file write: tmp + rename, so a crash mid-write can't truncate the live file.
@@ -269,19 +266,21 @@ mod tests {
         dir
     }
 
-    fn load_blocking(save: &WorldSave, pos: ChunkPos) -> Option<Chunk> {
+    fn load_blocking(save: &WorldSave, pos: ChunkPos) -> Option<LoadedChunk> {
         save.request_load(pos);
         for _ in 0..500 {
             if let Some(l) = save.poll_loaded() {
-                return l.chunk;
+                return Some(l);
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         None
     }
 
-    /// Full disk round-trip through the I/O thread: write a modified chunk +
-    /// level + entities in one session, reopen in another, and read it all back.
+    /// Full disk round-trip through the I/O thread: write a modified chunk (with a
+    /// resting item entity carrying a partly-elapsed lifetime) + level in one
+    /// session, reopen in another, and read it all back. Item entities now ride in
+    /// the chunk record, so the drop returns when its chunk loads.
     #[test]
     fn save_reopen_roundtrips_chunk_level_entities() {
         let dir = temp_world_dir("roundtrip");
@@ -290,24 +289,24 @@ mod tests {
         {
             let mut opened = open_at(dir.clone()).expect("open fresh");
             assert!(opened.level.is_none(), "fresh world has no level.dat");
-            assert!(opened.entities.is_empty());
             assert!(!opened.save.manifest_contains(pos));
 
             let mut chunk = Chunk::new(pos.cx, pos.cz);
             chunk.set_block(3, 64, 7, Block::Stone);
             chunk.set_water(3, 65, 7, Block::Water, 0x12);
-            opened.save.save_chunks(vec![ChunkSnapshot::from_chunk(&chunk)]);
-
-            let mut player = Player::new(Vec3::new(80.0, 70.0, -40.0));
-            player.inventory.set_active(4);
-            opened.save.save_level(level::encode(0xABCD, &player, 0));
-
-            let drop = DroppedItem::new(
+            let mut snap = ChunkSnapshot::from_chunk(&chunk);
+            let mut drop = DroppedItem::new(
                 Vec3::new(80.5, 70.0, -39.5),
                 ItemStack::new(ItemType::Dirt, 9),
                 1,
             );
-            opened.save.save_entities(entities::encode(&[drop]));
+            drop.ticks_lived = 2500;
+            snap.entities.push(drop);
+            opened.save.save_chunks(vec![snap]);
+
+            let mut player = Player::new(Vec3::new(80.0, 70.0, -40.0));
+            player.inventory.set_active(4);
+            opened.save.save_level(level::encode(0xABCD, &player, 0));
 
             opened.save.shutdown(); // flush queued writes + join the I/O thread
         }
@@ -320,15 +319,18 @@ mod tests {
             assert_eq!(level.player_pos, Vec3::new(80.0, 70.0, -40.0));
             assert_eq!(level.inventory.active_slot(), 4);
 
-            assert_eq!(opened.entities.len(), 1);
-            assert_eq!(opened.entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
-
             assert!(opened.save.manifest_contains(pos), "manifest sees saved chunk");
 
-            let chunk = load_blocking(&opened.save, pos).expect("chunk loads from disk");
+            let loaded = load_blocking(&opened.save, pos).expect("chunk loads from disk");
+            let chunk = loaded.chunk.expect("chunk record decodes");
             assert_eq!(chunk.block_raw(3, 64, 7), Block::Stone.id());
             assert_eq!(chunk.block_raw(3, 65, 7), Block::Water.id());
             assert_eq!(chunk.water_meta(3, 65, 7), 0x12);
+
+            // The item entity comes back with its chunk, lifetime intact.
+            assert_eq!(loaded.entities.len(), 1);
+            assert_eq!(loaded.entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
+            assert_eq!(loaded.entities[0].ticks_lived, 2500, "remaining lifetime persisted");
         }
 
         let _ = std::fs::remove_dir_all(&dir);

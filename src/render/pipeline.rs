@@ -30,11 +30,15 @@ pub(super) const MAX_ITEM3D_VERTICES: u64 = 4096;
 pub(super) const MAX_BREAK_VERTICES: u64 = 24;
 /// Indices in the break-overlay dynamic ibuf: one cube (36).
 pub(super) const MAX_BREAK_INDICES: u64 = 36;
-/// Max vertices in the item-entity dynamic vbuf. 24 per cube / 4 per sprite, so
-/// this covers ~170 simultaneously-visible dropped items with headroom.
-pub(super) const MAX_ITEM_ENTITY_VERTICES: u64 = 4096;
-/// Max indices in the item-entity dynamic ibuf (36 per cube / 6 per sprite).
-pub(super) const MAX_ITEM_ENTITY_INDICES: u64 = 6144;
+/// Max vertices in the item-entity dynamic vbuf. A stack draws up to 5 layered
+/// copies (120 verts per cube / 40 per sprite), so this is sized 5× the old
+/// single-copy budget to still cover ~170 simultaneously-visible dropped items
+/// (more when they're single, unstacked drops) without the bake overflowing and
+/// dropping every item entity that frame.
+pub(super) const MAX_ITEM_ENTITY_VERTICES: u64 = 20480;
+/// Max indices in the item-entity dynamic ibuf (up to 180 per cube / 30 per
+/// sprite for a 5-layer stack), matching [`MAX_ITEM_ENTITY_VERTICES`].
+pub(super) const MAX_ITEM_ENTITY_INDICES: u64 = 30720;
 /// Max vertices in the reusable UI dynamic vbuf (gui quads + digit cells). The
 /// open inventory is ~40 slots + a 176×166 panel; digits are a few quads each.
 /// 6 verts/quad; 16384 covers the full open inventory with comfortable headroom.

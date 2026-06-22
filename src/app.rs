@@ -12,7 +12,7 @@ pub use screen::{AppScreen, CursorPolicy};
 
 use crate::app::input::{ControlEvent, InputController};
 use crate::camera::Camera;
-use crate::controls::{Control, PointerButton};
+use crate::controls::{Control, Modifiers, PointerButton};
 use crate::game::{Game, GameInput};
 use crate::render::{HeldItemFrame, Renderer, UiFrame};
 
@@ -22,6 +22,10 @@ pub struct App {
     input: InputController,
     pointer: PointerState,
     screen: AppScreen,
+    /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
+    /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
+    /// drop whole stack, Shift = inventory quick-move).
+    modifiers: Modifiers,
     /// Set when the inventory opens so the UI cursor is centred on the next tick,
     /// where the renderer surface size is known.
     recenter_cursor: bool,
@@ -38,6 +42,10 @@ struct PointerState {
     scroll_delta: f32,
     cursor_x: f32,
     cursor_y: f32,
+    /// Inventory slot of the last left-click and when it happened, for
+    /// double-click detection. `None` means no streak is in progress.
+    last_click_slot: Option<usize>,
+    last_click_time: f64,
 }
 
 impl App {
@@ -48,6 +56,7 @@ impl App {
             input: InputController::default(),
             pointer: PointerState::default(),
             screen: AppScreen::Game,
+            modifiers: Modifiers::default(),
             recenter_cursor: false,
         }
     }
@@ -100,6 +109,14 @@ impl App {
                 }
                 true
             }
+            ControlEvent::DropItem => {
+                // Q drops the held item only while playing (not in a menu). The
+                // physical Ctrl modifier (not the sprint key) selects whole-stack.
+                if self.screen.gameplay_enabled() {
+                    self.game.drop_selected_item(self.modifiers.ctrl);
+                }
+                true
+            }
         }
     }
 
@@ -140,6 +157,13 @@ impl App {
         self.pointer.scroll_delta += delta;
     }
 
+    /// Update the tracked physical keyboard modifiers (Ctrl / Shift) from the
+    /// platform's modifier-changed event. Independent of the rebindable
+    /// Sprint/Sneak controls.
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
+    }
+
     pub fn tick(&mut self, renderer: &mut Renderer) {
         let now = now_seconds();
         let dt = (now - self.last) as f32;
@@ -152,8 +176,13 @@ impl App {
             self.recenter_cursor = false;
         }
 
-        if self.pointer.left_click && self.route_screen_click(screen_size) {
+        // Route inventory clicks before reading game input, so a right-click
+        // consumed by the open inventory never also fires block placement.
+        if self.pointer.left_click && self.route_screen_click(screen_size, now) {
             self.pointer.left_click = false;
+        }
+        if self.pointer.right_click && self.route_screen_right_click(screen_size, now) {
+            self.pointer.right_click = false;
         }
 
         let game_input = self.take_game_input();
@@ -173,7 +202,8 @@ impl App {
             item: self.game.selected_item(),
             mining: self.game.is_mining(),
             broke_block: events.broke_block,
-            placed: events.placed_block,
+            // Placing a block and throwing/dropping an item both flick the hand.
+            placed: events.placed_block || events.threw_item,
             dt,
         });
         renderer.set_held_item_light(self.game.held_item_skylight());
@@ -231,6 +261,9 @@ impl App {
         self.screen = AppScreen::Inventory;
         self.pointer.grabbing = false;
         self.recenter_cursor = true;
+        // Each inventory session starts with no click history, so a stale slot
+        // can't combine with the first click to register a phantom double.
+        self.pointer.reset_click_streak();
     }
 
     fn close_inventory(&mut self) {
@@ -247,18 +280,73 @@ impl App {
         }
     }
 
-    fn route_screen_click(&mut self, screen: (u32, u32)) -> bool {
+    /// Route a left-click to the open inventory. Returns whether it was consumed
+    /// (i.e. the inventory was open). No-op when closed. `now` timestamps the click
+    /// for double-click detection.
+    fn route_screen_click(&mut self, screen: (u32, u32), now: f64) -> bool {
         if !self.screen.inventory_open() {
             return false;
         }
-        if let Some(i) = crate::render::slot_at_cursor(
-            screen,
-            true,
-            (self.pointer.cursor_x, self.pointer.cursor_y),
-        ) {
-            self.game.click_inventory_slot(i);
-        }
+        self.route_inventory_click(screen, PointerButton::Primary, now);
         true
+    }
+
+    /// Route a right-click to the open inventory. Returns whether it was consumed
+    /// (i.e. the inventory was open) — so a closed-inventory right-click falls
+    /// through to block placement. No-op when closed.
+    fn route_screen_right_click(&mut self, screen: (u32, u32), now: f64) -> bool {
+        if !self.screen.inventory_open() {
+            return false;
+        }
+        self.route_inventory_click(screen, PointerButton::Secondary, now);
+        true
+    }
+
+    /// Apply an inventory click (caller guarantees the inventory is open). On a
+    /// slot: shift transfers between hotbar/grid; otherwise right splits / drips
+    /// one and left does whole-stack pick/drop/swap — except a fast second left
+    /// click on the same slot while dragging a stack gathers matching items onto
+    /// the cursor (see [`left_click_slot`](Self::left_click_slot)). Off any slot
+    /// but confidently OUTSIDE the panel: throw the held stack (left = all,
+    /// right = one). A click on the panel art but not a slot does nothing.
+    fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
+        let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
+        let shift = self.modifiers.shift;
+        match crate::render::slot_at_cursor(screen, true, cursor) {
+            Some(slot) => {
+                if shift {
+                    self.game.shift_click_inventory_slot(slot);
+                    self.pointer.reset_click_streak();
+                } else {
+                    match button {
+                        PointerButton::Primary => self.left_click_slot(slot, now),
+                        PointerButton::Secondary => {
+                            self.game.right_click_inventory_slot(slot);
+                            self.pointer.reset_click_streak();
+                        }
+                    }
+                }
+            }
+            None if !crate::render::cursor_in_panel(screen, cursor) => {
+                self.pointer.reset_click_streak();
+                match button {
+                    PointerButton::Primary => self.game.throw_cursor_stack(),
+                    PointerButton::Secondary => self.game.throw_cursor_one(),
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Left-click inventory `slot`. A fast second click on the same slot while a
+    /// stack is held on the cursor gathers matching items into it (double-click
+    /// fill); otherwise it's the normal whole-stack pick/drop/swap.
+    fn left_click_slot(&mut self, slot: usize, now: f64) {
+        if self.pointer.register_left_click(slot, now) && self.game.cursor_has_stack() {
+            self.game.collect_to_cursor();
+        } else {
+            self.game.click_inventory_slot(slot);
+        }
     }
 }
 
@@ -271,7 +359,35 @@ impl App {
 /// every micro-event.
 const SCROLL_NOTCHES_PER_SLOT: f32 = 1.0;
 
+/// A second left-click on the same inventory slot within this window counts as a
+/// double-click, which gathers matching items onto the cursor instead of dropping
+/// the held stack back. Matches the classic ~250 ms double-click timeout.
+const DOUBLE_CLICK_SECS: f64 = 0.25;
+
 impl PointerState {
+    /// Register a left-click on inventory `slot` at time `now`, returning whether
+    /// it completes a double-click: a second click on the SAME slot within
+    /// [`DOUBLE_CLICK_SECS`] of the first. A completed double-click consumes the
+    /// streak, so a third quick click starts a fresh single click.
+    fn register_left_click(&mut self, slot: usize, now: f64) -> bool {
+        let is_double = self.last_click_slot == Some(slot)
+            && now - self.last_click_time < DOUBLE_CLICK_SECS;
+        if is_double {
+            self.last_click_slot = None;
+        } else {
+            self.last_click_slot = Some(slot);
+            self.last_click_time = now;
+        }
+        is_double
+    }
+
+    /// Forget any in-progress click streak (after a non-pickup interaction such as
+    /// a shift-move, right-click, or throw-out), so the next left-click is a fresh
+    /// single click rather than a stray double.
+    fn reset_click_streak(&mut self) {
+        self.last_click_slot = None;
+    }
+
     /// Whole hotbar slots to move this frame, draining the accumulator by the
     /// notches consumed and keeping the sub-slot remainder for next frame. The
     /// result is frame-rate independent: a slow, deliberate roll yields one slot
@@ -301,11 +417,20 @@ fn now_seconds() -> f64 {
 mod tests {
     use super::*;
     use crate::controls::Control;
+    use crate::item::{ItemStack, ItemType};
     use crate::mathh::Vec3;
     use crate::player::PlayerMode;
 
     fn app() -> App {
         App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
+    }
+
+    /// An app whose player holds one full stack in hotbar slot 0 — the starting
+    /// inventory is empty now, so inventory-interaction tests seed a stack first.
+    fn app_with_grass() -> App {
+        let mut app = app();
+        app.game.add_to_inventory(ItemStack::new(ItemType::Grass, 64));
+        app
     }
 
     #[test]
@@ -450,7 +575,7 @@ mod tests {
 
     #[test]
     fn route_inventory_click_open_picks_up_slot_stack() {
-        let mut app = app();
+        let mut app = app_with_grass();
         app.handle_control(Control::ToggleInventory, true);
         assert!(app.inventory_open());
         let screen = (1280, 720);
@@ -460,10 +585,64 @@ mod tests {
         assert!(app.game.inventory().cursor().is_none());
         let item0 = app.game.inventory().slot(0).unwrap().item;
 
-        let consumed = app.route_screen_click(screen);
+        let consumed = app.route_screen_click(screen, 0.0);
         assert!(consumed);
         assert!(app.game.inventory().slot(0).is_none());
         assert_eq!(app.game.inventory().cursor().unwrap().item, item0);
+    }
+
+    #[test]
+    fn fast_double_click_keeps_stack_on_cursor_to_gather() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+
+        // First click picks the stack up; a second click within the double-click
+        // window gathers matching items instead of dropping it back — so the stack
+        // stays on the cursor and the source slot stays empty.
+        app.route_screen_click(screen, 0.0);
+        app.route_screen_click(screen, 0.1);
+        assert!(app.game.inventory().cursor().is_some(), "stack stays on the cursor");
+        assert!(app.game.inventory().slot(0).is_none(), "source slot stays empty");
+    }
+
+    #[test]
+    fn slow_second_click_drops_the_stack_back() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+
+        // Two clicks spaced beyond the double-click window: the second is a normal
+        // click that drops the held stack back into the now-empty slot.
+        app.route_screen_click(screen, 0.0);
+        app.route_screen_click(screen, 1.0);
+        assert!(app.game.inventory().cursor().is_none(), "stack dropped back");
+        assert!(app.game.inventory().slot(0).is_some(), "slot refilled");
+    }
+
+    #[test]
+    fn fast_click_on_a_different_slot_is_not_a_double_click() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        // Pick up slot 0's stack.
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.route_screen_click(screen, 0.0);
+        assert!(app.game.inventory().cursor().is_some());
+
+        // A fast click on a DIFFERENT slot is a normal drop, not a gather: the held
+        // stack lands in the first (empty) main-grid slot.
+        let dest = crate::inventory::HOTBAR_LEN;
+        let (dx, dy) = cursor_over_slot(screen, dest);
+        app.set_cursor_position(dx, dy);
+        app.route_screen_click(screen, 0.05);
+        assert!(app.game.inventory().cursor().is_none(), "stack dropped into the new slot");
+        assert!(app.game.inventory().slot(dest).is_some());
     }
 
     #[test]
@@ -471,9 +650,155 @@ mod tests {
         let mut app = app();
         assert!(!app.inventory_open());
         let before = app.game.inventory().slot(0).map(|s| s.count);
-        let consumed = app.route_screen_click((1280, 720));
+        let consumed = app.route_screen_click((1280, 720), 0.0);
         assert!(!consumed);
         assert!(app.game.inventory().cursor().is_none());
         assert_eq!(app.game.inventory().slot(0).map(|s| s.count), before);
+    }
+
+    #[test]
+    fn q_drops_one_held_item_while_playing() {
+        let mut app = app_with_grass();
+        let before = app.game.inventory().selected().unwrap().count;
+        app.handle_control(Control::DropItem, true);
+        assert_eq!(app.game.inventory().selected().unwrap().count, before - 1);
+    }
+
+    #[test]
+    fn ctrl_q_drops_whole_held_stack_while_playing() {
+        let mut app = app_with_grass();
+        assert!(app.game.inventory().selected().is_some());
+        // Physical Ctrl modifier held (NOT via the sprint control).
+        app.set_modifiers(Modifiers {
+            ctrl: true,
+            shift: false,
+        });
+        app.handle_control(Control::DropItem, true);
+        assert!(app.game.inventory().selected().is_none(), "whole stack dropped");
+    }
+
+    #[test]
+    fn q_drops_one_even_while_sprinting_when_ctrl_not_tracked() {
+        // Holding the sprint *control* must NOT turn Q into a drop-all: only the
+        // physical Ctrl modifier does. Guards the decoupling from the keybind.
+        let mut app = app_with_grass();
+        app.handle_control(Control::Sprint, true); // sprint action held
+        let before = app.game.inventory().selected().unwrap().count;
+        app.handle_control(Control::DropItem, true);
+        assert_eq!(
+            app.game.inventory().selected().unwrap().count,
+            before - 1,
+            "sprint key alone drops one, not the whole stack"
+        );
+    }
+
+    #[test]
+    fn q_does_not_drop_while_inventory_open() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let before = app.game.inventory().selected().map(|s| s.count);
+        app.handle_control(Control::DropItem, true);
+        assert_eq!(app.game.inventory().selected().map(|s| s.count), before);
+    }
+
+    #[test]
+    fn route_inventory_right_click_splits_slot_stack() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        // Slot 0 starts at 64; right-click drags off the larger half (32).
+        let consumed = app.route_screen_right_click(screen, 0.0);
+        assert!(consumed);
+        assert_eq!(app.game.inventory().cursor().unwrap().count, 32);
+        assert_eq!(app.game.inventory().slot(0).unwrap().count, 32);
+    }
+
+    #[test]
+    fn route_inventory_right_click_closed_falls_through_to_placement() {
+        // Closed inventory: a right-click is NOT consumed, so it can place a block.
+        let mut app = app();
+        assert!(!app.inventory_open());
+        assert!(!app.route_screen_right_click((1280, 720), 0.0));
+    }
+
+    #[test]
+    fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        // Physical Shift modifier held (NOT via the sneak control).
+        app.set_modifiers(Modifiers {
+            ctrl: false,
+            shift: true,
+        });
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        let item0 = app.game.inventory().slot(0).unwrap().item;
+        app.route_screen_click(screen, 0.0);
+        assert!(app.game.inventory().slot(0).is_none(), "hotbar slot emptied");
+        assert_eq!(
+            app.game
+                .inventory()
+                .slot(crate::inventory::HOTBAR_LEN)
+                .unwrap()
+                .item,
+            item0,
+            "moved to the first main-grid slot"
+        );
+    }
+
+    #[test]
+    fn route_click_outside_panel_throws_held_stack() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        // Drag slot 0's stack onto the cursor.
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.route_screen_click(screen, 0.0);
+        assert!(app.game.inventory().cursor().is_some());
+        // Click the top-left corner: confidently outside the inventory panel.
+        app.set_cursor_position(0.0, 0.0);
+        app.route_screen_click(screen, 0.1);
+        assert!(
+            app.game.inventory().cursor().is_none(),
+            "held stack thrown out of the inventory"
+        );
+    }
+
+    #[test]
+    fn route_click_on_panel_background_does_not_throw() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280, 720);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.route_screen_click(screen, 0.0); // pick up the stack
+        assert!(app.game.inventory().cursor().is_some());
+        // A point inside the panel but on no slot: the held stack is kept.
+        let inside_panel_gap = panel_gap_point(screen);
+        app.set_cursor_position(inside_panel_gap.0, inside_panel_gap.1);
+        app.route_screen_click(screen, 0.1);
+        assert!(
+            app.game.inventory().cursor().is_some(),
+            "click on panel art must not throw the stack"
+        );
+    }
+
+    /// A point inside the panel rectangle that is NOT over any slot.
+    fn panel_gap_point(screen: (u32, u32)) -> (f32, f32) {
+        for y in 0..screen.1 {
+            for x in 0..screen.0 {
+                let c = (x as f32 + 0.5, y as f32 + 0.5);
+                if crate::render::cursor_in_panel(screen, c)
+                    && crate::render::slot_at_cursor(screen, true, c).is_none()
+                {
+                    return c;
+                }
+            }
+        }
+        panic!("no in-panel, off-slot point found");
     }
 }

@@ -25,9 +25,6 @@ const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
 /// the view when the eye is only barely clipping their rendered surface.
 const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
 
-/// Seconds a dropped item survives before despawning if never collected.
-const ITEM_DESPAWN_SECS: f32 = 300.0;
-
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
 
@@ -71,6 +68,9 @@ pub struct GameInput {
 pub struct GameEvents {
     pub placed_block: bool,
     pub broke_block: bool,
+    /// An item/stack left the hand for the world this frame — a Q drop or an
+    /// inventory drag-out. Drives the same first-person place jab as a placement.
+    pub threw_item: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -88,7 +88,9 @@ pub struct Game {
     /// Block currently under the crosshair, refreshed each tick.
     look: Option<RaycastHit>,
     mining: MiningState,
-    dropped: Vec<DroppedItem>,
+    /// Tracks the world's lighting revision so item-entity skylight is only
+    /// recomputed when a world light bake actually changed. The drops themselves
+    /// live in `World` (with their chunks); this is just the change detector.
     dropped_light_revision: u64,
     particles: ParticleSystem,
     spawn_counter: u32,
@@ -99,21 +101,26 @@ pub struct Game {
     tick_accumulator: f32,
     /// Wall-clock seconds since the last background autosave.
     autosave_t: f32,
+    /// Set when the hand expels an item into the world (Q drop or inventory
+    /// drag-out) so the next [`tick`](Self::tick) reports it for the hand's place
+    /// jab. Consumed (reset) each tick.
+    threw_item: bool,
 }
 
 impl Game {
     pub fn new(mut cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
         // Open (or create) the on-disk world. A returning world supplies its own
-        // seed, player and entities; a fresh one uses `new_seed` and a found spawn.
-        let (save, level, saved_entities) = if world_name.is_empty() {
+        // seed and player; a fresh one uses `new_seed` and a found spawn. Item
+        // entities are no longer global — they load with their chunks.
+        let (save, level) = if world_name.is_empty() {
             // Empty name = in-memory only (used by tests; never touches disk).
-            (None, None, Vec::new())
+            (None, None)
         } else {
             match crate::save::open(world_name) {
-                Ok(o) => (Some(o.save), o.level, o.entities),
+                Ok(o) => (Some(o.save), o.level),
                 Err(e) => {
                     log::warn!("save disabled: could not open world '{world_name}': {e}");
-                    (None, None, Vec::new())
+                    (None, None)
                 }
             }
         };
@@ -156,7 +163,6 @@ impl Game {
             player,
             look: None,
             mining: MiningState::new(),
-            dropped: saved_entities,
             dropped_light_revision: 0,
             particles: ParticleSystem::new(),
             spawn_counter: 0,
@@ -165,17 +171,17 @@ impl Game {
             particle_instances: Vec::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
+            threw_item: false,
         }
     }
 
-    /// Persist everything: flush modified chunks to the save thread, then write
-    /// `level.dat` (seed + player + inventory) and `entities.dat` (dropped items).
-    /// A no-op without an attached save.
+    /// Persist everything: flush modified chunks (carrying any resting item
+    /// entities, so their lifetime timers survive) to the save thread, then write
+    /// `level.dat` (seed + player + inventory). A no-op without an attached save.
     pub fn save_all(&mut self) {
         self.world.flush_modified_chunks();
         if let Some(save) = self.world.save() {
             save.save_level(crate::save::level::encode(self.world.seed, &self.player, 0));
-            save.save_entities(crate::save::entities::encode(&self.dropped));
         }
     }
 
@@ -211,6 +217,8 @@ impl Game {
         GameEvents {
             placed_block,
             broke_block,
+            // Throws happen via input handlers before this tick; report and clear.
+            threw_item: std::mem::take(&mut self.threw_item),
         }
     }
 
@@ -225,6 +233,9 @@ impl Game {
         let mut ran = 0;
         while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
             self.world.game_tick();
+            // Item collection is paced by the simulation clock, not the frame
+            // rate: "a game tick decides the player picks it up".
+            self.item_pickup_tick();
             self.tick_accumulator -= TICK_DT;
             ran += 1;
         }
@@ -248,6 +259,14 @@ impl Game {
         &self.player.inventory
     }
 
+    /// Add a stack to the player inventory, returning any leftover that didn't
+    /// fit (merging into matching stacks first, then empty slots). The world
+    /// pickup path inlines this with a borrow split; exposed here for giving the
+    /// player items directly.
+    pub fn add_to_inventory(&mut self, stack: ItemStack) -> Option<ItemStack> {
+        self.player.inventory.add(stack)
+    }
+
     pub fn set_aspect(&mut self, aspect: f32) {
         self.cam.aspect = aspect;
     }
@@ -267,6 +286,72 @@ impl Game {
 
     pub fn click_inventory_slot(&mut self, slot: usize) {
         self.player.inventory.click_slot(slot);
+    }
+
+    /// Whether the cursor currently holds a stack. Gates the double-click gather,
+    /// which only fires while a stack is being dragged.
+    pub fn cursor_has_stack(&self) -> bool {
+        self.player.inventory.cursor().is_some()
+    }
+
+    /// Double-click gather: top up the cursor-held stack with every matching item
+    /// in the inventory. See [`Inventory::collect_to_cursor`].
+    pub fn collect_to_cursor(&mut self) {
+        self.player.inventory.collect_to_cursor();
+    }
+
+    /// Right-click an inventory slot: split the slot's stack onto the cursor, or
+    /// drip one held item into the slot. See [`Inventory::right_click_slot`].
+    pub fn right_click_inventory_slot(&mut self, slot: usize) {
+        self.player.inventory.right_click_slot(slot);
+    }
+
+    /// Shift-click an inventory slot: shuttle the stack between the hotbar and the
+    /// main grid. See [`Inventory::shift_move_slot`].
+    pub fn shift_click_inventory_slot(&mut self, slot: usize) {
+        self.player.inventory.shift_move_slot(slot);
+    }
+
+    /// Throw the whole cursor-held stack out into the world (inventory drag-out
+    /// then click outside the panel). No-op when the cursor is empty.
+    pub fn throw_cursor_stack(&mut self) {
+        if let Some(stack) = self.player.inventory.take_cursor() {
+            self.throw_item(stack);
+        }
+    }
+
+    /// Throw a single item off the cursor-held stack (right-click outside the
+    /// panel while dragging). No-op when the cursor is empty.
+    pub fn throw_cursor_one(&mut self) {
+        if let Some(stack) = self.player.inventory.take_cursor_one() {
+            self.throw_item(stack);
+        }
+    }
+
+    /// Drop the player's held (active hotbar) item into the world via the in-game
+    /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
+    /// single item (Q). No-op with an empty hand.
+    pub fn drop_selected_item(&mut self, all: bool) {
+        let stack = if all {
+            self.player.inventory.take_selected_all()
+        } else {
+            self.player.inventory.take_selected_one()
+        };
+        if let Some(stack) = stack {
+            self.throw_item(stack);
+        }
+    }
+
+    /// Spawn `stack` as a thrown item flying out along the camera's look
+    /// direction, originating just in front of the eye so it clears the player.
+    fn throw_item(&mut self, stack: ItemStack) {
+        let dir = self.cam.forward();
+        let origin = self.cam.pos + dir * 0.3;
+        let mut drop = DroppedItem::thrown(origin, stack, dir);
+        drop.skylight = sky6_at_pos(&self.world, origin);
+        self.world.spawn_item(drop);
+        // Flick the hand forward (place jab) on the next rendered frame.
+        self.threw_item = true;
     }
 
     #[inline]
@@ -489,57 +574,31 @@ impl Game {
             let stack = ItemStack::new(item, 1);
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
             drop.skylight = skylight;
-            self.dropped.push(drop);
+            self.world.spawn_item(drop);
         }
     }
 
+    /// Per-frame entity update: item-entity physics (gravity, collision, pickup
+    /// magnet) then particles. The drops live in `World` and the magnet target is
+    /// the player chest; the per-item pickup delay is enforced inside the world
+    /// step. Lifetime/despawn and the actual pickup run on the fixed tick.
     fn tick_entities(&mut self, dt: f32) {
         let player_pos = self.player.body_center();
-        let mut i = self.dropped.len();
-        while i > 0 {
-            i -= 1;
-            // After loading a saved world, restored drops may sit over chunks
-            // that haven't streamed back in yet. Freeze any such drop — no
-            // physics, ageing, despawn, or pickup — until its column returns, so
-            // it can't fall through not-yet-generated terrain. Mirrors the
-            // player's `columns_loaded` gate. Gated on a save being attached: a
-            // freshly generated world only ever spawns drops in loaded chunks, and
-            // unit tests simulate drops in a deliberately empty (no-save) world.
-            if self.world.save().is_some() {
-                let dp = self.dropped[i].pos;
-                if !self
-                    .world
-                    .chunk_loaded((dp.x.floor() as i32) >> 4, (dp.z.floor() as i32) >> 4)
-                {
-                    continue;
-                }
-            }
-            let before_cell = voxel_at(self.dropped[i].pos);
-            self.dropped[i].tick(dt, &self.world, Some(player_pos));
-            let after_cell = voxel_at(self.dropped[i].pos);
-            if before_cell != after_cell {
-                self.dropped[i].skylight = sky6_at_block(&self.world, after_cell);
-            }
-
-            if self.dropped[i].age >= ITEM_DESPAWN_SECS {
-                self.dropped.swap_remove(i);
-                continue;
-            }
-
-            if self.dropped[i].within_pickup(player_pos) {
-                let stack = self.dropped[i].stack;
-                match self.player.inventory.add(stack) {
-                    None => {
-                        self.dropped.swap_remove(i);
-                    }
-                    Some(leftover) => {
-                        self.dropped[i].stack = leftover;
-                    }
-                }
-            }
-        }
-
+        self.world.tick_item_physics(dt, player_pos);
         self.particles.tick(dt, &self.world);
+    }
+
+    /// Per game-tick (20 TPS) item maintenance: advance every drop's lifetime
+    /// timer (despawning those past their 5-minute limit) and pull any eligible
+    /// drop within the player's pickup radius into the inventory. Driven from the
+    /// fixed-tick loop, so both are paced by the simulation clock.
+    fn item_pickup_tick(&mut self) {
+        self.world.tick_item_lifetime();
+        let player_pos = self.player.body_center();
+        // Borrow-split: the world owns the drops, the player owns the inventory.
+        let inventory = &mut self.player.inventory;
+        self.world
+            .collect_item_pickups(player_pos, |stack| inventory.add(stack));
     }
 
     fn refresh_dropped_item_lights_after_world_light_update(&mut self) {
@@ -547,18 +606,17 @@ impl Game {
         if self.dropped_light_revision == revision {
             return;
         }
-        for drop in &mut self.dropped {
-            drop.skylight = sky6_at_pos(&self.world, drop.pos);
-        }
+        self.world.refresh_item_lights();
         self.dropped_light_revision = revision;
     }
 
     fn map_item_entities(&mut self) {
         self.item_entity_instances.clear();
         self.item_entity_instances
-            .extend(self.dropped.iter().map(|d| ItemEntityInstance {
+            .extend(self.world.item_entities().iter().map(|d| ItemEntityInstance {
                 pos: d.pos,
                 item: d.stack.item,
+                count: d.stack.count,
                 spin: d.spin,
                 skylight: d.skylight,
             }));
@@ -698,9 +756,18 @@ fn voxel_at(pos: Vec3) -> IVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
     fn game() -> Game {
         Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
+    }
+
+    /// A hotbar slot filled with one full demo stack, for tests that need the
+    /// player holding something (the real starting inventory is empty).
+    fn filled_inventory() -> Inventory {
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Dirt, 64));
+        inv
     }
 
     fn hit(pos: IVec3, normal: IVec3) -> RaycastHit {
@@ -809,10 +876,10 @@ mod tests {
     #[test]
     fn spawn_drops_dirt_yields_one_drop() {
         let mut game = game();
-        assert!(game.dropped.is_empty());
+        assert!(game.world.item_entities().is_empty());
         game.spawn_drops(IVec3::new(2, 3, 4), Block::Dirt, 17);
-        assert_eq!(game.dropped.len(), 1);
-        let d = &game.dropped[0];
+        assert_eq!(game.world.item_entities().len(), 1);
+        let d = &game.world.item_entities()[0];
         assert_eq!(d.stack.item, crate::item::ItemType::Dirt);
         assert_eq!(d.stack.count, 1);
         assert_eq!(d.skylight, 17);
@@ -827,12 +894,34 @@ mod tests {
         let item = crate::item::ItemType::Poppy;
         let before = count_item(&game.player.inventory, item);
         let centre = game.player.body_center();
-        game.dropped
-            .push(DroppedItem::new(centre, ItemStack::new(item, 1), 1));
-        game.tick_entities(0.001);
+        let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), 1);
+        drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
+        game.world.spawn_item(drop);
+        game.item_pickup_tick();
         let after = count_item(&game.player.inventory, item);
         assert_eq!(after, before + 1);
-        assert!(game.dropped.is_empty());
+        assert!(game.world.item_entities().is_empty());
+    }
+
+    #[test]
+    fn fresh_dropped_item_waits_out_pickup_delay() {
+        let mut game = game();
+        let item = crate::item::ItemType::Poppy;
+        let centre = game.player.body_center();
+        // ticks_lived 0: sitting right on the player but still inside the delay.
+        game.world
+            .spawn_item(DroppedItem::new(centre, ItemStack::new(item, 1), 1));
+        game.item_pickup_tick();
+        assert_eq!(
+            game.world.item_entities().len(),
+            1,
+            "delay blocks immediate pickup"
+        );
+        // Each tick ages it by one; once past the delay it is collected.
+        for _ in 0..ITEM_PICKUP_DELAY_TICKS {
+            game.item_pickup_tick();
+        }
+        assert!(game.world.item_entities().is_empty());
     }
 
     #[test]
@@ -842,21 +931,24 @@ mod tests {
         let before = count_item(&game.player.inventory, item);
         let chest = game.player.body_center();
         let start = chest + Vec3::new(0.0, crate::entity::ATTRACT_RADIUS - 0.1, 0.0);
-        game.dropped
-            .push(DroppedItem::new(start, ItemStack::new(item, 1), 1));
-        let d0 = (game.dropped[0].pos - chest).length();
+        let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
+        drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // skip the delay so the magnet engages now
+        game.world.spawn_item(drop);
+        let d0 = (game.world.item_entities()[0].pos - chest).length();
         game.tick_entities(1.0 / 60.0);
-        if !game.dropped.is_empty() {
-            let d1 = (game.dropped[0].pos - chest).length();
+        if !game.world.item_entities().is_empty() {
+            let d1 = (game.world.item_entities()[0].pos - chest).length();
             assert!(d1 < d0);
         }
+        // Magnet flies it in per frame; the fixed tick absorbs it once in range.
         for _ in 0..60 {
-            if game.dropped.is_empty() {
+            if game.world.item_entities().is_empty() {
                 break;
             }
             game.tick_entities(1.0 / 60.0);
+            game.item_pickup_tick();
         }
-        assert!(game.dropped.is_empty());
+        assert!(game.world.item_entities().is_empty());
         assert_eq!(count_item(&game.player.inventory, item), before + 1);
     }
 
@@ -869,13 +961,15 @@ mod tests {
         let start = chest + Vec3::new(crate::entity::ATTRACT_RADIUS + 0.05, 0.0, 0.0);
         let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
         drop.vel = Vec3::ZERO;
-        game.dropped.push(drop);
+        drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible for pickup, so only range gates it
+        game.world.spawn_item(drop);
 
         for _ in 0..60 {
             game.tick_entities(1.0 / 60.0);
+            game.item_pickup_tick();
         }
 
-        assert_eq!(game.dropped.len(), 1);
+        assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(count_item(&game.player.inventory, item), before);
     }
 
@@ -883,13 +977,11 @@ mod tests {
     fn distant_dropped_item_is_not_picked_up() {
         let mut game = game();
         let far = game.player.eye() + Vec3::new(50.0, 0.0, 0.0);
-        game.dropped.push(DroppedItem::new(
-            far,
-            ItemStack::new(crate::item::ItemType::Dirt, 1),
-            2,
-        ));
-        game.tick_entities(0.001);
-        assert_eq!(game.dropped.len(), 1);
+        let mut drop = DroppedItem::new(far, ItemStack::new(crate::item::ItemType::Dirt, 1), 2);
+        drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible, but far out of range
+        game.world.spawn_item(drop);
+        game.item_pickup_tick();
+        assert_eq!(game.world.item_entities().len(), 1);
     }
 
     #[test]
@@ -912,7 +1004,7 @@ mod tests {
         );
         drop.vel = Vec3::ZERO;
         drop.skylight = 0;
-        game.dropped.push(drop);
+        game.world.spawn_item(drop);
 
         let before = game.world.lighting_revision();
         for _ in 0..200 {
@@ -925,27 +1017,189 @@ mod tests {
         }
 
         assert_ne!(game.world.lighting_revision(), before);
-        assert_eq!(game.dropped[0].skylight, 63);
+        assert_eq!(game.world.item_entities()[0].skylight, 63);
     }
 
     #[test]
-    fn stale_dropped_item_despawns() {
+    fn stale_dropped_item_despawns_on_the_lifetime_tick() {
         let mut game = game();
         let far = game.player.eye() + Vec3::new(50.0, 0.0, 0.0);
         let mut item = DroppedItem::new(far, ItemStack::new(crate::item::ItemType::Dirt, 1), 3);
-        item.age = ITEM_DESPAWN_SECS + 1.0;
-        game.dropped.push(item);
-        game.tick_entities(0.001);
-        assert!(game.dropped.is_empty());
+        // One tick short of the lifetime limit: the next fixed tick ages it out.
+        item.ticks_lived = ITEM_LIFETIME_TICKS - 1;
+        game.world.spawn_item(item);
+        game.item_pickup_tick();
+        assert!(game.world.item_entities().is_empty());
+    }
+
+    #[test]
+    fn throwing_cursor_stack_spawns_a_dropped_item() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        // Drag a stack onto the cursor first.
+        game.player.inventory.click_slot(0);
+        let held = game.player.inventory.cursor().expect("cursor holds a stack").count;
+        assert!(game.world.item_entities().is_empty());
+        game.throw_cursor_stack();
+        assert!(game.player.inventory.cursor().is_none(), "cursor emptied");
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(game.world.item_entities()[0].stack.count, held);
+        assert_eq!(
+            game.world.item_entities()[0].ticks_lived,
+            0,
+            "thrown item starts the pickup delay"
+        );
+    }
+
+    #[test]
+    fn throwing_one_from_cursor_drops_a_single_item() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        game.player.inventory.click_slot(0);
+        let held = game.player.inventory.cursor().unwrap().count;
+        game.throw_cursor_one();
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(game.world.item_entities()[0].stack.count, 1);
+        assert_eq!(game.player.inventory.cursor().unwrap().count, held - 1);
+    }
+
+    #[test]
+    fn cursor_has_stack_tracks_the_held_stack() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        assert!(!game.cursor_has_stack(), "nothing held initially");
+        game.player.inventory.click_slot(0); // pick up hotbar slot 0
+        assert!(game.cursor_has_stack(), "holding a stack after pickup");
+    }
+
+    #[test]
+    fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
+        use crate::inventory::{Inventory, TOTAL_SLOTS};
+        let mut game = game();
+        // Cursor holds a partial Dirt stack; matching partials sit in the hotbar
+        // and the main grid, with an unrelated stack that must be left alone.
+        let mut slots = [None; TOTAL_SLOTS];
+        slots[2] = Some(ItemStack::new(ItemType::Dirt, 20)); // hotbar
+        slots[crate::inventory::HOTBAR_LEN] = Some(ItemStack::new(ItemType::Dirt, 30)); // main grid
+        slots[5] = Some(ItemStack::new(ItemType::Stone, 64)); // untouched
+        game.player.inventory =
+            Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 5)), 0);
+
+        game.collect_to_cursor();
+
+        // 5 + 20 + 30 = 55 onto the cursor, both dirt sources emptied.
+        assert_eq!(game.inventory().cursor().unwrap().count, 55);
+        assert!(game.inventory().slot(2).is_none());
+        assert!(game.inventory().slot(crate::inventory::HOTBAR_LEN).is_none());
+        assert_eq!(game.inventory().slot(5).unwrap().item, ItemType::Stone);
+    }
+
+    #[test]
+    fn throwing_with_empty_cursor_is_a_noop() {
+        let mut game = game();
+        game.player.inventory = crate::inventory::Inventory::new();
+        assert!(game.player.inventory.cursor().is_none());
+        game.throw_cursor_stack();
+        game.throw_cursor_one();
+        assert!(game.world.item_entities().is_empty());
+    }
+
+    #[test]
+    fn drop_selected_one_throws_a_single_held_item() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        game.player.inventory.set_active(0);
+        let before = game.player.inventory.selected().unwrap().count;
+        game.drop_selected_item(false);
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(game.world.item_entities()[0].stack.count, 1);
+        assert_eq!(
+            game.world.item_entities()[0].ticks_lived,
+            0,
+            "dropped item starts the pickup delay"
+        );
+        assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
+    }
+
+    #[test]
+    fn drop_selected_all_throws_the_whole_held_stack() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        game.player.inventory.set_active(0);
+        let before = game.player.inventory.selected().unwrap().count;
+        game.drop_selected_item(true);
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(game.world.item_entities()[0].stack.count, before);
+        assert!(game.player.inventory.selected().is_none(), "held slot emptied");
+    }
+
+    #[test]
+    fn drop_with_empty_hand_is_a_noop() {
+        let mut game = game();
+        game.player.inventory = crate::inventory::Inventory::new();
+        game.player.inventory.set_active(0);
+        assert!(game.player.inventory.selected().is_none());
+        game.drop_selected_item(false);
+        game.drop_selected_item(true);
+        assert!(game.world.item_entities().is_empty());
+    }
+
+    #[test]
+    fn throwing_an_item_arms_the_hand_place_jab() {
+        // The Q drop throws from the active hotbar slot.
+        {
+            let mut game = game();
+            game.player.inventory = filled_inventory();
+            game.player.inventory.set_active(0);
+            assert!(!game.threw_item);
+            game.drop_selected_item(false);
+            assert!(game.threw_item, "Q drop should flick the hand forward");
+        }
+        // Both inventory drag-outs throw from the cursor-held stack.
+        for throw in [
+            Game::throw_cursor_stack as fn(&mut Game),
+            Game::throw_cursor_one,
+        ] {
+            let mut game = game();
+            game.player.inventory = filled_inventory();
+            game.player.inventory.click_slot(0); // pick the stack onto the cursor
+            assert!(!game.threw_item);
+            throw(&mut game);
+            assert!(game.threw_item, "inventory drag-out should flick the hand forward");
+        }
+    }
+
+    #[test]
+    fn a_noop_throw_does_not_arm_the_place_jab() {
+        let mut game = game();
+        game.player.inventory = crate::inventory::Inventory::new();
+        // Nothing in hand or on the cursor: every throw path is a no-op.
+        for _ in 0..64 {
+            game.player.inventory.decrement_selected();
+        }
+        game.drop_selected_item(false);
+        game.throw_cursor_stack();
+        game.throw_cursor_one();
+        assert!(!game.threw_item, "an empty throw must not animate the hand");
+    }
+
+    #[test]
+    fn tick_reports_then_clears_the_throw_event() {
+        let mut game = game();
+        game.player.inventory = filled_inventory();
+        game.player.inventory.set_active(0);
+        game.drop_selected_item(false);
+
+        let events = game.tick(1.0 / 60.0, &GameInput::default());
+        assert!(events.threw_item, "the frame after a throw reports it");
+        let next = game.tick(1.0 / 60.0, &GameInput::default());
+        assert!(!next.threw_item, "the throw event is one-shot");
     }
 
     #[test]
     fn place_with_empty_hand_does_nothing() {
         let mut game = game();
-        game.player.inventory = crate::inventory::Inventory::new();
-        for _ in 0..64 {
-            game.player.inventory.decrement_selected();
-        }
+        // The starting inventory is already empty.
         assert!(game.player.inventory.selected().is_none());
         game.look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
         assert!(!game.try_place());
@@ -954,6 +1208,7 @@ mod tests {
     #[test]
     fn place_into_loaded_air_decrements_selected() {
         let mut game = game();
+        game.player.inventory = filled_inventory();
         game.world.update_load(0, 0);
         let mut loaded = false;
         for _ in 0..500 {
@@ -983,25 +1238,30 @@ mod tests {
     #[test]
     fn map_item_entities_one_instance_per_drop() {
         let mut game = game();
-        game.dropped.clear();
-        game.dropped.push(DroppedItem::new(
+        game.world.spawn_item(DroppedItem::new(
             Vec3::new(1.0, 2.0, 3.0),
             ItemStack::new(crate::item::ItemType::Dirt, 1),
             1,
         ));
-        game.dropped.push(DroppedItem::new(
+        game.world.spawn_item(DroppedItem::new(
             Vec3::new(4.0, 5.0, 6.0),
             ItemStack::new(crate::item::ItemType::Stone, 1),
             2,
         ));
         game.map_item_entities();
         assert_eq!(game.item_entity_instances.len(), 2);
-        assert_eq!(game.item_entity_instances[0].pos, game.dropped[0].pos);
+        assert_eq!(
+            game.item_entity_instances[0].pos,
+            game.world.item_entities()[0].pos
+        );
         assert_eq!(
             game.item_entity_instances[0].item,
             crate::item::ItemType::Dirt
         );
-        assert_eq!(game.item_entity_instances[0].spin, game.dropped[0].spin);
+        assert_eq!(
+            game.item_entity_instances[0].spin,
+            game.world.item_entities()[0].spin
+        );
         assert_eq!(
             game.item_entity_instances[1].item,
             crate::item::ItemType::Stone
@@ -1011,9 +1271,8 @@ mod tests {
     #[test]
     fn map_item_entities_reuses_the_vec_without_growth() {
         let mut game = game();
-        game.dropped.clear();
         for i in 0..8 {
-            game.dropped.push(DroppedItem::new(
+            game.world.spawn_item(DroppedItem::new(
                 Vec3::splat(i as f32),
                 ItemStack::new(crate::item::ItemType::Dirt, 1),
                 i,
@@ -1021,7 +1280,7 @@ mod tests {
         }
         game.map_item_entities();
         let cap = game.item_entity_instances.capacity();
-        game.dropped.truncate(2);
+        game.world.item_entities_mut().truncate(2);
         game.map_item_entities();
         assert_eq!(game.item_entity_instances.len(), 2);
         assert_eq!(game.item_entity_instances.capacity(), cap);

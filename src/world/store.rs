@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::chunk::{Chunk, ChunkPos, SECTION_COUNT};
+use crate::entity::DroppedItem;
 use crate::mesh::ChunkMesh;
 use crate::save::{ChunkSnapshot, WorldSave};
 use crate::worker::WorkerPool;
@@ -45,6 +46,11 @@ pub struct World {
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
     pub(super) save: Option<WorldSave>,
+    /// Active dropped item entities — those resting in currently-loaded chunks.
+    /// Items unload with their chunk (serialized into its save record) and reload
+    /// with it, so this list only ever holds drops the player can actually see.
+    /// See `world::entities`.
+    pub(super) dropped: Vec<DroppedItem>,
 }
 
 impl World {
@@ -64,6 +70,7 @@ impl World {
             last_load_target: None,
             sim: TickState::default(),
             save: None,
+            dropped: Vec::new(),
         }
     }
 
@@ -82,15 +89,21 @@ impl World {
     }
 
     /// Snapshot every modified chunk to the save thread and clear the flags.
-    /// Called on autosave and on quit; a no-op without an attached save.
+    /// Also snapshots any chunk holding item entities (even if its blocks are
+    /// untouched) so their lifetime timers persist; the entities stay active in
+    /// memory. Called on autosave and on quit; a no-op without an attached save.
     pub fn flush_modified_chunks(&mut self) {
         if self.save.is_none() {
             return;
         }
+        let mut by_chunk = self.items_by_chunk();
         let mut snaps = Vec::new();
-        for c in self.chunks.values_mut() {
-            if c.modified {
-                snaps.push(ChunkSnapshot::from_chunk(c));
+        for (pos, c) in self.chunks.iter_mut() {
+            let entities = by_chunk.remove(pos).unwrap_or_default();
+            if c.modified || !entities.is_empty() {
+                let mut snap = ChunkSnapshot::from_chunk(c);
+                snap.entities = entities;
+                snaps.push(snap);
                 c.modified = false;
             }
         }

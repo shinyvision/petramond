@@ -30,6 +30,21 @@ const BOB_AMP: f32 = 0.08;
 /// Centre height (metres) the item floats above its `pos`, before bob.
 const BOB_BASE: f32 = 0.25;
 
+/// Most geometries a dropped stack ever bakes, no matter how big the count: a
+/// 64-stack still draws only 5 layered copies (a bigger pile reads the same).
+const STACK_MAX_LAYERS: usize = 5;
+
+/// Per-layer model-space offsets (metres) for a layered stack, applied BEFORE the
+/// Y-spin so the little pile rotates as one body. A tight clustered scatter
+/// (mostly horizontal, a slight rise) so the copies read as a heap, not a tower.
+const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
+    Vec3::new(0.00, 0.000, 0.00),
+    Vec3::new(0.07, 0.012, 0.05),
+    Vec3::new(-0.06, 0.024, 0.04),
+    Vec3::new(0.05, 0.036, -0.06),
+    Vec3::new(-0.05, 0.048, -0.04),
+];
+
 /// Bake all `instances` into `verts` / `indices` (cleared first, capacity reused).
 /// `basis` supplies the camera right/up vectors for sprite billboards. Returns the
 /// number of indices written. Caller is responsible for frustum-culling instances
@@ -43,21 +58,30 @@ pub fn build_item_entities(
     verts.clear();
     indices.clear();
     for inst in instances {
+        // A stack draws several offset copies so a pile reads as loot; capped so a
+        // big count never bakes a wall of geometry. Always at least one layer.
+        let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
         match inst.item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
-                push_spinning_cube(verts, indices, inst, block.tiles());
+                let tiles = block.tiles();
+                for &offset in &STACK_LAYER_OFFSETS[..layers] {
+                    push_spinning_cube(verts, indices, inst, tiles, offset);
+                }
             }
             ItemRenderKind::Sprite(tile) => {
-                let center = inst.pos + Vec3::new(0.0, BOB_BASE + bob(inst.spin), 0.0);
-                super::block_model::push_billboard_world_lit(
-                    verts,
-                    indices,
-                    tile,
-                    center,
-                    ITEM_SPRITE_SIZE,
-                    basis,
-                    inst.skylight,
-                );
+                for &offset in &STACK_LAYER_OFFSETS[..layers] {
+                    let center = inst.pos
+                        + Vec3::new(offset.x, BOB_BASE + bob(inst.spin) + offset.y, offset.z);
+                    super::block_model::push_billboard_world_lit(
+                        verts,
+                        indices,
+                        tile,
+                        center,
+                        ITEM_SPRITE_SIZE,
+                        basis,
+                        inst.skylight,
+                    );
+                }
             }
         }
     }
@@ -71,15 +95,17 @@ fn bob(spin: f32) -> f32 {
     spin.sin() * BOB_AMP
 }
 
-/// Append a small Y-spun, bobbing textured cube for `inst`, centred on its `pos`.
-/// The cube is built in model space (centred on origin), rotated about Y by
-/// `inst.spin`, then translated into the world. We rotate the four positions of
-/// each vertex on the CPU since the opaque pipeline has no per-draw model matrix.
+/// Append a small Y-spun, bobbing textured cube for `inst`, centred on its `pos`
+/// plus a model-space `offset` (the pile-layer displacement). The cube is built
+/// in model space (centred on origin), offset within the pile, rotated about Y by
+/// `inst.spin`, then translated into the world. We rotate the positions of each
+/// vertex on the CPU since the opaque pipeline has no per-draw model matrix.
 fn push_spinning_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     inst: &ItemEntityInstance,
     tiles: [crate::atlas::Tile; 3],
+    offset: Vec3,
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
     // Append the cube centred on the origin (model space) directly into the
@@ -98,10 +124,12 @@ fn push_spinning_cube(
     let center = inst.pos + Vec3::new(0.0, BOB_BASE + bob(inst.spin), 0.0);
     for v in verts[start..].iter_mut() {
         let [x, y, z] = v.pos;
-        // Rotate about Y, then translate to the world centre.
-        let rx = x * c + z * s;
-        let rz = -x * s + z * c;
-        v.pos = [center.x + rx, center.y + y, center.z + rz];
+        // Offset within the pile (model space) so the layers spin coherently,
+        // then rotate about Y and translate to the world centre.
+        let (lx, ly, lz) = (x + offset.x, y + offset.y, z + offset.z);
+        let rx = lx * c + lz * s;
+        let rz = -lx * s + lz * c;
+        v.pos = [center.x + rx, center.y + ly, center.z + rz];
     }
 }
 
@@ -133,6 +161,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::new(10.0, 64.0, -5.0),
             item: ItemType::Stone,
+            count: 1,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
         };
@@ -152,6 +181,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Poppy,
+            count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
         };
@@ -170,6 +200,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Dirt,
+            count: 1,
             spin: 0.5,
             skylight: super::super::lighting::FULL_SKYLIGHT,
         };
@@ -187,6 +218,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Stone,
+            count: 1,
             spin: 0.0,
             skylight: 12,
         };
@@ -196,5 +228,35 @@ mod tests {
         for vert in &v {
             assert_eq!((vert.packed >> 23) & 0x3F, 12);
         }
+    }
+
+    #[test]
+    fn stack_count_bakes_layered_copies_capped_at_five() {
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        // A 3-stack cube bakes 3 layered cubes = 72 verts / 108 indices.
+        let three = ItemEntityInstance {
+            pos: Vec3::new(2.0, 5.0, 2.0),
+            item: ItemType::Stone,
+            count: 3,
+            spin: 0.0,
+            skylight: super::super::lighting::FULL_SKYLIGHT,
+        };
+        let n = build_item_entities(std::slice::from_ref(&three), basis(), &mut v, &mut i);
+        assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");
+        assert_eq!(n, 36 * 3);
+
+        // A huge count is capped at 5 layered copies, not 64.
+        let huge = ItemEntityInstance {
+            count: 64,
+            ..three
+        };
+        build_item_entities(std::slice::from_ref(&huge), basis(), &mut v, &mut i);
+        assert_eq!(v.len(), 24 * 5, "count capped at 5 layers");
+
+        // count 0 is treated as a single layer (never zero geometry).
+        let zero = ItemEntityInstance { count: 0, ..three };
+        build_item_entities(std::slice::from_ref(&zero), basis(), &mut v, &mut i);
+        assert_eq!(v.len(), 24, "count 0 still draws one layer");
     }
 }
