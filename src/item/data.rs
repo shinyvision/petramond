@@ -781,7 +781,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "stick",
         name: "Stick",
         max_stack_size: STACK,
-        held_pose: HeldPose::DEFAULT,
+        held_pose: PICKAXE_POSE,
         tags: &[],
     },
     ItemDef {
@@ -821,7 +821,11 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "coal",
         name: "Coal",
         max_stack_size: STACK,
-        held_pose: HeldPose::DEFAULT,
+        held_pose: HeldPose {
+            pitch: 0.0,
+            yaw: 1.8,
+            roll: 1.4,
+        },
         tags: &[ItemTag::Fuel],
     },
     ItemDef {
@@ -829,7 +833,11 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "iron_ingot",
         name: "Iron Ingot",
         max_stack_size: STACK,
-        held_pose: HeldPose::DEFAULT,
+        held_pose: HeldPose {
+            pitch: -0.1,
+            yaw: 1.8,
+            roll: -0.75,
+        },
         tags: &[],
     },
     ItemDef {
@@ -837,7 +845,11 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "copper_ingot",
         name: "Copper Ingot",
         max_stack_size: STACK,
-        held_pose: HeldPose::DEFAULT,
+        held_pose: HeldPose {
+            pitch: -0.1,
+            yaw: 1.8,
+            roll: -0.75,
+        },
         tags: &[],
     },
     ItemDef {
