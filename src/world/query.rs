@@ -1,3 +1,4 @@
+use crate::block::Block;
 use crate::chunk::{self, ChunkPos, SKY_FULL};
 use crate::mesh::ChunkMesh;
 
@@ -36,6 +37,16 @@ impl World {
             Some((c, lx, ly, lz)) => c.block_raw(lx, ly, lz),
             None => 0,
         }
+    }
+
+    /// The block at a world voxel, or `None` if its chunk is not loaded or `wy` is
+    /// outside the column. Unlike [`chunk_block`](Self::chunk_block) — which
+    /// collapses both "unloaded" and "air" to `0` — this keeps them distinct, for
+    /// callers that must NOT treat an unknown cell as air (leaf-decay support keeps
+    /// a leaf whose neighbour is merely off the edge of what's loaded).
+    pub fn block_if_loaded(&self, wx: i32, wy: i32, wz: i32) -> Option<Block> {
+        let (c, lx, ly, lz) = self.chunk_at_world(wx, wy, wz)?;
+        Some(c.block(lx, ly, lz))
     }
 
     /// Water-flow metadata at a world voxel (0 where the cell is not flowing

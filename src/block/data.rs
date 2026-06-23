@@ -3,7 +3,7 @@ use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::{self, RegistryKey, TableEntry};
 
 use super::definition::{drops_self, BlockDef, BlockFlags, BlockMaterial};
-use super::Block;
+use super::{behavior, Block, BlockTag};
 
 const AIR_FLAGS: BlockFlags = BlockFlags::REPLACEABLE;
 const FULL_CUBE_FLAGS: BlockFlags = BlockFlags::SOLID
@@ -119,6 +119,8 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     BlockDef {
         block: Block::Air,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: AIR_FLAGS,
         tiles: [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves],
         material: BlockMaterial::None,
@@ -128,6 +130,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Grass,
+        tags: &[BlockTag::Terrain],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::GrassTop, Tile::Dirt, Tile::GrassSide],
         material: BlockMaterial::Dirt,
@@ -137,6 +141,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Dirt,
+        tags: &[BlockTag::Terrain],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Dirt, Tile::Dirt, Tile::Dirt],
         material: BlockMaterial::Dirt,
@@ -146,6 +152,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Stone,
+        tags: &[BlockTag::Terrain],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Stone, Tile::Stone, Tile::Stone],
         material: BlockMaterial::Stone,
@@ -162,6 +170,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Sand,
+        tags: &[BlockTag::Terrain],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Sand, Tile::Sand, Tile::Sand],
         material: BlockMaterial::Sand,
@@ -171,6 +181,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Snow,
+        tags: &[BlockTag::Terrain],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Snow, Tile::Dirt, Tile::GrassSnow],
         material: BlockMaterial::Sand,
@@ -180,6 +192,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Water,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: WATER_FLAGS,
         tiles: [Tile::Water, Tile::Water, Tile::Water],
         material: BlockMaterial::None,
@@ -189,6 +203,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::OakLogTop, Tile::OakLogTop, Tile::OakLogSide],
         material: BlockMaterial::Wood,
@@ -198,6 +214,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves],
         material: BlockMaterial::Foliage,
@@ -207,6 +225,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SpruceLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::SpruceLogTop, Tile::SpruceLogTop, Tile::SpruceLogSide],
         material: BlockMaterial::Wood,
@@ -216,6 +236,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::BirchLogTop, Tile::BirchLogTop, Tile::BirchLogSide],
         material: BlockMaterial::Wood,
@@ -225,6 +247,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JungleLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::JungleLogTop, Tile::JungleLogTop, Tile::JungleLogSide],
         material: BlockMaterial::Wood,
@@ -234,6 +258,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::AcaciaLogTop, Tile::AcaciaLogTop, Tile::AcaciaLogSide],
         material: BlockMaterial::Wood,
@@ -243,6 +269,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::DarkOakLogTop,
@@ -256,6 +284,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CherryLogTop, Tile::CherryLogTop, Tile::CherryLogSide],
         material: BlockMaterial::Wood,
@@ -265,6 +295,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangroveLog,
+        tags: &[BlockTag::Log],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::MangroveLogTop,
@@ -278,6 +310,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SpruceLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::SpruceLeaves, Tile::SpruceLeaves, Tile::SpruceLeaves],
         material: BlockMaterial::Foliage,
@@ -287,6 +321,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::BirchLeaves, Tile::BirchLeaves, Tile::BirchLeaves],
         material: BlockMaterial::Foliage,
@@ -296,6 +332,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JungleLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::JungleLeaves, Tile::JungleLeaves, Tile::JungleLeaves],
         material: BlockMaterial::Foliage,
@@ -305,6 +343,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::AcaciaLeaves, Tile::AcaciaLeaves, Tile::AcaciaLeaves],
         material: BlockMaterial::Foliage,
@@ -314,6 +354,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [
             Tile::DarkOakLeaves,
@@ -327,6 +369,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangroveLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [
             Tile::MangroveLeaves,
@@ -340,6 +384,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::CherryLeaves, Tile::CherryLeaves, Tile::CherryLeaves],
         material: BlockMaterial::Foliage,
@@ -349,6 +395,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AzaleaLeaves,
+        tags: &[BlockTag::Leaves],
+        behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
         tiles: [Tile::AzaleaLeaves, Tile::AzaleaLeaves, Tile::AzaleaLeaves],
         material: BlockMaterial::Foliage,
@@ -358,6 +406,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedSand,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::RedSand, Tile::RedSand, Tile::RedSand],
         material: BlockMaterial::Sand,
@@ -367,6 +417,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Sandstone,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::SandstoneTop,
@@ -380,6 +432,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedSandstone,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::RedSandstoneTop,
@@ -393,6 +447,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Terracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Terracotta, Tile::Terracotta, Tile::Terracotta],
         material: BlockMaterial::Stone,
@@ -402,6 +458,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::WhiteTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::WhiteTerracotta,
@@ -415,6 +473,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OrangeTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::OrangeTerracotta,
@@ -428,6 +488,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::YellowTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::YellowTerracotta,
@@ -441,6 +503,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BrownTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::BrownTerracotta,
@@ -454,6 +518,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::RedTerracotta,
@@ -467,6 +533,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::LightGrayTerracotta,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::LightGrayTerracotta,
@@ -480,6 +548,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Podzol,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::PodzolTop, Tile::Dirt, Tile::PodzolSide],
         material: BlockMaterial::Dirt,
@@ -489,6 +559,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Mycelium,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::MyceliumTop, Tile::Dirt, Tile::MyceliumSide],
         material: BlockMaterial::Dirt,
@@ -498,6 +570,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CoarseDirt,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CoarseDirt, Tile::CoarseDirt, Tile::CoarseDirt],
         material: BlockMaterial::Dirt,
@@ -507,6 +581,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Gravel,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Gravel, Tile::Gravel, Tile::Gravel],
         material: BlockMaterial::Sand,
@@ -516,6 +592,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Clay,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Clay, Tile::Clay, Tile::Clay],
         material: BlockMaterial::Sand,
@@ -525,6 +603,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Mud,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Mud, Tile::Mud, Tile::Mud],
         material: BlockMaterial::Dirt,
@@ -534,6 +614,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MossBlock,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::MossBlock, Tile::MossBlock, Tile::MossBlock],
         material: BlockMaterial::Dirt,
@@ -543,6 +625,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SnowBlock,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Snow, Tile::Snow, Tile::Snow],
         material: BlockMaterial::Sand,
@@ -552,6 +636,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::PackedIce,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::PackedIce, Tile::PackedIce, Tile::PackedIce],
         material: BlockMaterial::Stone,
@@ -561,6 +647,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Ice,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Ice, Tile::Ice, Tile::Ice],
         material: BlockMaterial::Stone,
@@ -570,6 +658,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Calcite,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Calcite, Tile::Calcite, Tile::Calcite],
         material: BlockMaterial::Stone,
@@ -579,6 +669,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Granite,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Granite, Tile::Granite, Tile::Granite],
         material: BlockMaterial::Stone,
@@ -588,6 +680,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Diorite,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Diorite, Tile::Diorite, Tile::Diorite],
         material: BlockMaterial::Stone,
@@ -597,6 +691,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Andesite,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Andesite, Tile::Andesite, Tile::Andesite],
         material: BlockMaterial::Stone,
@@ -606,6 +702,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Tuff,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Tuff, Tile::Tuff, Tile::Tuff],
         material: BlockMaterial::Stone,
@@ -615,6 +713,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CoalOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CoalOre, Tile::CoalOre, Tile::CoalOre],
         material: BlockMaterial::Ore,
@@ -631,6 +731,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::IronOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::IronOre, Tile::IronOre, Tile::IronOre],
         material: BlockMaterial::Ore,
@@ -647,6 +749,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CopperOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CopperOre, Tile::CopperOre, Tile::CopperOre],
         material: BlockMaterial::Ore,
@@ -663,6 +767,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::GoldOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::GoldOre, Tile::GoldOre, Tile::GoldOre],
         material: BlockMaterial::Ore,
@@ -672,6 +778,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedstoneOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::RedstoneOre, Tile::RedstoneOre, Tile::RedstoneOre],
         material: BlockMaterial::Ore,
@@ -681,6 +789,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::LapisOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::LapisOre, Tile::LapisOre, Tile::LapisOre],
         material: BlockMaterial::Ore,
@@ -690,6 +800,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DiamondOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::DiamondOre, Tile::DiamondOre, Tile::DiamondOre],
         material: BlockMaterial::Ore,
@@ -699,6 +811,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::EmeraldOre,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::EmeraldOre, Tile::EmeraldOre, Tile::EmeraldOre],
         material: BlockMaterial::Ore,
@@ -708,6 +822,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Pumpkin,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::PumpkinTop, Tile::PumpkinTop, Tile::PumpkinSide],
         material: BlockMaterial::Other,
@@ -717,6 +833,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Melon,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::MelonTop, Tile::MelonTop, Tile::MelonSide],
         material: BlockMaterial::Other,
@@ -726,6 +844,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Cactus,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CactusTop, Tile::CactusBottom, Tile::CactusSide],
         material: BlockMaterial::Plant,
@@ -735,6 +855,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::ShortGrass,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::ShortGrass, Tile::ShortGrass, Tile::ShortGrass],
         material: BlockMaterial::Plant,
@@ -744,6 +866,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Fern,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::Fern, Tile::Fern, Tile::Fern],
         material: BlockMaterial::Plant,
@@ -753,6 +877,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Dandelion,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::Dandelion, Tile::Dandelion, Tile::Dandelion],
         material: BlockMaterial::Plant,
@@ -762,6 +888,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Poppy,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::Poppy, Tile::Poppy, Tile::Poppy],
         material: BlockMaterial::Plant,
@@ -771,6 +899,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Cornflower,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::Cornflower, Tile::Cornflower, Tile::Cornflower],
         material: BlockMaterial::Plant,
@@ -780,6 +910,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Allium,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::Allium, Tile::Allium, Tile::Allium],
         material: BlockMaterial::Plant,
@@ -789,6 +921,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AzureBluet,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::AzureBluet, Tile::AzureBluet, Tile::AzureBluet],
         material: BlockMaterial::Plant,
@@ -798,6 +932,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OxeyeDaisy,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::OxeyeDaisy, Tile::OxeyeDaisy, Tile::OxeyeDaisy],
         material: BlockMaterial::Plant,
@@ -807,6 +943,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedTulip,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::RedTulip, Tile::RedTulip, Tile::RedTulip],
         material: BlockMaterial::Plant,
@@ -816,6 +954,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DeadBush,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::DeadBush, Tile::DeadBush, Tile::DeadBush],
         material: BlockMaterial::Plant,
@@ -825,6 +965,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BrownMushroom,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [
             Tile::BrownMushroom,
@@ -838,6 +980,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedMushroom,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
         tiles: [Tile::RedMushroom, Tile::RedMushroom, Tile::RedMushroom],
         material: BlockMaterial::Plant,
@@ -848,6 +992,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     // --- Crafting update: crafted/placeable blocks. ---
     BlockDef {
         block: Block::Cobblestone,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Cobblestone, Tile::Cobblestone, Tile::Cobblestone],
         material: BlockMaterial::Stone,
@@ -857,6 +1003,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakPlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::OakPlanks, Tile::OakPlanks, Tile::OakPlanks],
         material: BlockMaterial::Wood,
@@ -866,6 +1014,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SprucePlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::SprucePlanks, Tile::SprucePlanks, Tile::SprucePlanks],
         material: BlockMaterial::Wood,
@@ -875,6 +1025,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchPlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::BirchPlanks, Tile::BirchPlanks, Tile::BirchPlanks],
         material: BlockMaterial::Wood,
@@ -884,6 +1036,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JunglePlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::JunglePlanks, Tile::JunglePlanks, Tile::JunglePlanks],
         material: BlockMaterial::Wood,
@@ -893,6 +1047,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaPlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::AcaciaPlanks, Tile::AcaciaPlanks, Tile::AcaciaPlanks],
         material: BlockMaterial::Wood,
@@ -902,6 +1058,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakPlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::DarkOakPlanks,
@@ -915,6 +1073,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryPlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::CherryPlanks, Tile::CherryPlanks, Tile::CherryPlanks],
         material: BlockMaterial::Wood,
@@ -924,6 +1084,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangrovePlanks,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [
             Tile::MangrovePlanks,
@@ -937,6 +1099,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CraftingTable,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         // [top, bottom, side]: the 3-tile model uses one side texture for all
         // four faces, so the recognizable front art is shown on every side.
@@ -952,6 +1116,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Furnace,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         // [top, bottom, side]: the placed furnace is meshed directionally (front on
         // the facing face, `furnace_side` on the others — see mesh::builder), so the
@@ -966,6 +1132,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Chest,
+        tags: &[],
+        behavior: &behavior::INERT,
         // SOLID but non-opaque: the placed chest is drawn as a custom inset body +
         // hinged lid (the mesher skips its cell — see render::chest_model), so
         // neighbours keep their faces toward it and it casts no full-cube shadow.
@@ -983,6 +1151,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Torch,
+        tags: &[],
+        behavior: &behavior::INERT,
         flags: TORCH_FLAGS,
         // [top, bottom, side]: the in-world pole (see mesh::torch) caps the top with
         // the flame tile and wraps the four thin sides with the center-strip body;

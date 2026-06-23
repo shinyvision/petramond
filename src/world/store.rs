@@ -74,7 +74,7 @@ impl World {
             light_bakes: LightBakeQueue::new(),
             dirty_meshes: DirtyMeshQueue::default(),
             last_load_target: None,
-            sim: TickState::default(),
+            sim: TickState::new(seed),
             save: None,
             dropped_items: DroppedItems::default(),
         }

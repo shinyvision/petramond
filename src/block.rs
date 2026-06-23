@@ -3,9 +3,11 @@
 use crate::atlas::Tile;
 use crate::item::{DropSpec, ItemType};
 
+pub mod behavior;
 mod data;
 mod definition;
 
+pub use behavior::BlockBehavior;
 pub(crate) use definition::BlockMaterial;
 
 #[repr(u8)]
@@ -100,6 +102,25 @@ pub enum Block {
     Chest,
     // --- Torch update (id 84). ---
     Torch,
+}
+
+/// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
+/// [`ItemTag`](crate::item::ItemTag) is a property of items. Each block lists its
+/// tags in its [`BlockDef`](definition::BlockDef) data row and code asks via
+/// [`Block::has_tag`]; keeping membership in the data means a block joins a
+/// category by editing its row, never a `match` in this file. Tags answer "what
+/// *is* this block" (categorisation); [`behavior`] answers "what does it *do*".
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BlockTag {
+    /// Any tree-leaves block: takes random ticks and decays when cut off, and
+    /// counts as the support that keeps an adjacent leaf alive.
+    Leaves,
+    /// Any tree-log block: counts as support that keeps adjacent leaves alive.
+    Log,
+    /// Natural ground surface — the bare-terrain set (stone/dirt/grass/sand/snow),
+    /// excluding tree parts and built blocks. Worldgen audits measure overhangs /
+    /// floating debris against it (see `worldgen::audit`).
+    Terrain,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
@@ -224,6 +245,14 @@ impl Block {
         self.def().flags.is_solid()
     }
 
+    /// Whether this block carries `tag` (see [`BlockTag`]) — the one tag query.
+    /// The named predicates below are thin wrappers over it so call sites read
+    /// well; membership itself lives per-row in the data table.
+    #[inline]
+    pub fn has_tag(self, tag: BlockTag) -> bool {
+        self.def().tags.contains(&tag)
+    }
+
     /// Whether this is a natural terrain-solid block: the bare-ground set
     /// (`Stone`, `Dirt`, `Grass`, `Sand`, `Snow`) that makes up the land surface,
     /// EXCLUDING tree logs/leaves and built blocks. Worldgen audits use this to
@@ -231,10 +260,38 @@ impl Block {
     /// signal (see `worldgen::audit`). Narrower than [`is_solid`](Self::is_solid).
     #[inline]
     pub fn is_terrain_solid(self) -> bool {
-        matches!(
-            self,
-            Block::Stone | Block::Dirt | Block::Grass | Block::Sand | Block::Snow
-        )
+        self.has_tag(BlockTag::Terrain)
+    }
+
+    /// Whether this is any tree-leaves variant. Leaves form the canopy: they take
+    /// random ticks and decay when cut off from wood, and are the support a
+    /// neighbouring leaf looks for (alongside logs). See [`behavior`].
+    #[inline]
+    pub fn is_leaves(self) -> bool {
+        self.has_tag(BlockTag::Leaves)
+    }
+
+    /// Whether this is any tree-log variant. A log keeps nearby leaves alive: a
+    /// leaf with no log within a few steps (through leaves) decays — see the flood
+    /// in [`behavior`].
+    #[inline]
+    pub fn is_log(self) -> bool {
+        self.has_tag(BlockTag::Log)
+    }
+
+    /// This block's behaviour — the world-reactive "class" assigned in its data
+    /// row (random ticks, …). Most blocks are [`behavior::INERT`].
+    #[inline]
+    pub fn behavior(self) -> &'static dyn BlockBehavior {
+        self.def().behavior
+    }
+
+    /// Whether this block receives random ticks — a shortcut for
+    /// `self.behavior().has_random_tick()`, read by the per-chunk random-tick gate
+    /// and the dispatch in `world::tick`.
+    #[inline]
+    pub fn has_random_tick(self) -> bool {
+        self.behavior().has_random_tick()
     }
 
     #[inline]
@@ -670,5 +727,58 @@ mod tests {
             Block::OakLeaves.tiles(),
             [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves]
         );
+    }
+
+    #[test]
+    fn tags_drive_category_predicates() {
+        use super::BlockTag;
+
+        // Every *Leaves variant carries the Leaves tag (and is not a log); the
+        // predicate reads straight from the data row.
+        for b in [
+            Block::OakLeaves,
+            Block::SpruceLeaves,
+            Block::BirchLeaves,
+            Block::JungleLeaves,
+            Block::AcaciaLeaves,
+            Block::DarkOakLeaves,
+            Block::MangroveLeaves,
+            Block::CherryLeaves,
+            Block::AzaleaLeaves,
+        ] {
+            assert!(b.is_leaves() && b.has_tag(BlockTag::Leaves), "{b:?}");
+            assert!(!b.is_log(), "{b:?}");
+        }
+
+        // Every *Log variant carries the Log tag (and is not leaves).
+        for b in [
+            Block::OakLog,
+            Block::SpruceLog,
+            Block::BirchLog,
+            Block::JungleLog,
+            Block::AcaciaLog,
+            Block::DarkOakLog,
+            Block::CherryLog,
+            Block::MangroveLog,
+        ] {
+            assert!(b.is_log() && b.has_tag(BlockTag::Log), "{b:?}");
+            assert!(!b.is_leaves(), "{b:?}");
+        }
+
+        // Non-tree blocks carry neither tree tag.
+        for b in [Block::Stone, Block::OakPlanks, Block::Air, Block::Water] {
+            assert!(!b.is_leaves() && !b.is_log(), "{b:?}");
+        }
+    }
+
+    #[test]
+    fn behavior_drives_random_tick_and_matches_leaves() {
+        // The random-tick property comes from each block's behaviour, and today it
+        // holds exactly for leaves — i.e. every leaf row points at a leaf-decay
+        // behaviour and no other row claims a random tick. Guards the table from a
+        // leaf row left on `INERT` (or a stray non-leaf marked tickable).
+        for &b in Block::ALL {
+            assert_eq!(b.has_random_tick(), b.is_leaves(), "{b:?}");
+        }
     }
 }

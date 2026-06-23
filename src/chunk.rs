@@ -97,6 +97,11 @@ pub struct Chunk {
     /// Bumped whenever this chunk's cached light needs a new bake. Async light
     /// workers echo this value back so stale results can be discarded.
     pub light_revision: u64,
+    /// Count of blocks in this column that receive random ticks (see
+    /// [`Block::has_random_tick`]). Maintained incrementally by every setter and
+    /// recomputed on bulk load; the simulation skips a whole column when this is
+    /// `0`, so the common ocean/desert/cave column pays nothing (`world::tick`).
+    random_tick_count: u32,
 }
 
 impl Chunk {
@@ -109,6 +114,7 @@ impl Chunk {
             cz,
             blocks,
             water: None,
+            random_tick_count: 0,
             furnaces: HashMap::new(),
             chests: HashMap::new(),
             torches: HashMap::new(),
@@ -183,6 +189,7 @@ impl Chunk {
             cx: self.cx,
             cz: self.cz,
             blocks: self.blocks.clone(),
+            random_tick_count: self.random_tick_count,
             // Water meta does not affect skylight (water is transparent), so the
             // bake never reads it -- drop it to keep the snapshot small.
             water: None,
@@ -217,7 +224,9 @@ impl Chunk {
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, b: Block) {
         let i = idx(x, y, z);
         let id = b.id();
+        let old = self.blocks[i];
         self.blocks[i] = id;
+        self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
@@ -226,7 +235,9 @@ impl Chunk {
 
     pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
         let i = idx(x, y, z);
+        let old = self.blocks[i];
         self.blocks[i] = id;
+        self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
@@ -250,7 +261,9 @@ impl Chunk {
     pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
         let i = idx(x, y, z);
         let id = b.id();
+        let old = self.blocks[i];
         self.blocks[i] = id;
+        self.adjust_random_tick_count(old, id);
         let meta = if b == Block::Water { meta } else { 0 };
         self.store_water_meta(i, meta);
         self.update_heightmap_after_set(x, y, z, id);
@@ -298,6 +311,37 @@ impl Chunk {
 
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
         self.heightmap[z * CHUNK_SX + x] as i32
+    }
+
+    /// Keep [`random_tick_count`](Self::random_tick_count) in step with one cell
+    /// changing from `old_id` to `new_id`. Every block setter calls this, so the
+    /// per-column gate stays exact through generation and runtime edits alike.
+    #[inline]
+    fn adjust_random_tick_count(&mut self, old_id: u8, new_id: u8) {
+        let was = Block::from_id(old_id).has_random_tick();
+        let now = Block::from_id(new_id).has_random_tick();
+        match (was, now) {
+            (false, true) => self.random_tick_count += 1,
+            (true, false) => self.random_tick_count -= 1,
+            _ => {}
+        }
+    }
+
+    /// Recount random-tickable cells from scratch — for a bulk load that fills
+    /// `blocks` directly (disk load) instead of going through the setters.
+    pub fn recompute_random_tick_count(&mut self) {
+        self.random_tick_count = self
+            .blocks
+            .iter()
+            .filter(|&&id| Block::from_id(id).has_random_tick())
+            .count() as u32;
+    }
+
+    /// Whether this column holds any random-tickable block — the gate the
+    /// simulation uses to skip a whole column cheaply (see `world::tick`).
+    #[inline]
+    pub fn has_random_tickable(&self) -> bool {
+        self.random_tick_count > 0
     }
 
     pub fn blocks_slice(&self) -> &[u8] {
@@ -542,6 +586,7 @@ impl Chunk {
             cx,
             cz,
             blocks,
+            random_tick_count: 0,
             water,
             furnaces,
             chests,
@@ -560,6 +605,7 @@ impl Chunk {
             light_revision: 0,
         };
         c.recompute_heightmap();
+        c.recompute_random_tick_count();
         c
     }
 }

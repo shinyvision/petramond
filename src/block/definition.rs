@@ -1,12 +1,22 @@
 use crate::atlas::Tile;
 use crate::item::DropSpec;
 
-use super::Block;
+use super::behavior::BlockBehavior;
+use super::{Block, BlockTag};
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+// No `Debug`/`PartialEq`: the `behavior` trait object is neither, and nothing
+// compares or formats a whole `BlockDef` (callers read individual fields).
+#[derive(Copy, Clone)]
 pub(super) struct BlockDef {
     pub block: Block,
     pub flags: BlockFlags,
+    /// Category memberships (see [`BlockTag`]) — what this block *is*. Most rows
+    /// carry none (`&[]`); a member lists each tag it belongs to. Mirrors the
+    /// item table's `tags`.
+    pub tags: &'static [BlockTag],
+    /// World-reactive behaviour (see [`BlockBehavior`]) — what this block *does*.
+    /// Most rows are [`behavior::INERT`](super::behavior::INERT).
+    pub behavior: &'static dyn BlockBehavior,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
     /// Mining material class (drives tool requirement + future tool tiers).
