@@ -145,12 +145,11 @@ impl DroppedItems {
     /// Already-requested drops are planned first. That keeps a split-off stack from
     /// being duplicated every tick while it is flying toward the player.
     pub fn request_pickups(&mut self, player_pos: Vec3, mut request: impl FnMut(ItemStack) -> u8) {
-        let len = self.items.len();
         let was_requested: Vec<bool> = self.items.iter().map(|d| d.pickup_requested).collect();
         let mut split_offs = Vec::new();
 
-        for i in 0..len {
-            if !was_requested[i] {
+        for (i, &requested) in was_requested.iter().enumerate() {
+            if !requested {
                 continue;
             }
             if !self.pickup_request_candidate(i, player_pos) {
@@ -165,8 +164,8 @@ impl DroppedItems {
             }
         }
 
-        for i in 0..len {
-            if was_requested[i] || !self.pickup_request_candidate(i, player_pos) {
+        for (i, &requested) in was_requested.iter().enumerate() {
+            if requested || !self.pickup_request_candidate(i, player_pos) {
                 continue;
             }
             let count = request(self.items[i].stack).min(self.items[i].stack.count);

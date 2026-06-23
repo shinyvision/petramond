@@ -43,6 +43,22 @@ const BREAK_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     clamp: 0.0,
 };
 
+// The break-overlay crack cube is COINCIDENT with the block faces, so it wins the
+// depth `LessEqual` tie only via a polygon offset toward the camera. Depth is
+// standard (near=0/far=1, closer = smaller), so both offset terms MUST be negative
+// — a positive or zero bias would leave the decal at/behind the surface and the
+// crack would z-fight or vanish. Guard the sign at COMPILE TIME so a future
+// "cleanup" can't silently break it. (The magnitude is intentionally unchecked: the
+// float-depth bias unit is implementation-defined per the WebGPU/Vulkan spec.)
+const _: () = assert!(
+    BREAK_DEPTH_BIAS.constant < 0,
+    "constant bias must be negative (toward camera)"
+);
+const _: () = assert!(
+    BREAK_DEPTH_BIAS.slope_scale < 0.0,
+    "slope-scaled bias must be negative (toward camera)"
+);
+
 /// The render target's depth format. Every depth-tested pass shares one
 /// `Depth32Float` attachment, so the presets below all use this.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -1132,33 +1148,6 @@ pub(super) fn create_pipeline_resources(
         ui_pipe,
         ui_bind,
         ui_vbuf,
-    }
-}
-
-#[cfg(test)]
-mod depth_bias_tests {
-    use super::BREAK_DEPTH_BIAS;
-
-    /// The break-overlay crack cube is COINCIDENT with the block faces, so it wins
-    /// the depth `LessEqual` tie only via a polygon offset toward the camera. Depth
-    /// is standard (near=0/far=1, closer = smaller), so both offset terms MUST be
-    /// negative — a positive or zero bias would leave the decal at/behind the block
-    /// surface, and the crack would z-fight or vanish entirely. Guard the sign so a
-    /// future "cleanup" can't silently break it. The magnitude is intentionally
-    /// untested: per the WebGPU/Vulkan spec the float-depth bias unit is
-    /// implementation-defined, so any exact-magnitude assertion would be GPU-specific.
-    #[test]
-    fn break_depth_bias_pulls_the_crack_toward_the_camera() {
-        assert!(
-            BREAK_DEPTH_BIAS.constant < 0,
-            "constant bias must be negative (toward camera), got {}",
-            BREAK_DEPTH_BIAS.constant
-        );
-        assert!(
-            BREAK_DEPTH_BIAS.slope_scale < 0.0,
-            "slope-scaled bias must be negative (toward camera), got {}",
-            BREAK_DEPTH_BIAS.slope_scale
-        );
     }
 }
 

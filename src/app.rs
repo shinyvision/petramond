@@ -629,9 +629,11 @@ mod tests {
 
     #[test]
     fn scroll_step_needs_a_full_notch() {
-        let mut p = PointerState::default();
         // Sub-notch travel accumulates without moving the selection...
-        p.scroll_delta = 0.4;
+        let mut p = PointerState {
+            scroll_delta: 0.4,
+            ..Default::default()
+        };
         assert_eq!(p.take_scroll_step(), 0);
         p.scroll_delta += 0.4;
         assert_eq!(p.take_scroll_step(), 0);
@@ -643,8 +645,10 @@ mod tests {
 
     #[test]
     fn scroll_step_is_proportional_and_signed() {
-        let mut p = PointerState::default();
-        p.scroll_delta = 3.0;
+        let mut p = PointerState {
+            scroll_delta: 3.0,
+            ..Default::default()
+        };
         assert_eq!(p.take_scroll_step(), 3);
         assert_eq!(p.scroll_delta, 0.0);
 

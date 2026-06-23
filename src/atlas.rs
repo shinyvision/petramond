@@ -275,8 +275,7 @@ mod tests {
         let mips = build_atlas_mips(&base);
         let level1_w = (ATLAS_COLS * (TILE / 2)) as usize;
         let level1_tile = (TILE / 2) as usize;
-        let li =
-            (((row as usize * level1_tile) * level1_w + col as usize * level1_tile) * 4) as usize;
+        let li = ((row as usize * level1_tile) * level1_w + col as usize * level1_tile) * 4;
 
         assert_eq!(&mips[1][li..li + 4], &[30, 90, 20, 255]);
     }

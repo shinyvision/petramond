@@ -947,7 +947,15 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Ore,
         harvest_tier: 3,
         hardness: 3.0,
-        drop: drops_self!(GoldOre),
+        // Gold ore → one raw gold (needs an iron pickaxe — see harvest_tier);
+        // smelt the raw gold into a gold ingot.
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::RawGold,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::RedstoneOre,
@@ -961,7 +969,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Ore,
         harvest_tier: 3,
         hardness: 3.0,
-        drop: drops_self!(RedstoneOre),
+        // Redstone ore drops nothing for now (redstone the item doesn't exist yet,
+        // and this ore is slated for removal). Breaks like any ore; yields no item.
+        drop: DropSpec::NONE,
     },
     BlockDef {
         block: Block::LapisOre,
@@ -975,7 +985,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Ore,
         harvest_tier: 3,
         hardness: 3.0,
-        drop: drops_self!(LapisOre),
+        // Lapis ore → 2–4 lapis lazuli (needs an iron pickaxe — see harvest_tier).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::LapisLazuli,
+                min: 2,
+                max: 4,
+            }],
+        },
     },
     BlockDef {
         block: Block::DiamondOre,
@@ -989,7 +1006,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Ore,
         harvest_tier: 3,
         hardness: 3.0,
-        drop: drops_self!(DiamondOre),
+        // Diamond ore → one diamond (needs an iron pickaxe — see harvest_tier).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::Diamond,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::EmeraldOre,

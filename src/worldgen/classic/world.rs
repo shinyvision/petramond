@@ -349,7 +349,7 @@ mod tests {
             }
             let total = ids.len() as f64;
             let mut v: Vec<_> = counts.into_iter().collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
             eprintln!("--- seed {seed} (512x512 around origin) ---");
             for (id, n) in v.iter().take(14) {
                 eprintln!(

@@ -16,6 +16,8 @@ const HAND_SWING_HZ: f32 = 4.2;
 /// Amplitude of the place jab relative to a full mining punch. Placing reuses the
 /// punch motion at this reduced strength so it reads as "similar but softer".
 const PLACE_SWING_SCALE: f32 = 0.62;
+// A place jab must be softer than a full mining punch — guard at compile time.
+const _: () = assert!(PLACE_SWING_SCALE < 1.0);
 
 #[derive(Copy, Clone, Debug)]
 pub(super) struct HeldItemAnimator {
@@ -158,13 +160,11 @@ mod tests {
             placed: true,
             dt: 1.0 / 60.0,
         });
-        // A place starts a one-shot swing at the reduced place amplitude...
+        // A place starts a one-shot swing at the reduced place amplitude (softer
+        // than a mining punch — the `PLACE_SWING_SCALE < 1.0` guard is a static
+        // assertion at the constant's definition).
         assert!(placed.swing > 0.0, "place should begin a swing");
         assert_eq!(placed.swing_scale, PLACE_SWING_SCALE);
-        assert!(
-            PLACE_SWING_SCALE < 1.0,
-            "place jab must be softer than a mining punch"
-        );
 
         // ...which completes and returns to rest within one swing period.
         let settled = anim.update(HeldItemFrame {

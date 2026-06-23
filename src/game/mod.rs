@@ -691,12 +691,12 @@ impl Game {
     }
 
     fn handle_block_actions(&mut self, dt: f32, input: &GameInput) -> (bool, bool) {
-        // The held pickaxe tier (0 = hand) gates mining speed + whether drops fall.
-        let tool_tier = self
+        // The held tool (None = bare hand) gates mining speed + whether drops fall.
+        let tool = self
             .player
             .inventory
             .selected()
-            .map_or(0, |s| s.item.pickaxe_tier());
+            .and_then(|s| s.item.tool());
 
         if !input.gameplay_enabled {
             self.mining.update(
@@ -705,7 +705,7 @@ impl Game {
                 input.break_held,
                 true,
                 &self.world,
-                tool_tier,
+                tool,
             );
             self.mining_dust_t = 0.0;
             return (false, false);
@@ -718,7 +718,7 @@ impl Game {
             input.break_held,
             false,
             &self.world,
-            tool_tier,
+            tool,
         ) {
             broke_block = true;
             let hit_normal = self

@@ -14,13 +14,22 @@ use super::{HeldPose, ItemTag, ItemType};
 /// Default stack size for every 0.1 block-item.
 const STACK: u8 = 64;
 
-/// Hold pose for a pickaxe: laid diagonally in the hand like a swung tool, where
-/// the upright [`HeldPose::DEFAULT`] would leave it lying flat. Tuned against the
-/// first-person view in `render::hand::held_sprite`.
-const PICKAXE_POSE: HeldPose = HeldPose {
+/// Hold pose for a long-handled tool (pickaxes, axes) and the bare stick: laid
+/// diagonally in the hand like a swung handle, where the upright
+/// [`HeldPose::DEFAULT`] would leave it lying flat. Tuned against the first-person
+/// view in `render::hand::held_sprite`.
+const TOOL_POSE: HeldPose = HeldPose {
     pitch: 0.0,
+    yaw: -1.5,
+    roll: 0.5,
+};
+
+/// Hold pose shared by the smelted ingots (iron/copper/gold): a small bar tilted
+/// to read flat-on in the hand.
+const INGOT_POSE: HeldPose = HeldPose {
+    pitch: -0.1,
     yaw: 1.8,
-    roll: 0.9,
+    roll: -0.75,
 };
 
 pub(super) const ALL_ITEMS: &[ItemType] = &[
@@ -117,6 +126,16 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::Furnace,
     ItemType::Chest,
     ItemType::Torch,
+    ItemType::Diamond,
+    ItemType::LapisLazuli,
+    ItemType::RawGold,
+    ItemType::GoldIngot,
+    ItemType::WoodenAxe,
+    ItemType::StoneAxe,
+    ItemType::IronAxe,
+    ItemType::DiamondAxe,
+    ItemType::IronPickaxe,
+    ItemType::DiamondPickaxe,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -781,7 +800,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "stick",
         name: "Stick",
         max_stack_size: STACK,
-        held_pose: PICKAXE_POSE,
+        held_pose: TOOL_POSE,
         tags: &[],
     },
     ItemDef {
@@ -789,7 +808,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "wooden_pickaxe",
         name: "Wooden Pickaxe",
         max_stack_size: STACK,
-        held_pose: PICKAXE_POSE,
+        held_pose: TOOL_POSE,
         tags: &[],
     },
     ItemDef {
@@ -797,7 +816,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "stone_pickaxe",
         name: "Stone Pickaxe",
         max_stack_size: STACK,
-        held_pose: PICKAXE_POSE,
+        held_pose: TOOL_POSE,
         tags: &[],
     },
     ItemDef {
@@ -833,11 +852,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "iron_ingot",
         name: "Iron Ingot",
         max_stack_size: STACK,
-        held_pose: HeldPose {
-            pitch: -0.1,
-            yaw: 1.8,
-            roll: -0.75,
-        },
+        held_pose: INGOT_POSE,
         tags: &[],
     },
     ItemDef {
@@ -845,11 +860,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "copper_ingot",
         name: "Copper Ingot",
         max_stack_size: STACK,
-        held_pose: HeldPose {
-            pitch: -0.1,
-            yaw: 1.8,
-            roll: -0.75,
-        },
+        held_pose: INGOT_POSE,
         tags: &[],
     },
     ItemDef {
@@ -876,6 +887,87 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Torch",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::Diamond,
+        key: "diamond",
+        name: "Diamond",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::LapisLazuli,
+        key: "lapis_lazuli",
+        name: "Lapis Lazuli",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::RawGold,
+        key: "raw_gold",
+        name: "Raw Gold",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        // Smeltable: shift-clicks into the furnace input and smelts to a gold ingot.
+        tags: &[ItemTag::Smeltable],
+    },
+    ItemDef {
+        item: ItemType::GoldIngot,
+        key: "gold_ingot",
+        name: "Gold Ingot",
+        max_stack_size: STACK,
+        held_pose: INGOT_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::WoodenAxe,
+        key: "wooden_axe",
+        name: "Wooden Axe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::StoneAxe,
+        key: "stone_axe",
+        name: "Stone Axe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::IronAxe,
+        key: "iron_axe",
+        name: "Iron Axe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::DiamondAxe,
+        key: "diamond_axe",
+        name: "Diamond Axe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::IronPickaxe,
+        key: "iron_pickaxe",
+        name: "Iron Pickaxe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::DiamondPickaxe,
+        key: "diamond_pickaxe",
+        name: "Diamond Pickaxe",
+        max_stack_size: STACK,
+        held_pose: TOOL_POSE,
         tags: &[],
     },
 ];

@@ -325,7 +325,7 @@ mod tests {
                                              // A representative floodplain sample: roughly mid-profile.
         let mid = samples[samples.len() / 2].1;
         assert!(
-            waterline <= SEA_LEVEL - 1,
+            waterline < SEA_LEVEL,
             "channel centre ({waterline}) must carve to/below the waterline"
         );
         assert!(
@@ -442,7 +442,7 @@ mod tests {
             .carve_column(0, 0, SEA_LEVEL + 6, Biome::Plains, &paths)
             .expect("median column should be carved by two flanking paths");
         assert!(
-            carved <= SEA_LEVEL - 1,
+            carved < SEA_LEVEL,
             "median between two channels should carve to/below water (was {carved})"
         );
         assert!(river.wet(), "median should be a wet river column");

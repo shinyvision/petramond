@@ -635,13 +635,13 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
         let df = d as f32;
         let half = fov * df;
         let wz = cam_z - d;
-        for sx in 0..w {
+        for (sx, yb) in ybuf.iter_mut().enumerate() {
             let t = sx as f32 / (w - 1) as f32;
             let wx = cam_x as f32 + (-half + 2.0 * half * t);
             let (b, hy) = surf(wx.round() as i32, wz, &mut cache);
             let sy = horizon + (cam_y as f32 - hy as f32) * scale / df;
             let sy = sy.clamp(0.0, h as f32);
-            if sy < ybuf[sx] {
+            if sy < *yb {
                 // simple depth + slope shade
                 let shade = (1.15 - df / (max_d as f32) * 0.85).clamp(0.25, 1.0);
                 let mut col = block_color(b);
@@ -649,12 +649,12 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
                     *c = (*c as f32 * shade) as u8;
                 }
                 let y0 = sy.max(0.0) as usize;
-                let y1 = ybuf[sx] as usize;
+                let y1 = *yb as usize;
                 for y in y0..y1 {
                     let p = (y * w + sx) * 3;
                     buf[p..p + 3].copy_from_slice(&col);
                 }
-                ybuf[sx] = sy;
+                *yb = sy;
             }
         }
     }

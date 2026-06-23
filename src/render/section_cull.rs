@@ -326,7 +326,7 @@ mod tests {
 
         assert!(visible.get(&left_pos).is_some_and(|m| m & 1 != 0));
         assert!(visible.get(&wall_pos).is_some_and(|m| m & 1 != 0));
-        assert!(visible.get(&behind_pos).map_or(true, |m| m & 1 == 0));
+        assert!(visible.get(&behind_pos).is_none_or(|m| m & 1 == 0));
     }
 
     #[test]

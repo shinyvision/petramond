@@ -385,7 +385,7 @@ mod tests {
             }
             if river.wet() {
                 wet_cols += 1;
-                if region.surf[i] <= SEA_LEVEL - 1 {
+                if region.surf[i] < SEA_LEVEL {
                     wet_below_sea += 1;
                 }
                 continue;

@@ -14,6 +14,17 @@
 
     { "type": "shaped", "pattern": ["PPP", " S ", " S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_pickaxe", "count": 1 },
     { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 },
+    { "type": "shaped", "pattern": ["III", " S ", " S "], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_pickaxe", "count": 1 },
+    { "type": "shaped", "pattern": ["DDD", " S ", " S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_pickaxe", "count": 1 },
+
+    { "type": "shaped", "pattern": ["PP", "PS", " S"], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["PP", "SP", "S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["CC", "CS", " S"], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["CC", "SC", "S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["II", "IS", " S"], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["II", "SI", "S "], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["DD", "DS", " S"], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
+    { "type": "shaped", "pattern": ["DD", "SD", "S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
 
     { "type": "shaped", "pattern": ["CCC", "C C", "CKC"], "key": { "C": "cobblestone", "K": "coal" }, "result": "furnace", "count": 1 },
 
@@ -22,6 +33,7 @@
     { "type": "shaped", "pattern": ["C", "S"], "key": { "C": "coal", "S": "stick" }, "result": "torch", "count": 4 },
 
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
-    { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" }
+    { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
+    { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" }
   ]
 }

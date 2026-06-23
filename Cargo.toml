@@ -56,7 +56,7 @@ panic = "abort"
 strip = true
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

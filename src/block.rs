@@ -1,7 +1,7 @@
 //! Block registry + per-face tile mapping.
 
 use crate::atlas::Tile;
-use crate::item::{DropSpec, ItemType};
+use crate::item::{DropSpec, ItemType, ToolKind};
 
 pub mod behavior;
 mod data;
@@ -351,6 +351,22 @@ impl Block {
         matches!(self.material(), BlockMaterial::Stone | BlockMaterial::Ore)
     }
 
+    /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
+    /// for stone & ore, an [`Axe`](ToolKind::Axe) for wood (logs, planks, the
+    /// crafting table, the chest) — or `None` for blocks a bare hand mines just as
+    /// fast (dirt, sand, plants, glass-likes). Holding the matching tool grants the
+    /// tier speed-up in [`crate::mining::break_time`], and for tool-gated blocks the
+    /// pickaxe also unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the
+    /// item half of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
+    #[inline]
+    pub fn preferred_tool(self) -> Option<ToolKind> {
+        match self.material() {
+            BlockMaterial::Stone | BlockMaterial::Ore => Some(ToolKind::Pickaxe),
+            BlockMaterial::Wood => Some(ToolKind::Axe),
+            _ => None,
+        }
+    }
+
     /// Minimum pickaxe tier (`0` = hand, `1` = wooden, `2` = stone, `3` = above
     /// stone) needed to HARVEST this block — i.e. to get a drop AND to mine it
     /// faster than by hand. A pickaxe below this tier breaks the block at the
@@ -633,6 +649,30 @@ mod tests {
                 block.harvest_tier() >= 1,
                 "{block:?}"
             );
+        }
+    }
+
+    #[test]
+    fn preferred_tool_pairs_pickaxe_with_stone_ore_and_axe_with_wood() {
+        use crate::item::ToolKind;
+        // Stone & ore want a pickaxe.
+        for b in [Block::Stone, Block::Cobblestone, Block::CoalOre, Block::DiamondOre] {
+            assert_eq!(b.preferred_tool(), Some(ToolKind::Pickaxe), "{b:?}");
+        }
+        // Wood wants an axe — logs and planks, AND (sanity check) the crafting
+        // table and chest, which are Wood-material blocks.
+        for b in [
+            Block::OakLog,
+            Block::OakPlanks,
+            Block::CraftingTable,
+            Block::Chest,
+        ] {
+            assert_eq!(b.material(), BlockMaterial::Wood, "{b:?} should be wood");
+            assert_eq!(b.preferred_tool(), Some(ToolKind::Axe), "{b:?}");
+        }
+        // Everything a hand mines just as well has no preferred tool.
+        for b in [Block::Dirt, Block::Sand, Block::Poppy, Block::Air] {
+            assert_eq!(b.preferred_tool(), None, "{b:?}");
         }
     }
 

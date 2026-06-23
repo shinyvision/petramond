@@ -298,8 +298,8 @@ mod tests {
     #[test]
     fn offsets_and_perm_match_reference() {
         let n = noise_12345();
-        assert_eq!(n.a, 92.621595433080785);
-        assert_eq!(n.b, 238.84633223386649);
+        assert_eq!(n.a, 92.621_595_433_080_78);
+        assert_eq!(n.b, 238.846_332_233_866_5);
         assert_eq!(n.c, 213.27138533658206);
         assert_eq!(
             &n.perm[..16],
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(n.sample(1.5, 2.5, 3.5), 0.3085586317820378);
         assert_eq!(n.sample(10.1, 0.0, -5.3), -0.45068267846500143);
         assert_eq!(n.sample(0.0, 0.0, 0.0), -0.37230011176761096);
-        assert_eq!(n.sample(-100.25, 64.5, 200.75), 0.27672749427421089);
+        assert_eq!(n.sample(-100.25, 64.5, 200.75), 0.276_727_494_274_210_9);
     }
 
     #[test]

@@ -129,6 +129,19 @@ pub enum ItemType {
     // --- Torch update: the Torch block-item. Item id appended (NOT equal to
     // `Block::Torch`'s id) and mapped explicitly in `from_block` / `as_block`. ---
     Torch,
+    // --- Tools + ores update (item-only, no Block): the new ore drops + smelted
+    // gold, then the iron/diamond pickaxes and the four axe tiers. Appended at the
+    // END so every id above stays frozen. `as_block()` = None for all of them. ---
+    Diamond,
+    LapisLazuli,
+    RawGold,
+    GoldIngot,
+    WoodenAxe,
+    StoneAxe,
+    IronAxe,
+    DiamondAxe,
+    IronPickaxe,
+    DiamondPickaxe,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -182,6 +195,27 @@ impl ItemTag {
             _ => None,
         }
     }
+}
+
+/// What family of tool an item is, for mining. A tool speeds up the block class
+/// it is *for* — a [`Pickaxe`](ToolKind::Pickaxe) mines stone & ore, an
+/// [`Axe`](ToolKind::Axe) mines wood — and a wrong-kind tool (an axe on stone, a
+/// pickaxe on a log) mines no faster than a bare hand and unlocks no drop. The
+/// block half of this pairing is [`Block::preferred_tool`](crate::block::Block::preferred_tool).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ToolKind {
+    Pickaxe,
+    Axe,
+}
+
+/// A mining tool: its [`kind`](Self::kind) and material `tier` (`1` = wooden,
+/// `2` = stone, `3` = iron, `4` = diamond). Read from an item via
+/// [`ItemType::tool`]; the mining model (see [`crate::mining`]) keys both the
+/// speed multiplier and the harvest gate off it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Tool {
+    pub kind: ToolKind,
+    pub tier: u8,
 }
 
 /// How an item is drawn in inventory slots and in-hand.
@@ -272,21 +306,34 @@ impl ItemType {
         }
     }
 
-    /// Pickaxe mining tier: `0` = not a pickaxe (mines at the hand rate), `1` =
-    /// wooden, `2` = stone. Drives tool-gated mining — see [`Block::harvest_tier`]
-    /// and [`crate::mining::break_time`].
+    /// This item as a mining [`Tool`] (kind + material tier), or `None` if it
+    /// isn't a tool. Drives tool-gated mining — the held tool's kind must match a
+    /// block's [`preferred_tool`](crate::block::Block::preferred_tool) to mine it
+    /// faster, and a pickaxe's tier must meet a block's
+    /// [`harvest_tier`](crate::block::Block::harvest_tier) to unlock its drop (see
+    /// [`crate::mining::break_time`]). The two axe/pickaxe families share the tier
+    /// ladder `1..=4` (wooden, stone, iron, diamond).
     #[inline]
-    pub fn pickaxe_tier(self) -> u8 {
-        match self {
-            ItemType::WoodenPickaxe => 1,
-            ItemType::StonePickaxe => 2,
-            _ => 0,
-        }
+    pub fn tool(self) -> Option<Tool> {
+        use ItemType::*;
+        use ToolKind::*;
+        let (kind, tier) = match self {
+            WoodenPickaxe => (Pickaxe, 1),
+            StonePickaxe => (Pickaxe, 2),
+            IronPickaxe => (Pickaxe, 3),
+            DiamondPickaxe => (Pickaxe, 4),
+            WoodenAxe => (Axe, 1),
+            StoneAxe => (Axe, 2),
+            IronAxe => (Axe, 3),
+            DiamondAxe => (Axe, 4),
+            _ => return None,
+        };
+        Some(Tool { kind, tier })
     }
 
     /// How many game ticks this item burns as furnace fuel (`0` = not a fuel).
     /// A property of the item — a furnace consuming it reads this, like mining
-    /// reads [`pickaxe_tier`](Self::pickaxe_tier). One piece of coal burns 4800
+    /// reads [`tool`](Self::tool). One piece of coal burns 4800
     /// ticks (= eight 600-tick smelts).
     #[inline]
     pub fn fuel_burn_ticks(self) -> u16 {
@@ -319,11 +366,11 @@ impl ItemType {
     /// Whether this item carries durability. A durable item never stacks (one per
     /// slot) — that limit is a CONSEQUENCE of durability, not of being a "tool".
     /// Durability isn't consumed yet, but the model is correct: a future durable
-    /// non-tool item would also not stack, for the same reason. The pickaxes are
-    /// the only durable items so far.
+    /// non-tool item would also not stack, for the same reason. Every mining
+    /// [`tool`](Self::tool) (the pickaxes + axes) is durable; nothing else is.
     #[inline]
     pub fn is_durable(self) -> bool {
-        matches!(self, ItemType::WoodenPickaxe | ItemType::StonePickaxe)
+        self.tool().is_some()
     }
 
     /// Stable snake_case identity recipes reference (e.g. `oak_planks`), read from
@@ -379,11 +426,21 @@ impl ItemType {
             Stick => Tile::Stick,
             WoodenPickaxe => Tile::WoodenPickaxe,
             StonePickaxe => Tile::StonePickaxe,
+            IronPickaxe => Tile::IronPickaxe,
+            DiamondPickaxe => Tile::DiamondPickaxe,
+            WoodenAxe => Tile::WoodenAxe,
+            StoneAxe => Tile::StoneAxe,
+            IronAxe => Tile::IronAxe,
+            DiamondAxe => Tile::DiamondAxe,
             RawIron => Tile::RawIron,
             RawCopper => Tile::RawCopper,
+            RawGold => Tile::RawGold,
             Coal => Tile::Coal,
             IronIngot => Tile::IronIngot,
             CopperIngot => Tile::CopperIngot,
+            GoldIngot => Tile::GoldIngot,
+            Diamond => Tile::Diamond,
+            LapisLazuli => Tile::LapisLazuli,
             // Block-items (incl. Furnace) resolve via `as_block`; never reach here.
             _ => Tile::Stick,
         }
@@ -538,6 +595,16 @@ mod tests {
             ItemType::Furnace,
             ItemType::Chest,
             ItemType::Torch,
+            ItemType::Diamond,
+            ItemType::LapisLazuli,
+            ItemType::RawGold,
+            ItemType::GoldIngot,
+            ItemType::WoodenAxe,
+            ItemType::StoneAxe,
+            ItemType::IronAxe,
+            ItemType::DiamondAxe,
+            ItemType::IronPickaxe,
+            ItemType::DiamondPickaxe,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -591,13 +658,17 @@ mod tests {
     }
 
     #[test]
-    fn item_only_items_render_as_sprites_and_carry_pickaxe_tiers() {
+    fn item_only_items_render_as_sprites_and_carry_tools() {
         for item in [
             ItemType::Stick,
             ItemType::WoodenPickaxe,
-            ItemType::StonePickaxe,
+            ItemType::DiamondPickaxe,
+            ItemType::IronAxe,
             ItemType::RawIron,
-            ItemType::RawCopper,
+            ItemType::RawGold,
+            ItemType::Diamond,
+            ItemType::LapisLazuli,
+            ItemType::GoldIngot,
             ItemType::Coal,
         ] {
             assert_eq!(item.as_block(), None, "{item:?}");
@@ -606,24 +677,49 @@ mod tests {
                 "{item:?} should render as a sprite"
             );
         }
-        // Pickaxe tiers gate tool mining; everything else is hand tier 0.
-        assert_eq!(ItemType::WoodenPickaxe.pickaxe_tier(), 1);
-        assert_eq!(ItemType::StonePickaxe.pickaxe_tier(), 2);
-        assert_eq!(ItemType::Stick.pickaxe_tier(), 0);
-        assert_eq!(ItemType::Cobblestone.pickaxe_tier(), 0);
+        // Tools carry a kind + tier (gating mining); non-tools carry none. The two
+        // families share the 1..=4 tier ladder (wooden, stone, iron, diamond).
+        use ToolKind::{Axe, Pickaxe};
+        assert_eq!(ItemType::WoodenPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 1 }));
+        assert_eq!(ItemType::StonePickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 2 }));
+        assert_eq!(ItemType::IronPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 3 }));
+        assert_eq!(ItemType::DiamondPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 4 }));
+        assert_eq!(ItemType::WoodenAxe.tool(), Some(Tool { kind: Axe, tier: 1 }));
+        assert_eq!(ItemType::DiamondAxe.tool(), Some(Tool { kind: Axe, tier: 4 }));
+        assert_eq!(ItemType::Stick.tool(), None);
+        assert_eq!(ItemType::Cobblestone.tool(), None);
     }
 
     #[test]
     fn durable_items_do_not_stack() {
         // The stack limit of 1 follows from durability, not from being a "tool".
-        for durable in [ItemType::WoodenPickaxe, ItemType::StonePickaxe] {
+        // Every mining tool — pickaxes and axes, all four tiers — is durable.
+        for durable in [
+            ItemType::WoodenPickaxe,
+            ItemType::StonePickaxe,
+            ItemType::IronPickaxe,
+            ItemType::DiamondPickaxe,
+            ItemType::WoodenAxe,
+            ItemType::StoneAxe,
+            ItemType::IronAxe,
+            ItemType::DiamondAxe,
+        ] {
             assert!(durable.is_durable(), "{durable:?}");
             assert_eq!(durable.max_stack_size(), 1, "{durable:?}");
             // ItemStack clamps to the durable limit.
             assert_eq!(ItemStack::new(durable, 5).count, 1);
         }
-        // Non-durable items keep their table stack size (sticks, raw drops, blocks).
-        for stackable in [ItemType::Stick, ItemType::RawIron, ItemType::Cobblestone] {
+        // Non-durable items keep their table stack size (sticks, raw drops, gems,
+        // ingots, blocks).
+        for stackable in [
+            ItemType::Stick,
+            ItemType::RawIron,
+            ItemType::RawGold,
+            ItemType::Diamond,
+            ItemType::LapisLazuli,
+            ItemType::GoldIngot,
+            ItemType::Cobblestone,
+        ] {
             assert!(!stackable.is_durable(), "{stackable:?}");
             assert_eq!(stackable.max_stack_size(), 64, "{stackable:?}");
         }

@@ -974,7 +974,7 @@ fn mesh_bytes_golden_is_byte_stable() {
     h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.transparent_idx), h);
 
     assert_eq!(
-        h, 0xf9f3_10ed_9bbc_dd27,
+        h, 0x0c18_4b9d_b4c7_a1e3,
         "meshed vertex/index byte layout changed"
     );
 }

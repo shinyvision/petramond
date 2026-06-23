@@ -185,6 +185,20 @@ const TILES: &[(&str, &str)] = &[
     ("torch", "torch.png"),
     ("torch_side", "torch_side.png"),
     ("torch_top", "torch_top.png"),
+    // Tools + ores update: diamond/lapis/raw-gold/gold-ingot drops and the iron/
+    // diamond pickaxes + the four axe tiers. Flat item sprites (billboards in
+    // slots / in-hand), referenced by `ItemType::item_sprite`. Appended last so
+    // every preceding tile id stays stable.
+    ("diamond", "diamond.png"),
+    ("lapis_lazuli", "lapis_lazuli.png"),
+    ("raw_gold", "raw_gold.png"),
+    ("gold_ingot", "gold_ingot.png"),
+    ("wooden_axe", "wooden_axe.png"),
+    ("stone_axe", "stone_axe.png"),
+    ("iron_axe", "iron_axe.png"),
+    ("diamond_axe", "diamond_axe.png"),
+    ("iron_pickaxe", "iron_pickaxe.png"),
+    ("diamond_pickaxe", "diamond_pickaxe.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

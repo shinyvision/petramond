@@ -82,7 +82,7 @@ pub fn compute_chunk_blocklight_with_neighbors<'a>(
         }
         let dcx = (wx >> 4) - chunk.cx;
         let dcz = (wz >> 4) - chunk.cz;
-        if dcx < -HALO || dcx > HALO || dcz < -HALO || dcz > HALO {
+        if !(-HALO..=HALO).contains(&dcx) || !(-HALO..=HALO).contains(&dcz) {
             return None;
         }
         let c = chunk_grid[((dcz + HALO) * grid + (dcx + HALO)) as usize]?;
@@ -95,7 +95,7 @@ pub fn compute_chunk_blocklight_with_neighbors<'a>(
     // Unloaded / out-of-bounds cells count as opaque so light never leaks past the
     // solved region (mirrors the skylight bake's closed boundaries).
     let opaque_at = |wx: i32, wy: i32, wz: i32| -> bool {
-        block_at(wx, wy, wz).map_or(true, |b| b.is_opaque())
+        block_at(wx, wy, wz).is_none_or(|b| b.is_opaque())
     };
 
     let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * sz + z) * sx + x) as usize };

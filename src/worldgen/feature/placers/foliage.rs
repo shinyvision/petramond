@@ -179,45 +179,6 @@ impl FoliagePlacer for ConiferFoliage {
     }
 }
 
-#[cfg(test)]
-mod spruce_tests {
-    use super::*;
-    use crate::chunk::Chunk;
-    use crate::worldgen::rng::FeatureRng;
-
-    /// A spruce must ALWAYS get its full pointed top regardless of the RNG: a
-    /// single-leaf tip, a four-face '+'-crown around the top log, and a four-face
-    /// '+' on the third block from the top. (Skirts below stay ragged.)
-    #[test]
-    fn spruce_crown_and_third_block_are_deterministic_plus() {
-        const FACES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-        for radius in [2, 3] {
-            for seed in [1u32, 7, 42, 1000, 31337] {
-                let mut chunk = Chunk::new(0, 0);
-                let (cx, cz, base, h) = (8i32, 8i32, 64i32, 9i32);
-                for i in 0..h {
-                    let p = ((base + i) as usize, cx as usize, cz as usize);
-                    chunk.set_block_raw(p.1, p.0, p.2, Block::SpruceLog.id());
-                }
-                let top = IVec3::new(cx, base + h - 1, cz);
-                let mut rng = FeatureRng::positional(seed, 0xABCD, cx, 0, cz);
-                let mut ctx = FeatureCtx::new(&mut chunk);
-                let cone = ConiferFoliage { radius, skirt_ragged: 0.25 };
-                cone.place(&mut ctx, &[top], Block::SpruceLeaves, &mut rng);
-
-                let leaf = |x: i32, y: i32, z: i32| {
-                    chunk.block_raw(x as usize, y as usize, z as usize) == Block::SpruceLeaves.id()
-                };
-                assert!(leaf(cx, top.y + 1, cz), "r{radius} seed {seed}: missing tip");
-                for (dx, dz) in FACES {
-                    assert!(leaf(cx + dx, top.y, cz + dz), "r{radius} seed {seed}: crown face {dx},{dz}");
-                    assert!(leaf(cx + dx, top.y - 2, cz + dz), "r{radius} seed {seed}: 3rd-block face {dx},{dz}");
-                }
-            }
-        }
-    }
-}
-
 /// Flat sparse savanna canopy (acacia-like silhouette): a thin diamond umbrella
 /// spread above a tall trunk, with gaps so it reads as airy. `upper_*` is the
 /// raised umbrella disc; `lower_*` is a sparser ring one block below it.
@@ -256,6 +217,45 @@ impl FoliagePlacer for FlatSparseFoliage {
                     continue;
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct, cz + lz), leaf);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod spruce_tests {
+    use super::*;
+    use crate::chunk::Chunk;
+    use crate::worldgen::rng::FeatureRng;
+
+    /// A spruce must ALWAYS get its full pointed top regardless of the RNG: a
+    /// single-leaf tip, a four-face '+'-crown around the top log, and a four-face
+    /// '+' on the third block from the top. (Skirts below stay ragged.)
+    #[test]
+    fn spruce_crown_and_third_block_are_deterministic_plus() {
+        const FACES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        for radius in [2, 3] {
+            for seed in [1u32, 7, 42, 1000, 31337] {
+                let mut chunk = Chunk::new(0, 0);
+                let (cx, cz, base, h) = (8i32, 8i32, 64i32, 9i32);
+                for i in 0..h {
+                    let p = ((base + i) as usize, cx as usize, cz as usize);
+                    chunk.set_block_raw(p.1, p.0, p.2, Block::SpruceLog.id());
+                }
+                let top = IVec3::new(cx, base + h - 1, cz);
+                let mut rng = FeatureRng::positional(seed, 0xABCD, cx, 0, cz);
+                let mut ctx = FeatureCtx::new(&mut chunk);
+                let cone = ConiferFoliage { radius, skirt_ragged: 0.25 };
+                cone.place(&mut ctx, &[top], Block::SpruceLeaves, &mut rng);
+
+                let leaf = |x: i32, y: i32, z: i32| {
+                    chunk.block_raw(x as usize, y as usize, z as usize) == Block::SpruceLeaves.id()
+                };
+                assert!(leaf(cx, top.y + 1, cz), "r{radius} seed {seed}: missing tip");
+                for (dx, dz) in FACES {
+                    assert!(leaf(cx + dx, top.y, cz + dz), "r{radius} seed {seed}: crown face {dx},{dz}");
+                    assert!(leaf(cx + dx, top.y - 2, cz + dz), "r{radius} seed {seed}: 3rd-block face {dx},{dz}");
+                }
             }
         }
     }
