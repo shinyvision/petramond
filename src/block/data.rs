@@ -193,7 +193,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     BlockDef {
         block: Block::Water,
         tags: &[],
-        behavior: &behavior::INERT,
+        behavior: &behavior::WATER,
         flags: WATER_FLAGS,
         tiles: [Tile::Water, Tile::Water, Tile::Water],
         material: BlockMaterial::None,

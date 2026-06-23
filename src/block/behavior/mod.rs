@@ -24,7 +24,9 @@ mod inert;
 mod leaves;
 
 // The behaviour registry: one re-export per behaviour, so a data row points at a
-// flat `&behavior::NAME`.
+// flat `&behavior::NAME`. Behaviours that reach into world internals live under
+// `world` (they can't from here) but are still listed here for one-stop reading.
+pub use crate::world::water::WATER;
 pub use inert::INERT;
 pub use leaves::LEAVES;
 
@@ -46,6 +48,21 @@ pub trait BlockBehavior: Sync {
     /// [`has_random_tick`](Self::has_random_tick) is true; free to read and edit
     /// the world through its public api. Default: do nothing.
     fn random_tick(&self, world: &mut World, pos: IVec3) {
+        let _ = (world, pos);
+    }
+
+    /// React to a neighbour change — the ANNOUNCE phase of a block update, fired
+    /// for a cell at or beside a change. Free to schedule a future
+    /// [`scheduled_tick`](Self::scheduled_tick) or edit the world. Default: do
+    /// nothing. (Water schedules its flow check here.)
+    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+        let _ = (world, pos);
+    }
+
+    /// Run a scheduled tick previously requested for this cell — the EXECUTE phase,
+    /// `delay` ticks after it was scheduled. Default: do nothing. (Water runs its
+    /// flow check here.)
+    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
         let _ = (world, pos);
     }
 }

@@ -1,20 +1,14 @@
 //! Fixed-timestep world simulation: the 20 TPS game tick, neighbour "block
 //! updates", scheduled block ticks, and random ticks.
 //!
-//! The generic loops never name a concrete block. Reactions are dispatched two
-//! ways, both keeping those loops block-agnostic:
-//! - **random ticks** route through the block's own behaviour (see
-//!   [`crate::block::behavior`]): a block carries its reaction as data, so adding
-//!   one is "write a behaviour and point its row at it", never a `match` here.
-//! - **neighbour / scheduled** reactions still route through a world-side dispatch
-//!   ([`World::on_neighbor_update`] / [`World::on_scheduled_tick`]) — today only
-//!   water (see [`super::water`]), whose reaction reaches into `World`/`FluidSim`
-//!   internals a `Block` must not import. These two hooks are the next to fold
-//!   into behaviours (a `Water` behaviour living in `world`), collapsing onto the
-//!   single behaviour extension point.
+//! The generic loops never name a concrete block: every reaction — random tick,
+//! neighbour update, and scheduled tick — routes through the block's
+//! [`behavior`](crate::block::behavior). A behaviour needing only World's public
+//! api (leaf decay) lives in `block`; one reaching into world internals (water,
+//! which drives `FluidSim` and the tick scheduler) lives in `world` and still
+//! implements the `block`-defined trait.
 //!
-//! Either way a reaction receives `&mut World` and never stores world state on a
-//! block.
+//! A reaction receives `&mut World` and never stores world state on a block.
 //!
 //! Ownership note: the whole simulation runs on the main thread inside
 //! [`World::game_tick`], driven by an accumulator in `Game::tick`. It mutates the
@@ -189,47 +183,19 @@ impl World {
     }
 
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there
-    /// and route it to the world-side reaction dispatch. Names no concrete block.
+    /// and route it to that block's [`behavior`](crate::block::behavior). Names no
+    /// concrete block — water (and any future reactor) carries its own reaction.
     fn dispatch_block_update(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        self.on_neighbor_update(block, pos);
+        block.behavior().neighbor_update(self, pos);
     }
 
     /// Generic EXECUTE step: run the scheduled behaviour for the block at `pos`.
-    /// Read the block there and route it to the world-side reaction dispatch.
-    /// Names no concrete block.
+    /// Read the block there and route it to that block's behaviour. Names no
+    /// concrete block.
     fn run_scheduled_tick(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        self.on_scheduled_tick(block, pos);
-    }
-
-    /// Reaction dispatch, ANNOUNCE phase: the `block` at `pos` learns a neighbour
-    /// changed and may schedule a future scheduled-tick. The single extension
-    /// point for reactive blocks (with [`on_scheduled_tick`](Self::on_scheduled_tick));
-    /// today only water reacts, so this is one branch — it grows into a `match`
-    /// over `block` as gravity/growth/… are added.
-    ///
-    /// World-side by design: water reaches into `World`/`FluidSim` internals a
-    /// `Block` method must not import. The reaction takes `&mut World` and never
-    /// stores world state on a block.
-    fn on_neighbor_update(&mut self, block: Block, pos: IVec3) {
-        // Water schedules its flow check `WATER_FLOW_DELAY` ticks out so a
-        // disturbance settles before it re-levels (see `super::water`).
-        if block == Block::Water {
-            self.schedule_block_tick(pos, super::water::WATER_FLOW_DELAY);
-        }
-    }
-
-    /// Reaction dispatch, EXECUTE phase: the `block` at `pos` runs its scheduled
-    /// behaviour. The single extension point for reactive blocks (paired with
-    /// [`on_neighbor_update`](Self::on_neighbor_update)); grows into a `match` over
-    /// `block` as more reactive blocks are added.
-    fn on_scheduled_tick(&mut self, block: Block, pos: IVec3) {
-        // `FluidSim` is stateless w.r.t. the world: construct it here and hand
-        // it `&mut self` per call, never storing the borrow (see `super::water`).
-        if block == Block::Water {
-            super::water::FluidSim.flow_check(self, pos);
-        }
+        block.behavior().scheduled_tick(self, pos);
     }
 
     /// Random block ticks: for each loaded column near the player that holds any

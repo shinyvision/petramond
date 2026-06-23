@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::block::Block;
+use crate::block::{Block, BlockBehavior};
 use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 use crate::mathh::{IVec3, Vec3};
 
@@ -30,6 +30,28 @@ use super::store::World;
 
 /// Ticks between a water cell being disturbed and its flow check running.
 pub(super) const WATER_FLOW_DELAY: u64 = 10;
+
+/// Water's block behaviour. Both hooks delegate to the [`FluidSim`] below, so this
+/// is just the wiring that puts water on the generic reaction path. It lives here
+/// in `world` (not in `block`) because it drives the world tick scheduler and
+/// `FluidSim` — world internals a `block`-side behaviour can't reach — while still
+/// implementing the `block`-defined [`BlockBehavior`].
+pub struct Water;
+
+impl BlockBehavior for Water {
+    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+        // A neighbour changed: schedule the flow check `WATER_FLOW_DELAY` ticks out
+        // so the disturbance settles before water re-levels.
+        world.schedule_block_tick(pos, WATER_FLOW_DELAY);
+    }
+
+    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
+        FluidSim.flow_check(world, pos);
+    }
+}
+
+/// The water singleton a row points at (`behavior: &behavior::WATER`).
+pub static WATER: Water = Water;
 
 /// Maximum horizontal falloff: flowing water dies out this many blocks from a
 /// source on a flat surface ("at most 8 blocks").
