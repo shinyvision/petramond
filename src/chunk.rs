@@ -6,6 +6,7 @@ use crate::block::Block;
 use crate::chest::Chest;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
+use crate::torch::TorchPlacement;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
@@ -62,6 +63,11 @@ pub struct Chunk {
     /// owned outright by its chunk: it persists in this chunk's save record and the
     /// renderer reads its contents/facing locally. Empty for the common chunk.
     chests: HashMap<u16, Chest>,
+    /// Torch orientations in this chunk, keyed by local block index like the
+    /// furnace/chest maps. A torch's only per-instance state is how it is mounted
+    /// (floor vs which wall), which the mesher and selection outline read locally
+    /// and the save record persists. Empty for the common chunk.
+    torches: HashMap<u16, TorchPlacement>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -77,6 +83,15 @@ pub struct Chunk {
     pub skylight: Box<[u8]>,
     pub sky_ylo: i32,
     pub sky_yhi: i32,
+    /// Cached block-light (x2 scale) radiated by emitters (torches), flooded by the
+    /// same light worker but kept in its OWN band — sized to the emitters and empty
+    /// when none are near, so torch-free chunks pay nothing. Unlike skylight it
+    /// reads `0` OUTSIDE its band (there is no block light beyond the flood, vs open
+    /// sky above the surface). The mesher samples it alongside skylight to brighten
+    /// and warm-tint torch-lit surfaces.
+    pub blocklight: Box<[u8]>,
+    pub block_ylo: i32,
+    pub block_yhi: i32,
     /// Set when blocks change; cleared when the skylight band is recomputed.
     pub light_dirty: bool,
     /// Bumped whenever this chunk's cached light needs a new bake. Async light
@@ -96,6 +111,7 @@ impl Chunk {
             water: None,
             furnaces: HashMap::new(),
             chests: HashMap::new(),
+            torches: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -103,6 +119,9 @@ impl Chunk {
             skylight: Vec::new().into_boxed_slice(),
             sky_ylo: 0,
             sky_yhi: 0,
+            blocklight: Vec::new().into_boxed_slice(),
+            block_ylo: 0,
+            block_yhi: 0,
             light_dirty: true,
             light_revision: 0,
         }
@@ -132,6 +151,26 @@ impl Chunk {
         self.light_dirty = false;
     }
 
+    /// Block-light (x2 scale) at a local voxel: `0` outside the computed band (no
+    /// block light beyond the flood, and none at all when the band is empty), else
+    /// the cached value.
+    #[inline]
+    pub fn blocklight_at(&self, x: usize, y: i32, z: usize) -> u8 {
+        if self.blocklight.is_empty() || y < self.block_ylo || y > self.block_yhi {
+            return 0;
+        }
+        let ay = y - self.block_ylo;
+        self.blocklight[((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
+    }
+
+    /// Install a freshly computed block-light band (paired with `set_skylight` in the
+    /// bake-apply path). An empty band means no emitters were near this chunk.
+    pub fn set_blocklight(&mut self, band: Box<[u8]>, ylo: i32, yhi: i32) {
+        self.blocklight = band;
+        self.block_ylo = ylo;
+        self.block_yhi = yhi;
+    }
+
     pub fn mark_light_dirty(&mut self) {
         self.light_dirty = true;
         self.light_revision = self.light_revision.wrapping_add(1);
@@ -147,9 +186,11 @@ impl Chunk {
             // Water meta does not affect skylight (water is transparent), so the
             // bake never reads it -- drop it to keep the snapshot small.
             water: None,
-            // Furnaces/chests don't affect skylight either; the bake never needs them.
+            // Furnaces/chests/torches don't affect skylight either; the bake never
+            // needs them.
             furnaces: HashMap::new(),
             chests: HashMap::new(),
+            torches: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -157,6 +198,9 @@ impl Chunk {
             skylight: Vec::new().into_boxed_slice(),
             sky_ylo: 0,
             sky_yhi: 0,
+            blocklight: Vec::new().into_boxed_slice(),
+            block_ylo: 0,
+            block_yhi: 0,
             light_dirty: true,
             light_revision: self.light_revision,
         }
@@ -313,6 +357,15 @@ impl Chunk {
         idx(x, y, z) as u16
     }
 
+    #[inline]
+    fn block_entity_coords(key: u16) -> (usize, usize, usize) {
+        (
+            (key & 0x000F) as usize,
+            (key >> 8) as usize,
+            ((key >> 4) & 0x000F) as usize,
+        )
+    }
+
     /// The furnace stored at a local voxel, if any.
     #[inline]
     pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
@@ -400,32 +453,74 @@ impl Chunk {
         &self.chests
     }
 
+    // --- Torch orientation ------------------------------------------------------
+
+    /// The placement of the torch at a local voxel, or `Floor` if none is recorded.
+    /// Read by the mesher and the selection outline to orient the pole; the `Floor`
+    /// default keeps a torch (somehow) missing its map entry rendering sanely rather
+    /// than panicking.
+    #[inline]
+    pub fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
+        self.torches
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Record `placement` for the torch at a local voxel (block placement). Marks
+    /// the chunk modified so the orientation persists from the moment it is placed.
+    pub fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
+        self.torches
+            .insert(Self::block_entity_key(x, y, z), placement);
+        self.modified = true;
+    }
+
+    /// Forget the torch orientation at a local voxel (block break). Marks the chunk
+    /// modified when an entry was actually removed.
+    pub fn take_torch(&mut self, x: usize, y: usize, z: usize) {
+        if self.torches.remove(&Self::block_entity_key(x, y, z)).is_some() {
+            self.modified = true;
+        }
+    }
+
+    /// The torch-orientation map, for saving (keyed by local block index).
+    #[inline]
+    pub fn torches(&self) -> &HashMap<u16, TorchPlacement> {
+        &self.torches
+    }
+
     /// Advance every furnace in this chunk one game tick. `smelt(item)` yields an
     /// item's smelted product, supplied by the world layer from the recipe set so
     /// storage stays recipe-agnostic. Marks the chunk modified when any furnace
     /// state changed, and mesh-dirty when any furnace's lit state flipped (a texture
-    /// change). No-op for the common furnace-free chunk.
-    pub fn tick_furnaces(&mut self, smelt: impl Fn(ItemType) -> Option<ItemStack>) {
+    /// change). Returns the local coordinates of furnaces whose lit texture changed
+    /// so the world layer can enqueue the corresponding mesh and block updates.
+    /// No-op for the common furnace-free chunk.
+    pub fn tick_furnaces(
+        &mut self,
+        smelt: impl Fn(ItemType) -> Option<ItemStack>,
+    ) -> Vec<(usize, usize, usize)> {
         if self.furnaces.is_empty() {
-            return;
+            return Vec::new();
         }
         let mut changed = false;
-        let mut relit = false;
-        for f in self.furnaces.values_mut() {
+        let mut relit = Vec::new();
+        for (&key, f) in self.furnaces.iter_mut() {
             let was_lit = f.is_lit();
             if f.tick(&smelt) {
                 changed = true;
             }
             if f.is_lit() != was_lit {
-                relit = true;
+                relit.push(Self::block_entity_coords(key));
             }
         }
         if changed {
             self.modified = true;
         }
-        if relit {
+        if !relit.is_empty() {
             self.dirty = true;
         }
+        relit
     }
 
     /// Rebuild a chunk from saved arrays: block ids, biome ids, and optional
@@ -439,6 +534,7 @@ impl Chunk {
         water: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         chests: HashMap<u16, Chest>,
+        torches: HashMap<u16, TorchPlacement>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -449,6 +545,7 @@ impl Chunk {
             water,
             furnaces,
             chests,
+            torches,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,
@@ -456,6 +553,9 @@ impl Chunk {
             skylight: Vec::new().into_boxed_slice(),
             sky_ylo: 0,
             sky_yhi: 0,
+            blocklight: Vec::new().into_boxed_slice(),
+            block_ylo: 0,
+            block_yhi: 0,
             light_dirty: true,
             light_revision: 0,
         };

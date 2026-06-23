@@ -126,6 +126,9 @@ pub enum ItemType {
     // --- Chest update: the Chest block-item. Like the furnace, its item id is
     // appended (NOT equal to `Block::Chest`'s id) and mapped explicitly below. ---
     Chest,
+    // --- Torch update: the Torch block-item. Item id appended (NOT equal to
+    // `Block::Torch`'s id) and mapped explicitly in `from_block` / `as_block`. ---
+    Torch,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -247,6 +250,7 @@ impl ItemType {
         match b {
             Block::Furnace => ItemType::Furnace,
             Block::Chest => ItemType::Chest,
+            Block::Torch => ItemType::Torch,
             _ => Self::from_id(b.id()),
         }
     }
@@ -260,6 +264,7 @@ impl ItemType {
         match self {
             ItemType::Furnace => Some(Block::Furnace),
             ItemType::Chest => Some(Block::Chest),
+            ItemType::Torch => Some(Block::Torch),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => {
                 Some(Block::from_id(self.id()))
             }
@@ -346,6 +351,10 @@ impl ItemType {
             Some(block) => match block.render_shape() {
                 RenderShape::Cube => ItemRenderKind::BlockCube(block),
                 RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
+                // A torch isn't a cube; it shows the full torch sprite as a flat
+                // hotbar icon and an extruded sprite in-hand (like a flower), not
+                // the cropped per-face tiles the in-world pole uses.
+                RenderShape::Torch => ItemRenderKind::Sprite(Tile::Torch),
             },
             None => ItemRenderKind::Sprite(self.item_sprite()),
         }
@@ -528,6 +537,7 @@ mod tests {
             ItemType::CopperIngot,
             ItemType::Furnace,
             ItemType::Chest,
+            ItemType::Torch,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -690,6 +700,13 @@ mod tests {
                     assert_eq!(
                         item.render_kind(),
                         ItemRenderKind::Sprite(block.tiles()[0]),
+                        "{block:?}"
+                    );
+                }
+                RenderShape::Torch => {
+                    assert_eq!(
+                        item.render_kind(),
+                        ItemRenderKind::Sprite(Tile::Torch),
                         "{block:?}"
                     );
                 }

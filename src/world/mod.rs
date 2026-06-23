@@ -14,6 +14,7 @@ mod query;
 mod store;
 mod stream;
 mod tick;
+mod torch;
 mod visibility;
 pub(crate) mod water;
 

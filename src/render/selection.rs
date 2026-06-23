@@ -1,4 +1,5 @@
-use crate::mathh::{IVec3, SelectionShape, Vec3};
+use crate::mathh::{IVec3, Mat4, SelectionShape, Vec3};
+use crate::torch::{POLE_HALF, POLE_HEIGHT};
 
 pub(super) const MAX_OUTLINE_VERTICES: usize = 24;
 
@@ -18,6 +19,7 @@ pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
             v_min,
             v_max,
         } => cross_outline_vertices(origin, u_min, u_max, v_min, v_max),
+        SelectionShape::Torch { origin, transform } => torch_outline_vertices(origin, transform),
     }
 }
 
@@ -48,6 +50,47 @@ fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
     let vertices = [
         // bottom rectangle (y = lo)
         c000, c100, c100, c101, c101, c001, c001, c000, // top rectangle (y = hi)
+        c010, c110, c110, c111, c111, c011, c011, c010, // four vertical edges
+        c000, c010, c100, c110, c101, c111, c001, c011,
+    ];
+    OutlineVertices {
+        vertices,
+        count: MAX_OUTLINE_VERTICES as u32,
+    }
+}
+
+/// The 12 edges of the torch's pole box, `transform`-mapped from local model space
+/// and offset by the cell `origin`. Mirrors [`box_outline_vertices`]'s edge layout
+/// but over a (possibly tilted) box, so a floor torch outlines a straight pole and a
+/// wall torch a leaning one — matching `mesh::torch`, which uses the same transform.
+fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
+    // Inflate in the torch's LOCAL frame so the wireframe sits a hair outside the
+    // pole on every face after the tilt (same purpose as box `INFLATE`).
+    const INFLATE: f32 = 0.003;
+    let lo = [-POLE_HALF - INFLATE, -INFLATE, -POLE_HALF - INFLATE];
+    let hi = [POLE_HALF + INFLATE, POLE_HEIGHT + INFLATE, POLE_HALF + INFLATE];
+    let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
+    // World-space corner for (x_hi?, y_hi?, z_hi?), transformed then cell-offset.
+    let c = |xh: bool, yh: bool, zh: bool| {
+        let local = Vec3::new(
+            if xh { hi[0] } else { lo[0] },
+            if yh { hi[1] } else { lo[1] },
+            if zh { hi[2] } else { lo[2] },
+        );
+        let p = base + transform.transform_point3(local);
+        [p.x, p.y, p.z]
+    };
+    let c000 = c(false, false, false);
+    let c100 = c(true, false, false);
+    let c010 = c(false, true, false);
+    let c001 = c(false, false, true);
+    let c110 = c(true, true, false);
+    let c101 = c(true, false, true);
+    let c011 = c(false, true, true);
+    let c111 = c(true, true, true);
+    let vertices = [
+        // bottom rectangle (local y = lo)
+        c000, c100, c100, c101, c101, c001, c001, c000, // top rectangle (local y = hi)
         c010, c110, c110, c111, c111, c011, c011, c010, // four vertical edges
         c000, c010, c100, c110, c101, c111, c001, c011,
     ];

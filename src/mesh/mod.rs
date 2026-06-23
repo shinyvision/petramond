@@ -7,10 +7,12 @@
 //! AO across the face, giving the soft contact shadows in nooks and against
 //! adjacent blocks.
 
+mod blocklight;
 mod builder;
 pub(crate) mod face;
 mod skylight;
 mod tint;
+mod torch;
 mod vertex;
 mod water;
 
@@ -19,6 +21,7 @@ pub use builder::{
 };
 #[cfg(test)]
 pub use builder::build_mesh_with_options;
+pub use blocklight::compute_chunk_blocklight_with_neighbors;
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
 pub use vertex::{ChunkMesh, MeshIndexSection, Vertex, SHADES};
 

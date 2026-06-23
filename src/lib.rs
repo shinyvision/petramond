@@ -27,6 +27,7 @@ pub mod player;
 pub mod registry;
 pub mod render;
 pub mod save;
+pub mod torch;
 pub mod worker;
 pub mod world;
 pub mod worldgen;

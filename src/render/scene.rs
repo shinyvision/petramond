@@ -33,9 +33,10 @@ pub struct Scene {
     /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
     /// from the loaded chunks; the lid angle is paired in from `Game::chest_lid_angle`.
     chest_scratch: Vec<(IVec3, Facing, u8)>,
-    /// World skylight to apply to the first-person hand / held item, sampled at the
-    /// camera each frame.
+    /// Combined sky+block light + warm-tint amount for the first-person hand / held
+    /// item, sampled at the camera each frame so it brightens AND warms near torches.
     held_item_skylight: u8,
+    held_item_warm: u8,
 }
 
 impl Scene {
@@ -50,7 +51,7 @@ impl Scene {
         bake_item_entities(game.item_entities(), &mut self.item_entities);
         bake_particles(game.particles(), &mut self.particles);
         self.bake_chests(game);
-        self.held_item_skylight = game.held_item_skylight();
+        (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
     }
 
     /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
@@ -73,7 +74,7 @@ impl Scene {
 
     /// Hand the baked instances + held-item light to the renderer for this frame.
     pub fn upload(&self, renderer: &mut Renderer) {
-        renderer.set_held_item_light(self.held_item_skylight);
+        renderer.set_held_item_light(self.held_item_skylight, self.held_item_warm);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
         renderer.set_particles(&self.particles);
@@ -103,7 +104,10 @@ fn bake_particles(particles: &crate::entity::ParticleSystem, out: &mut Vec<Parti
             pos: p.pos,
             uv_min,
             uv_size,
-            tint: p.tint,
+            // Warm the fleck's tint by the block-light it sits in (the particle
+            // shader multiplies tint into the atlas colour) so flecks near a
+            // torch/furnace glow warm, not just brighter.
+            tint: crate::torch::warm_tint(p.tint, p.warm as f32 / 255.0),
             alpha: p.alpha(),
             size: p.render_size(),
             skylight: p.skylight,

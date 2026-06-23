@@ -14,6 +14,7 @@ use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
 use crate::entity::DroppedItem;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
+use crate::torch::TorchPlacement;
 
 const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
 /// Current chunk-record version. Extra sections (item entities, furnaces) are
@@ -25,6 +26,7 @@ const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
 const FLAG_HAS_CHESTS: u8 = 0x08;
+const FLAG_HAS_TORCHES: u8 = 0x10;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -43,6 +45,9 @@ pub struct ChunkSnapshot {
     /// Chest block-entities in this chunk, keyed by local block index, so their
     /// contents persist. Empty for the common chunk.
     pub chests: HashMap<u16, Chest>,
+    /// Torch orientations in this chunk, keyed by local block index, so a wall vs
+    /// floor torch reloads the way it was placed. Empty for the common chunk.
+    pub torches: HashMap<u16, TorchPlacement>,
 }
 
 impl ChunkSnapshot {
@@ -57,6 +62,7 @@ impl ChunkSnapshot {
             entities: Vec::new(),
             furnaces: c.furnaces().clone(),
             chests: c.chests().clone(),
+            torches: c.torches().clone(),
         }
     }
 }
@@ -230,6 +236,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.chests.is_empty() {
         flags |= FLAG_HAS_CHESTS;
     }
+    if !s.torches.is_empty() {
+        flags |= FLAG_HAS_TORCHES;
+    }
     payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
@@ -244,6 +253,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     }
     if !s.chests.is_empty() {
         super::chest::put_chests(&mut payload, &s.chests);
+    }
+    if !s.torches.is_empty() {
+        super::torch::put_torches(&mut payload, &s.torches);
     }
     deflate(&payload)
 }
@@ -280,8 +292,13 @@ pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<Dropped
     } else {
         HashMap::new()
     };
+    let torches = if flags & FLAG_HAS_TORCHES != 0 {
+        super::torch::get_torches(&mut r)?
+    } else {
+        HashMap::new()
+    };
     Some((
-        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces, chests),
+        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces, chests, torches),
         entities,
     ))
 }
@@ -390,6 +407,25 @@ mod tests {
         assert_eq!(got.slots[26], Some(ItemStack::new(ItemType::OakLog, 5)));
         assert_eq!(got.slots[5], None);
         assert_eq!(got.facing, crate::furnace::Facing::South, "facing persists");
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_torches() {
+        use crate::torch::TorchPlacement;
+        let mut c = Chunk::new(6, 6);
+        c.set_block(3, 67, 4, Block::Torch);
+        c.insert_torch(3, 67, 4, TorchPlacement::East);
+        c.set_block(3, 68, 4, Block::Torch);
+        c.insert_torch(3, 68, 4, TorchPlacement::Floor);
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities) = decode_chunk(6, 6, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(3, 67, 4), Block::Torch.id());
+        assert_eq!(back.torch_placement(3, 67, 4), TorchPlacement::East, "wall mount persists");
+        assert_eq!(back.torch_placement(3, 68, 4), TorchPlacement::Floor, "floor mount persists");
+        // A cell with no torch reads the Floor default.
+        assert_eq!(back.torch_placement(0, 0, 0), TorchPlacement::Floor);
     }
 
     #[test]

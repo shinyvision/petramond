@@ -133,11 +133,22 @@ impl World {
                     None => SKY_FULL,
                 }
             };
+            // Block-light (torches) reads 0 outside any chunk's band and above/below
+            // the world — there is no block light without an emitter.
+            let nb_blocklight = |wx: i32, wy: i32, wz: i32| -> u8 {
+                if wy < 0 || wy >= CHUNK_SY as i32 {
+                    return 0;
+                }
+                match owner(wx >> 4, wz >> 4) {
+                    Some(c) => c.blocklight_at((wx & 0x0F) as usize, wy, (wz & 0x0F) as usize),
+                    None => 0,
+                }
+            };
             let nb_loaded = |cx: i32, cz: i32| -> bool { owner(cx, cz).is_some() };
             Some((
                 pos,
                 build_mesh_lods_with_loaded_neighbors(
-                    chunk, nb, nb_water, nb_biome, nb_light, nb_loaded,
+                    chunk, nb, nb_water, nb_biome, nb_light, nb_blocklight, nb_loaded,
                 ),
             ))
         };
@@ -166,6 +177,7 @@ impl World {
             }
             if let Some(c) = self.chunks.get_mut(&res.pos) {
                 c.set_skylight(res.band, res.ylo, res.yhi);
+                c.set_blocklight(res.block_band, res.block_ylo, res.block_yhi);
                 c.dirty = true;
             }
             self.bump_lighting_revision();

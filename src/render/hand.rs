@@ -60,13 +60,14 @@ pub fn build_hand(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> Mat4 {
-    build_hand_lit(view, aspect, lighting::FULL_SKYLIGHT, verts, indices)
+    build_hand_lit(view, aspect, lighting::FULL_SKYLIGHT, 0, verts, indices)
 }
 
 pub(super) fn build_hand_lit(
     view: &HeldItemView,
     aspect: f32,
     skylight: u8,
+    warm: u8,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> Mat4 {
@@ -123,6 +124,17 @@ pub(super) fn build_hand_lit(
             }
         },
     };
+
+    // Warm the whole hand by the block-light it sits in — one post-pass over the
+    // freshly built verts — so a held block / bare arm reads warm near a torch or
+    // furnace, not just brighter. (A sprite item emits no model3d verts here; it is
+    // warmed on the item3d side instead.)
+    if warm > 0 {
+        let w = warm as f32 / 255.0;
+        for v in verts.iter_mut() {
+            v.tint = crate::torch::warm_tint(v.tint, w);
+        }
+    }
 
     let placement = if view.item.is_none() {
         bare_arm_placement(view, aspect)
@@ -335,7 +347,7 @@ mod tests {
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
 
-        build_hand_lit(&view, 16.0 / 9.0, 9, &mut v, &mut i);
+        build_hand_lit(&view, 16.0 / 9.0, 9, 0, &mut v, &mut i);
 
         assert!(!v.is_empty());
         for vert in &v {

@@ -2,6 +2,7 @@ use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
+use crate::torch::{warm_amount, warm_tint};
 
 use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::tint::{self, tile_tint};
@@ -81,6 +82,7 @@ pub fn build_mesh(
         ctx.neighbour_water,
         neighbour_biome,
         neighbour_light,
+        |_, _, _| 0,
         ctx.neighbour_chunk_loaded,
         MeshOptions::DETAILED,
     )
@@ -90,12 +92,14 @@ pub fn build_mesh(
 /// world voxel (0 = source/none), routed to the owning chunk just like
 /// `neighbour_block`, so water surface heights and flow direction read correctly
 /// across chunk borders.
+#[allow(clippy::too_many_arguments)]
 pub fn build_mesh_lods_with_loaded_neighbors(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
 ) -> ChunkMesh {
     let mut mesh = build_mesh_with_context(
@@ -104,6 +108,7 @@ pub fn build_mesh_lods_with_loaded_neighbors(
         &neighbour_water,
         &neighbour_biome,
         &neighbour_light,
+        &neighbour_blocklight,
         &neighbour_chunk_loaded,
         MeshOptions::DETAILED,
     );
@@ -116,6 +121,7 @@ pub fn build_mesh_lods_with_loaded_neighbors(
         &neighbour_water,
         &neighbour_biome,
         &neighbour_light,
+        &neighbour_blocklight,
         &neighbour_chunk_loaded,
         MeshOptions::FAR_LEAVES,
     );
@@ -145,17 +151,20 @@ pub fn build_mesh_with_options(
         ctx.neighbour_water,
         neighbour_biome,
         neighbour_light,
+        |_, _, _| 0,
         ctx.neighbour_chunk_loaded,
         options,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_mesh_with_context(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
     options: MeshOptions,
 ) -> ChunkMesh {
@@ -259,11 +268,14 @@ fn build_mesh_with_context(
                 if block.render_shape() == RenderShape::Cross {
                     let ci = z * CHUNK_SX + x;
                     let tile = block.tiles()[0];
-                    let tint = tints.tile(tile_tint(tile), ci);
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
+                    // Fold skylight + torch block-light: a flower near a torch
+                    // brightens and takes the same warm tint as the blocks around it.
                     let l = neighbour_light(wx, y as i32, wz) as u32;
-                    let sky6 = ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
+                    let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let tint = warm_tint(tints.tile(tile_tint(tile), ci), warm);
                     let first_index = opaque_idx.len() as u32;
                     emit_cross(
                         &mut opaque,
@@ -274,6 +286,41 @@ fn build_mesh_with_context(
                         tile,
                         tint,
                         sky6,
+                    );
+                    extend_section(
+                        &mut opaque_sections,
+                        section_for_y(y),
+                        first_index,
+                        opaque_idx.len() as u32 - first_index,
+                    );
+                    continue;
+                }
+
+                // Torch: a thin 3D pole (floor or wall-mounted), baked into the
+                // opaque pass with its orientation read from this chunk's torch map.
+                // Self-lit to at least its own emission so it stays visible/glowing
+                // even where skylight is 0; the surrounding warm glow is the
+                // block-light flood sampled by the cube faces below.
+                if block.render_shape() == RenderShape::Torch {
+                    let [top_tile, _bottom, side_tile] = block.tiles();
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let cell_sky = neighbour_light(wx, y as i32, wz) as u32;
+                    let lit = cell_sky.max(block.light_emission() as u32);
+                    let light6 = ((lit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let placement = chunk.torch_placement(x, y, z);
+                    let first_index = opaque_idx.len() as u32;
+                    super::torch::emit_torch(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx as f32,
+                        y as f32,
+                        wz as f32,
+                        placement,
+                        side_tile,
+                        top_tile,
+                        [1.0, 1.0, 1.0],
+                        light6,
                     );
                     extend_section(
                         &mut opaque_sections,
@@ -437,6 +484,7 @@ fn build_mesh_with_context(
                     let fy = y as i32 + dy;
                     let fz = oz + z as i32 + dz;
                     let f_l = neighbour_light(fx, fy, fz) as u32;
+                    let f_bl = neighbour_blocklight(fx, fy, fz) as u32;
 
                     // Resolve this face's 12..20 overlay payload + has-overlay flag.
                     // A grass SIDE carries the tinted GrassSideOverlay; a flowing
@@ -478,8 +526,10 @@ fn build_mesh_with_context(
                         fy,
                         fz,
                         f_l,
+                        f_bl,
                         &block_at,
                         &neighbour_light,
+                        &neighbour_blocklight,
                     );
                     // A water surface (top face) also emits its reverse winding so it
                     // stays visible from underneath in the back-face-culled
@@ -543,6 +593,19 @@ fn extend_section(
     };
 }
 
+/// Fold a cell's (or neighbourhood-summed) skylight + block-light into the packed
+/// 6-bit brightness and a 0..1 warm amount. `sum_sky`/`sum_block` are x2-scale
+/// sums over `denom = cnt * SKY_FULL` cells (`cnt = 1`, `denom = SKY_FULL` for a
+/// single cell). Brightness is the BRIGHTER channel (so a torch lights a sky-dark
+/// cave); warm comes from the shared [`warm_amount`](crate::torch::warm_amount) so
+/// static blocks and dynamic geometry warm identically.
+#[inline]
+fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
+    let light6 = ((sum_sky.max(sum_block) * 63 + denom / 2) / denom).min(63);
+    let warm = warm_amount(sum_sky as f32 / denom as f32, sum_block as f32 / denom as f32);
+    (light6, warm)
+}
+
 /// One corner's ambient-occlusion level and smooth skylight, sampled from the
 /// shared 2x2 neighbourhood just outside the face: the front voxel `F = (fx,fy,fz)`
 /// (= block + normal, with its pre-sampled light `f_l`) plus its two edge
@@ -550,20 +613,24 @@ fn extend_section(
 /// solid occluders (opaque cubes AND leaves, for canopy self-occlusion); skylight
 /// averages the light of the non-opaque cells of that 2x2 (F is always non-opaque
 /// for an emitted face). Returns `(ao 0..3, skylight 0..63)`.
+#[allow(clippy::too_many_arguments)]
 #[inline]
-fn vertex_ao_and_light<B, L>(
+fn vertex_ao_and_light<B, L, K>(
     face: Face,
     corner: usize,
     fx: i32,
     fy: i32,
     fz: i32,
     f_l: u32,
+    f_bl: u32,
     block_at: &B,
     neighbour_light: &L,
-) -> (u32, u32)
+    neighbour_blocklight: &K,
+) -> (u32, u32, f32)
 where
     B: Fn(i32, i32, i32) -> Block,
     L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> u8,
 {
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
@@ -580,28 +647,34 @@ where
     let bd = block_at(dxx, dyy, dzz);
     let ao = vertex_ao(b1.occludes_ao(), b2.occludes_ao(), bd.occludes_ao());
 
-    // Smooth skylight: mean of F + the surround cells that carry light (anything
-    // not fully opaque -- leaves included, since they transmit light even though
-    // they occlude AO).
+    // Smooth skylight AND block-light: mean over F + the surround cells that carry
+    // light (anything not fully opaque -- leaves included, since they transmit
+    // light even though they occlude AO). The two channels share the same cells and
+    // count, so `fold_light` can max the sums for brightness and compare them for
+    // the warm tint.
     let mut sum = f_l;
+    let mut sum_block = f_bl;
     let mut cnt = 1u32;
     if !b1.is_opaque() {
         sum += neighbour_light(e1x, e1y, e1z) as u32;
+        sum_block += neighbour_blocklight(e1x, e1y, e1z) as u32;
         cnt += 1;
     }
     if !b2.is_opaque() {
         sum += neighbour_light(e2x, e2y, e2z) as u32;
+        sum_block += neighbour_blocklight(e2x, e2y, e2z) as u32;
         cnt += 1;
     }
     if !bd.is_opaque() {
         sum += neighbour_light(dxx, dyy, dzz) as u32;
+        sum_block += neighbour_blocklight(dxx, dyy, dzz) as u32;
         cnt += 1;
     }
-    // avg in [0,SKY_FULL] -> 6-bit level in [0,63], integer round-half-up (no f32,
-    // to keep meshes byte-identical).
+    // avg in [0,SKY_FULL] -> 6-bit level in [0,63], integer round-half-up (no f32
+    // for the level, to keep skylight-only meshes byte-identical).
     let denom = cnt * SKY_FULL as u32;
-    let light6 = ((sum * 63 + denom / 2) / denom).min(63);
-    (ao, light6)
+    let (light6, warm) = fold_light(sum, sum_block, denom);
+    (ao, light6, warm)
 }
 
 /// Emit one resolved cube face: sample per-corner AO + skylight from the shared 2x2
@@ -611,7 +684,7 @@ where
 /// are already in world space (and water-warped); `face` drives shade + the AO
 /// neighbourhood; `(fx,fy,fz)`/`f_l` are the front voxel and its light.
 #[allow(clippy::too_many_arguments)]
-fn emit_cube_face<B, L>(
+fn emit_cube_face<B, L, K>(
     vbuf: &mut Vec<Vertex>,
     ibuf: &mut Vec<u32>,
     corners: [[f32; 3]; 4],
@@ -624,23 +697,38 @@ fn emit_cube_face<B, L>(
     fy: i32,
     fz: i32,
     f_l: u32,
+    f_bl: u32,
     block_at: &B,
     neighbour_light: &L,
+    neighbour_blocklight: &K,
 ) -> [u32; 6]
 where
     B: Fn(i32, i32, i32) -> Block,
     L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> u8,
 {
     let shade_idx = face.shade_idx();
     let mut ao = [3u32; 4];
     let start = vbuf.len() as u32;
     for (corner, p) in corners.into_iter().enumerate() {
-        let (a, light6) =
-            vertex_ao_and_light(face, corner, fx, fy, fz, f_l, block_at, neighbour_light);
+        let (a, light6, warm) = vertex_ao_and_light(
+            face,
+            corner,
+            fx,
+            fy,
+            fz,
+            f_l,
+            f_bl,
+            block_at,
+            neighbour_light,
+            neighbour_blocklight,
+        );
         ao[corner] = a;
         vbuf.push(Vertex {
             pos: p,
-            tint,
+            // Warm the face tint per corner by however much torch light reaches it,
+            // so the glow fades smoothly across the surface (0 warm = unchanged).
+            tint: warm_tint(tint, warm),
             packed: pack_vertex(
                 base_tile as u32,
                 corner as u32,

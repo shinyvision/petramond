@@ -19,6 +19,8 @@
 
     { "type": "shaped", "pattern": ["PPP", "P P", "PPP"], "key": { "P": "#planks" }, "result": "chest", "count": 1 },
 
+    { "type": "shaped", "pattern": ["C", "S"], "key": { "C": "coal", "S": "stick" }, "result": "torch", "count": 4 },
+
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" }
   ]

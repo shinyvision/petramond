@@ -27,8 +27,9 @@ struct MvpUniform {
     mvp: mat4x4<f32>,
 };
 
-const SKY_MIN: f32 = 0.05;
-const FINAL_MIN: f32 = 0.02;
+// Keep in sync with `block.wgsl` / `render::lighting` (dark cave floor).
+const SKY_MIN: f32 = 0.02;
+const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
 
 @group(0) @binding(0) var<uniform> m: MvpUniform;

@@ -176,6 +176,15 @@ const TILES: &[(&str, &str)] = &[
     ("chest_lid_side", "chest_lid_side.png"),
     ("chest_inside", "chest_inside.png"),
     ("chest_latch", "chest_latch.png"),
+    // Torch update (Survival 0.1): the full torch sprite (item icon + held), plus
+    // two cropped tiles for the in-world 3D model — the center-strip body shown on
+    // the four thin side faces, and the flame cap on the top face. Cropped because
+    // the chunk shader maps a WHOLE tile per face, so each thin torch face needs a
+    // tile that is already just its slice of the sprite. Appended last to keep all
+    // preceding tile ids stable.
+    ("torch", "torch.png"),
+    ("torch_side", "torch_side.png"),
+    ("torch_top", "torch_top.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

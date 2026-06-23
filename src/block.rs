@@ -98,14 +98,19 @@ pub enum Block {
     Furnace,
     // --- Chest update (id 83). ---
     Chest,
+    // --- Torch update (id 84). ---
+    Torch,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
-/// is an X of two diagonal billboard quads (grass, ferns, flowers, mushrooms).
+/// is an X of two diagonal billboard quads (grass, ferns, flowers, mushrooms);
+/// `Torch` is a thin pole (a small box) standing on the floor or tilted against a
+/// wall, with its orientation read from the chunk's torch map (see `mesh::torch`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RenderShape {
     Cube,
     Cross,
+    Torch,
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -143,6 +148,7 @@ impl Block {
         match self {
             ShortGrass | Fern | Dandelion | Poppy | Cornflower | Allium | AzureBluet
             | OxeyeDaisy | RedTulip | DeadBush | BrownMushroom | RedMushroom => RenderShape::Cross,
+            Torch => RenderShape::Torch,
             _ => RenderShape::Cube,
         }
     }
@@ -159,8 +165,22 @@ impl Block {
         }
         match self {
             Block::Chest => CHEST_BOXES,
+            // A torch is SOLID so the ray can select it, but has NO collision box —
+            // the player walks through it. Its selection outline is custom-shaped
+            // (see `player::interaction`), not derived from this empty list.
+            Block::Torch => &[],
             _ => FULL_CUBE_BOXES,
         }
+    }
+
+    /// Whether this block physically obstructs movement — i.e. has any collision
+    /// box. The single predicate for "can an entity rest on / be stopped by this
+    /// cell", derived from [`collision_boxes`](Self::collision_boxes) (the source of
+    /// truth) rather than [`is_solid`](Self::is_solid): a torch is solid (so the ray
+    /// can select it) yet has NO collision, so items and particles fall through it.
+    #[inline]
+    pub fn blocks_movement(self) -> bool {
+        !self.collision_boxes().is_empty()
     }
 
     /// The visual bounding box (cell-local) for a non-full-cube block — the union of
@@ -235,6 +255,23 @@ impl Block {
     #[inline]
     pub fn is_transparent(self) -> bool {
         self.def().flags.is_transparent()
+    }
+
+    /// Block-light this block radiates when ACTIVE, on the SAME x2 integer scale the
+    /// skylight flood-fill uses (`SKY_FULL` = 30 = full daylight = level 15). `0` for
+    /// non-emitters. A torch is always active at level 14 (`28` on the x2 scale):
+    /// bright enough to light a cave, but one notch under open daylight so a lit cell
+    /// still reads as "indoors" and takes the warm block-light tint. A furnace shares
+    /// that level but only while it is LIT — that state lives in its block-entity, not
+    /// the block id, so the flood seeds furnaces only in their lit state (see
+    /// `world::light_queue` for which cells are seeded and `mesh::blocklight` for the
+    /// flood + the sky-vs-block tinting).
+    #[inline]
+    pub fn light_emission(self) -> u8 {
+        match self {
+            Block::Torch | Block::Furnace => 28,
+            _ => 0,
+        }
     }
 
     /// A cell a placement may overwrite: empty air, or water (building into water
@@ -413,6 +450,7 @@ mod tests {
             Block::CraftingTable,
             Block::Furnace,
             Block::Chest,
+            Block::Torch,
         ];
 
         assert_eq!(Block::ALL, expected);

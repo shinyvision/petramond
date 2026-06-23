@@ -2,6 +2,7 @@ use super::state::Player;
 use crate::atlas::{tile_alpha_bounds, tile_alpha_opaque, TileAlphaBounds};
 use crate::block::{Block, RenderShape};
 use crate::mathh::{IVec3, SelectionShape, Vec3};
+use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::World;
 
 /// Max block-interaction distance, measured from the eye.
@@ -24,9 +25,25 @@ impl Player {
     /// first selectable block within `REACH`. Voxel DDA (Amanatides & Woo), with
     /// cross-model plants tested against their alpha-cutout billboards.
     pub fn raycast(eye: Vec3, dir: Vec3, world: &World) -> Option<RaycastHit> {
-        Self::raycast_blocks_core(eye, dir, &|x, y, z| {
-            Block::from_id(world.chunk_block(x, y, z))
-        })
+        let mut hit = Self::raycast_blocks_core(
+            eye,
+            dir,
+            &|x, y, z| Block::from_id(world.chunk_block(x, y, z)),
+            // Inset/thin solids (chest, torch) are tested against their real shape so
+            // the ray only selects them where they actually are; the torch's tilt
+            // comes from the world's per-chunk torch map.
+            &|e, d, pos, block| precise_shape_hit(e, d, pos, block, world),
+        )?;
+        // A torch's outline traces its 3D pole, whose tilt depends on how it's
+        // mounted — state that lives in the world's per-chunk torch map, not visible
+        // to the block-only DDA core. Override the default full-cube outline here.
+        if Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z)) == Block::Torch {
+            hit.outline = SelectionShape::Torch {
+                origin: hit.block,
+                transform: world.torch_placement(hit.block).model_transform(),
+            };
+        }
+        Some(hit)
     }
 
     #[cfg(test)]
@@ -35,20 +52,32 @@ impl Player {
         dir: Vec3,
         solid: &F,
     ) -> Option<RaycastHit> {
-        Self::raycast_blocks_core(eye, dir, &|x, y, z| {
-            if solid(x, y, z) {
-                Block::Stone
-            } else {
-                Block::Air
-            }
-        })
+        // The stub world is only full cubes, so the precise-shape closure is never
+        // consulted (full cubes hit on cell entry).
+        Self::raycast_blocks_core(
+            eye,
+            dir,
+            &|x, y, z| {
+                if solid(x, y, z) {
+                    Block::Stone
+                } else {
+                    Block::Air
+                }
+            },
+            &|_, _, _, _| None,
+        )
     }
 
-    pub(super) fn raycast_blocks_core<F: Fn(i32, i32, i32) -> Block>(
+    pub(super) fn raycast_blocks_core<F, S>(
         eye: Vec3,
         dir: Vec3,
         block_at: &F,
-    ) -> Option<RaycastHit> {
+        shape_hit: &S,
+    ) -> Option<RaycastHit>
+    where
+        F: Fn(i32, i32, i32) -> Block,
+        S: Fn(Vec3, Vec3, IVec3, Block) -> Option<f32>,
+    {
         if dir.length_squared() <= f32::EPSILON {
             return None;
         }
@@ -70,12 +99,21 @@ impl Player {
         loop {
             let pos = IVec3::new(ix, iy, iz);
             let block = block_at(ix, iy, iz);
-            if block.is_solid() {
-                return Some(hit(pos, entry_normal, block));
-            }
-
             let t_exit = next_boundary_t(t_max);
-            if block.render_shape() == RenderShape::Cross {
+            if block.is_solid() {
+                // A full cube fills its cell, so it stops the ray on entry. A
+                // custom-shaped solid (the inset chest, the thin/tilted torch pole)
+                // only registers when the ray actually crosses its shape — otherwise
+                // the ray sees past the empty parts of its cell.
+                if block.visual_aabb().is_none() && block != Block::Torch {
+                    return Some(hit(pos, entry_normal, block));
+                }
+                if let Some(t) = shape_hit(eye, dir, pos, block) {
+                    if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
+                        return Some(hit(pos, entry_normal, block));
+                    }
+                }
+            } else if block.render_shape() == RenderShape::Cross {
                 if let Some(t) = intersect_cross_plant(eye, dir, pos, block) {
                     if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
                         return Some(hit(pos, entry_normal, block));
@@ -160,6 +198,80 @@ fn should_outline_as_full_block(bounds: TileAlphaBounds) -> bool {
     let width = bounds.u_max - bounds.u_min;
     let height = bounds.v_max - bounds.v_min;
     width >= 0.875 && height >= 0.875
+}
+
+/// Distance along the ray to the first crossing of a block's PRECISE shape — the
+/// inset chest body, or the torch pole — or `None` if the ray misses it. Full cubes
+/// never reach here (they stop the ray on cell entry); this is what lets selection
+/// ignore the empty parts of an inset/thin block's cell.
+fn precise_shape_hit(
+    eye: Vec3,
+    dir: Vec3,
+    pos: IVec3,
+    block: Block,
+    world: &World,
+) -> Option<f32> {
+    if block == Block::Torch {
+        return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
+    }
+    // Any other custom-shaped solid (the chest) outlines its inset visual box.
+    let (mn, mx) = block.visual_aabb()?;
+    let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+    ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
+}
+
+/// First-crossing distance of the ray through the torch's pole box. The pole is a
+/// thin, possibly-tilted box, so transform the ray into the torch's local model
+/// space (the inverse of its placement transform — a rigid rotate+translate, so
+/// distances along the ray are preserved) and test the upright local box.
+fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> Option<f32> {
+    let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+    let inv = placement.model_transform().inverse();
+    let ol = inv.transform_point3(eye - base);
+    let dl = inv.transform_vector3(dir);
+    ray_vs_aabb(
+        ol,
+        dl,
+        Vec3::new(-POLE_HALF, 0.0, -POLE_HALF),
+        Vec3::new(POLE_HALF, POLE_HEIGHT, POLE_HALF),
+    )
+}
+
+/// Ray vs axis-aligned box (slab method): the entry distance `t >= 0`, or `None`
+/// when the ray misses the box or it lies entirely behind the eye.
+fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+    let (e, d, lo, hi) = (
+        eye.to_array(),
+        dir.to_array(),
+        min.to_array(),
+        max.to_array(),
+    );
+    let mut t_near = f32::NEG_INFINITY;
+    let mut t_far = f32::INFINITY;
+    for i in 0..3 {
+        if d[i].abs() < EPS {
+            // Ray parallel to this slab: miss unless the origin is within it.
+            if e[i] < lo[i] - EPS || e[i] > hi[i] + EPS {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / d[i];
+            let mut t1 = (lo[i] - e[i]) * inv;
+            let mut t2 = (hi[i] - e[i]) * inv;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            t_near = t_near.max(t1);
+            t_far = t_far.min(t2);
+            if t_near > t_far {
+                return None;
+            }
+        }
+    }
+    if t_far < 0.0 {
+        return None;
+    }
+    Some(t_near.max(0.0))
 }
 
 fn intersect_cross_plant(eye: Vec3, dir: Vec3, block_pos: IVec3, block: Block) -> Option<f32> {

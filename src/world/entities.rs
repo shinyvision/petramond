@@ -107,7 +107,7 @@ impl DroppedItems {
             it.tick(dt, world, magnet);
             let after = voxel_at(it.pos);
             if before != after {
-                it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
+                it.skylight = world.combined_light6_at_world(after.x, after.y, after.z);
             }
         }
     }
@@ -236,11 +236,12 @@ impl DroppedItems {
         split_offs.push(split);
     }
 
-    /// Recompute every active item's cached skylight (after a world light update).
+    /// Recompute every active item's cached light (after a world light update), so a
+    /// dropped item brightens/dims when a nearby torch is placed or removed.
     pub fn refresh_lights(&mut self, world: &World) {
         for it in &mut self.items {
             let c = voxel_at(it.pos);
-            it.skylight = world.skylight6_at_world(c.x, c.y, c.z);
+            it.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
         }
     }
 

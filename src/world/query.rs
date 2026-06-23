@@ -67,6 +67,42 @@ impl World {
         ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63) as u8
     }
 
+    /// Cached block-light (torches) at a world voxel on the x2 scale. `0` outside any
+    /// chunk's block-light band and in unloaded chunks — there is no block light
+    /// without a nearby emitter.
+    pub fn blocklight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        match self.chunk_at_world(wx, wy, wz) {
+            Some((c, lx, _, lz)) => c.blocklight_at(lx, wy, lz),
+            None => 0,
+        }
+    }
+
+    /// Block-light converted to the 6-bit packed vertex scale (`0..=63`).
+    pub fn blocklight6_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        let l = self.blocklight_at_world(wx, wy, wz) as u32;
+        ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63) as u8
+    }
+
+    /// The brighter of skylight and block-light (6-bit) — how dynamic geometry (the
+    /// held item / hand, particles, dropped items) should be lit, mirroring the way
+    /// the chunk mesher folds the two channels so a torch lights them too.
+    pub fn combined_light6_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        self.skylight6_at_world(wx, wy, wz)
+            .max(self.blocklight6_at_world(wx, wy, wz))
+    }
+
+    /// Combined brightness AND the warm-tint amount for dynamic geometry that also
+    /// takes the warm block-light tint (the held item / hand, particles). Returns
+    /// `(combined6, warm)` where `warm` is `crate::torch::warm_amount * 255` packed
+    /// into a byte (divide by 255 at render) — so the same warmth the chunk mesher
+    /// bakes into static blocks applies to dynamic geometry.
+    pub fn dynamic_light_at_world(&self, wx: i32, wy: i32, wz: i32) -> (u8, u8) {
+        let sky6 = self.skylight6_at_world(wx, wy, wz);
+        let block6 = self.blocklight6_at_world(wx, wy, wz);
+        let warm = crate::torch::warm_amount(sky6 as f32 / 63.0, block6 as f32 / 63.0);
+        (sky6.max(block6), (warm * 255.0) as u8)
+    }
+
     /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its
     /// owning chunk is not currently loaded.
     pub fn column_biome(&self, wx: i32, wz: i32) -> Option<u8> {

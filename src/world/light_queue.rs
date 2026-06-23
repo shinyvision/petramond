@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::chunk::{Chunk, ChunkPos};
-use crate::mesh::compute_chunk_skylight_with_neighbors;
+use crate::mathh::IVec3;
+use crate::mesh::{compute_chunk_blocklight_with_neighbors, compute_chunk_skylight_with_neighbors};
 
 pub(super) struct LightBakeQueue {
     backend: Backend,
@@ -20,6 +21,10 @@ struct LightBakeJob {
     revision: u64,
     chunk: Chunk,
     neighbours: HashMap<ChunkPos, Chunk>,
+    /// World positions of light emitters (torches) in the center + halo chunks,
+    /// gathered from their torch maps so the block-light flood needn't scan every
+    /// block. Empty for the common torch-free neighbourhood.
+    emitters: Vec<IVec3>,
 }
 
 pub(super) struct LightBakeResult {
@@ -29,6 +34,10 @@ pub(super) struct LightBakeResult {
     pub band: Box<[u8]>,
     pub ylo: i32,
     pub yhi: i32,
+    /// Block-light band + its own `[ylo, yhi]` (empty when no emitters are near).
+    pub block_band: Box<[u8]>,
+    pub block_ylo: i32,
+    pub block_yhi: i32,
 }
 
 impl LightBakeQueue {
@@ -63,6 +72,7 @@ impl LightBakeQueue {
             revision,
             chunk: chunk.snapshot_for_light_bake(),
             neighbours: snapshot_neighbours(pos, chunks),
+            emitters: collect_emitters(pos, chunks),
         };
         self.pending.insert(pos, PendingLightBake { id });
         self.backend.submit(job);
@@ -102,6 +112,40 @@ fn snapshot_neighbours(
     out
 }
 
+/// World positions of every light emitter in the bake neighbourhood (center + 8
+/// neighbours), read cheaply from each chunk's sparse block-entity maps: every
+/// torch, plus every furnace that is currently LIT (a furnace's lit state lives in
+/// its entity, not its block id, so only the main thread — which holds the real
+/// chunks — can tell which ones glow). Empty when nothing nearby emits, which lets
+/// the block-light flood early-out.
+fn collect_emitters(pos: ChunkPos, chunks: &HashMap<ChunkPos, Chunk>) -> Vec<IVec3> {
+    let mut out = Vec::new();
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let Some(c) = chunks.get(&ChunkPos::new(pos.cx + dx, pos.cz + dz)) else {
+                continue;
+            };
+            let (ox, oz) = c.chunk_origin_world();
+            // Invert a local block index (idx = y*256 + z*16 + x) to a world pos.
+            let world_of = |key: u16| {
+                IVec3::new(
+                    ox + (key & 0x0F) as i32,
+                    (key >> 8) as i32,
+                    oz + ((key >> 4) & 0x0F) as i32,
+                )
+            };
+            out.extend(c.torches().keys().map(|&k| world_of(k)));
+            out.extend(
+                c.furnaces()
+                    .iter()
+                    .filter(|(_, f)| f.is_lit())
+                    .map(|(&k, _)| world_of(k)),
+            );
+        }
+    }
+    out
+}
+
 fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     let LightBakeJob {
         id,
@@ -109,10 +153,16 @@ fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         revision,
         chunk,
         neighbours,
+        emitters,
     } = job;
     let (band, ylo, yhi) = compute_chunk_skylight_with_neighbors(&chunk, |cx, cz| {
         neighbours.get(&ChunkPos::new(cx, cz))
     });
+    let (block_band, block_ylo, block_yhi) = compute_chunk_blocklight_with_neighbors(
+        &chunk,
+        |cx, cz| neighbours.get(&ChunkPos::new(cx, cz)),
+        &emitters,
+    );
     LightBakeResult {
         id,
         pos,
@@ -120,6 +170,9 @@ fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         band,
         ylo,
         yhi,
+        block_band,
+        block_ylo,
+        block_yhi,
     }
 }
 

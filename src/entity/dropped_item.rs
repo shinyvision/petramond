@@ -143,7 +143,8 @@ impl DroppedItem {
     /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
     /// (or a far target) to disable magnetism.
     pub fn tick(&mut self, dt: f32, world: &World, magnet_target: Option<Vec3>) {
-        let solid_at = |p: IVec3| Block::from_id(world.chunk_block(p.x, p.y, p.z)).is_solid();
+        let solid_at =
+            |p: IVec3| Block::from_id(world.chunk_block(p.x, p.y, p.z)).blocks_movement();
         let flow_at = |p: IVec3| world.water_flow_dir_at(p.x, p.y, p.z);
         self.integrate_with_flow(dt, magnet_target, &solid_at, &flow_at);
     }

@@ -14,6 +14,7 @@ pub mod entities;
 mod furnace;
 pub mod level;
 mod region;
+mod torch;
 
 pub use codec::ChunkSnapshot;
 pub use level::LevelData;

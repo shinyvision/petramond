@@ -17,9 +17,11 @@ const WATER_FLOW_FPS: f32 = 12.0;
 
 // Skylight floor: a fully sky-occluded surface fades to this fraction of its lit
 // value rather than to black. FINAL_MIN is the absolute darkest pixel ("very
-// dark, not pitch black"). Tune these to taste.
-const SKY_MIN: f32 = 0.05;
-const FINAL_MIN: f32 = 0.02;
+// dark, not pitch black"). Kept low so an unlit cave is genuinely dark and a
+// torch's block-light (folded into the same channel) reads dramatically against
+// it. Keep in sync with `model3d.wgsl` and `render::lighting`.
+const SKY_MIN: f32 = 0.02;
+const FINAL_MIN: f32 = 0.006;
 // Steepness of the light->dark falloff: higher = more of the range reads dark.
 const SKY_GAMMA: f32 = 3.0;
 

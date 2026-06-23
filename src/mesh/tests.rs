@@ -109,6 +109,7 @@ fn edge_water_mesh(east_chunk_loaded: bool) -> ChunkMesh {
         |_, _, _| 0u8,
         |_, _| 0u8,
         |_, _, _| SKY_FULL,
+        |_, _, _| 0u8,
         |cx, cz| cx == 0 && cz == 0 || east_chunk_loaded && cx == 1 && cz == 0,
     )
 }
@@ -160,8 +161,15 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     let water0 = |_: i32, _: i32, _: i32| 0u8;
     let biome0 = |_: i32, _: i32| 0u8;
     let light = |_: i32, _: i32, _: i32| SKY_FULL;
-    let mesh =
-        build_mesh_lods_with_loaded_neighbors(&chunk, air, water0, biome0, light, |_, _| true);
+    let mesh = build_mesh_lods_with_loaded_neighbors(
+        &chunk,
+        air,
+        water0,
+        biome0,
+        light,
+        |_, _, _| 0u8,
+        |_, _| true,
+    );
 
     // Decode the upward-facing tile for each top vertex (those raised above the
     // cell floor). Collect tile ids and the lowest/highest surface heights.
@@ -219,6 +227,7 @@ fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
         |_, _, _| 0u8,
         |_, _| 0u8,
         |_, _, _| SKY_FULL,
+        |_, _, _| 0u8,
         |_, _| true,
     );
 
@@ -256,6 +265,7 @@ fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
         |_, _, _| 0u8,
         |_, _| 0u8,
         |_, _, _| SKY_FULL,
+        |_, _, _| 0u8,
         |_, _| true,
     );
 
@@ -964,7 +974,7 @@ fn mesh_bytes_golden_is_byte_stable() {
     h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.transparent_idx), h);
 
     assert_eq!(
-        h, 0x4762_33b0_83cd_740b,
+        h, 0xf9f3_10ed_9bbc_dd27,
         "meshed vertex/index byte layout changed"
     );
 }

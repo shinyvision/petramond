@@ -3,8 +3,9 @@
 /// Full skylight on the 6-bit packed scale used by `mesh::Vertex`.
 pub(super) const FULL_SKYLIGHT: u8 = 63;
 
-const SKY_MIN: f32 = 0.05;
-const FINAL_MIN: f32 = 0.02;
+// Keep in sync with `block.wgsl` / `model3d.wgsl` (dark cave floor).
+const SKY_MIN: f32 = 0.02;
+const FINAL_MIN: f32 = 0.006;
 
 #[inline]
 pub(super) fn skylight_bits(skylight: u8) -> u32 {

@@ -197,6 +197,7 @@ pub struct Renderer {
     pub held_item: HeldItemView,
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
+    held_item_warm: u8,
     /// Dropped item-entities to draw in the world this frame.
     pub item_entities: Vec<ItemEntityInstance>,
     /// Particle billboards to draw this frame.
@@ -489,6 +490,7 @@ async fn new_renderer_inner(
         held_item: HeldItemView::default(),
         held_item_anim: HeldItemAnimator::default(),
         held_item_skylight: super::lighting::FULL_SKYLIGHT,
+        held_item_warm: 0,
         item_entities: Vec::new(),
         particles: Vec::new(),
         ui: UiSnapshot::default(),
@@ -591,9 +593,11 @@ impl Renderer {
         self.held_item = self.held_item_anim.update(v);
     }
 
-    /// Store the world skylight to apply to the first-person hand / held item.
-    pub fn set_held_item_light(&mut self, skylight: u8) {
+    /// Store the combined light + warm-tint amount to apply to the first-person hand
+    /// / held item (so it brightens AND warms near torches/furnaces).
+    pub fn set_held_item_light(&mut self, skylight: u8, warm: u8) {
         self.held_item_skylight = skylight.min(super::lighting::FULL_SKYLIGHT);
+        self.held_item_warm = warm;
     }
 
     /// Store the dropped item-entities to draw this frame. Reuses the existing
@@ -826,6 +830,7 @@ impl Renderer {
                 &self.held_item,
                 aspect,
                 self.held_item_skylight,
+                self.held_item_warm,
                 &mut hv,
                 &mut hi,
             );
@@ -866,6 +871,15 @@ impl Renderer {
                     self.held_item_skylight,
                     &mut iv,
                 );
+                // Warm the extruded held sprite by the block-light at the player, to
+                // match the warm tint static blocks + the model3d hand take near a
+                // torch/furnace. (Item entities reuse this builder but aren't warmed.)
+                if self.held_item_warm > 0 {
+                    let w = self.held_item_warm as f32 / 255.0;
+                    for v in iv.iter_mut() {
+                        v.tint = crate::torch::warm_tint(v.tint, w);
+                    }
+                }
                 let cap = super::pipeline::MAX_ITEM3D_VERTICES as usize;
                 if count > 0 && iv.len() <= cap {
                     self.queue

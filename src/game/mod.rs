@@ -13,6 +13,7 @@ use crate::camera::Camera;
 use crate::crafting::{load_recipes, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::furnace::Facing;
+use crate::torch::TorchPlacement;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{lerp, voxel_at, IVec3, SelectionShape, Vec3};
@@ -491,7 +492,7 @@ impl Game {
         let dir = self.cam.forward();
         let origin = self.cam.pos + dir * 0.3;
         let mut drop = DroppedItem::thrown(origin, stack, dir);
-        drop.skylight = sky6_at_pos(&self.world, origin);
+        drop.skylight = light6_at_pos(&self.world, origin);
         self.world.spawn_item(drop);
         // Flick the hand forward (place jab) on the next rendered frame.
         self.threw_item = true;
@@ -583,8 +584,11 @@ impl Game {
         &self.particles
     }
 
-    pub fn held_item_skylight(&self) -> u8 {
-        sky6_at_pos(&self.world, self.cam.pos)
+    /// Combined light + warm-tint amount at the player's eye, for lighting the
+    /// first-person hand / held item — it brightens AND warms near torches/furnaces.
+    pub fn held_item_light(&self) -> (u8, u8) {
+        let c = voxel_at(self.cam.pos);
+        self.world.dynamic_light_at_world(c.x, c.y, c.z)
     }
 
     pub fn environment(&self, now: f64) -> GameEnvironment {
@@ -721,7 +725,7 @@ impl Game {
                 .look
                 .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
                 .map(|h| h.normal);
-            let light = break_light(&self.world, event.pos, hit_normal);
+            let (light, warm) = break_light(&self.world, event.pos, hit_normal);
             self.world
                 .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
             // A broken furnace scatters whatever it held, regardless of tool (the
@@ -739,9 +743,13 @@ impl Game {
                         self.spawn_item_stack(event.pos, stack, light);
                     }
                 }
+            } else if event.block == Block::Torch {
+                // A torch has no contents — just forget its recorded orientation so
+                // the freed cell carries no stale block-entity state.
+                self.world.take_torch(event.pos);
             }
             self.particles
-                .spawn_break_burst_lit(event.pos, event.block, light);
+                .spawn_break_burst_lit(event.pos, event.block, light, warm);
             if event.harvested {
                 self.spawn_drops(event.pos, event.block, light);
             }
@@ -754,9 +762,10 @@ impl Game {
                     self.mining_dust_t = 0.0;
                     let block =
                         Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-                    let light = sky6_at_block(&self.world, h.block + h.normal);
+                    let cell = h.block + h.normal;
+                    let (light, warm) = self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
                     self.particles
-                        .spawn_mining_lit(h.block, h.normal, block, light);
+                        .spawn_mining_lit(h.block, h.normal, block, light, warm);
                 }
             }
         } else {
@@ -809,19 +818,45 @@ impl Game {
         };
 
         let p = h.block + h.normal;
+
+        // A torch only mounts on a floor or wall (never a ceiling) and needs a full
+        // solid face to attach to. Resolve that up front so an invalid spot is a
+        // no-op — the click neither places nor consumes the torch — rather than
+        // leaving a floating one. `support_cell` is the clicked block here, which the
+        // raycast already proved exists; the extra gate rejects non-full faces
+        // (leaves, a chest, another torch…).
+        let torch_placement = if block == Block::Torch {
+            let Some(tp) = TorchPlacement::from_place_normal(h.normal) else {
+                return false;
+            };
+            let s = tp.support_cell(p);
+            if !Block::from_id(self.world.chunk_block(s.x, s.y, s.z)).is_opaque() {
+                return false;
+            }
+            Some(tp)
+        } else {
+            None
+        };
+
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
+        // A torch has no collision, so it may sit in the player's own cell; every
+        // other block is gated on not overlapping the player.
+        let clear_of_player = block == Block::Torch || !self.player.intersects_block(p);
         if target.is_replaceable()
-            && !self.player.intersects_block(p)
+            && clear_of_player
             && self.world.set_block_world(p.x, p.y, p.z, block)
         {
             // A placed furnace/chest gets an empty block-entity from the moment it
-            // exists, its front oriented to face the player.
+            // exists, its front oriented to face the player; a torch records how it
+            // is mounted (floor vs which wall) for the mesher + outline.
             if block == Block::Furnace {
                 self.world
                     .insert_furnace(p, facing_from_forward(self.cam.forward()));
             } else if block == Block::Chest {
                 self.world
                     .insert_chest(p, facing_from_forward(self.cam.forward()));
+            } else if let Some(tp) = torch_placement {
+                self.world.insert_torch(p, tp);
             }
             self.player.inventory.decrement_selected();
             true
@@ -950,12 +985,15 @@ fn facing_from_forward(forward: Vec3) -> Facing {
     }
 }
 
-fn sky6_at_pos(world: &World, pos: Vec3) -> u8 {
-    sky6_at_block(world, voxel_at(pos))
+/// The 6-bit light level for dynamic geometry at a world position — the brighter of
+/// skylight and torch block-light, so the held item, particles, and dropped items
+/// are lit by torches just like the static blocks around them.
+fn light6_at_pos(world: &World, pos: Vec3) -> u8 {
+    light6_at_block(world, voxel_at(pos))
 }
 
-fn sky6_at_block(world: &World, pos: IVec3) -> u8 {
-    world.skylight6_at_world(pos.x, pos.y, pos.z)
+fn light6_at_block(world: &World, pos: IVec3) -> u8 {
+    world.combined_light6_at_world(pos.x, pos.y, pos.z)
 }
 
 fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {
@@ -1024,9 +1062,13 @@ fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
     crate::world::water::fills_cell(world.water_meta_world(wx, wy, wz), water_above)
 }
 
-fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> u8 {
+/// Combined light + warm at the lit face of a just-broken block, for its break
+/// particles: the mined face's `(combined, warm)`, or the brightest neighbour when
+/// the face is unknown.
+fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8) {
+    let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
-        return sky6_at_block(world, pos + n);
+        return at(pos + n);
     }
 
     [
@@ -1038,9 +1080,9 @@ fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> u8 {
         -IVec3::Z,
     ]
     .into_iter()
-    .map(|n| sky6_at_block(world, pos + n))
-    .max()
-    .unwrap_or(63)
+    .map(|n| at(pos + n))
+    .max_by_key(|(combined, _)| *combined)
+    .unwrap_or((63, 0))
 }
 
 #[cfg(test)]

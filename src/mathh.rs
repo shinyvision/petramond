@@ -15,6 +15,15 @@ pub enum SelectionShape {
         v_min: f32,
         v_max: f32,
     },
+    /// A torch pole. The outline's box corners are `transform`-mapped from the
+    /// torch's local model box and offset by `origin` (the cell), so the wireframe
+    /// traces the rendered pole — straight for a floor torch, tilted for a wall one.
+    /// `transform` is the torch's model transform (`TorchPlacement::model_transform`);
+    /// kept as a plain `Mat4` so this generic math type stays torch-agnostic.
+    Torch {
+        origin: IVec3,
+        transform: Mat4,
+    },
 }
 
 impl SelectionShape {

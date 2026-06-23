@@ -65,7 +65,7 @@ impl World {
                 let lz = ((key >> 4) & 0x0F) as i32;
                 let ly = (key >> 8) as i32;
                 let pos = IVec3::new(ox + lx, ly, oz + lz);
-                let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
+                let sky = self.combined_light6_at_world(pos.x, pos.y, pos.z);
                 out.push((pos, chest.facing, sky));
             }
         }

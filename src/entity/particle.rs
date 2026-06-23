@@ -12,7 +12,7 @@
 use crate::atlas::{self, Tile};
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::hash01;
@@ -68,10 +68,13 @@ const FADE_TAIL: f32 = 0.4;
 pub struct Particle {
     pub pos: Vec3,
     pub vel: Vec3,
-    /// 6-bit skylight sampled when the particle spawned. Render code consumes
-    /// this directly so frame mapping does not hit the world chunk map for every
-    /// live fleck.
+    /// 6-bit combined sky+block light, re-sampled each tick so the fleck tracks the
+    /// lighting it drifts through (and dims when a nearby torch is broken).
     pub skylight: u8,
+    /// Warm-tint amount (`crate::torch::warm_amount * 255`) from nearby block-light,
+    /// re-sampled each tick; the render warms the fleck's tint by this so flecks near
+    /// a torch/furnace glow warm.
+    pub warm: u8,
     /// Block face tile this fleck is cut from.
     pub tile: Tile,
     /// Sub-tile patch origin in `[0, 1]` tile fractions (bottom-left).
@@ -176,8 +179,17 @@ impl ParticleSystem {
     /// live slice stays packed at the front.
     pub fn tick(&mut self, dt: f32, world: &World) {
         self.tick_with(dt, &|p| {
-            Block::from_id(world.chunk_block(p.x, p.y, p.z)).is_solid()
+            Block::from_id(world.chunk_block(p.x, p.y, p.z)).blocks_movement()
         });
+        // Re-sample light each tick so a fleck dims/brightens as the lighting around
+        // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
+        // at its spawn light.
+        for p in &mut self.particles {
+            let c = voxel_at(p.pos);
+            let (light, warm) = world.dynamic_light_at_world(c.x, c.y, c.z);
+            p.skylight = light;
+            p.warm = warm;
+        }
     }
 
     /// Pure tick behind [`tick`](Self::tick); `solid_at` reports solid cells so
@@ -257,17 +269,18 @@ impl ParticleSystem {
     /// Mining face dust: 2–4 flecks spat off the mined face, drifting outward
     /// along the hit normal and falling under gravity. Lifetime 0.5–1.5 s.
     pub fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
-        self.spawn_mining_lit(block_pos, face_normal, block, 63);
+        self.spawn_mining_lit(block_pos, face_normal, block, 63, 0);
     }
 
-    /// Same as [`spawn_mining`](Self::spawn_mining), with caller-provided
-    /// render skylight on the 6-bit packed scale.
+    /// Same as [`spawn_mining`](Self::spawn_mining), with caller-provided render
+    /// light (6-bit combined) and warm-tint amount; both are re-sampled each tick.
     pub fn spawn_mining_lit(
         &mut self,
         block_pos: IVec3,
         face_normal: IVec3,
         block: Block,
         skylight: u8,
+        warm: u8,
     ) {
         let tile = Self::face_tile(block, face_normal);
         // Tint by the sampled face tile (a top-face grass fleck greens; the side does not).
@@ -300,6 +313,7 @@ impl ParticleSystem {
                 pos,
                 vel,
                 skylight: skylight.min(63),
+                warm,
                 tile,
                 uv_min,
                 uv_size: PATCH_FRAC,
@@ -314,12 +328,12 @@ impl ParticleSystem {
     /// Break burst: 16–32 flecks erupting from the block centre in all
     /// directions. Lifetime 1–3 s. Mixes side/top tiles for visual variety.
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(block_pos, block, 63);
+        self.spawn_break_burst_lit(block_pos, block, 63, 0);
     }
 
-    /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with
-    /// caller-provided render skylight on the 6-bit packed scale.
-    pub fn spawn_break_burst_lit(&mut self, block_pos: IVec3, block: Block, skylight: u8) {
+    /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with caller-provided
+    /// render light (6-bit combined) and warm-tint amount; both re-sampled each tick.
+    pub fn spawn_break_burst_lit(&mut self, block_pos: IVec3, block: Block, skylight: u8, warm: u8) {
         let tiles = block.tiles();
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
             + Vec3::splat(0.5);
@@ -351,6 +365,7 @@ impl ParticleSystem {
                 pos,
                 vel,
                 skylight: skylight.min(63),
+                warm,
                 tile,
                 uv_min,
                 uv_size: PATCH_FRAC,
@@ -386,6 +401,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            warm: 0,
             tile,
             uv_min: [0.25, 0.5],
             uv_size: 0.25,
@@ -411,6 +427,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            warm: 0,
             tile: Tile::ALL[0],
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
@@ -438,6 +455,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            warm: 0,
             tile: Tile::ALL[0],
             uv_min: [0.0, 0.0],
             uv_size: 0.25,

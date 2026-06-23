@@ -21,6 +21,12 @@ const PLANT_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 // occluder — it's drawn as a custom inset model (the mesher skips its cell), so
 // neighbours must keep their faces toward it and it casts no full-cube shadow.
 const CHEST_FLAGS: BlockFlags = BlockFlags::SOLID;
+// Torch: SOLID so the ray can select it (its real shape is far too thin to DDA),
+// and TRANSPARENT so skylight/block-light flood through its cell and neighbours
+// keep their faces toward it. NOT opaque, NOT an AO occluder, NOT replaceable —
+// and its collision box is overridden to empty (see `Block::collision_boxes`), so
+// the player walks through it. Drawn as a custom 3D pole (see `mesh::torch`).
+const TORCH_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::TRANSPARENT);
 
 pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Air,
@@ -107,6 +113,7 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::CraftingTable,
     Block::Furnace,
     Block::Chest,
+    Block::Torch,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -973,6 +980,22 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         harvest_tier: 0,
         hardness: 2.5,
         drop: drops_self!(Chest),
+    },
+    BlockDef {
+        block: Block::Torch,
+        flags: TORCH_FLAGS,
+        // [top, bottom, side]: the in-world pole (see mesh::torch) caps the top with
+        // the flame tile and wraps the four thin sides with the center-strip body;
+        // the bottom reuses the strip (it sits against the support and is unseen).
+        // The inventory icon / held item use the full `Tile::Torch` sprite instead
+        // (see ItemType::render_kind), so these per-face tiles only feed the model.
+        tiles: [Tile::TorchTop, Tile::TorchSide, Tile::TorchSide],
+        // Manufactured object, not a plant: instant to break, hand-harvestable,
+        // drops itself. `Other` keeps it out of the tool-gated Stone/Ore set.
+        material: BlockMaterial::Other,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(Torch),
     },
 ];
 

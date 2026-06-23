@@ -116,6 +116,7 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::CopperIngot,
     ItemType::Furnace,
     ItemType::Chest,
+    ItemType::Torch,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -852,6 +853,15 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         // Key `chest` is what the chest recipe's result resolves to.
         key: "chest",
         name: "Chest",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::Torch,
+        // Key `torch` is what the torch recipe's result resolves to.
+        key: "torch",
+        name: "Torch",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
         tags: &[],
