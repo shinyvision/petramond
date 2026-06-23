@@ -10,6 +10,9 @@ pub const EYE: f32 = 1.62;
 /// Largest physics sub-step; `app` splits a frame's `dt` into chunks this size
 /// so a long stall can't make one update step move (and tunnel) too far.
 pub const DT_MAX: f32 = 0.05;
+/// Pitch is clamped to just shy of straight up/down (~89°) so the look never
+/// tips through vertical — past it the view flips and yaw inverts (gimbal).
+pub const PITCH_LIMIT: f32 = 1.553_343;
 
 /// Per-frame movement intent, in world space.
 #[derive(Copy, Clone, Default)]
@@ -31,6 +34,13 @@ pub struct Player {
     /// Feet centre (see module docs).
     pub pos: Vec3,
     pub vel: Vec3,
+    /// Look direction, radians. `yaw` turns about +Y; `pitch` tilts up/down,
+    /// clamped to [`PITCH_LIMIT`]. The player is the authority for the facing —
+    /// the camera mirrors these onto its own orientation each frame, exactly as
+    /// `cam.pos` mirrors [`eye`](Self::eye) — so the look persists in `level.dat`
+    /// alongside the rest of the player state.
+    pub yaw: f32,
+    pub pitch: f32,
     pub on_ground: bool,
     mode: PlayerMode,
     /// True between a jump take-off and the next blocked vertical sweep (landing
@@ -47,11 +57,21 @@ impl Player {
         Self {
             pos: feet,
             vel: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
             on_ground: false,
             mode: PlayerMode::Survival,
             jumping: false,
             inventory: crate::inventory::Inventory::new(),
         }
+    }
+
+    /// Turn the look by `(dyaw, dpitch)` radians (mouse delta × sensitivity).
+    /// Yaw wraps freely; pitch is clamped to [`PITCH_LIMIT`] so the view can't
+    /// tip past vertical.
+    pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
+        self.yaw += dyaw;
+        self.pitch = (self.pitch + dpitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
     }
 
     #[inline]

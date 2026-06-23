@@ -199,6 +199,13 @@ const TILES: &[(&str, &str)] = &[
     ("diamond_axe", "diamond_axe.png"),
     ("iron_pickaxe", "iron_pickaxe.png"),
     ("diamond_pickaxe", "diamond_pickaxe.png"),
+    // Shovels: the four shovel tiers (dirt/sand tool). Flat item sprites
+    // referenced by `ItemType::item_sprite`. Appended last so every preceding
+    // tile id stays stable.
+    ("wooden_shovel", "wooden_shovel.png"),
+    ("stone_shovel", "stone_shovel.png"),
+    ("iron_shovel", "iron_shovel.png"),
+    ("diamond_shovel", "diamond_shovel.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

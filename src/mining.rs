@@ -8,8 +8,10 @@
 //! frame and never display a break overlay.
 //!
 //! Tools: a held tool whose KIND matches the block's
-//! [`Block::preferred_tool`] (a pickaxe on stone/ore, an axe on wood) mines it
-//! faster by its tier (×2/×4/×6/×8 for wooden/stone/iron/diamond). For a
+//! [`Block::preferred_tool`] (a pickaxe on stone/ore, an axe on wood, a shovel on
+//! dirt/sand) mines it faster by its tier (×2/×4/×6/×8 for wooden/stone/iron/
+//! diamond), scaled by the kind's efficiency — the shovel digs at 0.5625× so it
+//! is uniformly slower than a pickaxe/axe of equal tier. For a
 //! tool-gated block (stone/ore) a pickaxe must also meet the block's
 //! [`Block::harvest_tier`] to unlock the drop; a wrong-kind, insufficient, or
 //! absent tool mines at the bare-hand rate and — for those blocks — yields nothing.
@@ -203,8 +205,10 @@ pub fn harvests(block: Block, tool: Option<Tool>) -> bool {
 /// instant blocks; callers must not pass unbreakable blocks (`hardness < 0`). A
 /// tool of the block's [`preferred_tool`](Block::preferred_tool) kind that also
 /// meets its [`harvest_tier`](Block::harvest_tier) divides the hand time by
-/// [`tool_speed`]; a wrong-kind, insufficient, or absent tool mines at the
-/// bare-hand rate.
+/// [`tool_speed`] scaled by the kind's
+/// [`mining_efficiency`](crate::item::ToolKind::mining_efficiency) (so a shovel
+/// digs slower than a pickaxe/axe of equal tier); a wrong-kind, insufficient, or
+/// absent tool mines at the bare-hand rate.
 #[inline]
 pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     let h = block.hardness();
@@ -218,7 +222,11 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     // speed, matching the no-drop gate. `max(1)` covers wood, whose harvest tier is
     // 0: any axe (tier >= 1) speeds it, a bare hand never does.
     if power >= block.harvest_tier().max(1) {
-        base / tool_speed(power)
+        // `power >= 1` means the tool's kind matched the block, so `tool` is Some.
+        // Scale the shared tier ladder by the kind's efficiency so a clumsier kind —
+        // the shovel — is uniformly slower than a pickaxe/axe of the same tier.
+        let efficiency = tool.map_or(1.0, |t| t.kind.mining_efficiency());
+        base / (tool_speed(power) * efficiency)
     } else {
         base
     }
@@ -268,6 +276,14 @@ mod tests {
     fn axe(tier: u8) -> Option<Tool> {
         Some(Tool {
             kind: ToolKind::Axe,
+            tier,
+        })
+    }
+
+    /// A shovel of `tier` in hand.
+    fn shovel(tier: u8) -> Option<Tool> {
+        Some(Tool {
+            kind: ToolKind::Shovel,
             tier,
         })
     }
@@ -563,6 +579,47 @@ mod tests {
         }
         // Conversely, an axe is the wrong kind for stone/ore: no speed-up.
         assert_eq!(break_time(Block::Stone, axe(4)), break_time(Block::Stone, None));
+    }
+
+    #[test]
+    fn shovels_speed_dirt_and_sand_but_less_than_an_equal_tier_pickaxe_axe() {
+        use crate::item::ToolKind;
+        // Dirt is shovel-material (hardness 0.5 -> 1.25 s by hand).
+        let hand = break_time(Block::Dirt, None);
+        assert_eq!(hand, 1.25);
+
+        // A shovel is, by design, a less efficient digger than the baseline kinds.
+        let eff = ToolKind::Shovel.mining_efficiency();
+        assert!(eff < 1.0, "shovel must be less efficient than a pickaxe/axe");
+
+        for tier in 1..=4u8 {
+            let with_shovel = break_time(Block::Dirt, shovel(tier));
+            // Still a real speed-up over the bare hand at every tier...
+            assert!(with_shovel < hand, "shovel tier {tier} should beat the hand");
+            // ...yet slower than a full-efficiency (pickaxe/axe-grade) tool of the
+            // same tier would be — the kind penalty applies across the board.
+            let full_speed = hand / tool_speed(tier);
+            assert!(
+                with_shovel > full_speed,
+                "shovel tier {tier} should be slower than a full-efficiency tool"
+            );
+            // Exact: the shared tier ladder scaled by the kind's efficiency.
+            assert_eq!(with_shovel, hand / (tool_speed(tier) * eff));
+        }
+
+        // The whole dirt/sand family is shovel-sped (grass, gravel, clay, …).
+        for b in [Block::Grass, Block::Sand, Block::Gravel, Block::Clay] {
+            assert!(
+                break_time(b, shovel(1)) < break_time(b, None),
+                "{b:?} should mine faster with a shovel"
+            );
+        }
+        // A pickaxe/axe is the wrong kind for dirt: hand speed, no faster than bare.
+        assert_eq!(break_time(Block::Dirt, pick(4)), hand);
+        assert_eq!(break_time(Block::Dirt, axe(4)), hand);
+        // And a shovel is the wrong kind for stone/wood: no speed-up there.
+        assert_eq!(break_time(Block::Stone, shovel(4)), break_time(Block::Stone, None));
+        assert_eq!(break_time(Block::OakLog, shovel(4)), break_time(Block::OakLog, None));
     }
 
     #[test]

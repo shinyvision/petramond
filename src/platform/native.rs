@@ -212,6 +212,27 @@ impl ApplicationHandler for NativeHost {
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
+
+    /// Tear down the GPU + window state here, while winit still holds the live
+    /// Wayland connection. winit calls `exiting` as the loop winds down (after
+    /// `event_loop.exit()`), before the `EventLoop` — and the Wayland connection
+    /// it owns — is dropped.
+    ///
+    /// This ordering is load-bearing: `wgpu::Instance` enables every backend, so
+    /// it always spins up a GLES/EGL (Mesa) instance even when we render through
+    /// Vulkan. The whole wgpu context (`wgpu_core::Global`) is kept alive by the
+    /// GPU objects the `Renderer` holds, so it only drops when the `Renderer`
+    /// does. That drop runs `eglTerminate`, which talks to the Wayland display.
+    /// If the `Renderer` instead dropped with `host` at the end of `run` — after
+    /// the `EventLoop` (a later-declared local) had already closed the Wayland
+    /// connection — `eglTerminate` calls into freed `libwayland-client` proxies
+    /// and segfaults on exit. Dropping it here keeps the connection valid for the
+    /// teardown. Drop the renderer first so its surface releases its `Arc<Window>`
+    /// before we drop ours.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.renderer = None;
+        self.window = None;
+    }
 }
 
 /// A scroll event as a count of wheel notches (`1.0` == one detent). winit

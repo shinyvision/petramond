@@ -89,8 +89,10 @@ impl Frustum {
 
 pub struct Camera {
     pub pos: Vec3,
-    pub yaw: f32,   // around +Y, radians
-    pub pitch: f32, // around +X, radians, clamped ~= [-1.55, 1.55]
+    // Orientation mirrored from the player's look each frame — `player::Player`
+    // owns the authoritative yaw/pitch (and the pitch clamp). Radians.
+    pub yaw: f32,   // around +Y
+    pub pitch: f32, // up/down
     pub fov_y: f32,
     pub aspect: f32,
     pub near: f32,
@@ -101,8 +103,10 @@ impl Camera {
     pub fn new(pos: Vec3, aspect: f32) -> Self {
         Self {
             pos,
+            // Overwritten each frame by the player's look (see the field docs);
+            // this default only applies to a standalone camera, e.g. in tests.
             yaw: 0.0,
-            pitch: -0.4,
+            pitch: 0.0,
             fov_y: 70f32.to_radians(),
             aspect,
             near: 0.1,
@@ -126,11 +130,6 @@ impl Camera {
 
     pub fn up(&self) -> Vec3 {
         Vec3::Y
-    }
-
-    pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
-        self.yaw += dyaw;
-        self.pitch = (self.pitch + dpitch).clamp(-1.553_343, 1.553_343);
     }
 
     pub fn view(&self) -> Mat4 {

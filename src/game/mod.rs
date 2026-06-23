@@ -184,6 +184,8 @@ impl Game {
                 let mut p = Player::new(l.player_pos);
                 p.set_mode(l.player_mode);
                 p.vel = l.player_vel; // assign after set_mode, which zeroes vel
+                p.yaw = l.player_yaw;
+                p.pitch = l.player_pitch;
                 p.inventory = l.inventory.clone();
                 p
             }
@@ -197,8 +199,12 @@ impl Game {
                 Player::new(feet)
             }
         };
-        // Centre chunk streaming on the real player position from frame one.
+        // Centre chunk streaming on the real player position from frame one, and
+        // point the camera the way the player is looking (restored from the save,
+        // or the default forward for a fresh spawn).
         cam.pos = player.eye();
+        cam.yaw = player.yaw;
+        cam.pitch = player.pitch;
 
         let mut world = World::new(seed, render_dist);
         if let Some(s) = save {
@@ -617,7 +623,12 @@ impl Game {
             return;
         }
         const SENS: f32 = 0.0025;
-        self.cam.rotate(-dx * SENS, -dy * SENS);
+        self.player.rotate(-dx * SENS, -dy * SENS);
+        // Mirror the player's look onto the camera now (before this tick's
+        // movement + raycast read `cam.forward()`), the same way `tick_player`
+        // mirrors `player.eye()` onto `cam.pos`.
+        self.cam.yaw = self.player.yaw;
+        self.cam.pitch = self.player.pitch;
     }
 
     fn apply_hotbar_input(&mut self, input: &GameInput) {

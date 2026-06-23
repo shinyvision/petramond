@@ -17,6 +17,11 @@
     { "type": "shaped", "pattern": ["III", " S ", " S "], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_pickaxe", "count": 1 },
     { "type": "shaped", "pattern": ["DDD", " S ", " S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_pickaxe", "count": 1 },
 
+    { "type": "shaped", "pattern": ["P", "S", "S"], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_shovel", "count": 1 },
+    { "type": "shaped", "pattern": ["C", "S", "S"], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_shovel", "count": 1 },
+    { "type": "shaped", "pattern": ["I", "S", "S"], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_shovel", "count": 1 },
+    { "type": "shaped", "pattern": ["D", "S", "S"], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_shovel", "count": 1 },
+
     { "type": "shaped", "pattern": ["PP", "PS", " S"], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
     { "type": "shaped", "pattern": ["PP", "SP", "S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
     { "type": "shaped", "pattern": ["CC", "CS", " S"], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_axe", "count": 1 },

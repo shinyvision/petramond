@@ -142,6 +142,13 @@ pub enum ItemType {
     DiamondAxe,
     IronPickaxe,
     DiamondPickaxe,
+    // --- Shovels (item-only, no Block): the four shovel tiers, the dirt/sand
+    // counterpart to the pickaxe (stone) and axe (wood). Appended at the END so
+    // every id above stays frozen. `as_block()` = None for all of them. ---
+    WoodenShovel,
+    StoneShovel,
+    IronShovel,
+    DiamondShovel,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -199,13 +206,36 @@ impl ItemTag {
 
 /// What family of tool an item is, for mining. A tool speeds up the block class
 /// it is *for* — a [`Pickaxe`](ToolKind::Pickaxe) mines stone & ore, an
-/// [`Axe`](ToolKind::Axe) mines wood — and a wrong-kind tool (an axe on stone, a
-/// pickaxe on a log) mines no faster than a bare hand and unlocks no drop. The
-/// block half of this pairing is [`Block::preferred_tool`](crate::block::Block::preferred_tool).
+/// [`Axe`](ToolKind::Axe) mines wood, a [`Shovel`](ToolKind::Shovel) mines dirt &
+/// sand — and a wrong-kind tool (an axe on stone, a shovel on a log) mines no
+/// faster than a bare hand and unlocks no drop. The block half of this pairing is
+/// [`Block::preferred_tool`](crate::block::Block::preferred_tool).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ToolKind {
     Pickaxe,
     Axe,
+    Shovel,
+}
+
+impl ToolKind {
+    /// How effective this kind of tool is at mining its own block class, as a
+    /// multiplier on the shared material-tier speed ladder (see
+    /// [`crate::mining::break_time`]). A pickaxe and an axe are the baseline
+    /// (`1.0`); a shovel is a clumsier digging implement, so it clears its dirt &
+    /// sand at `0.5625` of the speed an equal-tier pickaxe gets on stone —
+    /// uniformly slower at every tier, because the factor scales the whole ladder.
+    /// Tuned low enough that even a diamond shovel (the ×8 tier) tops out at ×4.5,
+    /// the dirt-clearing rate of an iron-tier tool. This is a property of the tool
+    /// KIND (the real reason a shovel digs slower), separate from the material
+    /// `tier` it shares with the other kinds.
+    #[inline]
+    pub fn mining_efficiency(self) -> f32 {
+        match self {
+            ToolKind::Pickaxe | ToolKind::Axe => 1.0,
+            // 0.5625 = 9/16: scales the ×8 diamond tier down to ×4.5.
+            ToolKind::Shovel => 0.5625,
+        }
+    }
 }
 
 /// A mining tool: its [`kind`](Self::kind) and material `tier` (`1` = wooden,
@@ -311,8 +341,8 @@ impl ItemType {
     /// block's [`preferred_tool`](crate::block::Block::preferred_tool) to mine it
     /// faster, and a pickaxe's tier must meet a block's
     /// [`harvest_tier`](crate::block::Block::harvest_tier) to unlock its drop (see
-    /// [`crate::mining::break_time`]). The two axe/pickaxe families share the tier
-    /// ladder `1..=4` (wooden, stone, iron, diamond).
+    /// [`crate::mining::break_time`]). The axe/pickaxe/shovel families share the
+    /// tier ladder `1..=4` (wooden, stone, iron, diamond).
     #[inline]
     pub fn tool(self) -> Option<Tool> {
         use ItemType::*;
@@ -326,6 +356,10 @@ impl ItemType {
             StoneAxe => (Axe, 2),
             IronAxe => (Axe, 3),
             DiamondAxe => (Axe, 4),
+            WoodenShovel => (Shovel, 1),
+            StoneShovel => (Shovel, 2),
+            IronShovel => (Shovel, 3),
+            DiamondShovel => (Shovel, 4),
             _ => return None,
         };
         Some(Tool { kind, tier })
@@ -367,7 +401,7 @@ impl ItemType {
     /// slot) — that limit is a CONSEQUENCE of durability, not of being a "tool".
     /// Durability isn't consumed yet, but the model is correct: a future durable
     /// non-tool item would also not stack, for the same reason. Every mining
-    /// [`tool`](Self::tool) (the pickaxes + axes) is durable; nothing else is.
+    /// [`tool`](Self::tool) (the pickaxes, axes + shovels) is durable; nothing else is.
     #[inline]
     pub fn is_durable(self) -> bool {
         self.tool().is_some()
@@ -432,6 +466,10 @@ impl ItemType {
             StoneAxe => Tile::StoneAxe,
             IronAxe => Tile::IronAxe,
             DiamondAxe => Tile::DiamondAxe,
+            WoodenShovel => Tile::WoodenShovel,
+            StoneShovel => Tile::StoneShovel,
+            IronShovel => Tile::IronShovel,
+            DiamondShovel => Tile::DiamondShovel,
             RawIron => Tile::RawIron,
             RawCopper => Tile::RawCopper,
             RawGold => Tile::RawGold,
@@ -605,6 +643,10 @@ mod tests {
             ItemType::DiamondAxe,
             ItemType::IronPickaxe,
             ItemType::DiamondPickaxe,
+            ItemType::WoodenShovel,
+            ItemType::StoneShovel,
+            ItemType::IronShovel,
+            ItemType::DiamondShovel,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -664,6 +706,7 @@ mod tests {
             ItemType::WoodenPickaxe,
             ItemType::DiamondPickaxe,
             ItemType::IronAxe,
+            ItemType::DiamondShovel,
             ItemType::RawIron,
             ItemType::RawGold,
             ItemType::Diamond,
@@ -677,15 +720,19 @@ mod tests {
                 "{item:?} should render as a sprite"
             );
         }
-        // Tools carry a kind + tier (gating mining); non-tools carry none. The two
-        // families share the 1..=4 tier ladder (wooden, stone, iron, diamond).
-        use ToolKind::{Axe, Pickaxe};
+        // Tools carry a kind + tier (gating mining); non-tools carry none. The
+        // three families share the 1..=4 tier ladder (wooden, stone, iron, diamond).
+        use ToolKind::{Axe, Pickaxe, Shovel};
         assert_eq!(ItemType::WoodenPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 1 }));
         assert_eq!(ItemType::StonePickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 2 }));
         assert_eq!(ItemType::IronPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 3 }));
         assert_eq!(ItemType::DiamondPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 4 }));
         assert_eq!(ItemType::WoodenAxe.tool(), Some(Tool { kind: Axe, tier: 1 }));
         assert_eq!(ItemType::DiamondAxe.tool(), Some(Tool { kind: Axe, tier: 4 }));
+        assert_eq!(ItemType::WoodenShovel.tool(), Some(Tool { kind: Shovel, tier: 1 }));
+        assert_eq!(ItemType::StoneShovel.tool(), Some(Tool { kind: Shovel, tier: 2 }));
+        assert_eq!(ItemType::IronShovel.tool(), Some(Tool { kind: Shovel, tier: 3 }));
+        assert_eq!(ItemType::DiamondShovel.tool(), Some(Tool { kind: Shovel, tier: 4 }));
         assert_eq!(ItemType::Stick.tool(), None);
         assert_eq!(ItemType::Cobblestone.tool(), None);
     }
@@ -693,7 +740,7 @@ mod tests {
     #[test]
     fn durable_items_do_not_stack() {
         // The stack limit of 1 follows from durability, not from being a "tool".
-        // Every mining tool — pickaxes and axes, all four tiers — is durable.
+        // Every mining tool — pickaxes, axes and shovels, all four tiers — is durable.
         for durable in [
             ItemType::WoodenPickaxe,
             ItemType::StonePickaxe,
@@ -703,6 +750,10 @@ mod tests {
             ItemType::StoneAxe,
             ItemType::IronAxe,
             ItemType::DiamondAxe,
+            ItemType::WoodenShovel,
+            ItemType::StoneShovel,
+            ItemType::IronShovel,
+            ItemType::DiamondShovel,
         ] {
             assert!(durable.is_durable(), "{durable:?}");
             assert_eq!(durable.max_stack_size(), 1, "{durable:?}");

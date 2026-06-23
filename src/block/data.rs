@@ -159,9 +159,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         tiles: [Tile::GrassTop, Tile::Dirt, Tile::GrassSide],
         material: BlockMaterial::Dirt,
         harvest_tier: 0,
-        hardness: 0.5,
-        // Mined grass reverts to dirt — the grass layer is lost (Minecraft-style;
-        // the grass block itself is not a survival drop).
+        hardness: 0.7,
         drop: DropSpec {
             drops: &[Drop {
                 item: ItemType::Dirt,

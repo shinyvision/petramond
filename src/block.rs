@@ -354,8 +354,9 @@ impl Block {
 
     /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
     /// for stone & ore, an [`Axe`](ToolKind::Axe) for wood (logs, planks, the
-    /// crafting table, the chest) — or `None` for blocks a bare hand mines just as
-    /// fast (dirt, sand, plants, glass-likes). Holding the matching tool grants the
+    /// crafting table, the chest), a [`Shovel`](ToolKind::Shovel) for dirt & sand
+    /// (grass, podzol, gravel, clay, snow…) — or `None` for blocks a bare hand mines
+    /// just as fast (plants, glass-likes). Holding the matching tool grants the
     /// tier speed-up in [`crate::mining::break_time`], and for tool-gated blocks the
     /// pickaxe also unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the
     /// item half of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
@@ -364,6 +365,7 @@ impl Block {
         match self.material() {
             BlockMaterial::Stone | BlockMaterial::Ore => Some(ToolKind::Pickaxe),
             BlockMaterial::Wood => Some(ToolKind::Axe),
+            BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
             _ => None,
         }
     }
@@ -654,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn preferred_tool_pairs_pickaxe_with_stone_ore_and_axe_with_wood() {
+    fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
         use crate::item::ToolKind;
         // Stone & ore want a pickaxe.
         for b in [Block::Stone, Block::Cobblestone, Block::CoalOre, Block::DiamondOre] {
@@ -671,8 +673,26 @@ mod tests {
             assert_eq!(b.material(), BlockMaterial::Wood, "{b:?} should be wood");
             assert_eq!(b.preferred_tool(), Some(ToolKind::Axe), "{b:?}");
         }
-        // Everything a hand mines just as well has no preferred tool.
-        for b in [Block::Dirt, Block::Sand, Block::Poppy, Block::Air] {
+        // Dirt & sand want a shovel — the soft cover blocks (grass, podzol, gravel,
+        // clay, snow), all hand-harvestable so the shovel is a pure speed bonus.
+        for b in [
+            Block::Dirt,
+            Block::Grass,
+            Block::Podzol,
+            Block::Sand,
+            Block::Gravel,
+            Block::Clay,
+            Block::Snow,
+        ] {
+            assert!(
+                matches!(b.material(), BlockMaterial::Dirt | BlockMaterial::Sand),
+                "{b:?} should be dirt/sand"
+            );
+            assert_eq!(b.preferred_tool(), Some(ToolKind::Shovel), "{b:?}");
+        }
+        // Everything a hand mines just as well has no preferred tool (plants,
+        // leaves, air).
+        for b in [Block::Poppy, Block::ShortGrass, Block::OakLeaves, Block::Air] {
             assert_eq!(b.preferred_tool(), None, "{b:?}");
         }
     }
