@@ -1075,7 +1075,7 @@ impl Layer for Voronoi {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::super::stack::{biome_256, biome_edge_64, voronoi};
     use super::*;

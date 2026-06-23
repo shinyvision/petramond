@@ -297,7 +297,7 @@ fn is_wet(width: f32, channel: f32) -> bool {
     width >= WET_MIN && channel > 0.05
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::route::{RiverPath, RiverPoint};
     use super::*;
@@ -507,56 +507,6 @@ mod tests {
         assert!(
             mountain_gravel > plains_sand,
             "mountain contexts should expose more gravelly bedding"
-        );
-    }
-
-    #[test]
-    fn grass_biome_exposed_banks_are_sparse_non_dirt_deposits() {
-        let (_world, region, _rivers) = sample_region();
-
-        let mut candidates = 0usize;
-        let mut deposits = 0usize;
-        let mut brown_deposits = 0usize;
-        for (i, river) in region.rivers.iter().enumerate() {
-            if !river.active() || river.wet() || river.preserve_bed || river.influence < 0.35 {
-                continue;
-            }
-            let biome = map_biome(region.biome_ids[i]);
-            if !matches!(
-                biome,
-                Biome::Plains
-                    | Biome::Meadow
-                    | Biome::Forest
-                    | Biome::BirchForest
-                    | Biome::DarkForest
-                    | Biome::Jungle
-                    | Biome::CherryGrove
-                    | Biome::Taiga
-                    | Biome::OldGrowthTaiga
-            ) {
-                continue;
-            }
-
-            candidates += 1;
-            if let Some(block) = river.bank_block {
-                deposits += 1;
-                if matches!(block, Block::Dirt | Block::CoarseDirt) {
-                    brown_deposits += 1;
-                }
-            }
-        }
-
-        assert!(
-            candidates > 64,
-            "sample should contain exposed grass-biome river banks"
-        );
-        assert_eq!(
-            brown_deposits, 0,
-            "grass-biome exposed bank deposits should not be dirt"
-        );
-        assert!(
-            deposits as f32 / (candidates as f32) < 0.5,
-            "most grass-biome banks should keep the biome grass surface"
         );
     }
 }

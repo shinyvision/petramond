@@ -1,45 +1,52 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SY, SKY_FULL};
 use crate::mesh::build_mesh_lods_with_loaded_neighbors;
 
 use super::store::World;
 
-/// FIFO of chunks awaiting a remesh, deduplicated. With `World`'s chunk map
-/// private, every path that dirties a chunk pushes here (`mark_dirty_pos`,
-/// `queue_dirty_mesh`, the light-bake drain) and `remove_chunk` pulls it back
-/// out — so the queue alone says what needs meshing; there is no chunk-flag
-/// scan to reconcile against.
+/// Set of chunks awaiting a remesh. With `World`'s chunk map private, every path
+/// that dirties a chunk pushes here (`mark_dirty_pos`, `queue_dirty_mesh`, the
+/// light-bake drain) and `remove_chunk` pulls it back out — so the set alone says
+/// what needs meshing; there is no chunk-flag scan to reconcile against. Drained
+/// NEAREST-FIRST to the load centre (see [`pop_nearest_batch`](Self::pop_nearest_batch))
+/// so the terrain around the player meshes before the edges.
 #[derive(Default)]
 pub(super) struct DirtyMeshQueue {
-    order: VecDeque<ChunkPos>,
-    queued: HashSet<ChunkPos>,
+    pending: HashSet<ChunkPos>,
 }
 
 impl DirtyMeshQueue {
     pub fn push(&mut self, pos: ChunkPos) {
-        if self.queued.insert(pos) {
-            self.order.push_back(pos);
-        }
+        self.pending.insert(pos);
     }
 
     pub fn remove(&mut self, pos: ChunkPos) {
-        self.queued.remove(&pos);
+        self.pending.remove(&pos);
     }
 
-    /// Pop up to `max` queued positions in FIFO order, skipping any that were
-    /// removed (e.g. their chunk unloaded) since being enqueued.
-    fn pop_batch(&mut self, max: usize) -> Vec<ChunkPos> {
-        let mut out = Vec::with_capacity(max);
-        while out.len() < max {
-            let Some(pos) = self.order.pop_front() else {
-                break;
-            };
-            if self.queued.remove(&pos) {
-                out.push(pos);
-            }
+    /// Pop up to `max` chunks, those nearest `center` (the player's chunk) first,
+    /// so nearby terrain meshes before distant terrain. Meshing is idempotent (a
+    /// rebuild from current state), so the order is a priority, not a contract — a
+    /// popped chunk still blocked on light is simply re-pushed by the caller.
+    /// `center` is `None` only before the first load target, where any order is fine.
+    fn pop_nearest_batch(&mut self, max: usize, center: Option<ChunkPos>) -> Vec<ChunkPos> {
+        if max == 0 || self.pending.is_empty() {
+            return Vec::new();
         }
-        out
+        let mut all: Vec<ChunkPos> = self.pending.iter().copied().collect();
+        if let Some(c) = center {
+            all.sort_by_key(|p| {
+                let dx = (p.cx - c.cx) as i64;
+                let dz = (p.cz - c.cz) as i64;
+                dx * dx + dz * dz
+            });
+        }
+        all.truncate(max);
+        for pos in &all {
+            self.pending.remove(pos);
+        }
+        all
     }
 }
 
@@ -53,7 +60,10 @@ impl World {
 
         self.drain_finished_light_bakes();
 
-        let candidates = self.dirty_meshes.pop_batch(max_per_frame);
+        // Mesh nearest the player first; the load target's centre is the player's
+        // chunk (`None` only before the first stream, where order doesn't matter).
+        let center = self.last_load_target.as_ref().map(|t| t.center);
+        let candidates = self.dirty_meshes.pop_nearest_batch(max_per_frame, center);
         if candidates.is_empty() {
             return;
         }
@@ -234,6 +244,25 @@ mod tests {
         chunk
     }
 
+    /// The same blocks as [`fresh_chunk`], but reconstructed through
+    /// [`Chunk::from_saved`] — the path a chunk read back from disk takes. The
+    /// block bytes are taken from a real chunk so the in-array layout is exact.
+    fn disk_chunk(cx: i32, cz: i32) -> Chunk {
+        let template = fresh_chunk(cx, cz);
+        let blocks: Box<[u8]> = Box::from(template.blocks_slice());
+        let biomes: Vec<u8> = template.biomes_slice().to_vec();
+        Chunk::from_saved(
+            cx,
+            cz,
+            blocks,
+            &biomes,
+            None,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+    }
+
     /// Tick the mesh budget until `pos` settles (mesh + light flags clear),
     /// driving the async light bake to completion.
     fn tick_until_settled(world: &mut World, pos: ChunkPos) {
@@ -266,6 +295,39 @@ mod tests {
 
         assert!(!world.meshes.get(&pos).unwrap().is_empty());
         assert!(world.lighting_revision() > 0);
+    }
+
+    /// Repro probe for "disk-loaded chunks don't render": a chunk reconstructed
+    /// via `Chunk::from_saved` (the codec decode path) and installed the way the
+    /// streamer installs it must mesh identically to the generated chunk it was
+    /// saved from — and remesh on a later edit.
+    #[test]
+    fn disk_loaded_chunk_meshes_like_a_generated_one() {
+        let pos = ChunkPos::new(0, 0);
+
+        let mut generated = World::new(0, 0);
+        generated.insert_chunk_for_test(pos, fresh_chunk(pos.cx, pos.cz));
+        tick_until_settled(&mut generated, pos);
+        let generated_len = generated.meshes.get(&pos).unwrap().opaque_idx.len();
+        assert!(generated_len > 0, "baseline generated chunk meshes");
+
+        let mut disk = World::new(0, 0);
+        disk.insert_chunk_for_test(pos, disk_chunk(pos.cx, pos.cz));
+        tick_until_settled(&mut disk, pos);
+        let disk_len = disk.meshes.get(&pos).unwrap().opaque_idx.len();
+
+        assert_eq!(
+            disk_len, generated_len,
+            "disk-loaded chunk must mesh like the generated chunk it was saved from"
+        );
+
+        // And an edit must remesh it.
+        assert!(disk.set_block_world(1, 2, 1, Block::Stone));
+        tick_until_settled(&mut disk, pos);
+        assert!(
+            disk.meshes.get(&pos).unwrap().opaque_idx.len() > disk_len,
+            "edit on a disk-loaded chunk must rebuild its mesh"
+        );
     }
 
     /// An edit through the proper API (`set_block_world`) re-dirties and

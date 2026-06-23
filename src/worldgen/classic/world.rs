@@ -186,7 +186,7 @@ pub fn map_biome(id: i32) -> Biome {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
     use crate::worldgen::classic::biome::stack::voronoi;

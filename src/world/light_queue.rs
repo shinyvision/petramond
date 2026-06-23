@@ -179,27 +179,58 @@ fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
 struct Backend {
     tx_req: std::sync::mpsc::Sender<LightBakeJob>,
     rx_res: std::sync::mpsc::Receiver<LightBakeResult>,
-    _handle: std::thread::JoinHandle<()>,
+    _handles: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Backend {
     fn new() -> Self {
         let (tx_req, rx_req) = std::sync::mpsc::channel::<LightBakeJob>();
         let (tx_res, rx_res) = std::sync::mpsc::channel::<LightBakeResult>();
-        let _handle = std::thread::Builder::new()
-            .name("llamacraft-light".to_string())
-            .spawn(move || {
-                while let Ok(job) = rx_req.recv() {
-                    if tx_res.send(run_light_bake(job)).is_err() {
-                        break;
+
+        // A light bake is a pure function of its chunk+neighbour snapshot (see
+        // `run_light_bake`), so it parallelises exactly like chunk gen. A SINGLE
+        // worker was the world-load wall: every chunk's mesh waits for its 3x3
+        // light band to bake (see `request_light_dependencies`), so at a large
+        // render distance hundreds of chunks queued behind one core while the rest
+        // sat idle. Use a pool, sized like the gen pool (reserve ~2 cores for the
+        // main/render thread and the mesh rayon pool). Results carry an id +
+        // revision and are matched on the main thread, so out-of-order completion
+        // across workers is already handled.
+        let rx_req = std::sync::Arc::new(std::sync::Mutex::new(rx_req));
+        let n = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .saturating_sub(2)
+            .max(2);
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let rx_req = rx_req.clone();
+            let tx_res = tx_res.clone();
+            let h = std::thread::Builder::new()
+                .name("llamacraft-light".to_string())
+                .spawn(move || loop {
+                    // Hold the receiver lock only across the brief recv(); the bake
+                    // itself runs unlocked, so workers pull jobs concurrently.
+                    let job = {
+                        let g = rx_req.lock().unwrap();
+                        g.recv()
+                    };
+                    match job {
+                        Ok(job) => {
+                            if tx_res.send(run_light_bake(job)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
                     }
-                }
-            })
-            .expect("spawn light worker");
+                })
+                .expect("spawn light worker");
+            handles.push(h);
+        }
         Self {
             tx_req,
             rx_res,
-            _handle,
+            _handles: handles,
         }
     }
 

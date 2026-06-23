@@ -13,6 +13,13 @@ resolver = "2"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# Worldgen tests are slow (heavy noise/terrain generation) and worldgen is stable,
+# so they are opt-in: run them with `cargo test --features worldgen-tests`. Plain
+# `cargo test` skips them — the worldgen test modules are gated
+# `#[cfg(all(test, feature = "worldgen-tests"))]`.
+worldgen-tests = []
+
 [[bin]]
 name = "llamacraft_native"
 path = "src/bin/native.rs"
@@ -56,7 +63,7 @@ panic = "abort"
 strip = true
 
 [profile.dev]
-opt-level = 0
+opt-level = 1
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

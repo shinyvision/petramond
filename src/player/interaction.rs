@@ -29,7 +29,7 @@ impl Player {
             eye,
             dir,
             &|x, y, z| Block::from_id(world.chunk_block(x, y, z)),
-            // Inset/thin solids (chest, torch) are tested against their real shape so
+            // Inset/thin blocks (chest, torch) are tested against their real shape so
             // the ray only selects them where they actually are; the torch's tilt
             // comes from the world's per-chunk torch map.
             &|e, d, pos, block| precise_shape_hit(e, d, pos, block, world),
@@ -100,9 +100,12 @@ impl Player {
             let pos = IVec3::new(ix, iy, iz);
             let block = block_at(ix, iy, iz);
             let t_exit = next_boundary_t(t_max);
-            if block.is_solid() {
+            // The "solid body" selection branch: genuinely solid blocks plus the
+            // torch — not solid, but still selectable by its thin pole shape (the
+            // cross-plant case is handled separately below, like its render shape).
+            if block.is_solid() || block.render_shape() == RenderShape::Torch {
                 // A full cube fills its cell, so it stops the ray on entry. A
-                // custom-shaped solid (the inset chest, the thin/tilted torch pole)
+                // custom-shaped block (the inset chest, the thin/tilted torch pole)
                 // only registers when the ray actually crosses its shape — otherwise
                 // the ray sees past the empty parts of its cell.
                 if block.visual_aabb().is_none() && block != Block::Torch {

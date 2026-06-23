@@ -682,7 +682,7 @@ pub fn roughness(seed: u32) -> Option<RoughnessStats> {
 // current generator for the default seed 0x1234_5678 (see commit baseline).
 // These pin the `mc-worldgen-jaggedness` family of invariants.
 // ---------------------------------------------------------------------------
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
 

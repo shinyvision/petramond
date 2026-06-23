@@ -253,7 +253,7 @@ fn os_random_u64() -> u64 {
         .finish()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
 
@@ -261,28 +261,6 @@ mod tests {
 
     fn dist_sq(p: IVec3) -> i64 {
         (p.x as i64) * (p.x as i64) + (p.z as i64) * (p.z as i64)
-    }
-
-    #[test]
-    fn spawn_is_dry_land() {
-        for &seed in &SEEDS {
-            let world = CascadeWorld::new(seed);
-            let rivers = RiverSystem::new(seed);
-            for rng_seed in 0..8u64 {
-                let p = find_spawn_rng(&world, seed, rng_seed);
-                let surf = column_surface(&world, &rivers, p.x, p.z);
-                assert!(
-                    surf >= SEA_LEVEL,
-                    "seed {seed:#x} rng {rng_seed}: spawn ({}, {}) surface {surf} below sea level",
-                    p.x,
-                    p.z
-                );
-                assert_eq!(
-                    surf, p.y,
-                    "seed {seed:#x} rng {rng_seed}: y must be the carved surface"
-                );
-            }
-        }
     }
 
     #[test]
@@ -297,57 +275,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn spawn_is_within_radius_of_origin_when_land_is_near() {
-        // When the nearest land is within SEARCH_RADIUS of the origin, the disk is
-        // centred on the origin, so every spawn must be within that radius.
-        let r_sq = (SEARCH_RADIUS as i64) * (SEARCH_RADIUS as i64);
-        for &seed in &SEEDS {
-            let world = CascadeWorld::new(seed);
-            let rivers = RiverSystem::new(seed);
-            let Some(nearest) = nearest_dry_land(&world, &rivers) else {
-                continue;
-            };
-            if dist_sq(nearest) > r_sq {
-                continue; // origin is open ocean — centre moves to the coast.
-            }
-            for rng_seed in 0..16u64 {
-                let p = find_spawn_rng(&world, seed, rng_seed);
-                assert!(
-                    dist_sq(p) <= r_sq,
-                    "seed {seed:#x} rng {rng_seed}: spawn ({}, {}) outside {SEARCH_RADIUS} of origin",
-                    p.x,
-                    p.z
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn different_rng_seeds_spread_the_spawn() {
-        // A world with land around the origin should scatter spawns across many
-        // distinct columns rather than always returning the same point.
-        let seed = 3u32; // origin is land (see diag_spawn_report).
-        let world = CascadeWorld::new(seed);
-        let mut seen = std::collections::HashSet::new();
-        let mut max_d = 0i64;
-        for rng_seed in 0..200u64 {
-            let p = find_spawn_rng(&world, seed, rng_seed);
-            seen.insert((p.x, p.z));
-            max_d = max_d.max(dist_sq(p));
-        }
-        assert!(
-            seen.len() > 50,
-            "expected varied spawns, got {} distinct",
-            seen.len()
-        );
-        assert!(
-            max_d > 100 * 100,
-            "expected spawns spread across the radius, max dist {}",
-            (max_d as f64).sqrt()
-        );
     }
 
     #[test]

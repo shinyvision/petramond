@@ -32,33 +32,40 @@ impl World {
     }
 
     fn request_missing_chunks(&mut self, center: ChunkPos, r: i32) {
-        // Request all chunks within radius (Euclidean approximation via squared).
+        // Gather the missing chunks in the radius (Euclidean approximation via
+        // squared), then request them NEAREST-FIRST so terrain around the player
+        // streams in before the edges. The gen/load pools and the light pool all
+        // pull jobs in submission order, so ordering the submissions orders the
+        // whole load pipeline; the mesh queue then drains nearest-first too.
+        let mut missing: Vec<(i32, ChunkPos)> = Vec::new();
         for dz in -r..=r {
             for dx in -r..=r {
-                if dx * dx + dz * dz > r * r {
+                let d2 = dx * dx + dz * dz;
+                if d2 > r * r {
                     continue;
                 }
                 let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
-                if self.chunks.contains_key(&pos) {
+                if self.chunks.contains_key(&pos) || self.pending.contains_key(&pos) {
                     continue;
                 }
-                if self.pending.contains_key(&pos) {
-                    continue;
-                }
-                // Prefer a saved (player-modified) chunk over regenerating it.
-                if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
-                    if let Some(save) = self.save.as_ref() {
-                        save.request_load(pos);
-                    }
-                } else {
-                    self.worker.submit(GenRequest {
-                        cx: pos.cx,
-                        cz: pos.cz,
-                        seed: self.seed,
-                    });
-                }
-                self.pending.insert(pos, ());
+                missing.push((d2, pos));
             }
+        }
+        missing.sort_by_key(|(d2, _)| *d2);
+        for (_, pos) in missing {
+            // Prefer a saved (player-modified) chunk over regenerating it.
+            if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+                if let Some(save) = self.save.as_ref() {
+                    save.request_load(pos);
+                }
+            } else {
+                self.worker.submit(GenRequest {
+                    cx: pos.cx,
+                    cz: pos.cz,
+                    seed: self.seed,
+                });
+            }
+            self.pending.insert(pos, ());
         }
     }
 
@@ -453,6 +460,86 @@ mod tests {
         );
 
         drop(world); // join the save I/O thread before removing the dir
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End-to-end repro for "chunks loaded from disk don't render geometry":
+    /// modify a chunk, unload it (which saves it), then reload it from disk through
+    /// the streamer's poll path and confirm it both builds a mesh and remeshes on a
+    /// later edit — the block data survives either way (that's why collision works).
+    #[test]
+    fn modified_chunk_reloaded_from_disk_meshes_and_remeshes() {
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-streamtest-{}-reload-mesh",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let opened = crate::save::open_at(dir.clone()).expect("open temp world");
+        let mut world = World::new(0, 2);
+        world.attach_save(opened.save);
+        let pos = ChunkPos::new(0, 0);
+
+        // Drive the mesh budget + async light bake (+ save I/O) until `cond`.
+        fn settle(world: &mut World, cond: impl Fn(&World) -> bool) -> bool {
+            for _ in 0..1000 {
+                let _ = world.poll();
+                world.tick_mesh_budget(64);
+                if cond(world) {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            false
+        }
+        let mesh_len = |w: &World, p: ChunkPos| {
+            w.iter_meshes()
+                .find(|(mp, _)| *mp == p)
+                .map(|(_, m)| m.opaque_idx.len())
+        };
+
+        // Install a chunk and edit it, so it is non-empty AND modified (persisted).
+        world.insert_chunk_for_test(pos, flat_chunk(pos.cx, pos.cz));
+        assert!(world.set_block_world(8, 90, 8, Block::Stone), "place marker");
+        assert!(
+            settle(&mut world, |w| mesh_len(w, pos).is_some_and(|n| n > 0)),
+            "chunk meshes before unload"
+        );
+        let before = mesh_len(&world, pos).unwrap();
+
+        // Unload far away: the modified chunk is saved + evicted.
+        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
+        assert!(!world.chunk_loaded(pos.cx, pos.cz), "chunk evicted on unload");
+
+        // Reload it from disk through the streamer's poll ingestion path.
+        world.save().expect("save").request_load(pos);
+        assert!(
+            settle(&mut world, |w| w.chunk_loaded(pos.cx, pos.cz)),
+            "chunk reloads from disk"
+        );
+        assert_eq!(
+            world.chunk_block(8, 90, 8),
+            Block::Stone.id(),
+            "block data restored (so collision works)"
+        );
+        assert!(
+            settle(&mut world, |w| mesh_len(w, pos).is_some_and(|n| n > 0)),
+            "REPRO: reloaded chunk must build a non-empty mesh"
+        );
+        assert_eq!(
+            mesh_len(&world, pos).unwrap(),
+            before,
+            "reloaded mesh matches the saved chunk's mesh"
+        );
+
+        // An edit on the reloaded chunk must rebuild its mesh.
+        assert!(world.set_block_world(8, 90, 8, Block::Air), "mine the marker");
+        assert!(
+            settle(&mut world, |w| w.chunk_block(8, 90, 8) == Block::Air.id()
+                && mesh_len(w, pos).is_some_and(|n| n < before)),
+            "REPRO: edit on the reloaded chunk must remesh (fewer faces after mining)"
+        );
+
+        drop(world);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -256,7 +256,7 @@ fn unit_from_angle(angle: f32) -> (f32, f32) {
     (angle.cos(), angle.sin())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
 

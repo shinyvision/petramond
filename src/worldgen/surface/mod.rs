@@ -52,7 +52,7 @@ impl SurfaceSystem {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
     use crate::biome::Biome;

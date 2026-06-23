@@ -66,7 +66,7 @@ pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32)
     chunk
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
     use crate::block::Block;

@@ -158,8 +158,8 @@ impl Block {
 
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
     /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
-    /// and the torch (SOLID so a ray can select it, yet stepped through — its
-    /// selection outline is custom-shaped, see `player::interaction`). One unit box
+    /// and the torch (selectable by its custom pole shape yet stepped through — see
+    /// `player::interaction`). One unit box
     /// for an ordinary full cube; the chest is a single inset box; future
     /// stairs/slabs list several. The single source of truth for player collision
     /// AND — via the union — the selection outline + break overlay
@@ -171,9 +171,10 @@ impl Block {
 
     /// Whether this block physically obstructs movement — i.e. has any collision
     /// box. The single predicate for "can an entity rest on / be stopped by this
-    /// cell", derived from [`collision_boxes`](Self::collision_boxes) (the source of
-    /// truth) rather than [`is_solid`](Self::is_solid): a torch is solid (so the ray
-    /// can select it) yet has NO collision, so items and particles fall through it.
+    /// cell", derived from [`collision_boxes`](Self::collision_boxes) (the physics
+    /// source of truth) rather than [`is_solid`](Self::is_solid) (material solidity):
+    /// they coincide today, but collision is what governs movement, so a future
+    /// partial block (slab/fence) could obstruct without being a full solid.
     #[inline]
     pub fn blocks_movement(self) -> bool {
         !self.collision_boxes().is_empty()
@@ -590,10 +591,10 @@ mod tests {
         assert_eq!(Block::OakLeaves.hardness(), 0.2);
         assert!(!Block::OakLeaves.requires_tool());
 
-        // Dirt family.
+        // Dirt family. Mined grass reverts to dirt (its grass layer is lost).
         assert_eq!(Block::Grass.material(), BlockMaterial::Dirt);
         assert_eq!(Block::Grass.hardness(), 0.5);
-        assert_eq!(Block::Grass.drop_spec().drops, &[drop1(ItemType::Grass)]);
+        assert_eq!(Block::Grass.drop_spec().drops, &[drop1(ItemType::Dirt)]);
 
         // Cross-plants: instant, Plant material, never require a tool.
         for plant in [

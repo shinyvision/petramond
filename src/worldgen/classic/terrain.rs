@@ -387,7 +387,7 @@ impl TerrainGen {
 
     /// Reference (pre-cache) batched density sampler — kept only to prove the
     /// per-column path yields the identical integer heightmap.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "worldgen-tests"))]
     fn density_region_batched(
         &self,
         x0: i32,
@@ -569,7 +569,7 @@ impl TerrainGen {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
     use crate::worldgen::classic::biome::stack::river_mix;

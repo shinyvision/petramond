@@ -21,15 +21,17 @@ const PLANT_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 // occluder — it's drawn as a custom inset model (the mesher skips its cell), so
 // neighbours must keep their faces toward it and it casts no full-cube shadow.
 const CHEST_FLAGS: BlockFlags = BlockFlags::SOLID;
-// Torch: SOLID so the ray can select it (its real shape is far too thin to DDA),
-// and TRANSPARENT so skylight/block-light flood through its cell and neighbours
-// keep their faces toward it. NOT opaque, NOT an AO occluder, NOT replaceable —
-// and its collision box is overridden to empty (see `Block::collision_boxes`), so
-// the player walks through it. Drawn as a custom 3D pole (see `mesh::torch`).
-const TORCH_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::TRANSPARENT);
+// Torch: NOT solid — a thin decoration, not a block that obstructs, supports, or
+// smothers, so it must never count as a solid block (e.g. as cover over grass).
+// TRANSPARENT so skylight/block-light flood through its cell and neighbours keep
+// their faces toward it. NOT opaque, NOT an AO occluder, NOT replaceable, and no
+// collision (see `Block::collision_boxes`), so the player walks through it. The
+// raycast still selects it — by its `RenderShape::Torch` (its real pole is too thin
+// to DDA on cell entry), NOT by solidity. Drawn as a custom 3D pole (`mesh::torch`).
+const TORCH_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
-// walk-through plants, and the torch — SOLID for raycasting but stepped through);
+// walk-through plants, and the torch — selectable by its shape but stepped through);
 // `FULL_CUBE_BOXES` = the whole cell; `CHEST_BOXES` = the inset chest body+lid
 // (matches `render::chest_model`, so collision/outline/crack hug the chest).
 const NO_BOXES: &[Aabb] = &[];
@@ -151,13 +153,22 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         collision: FULL_CUBE_BOXES,
         emission: 0,
         tags: &[BlockTag::Terrain],
-        behavior: &behavior::INERT,
+        // Dies back to dirt when smothered by a solid block (see `behavior::grass`).
+        behavior: &behavior::GRASS,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::GrassTop, Tile::Dirt, Tile::GrassSide],
         material: BlockMaterial::Dirt,
         harvest_tier: 0,
         hardness: 0.5,
-        drop: drops_self!(Grass),
+        // Mined grass reverts to dirt — the grass layer is lost (Minecraft-style;
+        // the grass block itself is not a survival drop).
+        drop: DropSpec {
+            drops: &[Drop {
+                item: ItemType::Dirt,
+                min: 1,
+                max: 1,
+            }],
+        },
     },
     BlockDef {
         block: Block::Dirt,
@@ -165,7 +176,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         collision: FULL_CUBE_BOXES,
         emission: 0,
         tags: &[BlockTag::Terrain],
-        behavior: &behavior::INERT,
+        // Greens over into grass when grass is nearby (see `behavior::dirt`).
+        behavior: &behavior::DIRT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Dirt, Tile::Dirt, Tile::Dirt],
         material: BlockMaterial::Dirt,

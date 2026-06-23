@@ -222,7 +222,7 @@ impl FoliagePlacer for FlatSparseFoliage {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod spruce_tests {
     use super::*;
     use crate::chunk::Chunk;

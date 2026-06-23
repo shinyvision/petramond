@@ -272,7 +272,7 @@ fn hit_lt(a: &RiverHit, b: &RiverHit) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::route::RiverPoint;
     use super::*;

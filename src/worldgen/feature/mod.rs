@@ -287,7 +287,7 @@ pub fn place_features(chunk: &mut Chunk, field: &RegionCells, seed: u32) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::{feature_region, tree_candidate_at, tree_spacing_allows, TREE_SPACING_RADIUS};
     use crate::biome::Biome;

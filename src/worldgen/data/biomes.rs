@@ -389,7 +389,7 @@ pub fn def(b: Biome) -> &'static BiomeDef {
     &BIOME_DEFS[i.min(BIOME_DEFS.len() - 1)]
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
 

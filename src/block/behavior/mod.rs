@@ -20,6 +20,8 @@
 use crate::mathh::IVec3;
 use crate::world::World;
 
+mod dirt;
+mod grass;
 mod inert;
 mod leaves;
 
@@ -27,6 +29,8 @@ mod leaves;
 // flat `&behavior::NAME`. Behaviours that reach into world internals live under
 // `world` (they can't from here) but are still listed here for one-stop reading.
 pub use crate::world::water::WATER;
+pub use dirt::DIRT;
+pub use grass::GRASS;
 pub use inert::INERT;
 pub use leaves::LEAVES;
 

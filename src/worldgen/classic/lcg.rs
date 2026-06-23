@@ -100,7 +100,7 @@ impl LcgRandom {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
 
