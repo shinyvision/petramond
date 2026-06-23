@@ -3,7 +3,7 @@ use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::{self, RegistryKey, TableEntry};
 
 use super::definition::{drops_self, BlockDef, BlockFlags, BlockMaterial};
-use super::{behavior, Block, BlockTag};
+use super::{behavior, Aabb, Block, BlockTag, RenderShape};
 
 const AIR_FLAGS: BlockFlags = BlockFlags::REPLACEABLE;
 const FULL_CUBE_FLAGS: BlockFlags = BlockFlags::SOLID
@@ -27,6 +27,20 @@ const CHEST_FLAGS: BlockFlags = BlockFlags::SOLID;
 // and its collision box is overridden to empty (see `Block::collision_boxes`), so
 // the player walks through it. Drawn as a custom 3D pole (see `mesh::torch`).
 const TORCH_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::TRANSPARENT);
+
+// Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
+// walk-through plants, and the torch — SOLID for raycasting but stepped through);
+// `FULL_CUBE_BOXES` = the whole cell; `CHEST_BOXES` = the inset chest body+lid
+// (matches `render::chest_model`, so collision/outline/crack hug the chest).
+const NO_BOXES: &[Aabb] = &[];
+const FULL_CUBE_BOXES: &[Aabb] = &[Aabb {
+    min: [0.0, 0.0, 0.0],
+    max: [1.0, 1.0, 1.0],
+}];
+const CHEST_BOXES: &[Aabb] = &[Aabb {
+    min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
+    max: [15.0 / 16.0, 14.0 / 16.0, 15.0 / 16.0],
+}];
 
 pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Air,
@@ -119,6 +133,9 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     BlockDef {
         block: Block::Air,
+        shape: RenderShape::Cube,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: AIR_FLAGS,
@@ -130,6 +147,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Grass,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Terrain],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -141,6 +161,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Dirt,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Terrain],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -152,6 +175,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Stone,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Terrain],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -170,6 +196,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Sand,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Terrain],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -181,6 +210,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Snow,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Terrain],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -192,6 +224,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Water,
+        shape: RenderShape::Cube,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::WATER,
         flags: WATER_FLAGS,
@@ -203,6 +238,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -214,6 +252,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -225,6 +266,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SpruceLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -236,6 +280,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -247,6 +294,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JungleLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -258,6 +308,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -269,6 +322,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -284,6 +340,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -295,6 +354,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangroveLog,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Log],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -310,6 +372,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SpruceLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -321,6 +386,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -332,6 +400,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JungleLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -343,6 +414,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -354,6 +428,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -369,6 +446,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangroveLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -384,6 +464,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -395,6 +478,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AzaleaLeaves,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[BlockTag::Leaves],
         behavior: &behavior::LEAVES,
         flags: LEAVES_FLAGS,
@@ -406,6 +492,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedSand,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -417,6 +506,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Sandstone,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -432,6 +524,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedSandstone,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -447,6 +542,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Terracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -458,6 +556,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::WhiteTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -473,6 +574,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OrangeTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -488,6 +592,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::YellowTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -503,6 +610,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BrownTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -518,6 +628,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -533,6 +646,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::LightGrayTerracotta,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -548,6 +664,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Podzol,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -559,6 +678,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Mycelium,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -570,6 +692,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CoarseDirt,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -581,6 +706,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Gravel,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -592,6 +720,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Clay,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -603,6 +734,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Mud,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -614,6 +748,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MossBlock,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -625,6 +762,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SnowBlock,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -636,6 +776,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::PackedIce,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -647,6 +790,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Ice,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -658,6 +804,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Calcite,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -669,6 +818,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Granite,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -680,6 +832,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Diorite,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -691,6 +846,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Andesite,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -702,6 +860,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Tuff,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -713,6 +874,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CoalOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -731,6 +895,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::IronOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -749,6 +916,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CopperOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -767,6 +937,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::GoldOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -778,6 +951,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedstoneOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -789,6 +965,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::LapisOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -800,6 +979,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DiamondOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -811,6 +993,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::EmeraldOre,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -822,6 +1007,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Pumpkin,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -833,6 +1021,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Melon,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -844,6 +1035,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Cactus,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -855,6 +1049,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::ShortGrass,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -866,6 +1063,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Fern,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -877,6 +1077,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Dandelion,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -888,6 +1091,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Poppy,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -899,6 +1105,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Cornflower,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -910,6 +1119,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Allium,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -921,6 +1133,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AzureBluet,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -932,6 +1147,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OxeyeDaisy,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -943,6 +1161,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedTulip,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -954,6 +1175,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DeadBush,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -965,6 +1189,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BrownMushroom,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -980,6 +1207,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::RedMushroom,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: PLANT_FLAGS,
@@ -992,6 +1222,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     // --- Crafting update: crafted/placeable blocks. ---
     BlockDef {
         block: Block::Cobblestone,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1003,6 +1236,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::OakPlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1014,6 +1250,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::SprucePlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1025,6 +1264,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::BirchPlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1036,6 +1278,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::JunglePlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1047,6 +1292,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::AcaciaPlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1058,6 +1306,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::DarkOakPlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1073,6 +1324,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CherryPlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1084,6 +1338,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::MangrovePlanks,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1099,6 +1356,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::CraftingTable,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1116,6 +1376,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Furnace,
+        shape: RenderShape::Cube,
+        collision: FULL_CUBE_BOXES,
+        emission: 28,
         tags: &[],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
@@ -1132,6 +1395,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Chest,
+        shape: RenderShape::Cube,
+        collision: CHEST_BOXES,
+        emission: 0,
         tags: &[],
         behavior: &behavior::INERT,
         // SOLID but non-opaque: the placed chest is drawn as a custom inset body +
@@ -1151,6 +1417,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
     BlockDef {
         block: Block::Torch,
+        shape: RenderShape::Torch,
+        collision: NO_BOXES,
+        emission: 28,
         tags: &[],
         behavior: &behavior::INERT,
         flags: TORCH_FLAGS,

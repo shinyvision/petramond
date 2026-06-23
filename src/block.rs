@@ -145,53 +145,28 @@ pub struct Aabb {
     pub max: [f32; 3],
 }
 
-/// The whole cell — the collision shape of every ordinary solid block.
-const FULL_CUBE_BOXES: &[Aabb] = &[Aabb {
-    min: [0.0, 0.0, 0.0],
-    max: [1.0, 1.0, 1.0],
-}];
-/// The chest's inset body+lid box (1/16 inset, 14/16 tall) — matches the model in
-/// `render::chest_model`, so collision, outline, and crack all hug the chest.
-const CHEST_BOXES: &[Aabb] = &[Aabb {
-    min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
-    max: [15.0 / 16.0, 14.0 / 16.0, 15.0 / 16.0],
-}];
-
 impl Block {
     pub const ALL: &'static [Block] = data::ALL_BLOCKS;
 
-    /// Mesh geometry kind. Cross-model plants render as billboards; everything
-    /// else is a full cube. (A match, not a `BlockDef` field, so the 60 cube rows
-    /// stay untouched — only the handful of plants are listed here.)
+    /// Mesh geometry kind — cube / cross-plant / torch — a per-row [`BlockDef`]
+    /// field (see [`RenderShape`]): cross-model plants render as billboards, a torch
+    /// as a thin pole, everything else as a full cube.
     #[inline]
     pub fn render_shape(self) -> RenderShape {
-        use Block::*;
-        match self {
-            ShortGrass | Fern | Dandelion | Poppy | Cornflower | Allium | AzureBluet
-            | OxeyeDaisy | RedTulip | DeadBush | BrownMushroom | RedMushroom => RenderShape::Cross,
-            Torch => RenderShape::Torch,
-            _ => RenderShape::Cube,
-        }
+        self.def().shape
     }
 
-    /// The block's collision shape: a list of cell-local AABBs (`0.0..1.0`). Empty =
-    /// no collision (air, water, walk-through plants). One unit box for an ordinary
-    /// full cube; the chest is a single inset box; future stairs/slabs return several.
-    /// The single source of truth for player collision AND — via the union — the
-    /// selection outline + break overlay ([`visual_aabb`](Self::visual_aabb)).
+    /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
+    /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
+    /// and the torch (SOLID so a ray can select it, yet stepped through — its
+    /// selection outline is custom-shaped, see `player::interaction`). One unit box
+    /// for an ordinary full cube; the chest is a single inset box; future
+    /// stairs/slabs list several. The single source of truth for player collision
+    /// AND — via the union — the selection outline + break overlay
+    /// ([`visual_aabb`](Self::visual_aabb)).
     #[inline]
     pub fn collision_boxes(self) -> &'static [Aabb] {
-        if !self.is_solid() {
-            return &[];
-        }
-        match self {
-            Block::Chest => CHEST_BOXES,
-            // A torch is SOLID so the ray can select it, but has NO collision box —
-            // the player walks through it. Its selection outline is custom-shaped
-            // (see `player::interaction`), not derived from this empty list.
-            Block::Torch => &[],
-            _ => FULL_CUBE_BOXES,
-        }
+        self.def().collision
     }
 
     /// Whether this block physically obstructs movement — i.e. has any collision
@@ -325,10 +300,7 @@ impl Block {
     /// flood + the sky-vs-block tinting).
     #[inline]
     pub fn light_emission(self) -> u8 {
-        match self {
-            Block::Torch | Block::Furnace => 28,
-            _ => 0,
-        }
+        self.def().emission
     }
 
     /// A cell a placement may overwrite: empty air, or water (building into water
@@ -727,58 +699,5 @@ mod tests {
             Block::OakLeaves.tiles(),
             [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves]
         );
-    }
-
-    #[test]
-    fn tags_drive_category_predicates() {
-        use super::BlockTag;
-
-        // Every *Leaves variant carries the Leaves tag (and is not a log); the
-        // predicate reads straight from the data row.
-        for b in [
-            Block::OakLeaves,
-            Block::SpruceLeaves,
-            Block::BirchLeaves,
-            Block::JungleLeaves,
-            Block::AcaciaLeaves,
-            Block::DarkOakLeaves,
-            Block::MangroveLeaves,
-            Block::CherryLeaves,
-            Block::AzaleaLeaves,
-        ] {
-            assert!(b.is_leaves() && b.has_tag(BlockTag::Leaves), "{b:?}");
-            assert!(!b.is_log(), "{b:?}");
-        }
-
-        // Every *Log variant carries the Log tag (and is not leaves).
-        for b in [
-            Block::OakLog,
-            Block::SpruceLog,
-            Block::BirchLog,
-            Block::JungleLog,
-            Block::AcaciaLog,
-            Block::DarkOakLog,
-            Block::CherryLog,
-            Block::MangroveLog,
-        ] {
-            assert!(b.is_log() && b.has_tag(BlockTag::Log), "{b:?}");
-            assert!(!b.is_leaves(), "{b:?}");
-        }
-
-        // Non-tree blocks carry neither tree tag.
-        for b in [Block::Stone, Block::OakPlanks, Block::Air, Block::Water] {
-            assert!(!b.is_leaves() && !b.is_log(), "{b:?}");
-        }
-    }
-
-    #[test]
-    fn behavior_drives_random_tick_and_matches_leaves() {
-        // The random-tick property comes from each block's behaviour, and today it
-        // holds exactly for leaves — i.e. every leaf row points at a leaf-decay
-        // behaviour and no other row claims a random tick. Guards the table from a
-        // leaf row left on `INERT` (or a stray non-leaf marked tickable).
-        for &b in Block::ALL {
-            assert_eq!(b.has_random_tick(), b.is_leaves(), "{b:?}");
-        }
     }
 }

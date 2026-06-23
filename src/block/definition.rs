@@ -2,7 +2,7 @@ use crate::atlas::Tile;
 use crate::item::DropSpec;
 
 use super::behavior::BlockBehavior;
-use super::{Block, BlockTag};
+use super::{Aabb, Block, BlockTag, RenderShape};
 
 // No `Debug`/`PartialEq`: the `behavior` trait object is neither, and nothing
 // compares or formats a whole `BlockDef` (callers read individual fields).
@@ -17,6 +17,15 @@ pub(super) struct BlockDef {
     /// World-reactive behaviour (see [`BlockBehavior`]) — what this block *does*.
     /// Most rows are [`behavior::INERT`](super::behavior::INERT).
     pub behavior: &'static dyn BlockBehavior,
+    /// How this block is meshed — cube / cross-plant / torch. See
+    /// [`Block::render_shape`](super::Block::render_shape).
+    pub shape: RenderShape,
+    /// Collision shape: cell-local AABBs (`&[]` = no collision). See
+    /// [`Block::collision_boxes`](super::Block::collision_boxes).
+    pub collision: &'static [Aabb],
+    /// Block-light radiated when active, on the x2 scale (`0` = non-emitter). See
+    /// [`Block::light_emission`](super::Block::light_emission).
+    pub emission: u8,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
     /// Mining material class (drives tool requirement + future tool tiers).

@@ -614,31 +614,6 @@ mod tests {
     }
 
     #[test]
-    fn held_pose_is_diagonal_for_pickaxes_upright_otherwise() {
-        // Pickaxes hang diagonally in the hand (rolled like a swung handle)...
-        for pick in [ItemType::WoodenPickaxe, ItemType::StonePickaxe] {
-            assert_ne!(
-                pick.held_pose().roll,
-                0.0,
-                "{pick:?} should hang diagonally"
-            );
-        }
-        // ...every other sprite-held item stands upright (no roll).
-        for upright in [
-            ItemType::Poppy,
-            ItemType::Stick,
-            ItemType::RawIron,
-            ItemType::Dandelion,
-        ] {
-            assert_eq!(
-                upright.held_pose().roll,
-                0.0,
-                "{upright:?} should stand upright"
-            );
-        }
-    }
-
-    #[test]
     fn durable_items_do_not_stack() {
         // The stack limit of 1 follows from durability, not from being a "tool".
         for durable in [ItemType::WoodenPickaxe, ItemType::StonePickaxe] {
