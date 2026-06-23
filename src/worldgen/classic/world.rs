@@ -191,6 +191,153 @@ mod tests {
     use super::*;
     use crate::worldgen::classic::biome::stack::voronoi;
 
+    /// Biome-province invariants on the SHIPPING terrain path. Samples the live
+    /// `CascadeWorld` region (the same provider the chunk generator reads) on a
+    /// stride-8 grid and asserts the world stays a varied mix rather than one
+    /// dominant biome: many distinct biomes coexist with no single one swallowing
+    /// the window, a large connected desert exists AND reaches high ground (hills /
+    /// plateaus), and at least one swamp forms well inland from any ocean.
+    ///
+    /// Relocated from the excised legacy `HeightField` path, which sampled the same
+    /// invariants through a now-deleted generator. The desert thresholds (`>= 220`
+    /// connected cells, surface `>= y82`) and inland-swamp test are carried over
+    /// verbatim; they pass on the shipping path with wide margin. The legacy
+    /// per-biome upper caps (forest/savanna `<= 2200`, etc.) were artifacts of the
+    /// old climate-noise generator and do NOT hold for the cascade biome system —
+    /// which deliberately grows large contiguous provinces — so they are replaced
+    /// by the equivalent "no single biome dominates" invariant. Window origin
+    /// `(4096, -4096)` at seed 42 is a continental patch with a desert/savanna belt
+    /// abutting forest, plains, swamp, mountains and ocean.
+    #[test]
+    fn biome_field_keeps_regions_varied_with_large_deserts_and_inland_swamps() {
+        const SEED: u32 = 42;
+        const STEP: i32 = 8;
+        const R: i32 = 640;
+        const OX: i32 = 4096;
+        const OZ: i32 = -4096;
+        let n = (R * 2 / STEP + 1) as usize;
+        let world = CascadeWorld::new(SEED);
+        // One contiguous cascade region covering every sampled column (origin and
+        // size are multiples of 4 as `region` requires).
+        let span = ((n - 1) as i32 * STEP) as usize; // 1280
+        let region = world.region(OX, OZ, span + 4, span + 4);
+
+        let mut grid = vec![Biome::Ocean; n * n];
+        let mut max_desert_y = i32::MIN;
+        let mut counts = [0usize; 32];
+        for gz in 0..n {
+            let wz = OZ + gz as i32 * STEP;
+            for gx in 0..n {
+                let wx = OX + gx as i32 * STEP;
+                let (surf, biome_id) = region.at(wx, wz);
+                let biome = map_biome(biome_id);
+                if biome == Biome::Desert {
+                    max_desert_y = max_desert_y.max(surf);
+                }
+                counts[biome.id() as usize] += 1;
+                grid[gz * n + gx] = biome;
+            }
+        }
+
+        // Varied world: many biomes present, none dominating. (Replaces the legacy
+        // per-biome upper caps, which the cascade biome system does not satisfy.)
+        let distinct = counts.iter().filter(|&&c| c > 0).count();
+        let max_any = counts.iter().copied().max().unwrap_or(0);
+        let total = n * n;
+        assert!(
+            distinct >= 8,
+            "expected a varied biome mix, only {distinct} distinct biomes sampled"
+        );
+        assert!(
+            max_any * 5 < total * 2,
+            "expected no single biome to dominate, but one covered {max_any}/{total} cells"
+        );
+
+        // A large connected desert exists and reaches hill/plateau elevation.
+        let largest_desert = largest_component(&grid, n, Biome::Desert);
+        assert!(
+            largest_desert >= 220,
+            "largest sampled desert component was {largest_desert} cells"
+        );
+        assert!(
+            max_desert_y >= 82,
+            "expected desert hills/plateaus, max desert surface was y{max_desert_y}"
+        );
+
+        // At least one inland swamp (>= 64 blocks from any sampled ocean).
+        assert!(
+            has_inland_swamp(&grid, n, 8),
+            "expected at least one swamp sample >=64 blocks from sampled ocean"
+        );
+    }
+
+    fn largest_component(grid: &[Biome], n: usize, target: Biome) -> usize {
+        let mut seen = vec![false; grid.len()];
+        let mut best = 0usize;
+        let mut stack = Vec::new();
+        for i in 0..grid.len() {
+            if seen[i] || grid[i] != target {
+                continue;
+            }
+            seen[i] = true;
+            stack.push(i);
+            let mut size = 0usize;
+            while let Some(cur) = stack.pop() {
+                size += 1;
+                let x = cur % n;
+                let z = cur / n;
+                let push = |nx: usize, nz: usize, seen: &mut [bool], stack: &mut Vec<usize>| {
+                    let ni = nz * n + nx;
+                    if !seen[ni] && grid[ni] == target {
+                        seen[ni] = true;
+                        stack.push(ni);
+                    }
+                };
+                if x > 0 {
+                    push(x - 1, z, &mut seen, &mut stack);
+                }
+                if x + 1 < n {
+                    push(x + 1, z, &mut seen, &mut stack);
+                }
+                if z > 0 {
+                    push(x, z - 1, &mut seen, &mut stack);
+                }
+                if z + 1 < n {
+                    push(x, z + 1, &mut seen, &mut stack);
+                }
+            }
+            best = best.max(size);
+        }
+        best
+    }
+
+    fn has_inland_swamp(grid: &[Biome], n: usize, radius_cells: usize) -> bool {
+        for z in 0..n {
+            for x in 0..n {
+                if grid[z * n + x] != Biome::Swamp {
+                    continue;
+                }
+                let z0 = z.saturating_sub(radius_cells);
+                let z1 = (z + radius_cells).min(n - 1);
+                let x0 = x.saturating_sub(radius_cells);
+                let x1 = (x + radius_cells).min(n - 1);
+                let mut near_ocean = false;
+                'scan: for nz in z0..=z1 {
+                    for nx in x0..=x1 {
+                        if matches!(grid[nz * n + nx], Biome::Ocean | Biome::DeepOcean) {
+                            near_ocean = true;
+                            break 'scan;
+                        }
+                    }
+                }
+                if !near_ocean {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     #[test]
     #[ignore = "diagnostic: prints the cascade biome histogram near origin"]
     fn biome_histogram() {

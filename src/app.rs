@@ -13,11 +13,14 @@ pub use screen::{AppScreen, CursorPolicy};
 use crate::app::input::{ControlEvent, InputController};
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton};
-use crate::game::{Game, GameInput};
-use crate::render::{HeldItemFrame, Renderer, UiFrame};
+use crate::game::{ContainerTarget, Game, GameInput, MenuSlot};
+use crate::render::{HeldItemFrame, Renderer, Scene, UiFrame};
 
 pub struct App {
     game: Game,
+    /// Render-side translation of the sim's per-frame world data (dropped items,
+    /// particles, chests, held-item light) into the renderer's wire structs.
+    scene: Scene,
     last: f64,
     input: InputController,
     pointer: PointerState,
@@ -52,6 +55,7 @@ impl App {
     pub fn new(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
         Self {
             game: Game::new(cam, world_name, seed, render_dist),
+            scene: Scene::new(),
             last: now_seconds(),
             input: InputController::default(),
             pointer: PointerState::default(),
@@ -222,11 +226,10 @@ impl App {
             placed: events.placed_block || events.threw_item,
             dt,
         });
-        renderer.set_held_item_light(self.game.held_item_skylight());
-
-        renderer.set_item_entities(self.game.item_entity_instances());
-        renderer.set_chests(self.game.chest_instances());
-        renderer.set_particles(self.game.particle_instances());
+        // Bake the sim's per-frame world-render data (dropped items, particles,
+        // chests, held-item light) into the render-side scene, then hand it off.
+        self.scene.bake(&self.game);
+        self.scene.upload(renderer);
         renderer.set_ui(UiFrame {
             open: self.screen.ui_open(),
             panel: self.screen.craft_kind(),
@@ -356,63 +359,32 @@ impl App {
         true
     }
 
-    /// Apply an inventory click (caller guarantees the inventory is open). On a
-    /// slot: shift transfers between hotbar/grid; otherwise right splits / drips
-    /// one and left does whole-stack pick/drop/swap — except a fast second left
-    /// click on the same slot while dragging a stack gathers matching items onto
-    /// the cursor (see [`left_click_slot`](Self::left_click_slot)). Off any slot
-    /// but confidently OUTSIDE the panel: throw the held stack (left = all,
+    /// Apply an inventory click (caller guarantees a menu is open). Hit-test the
+    /// pixel to a slot identity, then route it through the menu's single
+    /// [`Game::menu_click`] entry — one path keyed on the open container, instead of
+    /// a router per container type.
+    ///
+    /// On a slot: shift transfers (furnace tag-routes #fuel / #smeltable, chest
+    /// dumps in, otherwise hotbar↔grid); right splits / drips one; left does
+    /// whole-stack pick/drop/swap — except a fast second left click on the same slot
+    /// while dragging a stack gathers matching items onto the cursor (the
+    /// double-click `gather` verdict App owns; see [`left_click_gather`]). Off any
+    /// slot but confidently OUTSIDE the panel: throw the held stack (left = all,
     /// right = one). A click on the panel art but not a slot does nothing.
     fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
         let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
         let shift = self.modifiers.shift;
         // The open panel's own slots take priority over the inventory grid below.
-        // The furnace screen has its three slots; the crafting screens have the
-        // input cells + result.
-        if self.screen.is_furnace() {
-            if let Some(hit) = crate::render::furnace_slot_at_cursor(screen, cursor) {
-                self.pointer.reset_click_streak();
-                self.route_furnace_click(hit, button, shift);
-                return;
-            }
-        } else if self.screen.is_chest() {
-            if let Some(slot) = crate::render::chest_slot_at_cursor(screen, cursor) {
-                // Left-clicks manage their own double-click streak inside
-                // route_chest_click (so a fast re-click gathers); don't reset it here.
-                self.route_chest_click(slot, button, shift, now);
-                return;
-            }
-        } else if let Some(hit) =
-            crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
-        {
-            self.pointer.reset_click_streak();
-            self.route_craft_click(hit, button, shift);
-            return;
-        }
-        match crate::render::slot_at_cursor(screen, true, cursor) {
+        // ONE match on the menu's edit target picks the panel's per-layout
+        // hit-tester (furnace role / chest index / craft cell), replacing the old
+        // is_furnace()/is_chest() ladder. A miss falls through to the inventory grid.
+        let slot = self.panel_slot_at(screen, cursor).or_else(|| {
+            crate::render::slot_at_cursor(screen, true, cursor).map(MenuSlot::Inventory)
+        });
+        match slot {
             Some(slot) => {
-                if shift {
-                    // In the furnace screen, shift-click sends #fuel / #smeltable
-                    // stacks into the right furnace slot; in the chest screen it
-                    // dumps the stack into the chest; elsewhere it shuffles between
-                    // the hotbar and the main grid.
-                    if self.screen.is_furnace() {
-                        self.game.furnace_shift_from_inventory(slot);
-                    } else if self.screen.is_chest() {
-                        self.game.chest_shift_from_inventory(slot);
-                    } else {
-                        self.game.shift_click_inventory_slot(slot);
-                    }
-                    self.pointer.reset_click_streak();
-                } else {
-                    match button {
-                        PointerButton::Primary => self.left_click_slot(slot, now),
-                        PointerButton::Secondary => {
-                            self.game.right_click_inventory_slot(slot);
-                            self.pointer.reset_click_streak();
-                        }
-                    }
-                }
+                let gather = self.left_click_gather(slot, button, shift, now);
+                self.game.menu_click(slot, button, shift, gather);
             }
             None if !crate::render::cursor_in_panel(screen, cursor) => {
                 self.pointer.reset_click_streak();
@@ -425,124 +397,55 @@ impl App {
         }
     }
 
-    /// Left-click inventory `slot`. A fast second click on the same slot while a
-    /// stack is held on the cursor gathers matching items into it (double-click
-    /// fill); otherwise it's the normal whole-stack pick/drop/swap.
-    fn left_click_slot(&mut self, slot: usize, now: f64) {
-        if self.pointer.register_left_click(slot, now) && self.game.cursor_has_stack() {
-            // While the chest screen is open, a double-click gathers from the chest
-            // too (matching MC), not just the inventory.
-            if self.screen.is_chest() {
-                self.game.collect_to_cursor_in_chest();
-            } else {
-                self.game.collect_to_cursor();
+    /// Hit-test the open panel's OWN slots (above the inventory grid), resolving the
+    /// pixel to the panel-specific slot identity. The per-layout geometry differs by
+    /// container (furnace slots vs chest slots sit at different pixels), so this stays
+    /// keyed on the open container — but it is the ONE place that branches on it, the
+    /// single decision point that replaced App's per-container click routers.
+    fn panel_slot_at(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<MenuSlot> {
+        match self.game.menu().target() {
+            ContainerTarget::Furnace(_) => {
+                crate::render::furnace_slot_at_cursor(screen, cursor).map(MenuSlot::Furnace)
             }
-        } else {
-            self.game.click_inventory_slot(slot);
+            ContainerTarget::Chest(_) => {
+                crate::render::chest_slot_at_cursor(screen, cursor).map(MenuSlot::Chest)
+            }
+            ContainerTarget::Inventory | ContainerTarget::Table => {
+                crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
+                    .map(MenuSlot::Craft)
+            }
+            ContainerTarget::None => None,
         }
     }
 
-    /// Apply a click on a crafting slot. Input cells behave like inventory slots
-    /// (shift quick-moves to the inventory; left/right place / split / swap). The
-    /// result slot takes one craft to the cursor, or shift-crafts as many as fit.
-    fn route_craft_click(&mut self, hit: crate::render::CraftHit, button: PointerButton, shift: bool) {
-        use crate::render::CraftHit;
-        match hit {
-            CraftHit::Input(i) => {
-                if shift {
-                    self.game.craft_shift_slot(i);
-                } else {
-                    match button {
-                        PointerButton::Primary => self.game.craft_click_slot(i),
-                        PointerButton::Secondary => self.game.craft_right_click_slot(i),
-                    }
-                }
-            }
-            CraftHit::Result => {
-                if shift {
-                    self.game.craft_shift_result();
-                } else {
-                    self.game.craft_take_result();
-                }
-            }
-        }
-    }
-
-    /// Apply a click on a furnace slot. Input and fuel behave like ordinary slots
-    /// (shift quick-moves to the inventory; left/right place / split / swap). The
-    /// output is take-only: any click moves the product onto the cursor (shift sends
-    /// it to the inventory).
-    fn route_furnace_click(
+    /// Resolve a click into the double-click `gather` verdict and keep the App's
+    /// click-streak in step. A streak-advancing click is a plain left-click on a
+    /// gatherable slot (an inventory or chest storage slot — the only slots whose
+    /// fast re-click gathers); that case registers against the streak and reports a
+    /// gather when it completes a double AND the cursor holds a stack. Every other
+    /// interaction (shift / right, or a furnace/craft slot) ends the streak and never
+    /// gathers, so the next left-click is a fresh single click. Chest slot indices
+    /// are namespaced past the inventory's (see [`CHEST_SLOT_STREAK_BASE`]) so a chest
+    /// slot and an inventory slot with the same number aren't conflated.
+    fn left_click_gather(
         &mut self,
-        hit: crate::render::FurnaceHit,
+        slot: MenuSlot,
         button: PointerButton,
         shift: bool,
-    ) {
-        use crate::render::FurnaceHit;
-        match hit {
-            FurnaceHit::Input => {
-                if shift {
-                    self.game.furnace_shift_input();
-                } else {
-                    match button {
-                        PointerButton::Primary => self.game.furnace_click_input(),
-                        PointerButton::Secondary => self.game.furnace_right_click_input(),
-                    }
-                }
+        now: f64,
+    ) -> bool {
+        let streak_key = match slot {
+            _ if shift || button != PointerButton::Primary => None,
+            MenuSlot::Inventory(i) => Some(i),
+            MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
+            MenuSlot::Craft(_) | MenuSlot::Furnace(_) => None,
+        };
+        match streak_key {
+            Some(key) => self.pointer.register_left_click(key, now) && self.game.cursor_has_stack(),
+            None => {
+                self.pointer.reset_click_streak();
+                false
             }
-            FurnaceHit::Fuel => {
-                if shift {
-                    self.game.furnace_shift_fuel();
-                } else {
-                    match button {
-                        PointerButton::Primary => self.game.furnace_click_fuel(),
-                        PointerButton::Secondary => self.game.furnace_right_click_fuel(),
-                    }
-                }
-            }
-            FurnaceHit::Output => {
-                if shift {
-                    self.game.furnace_shift_output();
-                } else {
-                    self.game.furnace_take_output();
-                }
-            }
-        }
-    }
-
-    /// Apply a click on a chest storage slot. Shift quick-moves the stack to the
-    /// inventory; right splits / places one; left does whole-stack pick/drop/swap —
-    /// except a fast second left click on the same slot while dragging gathers
-    /// matching items onto the cursor (double-click fill, from chest + inventory).
-    fn route_chest_click(&mut self, slot: usize, button: PointerButton, shift: bool, now: f64) {
-        if shift {
-            self.game.chest_shift_slot(slot);
-            self.pointer.reset_click_streak();
-        } else {
-            match button {
-                PointerButton::Primary => self.left_click_chest_slot(slot, now),
-                PointerButton::Secondary => {
-                    self.game.chest_right_click_slot(slot);
-                    self.pointer.reset_click_streak();
-                }
-            }
-        }
-    }
-
-    /// Left-click a chest storage slot. A fast second click on the same slot while a
-    /// stack is held gathers matching items into the cursor (from the chest AND the
-    /// inventory); otherwise it's the normal whole-stack pick/drop/swap. Chest slot
-    /// indices are namespaced past the inventory's (see [`CHEST_SLOT_STREAK_BASE`])
-    /// so a chest slot and an inventory slot with the same number aren't conflated.
-    fn left_click_chest_slot(&mut self, slot: usize, now: f64) {
-        if self
-            .pointer
-            .register_left_click(CHEST_SLOT_STREAK_BASE + slot, now)
-            && self.game.cursor_has_stack()
-        {
-            self.game.collect_to_cursor_in_chest();
-        } else {
-            self.game.chest_click_slot(slot);
         }
     }
 }
@@ -572,8 +475,8 @@ impl PointerState {
     /// [`DOUBLE_CLICK_SECS`] of the first. A completed double-click consumes the
     /// streak, so a third quick click starts a fresh single click.
     fn register_left_click(&mut self, slot: usize, now: f64) -> bool {
-        let is_double = self.last_click_slot == Some(slot)
-            && now - self.last_click_time < DOUBLE_CLICK_SECS;
+        let is_double =
+            self.last_click_slot == Some(slot) && now - self.last_click_time < DOUBLE_CLICK_SECS;
         if is_double {
             self.last_click_slot = None;
         } else {
@@ -631,7 +534,8 @@ mod tests {
     /// inventory is empty now, so inventory-interaction tests seed a stack first.
     fn app_with_grass() -> App {
         let mut app = app();
-        app.game.add_to_inventory(ItemStack::new(ItemType::Grass, 64));
+        app.game
+            .add_to_inventory(ItemStack::new(ItemType::Grass, 64));
         app
     }
 
@@ -796,7 +700,8 @@ mod tests {
         use crate::render::{CraftHit, CraftKind};
         let mut app = app();
         // Give the player one oak log and open the inventory (2×2 crafting).
-        app.game.add_to_inventory(ItemStack::new(ItemType::OakLog, 1));
+        app.game
+            .add_to_inventory(ItemStack::new(ItemType::OakLog, 1));
         app.handle_control(Control::ToggleInventory, true);
         let screen = (1280u32, 720u32);
 
@@ -810,7 +715,10 @@ mod tests {
         let cc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Input(0));
         app.set_cursor_position(cc.0, cc.1);
         app.route_screen_click(screen, 0.1);
-        assert!(app.game.inventory().cursor().is_none(), "log placed into the craft cell");
+        assert!(
+            app.game.inventory().cursor().is_none(),
+            "log placed into the craft cell"
+        );
         assert_eq!(
             app.game.craft_grid().result().map(|s| s.item),
             Some(ItemType::OakPlanks)
@@ -830,14 +738,19 @@ mod tests {
     #[test]
     fn closing_a_menu_returns_craft_grid_items_to_inventory() {
         let mut app = app();
-        app.game.add_to_inventory(ItemStack::new(ItemType::OakLog, 2));
+        app.game
+            .add_to_inventory(ItemStack::new(ItemType::OakLog, 2));
         app.handle_control(Control::ToggleInventory, true);
         let screen = (1280u32, 720u32);
         // Move the logs onto the cursor and into a craft cell.
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
         app.route_screen_click(screen, 0.0);
-        let cc = cursor_over_craft(screen, crate::render::CraftKind::Inventory, crate::render::CraftHit::Input(0));
+        let cc = cursor_over_craft(
+            screen,
+            crate::render::CraftKind::Inventory,
+            crate::render::CraftHit::Input(0),
+        );
         app.set_cursor_position(cc.0, cc.1);
         app.route_screen_click(screen, 0.1);
         // Close with Escape: the logs return to the inventory.
@@ -882,8 +795,14 @@ mod tests {
         // stays on the cursor and the source slot stays empty.
         app.route_screen_click(screen, 0.0);
         app.route_screen_click(screen, 0.1);
-        assert!(app.game.inventory().cursor().is_some(), "stack stays on the cursor");
-        assert!(app.game.inventory().slot(0).is_none(), "source slot stays empty");
+        assert!(
+            app.game.inventory().cursor().is_some(),
+            "stack stays on the cursor"
+        );
+        assert!(
+            app.game.inventory().slot(0).is_none(),
+            "source slot stays empty"
+        );
     }
 
     #[test]
@@ -898,7 +817,10 @@ mod tests {
         // click that drops the held stack back into the now-empty slot.
         app.route_screen_click(screen, 0.0);
         app.route_screen_click(screen, 1.0);
-        assert!(app.game.inventory().cursor().is_none(), "stack dropped back");
+        assert!(
+            app.game.inventory().cursor().is_none(),
+            "stack dropped back"
+        );
         assert!(app.game.inventory().slot(0).is_some(), "slot refilled");
     }
 
@@ -919,7 +841,10 @@ mod tests {
         let (dx, dy) = cursor_over_slot(screen, dest);
         app.set_cursor_position(dx, dy);
         app.route_screen_click(screen, 0.05);
-        assert!(app.game.inventory().cursor().is_none(), "stack dropped into the new slot");
+        assert!(
+            app.game.inventory().cursor().is_none(),
+            "stack dropped into the new slot"
+        );
         assert!(app.game.inventory().slot(dest).is_some());
     }
 
@@ -952,7 +877,10 @@ mod tests {
             shift: false,
         });
         app.handle_control(Control::DropItem, true);
-        assert!(app.game.inventory().selected().is_none(), "whole stack dropped");
+        assert!(
+            app.game.inventory().selected().is_none(),
+            "whole stack dropped"
+        );
     }
 
     #[test]
@@ -1015,7 +943,10 @@ mod tests {
         app.set_cursor_position(cx, cy);
         let item0 = app.game.inventory().slot(0).unwrap().item;
         app.route_screen_click(screen, 0.0);
-        assert!(app.game.inventory().slot(0).is_none(), "hotbar slot emptied");
+        assert!(
+            app.game.inventory().slot(0).is_none(),
+            "hotbar slot emptied"
+        );
         assert_eq!(
             app.game
                 .inventory()

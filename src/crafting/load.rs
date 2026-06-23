@@ -2,8 +2,9 @@
 //!
 //! The on-disk file is preferred so recipes can be edited without a rebuild; an
 //! embedded copy is the fallback when the game runs outside the project tree.
-//! Items are referenced by their snake_case registry key (derived from the
-//! display name, e.g. "Oak Planks" → `oak_planks`); a `#name` reference is a tag.
+//! Items are referenced by their stable snake_case [`key`](ItemType::key) (e.g.
+//! `oak_planks`) — the item's real identity, independent of its display name; a
+//! `#name` reference is a tag.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -216,17 +217,10 @@ fn item_stack(key: &str, count: u8) -> Result<ItemStack, String> {
     Ok(ItemStack::new(item, count.max(1)))
 }
 
-/// Resolve a snake_case registry key (e.g. `oak_planks`) to its item, derived
-/// from the item's display name ("Oak Planks" → `oak_planks`).
+/// Resolve a recipe's snake_case [`key`](ItemType::key) (e.g. `oak_planks`) to its
+/// item — matched against each item's explicit stable key, not its display name.
 fn item_from_key(key: &str) -> Option<ItemType> {
-    ItemType::ALL
-        .iter()
-        .copied()
-        .find(|it| registry_key(*it) == key)
-}
-
-fn registry_key(item: ItemType) -> String {
-    item.name().to_ascii_lowercase().replace(' ', "_")
+    ItemType::ALL.iter().copied().find(|it| it.key() == key)
 }
 
 #[cfg(test)]
@@ -264,6 +258,25 @@ mod tests {
 
     #[test]
     fn registry_keys_match_display_names() {
+        use std::collections::HashSet;
+
+        // The recipe key is now explicit item data, but it must still equal what the
+        // display name used to derive to — otherwise an existing recipe in
+        // `recipes.json` would stop resolving. Pin every item's key to that
+        // historical derivation, and require all keys to be unique (a duplicate would
+        // make a recipe reference ambiguous).
+        let mut seen = HashSet::new();
+        for &item in ItemType::ALL {
+            let derived = item.name().to_ascii_lowercase().replace(' ', "_");
+            assert_eq!(
+                item.key(),
+                derived,
+                "{item:?} key must match its historical name-derived key"
+            );
+            assert!(seen.insert(item.key()), "duplicate item key {:?}", item.key());
+        }
+
+        // Spot-check round-tripping through the resolver used by the recipe loader.
         assert_eq!(item_from_key("oak_log"), Some(ItemType::OakLog));
         assert_eq!(item_from_key("dark_oak_planks"), Some(ItemType::DarkOakPlanks));
         assert_eq!(item_from_key("crafting_table"), Some(ItemType::CraftingTable));

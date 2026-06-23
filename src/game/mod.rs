@@ -4,24 +4,25 @@
 //! platform input, app screens, or hand animation; those belong to the app shell
 //! and render presentation layer.
 
+mod container;
+
 use std::collections::HashMap;
 
 use crate::block::Block;
 use crate::camera::Camera;
-use crate::chest::Chest;
-use crate::crafting::{load_recipes, CraftGrid, Recipes};
+use crate::crafting::{load_recipes, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
-use crate::furnace::{Facing, Furnace};
+use crate::furnace::Facing;
 use crate::inventory::Inventory;
-use crate::item::{ItemStack, ItemTag, ItemType};
-use crate::mathh::{lerp, IVec3, SelectionShape, Vec3};
+use crate::item::{ItemStack, ItemType};
+use crate::mathh::{lerp, voxel_at, IVec3, SelectionShape, Vec3};
 use crate::mining::MiningState;
 use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
-use crate::render::{
-    BreakOverlayView, ChestInstance, ChestView, FurnaceView, ItemEntityInstance, ParticleInstance,
-};
+use crate::render::{BreakOverlayView, ChestView, FurnaceView};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
+
+pub use container::{ContainerMenu, ContainerTarget, MenuSlot};
 
 /// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
 /// is underwater.
@@ -114,17 +115,12 @@ pub struct Game {
     particles: ParticleSystem,
     spawn_counter: u32,
     mining_dust_t: f32,
-    item_entity_instances: Vec<ItemEntityInstance>,
-    particle_instances: Vec<ParticleInstance>,
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
-    /// for the rest; client-side animation only, never persisted.
+    /// for the rest; client-side animation only, never persisted. The render-side
+    /// scene adapter reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
+    /// the easing in [`Game::advance_chest_lids`] is the owning sim/animation state.
     chest_lids: HashMap<IVec3, f32>,
-    /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
-    /// from the loaded chunks each frame; the lid angle is added from `chest_lids`.
-    chest_render_buf: Vec<(IVec3, Facing, u8)>,
-    /// Reusable buffer of the chest instances handed to the renderer each frame.
-    chest_instances: Vec<ChestInstance>,
     /// Wall-clock seconds banked toward the next fixed simulation tick.
     tick_accumulator: f32,
     /// Wall-clock seconds since the last background autosave.
@@ -133,27 +129,30 @@ pub struct Game {
     /// drag-out) so the next [`tick`](Self::tick) reports it for the hand's place
     /// jab. Consumed (reset) each tick.
     threw_item: bool,
-    /// Loaded crafting recipes (from `assets/recipes.json`), used to compute the
-    /// crafting result preview.
+    /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
+    /// [`ContainerMenu`]'s craft preview (borrowed in per call) and by the furnace
+    /// *smelting* tick (`World::game_tick`), which is why they live here on `Game`
+    /// rather than on the menu — the menu would otherwise need a self-referential
+    /// borrow during the tick.
     recipes: Recipes,
-    /// The active crafting grid (2×2 in the inventory, 3×3 at a table) + its
-    /// cached result. Empty whenever no crafting screen is open.
-    craft: CraftGrid,
+    /// The open container GUI's persistent *edit target*: the block-entity (or the
+    /// inventory-side craft grid) the screen currently mutates, plus its slot
+    /// behaviour. NOT the screen authority — `App::AppScreen` decides which screen
+    /// is open; this only tracks what that screen is acting on.
+    menu: ContainerMenu,
     /// Set when the player right-clicks a placed crafting table, so the next
-    /// [`tick`](Self::tick) asks the app shell to open the 3×3 screen. One-shot.
+    /// [`tick`](Self::tick) asks the app shell to open the 3×3 screen. One-shot
+    /// open *request* (consumed via [`GameEvents`]), distinct from the menu's
+    /// persistent edit target.
     request_open_table: bool,
     /// Set to a furnace's position when right-clicked, so the next
-    /// [`tick`](Self::tick) asks the app shell to open the furnace screen. One-shot.
+    /// [`tick`](Self::tick) asks the app shell to open the furnace screen. One-shot
+    /// open request (consumed via [`GameEvents`]).
     request_open_furnace: Option<IVec3>,
-    /// The position of the furnace whose screen is currently open (the GUI reads and
-    /// edits the furnace stored there); `None` when no furnace screen is up.
-    open_furnace: Option<IVec3>,
     /// Set to a chest's position when right-clicked, so the next [`tick`](Self::tick)
-    /// asks the app shell to open the chest screen. One-shot.
+    /// asks the app shell to open the chest screen. One-shot open request (consumed
+    /// via [`GameEvents`]).
     request_open_chest: Option<IVec3>,
-    /// The position of the chest whose screen is currently open (the GUI reads and
-    /// edits the chest stored there); `None` when no chest screen is up.
-    open_chest: Option<IVec3>,
 }
 
 impl Game {
@@ -198,7 +197,7 @@ impl Game {
             }
         };
         // Centre chunk streaming on the real player position from frame one.
-        cam.pos = Vec3::new(player.pos.x, player.pos.y + player::EYE, player.pos.z);
+        cam.pos = player.eye();
 
         let mut world = World::new(seed, render_dist);
         if let Some(s) = save {
@@ -216,21 +215,15 @@ impl Game {
             particles: ParticleSystem::new(),
             spawn_counter: 0,
             mining_dust_t: 0.0,
-            item_entity_instances: Vec::new(),
-            particle_instances: Vec::new(),
             chest_lids: HashMap::new(),
-            chest_render_buf: Vec::new(),
-            chest_instances: Vec::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
             threw_item: false,
             recipes: load_recipes(),
-            craft: CraftGrid::new(),
+            menu: ContainerMenu::new(),
             request_open_table: false,
             request_open_furnace: None,
-            open_furnace: None,
             request_open_chest: None,
-            open_chest: None,
         }
     }
 
@@ -298,11 +291,12 @@ impl Game {
         self.tick_accumulator += dt.clamp(0.0, 1.0);
         let mut ran = 0;
         while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
-            self.world.game_tick();
-            // Furnaces smelt on the same 20 TPS clock (recipes live in `Game`).
-            self.world.tick_furnaces(&self.recipes);
-            // Item collection is paced by the simulation clock, not the frame
-            // rate: "a game tick decides the player picks it up".
+            // The world owns its per-tick sequence (scheduled ticks, block updates,
+            // furnace smelting). Recipes live in `Game`, so they're passed through.
+            self.world.game_tick(&self.recipes);
+            // Item lifetime + collection stay here: pickup needs `player.inventory`
+            // (the borrow split). Paced by the simulation clock, not the frame
+            // rate — "a game tick decides the player picks it up".
             self.item_pickup_tick();
             self.tick_accumulator -= TICK_DT;
             ran += 1;
@@ -352,10 +346,6 @@ impl Game {
         self.player.inventory.set_active(slot);
     }
 
-    pub fn click_inventory_slot(&mut self, slot: usize) {
-        self.player.inventory.click_slot(slot);
-    }
-
     /// Whether the cursor currently holds a stack. Gates the double-click gather,
     /// which only fires while a stack is being dragged.
     pub fn cursor_has_stack(&self) -> bool {
@@ -368,327 +358,101 @@ impl Game {
         self.player.inventory.collect_to_cursor();
     }
 
-    /// Right-click an inventory slot: split the slot's stack onto the cursor, or
-    /// drip one held item into the slot. See [`Inventory::right_click_slot`].
-    pub fn right_click_inventory_slot(&mut self, slot: usize) {
-        self.player.inventory.right_click_slot(slot);
+    // --- Container menu (forwarders) --------------------------------------
+    //
+    // The open container GUI's edit target + slot behaviour live on `ContainerMenu`
+    // (`game/container.rs`). These thin forwarders split `Game` into its disjoint
+    // `menu` / `world` / `player.inventory` fields and hand them to the menu (recipes
+    // borrowed from `Game` per call) — the App can't take those disjoint borrows
+    // itself. Per-slot interaction routing funnels through the single
+    // [`menu_click`](Self::menu_click) entry; open/close + view forwarders cover the
+    // menu's lifecycle and what the UI reads.
+
+    /// Read-only handle to the open container menu (its target + craft grid).
+    #[inline]
+    pub fn menu(&self) -> &ContainerMenu {
+        &self.menu
     }
 
-    /// Shift-click an inventory slot: shuttle the stack between the hotbar and the
-    /// main grid. See [`Inventory::shift_move_slot`].
-    pub fn shift_click_inventory_slot(&mut self, slot: usize) {
-        self.player.inventory.shift_move_slot(slot);
+    /// Route a hit-tested container click (resolved by the App to a [`MenuSlot`] +
+    /// button + Shift, with the App's double-click `gather` verdict) to the open
+    /// menu. Splits the disjoint `world` / `inventory` borrows the menu needs and
+    /// lends the recipes; the menu decodes the interaction keyed on its target.
+    pub fn menu_click(
+        &mut self,
+        slot: MenuSlot,
+        button: crate::controls::PointerButton,
+        shift: bool,
+        gather: bool,
+    ) {
+        self.menu.click(
+            &mut self.world,
+            &mut self.player.inventory,
+            &self.recipes,
+            slot,
+            button,
+            shift,
+            gather,
+        );
     }
 
     /// The active crafting grid (for the UI to read cells + result preview).
     #[inline]
-    pub fn craft_grid(&self) -> &CraftGrid {
-        &self.craft
+    pub fn craft_grid(&self) -> &crate::crafting::CraftGrid {
+        self.menu.craft_grid()
     }
 
     /// Configure the crafting grid for a screen of `cols×cols` (2 = inventory,
     /// 3 = table) and clear it. Called when a crafting screen opens.
     pub fn open_crafting(&mut self, cols: usize) {
-        self.craft.reset(cols);
-        self.craft.recompute(&self.recipes);
+        self.menu.open_crafting(cols, &self.recipes);
     }
 
-    /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
-    /// reads and edits. Defensively creates an empty entity if the block lacks one
-    /// (placement always inserts one, so this is belt-and-braces).
+    /// Begin a furnace-screen session at `pos` (the GUI's edit target).
     pub fn open_furnace_screen(&mut self, pos: IVec3) {
-        if self.world.furnace_at(pos).is_none() {
-            self.world.insert_furnace(pos, Facing::default());
-        }
-        self.open_furnace = Some(pos);
+        self.menu.open_furnace_screen(&mut self.world, pos);
     }
 
-    /// End the furnace-screen session. The furnace keeps its contents (unlike the
-    /// crafting grid, which empties back into the inventory on close).
+    /// End the furnace-screen session.
     pub fn close_furnace(&mut self) {
-        self.open_furnace = None;
+        self.menu.close_furnace();
     }
 
     /// Close the crafting grid: return every input item to the inventory (any
-    /// overflow is thrown into the world), then clear the result.
+    /// overflow is thrown into the world), then clear the result. Overflow is
+    /// gathered first, then thrown after the menu call so `throw_item`'s
+    /// `world`/`cam` borrow doesn't alias the menu's borrow.
     pub fn close_crafting(&mut self) {
-        for i in 0..self.craft.capacity() {
-            if let Some(stack) = self.craft.take_cell(i) {
-                if let Some(leftover) = self.player.inventory.add(stack) {
-                    self.throw_item(leftover);
-                }
-            }
-        }
-        self.craft.recompute(&self.recipes);
-    }
-
-    /// Left-click a crafting input cell (cursor pick/drop/merge/swap), then
-    /// refresh the result preview.
-    pub fn craft_click_slot(&mut self, i: usize) {
-        if i >= self.craft.capacity() {
-            return;
-        }
-        self.player
-            .inventory
-            .click_external_slot(self.craft.cell_mut(i));
-        self.craft.recompute(&self.recipes);
-    }
-
-    /// Right-click a crafting input cell (split / place-one), then refresh.
-    pub fn craft_right_click_slot(&mut self, i: usize) {
-        if i >= self.craft.capacity() {
-            return;
-        }
-        self.player
-            .inventory
-            .right_click_external_slot(self.craft.cell_mut(i));
-        self.craft.recompute(&self.recipes);
-    }
-
-    /// Shift-click a crafting input cell: move its whole stack to the inventory
-    /// (whatever doesn't fit stays in the cell), then refresh.
-    pub fn craft_shift_slot(&mut self, i: usize) {
-        if i >= self.craft.capacity() {
-            return;
-        }
-        if let Some(stack) = self.craft.take_cell(i) {
-            if let Some(leftover) = self.player.inventory.add(stack) {
-                *self.craft.cell_mut(i) = Some(leftover);
-            }
-        }
-        self.craft.recompute(&self.recipes);
-    }
-
-    /// Take one craft from the result slot onto the cursor: places the result on
-    /// the cursor (stacking onto a matching held stack with room) and consumes one
-    /// item from every occupied input cell. No-op if there's no result or the
-    /// cursor can't accept the whole result.
-    pub fn craft_take_result(&mut self) {
-        let Some(result) = self.craft.result().copied() else {
-            return;
-        };
-        if self.player.inventory.try_stack_onto_cursor(result) {
-            self.craft.consume_one();
-            self.craft.recompute(&self.recipes);
+        let mut overflow = Vec::new();
+        self.menu
+            .close_crafting(&mut self.player.inventory, &self.recipes, |stack| {
+                overflow.push(stack);
+            });
+        for stack in overflow {
+            self.throw_item(stack);
         }
     }
 
-    /// Shift-click the result: craft as many times as possible straight into the
-    /// inventory, stopping when an ingredient runs out or the next result won't
-    /// fully fit. The hotbar/main grid both receive results (via `add`).
-    pub fn craft_shift_result(&mut self) {
-        // Bounded by the grid contents: each craft consumes ≥1 from every cell.
-        for _ in 0..(64 * crate::crafting::MAX_CELLS) {
-            let Some(result) = self.craft.result().copied() else {
-                break;
-            };
-            if !self.player.inventory.can_add(result) {
-                break;
-            }
-            self.player.inventory.add(result);
-            self.craft.consume_one();
-            self.craft.recompute(&self.recipes);
-        }
-    }
-
-    /// The view of the currently-open furnace for the UI (its slots + the two
-    /// progress gauges), or `None` if no furnace screen is up or it has unloaded.
+    /// The view of the currently-open furnace for the UI, or `None` if no furnace
+    /// screen is up or it has unloaded.
     pub fn open_furnace_view(&self) -> Option<FurnaceView> {
-        let pos = self.open_furnace?;
-        let f = self.world.furnace_at(pos)?;
-        Some(FurnaceView {
-            input: f.input,
-            fuel: f.fuel,
-            output: f.output,
-            cook01: f.cook_fraction(),
-            burn01: f.burn_fraction(),
-        })
+        self.menu.open_furnace_view(&self.world)
     }
 
-    /// Run `edit` on the open furnace's contents, then mark its chunk modified so the
-    /// change persists (an idle furnace wouldn't otherwise be re-saved). No-op when
-    /// no furnace screen is open or the furnace has unloaded.
-    fn edit_open_furnace(&mut self, edit: impl FnOnce(&mut Inventory, &mut Furnace)) {
-        let Some(pos) = self.open_furnace else { return };
-        if let Some(f) = self.world.furnace_at_mut(pos) {
-            edit(&mut self.player.inventory, f);
-        }
-        self.world.mark_furnace_modified(pos);
-    }
-
-    /// Left-click the furnace input (smeltable) slot: cursor pick/drop/merge/swap.
-    pub fn furnace_click_input(&mut self) {
-        self.edit_open_furnace(|inv, f| inv.click_external_slot(&mut f.input));
-    }
-
-    /// Right-click the furnace input slot: split / place-one.
-    pub fn furnace_right_click_input(&mut self) {
-        self.edit_open_furnace(|inv, f| inv.right_click_external_slot(&mut f.input));
-    }
-
-    /// Left-click the furnace fuel slot: cursor pick/drop/merge/swap.
-    pub fn furnace_click_fuel(&mut self) {
-        self.edit_open_furnace(|inv, f| inv.click_external_slot(&mut f.fuel));
-    }
-
-    /// Right-click the furnace fuel slot: split / place-one.
-    pub fn furnace_right_click_fuel(&mut self) {
-        self.edit_open_furnace(|inv, f| inv.right_click_external_slot(&mut f.fuel));
-    }
-
-    /// Click the furnace output: take-only — move the whole product onto the cursor
-    /// if it fits (cursor empty, or the same item with room). You can't deposit into
-    /// the output, so this is the only way to interact with it.
-    pub fn furnace_take_output(&mut self) {
-        self.edit_open_furnace(|inv, f| {
-            if let Some(out) = f.output {
-                if inv.try_stack_onto_cursor(out) {
-                    f.output = None;
-                }
-            }
-        });
-    }
-
-    /// Shift-click the furnace input slot: move its stack to the inventory (whatever
-    /// doesn't fit stays put).
-    pub fn furnace_shift_input(&mut self) {
-        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.input));
-    }
-
-    /// Shift-click the furnace fuel slot: move its stack to the inventory.
-    pub fn furnace_shift_fuel(&mut self) {
-        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.fuel));
-    }
-
-    /// Shift-click the furnace output slot: move the product to the inventory.
-    pub fn furnace_shift_output(&mut self) {
-        self.edit_open_furnace(|inv, f| transfer_to_inventory(inv, &mut f.output));
-    }
-
-    /// Shift-click inventory slot `i` while the furnace screen is open: a
-    /// [`Fuel`](ItemTag::Fuel) stack goes to the fuel slot and a
-    /// [`Smeltable`](ItemTag::Smeltable) stack to the input slot (leftover stays in
-    /// the inventory). Items that are neither fall back to the normal hotbar↔grid
-    /// move, so shift-click still does something sensible for them.
-    pub fn furnace_shift_from_inventory(&mut self, i: usize) {
-        let Some(pos) = self.open_furnace else { return };
-        let Some(stack) = self.player.inventory.slot(i).copied() else {
-            return;
-        };
-        let to_fuel = stack.item.has_tag(ItemTag::Fuel);
-        let to_input = stack.item.has_tag(ItemTag::Smeltable);
-        if !to_fuel && !to_input {
-            self.player.inventory.shift_move_slot(i);
-            return;
-        }
-        // `world` and `player` are disjoint fields, so the furnace slot and the
-        // inventory slot can be borrowed together for the move.
-        {
-            let Some(furnace) = self.world.furnace_at_mut(pos) else {
-                return;
-            };
-            let Some(src) = self.player.inventory.slot_mut(i) else {
-                return;
-            };
-            let dst = if to_fuel {
-                &mut furnace.fuel
-            } else {
-                &mut furnace.input
-            };
-            move_stack(src, dst);
-        }
-        self.world.mark_furnace_modified(pos);
-    }
-
-    /// Begin a chest-screen session at `pos`: remember which chest the GUI reads and
-    /// edits. Defensively creates an empty chest if the block lacks one (placement
-    /// always inserts one, so this is belt-and-braces).
+    /// Begin a chest-screen session at `pos` (the GUI's edit target).
     pub fn open_chest_screen(&mut self, pos: IVec3) {
-        if self.world.chest_at(pos).is_none() {
-            self.world.insert_chest(pos, Facing::default());
-        }
-        self.open_chest = Some(pos);
+        self.menu.open_chest_screen(&mut self.world, pos);
     }
 
-    /// End the chest-screen session. The chest keeps its contents (like the furnace,
-    /// unlike the crafting grid which empties back into the inventory on close).
+    /// End the chest-screen session.
     pub fn close_chest(&mut self) {
-        self.open_chest = None;
+        self.menu.close_chest();
     }
 
-    /// The view of the currently-open chest for the UI (its 27 storage slots), or
-    /// `None` if no chest screen is up or it has unloaded.
+    /// The view of the currently-open chest for the UI, or `None` if no chest screen
+    /// is up or it has unloaded.
     pub fn open_chest_view(&self) -> Option<ChestView> {
-        let pos = self.open_chest?;
-        let chest = self.world.chest_at(pos)?;
-        Some(ChestView { slots: chest.slots })
-    }
-
-    /// Run `edit` on the open chest's contents, then mark its chunk modified so the
-    /// change persists (an idle chest wouldn't otherwise be re-saved). No-op when no
-    /// chest screen is open or the chest has unloaded.
-    fn edit_open_chest(&mut self, edit: impl FnOnce(&mut Inventory, &mut Chest)) {
-        let Some(pos) = self.open_chest else { return };
-        if let Some(chest) = self.world.chest_at_mut(pos) {
-            edit(&mut self.player.inventory, chest);
-        }
-        self.world.mark_chest_modified(pos);
-    }
-
-    /// Left-click a chest storage slot: cursor pick/drop/merge/swap.
-    pub fn chest_click_slot(&mut self, i: usize) {
-        self.edit_open_chest(|inv, chest| {
-            if let Some(slot) = chest.slots.get_mut(i) {
-                inv.click_external_slot(slot);
-            }
-        });
-    }
-
-    /// Right-click a chest storage slot: split / place-one.
-    pub fn chest_right_click_slot(&mut self, i: usize) {
-        self.edit_open_chest(|inv, chest| {
-            if let Some(slot) = chest.slots.get_mut(i) {
-                inv.right_click_external_slot(slot);
-            }
-        });
-    }
-
-    /// Shift-click a chest storage slot: move its stack to the inventory (whatever
-    /// doesn't fit stays put).
-    pub fn chest_shift_slot(&mut self, i: usize) {
-        self.edit_open_chest(|inv, chest| {
-            if let Some(slot) = chest.slots.get_mut(i) {
-                transfer_to_inventory(inv, slot);
-            }
-        });
-    }
-
-    /// Shift-click inventory slot `i` while the chest screen is open: move its whole
-    /// stack into the chest (merging into matching stacks, then the first empty slot;
-    /// leftover stays in the inventory).
-    pub fn chest_shift_from_inventory(&mut self, i: usize) {
-        let Some(pos) = self.open_chest else { return };
-        if self.player.inventory.slot(i).is_none() {
-            return;
-        }
-        // `world` and `player` are disjoint fields, so the chest slots and the
-        // inventory slot can be borrowed together for the move.
-        {
-            let Some(chest) = self.world.chest_at_mut(pos) else {
-                return;
-            };
-            let Some(src) = self.player.inventory.slot_mut(i) else {
-                return;
-            };
-            move_into_slots(src, &mut chest.slots);
-        }
-        self.world.mark_chest_modified(pos);
-    }
-
-    /// Double-click gather in the open chest screen: top up the cursor-held stack
-    /// with matching items from BOTH the chest and the inventory.
-    pub fn collect_to_cursor_in_chest(&mut self) {
-        self.edit_open_chest(|inv, chest| inv.collect_to_cursor_including(&mut chest.slots));
+        self.menu.open_chest_view(&self.world)
     }
 
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
@@ -760,44 +524,46 @@ impl Game {
         })
     }
 
-    pub fn item_entity_instances(&mut self) -> &[ItemEntityInstance] {
-        self.map_item_entities();
-        &self.item_entity_instances
+    /// The active dropped item-entities, for the render-side scene adapter to bake
+    /// into `ItemEntityInstance`s. Their cached skylight is kept fresh by the
+    /// per-tick light refresh, so the adapter only reads here.
+    #[inline]
+    pub fn item_entities(&self) -> &[DroppedItem] {
+        self.world.item_entities()
     }
 
-    /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
-    /// gathered from the loaded chunks. Reuses internal buffers (no per-frame alloc).
-    pub fn chest_instances(&mut self) -> &[ChestInstance] {
-        self.world.collect_chests(&mut self.chest_render_buf);
-        self.chest_instances.clear();
-        for idx in 0..self.chest_render_buf.len() {
-            let (pos, facing, skylight) = self.chest_render_buf[idx];
-            // Ease the linear open progress with a smoothstep so the lid accelerates
-            // and decelerates instead of swinging at a constant rate.
-            let raw = self.chest_lids.get(&pos).copied().unwrap_or(0.0);
-            let lid01 = raw * raw * (3.0 - 2.0 * raw);
-            self.chest_instances.push(ChestInstance {
-                pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
-                facing,
-                lid01,
-                skylight,
-            });
-        }
-        &self.chest_instances
+    /// The placed chests' render data — world position, facing, sampled skylight —
+    /// gathered from the loaded chunks into `out` (cleared first). The render-side
+    /// scene adapter pairs each with its lid angle (via [`chest_lid_angle`]) to bake
+    /// a `ChestInstance`. The lid animation itself stays here on `Game`.
+    ///
+    /// [`chest_lid_angle`]: Self::chest_lid_angle
+    #[inline]
+    pub fn collect_chest_render_data(&self, out: &mut Vec<(IVec3, Facing, u8)>) {
+        self.world.collect_chests(out);
+    }
+
+    /// The transient open progress (`0.0` closed .. `1.0` open) of the chest at
+    /// `pos`, or `0.0` if it isn't tracked. The render-side scene adapter reads this
+    /// to bake the chest's lid hinge; the easing/animation lives in
+    /// [`advance_chest_lids`](Self::advance_chest_lids).
+    #[inline]
+    pub fn chest_lid_angle(&self, pos: IVec3) -> f32 {
+        self.chest_lids.get(&pos).copied().unwrap_or(0.0)
     }
 
     /// Advance the transient chest-lid animation by `dt`: the open chest's lid eases
     /// toward fully open, every other tracked lid toward closed, and lids that reach
     /// closed (and aren't the open chest) are dropped. The open/closed target is
-    /// derived from `open_chest`, so the lid follows the GUI being open — purely
-    /// client-side, never saved.
+    /// derived from the menu's edit target (the open chest's position), so the lid
+    /// follows the GUI being open — purely client-side, never saved.
     fn advance_chest_lids(&mut self, dt: f32) {
         let step = (dt * CHEST_LID_SPEED).clamp(0.0, 1.0);
+        let open = self.menu.target().open_chest();
         // Ensure the open chest is tracked so it animates from closed on the first frame.
-        if let Some(pos) = self.open_chest {
+        if let Some(pos) = open {
             self.chest_lids.entry(pos).or_insert(0.0);
         }
-        let open = self.open_chest;
         self.chest_lids.retain(|&pos, lid| {
             let target = if Some(pos) == open { 1.0 } else { 0.0 };
             if *lid < target {
@@ -810,9 +576,11 @@ impl Game {
         });
     }
 
-    pub fn particle_instances(&mut self) -> &[ParticleInstance] {
-        self.map_particles();
-        &self.particle_instances
+    /// The live particle system, for the render-side scene adapter to bake into
+    /// `ParticleInstance`s. Read-only; ticking happens in the sim.
+    #[inline]
+    pub fn particles(&self) -> &ParticleSystem {
+        &self.particles
     }
 
     pub fn held_item_skylight(&self) -> u8 {
@@ -1118,24 +886,28 @@ impl Game {
         // Plan first against a cloned inventory, reserving capacity without
         // mutating the real slots. Only requested drops are allowed to magnet.
         let mut planned = self.player.inventory.clone();
-        self.world.request_item_pickups(player_pos, |stack| {
-            let count = planned.fits_count(stack);
-            if count > 0 {
-                let leftover = planned.add(ItemStack::new(stack.item, count));
-                debug_assert!(
-                    leftover.is_none(),
-                    "fits_count overestimated pickup capacity"
-                );
-            }
-            count
-        });
+        self.world
+            .dropped_items_mut()
+            .request_pickups(player_pos, |stack| {
+                let count = planned.fits_count(stack);
+                if count > 0 {
+                    let leftover = planned.add(ItemStack::new(stack.item, count));
+                    debug_assert!(
+                        leftover.is_none(),
+                        "fits_count overestimated pickup capacity"
+                    );
+                }
+                count
+            });
 
-        // Borrow-split: the world owns the drops, the player owns the inventory.
-        // Actual inventory mutation only happens after a requested drop reaches the
-        // absorb radius.
+        // Borrow-split: `dropped_items_mut()` borrows the drops, `self.player`
+        // owns the inventory — disjoint `Game` fields, so this type-checks without
+        // aliasing. Actual inventory mutation only happens after a requested drop
+        // reaches the absorb radius.
         let inventory = &mut self.player.inventory;
         self.world
-            .collect_requested_item_pickups(player_pos, |stack| inventory.add(stack));
+            .dropped_items_mut()
+            .collect_requested_pickups(player_pos, |stack| inventory.add(stack));
     }
 
     fn refresh_dropped_item_lights_after_world_light_update(&mut self) {
@@ -1145,40 +917,6 @@ impl Game {
         }
         self.world.refresh_item_lights();
         self.dropped_light_revision = revision;
-    }
-
-    fn map_item_entities(&mut self) {
-        self.item_entity_instances.clear();
-        self.item_entity_instances
-            .extend(
-                self.world
-                    .item_entities()
-                    .iter()
-                    .map(|d| ItemEntityInstance {
-                        pos: d.pos,
-                        item: d.stack.item,
-                        count: d.stack.count,
-                        spin: d.spin,
-                        skylight: d.skylight,
-                    }),
-            );
-    }
-
-    fn map_particles(&mut self) {
-        self.particle_instances.clear();
-        self.particle_instances
-            .extend(self.particles.particles().iter().map(|p| {
-                let (uv_min, uv_size) = p.atlas_uv();
-                ParticleInstance {
-                    pos: p.pos,
-                    uv_min,
-                    uv_size,
-                    tint: p.tint,
-                    alpha: p.alpha(),
-                    size: p.render_size(),
-                    skylight: p.skylight,
-                }
-            }));
     }
 
     fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
@@ -1210,66 +948,6 @@ fn facing_from_forward(forward: Vec3) -> Facing {
     } else {
         Facing::North
     }
-}
-
-/// Move `slot`'s whole stack into `inv`, leaving any part that didn't fit behind
-/// (furnace shift-click). No-op on an empty slot.
-fn transfer_to_inventory(inv: &mut Inventory, slot: &mut Option<ItemStack>) {
-    if let Some(stack) = slot.take() {
-        *slot = inv.add(stack);
-    }
-}
-
-/// Move `src`'s stack into `dst` (a single furnace slot): merge onto a matching
-/// item up to its max, or fill an empty slot; whatever doesn't fit stays in `src`.
-/// A different item in `dst` blocks the move. No-op on an empty `src`.
-fn move_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
-    let Some(mut incoming) = src.take() else {
-        return;
-    };
-    match dst {
-        None => *dst = Some(incoming),
-        Some(existing) if existing.can_stack_with(&incoming) => {
-            let moved = existing.space_left().min(incoming.count);
-            existing.count += moved;
-            incoming.count -= moved;
-            *src = (incoming.count > 0).then_some(incoming);
-        }
-        Some(_) => *src = Some(incoming),
-    }
-}
-
-/// Move `src`'s whole stack into `slots` (a chest's storage): merge onto matching
-/// stacks with room in order, then drop the remainder into the first empty slot.
-/// Whatever still doesn't fit stays in `src`. Mirrors `Inventory::add` over an
-/// external slot array (a single source stack is ≤ one max stack, so one empty slot
-/// always suffices for the remainder). No-op on an empty `src`.
-fn move_into_slots(src: &mut Option<ItemStack>, slots: &mut [Option<ItemStack>]) {
-    let Some(mut incoming) = src.take() else {
-        return;
-    };
-    // Pass 1: top up matching, non-full stacks.
-    for slot in slots.iter_mut().flatten() {
-        if incoming.count == 0 {
-            break;
-        }
-        if slot.can_stack_with(&incoming) {
-            let moved = slot.space_left().min(incoming.count);
-            slot.count += moved;
-            incoming.count -= moved;
-        }
-    }
-    // Pass 2: the first empty slot takes the remainder.
-    if incoming.count > 0 {
-        for slot in slots.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(incoming);
-                incoming.count = 0;
-                break;
-            }
-        }
-    }
-    *src = (incoming.count > 0).then_some(incoming);
 }
 
 fn sky6_at_pos(world: &World, pos: Vec3) -> u8 {
@@ -1365,14 +1043,6 @@ fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> u8 {
     .unwrap_or(63)
 }
 
-fn voxel_at(pos: Vec3) -> IVec3 {
-    IVec3::new(
-        pos.x.floor() as i32,
-        pos.y.floor() as i32,
-        pos.z.floor() as i32,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1400,19 +1070,15 @@ mod tests {
 
     fn install_empty_chunk(game: &mut Game) {
         let pos = crate::chunk::ChunkPos::new(0, 0);
-        game.world.chunks.clear();
-        game.world.meshes.clear();
-        game.world.pending.clear();
+        game.world.clear_world();
         game.world
-            .chunks
-            .insert(pos, crate::chunk::Chunk::new(0, 0));
+            .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
     }
 
     fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
         let chunk = game
             .world
-            .chunks
-            .get_mut(&crate::chunk::ChunkPos::new(pos.x >> 4, pos.z >> 4))
+            .chunk_mut_for_test(crate::chunk::ChunkPos::new(pos.x >> 4, pos.z >> 4))
             .expect("test chunk must be installed");
         chunk.set_water(
             (pos.x & 0x0F) as usize,
@@ -1685,14 +1351,11 @@ mod tests {
     #[test]
     fn stationary_dropped_item_resamples_after_chunk_light_bake_installs() {
         let mut game = game();
-        game.world.chunks.clear();
-        game.world.meshes.clear();
-        game.world.pending.clear();
+        game.world.clear_world();
 
         let pos = crate::chunk::ChunkPos::new(0, 0);
         game.world
-            .chunks
-            .insert(pos, crate::chunk::Chunk::new(0, 0));
+            .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
         game.dropped_light_revision = game.world.lighting_revision();
 
         let mut drop = DroppedItem::new(
@@ -1947,130 +1610,12 @@ mod tests {
         assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
     }
 
-    #[test]
-    fn map_item_entities_one_instance_per_drop() {
-        let mut game = game();
-        game.world.spawn_item(DroppedItem::new(
-            Vec3::new(1.0, 2.0, 3.0),
-            ItemStack::new(crate::item::ItemType::Dirt, 1),
-            1,
-        ));
-        game.world.spawn_item(DroppedItem::new(
-            Vec3::new(4.0, 5.0, 6.0),
-            ItemStack::new(crate::item::ItemType::Stone, 1),
-            2,
-        ));
-        game.map_item_entities();
-        assert_eq!(game.item_entity_instances.len(), 2);
-        assert_eq!(
-            game.item_entity_instances[0].pos,
-            game.world.item_entities()[0].pos
-        );
-        assert_eq!(
-            game.item_entity_instances[0].item,
-            crate::item::ItemType::Dirt
-        );
-        assert_eq!(
-            game.item_entity_instances[0].spin,
-            game.world.item_entities()[0].spin
-        );
-        assert_eq!(
-            game.item_entity_instances[1].item,
-            crate::item::ItemType::Stone
-        );
-    }
-
-    #[test]
-    fn map_item_entities_reuses_the_vec_without_growth() {
-        let mut game = game();
-        for i in 0..8 {
-            game.world.spawn_item(DroppedItem::new(
-                Vec3::splat(i as f32),
-                ItemStack::new(crate::item::ItemType::Dirt, 1),
-                i,
-            ));
-        }
-        game.map_item_entities();
-        let cap = game.item_entity_instances.capacity();
-        game.world.item_entities_mut().truncate(2);
-        game.map_item_entities();
-        assert_eq!(game.item_entity_instances.len(), 2);
-        assert_eq!(game.item_entity_instances.capacity(), cap);
-    }
-
-    #[test]
-    fn map_particles_one_instance_per_alive_particle() {
-        let mut game = game();
-        game.particles
-            .spawn_break_burst(IVec3::new(0, 64, 0), Block::Dirt);
-        let alive = game.particles.particles().len();
-        assert!(alive > 0);
-        game.map_particles();
-        assert_eq!(game.particle_instances.len(), alive);
-        let (uv_min, uv_size) = game.particles.particles()[0].atlas_uv();
-        assert_eq!(game.particle_instances[0].uv_min, uv_min);
-        assert_eq!(game.particle_instances[0].uv_size, uv_size);
-        assert_eq!(
-            game.particle_instances[0].size,
-            game.particles.particles()[0].size
-        );
-    }
-
     fn count_item(inv: &Inventory, item: ItemType) -> u32 {
         (0..crate::inventory::TOTAL_SLOTS)
             .filter_map(|i| inv.slot(i))
             .filter(|s| s.item == item)
             .map(|s| s.count as u32)
             .sum()
-    }
-
-    /// Put `stack` into the first craft cell by routing it through the cursor
-    /// (inventory slot 0 → cursor → craft cell), as the UI clicks would.
-    fn place_in_craft_cell(game: &mut Game, cell: usize, stack: ItemStack) {
-        game.add_to_inventory(stack);
-        game.click_inventory_slot(0); // pick the stack onto the cursor
-        game.craft_click_slot(cell); // drop it into the craft cell
-    }
-
-    #[test]
-    fn crafting_planks_from_log_via_result_slot() {
-        let mut game = game();
-        game.open_crafting(2);
-        place_in_craft_cell(&mut game, 0, ItemStack::new(ItemType::OakLog, 1));
-        assert_eq!(
-            game.craft_grid().result().map(|s| (s.item, s.count)),
-            Some((ItemType::OakPlanks, 4))
-        );
-        // Take the result: 4 planks onto the cursor, the log consumed, no result.
-        game.craft_take_result();
-        assert_eq!(
-            game.inventory().cursor().map(|s| (s.item, s.count)),
-            Some((ItemType::OakPlanks, 4))
-        );
-        assert!(game.craft_grid().result().is_none());
-        assert!(game.craft_grid().is_empty());
-    }
-
-    #[test]
-    fn shift_crafting_consumes_every_log_in_the_cell() {
-        let mut game = game();
-        game.open_crafting(2);
-        // A cell holding 3 logs shift-crafts three times (one log per craft).
-        place_in_craft_cell(&mut game, 0, ItemStack::new(ItemType::OakLog, 3));
-        game.craft_shift_result();
-        assert!(game.craft_grid().is_empty(), "all logs consumed");
-        assert_eq!(count_item(&game.player.inventory, ItemType::OakPlanks), 12);
-    }
-
-    #[test]
-    fn closing_crafting_returns_grid_items_to_inventory() {
-        let mut game = game();
-        game.open_crafting(3);
-        place_in_craft_cell(&mut game, 4, ItemStack::new(ItemType::OakLog, 5));
-        assert!(game.inventory().cursor().is_none());
-        game.close_crafting();
-        assert_eq!(count_item(&game.player.inventory, ItemType::OakLog), 5);
-        assert!(game.craft_grid().cell(4).is_none());
     }
 
     #[test]
@@ -2092,86 +1637,6 @@ mod tests {
         assert_eq!(drops.len(), 1);
         assert_eq!(drops[0].stack.item, ItemType::RawCopper);
         assert!((2..=4).contains(&drops[0].stack.count), "2–4 raw copper");
-    }
-
-    #[test]
-    fn furnace_shift_routes_fuel_and_smeltable_to_their_slots() {
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let pos = IVec3::new(2, 64, 2);
-        game.world
-            .set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
-        game.world.insert_furnace(pos, Facing::North);
-        game.open_furnace_screen(pos);
-
-        // Hotbar: coal (slot 0), raw iron (slot 1), oak planks (slot 2 — neither tag).
-        game.player.inventory = Inventory::new();
-        game.add_to_inventory(ItemStack::new(ItemType::Coal, 5));
-        game.add_to_inventory(ItemStack::new(ItemType::RawIron, 3));
-        game.add_to_inventory(ItemStack::new(ItemType::OakPlanks, 4));
-
-        // Coal -> fuel slot.
-        game.furnace_shift_from_inventory(0);
-        assert!(
-            game.inventory().slot(0).is_none(),
-            "coal left the inventory"
-        );
-        assert_eq!(
-            game.world.furnace_at(pos).unwrap().fuel,
-            Some(ItemStack::new(ItemType::Coal, 5)),
-            "coal went to the fuel slot"
-        );
-
-        // Raw iron -> input slot.
-        game.furnace_shift_from_inventory(1);
-        assert!(
-            game.inventory().slot(1).is_none(),
-            "raw iron left the inventory"
-        );
-        assert_eq!(
-            game.world.furnace_at(pos).unwrap().input,
-            Some(ItemStack::new(ItemType::RawIron, 3)),
-            "raw iron went to the input slot"
-        );
-
-        // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
-        // back to the ordinary hotbar->main-grid shuffle.
-        game.furnace_shift_from_inventory(2);
-        assert!(
-            game.inventory().slot(2).is_none(),
-            "plank moved out of the hotbar slot"
-        );
-        let f = game.world.furnace_at(pos).unwrap();
-        assert_ne!(f.input.map(|s| s.item), Some(ItemType::OakPlanks));
-        assert_ne!(f.fuel.map(|s| s.item), Some(ItemType::OakPlanks));
-        // It landed in the main grid (first slot of the 27-slot region).
-        assert_eq!(
-            game.inventory()
-                .slot(crate::inventory::HOTBAR_LEN)
-                .map(|s| s.item),
-            Some(ItemType::OakPlanks),
-        );
-    }
-
-    #[test]
-    fn furnace_shift_merges_into_a_partly_filled_slot() {
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let pos = IVec3::new(3, 64, 3);
-        game.world
-            .set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
-        game.world.insert_furnace(pos, Facing::North);
-        // Seed the fuel slot with some coal already.
-        game.world.furnace_at_mut(pos).unwrap().fuel = Some(ItemStack::new(ItemType::Coal, 60));
-        game.open_furnace_screen(pos);
-
-        game.player.inventory = Inventory::new();
-        game.add_to_inventory(ItemStack::new(ItemType::Coal, 10));
-        game.furnace_shift_from_inventory(0);
-
-        // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
-        assert_eq!(game.world.furnace_at(pos).unwrap().fuel.unwrap().count, 64);
-        assert_eq!(game.inventory().slot(0).map(|s| s.count), Some(6));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use super::classic::world::{map_biome, CascadeWorld, RegionCells};
 use super::ctx::ColumnGrid;
 use super::data::biomes::def;
 use super::noise::settings::{CAVE_MIN_Y, CAVE_SURFACE_BUFFER};
-use super::noise::HeightField;
+use super::noise::CaveField;
 use super::proto::ProtoChunk;
 use super::river::RiverSystem;
 use super::surface::rule::SurfaceCtx;
@@ -27,7 +27,7 @@ use super::surface::SurfaceSystem;
 
 pub struct ChunkGenerator {
     seed: u32,
-    field: HeightField,
+    field: CaveField,
     world: CascadeWorld,
     rivers: RiverSystem,
     surface: SurfaceSystem,
@@ -37,7 +37,7 @@ impl ChunkGenerator {
     pub fn new(seed: u32) -> Self {
         Self {
             seed,
-            field: HeightField::new(seed),
+            field: CaveField::new(seed),
             world: CascadeWorld::new(seed),
             rivers: RiverSystem::new(seed),
             surface: SurfaceSystem,
@@ -50,7 +50,7 @@ impl ChunkGenerator {
     pub fn with_cache(seed: u32, cache: Arc<NoiseCache>) -> Self {
         Self {
             seed,
-            field: HeightField::new(seed),
+            field: CaveField::new(seed),
             world: CascadeWorld::with_cache(seed, cache),
             rivers: RiverSystem::new(seed),
             surface: SurfaceSystem,

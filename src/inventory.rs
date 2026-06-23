@@ -12,6 +12,78 @@
 
 use crate::item::ItemStack;
 
+/// A fixed set of `Option<ItemStack>` cells with the shared "first-fit insert" and
+/// emptiness rules. Implemented by every container that is a uniform grid of stacks
+/// (the inventory, a chest, and a craft grid's read view).
+///
+/// Implementors only supply the storage (`slots`/`slots_mut`); the merge-then-fill
+/// [`insert`](SlotGrid::insert) and [`is_empty`](SlotGrid::is_empty) come for free.
+///
+/// Note: a [`CraftGrid`](crate::crafting::CraftGrid) implements this for read/index
+/// access only — it is filled by cursor clicks, never by first-fit loot insert, so
+/// nothing should call `insert` on one.
+pub trait SlotGrid {
+    /// The cells as a slice (`None` = empty), in fill order.
+    fn slots(&self) -> &[Option<ItemStack>];
+    /// The cells as a mutable slice, in fill order.
+    fn slots_mut(&mut self) -> &mut [Option<ItemStack>];
+
+    /// `true` if every cell is empty.
+    fn is_empty(&self) -> bool {
+        self.slots().iter().all(Option::is_none)
+    }
+
+    /// Insert `stack`, merging into existing non-full matching cells first (in fill
+    /// order), then spilling the remainder into empty cells (each capped at the
+    /// item's `max_stack_size`). Returns the leftover, or `None` if fully absorbed.
+    /// An empty input stack is a no-op returning `None`.
+    fn insert(&mut self, stack: ItemStack) -> Option<ItemStack> {
+        insert_into_slots(self.slots_mut(), stack)
+    }
+}
+
+/// The canonical merge-then-fill insert over a slice of slots: Pass 1 tops up
+/// existing matching, non-full stacks in order; Pass 2 spills the remainder into
+/// empty slots, one capped stack at a time. Returns the leftover, or `None` if fully
+/// absorbed. Empty input is a no-op returning `None`.
+///
+/// Shared by [`SlotGrid::insert`] (whole slice) and [`Inventory::add_to_range`] (one
+/// sub-range at a time).
+fn insert_into_slots(slots: &mut [Option<ItemStack>], mut stack: ItemStack) -> Option<ItemStack> {
+    if stack.is_empty() {
+        return None;
+    }
+
+    // Pass 1: top up existing matching, non-full stacks in slot order.
+    for existing in slots.iter_mut().flatten() {
+        if existing.can_stack_with(&stack) {
+            let space = existing.space_left();
+            if space > 0 {
+                let moved = space.min(stack.count);
+                existing.count += moved;
+                stack.count -= moved;
+                if stack.count == 0 {
+                    return None;
+                }
+            }
+        }
+    }
+
+    // Pass 2: drop the remainder into empty slots, one full stack at a time.
+    for slot in slots.iter_mut() {
+        if slot.is_none() {
+            let put = stack.count.min(stack.item.max_stack_size());
+            *slot = Some(ItemStack::new(stack.item, put));
+            stack.count -= put;
+            if stack.count == 0 {
+                return None;
+            }
+        }
+    }
+
+    Some(stack)
+}
+
 /// Number of hotbar slots (the always-visible bottom row).
 pub const HOTBAR_LEN: usize = 9;
 /// Number of main-grid slots (the 3×9 grid shown when the inventory is open).
@@ -119,39 +191,18 @@ impl Inventory {
     /// or `None` if fully absorbed. Empty input is a no-op returning `None`.
     /// Used by [`add`](Self::add) (whole range) and shift-click transfer (one
     /// region at a time).
-    fn add_to_range(&mut self, mut stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
-        if stack.is_empty() {
-            return None;
-        }
+    fn add_to_range(&mut self, stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
+        insert_into_slots(&mut self.slots[start..end], stack)
+    }
 
-        // Pass 1: top up existing matching, non-full stacks in slot order.
-        for existing in self.slots[start..end].iter_mut().flatten() {
-            if existing.can_stack_with(&stack) {
-                let space = existing.space_left();
-                if space > 0 {
-                    let moved = space.min(stack.count);
-                    existing.count += moved;
-                    stack.count -= moved;
-                    if stack.count == 0 {
-                        return None;
-                    }
-                }
-            }
+    /// Absorb an external slot's whole stack into the inventory (first-fit over all
+    /// slots), leaving any part that didn't fit behind in `slot`. Used by
+    /// shift-clicking a stack out of a furnace or chest slot into the inventory.
+    /// No-op on an empty slot.
+    pub fn pull_from(&mut self, slot: &mut Option<ItemStack>) {
+        if let Some(stack) = slot.take() {
+            *slot = self.add(stack);
         }
-
-        // Pass 2: drop the remainder into empty slots, one full stack at a time.
-        for slot in self.slots[start..end].iter_mut() {
-            if slot.is_none() {
-                let put = stack.count.min(stack.item.max_stack_size());
-                *slot = Some(ItemStack::new(stack.item, put));
-                stack.count -= put;
-                if stack.count == 0 {
-                    return None;
-                }
-            }
-        }
-
-        Some(stack)
     }
 
     /// Take a single item off the active hotbar slot (for the in-game drop key),
@@ -190,6 +241,14 @@ impl Inventory {
     #[inline]
     pub fn cursor(&self) -> Option<&ItemStack> {
         self.cursor.as_ref()
+    }
+
+    /// Mutable handle to the cursor-held cell, so an external slot owner (a crafting
+    /// result slot) can deposit a taken stack straight onto the cursor. Mirrors
+    /// [`slot_mut`](Self::slot_mut) for the cursor.
+    #[inline]
+    pub fn cursor_mut(&mut self) -> &mut Option<ItemStack> {
+        &mut self.cursor
     }
 
     /// Take the whole cursor-held stack out, clearing the cursor. Returns `None`
@@ -485,6 +544,22 @@ impl Inventory {
             active: active.min(HOTBAR_LEN as u8 - 1),
         }
     }
+}
+
+impl SlotGrid for Inventory {
+    #[inline]
+    fn slots(&self) -> &[Option<ItemStack>] {
+        &self.slots
+    }
+
+    #[inline]
+    fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
+        &mut self.slots
+    }
+
+    // NB: `Inventory` keeps its own inherent `is_empty` (which also checks the
+    // cursor); the inherent method wins on direct calls, and `insert` is inherited
+    // from the trait for the first-fit add.
 }
 
 #[cfg(test)]

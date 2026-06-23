@@ -6,6 +6,7 @@ mod chest_model;
 mod crosshair;
 mod foliage_tint;
 mod hand;
+mod hand_animator;
 mod item_entity;
 mod item_model;
 mod lighting;
@@ -13,6 +14,7 @@ mod particles;
 mod pipeline;
 mod renderer;
 mod resources;
+mod scene;
 mod section_cull;
 mod selection;
 mod ui;
@@ -24,6 +26,11 @@ pub use renderer::{
     Renderer, UiSnapshot,
 };
 pub use resources::{GpuMesh, GuiSprite};
+
+/// The render-side scene adapter: bakes the sim's per-frame world-render data
+/// (dropped items, particles, chests, held-item light) into the renderer's wire
+/// structs. The App owns one and drives it each frame.
+pub use scene::Scene;
 pub use uniforms::{
     Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START, UV_RECTS_LEN,
 };

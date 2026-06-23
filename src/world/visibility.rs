@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::block::Block;
-use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE};
+use crate::chunk::{self, Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE};
 
 use super::store::World;
 
@@ -272,9 +272,9 @@ impl World {
         }
         let pos = SectionPos::from_world(wx, wy, wz)?;
         let chunk = self.chunks.get(&pos.chunk_pos())?;
-        let lx = (wx & 0x0F) as usize;
+        let lx = chunk::lx(wx);
         let ly = wy as usize % SECTION_SIZE;
-        let lz = (wz & 0x0F) as usize;
+        let lz = chunk::lz(wz);
         if !section_cell_open(chunk, pos.sy as usize, lx, ly, lz) {
             return None;
         }
@@ -285,14 +285,11 @@ impl World {
     }
 
     pub fn can_see_sky_from(&self, wx: i32, wy: i32, wz: i32) -> bool {
-        if wy < 0 || wy >= (SECTION_COUNT * SECTION_SIZE) as i32 {
-            return true;
-        }
-        let Some(chunk) = self.chunks.get(&ChunkPos::new(wx >> 4, wz >> 4)) else {
+        // `SECTION_COUNT * SECTION_SIZE == CHUNK_SY`, so the router's column guard
+        // matches the old bound. Out of range OR unloaded both read as open sky.
+        let Some((chunk, lx, _, lz)) = self.chunk_at_world(wx, wy, wz) else {
             return true;
         };
-        let lx = (wx & 0x0F) as usize;
-        let lz = (wz & 0x0F) as usize;
         for y in (wy as usize + 1)..(SECTION_COUNT * SECTION_SIZE) {
             if Block::from_id(chunk.block_raw(lx, y, lz)).is_opaque() {
                 return false;

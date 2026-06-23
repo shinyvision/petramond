@@ -1,6 +1,31 @@
 //! Fly camera: yaw/pitch orientation, WASD/space/shift translation.
 
+use crate::chunk::CHUNK_SX;
 use crate::mathh::{Mat4, Vec3, Vec4};
+use crate::world::RENDER_DIST;
+
+/// Far clip plane (world blocks). The far plane only has to sit beyond the point
+/// where the world fully fogs out so nothing still visible gets far-plane-culled,
+/// and it must comfortably clear the whole loaded world for the rare clear-air
+/// long sightline (e.g. across an unfogged gap). We size it off the real cause —
+/// the loaded-world extent — rather than a bare magic number.
+///
+/// `render::uniforms::FOG_END` (currently 256 blocks) is where visibility ends;
+/// this far plane is two orders of magnitude past it, so the fog end is never the
+/// limiting factor. (Kept out of a direct `FOG_END` reference to avoid pointing
+/// the low-level camera at the high-level render layer — the invariant to hold is
+/// simply `CAMERA_FAR >= FOG_END`.)
+///
+/// Diameter, in blocks, of the chunks loaded around the camera
+/// (`2 * RENDER_DIST` chunks across, `CHUNK_SX` blocks each).
+const LOADED_WORLD_DIAMETER: f32 = (2 * RENDER_DIST as usize * CHUNK_SX) as f32;
+/// Generous depth-buffer headroom so the far plane clears the loaded world many
+/// times over. Larger than necessary on purpose (the value predates this
+/// derivation); kept as-is so depth precision is unchanged.
+const FAR_HEADROOM: f32 = 102.0;
+/// `512 * 102 == 52224` — identical to the previous magic
+/// `32.0 * 17.0 * 24.0 * 2.0 * 2.0`.
+const CAMERA_FAR: f32 = LOADED_WORLD_DIAMETER * FAR_HEADROOM;
 
 /// View frustum as 6 inward-facing planes, for viewspace (frustum) culling.
 /// Each plane is `(a,b,c,d)` with the convention `a·x + b·y + c·z + d >= 0`
@@ -81,7 +106,7 @@ impl Camera {
             fov_y: 70f32.to_radians(),
             aspect,
             near: 0.1,
-            far: 32.0 * 17.0 * 24f32 * 2.0 * 2f32, // large enough for fog
+            far: CAMERA_FAR,
         }
     }
 

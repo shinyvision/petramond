@@ -17,8 +17,7 @@ mod tick;
 mod visibility;
 pub(crate) mod water;
 
-pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+pub use entities::{DroppedItems, ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
-pub use query::WorldQuery;
 pub use store::{World, RENDER_DIST};
 pub use visibility::{SectionConnectivity, SectionFace, SectionPos, SECTION_FACES};

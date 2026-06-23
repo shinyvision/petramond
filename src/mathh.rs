@@ -43,6 +43,14 @@ pub fn smoothstep01(x: f32) -> f32 {
     smoothstep(0.0, 1.0, x)
 }
 
-pub fn clamp(x: f32, lo: f32, hi: f32) -> f32 {
-    x.clamp(lo, hi)
+/// The integer voxel coordinate containing a world-space position.
+///
+/// Uses `floor`, not a bare `as i32` cast: truncation rounds toward zero, which
+/// would map `-0.5` to voxel `0` instead of the correct `-1`.
+pub fn voxel_at(pos: Vec3) -> IVec3 {
+    IVec3::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    )
 }

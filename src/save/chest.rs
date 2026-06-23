@@ -11,42 +11,34 @@ use std::collections::HashMap;
 
 use crate::chest::{Chest, CHEST_SLOTS};
 use crate::furnace::Facing;
-use crate::save::codec::{get_item_slot, put_item_slot, Reader, Writer};
+use crate::save::codec::{get_indexed, get_item_slot, put_indexed, put_item_slot, Reader, Writer};
 
 /// Bytes per serialized chest: idx(2) + 27 slots × (id 1 + count 1) + facing(1).
 const CHEST_BYTES: usize = 2 + CHEST_SLOTS * 2 + 1;
 
-/// Append a `u16`-length-prefixed list of `(local index, chest)` records to `buf`,
-/// in ascending index order so identical state encodes identically.
+/// Append a `u16`-length-prefixed list of `(local index, chest)` records to `buf`.
+/// The list framing (count, sort-by-index, reserve) lives in
+/// [`put_indexed`](crate::save::codec::put_indexed); this owns only the chest
+/// body: 27 slots in grid order followed by the facing byte.
 pub fn put_chests(buf: &mut Vec<u8>, chests: &HashMap<u16, Chest>) {
-    let n = chests.len().min(u16::MAX as usize);
-    buf.reserve(2 + n * CHEST_BYTES);
-    buf.put_u16(n as u16);
-    let mut entries: Vec<(&u16, &Chest)> = chests.iter().take(n).collect();
-    entries.sort_by_key(|(idx, _)| **idx);
-    for (idx, c) in entries {
-        buf.put_u16(*idx);
+    put_indexed(buf, chests, CHEST_BYTES, |buf, c| {
         for slot in c.slots {
             put_item_slot(buf, slot);
         }
         buf.put_u8(c.facing.to_u8());
-    }
+    });
 }
 
 /// Read the chest list written by [`put_chests`]. `None` on truncated input.
 pub fn get_chests(r: &mut Reader) -> Option<HashMap<u16, Chest>> {
-    let n = r.u16()? as usize;
-    let mut out = HashMap::with_capacity(n.min(256));
-    for _ in 0..n {
-        let idx = r.u16()?;
+    get_indexed(r, |r| {
         let mut slots = [None; CHEST_SLOTS];
         for slot in slots.iter_mut() {
             *slot = get_item_slot(r)?;
         }
         let facing = Facing::from_u8(r.u8()?);
-        out.insert(idx, Chest { slots, facing });
-    }
-    Some(out)
+        Some(Chest { slots, facing })
+    })
 }
 
 #[cfg(test)]
@@ -73,6 +65,53 @@ mod tests {
         let mut r = Reader::new(&buf);
         let got = get_chests(&mut r).expect("decodes");
         assert_eq!(got, map, "chest state survives the round-trip");
+    }
+
+    /// Frozen golden for the on-disk chest framing. Like the furnace golden, the
+    /// roundtrip test above only proves self-consistency; this pins the exact bytes
+    /// `put_chests` emits for ONE fully-populated chest (several of the 27 slots
+    /// filled across the row-major grid, plus a non-default facing). The 60-byte
+    /// record is FNV-1a-hashed rather than spelled out byte-for-byte. Any reframing
+    /// of the chest codec (slot order, length prefix, facing placement, item-id
+    /// renumber) flips this.
+    #[test]
+    fn put_chests_golden_bytes() {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+        fn fnv1a(bytes: &[u8]) -> u64 {
+            let mut h = FNV_OFFSET;
+            for &b in bytes {
+                h ^= b as u64;
+                h = h.wrapping_mul(FNV_PRIME);
+            }
+            h
+        }
+
+        let mut chest = Chest {
+            facing: Facing::South,
+            ..Chest::default()
+        };
+        // Fill across the grid: first/middle/last of each conceptual row.
+        chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
+        chest.slots[4] = Some(ItemStack::new(ItemType::OakLog, 12));
+        chest.slots[8] = Some(ItemStack::new(ItemType::Coal, 5));
+        chest.slots[13] = Some(ItemStack::new(ItemType::RawIron, 3));
+        chest.slots[22] = Some(ItemStack::new(ItemType::IronIngot, 9));
+        chest.slots[26] = Some(ItemStack::new(ItemType::Dirt, 1));
+
+        let mut map = HashMap::new();
+        map.insert(0x1234u16, chest);
+
+        let mut buf = Vec::new();
+        put_chests(&mut buf, &map);
+
+        // 60-byte record: count(2) + idx(2) + 27 slots x 2 + facing(1).
+        assert_eq!(buf.len(), 2 + 2 + CHEST_SLOTS * 2 + 1);
+        assert_eq!(
+            fnv1a(&buf),
+            0x7707_5f59_bd79_86e7,
+            "chest save framing changed"
+        );
     }
 
     #[test]

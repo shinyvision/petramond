@@ -1,10 +1,11 @@
 use crate::atlas::Tile;
-use crate::biome::Biome;
 use crate::block::{Block, RenderShape};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
 
 use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
+use super::tint::{self, tile_tint};
+use super::water::{self, SideVsWater, WaterSurface};
 
 /// The horizontal cube face a furnace's front points to, for its [`Facing`].
 #[inline]
@@ -16,7 +17,7 @@ fn facing_face(facing: Facing) -> Face {
         Facing::East => Face::PosX,
     }
 }
-use super::vertex::{ChunkMesh, MeshIndexSection, Vertex};
+use super::vertex::{pack_vertex, ChunkMesh, MeshIndexSection, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LeafMeshMode {
@@ -39,29 +40,25 @@ impl MeshOptions {
     };
 }
 
-#[derive(Copy, Clone)]
-enum TintKind {
-    Grass,
-    Foliage,
-    Water,
+/// The two cross-chunk lookups that `build_mesh_with_context` needs beyond the
+/// block/biome/light triple, bundled so the "no neighbours" defaults live in one
+/// place instead of being re-spelled as stub closures at each entry point.
+struct MeshContext {
+    /// Flowing-water metadata at a world voxel (0 = source/none).
+    neighbour_water: fn(i32, i32, i32) -> u8,
+    /// Whether the chunk owning a world column is loaded (gates water edge culling).
+    neighbour_chunk_loaded: fn(i32, i32) -> bool,
 }
 
-fn tile_tint(tile: Tile) -> Option<TintKind> {
-    match tile {
-        Tile::GrassTop => Some(TintKind::Grass),
-        Tile::ShortGrass => Some(TintKind::Grass),
-        Tile::Fern => Some(TintKind::Grass),
-        Tile::Water => Some(TintKind::Water),
-        Tile::WaterStill => Some(TintKind::Water),
-        Tile::WaterFlow => Some(TintKind::Water),
-        Tile::OakLeaves => Some(TintKind::Foliage),
-        Tile::AcaciaLeaves => Some(TintKind::Foliage),
-        Tile::BirchLeaves => Some(TintKind::Foliage),
-        Tile::DarkOakLeaves => Some(TintKind::Foliage),
-        Tile::JungleLeaves => Some(TintKind::Foliage),
-        Tile::MangroveLeaves => Some(TintKind::Foliage),
-        Tile::SpruceLeaves => Some(TintKind::Foliage),
-        _ => None,
+impl MeshContext {
+    /// Defaults for meshing a chunk in isolation: no flowing-water metadata across
+    /// borders (everything reads as a source), and every neighbour treated as
+    /// loaded. Used by `build_mesh` (and the test-only entry points).
+    fn standalone() -> Self {
+        Self {
+            neighbour_water: |_, _, _| 0,
+            neighbour_chunk_loaded: |_, _| true,
+        }
     }
 }
 
@@ -77,30 +74,15 @@ pub fn build_mesh(
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
 ) -> ChunkMesh {
+    let ctx = MeshContext::standalone();
     build_mesh_with_context(
         chunk,
         neighbour_block,
-        |_, _, _| 0,
+        ctx.neighbour_water,
         neighbour_biome,
         neighbour_light,
-        |_, _| true,
+        ctx.neighbour_chunk_loaded,
         MeshOptions::DETAILED,
-    )
-}
-
-pub fn build_mesh_lods(
-    chunk: &Chunk,
-    neighbour_block: impl Fn(i32, i32, i32) -> u8,
-    neighbour_biome: impl Fn(i32, i32) -> u8,
-    neighbour_light: impl Fn(i32, i32, i32) -> u8,
-) -> ChunkMesh {
-    build_mesh_lods_with_loaded_neighbors(
-        chunk,
-        neighbour_block,
-        |_, _, _| 0,
-        neighbour_biome,
-        neighbour_light,
-        |_, _| true,
     )
 }
 
@@ -145,6 +127,10 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     mesh
 }
 
+/// Standalone mesh with explicit [`MeshOptions`] (e.g. the far-leaf LOD), for the
+/// LOD/leaf tests. Production reaches the options via
+/// [`build_mesh_lods_with_loaded_neighbors`].
+#[cfg(test)]
 pub fn build_mesh_with_options(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
@@ -152,13 +138,14 @@ pub fn build_mesh_with_options(
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     options: MeshOptions,
 ) -> ChunkMesh {
+    let ctx = MeshContext::standalone();
     build_mesh_with_context(
         chunk,
         neighbour_block,
-        |_, _, _| 0,
+        ctx.neighbour_water,
         neighbour_biome,
         neighbour_light,
-        |_, _| true,
+        ctx.neighbour_chunk_loaded,
         options,
     )
 }
@@ -236,41 +223,7 @@ fn build_mesh_with_context(
     };
 
     // Precompute biome-blended tint (5x5 window) per column, per kind.
-    const R: i32 = 2;
-    let n = (2 * R + 1) as f32 * (2 * R + 1) as f32;
-    let mut tint_grass = vec![[0f32; 3]; CHUNK_SX * CHUNK_SZ];
-    let mut tint_foliage = vec![[0f32; 3]; CHUNK_SX * CHUNK_SZ];
-    let mut tint_water = vec![[0f32; 3]; CHUNK_SX * CHUNK_SZ];
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            let wx = ox + x as i32;
-            let wz = oz + z as i32;
-            let mut g = [0f32; 3];
-            let mut f = [0f32; 3];
-            let mut w = [0f32; 3];
-            for dz in -R..=R {
-                for dx in -R..=R {
-                    let b = Biome::from_id(neighbour_biome(wx + dx, wz + dz));
-                    let grass = b.grass_color();
-                    let foliage = b.foliage_color();
-                    let water = b.water_color();
-                    g[0] += grass[0];
-                    g[1] += grass[1];
-                    g[2] += grass[2];
-                    f[0] += foliage[0];
-                    f[1] += foliage[1];
-                    f[2] += foliage[2];
-                    w[0] += water[0];
-                    w[1] += water[1];
-                    w[2] += water[2];
-                }
-            }
-            let i = z * CHUNK_SX + x;
-            tint_grass[i] = [g[0] / n, g[1] / n, g[2] / n];
-            tint_foliage[i] = [f[0] / n, f[1] / n, f[2] / n];
-            tint_water[i] = [w[0] / n, w[1] / n, w[2] / n];
-        }
-    }
+    let tints = tint::biome_window(ox, oz, &neighbour_biome);
 
     // Skip the all-air shell above the terrain. `heightmap[i]` is the highest
     // non-air Y in column i (set for every non-air block incl. water; rebuilt by
@@ -306,12 +259,7 @@ fn build_mesh_with_context(
                 if block.render_shape() == RenderShape::Cross {
                     let ci = z * CHUNK_SX + x;
                     let tile = block.tiles()[0];
-                    let tint = match tile_tint(tile) {
-                        Some(TintKind::Grass) => tint_grass[ci],
-                        Some(TintKind::Foliage) => tint_foliage[ci],
-                        Some(TintKind::Water) => tint_water[ci],
-                        None => [1.0, 1.0, 1.0],
-                    };
+                    let tint = tints.tile(tile_tint(tile), ci);
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
                     let l = neighbour_light(wx, y as i32, wz) as u32;
@@ -358,54 +306,20 @@ fn build_mesh_with_context(
                 let base_x = x as f32 + ox as f32;
                 let base_z = z as f32 + oz as f32;
 
-                // Water surface: per-corner heights (so neighbouring cells join
-                // into one continuous sloped sheet) plus the top tile + rotation
-                // derived from the flow direction.
-                let mut water_h = [[1.0f32; 2]; 2];
-                let mut water_top_tile = Tile::WaterStill;
-                let mut water_top_angle = 0u32;
-                // Full-height water (capped from above, or a falling column) fills
-                // to the top and its sides render full height rather than sloping.
-                let water_full =
-                    is_water && water_fills_cell(ox + x as i32, y as i32, oz + z as i32);
-                if is_water {
-                    let wx = ox + x as i32;
-                    let wz = oz + z as i32;
-                    let yy = y as i32;
-                    // 2x2 corner heights, indexed [cx][cz]: average the up-to-4
-                    // water cells meeting at each corner.
-                    for cx in 0..2i32 {
-                        for cz in 0..2i32 {
-                            let mut sum = 0.0;
-                            let mut cnt = 0;
-                            for ox2 in (cx - 1)..=cx {
-                                for oz2 in (cz - 1)..=cz {
-                                    if let Some(h) = fluid_at(wx + ox2, yy, wz + oz2) {
-                                        sum += h;
-                                        cnt += 1;
-                                    }
-                                }
-                            }
-                            water_h[cx as usize][cz as usize] =
-                                if cnt == 0 { 1.0 } else { sum / cnt as f32 };
-                        }
-                    }
-                    // Flow vector from the surface gradient: shared with entity
-                    // physics so current push matches the texture heading.
-                    let flow =
-                        crate::world::water::surface_flow_dir(wx, yy, wz, &block_at, &fluid_at);
-                    if flow.length_squared() > 0.0 {
-                        water_top_tile = Tile::WaterFlow;
-                        // Continuous flow heading: the shader rotates the flow tile
-                        // by this angle so a cell streaming into a corner points
-                        // diagonally, not snapped to a cardinal. atan2(x, z)
-                        // keeps +Z=0/-X=-90/+X=+90/-Z=180 so the cardinals match the
-                        // texture's built-in down-flow. Quantized to 8 bits.
-                        let a = flow.x.atan2(flow.z);
-                        let frac = a / std::f32::consts::TAU + 0.5;
-                        water_top_angle = ((frac * 256.0) as i32).rem_euclid(256) as u32;
-                    }
-                }
+                // Water surface geometry (corner heights, flow tile/heading, full-
+                // height flag), computed once per cell — see `mesh::water`. `None`
+                // for non-water blocks.
+                let water_surface = is_water.then(|| {
+                    let full = water_fills_cell(ox + x as i32, y as i32, oz + z as i32);
+                    WaterSurface::new(
+                        ox + x as i32,
+                        y as i32,
+                        oz + z as i32,
+                        full,
+                        &block_at,
+                        &fluid_at,
+                    )
+                });
 
                 for face in FACES {
                     let (dx, dy, dz) = face.dir();
@@ -463,19 +377,15 @@ fn build_mesh_with_context(
                     // full-height cell's exposed step over a shorter neighbour.
                     // Its bottom is trimmed to the neighbour's surface (below) so
                     // the submerged part — water behind water — isn't drawn twice.
+                    // Otherwise faces between two water cells cull (the surfaces meet).
                     let mut water_exposed_step = false;
-                    if is_water && nb == Block::Water {
-                        // Cull faces between two water cells, EXCEPT a submerged
-                        // or falling cell's SIDE toward an open-surface neighbour:
-                        // this cell is full to the top while the neighbour's
-                        // surface is recessed, so the height difference is an
-                        // exposed vertical step. Cull it and the floor shows
-                        // through the gap; render it to bridge the two surfaces.
-                        let nb_full = water_fills_cell(ox + nx, y as i32, oz + nz);
-                        if is_side && water_full && !nb_full {
-                            water_exposed_step = true;
-                        } else {
-                            continue;
+                    if let Some(ws) = &water_surface {
+                        if nb == Block::Water {
+                            let nb_full = water_fills_cell(ox + nx, y as i32, oz + nz);
+                            match ws.side_against_water(is_side, nb_full) {
+                                SideVsWater::ExposedStep => water_exposed_step = true,
+                                SideVsWater::Cull => continue,
+                            }
                         }
                     }
 
@@ -486,15 +396,15 @@ fn build_mesh_with_context(
                     // dirt + a grayscale grass overlay tinted by the same biome
                     // grass colour as the top. Everything else is the face's own
                     // tile, tinted only for grass-top/foliage/water.
-                    let (base_tile, overlay_tile, tint) = if is_water {
+                    let (base_tile, overlay_tile, tint) = if let Some(ws) = &water_surface {
                         let t = match face {
-                            Face::PosY => water_top_tile,
+                            Face::PosY => ws.top_tile(),
                             Face::NegY => Tile::WaterStill,
                             _ => Tile::WaterFlow,
                         };
-                        (t, None, tint_water[ci])
+                        (t, None, tints.water[ci])
                     } else if block == Block::Grass && is_side {
-                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass[ci])
+                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tints.grass[ci])
                     } else {
                         let t = match face {
                             Face::PosY => tile_top,
@@ -505,12 +415,7 @@ fn build_mesh_with_context(
                                 None => tile_side,
                             },
                         };
-                        let tint = match tile_tint(t) {
-                            Some(TintKind::Grass) => tint_grass[ci],
-                            Some(TintKind::Foliage) => tint_foliage[ci],
-                            Some(TintKind::Water) => tint_water[ci],
-                            None => [1.0, 1.0, 1.0],
-                        };
+                        let tint = tints.tile(tile_tint(t), ci);
                         (t, None, tint)
                     };
 
@@ -518,107 +423,36 @@ fn build_mesh_with_context(
                     // Positions are in world space (baked chunk origin) so each
                     // chunk renders at its actual world coordinates.
                     let base_y = y as f32;
-                    let [mut p0, mut p1, mut p2, mut p3] = quad_for(face, base_x, base_y, base_z);
+                    let mut corners = quad_for(face, base_x, base_y, base_z);
 
-                    // Water vertices: TOP verts go to their corner's surface height
-                    // so the top slopes and every side's top edge meets it exactly
-                    // (a watertight, connected sheet). A full-height cell is full
-                    // to the top, so its faces span the whole block.
-                    //   - Exposed-step faces additionally pull their BOTTOM verts up
-                    //     to the neighbour's surface (= the shared corner height), so
-                    //     only the band above the neighbour is drawn (no water-behind-
-                    //     water double-blend).
-                    if is_water {
-                        for p in [&mut p0, &mut p1, &mut p2, &mut p3] {
-                            let cx = ((p[0] - base_x) as usize).min(1);
-                            let cz = ((p[2] - base_z) as usize).min(1);
-                            if p[1] > base_y + 0.5 {
-                                p[1] = base_y + if water_full { 1.0 } else { water_h[cx][cz] };
-                            } else if water_exposed_step {
-                                p[1] = base_y + water_h[cx][cz];
-                            }
-                        }
+                    // Water vertices are warped onto the cell's surface (top edge to
+                    // the per-corner height; exposed-step faces also trim the bottom).
+                    if let Some(ws) = &water_surface {
+                        ws.warp_quad(&mut corners, base_x, base_y, base_z, water_exposed_step);
                     }
 
-                    // Per-vertex ambient occlusion AND smooth skylight share one
-                    // neighbourhood: for each corner, the front voxel F = block+
-                    // normal plus its two edge neighbours and the diagonal one.
-                    // AO counts solid occluders (darker = more buried); skylight
-                    // averages the light of the NON-opaque cells of that 2x2 (F is
-                    // always non-opaque for an emitted face, so the average is
-                    // well-defined). Both are packed per vertex and interpolated.
-                    let (ux, uy, uz) = face.ao_u();
-                    let (vx, vy, vz) = face.ao_v();
+                    // The front voxel F = block + normal, and its pre-sampled light:
+                    // the shared seed for every corner's AO + smooth-skylight sample.
                     let fx = ox + x as i32 + dx;
                     let fy = y as i32 + dy;
                     let fz = oz + z as i32 + dz;
                     let f_l = neighbour_light(fx, fy, fz) as u32;
-                    let mut ao = [3u32; 4];
-                    let mut light6 = [63u32; 4];
-                    for (i, &(su, sv)) in face.ao_signs().iter().enumerate() {
-                        let (e1x, e1y, e1z) = (fx + su * ux, fy + su * uy, fz + su * uz);
-                        let (e2x, e2y, e2z) = (fx + sv * vx, fy + sv * vy, fz + sv * vz);
-                        let (dxx, dyy, dzz) = (
-                            fx + su * ux + sv * vx,
-                            fy + su * uy + sv * vy,
-                            fz + su * uz + sv * vz,
-                        );
-                        let b1 = block_at(e1x, e1y, e1z);
-                        let b2 = block_at(e2x, e2y, e2z);
-                        let bd = block_at(dxx, dyy, dzz);
-                        // AO counts opaque cubes AND leaves (canopy self-occlusion).
-                        ao[i] = vertex_ao(b1.occludes_ao(), b2.occludes_ao(), bd.occludes_ao());
 
-                        // Smooth skylight: mean of F + the surround cells that carry
-                        // light (anything not fully opaque -- leaves included, since
-                        // they still transmit light even though they occlude AO).
-                        let mut sum = f_l;
-                        let mut cnt = 1u32;
-                        if !b1.is_opaque() {
-                            sum += neighbour_light(e1x, e1y, e1z) as u32;
-                            cnt += 1;
-                        }
-                        if !b2.is_opaque() {
-                            sum += neighbour_light(e2x, e2y, e2z) as u32;
-                            cnt += 1;
-                        }
-                        if !bd.is_opaque() {
-                            sum += neighbour_light(dxx, dyy, dzz) as u32;
-                            cnt += 1;
-                        }
-                        // avg in [0,SKY_FULL] -> 6-bit level in [0,63], integer
-                        // round-half-up (no f32, to keep meshes byte-identical).
-                        let denom = cnt * SKY_FULL as u32;
-                        light6[i] = ((sum * 63 + denom / 2) / denom).min(63);
-                    }
-
-                    // Pack base tile + shade + optional overlay once per face; the
-                    // corner (0..3), AO level (0..3) and skylight (0..63) are
-                    // per-vertex. Bit layout:
-                    //   0..8 base tile | 8..10 corner | 10..12 shade
-                    //   12..20 overlay tile | 20 has-overlay | 21..23 AO
-                    //   23..29 skylight
-                    // The shader selects uvs from the CPU-baked tile_uv() table by
-                    // (tile, corner): 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
-                    // Water has no grass overlay, so a flowing TOP face reuses its
-                    // per-face overlay-tile bits to carry the quantized flow heading
-                    // (the `has-overlay` flag stays 0, so the fragment shader never
-                    // composites an overlay). Side faces derive their texture V from
-                    // the vertex height in the shader, so they need no data here.
-                    let water_ov: u32 = if is_water && matches!(face, Face::PosY) {
-                        water_top_angle
-                    } else {
-                        0
+                    // Resolve this face's 12..20 overlay payload + has-overlay flag.
+                    // A grass SIDE carries the tinted GrassSideOverlay; a flowing
+                    // water TOP (no grass overlay) reuses those 8 bits to carry the
+                    // quantized flow heading with the flag CLEAR, so the fragment
+                    // shader composites no overlay (water side faces derive their
+                    // texture V from the vertex height in the shader, so they need
+                    // no per-face data here). `pack_vertex` owns the bit positions.
+                    let water_ov: u32 = match &water_surface {
+                        Some(ws) if matches!(face, Face::PosY) => ws.top_angle(),
+                        _ => 0,
                     };
-                    let (ov_tile, ov_flag) = match overlay_tile {
-                        Some(o) => (o as u32, 1u32),
-                        None => (water_ov, 0u32),
+                    let (overlay, has_overlay) = match overlay_tile {
+                        Some(o) => (o as u32, true),
+                        None => (water_ov, false),
                     };
-                    let face_bits = (base_tile as u32)
-                        | (face.shade_idx() << 10)
-                        | (ov_tile << 12)
-                        | (ov_flag << 20);
-                    let corners = [p0, p1, p2, p3];
 
                     let (vbuf, ibuf, sections) = if is_water {
                         (
@@ -630,33 +464,28 @@ fn build_mesh_with_context(
                         (&mut opaque, &mut opaque_idx, &mut opaque_sections)
                     };
 
-                    let start = vbuf.len() as u32;
-                    for (corner, p) in corners.into_iter().enumerate() {
-                        vbuf.push(Vertex {
-                            pos: p,
-                            tint,
-                            packed: face_bits
-                                | ((corner as u32) << 8)
-                                | (ao[corner] << 21)
-                                | (light6[corner] << 23),
-                        });
-                    }
-                    // Flip the triangulation so the split runs along the darker
-                    // diagonal -- keeps the AO gradient symmetric (no bright bleed).
                     let first_index = ibuf.len() as u32;
-                    let tris: [u32; 6] = if should_flip(ao) {
-                        [start, start + 1, start + 3, start + 1, start + 2, start + 3]
-                    } else {
-                        [start, start + 1, start + 2, start, start + 2, start + 3]
-                    };
-                    ibuf.extend_from_slice(&tris);
-                    // The transparent pass is back-face culled, so the water SURFACE
-                    // (top face) also needs the reverse winding to stay visible from
-                    // underneath when submerged. Side/bottom faces stay single-sided.
+                    let tris = emit_cube_face(
+                        vbuf,
+                        ibuf,
+                        corners,
+                        base_tile,
+                        overlay,
+                        has_overlay,
+                        tint,
+                        face,
+                        fx,
+                        fy,
+                        fz,
+                        f_l,
+                        &block_at,
+                        &neighbour_light,
+                    );
+                    // A water surface (top face) also emits its reverse winding so it
+                    // stays visible from underneath in the back-face-culled
+                    // transparent pass; side/bottom faces stay single-sided.
                     if is_water && matches!(face, Face::PosY) {
-                        ibuf.extend_from_slice(&[
-                            tris[0], tris[2], tris[1], tris[3], tris[5], tris[4],
-                        ]);
+                        ibuf.extend_from_slice(&water::top_back_winding(tris));
                     }
                     extend_section(
                         sections,
@@ -714,6 +543,126 @@ fn extend_section(
     };
 }
 
+/// One corner's ambient-occlusion level and smooth skylight, sampled from the
+/// shared 2x2 neighbourhood just outside the face: the front voxel `F = (fx,fy,fz)`
+/// (= block + normal, with its pre-sampled light `f_l`) plus its two edge
+/// neighbours and the diagonal one, picked by this `corner`'s `ao_signs`. AO counts
+/// solid occluders (opaque cubes AND leaves, for canopy self-occlusion); skylight
+/// averages the light of the non-opaque cells of that 2x2 (F is always non-opaque
+/// for an emitted face). Returns `(ao 0..3, skylight 0..63)`.
+#[inline]
+fn vertex_ao_and_light<B, L>(
+    face: Face,
+    corner: usize,
+    fx: i32,
+    fy: i32,
+    fz: i32,
+    f_l: u32,
+    block_at: &B,
+    neighbour_light: &L,
+) -> (u32, u32)
+where
+    B: Fn(i32, i32, i32) -> Block,
+    L: Fn(i32, i32, i32) -> u8,
+{
+    let (ux, uy, uz) = face.ao_u();
+    let (vx, vy, vz) = face.ao_v();
+    let (su, sv) = face.ao_signs()[corner];
+    let (e1x, e1y, e1z) = (fx + su * ux, fy + su * uy, fz + su * uz);
+    let (e2x, e2y, e2z) = (fx + sv * vx, fy + sv * vy, fz + sv * vz);
+    let (dxx, dyy, dzz) = (
+        fx + su * ux + sv * vx,
+        fy + su * uy + sv * vy,
+        fz + su * uz + sv * vz,
+    );
+    let b1 = block_at(e1x, e1y, e1z);
+    let b2 = block_at(e2x, e2y, e2z);
+    let bd = block_at(dxx, dyy, dzz);
+    let ao = vertex_ao(b1.occludes_ao(), b2.occludes_ao(), bd.occludes_ao());
+
+    // Smooth skylight: mean of F + the surround cells that carry light (anything
+    // not fully opaque -- leaves included, since they transmit light even though
+    // they occlude AO).
+    let mut sum = f_l;
+    let mut cnt = 1u32;
+    if !b1.is_opaque() {
+        sum += neighbour_light(e1x, e1y, e1z) as u32;
+        cnt += 1;
+    }
+    if !b2.is_opaque() {
+        sum += neighbour_light(e2x, e2y, e2z) as u32;
+        cnt += 1;
+    }
+    if !bd.is_opaque() {
+        sum += neighbour_light(dxx, dyy, dzz) as u32;
+        cnt += 1;
+    }
+    // avg in [0,SKY_FULL] -> 6-bit level in [0,63], integer round-half-up (no f32,
+    // to keep meshes byte-identical).
+    let denom = cnt * SKY_FULL as u32;
+    let light6 = ((sum * 63 + denom / 2) / denom).min(63);
+    (ao, light6)
+}
+
+/// Emit one resolved cube face: sample per-corner AO + skylight from the shared 2x2
+/// neighbourhood, push the four packed vertices, and append the (AO-symmetric,
+/// possibly flipped) triangulation. Returns the two triangles' six indices so the
+/// caller can add water's reverse winding before closing the section. The `corners`
+/// are already in world space (and water-warped); `face` drives shade + the AO
+/// neighbourhood; `(fx,fy,fz)`/`f_l` are the front voxel and its light.
+#[allow(clippy::too_many_arguments)]
+fn emit_cube_face<B, L>(
+    vbuf: &mut Vec<Vertex>,
+    ibuf: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    base_tile: Tile,
+    overlay: u32,
+    has_overlay: bool,
+    tint: [f32; 3],
+    face: Face,
+    fx: i32,
+    fy: i32,
+    fz: i32,
+    f_l: u32,
+    block_at: &B,
+    neighbour_light: &L,
+) -> [u32; 6]
+where
+    B: Fn(i32, i32, i32) -> Block,
+    L: Fn(i32, i32, i32) -> u8,
+{
+    let shade_idx = face.shade_idx();
+    let mut ao = [3u32; 4];
+    let start = vbuf.len() as u32;
+    for (corner, p) in corners.into_iter().enumerate() {
+        let (a, light6) =
+            vertex_ao_and_light(face, corner, fx, fy, fz, f_l, block_at, neighbour_light);
+        ao[corner] = a;
+        vbuf.push(Vertex {
+            pos: p,
+            tint,
+            packed: pack_vertex(
+                base_tile as u32,
+                corner as u32,
+                shade_idx,
+                overlay,
+                has_overlay,
+                a,
+                light6,
+            ),
+        });
+    }
+    // Flip the triangulation so the split runs along the darker diagonal -- keeps
+    // the AO gradient symmetric (no bright bleed).
+    let tris: [u32; 6] = if should_flip(ao) {
+        [start, start + 1, start + 3, start + 1, start + 2, start + 3]
+    } else {
+        [start, start + 1, start + 2, start, start + 2, start + 3]
+    };
+    ibuf.extend_from_slice(&tris);
+    tris
+}
+
 /// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)
 /// buffer, each drawn in BOTH windings so the plant is visible from both sides
 /// under back-face culling. Flat-lit (AO = 3, shade index 0 = "top", no
@@ -729,16 +678,15 @@ fn emit_cross(
     tint: [f32; 3],
     sky6: u32,
 ) {
-    // packed: 0..8 tile | 8..10 corner | 10..12 shade(0) | 12..20 overlay |
-    //         20 has-overlay(0) | 21..23 AO | 23..29 skylight.
-    let face_bits = tile as u32;
+    // Flat-lit: shade index 0 (top, no directional darkening), AO = 3, no overlay;
+    // `pack_vertex` owns the bit layout.
     for plane in cross_quads(bx, y, bz) {
         let start = opaque.len() as u32;
         for (corner, p) in plane.into_iter().enumerate() {
             opaque.push(Vertex {
                 pos: p,
                 tint,
-                packed: face_bits | ((corner as u32) << 8) | (3u32 << 21) | (sky6 << 23),
+                packed: pack_vertex(tile as u32, corner as u32, 0, 0, false, 3, sky6),
             });
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

@@ -12,6 +12,7 @@ mod recipe;
 pub use load::load_recipes;
 pub use recipe::{Ingredient, Recipe, Recipes, SmeltingRecipe};
 
+use crate::inventory::SlotGrid;
 use crate::item::ItemStack;
 
 /// Largest crafting grid side (3×3 at a table; 2×2 in the inventory).
@@ -119,9 +120,51 @@ impl CraftGrid {
         }
     }
 
-    /// `true` if every input cell is empty.
-    pub fn is_empty(&self) -> bool {
-        self.cells().iter().all(Option::is_none)
+    /// Take one craft from the result onto `cursor`: place the current result on the
+    /// cursor (only if the whole stack fits — cursor empty, or the same item with
+    /// room), then consume one item from every occupied input cell and recompute the
+    /// result against `recipes`. No-op when there is no result or the cursor can't
+    /// accept the whole result.
+    ///
+    /// The recompute needs the recipe set, which lives outside the grid, so it is
+    /// passed in. The result slot is take-only: a craft only ever moves *out* onto
+    /// the cursor, never accepts a deposit.
+    pub fn take_result(&mut self, recipes: &Recipes, cursor: &mut Option<ItemStack>) {
+        let Some(result) = self.result else {
+            return;
+        };
+        let placed = match cursor {
+            None => {
+                *cursor = Some(result);
+                true
+            }
+            Some(cur) if cur.can_stack_with(&result) && cur.space_left() >= result.count => {
+                cur.count += result.count;
+                true
+            }
+            _ => false,
+        };
+        if placed {
+            self.consume_one();
+            self.recompute(recipes);
+        }
+    }
+}
+
+/// Read/index access to the live input cells (and the shared `is_empty`). A craft
+/// grid is filled by cursor clicks, never by first-fit loot insert, so the trait's
+/// `insert` must NOT be called on one — no loot/shift path wires into a `CraftGrid`.
+impl SlotGrid for CraftGrid {
+    #[inline]
+    fn slots(&self) -> &[Option<ItemStack>] {
+        let cap = self.capacity();
+        &self.cells[..cap]
+    }
+
+    #[inline]
+    fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
+        let cap = self.capacity();
+        &mut self.cells[..cap]
     }
 }
 

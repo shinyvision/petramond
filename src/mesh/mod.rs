@@ -8,14 +8,17 @@
 //! adjacent blocks.
 
 mod builder;
-mod face;
+pub(crate) mod face;
 mod skylight;
+mod tint;
 mod vertex;
+mod water;
 
 pub use builder::{
-    build_mesh, build_mesh_lods, build_mesh_lods_with_loaded_neighbors, build_mesh_with_options,
-    LeafMeshMode, MeshOptions,
+    build_mesh, build_mesh_lods_with_loaded_neighbors, LeafMeshMode, MeshOptions,
 };
+#[cfg(test)]
+pub use builder::build_mesh_with_options;
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
 pub use vertex::{ChunkMesh, MeshIndexSection, Vertex, SHADES};
 

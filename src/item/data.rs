@@ -6,6 +6,8 @@
 //! Append-only: never reorder or remove rows (item ids are persisted-adjacent
 //! to block ids and are covered by a stability test).
 
+use crate::registry::{self, RegistryKey, TableEntry};
+
 use super::definition::ItemDef;
 use super::{HeldPose, ItemTag, ItemType};
 
@@ -119,6 +121,7 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
     ItemDef {
         item: ItemType::Air,
+        key: "air",
         name: "Air",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -126,6 +129,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Grass,
+        key: "grass_block",
         name: "Grass Block",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -133,6 +137,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Dirt,
+        key: "dirt",
         name: "Dirt",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -140,6 +145,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Stone,
+        key: "stone",
         name: "Stone",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -147,6 +153,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Sand,
+        key: "sand",
         name: "Sand",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -154,6 +161,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Snow,
+        key: "snow",
         name: "Snow",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -161,6 +169,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Water,
+        key: "water",
         name: "Water",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -168,6 +177,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::OakLog,
+        key: "oak_log",
         name: "Oak Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -175,6 +185,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::OakLeaves,
+        key: "oak_leaves",
         name: "Oak Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -182,6 +193,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::SpruceLog,
+        key: "spruce_log",
         name: "Spruce Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -189,6 +201,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::BirchLog,
+        key: "birch_log",
         name: "Birch Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -196,6 +209,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::JungleLog,
+        key: "jungle_log",
         name: "Jungle Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -203,6 +217,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::AcaciaLog,
+        key: "acacia_log",
         name: "Acacia Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -210,6 +225,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::DarkOakLog,
+        key: "dark_oak_log",
         name: "Dark Oak Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -217,6 +233,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CherryLog,
+        key: "cherry_log",
         name: "Cherry Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -224,6 +241,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::MangroveLog,
+        key: "mangrove_log",
         name: "Mangrove Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -231,6 +249,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::SpruceLeaves,
+        key: "spruce_leaves",
         name: "Spruce Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -238,6 +257,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::BirchLeaves,
+        key: "birch_leaves",
         name: "Birch Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -245,6 +265,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::JungleLeaves,
+        key: "jungle_leaves",
         name: "Jungle Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -252,6 +273,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::AcaciaLeaves,
+        key: "acacia_leaves",
         name: "Acacia Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -259,6 +281,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::DarkOakLeaves,
+        key: "dark_oak_leaves",
         name: "Dark Oak Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -266,6 +289,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::MangroveLeaves,
+        key: "mangrove_leaves",
         name: "Mangrove Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -273,6 +297,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CherryLeaves,
+        key: "cherry_leaves",
         name: "Cherry Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -280,6 +305,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::AzaleaLeaves,
+        key: "azalea_leaves",
         name: "Azalea Leaves",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -287,6 +313,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedSand,
+        key: "red_sand",
         name: "Red Sand",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -294,6 +321,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Sandstone,
+        key: "sandstone",
         name: "Sandstone",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -301,6 +329,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedSandstone,
+        key: "red_sandstone",
         name: "Red Sandstone",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -308,6 +337,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Terracotta,
+        key: "terracotta",
         name: "Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -315,6 +345,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::WhiteTerracotta,
+        key: "white_terracotta",
         name: "White Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -322,6 +353,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::OrangeTerracotta,
+        key: "orange_terracotta",
         name: "Orange Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -329,6 +361,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::YellowTerracotta,
+        key: "yellow_terracotta",
         name: "Yellow Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -336,6 +369,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::BrownTerracotta,
+        key: "brown_terracotta",
         name: "Brown Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -343,6 +377,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedTerracotta,
+        key: "red_terracotta",
         name: "Red Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -350,6 +385,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::LightGrayTerracotta,
+        key: "light_gray_terracotta",
         name: "Light Gray Terracotta",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -357,6 +393,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Podzol,
+        key: "podzol",
         name: "Podzol",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -364,6 +401,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Mycelium,
+        key: "mycelium",
         name: "Mycelium",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -371,6 +409,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CoarseDirt,
+        key: "coarse_dirt",
         name: "Coarse Dirt",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -378,6 +417,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Gravel,
+        key: "gravel",
         name: "Gravel",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -385,6 +425,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Clay,
+        key: "clay",
         name: "Clay",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -392,6 +433,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Mud,
+        key: "mud",
         name: "Mud",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -399,6 +441,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::MossBlock,
+        key: "moss_block",
         name: "Moss Block",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -406,6 +449,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::SnowBlock,
+        key: "snow_block",
         name: "Snow Block",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -413,6 +457,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::PackedIce,
+        key: "packed_ice",
         name: "Packed Ice",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -420,6 +465,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Ice,
+        key: "ice",
         name: "Ice",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -427,6 +473,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Calcite,
+        key: "calcite",
         name: "Calcite",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -434,6 +481,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Granite,
+        key: "granite",
         name: "Granite",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -441,6 +489,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Diorite,
+        key: "diorite",
         name: "Diorite",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -448,6 +497,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Andesite,
+        key: "andesite",
         name: "Andesite",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -455,6 +505,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Tuff,
+        key: "tuff",
         name: "Tuff",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -462,6 +513,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CoalOre,
+        key: "coal_ore",
         name: "Coal Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -469,6 +521,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::IronOre,
+        key: "iron_ore",
         name: "Iron Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -476,6 +529,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CopperOre,
+        key: "copper_ore",
         name: "Copper Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -483,6 +537,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::GoldOre,
+        key: "gold_ore",
         name: "Gold Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -490,6 +545,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedstoneOre,
+        key: "redstone_ore",
         name: "Redstone Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -497,6 +553,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::LapisOre,
+        key: "lapis_ore",
         name: "Lapis Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -504,6 +561,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::DiamondOre,
+        key: "diamond_ore",
         name: "Diamond Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -511,6 +569,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::EmeraldOre,
+        key: "emerald_ore",
         name: "Emerald Ore",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -518,6 +577,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Pumpkin,
+        key: "pumpkin",
         name: "Pumpkin",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -525,6 +585,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Melon,
+        key: "melon",
         name: "Melon",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -532,6 +593,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Cactus,
+        key: "cactus",
         name: "Cactus",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -539,6 +601,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::ShortGrass,
+        key: "short_grass",
         name: "Short Grass",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -546,6 +609,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Fern,
+        key: "fern",
         name: "Fern",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -553,6 +617,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Dandelion,
+        key: "dandelion",
         name: "Dandelion",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -560,6 +625,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Poppy,
+        key: "poppy",
         name: "Poppy",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -567,6 +633,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Cornflower,
+        key: "cornflower",
         name: "Cornflower",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -574,6 +641,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Allium,
+        key: "allium",
         name: "Allium",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -581,6 +649,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::AzureBluet,
+        key: "azure_bluet",
         name: "Azure Bluet",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -588,6 +657,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::OxeyeDaisy,
+        key: "oxeye_daisy",
         name: "Oxeye Daisy",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -595,6 +665,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedTulip,
+        key: "red_tulip",
         name: "Red Tulip",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -602,6 +673,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::DeadBush,
+        key: "dead_bush",
         name: "Dead Bush",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -609,6 +681,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::BrownMushroom,
+        key: "brown_mushroom",
         name: "Brown Mushroom",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -616,6 +689,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RedMushroom,
+        key: "red_mushroom",
         name: "Red Mushroom",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -623,6 +697,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Cobblestone,
+        key: "cobblestone",
         name: "Cobblestone",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -630,6 +705,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::OakPlanks,
+        key: "oak_planks",
         name: "Oak Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -637,6 +713,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::SprucePlanks,
+        key: "spruce_planks",
         name: "Spruce Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -644,6 +721,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::BirchPlanks,
+        key: "birch_planks",
         name: "Birch Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -651,6 +729,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::JunglePlanks,
+        key: "jungle_planks",
         name: "Jungle Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -658,6 +737,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::AcaciaPlanks,
+        key: "acacia_planks",
         name: "Acacia Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -665,6 +745,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::DarkOakPlanks,
+        key: "dark_oak_planks",
         name: "Dark Oak Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -672,6 +753,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CherryPlanks,
+        key: "cherry_planks",
         name: "Cherry Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -679,6 +761,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::MangrovePlanks,
+        key: "mangrove_planks",
         name: "Mangrove Planks",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -686,6 +769,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CraftingTable,
+        key: "crafting_table",
         name: "Crafting Table",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -693,6 +777,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Stick,
+        key: "stick",
         name: "Stick",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -700,6 +785,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::WoodenPickaxe,
+        key: "wooden_pickaxe",
         name: "Wooden Pickaxe",
         max_stack_size: STACK,
         held_pose: PICKAXE_POSE,
@@ -707,6 +793,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::StonePickaxe,
+        key: "stone_pickaxe",
         name: "Stone Pickaxe",
         max_stack_size: STACK,
         held_pose: PICKAXE_POSE,
@@ -714,6 +801,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RawIron,
+        key: "raw_iron",
         name: "Raw Iron",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -721,6 +809,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::RawCopper,
+        key: "raw_copper",
         name: "Raw Copper",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -728,6 +817,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Coal,
+        key: "coal",
         name: "Coal",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -735,6 +825,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::IronIngot,
+        key: "iron_ingot",
         name: "Iron Ingot",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -742,6 +833,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::CopperIngot,
+        key: "copper_ingot",
         name: "Copper Ingot",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -749,6 +841,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Furnace,
+        key: "furnace",
         name: "Furnace",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -756,7 +849,8 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
     ItemDef {
         item: ItemType::Chest,
-        // Name → registry key `chest`, which the chest recipe's result resolves to.
+        // Key `chest` is what the chest recipe's result resolves to.
+        key: "chest",
         name: "Chest",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
@@ -764,19 +858,27 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
 ];
 
+impl RegistryKey for ItemType {
+    #[inline]
+    fn to_id(self) -> u8 {
+        self.id()
+    }
+}
+
+impl TableEntry for ItemDef {
+    type Key = ItemType;
+    #[inline]
+    fn key(&self) -> ItemType {
+        self.item
+    }
+}
+
 #[inline]
 pub(super) fn from_id(id: u8) -> ItemType {
-    ITEM_DEFS
-        .get(id as usize)
-        .map_or(ItemType::Air, |def| def.item)
+    registry::from_id(ITEM_DEFS, id, ItemType::Air)
 }
 
 #[inline]
 pub(super) fn def(item: ItemType) -> &'static ItemDef {
-    let index = item.id() as usize;
-    debug_assert!(
-        index < ITEM_DEFS.len() && ITEM_DEFS[index].item == item,
-        "ITEM_DEFS must be ordered by ItemType::id()"
-    );
-    &ITEM_DEFS[index]
+    registry::def(ITEM_DEFS, item)
 }

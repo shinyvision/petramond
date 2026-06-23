@@ -1,6 +1,9 @@
-/// Face direction enum.
+/// Face direction enum. Shared by the chunk mesher (`mesh::builder`) and the
+/// dynamic-geometry builder (`render::block_model`): both pick faces from
+/// [`Face::ALL`], shade them via [`Face::shade_idx`], and wind their quads via
+/// [`Face::quad_box`], so the two stay byte-identical by construction.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(super) enum Face {
+pub(crate) enum Face {
     PosX,
     NegX,
     PosY,
@@ -10,6 +13,17 @@ pub(super) enum Face {
 }
 
 impl Face {
+    /// The six faces in canonical order (`PosX, NegX, PosY, NegY, PosZ, NegZ`).
+    /// Both mesher loops iterate this, so face/index correspondence is shared.
+    pub(crate) const ALL: [Face; 6] = [
+        Face::PosX,
+        Face::NegX,
+        Face::PosY,
+        Face::NegY,
+        Face::PosZ,
+        Face::NegZ,
+    ];
+
     pub(super) fn dir(self) -> (i32, i32, i32) {
         match self {
             Face::PosX => (1, 0, 0),
@@ -36,7 +50,7 @@ impl Face {
 
     /// Index into `SHADES` (and the shader's mirror) for this face -- packed into
     /// the vertex instead of the raw float.
-    pub(super) fn shade_idx(self) -> u32 {
+    pub(crate) fn shade_idx(self) -> u32 {
         match self {
             Face::PosY => 0,
             Face::PosZ | Face::NegZ => 1,
@@ -65,10 +79,10 @@ impl Face {
     }
 
     /// Per-corner tangent signs `(su, sv)` for the quad corners `p0..p3` in the
-    /// same CCW order `quad_for` emits. `su`/`sv` pick which side along `ao_u`/
+    /// same CCW order `quad_box` emits. `su`/`sv` pick which side along `ao_u`/
     /// `ao_v` (relative to the front voxel `block + normal`) each corner's three
-    /// AO occluders sit on. Derived from `quad_for` and independently verified
-    /// per face; keep in lockstep with `quad_for` if corner order ever changes.
+    /// AO occluders sit on. Derived from `quad_box` and independently verified
+    /// per face; keep in lockstep with `quad_box` if corner order ever changes.
     pub(super) fn ao_signs(self) -> [(i32, i32); 4] {
         match self {
             Face::PosX => [(-1, 1), (-1, -1), (1, -1), (1, 1)],
@@ -77,6 +91,31 @@ impl Face {
             Face::NegY => [(-1, -1), (1, -1), (1, 1), (-1, 1)],
             Face::PosZ => [(-1, -1), (1, -1), (1, 1), (-1, 1)],
             Face::NegZ => [(1, -1), (-1, -1), (-1, 1), (1, 1)],
+        }
+    }
+
+    /// The four corners of this face, CCW as seen from outside, spanning the
+    /// arbitrary axis-aligned box `[min, max]` (per-axis extents). The unit-cell
+    /// `quad_for(face, x, y, z)` is exactly this over `[(x,y,z), (x+1,y+1,z+1)]`;
+    /// `render::block_model` calls it with non-cube boxes (the chest's inset body
+    /// and lid). Corner order (p0 bottom-left, p1 bottom-right, p2 top-right, p3
+    /// top-left) matches the shader's `corner_uv`, so tiles map upright.
+    pub(crate) fn quad_box(self, min: [f32; 3], max: [f32; 3]) -> [[f32; 3]; 4] {
+        // Select min/max on each axis: dx/dy/dz of 0 picks min, 1 picks max.
+        let p = |dx: usize, dy: usize, dz: usize| {
+            [
+                if dx == 0 { min[0] } else { max[0] },
+                if dy == 0 { min[1] } else { max[1] },
+                if dz == 0 { min[2] } else { max[2] },
+            ]
+        };
+        match self {
+            Face::PosX => [p(1, 0, 1), p(1, 0, 0), p(1, 1, 0), p(1, 1, 1)],
+            Face::NegX => [p(0, 0, 0), p(0, 0, 1), p(0, 1, 1), p(0, 1, 0)],
+            Face::PosY => [p(0, 1, 1), p(1, 1, 1), p(1, 1, 0), p(0, 1, 0)],
+            Face::NegY => [p(0, 0, 0), p(1, 0, 0), p(1, 0, 1), p(0, 0, 1)],
+            Face::PosZ => [p(0, 0, 1), p(1, 0, 1), p(1, 1, 1), p(0, 1, 1)],
+            Face::NegZ => [p(1, 0, 0), p(0, 0, 0), p(0, 1, 0), p(1, 1, 0)],
         }
     }
 }
@@ -137,44 +176,8 @@ pub(super) fn should_flip(ao: [u32; 4]) -> bool {
     ao[0] + ao[2] > ao[1] + ao[3]
 }
 
+/// The unit-cell quad: 4 corners CCW as seen from the +axis direction, spanning
+/// `[(x,y,z), (x+1,y+1,z+1)]`. A thin wrapper over [`Face::quad_box`].
 pub(super) fn quad_for(face: Face, x: f32, y: f32, z: f32) -> [[f32; 3]; 4] {
-    // Returns 4 corners CCW as seen from +axis direction.
-    match face {
-        Face::PosX => [
-            [x + 1.0, y, z + 1.0],
-            [x + 1.0, y, z],
-            [x + 1.0, y + 1.0, z],
-            [x + 1.0, y + 1.0, z + 1.0],
-        ],
-        Face::NegX => [
-            [x, y, z],
-            [x, y, z + 1.0],
-            [x, y + 1.0, z + 1.0],
-            [x, y + 1.0, z],
-        ],
-        Face::PosY => [
-            [x, y + 1.0, z + 1.0],
-            [x + 1.0, y + 1.0, z + 1.0],
-            [x + 1.0, y + 1.0, z],
-            [x, y + 1.0, z],
-        ],
-        Face::NegY => [
-            [x, y, z],
-            [x + 1.0, y, z],
-            [x + 1.0, y, z + 1.0],
-            [x, y, z + 1.0],
-        ],
-        Face::PosZ => [
-            [x, y, z + 1.0],
-            [x + 1.0, y, z + 1.0],
-            [x + 1.0, y + 1.0, z + 1.0],
-            [x, y + 1.0, z + 1.0],
-        ],
-        Face::NegZ => [
-            [x + 1.0, y, z],
-            [x, y, z],
-            [x, y + 1.0, z],
-            [x + 1.0, y + 1.0, z],
-        ],
-    }
+    face.quad_box([x, y, z], [x + 1.0, y + 1.0, z + 1.0])
 }

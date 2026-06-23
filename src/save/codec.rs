@@ -156,6 +156,45 @@ pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
     }
 }
 
+/// Append a `u16`-length-prefixed list of `(local index, record)` entries to
+/// `buf`, in ascending index order so identical state encodes identically. Owns
+/// only the list FRAME — the count (capped at `u16::MAX`, since a chunk never
+/// holds anywhere near that many), the sort-by-index reproducibility invariant,
+/// the `2 + n * rec_bytes` reserve, and the per-entry `u16` index — and defers
+/// the record body to `body`. Shared by the furnace and chest codecs.
+pub(crate) fn put_indexed<T>(
+    buf: &mut Vec<u8>,
+    map: &HashMap<u16, T>,
+    rec_bytes: usize,
+    mut body: impl FnMut(&mut Vec<u8>, &T),
+) {
+    let n = map.len().min(u16::MAX as usize);
+    buf.reserve(2 + n * rec_bytes);
+    buf.put_u16(n as u16);
+    let mut entries: Vec<(&u16, &T)> = map.iter().take(n).collect();
+    entries.sort_by_key(|(idx, _)| **idx);
+    for (idx, rec) in entries {
+        buf.put_u16(*idx);
+        body(buf, rec);
+    }
+}
+
+/// Read an indexed list written by [`put_indexed`]: the `u16` count, then each
+/// `u16` index paired with a record decoded by `body`. `None` on truncated
+/// input (propagated from either the index read or `body`).
+pub(crate) fn get_indexed<T>(
+    r: &mut Reader,
+    mut body: impl FnMut(&mut Reader) -> Option<T>,
+) -> Option<HashMap<u16, T>> {
+    let n = r.u16()? as usize;
+    let mut out = HashMap::with_capacity(n.min(256));
+    for _ in 0..n {
+        let idx = r.u16()?;
+        out.insert(idx, body(r)?);
+    }
+    Some(out)
+}
+
 /// zlib-compress a payload.
 pub fn deflate(payload: &[u8]) -> Vec<u8> {
     let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());

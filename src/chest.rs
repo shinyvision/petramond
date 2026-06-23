@@ -8,7 +8,9 @@
 //! contents. Mirrors [`crate::furnace::Furnace`] minus the smelting machinery.
 
 use crate::furnace::Facing;
+use crate::inventory::SlotGrid;
 use crate::item::ItemStack;
+use crate::render::ChestView;
 
 /// Storage slots in one chest: 3 rows × 9 columns, row-major (matching the GUI grid
 /// and the player inventory's main grid).
@@ -38,11 +40,26 @@ impl Default for Chest {
 }
 
 impl Chest {
-    /// `true` when every slot is empty — used when breaking the block (nothing to
-    /// spill) and to prune chests that no longer need saving.
+    /// A snapshot of this chest for the open-chest screen: its 27 storage slots,
+    /// row-major. The renderer takes it by value (`ItemStack` is `Copy`), so it holds
+    /// no borrow on the chest — exactly like [`Furnace::view`](crate::furnace::Furnace::view).
+    pub fn view(&self) -> ChestView {
+        ChestView { slots: self.slots }
+    }
+}
+
+/// A chest is a uniform 27-slot grid, so it gets the shared `is_empty` (used when
+/// breaking the block — nothing to spill — and to prune chests that no longer need
+/// saving) and first-fit `insert` (shift-clicking a stack in from the inventory).
+impl SlotGrid for Chest {
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.slots.iter().all(Option::is_none)
+    fn slots(&self) -> &[Option<ItemStack>] {
+        &self.slots
+    }
+
+    #[inline]
+    fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
+        &mut self.slots
     }
 }
 

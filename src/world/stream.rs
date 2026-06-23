@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use crate::block::Block;
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::mathh::IVec3;
-use crate::save::ChunkSnapshot;
 use crate::worker::GenRequest;
 
 use super::store::{LoadTarget, World};
@@ -72,26 +71,19 @@ impl World {
             .cloned()
             .collect();
         // Persist any player-modified chunk, and any chunk holding item entities,
-        // before it leaves memory. Draining the entities into the save record is
-        // what pauses their lifetime timers (they stop being simulated) until the
-        // chunk loads again.
+        // before it leaves memory. Unload's harvest policy DRAINS the entities into
+        // the save record, which is what pauses their lifetime timers (they stop
+        // being simulated) until the chunk loads again. The gate + snapshot build
+        // itself is shared with the autosave flush (`snapshot_chunk_for_save`).
         if self.save.is_some() {
             let mut snaps = Vec::new();
             for &pos in &to_drop {
-                let entities = self.take_items_in_chunk(pos);
-                // A chunk whose record holds drops must be rewritten even when it
-                // now has none (they were picked up or despawned), or the stale
-                // record resurrects them on reload — the unload/reload dupe.
+                let entities = self.dropped_items.take_items_in_chunk(pos);
                 let record_holds_drops = self
                     .save
                     .as_ref()
                     .is_some_and(|s| s.record_holds_drops(pos));
-                let Some(chunk) = self.chunks.get(&pos) else {
-                    continue;
-                };
-                if chunk.modified || !entities.is_empty() || record_holds_drops {
-                    let mut snap = ChunkSnapshot::from_chunk(chunk);
-                    snap.entities = entities;
+                if let Some(snap) = self.snapshot_chunk_for_save(pos, entities, record_holds_drops) {
                     snaps.push(snap);
                 }
             }
@@ -99,6 +91,7 @@ impl World {
                 save.save_chunks(snaps);
             }
         }
+        // Post-action: evict each chunk now that its state is on the save queue.
         for pos in to_drop {
             self.remove_chunk(pos);
         }
@@ -143,7 +136,7 @@ impl World {
                             save.note_record_holds_drops(pos);
                         }
                     }
-                    self.dropped.extend(loaded.entities);
+                    self.dropped_items.extend(loaded.entities);
                     fresh.push((pos, chunk));
                 }
                 None => {
@@ -371,8 +364,10 @@ mod tests {
     }
 
     fn run_ticks(world: &mut World, n: u32) {
+        // These tests drive block updates / water flow only; no furnaces.
+        let recipes = crate::crafting::Recipes::default();
         for _ in 0..n {
-            world.game_tick();
+            world.game_tick(&recipes);
         }
     }
 

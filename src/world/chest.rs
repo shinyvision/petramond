@@ -7,7 +7,6 @@
 //! and breaking. Mirrors the furnace wrappers minus `tick_furnaces`.
 
 use crate::chest::Chest;
-use crate::chunk::{ChunkPos, CHUNK_SY};
 use crate::furnace::Facing;
 use crate::mathh::IVec3;
 
@@ -16,43 +15,24 @@ use super::store::World;
 impl World {
     /// The chest at a world block position, if one is stored there.
     pub fn chest_at(&self, pos: IVec3) -> Option<&Chest> {
-        if pos.y < 0 || pos.y >= CHUNK_SY as i32 {
-            return None;
-        }
-        self.chunks
-            .get(&ChunkPos::new(pos.x >> 4, pos.z >> 4))?
-            .chest_at(
-                (pos.x & 0x0F) as usize,
-                pos.y as usize,
-                (pos.z & 0x0F) as usize,
-            )
+        let (c, lx, ly, lz) = self.chunk_at_world(pos.x, pos.y, pos.z)?;
+        c.chest_at(lx, ly, lz)
     }
 
     /// Mutable handle to the chest at a world block position (GUI edits).
     pub fn chest_at_mut(&mut self, pos: IVec3) -> Option<&mut Chest> {
-        if pos.y < 0 || pos.y >= CHUNK_SY as i32 {
-            return None;
-        }
-        self.chunks
-            .get_mut(&ChunkPos::new(pos.x >> 4, pos.z >> 4))?
-            .chest_at_mut(
-                (pos.x & 0x0F) as usize,
-                pos.y as usize,
-                (pos.z & 0x0F) as usize,
-            )
+        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
+        c.chest_at_mut(lx, ly, lz)
     }
 
     /// Install an empty chest facing `facing` at a freshly placed chest block.
     /// No-op if the owning chunk is not loaded or `y` is out of range.
     pub fn insert_chest(&mut self, pos: IVec3, facing: Facing) {
-        if pos.y < 0 || pos.y >= CHUNK_SY as i32 {
-            return;
-        }
-        if let Some(c) = self.chunks.get_mut(&ChunkPos::new(pos.x >> 4, pos.z >> 4)) {
+        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_chest(
-                (pos.x & 0x0F) as usize,
-                pos.y as usize,
-                (pos.z & 0x0F) as usize,
+                lx,
+                ly,
+                lz,
                 Chest {
                     facing,
                     ..Chest::default()
@@ -61,26 +41,10 @@ impl World {
         }
     }
 
-    /// Mark the chunk owning `pos` as modified — called after a GUI edit to a chest
-    /// so the change persists even when the chest is otherwise untouched by any tick.
-    pub fn mark_chest_modified(&mut self, pos: IVec3) {
-        if let Some(c) = self.chunks.get_mut(&ChunkPos::new(pos.x >> 4, pos.z >> 4)) {
-            c.modified = true;
-        }
-    }
-
     /// Remove and return the chest at a world position (block break), if any.
     pub fn take_chest(&mut self, pos: IVec3) -> Option<Chest> {
-        if pos.y < 0 || pos.y >= CHUNK_SY as i32 {
-            return None;
-        }
-        self.chunks
-            .get_mut(&ChunkPos::new(pos.x >> 4, pos.z >> 4))?
-            .take_chest(
-                (pos.x & 0x0F) as usize,
-                pos.y as usize,
-                (pos.z & 0x0F) as usize,
-            )
+        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
+        c.take_chest(lx, ly, lz)
     }
 
     /// Append the render data — world position, facing, and sampled skylight — of

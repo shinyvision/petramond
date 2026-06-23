@@ -125,17 +125,20 @@ mod tests {
 
     #[test]
     fn reuses_buffers() {
-        let mut v = Vec::with_capacity(32);
-        let mut i = Vec::with_capacity(48);
-        let cap = v.capacity();
+        let mut v = Vec::new();
+        let mut i = Vec::new();
         let view = BreakOverlayView {
             block: IVec3::ZERO,
             block_kind: crate::block::Block::Stone,
             stage: 0,
         };
         build_break_overlay(&view, &mut v, &mut i);
+        let (cap_v, cap_i) = (v.capacity(), i.capacity());
+        // Same view -> identical vert/index count, so the cleared+refilled
+        // buffers keep their capacity: rebuilding to the same size never reallocs.
         build_break_overlay(&view, &mut v, &mut i);
         assert_eq!(v.len(), 24);
-        assert!(v.capacity() >= cap);
+        assert_eq!(v.capacity(), cap_v, "vert buffer reused");
+        assert_eq!(i.capacity(), cap_i, "index buffer reused");
     }
 }

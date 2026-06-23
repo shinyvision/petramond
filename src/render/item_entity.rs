@@ -225,9 +225,8 @@ mod tests {
 
     #[test]
     fn reuses_buffers_across_calls() {
-        let mut v = Vec::with_capacity(64);
-        let mut i = Vec::with_capacity(64);
-        let cap_v = v.capacity();
+        let mut v = Vec::new();
+        let mut i = Vec::new();
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Dirt,
@@ -236,10 +235,13 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
         };
         build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
-        // Second call clears + refills; capacity is retained (no shrink/regrow).
-        build_item_entities(&[], basis(), &mut v, &mut i);
-        assert!(v.is_empty());
-        assert!(v.capacity() >= cap_v);
+        let (cap_v, cap_i) = (v.capacity(), i.capacity());
+        // Same input -> identical vert/index count, so the cleared+refilled
+        // buffers keep their capacity: rebuilding to the same size never reallocs.
+        build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
+        assert_eq!(v.len(), 24, "one textured cube = 24 verts");
+        assert_eq!(v.capacity(), cap_v, "vert buffer reused");
+        assert_eq!(i.capacity(), cap_i, "index buffer reused");
     }
 
     #[test]

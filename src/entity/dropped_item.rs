@@ -7,7 +7,7 @@
 
 use crate::block::Block;
 use crate::item::ItemStack;
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::{hash01, hash_signed};
@@ -297,13 +297,6 @@ impl DroppedItem {
     }
 }
 
-fn voxel_at(pos: Vec3) -> IVec3 {
-    IVec3::new(
-        pos.x.floor() as i32,
-        pos.y.floor() as i32,
-        pos.z.floor() as i32,
-    )
-}
 
 fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec3 {
     let len_sq = dir.x * dir.x + dir.z * dir.z;

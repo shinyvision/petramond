@@ -7,3 +7,4 @@
 
 pub mod biomes;
 pub mod features;
+pub mod rivers;

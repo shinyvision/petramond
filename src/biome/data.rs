@@ -1,3 +1,5 @@
+use crate::registry::{self, RegistryKey, TableEntry};
+
 use super::definition::{BiomeDef, HumidityBand};
 use super::Biome;
 
@@ -282,21 +284,29 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
     },
 ];
 
+impl RegistryKey for Biome {
+    #[inline]
+    fn to_id(self) -> u8 {
+        self.id()
+    }
+}
+
+impl TableEntry for BiomeDef {
+    type Key = Biome;
+    #[inline]
+    fn key(&self) -> Biome {
+        self.biome
+    }
+}
+
 #[inline]
 pub(super) fn from_id(id: u8) -> Biome {
-    BIOME_DEFS
-        .get(id as usize)
-        .map_or(Biome::Ocean, |def| def.biome)
+    registry::from_id(BIOME_DEFS, id, Biome::Ocean)
 }
 
 #[inline]
 pub(super) fn def(biome: Biome) -> &'static BiomeDef {
-    let index = biome.id() as usize;
-    debug_assert!(
-        index < BIOME_DEFS.len() && BIOME_DEFS[index].biome == biome,
-        "BIOME_DEFS must be ordered by Biome::id()"
-    );
-    &BIOME_DEFS[index]
+    registry::def(BIOME_DEFS, biome)
 }
 
 #[inline]

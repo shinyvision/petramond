@@ -6,7 +6,7 @@ use crate::item::{DropSpec, ItemType};
 mod data;
 mod definition;
 
-pub use definition::BlockMaterial;
+pub(crate) use definition::BlockMaterial;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -204,6 +204,19 @@ impl Block {
         self.def().flags.is_solid()
     }
 
+    /// Whether this is a natural terrain-solid block: the bare-ground set
+    /// (`Stone`, `Dirt`, `Grass`, `Sand`, `Snow`) that makes up the land surface,
+    /// EXCLUDING tree logs/leaves and built blocks. Worldgen audits use this to
+    /// measure terrain overhangs/floating debris without tree canopy swamping the
+    /// signal (see `worldgen::audit`). Narrower than [`is_solid`](Self::is_solid).
+    #[inline]
+    pub fn is_terrain_solid(self) -> bool {
+        matches!(
+            self,
+            Block::Stone | Block::Dirt | Block::Grass | Block::Sand | Block::Snow
+        )
+    }
+
     #[inline]
     pub fn is_opaque(self) -> bool {
         self.def().flags.is_opaque()
@@ -237,9 +250,11 @@ impl Block {
         self.def().tiles
     }
 
-    /// Mining material class (drives tool requirement + future tool tiers).
+    /// Mining material class (drives tool requirement + future tool tiers). An
+    /// internal grouping key — `pub(crate)`; the public surface is
+    /// [`requires_tool`](Self::requires_tool) / [`harvest_tier`](Self::harvest_tier).
     #[inline]
-    pub fn material(self) -> BlockMaterial {
+    pub(crate) fn material(self) -> BlockMaterial {
         self.def().material
     }
 
@@ -270,30 +285,17 @@ impl Block {
         matches!(self.material(), BlockMaterial::Stone | BlockMaterial::Ore)
     }
 
-    /// Minimum pickaxe tier (`0` = hand, `1` = wooden, `2` = stone) needed to
-    /// HARVEST this block — i.e. to get a drop AND to mine it faster than by hand.
-    /// A pickaxe below this tier breaks the block at the bare-hand rate and yields
-    /// nothing (matching the goal's redstone/diamond rule). Everything that is
-    /// hand-harvestable (dirt, wood, plants, planks…) is tier `0`.
-    ///
-    /// A `match`, not a `BlockDef` field, so the cube rows stay untouched — only
-    /// the ores that deviate from "Stone/Ore ⇒ wooden" are listed (mirrors how
-    /// `render_shape` lists only the plants).
+    /// Minimum pickaxe tier (`0` = hand, `1` = wooden, `2` = stone, `3` = above
+    /// stone) needed to HARVEST this block — i.e. to get a drop AND to mine it
+    /// faster than by hand. A pickaxe below this tier breaks the block at the
+    /// bare-hand rate and yields nothing (matching the goal's redstone/diamond
+    /// rule). Everything that is hand-harvestable (dirt, wood, plants, planks…)
+    /// is tier `0`. Per-row in [`BlockDef`](definition::BlockDef): stone/ore
+    /// blocks are tier `1`, iron/copper ore `2`, gold/redstone/lapis/diamond/
+    /// emerald ore `3`.
     #[inline]
     pub fn harvest_tier(self) -> u8 {
-        use Block::*;
-        match self {
-            // Above stone tier: needs an iron pickaxe (which doesn't exist yet),
-            // so a wooden/stone pickaxe breaks them at hand speed for no drop.
-            GoldOre | RedstoneOre | LapisOre | DiamondOre | EmeraldOre => 3,
-            // Stone pickaxe ores.
-            IronOre | CopperOre => 2,
-            // Everything else: wooden pickaxe for any stone/ore, hand otherwise.
-            _ => match self.material() {
-                BlockMaterial::Stone | BlockMaterial::Ore => 1,
-                _ => 0,
-            },
-        }
+        self.def().harvest_tier
     }
 
     #[inline]
@@ -302,9 +304,16 @@ impl Block {
     }
 }
 
+/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
+/// the `BLOCK_DEFS` table is id-ordered and one-to-one with [`Block::ALL`].
+#[cfg(test)]
+pub(crate) fn assert_registry_ordered() {
+    crate::registry::assert_id_ordered(data::BLOCK_DEFS, Block::ALL);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{data, Block, BlockMaterial};
+    use super::{Block, BlockMaterial};
     use crate::atlas::Tile;
     use crate::item::{Drop, ItemType};
 
@@ -415,15 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn definitions_are_id_ordered() {
-        assert_eq!(data::BLOCK_DEFS.len(), Block::ALL.len());
-        for def in data::BLOCK_DEFS {
-            assert_eq!(Block::from_id(def.block.id()), def.block);
-            assert_eq!(data::BLOCK_DEFS[def.block.id() as usize].block, def.block);
-        }
-    }
-
-    #[test]
     fn properties_match_existing_behavior() {
         assert!(!Block::Air.is_solid());
         assert!(!Block::Air.is_opaque());
@@ -487,7 +487,10 @@ mod tests {
         assert_eq!(Block::CoalOre.harvest_tier(), 1);
         assert_eq!(Block::CoalOre.drop_spec().drops, &[drop1(ItemType::Coal)]);
         assert_eq!(Block::IronOre.harvest_tier(), 2);
-        assert_eq!(Block::IronOre.drop_spec().drops, &[drop1(ItemType::RawIron)]);
+        assert_eq!(
+            Block::IronOre.drop_spec().drops,
+            &[drop1(ItemType::RawIron)]
+        );
         assert_eq!(Block::CopperOre.harvest_tier(), 2);
         assert_eq!(
             Block::CopperOre.drop_spec().drops,
@@ -558,7 +561,42 @@ mod tests {
             // "needs at least a wooden pickaxe" (harvest_tier >= 1).
             let by_material = matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore);
             assert_eq!(block.requires_tool(), by_material, "{block:?}");
-            assert_eq!(block.requires_tool(), block.harvest_tier() >= 1, "{block:?}");
+            assert_eq!(
+                block.requires_tool(),
+                block.harvest_tier() >= 1,
+                "{block:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_terrain_solid_is_the_bare_ground_set() {
+        // Exactly the natural ground blocks — the set the genmap audits treat as
+        // terrain (excludes logs/leaves and built blocks).
+        let terrain = [
+            Block::Stone,
+            Block::Dirt,
+            Block::Grass,
+            Block::Sand,
+            Block::Snow,
+        ];
+        for &b in &terrain {
+            assert!(b.is_terrain_solid(), "{b:?} should be terrain-solid");
+        }
+        for &b in Block::ALL {
+            let expected = terrain.contains(&b);
+            assert_eq!(b.is_terrain_solid(), expected, "{b:?}");
+        }
+        // Notably NOT terrain even though solid: tree parts and built blocks.
+        for b in [
+            Block::OakLog,
+            Block::OakLeaves,
+            Block::Cobblestone,
+            Block::Sandstone,
+            Block::Water,
+            Block::Air,
+        ] {
+            assert!(!b.is_terrain_solid(), "{b:?} should NOT be terrain-solid");
         }
     }
 

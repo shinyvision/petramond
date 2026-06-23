@@ -11,6 +11,9 @@ pub(super) struct BlockDef {
     pub tiles: [Tile; 3],
     /// Mining material class (drives tool requirement + future tool tiers).
     pub material: BlockMaterial,
+    /// Minimum pickaxe tier to HARVEST this block (`0` = hand, `1` = wooden,
+    /// `2` = stone, `3` = above stone). See [`Block::harvest_tier`](super::Block::harvest_tier).
+    pub harvest_tier: u8,
     /// Base break time scalar in "hardness units"; `0.0` = instant, `< 0.0` =
     /// unbreakable (never a mining target). See `crate::mining` for the model.
     pub hardness: f32,
@@ -18,11 +21,13 @@ pub(super) struct BlockDef {
     pub drop: DropSpec,
 }
 
-/// Mining material class of a block. Drives whether a block can be hand-harvested
-/// (`Stone`/`Ore` require a tool — future) and groups blocks for tool tiers.
+/// Mining material class of a block — an internal mining-grouping key (drives the
+/// tool requirement and groups blocks for tool tiers). Not part of the public
+/// surface: callers use [`Block::requires_tool`](super::Block::requires_tool) /
+/// [`Block::harvest_tier`](super::Block::harvest_tier) instead.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum BlockMaterial {
+pub(crate) enum BlockMaterial {
     None,
     Dirt,
     Sand,

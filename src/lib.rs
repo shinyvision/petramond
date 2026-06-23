@@ -24,6 +24,7 @@ pub mod mesh;
 pub mod mining;
 pub mod platform;
 pub mod player;
+pub mod registry;
 pub mod render;
 pub mod save;
 pub mod worker;

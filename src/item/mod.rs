@@ -6,8 +6,9 @@
 //! item-only variants (tools, raw drops) that have NO block — `as_block` returns
 //! `None` and they render as flat sprites. Both enums stay append-only.
 //!
-//! Per-item static data (`name`, `max_stack_size`) lives in an id-ordered table
-//! (`data::ITEM_DEFS`), mirroring `block/data.rs`. Behaviour derivable from the
+//! Per-item static data (`key`, `name`, `max_stack_size`) lives in an id-ordered
+//! table (`data::ITEM_DEFS`), mirroring `block/data.rs`. The `key` is the stable
+//! recipe identity; `name` is display-only. Behaviour derivable from the
 //! underlying `Block` (`render_kind` for block-items) is computed via `Block`;
 //! item-only sprites + pickaxe tiers are small matches, not table columns.
 
@@ -320,7 +321,17 @@ impl ItemType {
         matches!(self, ItemType::WoodenPickaxe | ItemType::StonePickaxe)
     }
 
-    /// Human-readable display name.
+    /// Stable snake_case identity recipes reference (e.g. `oak_planks`), read from
+    /// the item's [`ItemDef`](definition::ItemDef) row. This is the item's real id,
+    /// distinct from its [`name`](Self::name) display string — renaming the name
+    /// never moves the key, so recipes keep resolving (see `crate::crafting::load`).
+    #[inline]
+    pub fn key(self) -> &'static str {
+        self.def().key
+    }
+
+    /// Human-readable display name (UI only; the recipe identity is
+    /// [`key`](Self::key)).
     #[inline]
     pub fn name(self) -> &'static str {
         self.def().name
@@ -373,6 +384,13 @@ impl ItemType {
     fn def(self) -> &'static definition::ItemDef {
         data::def(self)
     }
+}
+
+/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
+/// the `ITEM_DEFS` table is id-ordered and one-to-one with [`ItemType::ALL`].
+#[cfg(test)]
+pub(crate) fn assert_registry_ordered() {
+    crate::registry::assert_id_ordered(data::ITEM_DEFS, ItemType::ALL);
 }
 
 /// A run of identical items occupying one inventory slot.
@@ -518,15 +536,6 @@ mod tests {
             assert_eq!(ItemType::from_id(id as u8), item);
         }
         assert_eq!(ItemType::from_id(u8::MAX), ItemType::Air);
-    }
-
-    #[test]
-    fn definitions_are_id_ordered() {
-        assert_eq!(data::ITEM_DEFS.len(), ItemType::ALL.len());
-        for def in data::ITEM_DEFS {
-            assert_eq!(ItemType::from_id(def.item.id()), def.item);
-            assert_eq!(data::ITEM_DEFS[def.item.id() as usize].item, def.item);
-        }
     }
 
     #[test]

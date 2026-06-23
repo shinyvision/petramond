@@ -1,10 +1,15 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SY, SKY_FULL};
 use crate::mesh::build_mesh_lods_with_loaded_neighbors;
 
 use super::store::World;
 
+/// FIFO of chunks awaiting a remesh, deduplicated. With `World`'s chunk map
+/// private, every path that dirties a chunk pushes here (`mark_dirty_pos`,
+/// `queue_dirty_mesh`, the light-bake drain) and `remove_chunk` pulls it back
+/// out — so the queue alone says what needs meshing; there is no chunk-flag
+/// scan to reconcile against.
 #[derive(Default)]
 pub(super) struct DirtyMeshQueue {
     order: VecDeque<ChunkPos>,
@@ -22,24 +27,15 @@ impl DirtyMeshQueue {
         self.queued.remove(&pos);
     }
 
-    fn enqueue_loaded_dirty(&mut self, chunks: &HashMap<ChunkPos, Chunk>) {
-        for (&pos, chunk) in chunks {
-            if chunk.dirty {
-                self.push(pos);
-            }
-        }
-    }
-
-    fn pop_dirty(&mut self, chunks: &HashMap<ChunkPos, Chunk>, max: usize) -> Vec<ChunkPos> {
+    /// Pop up to `max` queued positions in FIFO order, skipping any that were
+    /// removed (e.g. their chunk unloaded) since being enqueued.
+    fn pop_batch(&mut self, max: usize) -> Vec<ChunkPos> {
         let mut out = Vec::with_capacity(max);
         while out.len() < max {
             let Some(pos) = self.order.pop_front() else {
                 break;
             };
-            if !self.queued.remove(&pos) {
-                continue;
-            }
-            if chunks.get(&pos).is_some_and(|c| c.dirty) {
+            if self.queued.remove(&pos) {
                 out.push(pos);
             }
         }
@@ -57,13 +53,7 @@ impl World {
 
         self.drain_finished_light_bakes();
 
-        // `World::chunks` is public for compatibility, so callers can still
-        // mutate chunks directly. Reconcile the private queue with the public
-        // dirty flag before consuming it so those edits keep the old scan-based
-        // semantics while queued writes remain deduplicated.
-        self.dirty_meshes.enqueue_loaded_dirty(&self.chunks);
-
-        let candidates = self.dirty_meshes.pop_dirty(&self.chunks, max_per_frame);
+        let candidates = self.dirty_meshes.pop_batch(max_per_frame);
         if candidates.is_empty() {
             return;
         }
@@ -214,6 +204,8 @@ mod tests {
     use crate::block::Block;
     use crate::mesh::compute_chunk_skylight;
 
+    /// A settled chunk: skylight baked from its current blocks, flags clear.
+    /// All-air, so it meshes empty until something is placed in it.
     fn clean_chunk(cx: i32, cz: i32) -> Chunk {
         let mut chunk = Chunk::new(cx, cz);
         let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
@@ -222,50 +214,64 @@ mod tests {
         chunk
     }
 
-    fn public_chunk_mutation_is_meshed(mutate: impl FnOnce(&mut Chunk)) {
-        let pos = ChunkPos::new(0, 0);
-        let mut world = World::new(0, 0);
-        world.chunks.insert(pos, clean_chunk(pos.cx, pos.cz));
-
-        mutate(world.chunks.get_mut(&pos).unwrap());
-        assert!(world.chunks.get(&pos).unwrap().dirty);
-
-        tick_until_meshed(&mut world, pos);
-
-        let chunk = world.chunks.get(&pos).unwrap();
-        assert!(!chunk.dirty);
-        assert!(!chunk.light_dirty);
-        assert!(!world.meshes.get(&pos).unwrap().is_empty());
-        assert!(world.lighting_revision() > 0);
+    /// A freshly generated chunk as the streamer would hand it over: one solid
+    /// block, light not yet baked (`dirty` + `light_dirty` set).
+    fn fresh_chunk(cx: i32, cz: i32) -> Chunk {
+        let mut chunk = Chunk::new(cx, cz);
+        chunk.set_block(1, 1, 1, Block::Stone);
+        chunk
     }
 
-    fn tick_until_meshed(world: &mut World, pos: ChunkPos) {
+    /// Tick the mesh budget until `pos` settles (mesh + light flags clear),
+    /// driving the async light bake to completion.
+    fn tick_until_settled(world: &mut World, pos: ChunkPos) {
         for _ in 0..200 {
             world.tick_mesh_budget(1);
             if world
                 .chunks
                 .get(&pos)
                 .is_some_and(|c| !c.dirty && !c.light_dirty)
-                && world.meshes.get(&pos).is_some_and(|m| !m.is_empty())
             {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        panic!("chunk was not meshed after async light bake");
+        panic!("chunk did not settle after async light bake");
     }
 
+    /// The queue is the single source of truth: a freshly installed chunk
+    /// (enqueued the way the streamer does) bakes its light and meshes — no
+    /// chunk-flag scan reconciles it.
     #[test]
-    fn tick_mesh_budget_reconciles_public_set_block_mutation() {
-        public_chunk_mutation_is_meshed(|chunk| {
-            chunk.set_block(1, 1, 1, Block::Stone);
-        });
+    fn installed_chunk_is_meshed_via_the_queue() {
+        let pos = ChunkPos::new(0, 0);
+        let mut world = World::new(0, 0);
+        // `insert_chunk_for_test` mirrors the streamer's per-chunk install,
+        // enqueueing the chunk for meshing.
+        world.insert_chunk_for_test(pos, fresh_chunk(pos.cx, pos.cz));
+
+        tick_until_settled(&mut world, pos);
+
+        assert!(!world.meshes.get(&pos).unwrap().is_empty());
+        assert!(world.lighting_revision() > 0);
     }
 
+    /// An edit through the proper API (`set_block_world`) re-dirties and
+    /// remeshes the chunk without any chunk-flag scan to reconcile it.
     #[test]
-    fn tick_mesh_budget_reconciles_public_set_block_raw_mutation() {
-        public_chunk_mutation_is_meshed(|chunk| {
-            chunk.set_block_raw(1, 1, 1, Block::Stone.id());
-        });
+    fn set_block_world_edit_remeshes_the_chunk() {
+        let pos = ChunkPos::new(0, 0);
+        let mut world = World::new(0, 0);
+        world.insert_chunk_for_test(pos, clean_chunk(pos.cx, pos.cz));
+        tick_until_settled(&mut world, pos);
+        assert!(world.meshes.get(&pos).unwrap().is_empty()); // all air so far
+        let baked_before = world.lighting_revision();
+
+        assert!(world.set_block_world(1, 1, 1, Block::Stone));
+        assert!(world.chunks.get(&pos).unwrap().dirty);
+
+        tick_until_settled(&mut world, pos);
+        assert!(!world.meshes.get(&pos).unwrap().is_empty());
+        assert!(world.lighting_revision() > baked_before);
     }
 }

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use crate::chunk::{Chunk, ChunkPos, SECTION_COUNT};
+use crate::chunk::{self, Chunk, ChunkPos, CHUNK_SY, SECTION_COUNT};
 use crate::entity::DroppedItem;
 use crate::mesh::ChunkMesh;
 use crate::save::{ChunkSnapshot, WorldSave};
 use crate::worker::WorkerPool;
 
+use super::entities::DroppedItems;
 use super::light_queue::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
 use super::tick::TickState;
@@ -30,14 +31,18 @@ impl LoadTarget {
 
 pub struct World {
     pub seed: u32,
-    pub chunks: HashMap<ChunkPos, Chunk>,
-    pub meshes: HashMap<ChunkPos, ChunkMesh>,
+    /// Loaded chunk voxel data. Private to the `world` module: every external
+    /// mutation routes through an accessor (`set_block_world`, `clear_world`,
+    /// the dirty-mesh queue) so the queue stays the single source of truth for
+    /// what needs remeshing — see `mesh_queue`.
+    pub(super) chunks: HashMap<ChunkPos, Chunk>,
+    pub(super) meshes: HashMap<ChunkPos, ChunkMesh>,
     pub worker: WorkerPool,
     /// Chunks queued for gen (waiting on result).
-    pub pending: HashMap<ChunkPos, ()>,
+    pub(super) pending: HashMap<ChunkPos, ()>,
     pub render_dist: i32,
-    pub section_visibility: HashMap<ChunkPos, [SectionConnectivity; SECTION_COUNT]>,
-    pub visibility_revision: u64,
+    pub(super) section_visibility: HashMap<ChunkPos, [SectionConnectivity; SECTION_COUNT]>,
+    pub(super) visibility_revision: u64,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
     pub(super) dirty_meshes: DirtyMeshQueue,
@@ -48,9 +53,10 @@ pub struct World {
     pub(super) save: Option<WorldSave>,
     /// Active dropped item entities — those resting in currently-loaded chunks.
     /// Items unload with their chunk (serialized into its save record) and reload
-    /// with it, so this list only ever holds drops the player can actually see.
-    /// See `world::entities`.
-    pub(super) dropped: Vec<DroppedItem>,
+    /// with it, so this collection only ever holds drops the player can actually
+    /// see. The entity subsystem (physics, pickup, lifetime, save-bundling) lives
+    /// on [`DroppedItems`]; see `world::entities`.
+    pub(super) dropped_items: DroppedItems,
 }
 
 impl World {
@@ -70,7 +76,7 @@ impl World {
             last_load_target: None,
             sim: TickState::default(),
             save: None,
-            dropped: Vec::new(),
+            dropped_items: DroppedItems::default(),
         }
     }
 
@@ -88,6 +94,43 @@ impl World {
         self.save.as_mut()
     }
 
+    /// The single snapshot-and-persist gate shared by [`flush_modified_chunks`]
+    /// (autosave/quit) and `unload_far_chunks` (eviction). Applies the three-way
+    /// persist condition and, when it holds, builds the chunk's [`ChunkSnapshot`]
+    /// with `entities` attached; returns `None` when the chunk needn't persist.
+    ///
+    /// The gate persists a chunk when ANY of:
+    /// - its blocks were modified,
+    /// - it carries item entities right now, or
+    /// - `record_holds_drops` — its on-disk record still holds drops it no longer
+    ///   carries, so the stale record must be rewritten or it resurrects them on
+    ///   reload. This signal is CROSS-SESSION: the caller computes it from the
+    ///   save handle (`WorldSave::record_holds_drops`), which also remembers
+    ///   records read back from a prior session (`note_record_holds_drops`), so a
+    ///   record written before this run is still cleared once its drops are gone.
+    ///
+    /// The caller owns the harvest policy (which fed `entities`) and the
+    /// post-action (clear `modified` vs. evict), keeping flush's "drops stay
+    /// active" and unload's "drops pause" lifetimes distinct.
+    ///
+    /// [`flush_modified_chunks`]: Self::flush_modified_chunks
+    /// [`ChunkSnapshot`]: crate::save::ChunkSnapshot
+    pub(super) fn snapshot_chunk_for_save(
+        &self,
+        pos: ChunkPos,
+        entities: Vec<DroppedItem>,
+        record_holds_drops: bool,
+    ) -> Option<ChunkSnapshot> {
+        let chunk = self.chunks.get(&pos)?;
+        if chunk.modified || !entities.is_empty() || record_holds_drops {
+            let mut snap = ChunkSnapshot::from_chunk(chunk);
+            snap.entities = entities;
+            Some(snap)
+        } else {
+            None
+        }
+    }
+
     /// Snapshot every modified chunk to the save thread and clear the flags.
     /// Also snapshots any chunk holding item entities (even if its blocks are
     /// untouched) so their lifetime timers persist; the entities stay active in
@@ -96,20 +139,26 @@ impl World {
         if self.save.is_none() {
             return;
         }
-        let mut by_chunk = self.items_by_chunk();
+        // Flush's harvest policy: CLONE the resting drops (they stay active in
+        // memory) so a crash can't lose their lifetimes.
+        let mut by_chunk = self.dropped_items.items_by_chunk();
+        let positions: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         let mut snaps = Vec::new();
-        for (pos, c) in self.chunks.iter_mut() {
-            let entities = by_chunk.remove(pos).unwrap_or_default();
-            // Rewrite a chunk whose record still holds drops it no longer carries,
-            // so the stale record can't resurrect them after a quit/reopen.
+        let mut persisted = Vec::new();
+        for pos in positions {
+            let entities = by_chunk.remove(&pos).unwrap_or_default();
             let record_holds_drops = self
                 .save
                 .as_ref()
-                .is_some_and(|s| s.record_holds_drops(*pos));
-            if c.modified || !entities.is_empty() || record_holds_drops {
-                let mut snap = ChunkSnapshot::from_chunk(c);
-                snap.entities = entities;
+                .is_some_and(|s| s.record_holds_drops(pos));
+            if let Some(snap) = self.snapshot_chunk_for_save(pos, entities, record_holds_drops) {
                 snaps.push(snap);
+                persisted.push(pos);
+            }
+        }
+        // Post-action: a persisted chunk is now in sync with disk.
+        for pos in persisted {
+            if let Some(c) = self.chunks.get_mut(&pos) {
                 c.modified = false;
             }
         }
@@ -146,6 +195,64 @@ impl World {
         }
     }
 
+    /// The one world-coordinate router: decode a world voxel `(wx, wy, wz)` into
+    /// its owning chunk and in-chunk local coords `(ChunkPos, lx, ly, lz)`, or
+    /// `None` when `wy` falls outside the `0..CHUNK_SY` column. Chunk lookup is a
+    /// separate step (see [`chunk_at_world`](Self::chunk_at_world)): callers that
+    /// only need the decode (e.g. to address an unloaded chunk) stop here. The
+    /// out-of-range *fallback value* stays with each caller — this returns `None`.
+    #[inline]
+    pub(super) fn split_world(wx: i32, wy: i32, wz: i32) -> Option<(ChunkPos, usize, usize, usize)> {
+        if wy < 0 || wy >= CHUNK_SY as i32 {
+            return None;
+        }
+        Some((
+            ChunkPos::new(wx >> 4, wz >> 4),
+            chunk::lx(wx),
+            wy as usize,
+            chunk::lz(wz),
+        ))
+    }
+
+    /// The loaded chunk owning world voxel `(wx, wy, wz)` plus its local coords,
+    /// or `None` if `wy` is out of range or the chunk is not loaded. The shared
+    /// front end for every read-side world-coordinate accessor.
+    #[inline]
+    pub(super) fn chunk_at_world(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> Option<(&Chunk, usize, usize, usize)> {
+        let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
+        let c = self.chunks.get(&pos)?;
+        Some((c, lx, ly, lz))
+    }
+
+    /// Mutable counterpart of [`chunk_at_world`](Self::chunk_at_world): the loaded
+    /// owning chunk and local coords for a write-side accessor, or `None` when out
+    /// of range or unloaded.
+    #[inline]
+    pub(super) fn chunk_at_world_mut(
+        &mut self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> Option<(&mut Chunk, usize, usize, usize)> {
+        let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
+        let c = self.chunks.get_mut(&pos)?;
+        Some((c, lx, ly, lz))
+    }
+
+    /// Mark the chunk owning world voxel `pos` as modified, so a change that no
+    /// tick would otherwise re-flag (a GUI edit to an idle chest or furnace)
+    /// still persists. No-op if the chunk is not loaded.
+    pub fn mark_chunk_modified(&mut self, pos: crate::mathh::IVec3) {
+        if let Some(c) = self.chunks.get_mut(&ChunkPos::new(pos.x >> 4, pos.z >> 4)) {
+            c.modified = true;
+        }
+    }
+
     pub(super) fn mark_dirty_neighborhood(&mut self, center: ChunkPos, include_center: bool) {
         for dz in -1..=1 {
             for dx in -1..=1 {
@@ -179,6 +286,39 @@ impl World {
         if self.section_visibility.remove(&pos).is_some() {
             self.bump_visibility_revision();
         }
+    }
+
+    /// Drop all loaded chunks, their meshes, and the in-flight gen set — the
+    /// regen path. Invalidates the section-visibility cache so the renderer
+    /// rebuilds from scratch on the next frame.
+    pub fn clear_world(&mut self) {
+        self.chunks.clear();
+        self.meshes.clear();
+        self.pending.clear();
+        if !self.section_visibility.is_empty() {
+            self.section_visibility.clear();
+            self.bump_visibility_revision();
+        }
+    }
+
+    /// Install a chunk for a test, bypassing generation but mirroring the
+    /// streamer's per-chunk install (`stream::poll`): drop it in, invalidate the
+    /// section-visibility cache, and enqueue it for meshing. So a test chunk
+    /// enters the dirty-mesh queue exactly as a streamed one would.
+    /// Test-only: production loads chunks through the streamer.
+    #[cfg(test)]
+    pub(crate) fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: Chunk) {
+        self.chunks.insert(pos, chunk);
+        self.invalidate_section_visibility(pos);
+        self.queue_dirty_mesh(pos);
+    }
+
+    /// Mutable access to an installed chunk for a test that pokes voxel state
+    /// directly (e.g. seeding water metadata). Test-only: production edits go
+    /// through `set_block_world` so the dirty-mesh queue stays authoritative.
+    #[cfg(test)]
+    pub(crate) fn chunk_mut_for_test(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunks.get_mut(&pos)
     }
 }
 

@@ -748,33 +748,48 @@ fn skylight_leaf_covered_side_bleed_is_half_opaque_falloff() {
     }
 }
 
-/// AO must actually be computed and vary: real terrain has both fully-lit
-/// (ao=3) corners and occluded (ao<3) ones. Scans a small chunk grid so the
-/// assertion can't hinge on one unlucky flat chunk.
+/// AO produces the exact occlusion contract at a known concave corner, on a
+/// hand-built fixture (no worldgen coupling). A 1-tall step block sits beside a
+/// 2-tall pillar one cell over in +X; the pillar's upper cube edge-occludes the
+/// step block's TOP face along its shared +X edge. The two top corners on that
+/// edge therefore read ao == 2 (one solid edge neighbour:
+/// `vertex_ao(true, false, false)`), while the two corners on the open -X edge
+/// stay at the un-occluded ao == 3. The precise table is pinned separately by
+/// `vertex_ao_levels`; this proves the builder feeds it the right neighbourhood.
 #[test]
-fn ao_varies_across_generated_terrain() {
-    let seed = 0x1234_5678u32;
-    let (mut saw_open, mut saw_occluded) = (false, false);
-    'outer: for cz in 0..3 {
-        for cx in 0..3 {
-            let mut c = generate_chunk(seed, cx, cz);
-            let mesh = mesh_solo(&mut c);
-            for v in &mesh.opaque {
-                match (v.packed >> 21) & 0x3 {
-                    3 => saw_open = true,
-                    _ => saw_occluded = true,
-                }
-                if saw_open && saw_occluded {
-                    break 'outer;
-                }
-            }
-        }
-    }
-    assert!(saw_open, "expected some fully-lit (ao=3) vertices");
-    assert!(
-        saw_occluded,
-        "expected some occluded (ao<3) vertices in real terrain"
-    );
+fn ao_exact_at_concave_step_corner() {
+    let mut c = Chunk::new(0, 0);
+    // The step block.
+    c.set_block(8, 64, 8, Block::Stone);
+    // The 2-tall pillar one cell over in +X; its upper cube (9,65,8) is the
+    // single edge-occluder of the step block's top (+Y) face.
+    c.set_block(9, 64, 8, Block::Stone);
+    c.set_block(9, 65, 8, Block::Stone);
+    let mesh = mesh_solo(&mut c);
+
+    // The step block's top face is the only +Y (PosY -> shade idx 0) quad whose
+    // four corners lie at y == 65 over the step cell x in [8,9], z in [8,9].
+    let ao_at = |wx: f32, wz: f32| -> u32 {
+        let v = mesh
+            .opaque
+            .iter()
+            .find(|v| {
+                (v.packed >> 10) & 0x3 == 0 // PosY
+                    && (v.pos[1] - 65.0).abs() < 1e-3
+                    && (v.pos[0] - wx).abs() < 1e-3
+                    && (v.pos[2] - wz).abs() < 1e-3
+            })
+            .unwrap_or_else(|| panic!("no top-face vertex at ({wx}, 65, {wz})"));
+        (v.packed >> 21) & 0x3
+    };
+
+    // The two corners on the shared +X edge (x == 9), adjacent to the pillar:
+    // one solid edge neighbour each -> ao == 2.
+    assert_eq!(ao_at(9.0, 8.0), 2, "concave +X corner is edge-occluded");
+    assert_eq!(ao_at(9.0, 9.0), 2, "concave +X corner is edge-occluded");
+    // The two corners on the open -X edge (x == 8): no occluder -> ao == 3.
+    assert_eq!(ao_at(8.0, 8.0), 3, "open -X corner is fully lit");
+    assert_eq!(ao_at(8.0, 9.0), 3, "open -X corner is fully lit");
 }
 
 /// Parallel mesh building (World::tick_mesh_budget on native) must produce
@@ -891,6 +906,67 @@ mod parallel_parity_tests {
             assert_eq!(s.transparent_idx, p.transparent_idx);
         }
     }
+}
+
+/// Frozen golden for the meshed vertex/index byte layout. `parallel_meshing_is_
+/// byte_identical_to_serial` proves the serial and parallel paths AGREE, but a
+/// wrong-but-consistent `pack_vertex` bit layout would pass it while corrupting
+/// every vertex identically. This pins the actual bytes: it builds the mesh for
+/// one deterministic generated chunk (the same `generate_chunk` -> skylight ->
+/// `build_mesh` path the parallel test exercises, meshed solo so out-of-chunk
+/// reads are air / full sky), serializes the opaque + transparent vertex (`u32`-
+/// packed) and index buffers to raw bytes, FNV-1a-folds them, and asserts a
+/// literal captured from the current baseline. Any drift in `Vertex` packing,
+/// face emission, or atlas tile ids flips this.
+#[test]
+fn mesh_bytes_golden_is_byte_stable() {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        h
+    }
+
+    // One deterministic fixture chunk: generated terrain (seed + coord fixed),
+    // its self-contained skylight baked, then meshed solo. Out-of-chunk block /
+    // light reads resolve to air / full sky, so the mesh depends only on this
+    // chunk -- no neighbour state to pin.
+    let seed = 0x1234_5678u32;
+    let mut chunk = generate_chunk(seed, 0, 0);
+    let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
+    chunk.set_skylight(band, ylo, yhi);
+
+    let air = |_: i32, _: i32, _: i32| 0u8;
+    let biome0 = |_: i32, _: i32| 0u8;
+    let light = |wx: i32, wy: i32, wz: i32| -> u8 {
+        if wx < 0
+            || wx >= CHUNK_SX as i32
+            || wz < 0
+            || wz >= CHUNK_SZ as i32
+            || wy < 0
+            || wy >= CHUNK_SY as i32
+        {
+            SKY_FULL
+        } else {
+            chunk.skylight_at(wx as usize, wy, wz as usize)
+        }
+    };
+    let mesh = build_mesh(&chunk, air, biome0, light);
+
+    let mut h = FNV_OFFSET;
+    h = fnv1a(bytemuck::cast_slice::<Vertex, u8>(&mesh.opaque), h);
+    h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.opaque_idx), h);
+    h = fnv1a(bytemuck::cast_slice::<Vertex, u8>(&mesh.transparent), h);
+    h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.transparent_idx), h);
+
+    assert_eq!(
+        h, 0x4762_33b0_83cd_740b,
+        "meshed vertex/index byte layout changed"
+    );
 }
 
 /// A placed furnace shows its front on exactly the face it was placed facing and

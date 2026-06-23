@@ -12,7 +12,9 @@
 //! what smelts into what is supplied by the caller as a closure, since the recipe
 //! set lives in `crafting` and the storage layer must not depend on it.
 
-use crate::item::{ItemStack, ItemType};
+use crate::inventory::Inventory;
+use crate::item::{ItemStack, ItemTag, ItemType};
+use crate::render::FurnaceView;
 
 /// Game ticks to smelt one item (30 s at 20 TPS), matching Minecraft.
 pub const COOK_TICKS: u16 = 600;
@@ -51,6 +53,18 @@ impl Facing {
             _ => Facing::North,
         }
     }
+}
+
+/// Which fillable slot a shift-clicked stack belongs in. The two *fillable* roles —
+/// the only ones a player can deposit into. The output is deliberately absent: it is
+/// a take-only slot (you remove the finished product, you can never put into it), so
+/// it has no place in a routing decision that picks a deposit target.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FillSlot {
+    /// The top slot — what gets smelted (a [`Smeltable`](ItemTag::Smeltable) item).
+    Input,
+    /// The bottom slot — what burns (a [`Fuel`](ItemTag::Fuel) item).
+    Fuel,
 }
 
 /// One furnace's contents and smelting progress. POD: small and `Copy`, so the
@@ -102,6 +116,94 @@ impl Furnace {
         } else {
             self.burn_remaining as f32 / self.burn_max as f32
         }
+    }
+
+    /// A snapshot of this furnace for the open-furnace screen: its three slots and
+    /// the two progress gauges (`0.0..=1.0`). The renderer takes it by value (all
+    /// `Copy`), so it holds no borrow on the furnace.
+    pub fn view(&self) -> FurnaceView {
+        FurnaceView {
+            input: self.input,
+            fuel: self.fuel,
+            output: self.output,
+            cook01: self.cook_fraction(),
+            burn01: self.burn_fraction(),
+        }
+    }
+
+    /// Click the **take-only** output: move the whole finished product onto `cursor`
+    /// if it fits (cursor empty, or the same item with room for the entire stack),
+    /// clearing the output and returning `true`. Returns `false` (touching nothing)
+    /// when the output is empty or won't fit.
+    ///
+    /// This is the *only* way to interact with the output: there is deliberately no
+    /// method that deposits into it. The output slot accumulates smelted product
+    /// (via [`produce`](Self::produce) inside [`tick`](Self::tick)) and the player
+    /// only ever takes from it — the take-only rule the UI relies on.
+    pub fn take_output(&mut self, cursor: &mut Option<ItemStack>) -> bool {
+        let Some(out) = self.output else {
+            return false;
+        };
+        if stack_onto_cursor(cursor, out) {
+            self.output = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Where a shift-clicked stack of `item` belongs, by its item *tags*: a
+    /// [`Fuel`](ItemTag::Fuel) item heads for the fuel slot and a
+    /// [`Smeltable`](ItemTag::Smeltable) item for the input slot. `None` means the
+    /// furnace wants neither (the caller does its ordinary inventory shuffle).
+    ///
+    /// This tag routing is *furnace* behavior — it reads `ItemTag` from item data —
+    /// and lives here rather than in any shared container. The output is never a
+    /// destination: it is take-only.
+    pub fn fill_slot_for(item: ItemType) -> Option<FillSlot> {
+        if item.has_tag(ItemTag::Fuel) {
+            Some(FillSlot::Fuel)
+        } else if item.has_tag(ItemTag::Smeltable) {
+            Some(FillSlot::Input)
+        } else {
+            None
+        }
+    }
+
+    /// Shift a stack into one of the fillable slots: merge `src` onto a matching
+    /// stack up to its max, or fill the slot if empty; whatever doesn't fit stays in
+    /// `src`. A different item already in the slot blocks the move. No-op on an empty
+    /// `src`. The `role` is chosen by [`fill_slot_for`](Self::fill_slot_for).
+    pub fn shift_in(&mut self, role: FillSlot, src: &mut Option<ItemStack>) {
+        let dst = match role {
+            FillSlot::Input => &mut self.input,
+            FillSlot::Fuel => &mut self.fuel,
+        };
+        merge_stack(src, dst);
+    }
+
+    /// Mutable handle to the input (smeltable, top) slot, for the caller's cursor
+    /// click rule (pick / drop / merge / swap) and shift-out. A fillable slot.
+    #[inline]
+    pub fn input_slot(&mut self) -> &mut Option<ItemStack> {
+        &mut self.input
+    }
+
+    /// Mutable handle to the fuel (bottom) slot, for the caller's cursor click rule
+    /// and shift-out. A fillable slot.
+    #[inline]
+    pub fn fuel_slot(&mut self) -> &mut Option<ItemStack> {
+        &mut self.fuel
+    }
+
+    /// Shift-click the **take-only** output: move the finished product into `inv`
+    /// (first-fit; whatever doesn't fit stays in the output). Take-only out — like
+    /// [`take_output`](Self::take_output) it only ever removes product, never accepts
+    /// a deposit. The output has no general mutable handle, so there is *no* way to
+    /// put a stack into it: the only producer is the smelt step inside
+    /// [`tick`](Self::tick).
+    pub fn shift_output_into(&mut self, inv: &mut Inventory) {
+        inv.pull_from(&mut self.output);
     }
 
     /// The result of smelting the current input once, or `None` if the input is
@@ -196,6 +298,45 @@ impl Furnace {
         }
 
         *self != before
+    }
+}
+
+/// Place a whole `stack` onto a cursor-held stack: succeeds (returns `true`) when the
+/// cursor is empty (it becomes `stack`) or holds the same item with room for the
+/// ENTIRE stack; otherwise leaves the cursor untouched and returns `false`. The
+/// take-only-output rule: a product moves onto the cursor only if it fits in full.
+/// Mirrors [`Inventory::try_stack_onto_cursor`](crate::inventory::Inventory) for a
+/// bare cursor cell.
+fn stack_onto_cursor(cursor: &mut Option<ItemStack>, stack: ItemStack) -> bool {
+    match cursor {
+        None => {
+            *cursor = Some(stack);
+            true
+        }
+        Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
+            cur.count += stack.count;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Move `src`'s stack into `dst` (one furnace slot): merge onto a matching item up to
+/// its max, or fill an empty slot; whatever doesn't fit stays in `src`. A different
+/// item in `dst` blocks the move. No-op on an empty `src`.
+fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
+    let Some(mut incoming) = src.take() else {
+        return;
+    };
+    match dst {
+        None => *dst = Some(incoming),
+        Some(existing) if existing.can_stack_with(&incoming) => {
+            let moved = existing.space_left().min(incoming.count);
+            existing.count += moved;
+            incoming.count -= moved;
+            *src = (incoming.count > 0).then_some(incoming);
+        }
+        Some(_) => *src = Some(incoming),
     }
 }
 

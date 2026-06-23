@@ -363,15 +363,19 @@ mod tests {
 
     #[test]
     fn caps_at_capacity_and_reuses_buffer() {
-        let mut v = Vec::with_capacity(MAX_PARTICLE_VERTICES);
-        let cap = v.capacity();
+        let mut v = Vec::new();
         let many = vec![inst(1.0); MAX_PARTICLE_CUBES + 100];
         let n = build_particles(&many, &mut v);
         assert_eq!(
             n as usize, MAX_PARTICLE_VERTICES,
             "capped at the vertex budget"
         );
-        assert!(v.capacity() >= cap, "no shrink/regrow churn");
+        let cap = v.capacity();
+        // Same input -> identical (capped) vert count, so the cleared+refilled
+        // buffer keeps its capacity: rebuilding to the same size never reallocs.
+        let n = build_particles(&many, &mut v);
+        assert_eq!(n as usize, MAX_PARTICLE_VERTICES);
+        assert_eq!(v.capacity(), cap, "vert buffer reused");
     }
 
     #[test]

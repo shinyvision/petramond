@@ -39,6 +39,7 @@ use super::foliage_tint::{self, FaceMaterial};
 use super::lighting;
 use crate::atlas::Tile;
 use crate::block::Block;
+use crate::mesh::face::Face;
 use crate::mesh::Vertex;
 
 use glam::Vec3;
@@ -51,101 +52,13 @@ pub const SOLID_COLOR_FLAG: u32 = 1 << 20;
 /// Max AO (no occlusion) packed into bits 21..23.
 const FULL_AO: u32 = 3 << 21;
 
-/// Per-face shade index into [`SHADES`], matching the chunk mesher's
-/// `Face::shade_idx`: top = 0 (brightest), sides Z = 1, sides X = 2, bottom = 3.
-/// We bake the same directional shading into hand/icon cubes so they read with
-/// the familiar "top bright, bottom dark" voxel look even though they are
-/// otherwise full-bright.
-#[derive(Copy, Clone)]
-enum Face {
-    PosX,
-    NegX,
-    PosY,
-    NegY,
-    PosZ,
-    NegZ,
-}
-
-impl Face {
-    #[inline]
-    fn shade_idx(self) -> u32 {
-        match self {
-            Face::PosY => 0,
-            Face::PosZ | Face::NegZ => 1,
-            Face::PosX | Face::NegX => 2,
-            Face::NegY => 3,
-        }
-    }
-
-    /// 4 corners CCW as seen from outside, for a unit cube at `origin` scaled by
-    /// `size`. Corner order matches `mesh::builder::quad_for` so the shared
-    /// `corner_uv` (0->bl, 1->br, 2->tr, 3->tl) maps tiles upright.
-    #[inline]
-    fn quad(self, o: Vec3, s: f32) -> [[f32; 3]; 4] {
-        self.quad_box(o, Vec3::new(o.x + s, o.y + s, o.z + s))
-    }
-
-    /// Like [`quad`](Self::quad) but spanning an arbitrary axis-aligned box
-    /// `[min, max]` (per-axis extents), for non-cube parts such as the chest's inset
-    /// body and lid. Corner order matches [`quad`] so `corner_uv` maps tiles upright.
-    #[inline]
-    fn quad_box(self, min: Vec3, max: Vec3) -> [[f32; 3]; 4] {
-        let p = |dx: f32, dy: f32, dz: f32| {
-            [
-                if dx == 0.0 { min.x } else { max.x },
-                if dy == 0.0 { min.y } else { max.y },
-                if dz == 0.0 { min.z } else { max.z },
-            ]
-        };
-        match self {
-            Face::PosX => [
-                p(1.0, 0.0, 1.0),
-                p(1.0, 0.0, 0.0),
-                p(1.0, 1.0, 0.0),
-                p(1.0, 1.0, 1.0),
-            ],
-            Face::NegX => [
-                p(0.0, 0.0, 0.0),
-                p(0.0, 0.0, 1.0),
-                p(0.0, 1.0, 1.0),
-                p(0.0, 1.0, 0.0),
-            ],
-            Face::PosY => [
-                p(0.0, 1.0, 1.0),
-                p(1.0, 1.0, 1.0),
-                p(1.0, 1.0, 0.0),
-                p(0.0, 1.0, 0.0),
-            ],
-            Face::NegY => [
-                p(0.0, 0.0, 0.0),
-                p(1.0, 0.0, 0.0),
-                p(1.0, 0.0, 1.0),
-                p(0.0, 0.0, 1.0),
-            ],
-            Face::PosZ => [
-                p(0.0, 0.0, 1.0),
-                p(1.0, 0.0, 1.0),
-                p(1.0, 1.0, 1.0),
-                p(0.0, 1.0, 1.0),
-            ],
-            Face::NegZ => [
-                p(1.0, 0.0, 0.0),
-                p(0.0, 0.0, 0.0),
-                p(0.0, 1.0, 0.0),
-                p(1.0, 1.0, 0.0),
-            ],
-        }
-    }
-}
-
-const ALL_FACES: [Face; 6] = [
-    Face::PosX,
-    Face::NegX,
-    Face::PosY,
-    Face::NegY,
-    Face::PosZ,
-    Face::NegZ,
-];
+/// The six cube faces (`PosX, NegX, PosY, NegY, PosZ, NegZ`). Dynamic geometry
+/// shares the chunk mesher's [`mesh::face::Face`](crate::mesh::face::Face): its
+/// `shade_idx` bakes the same "top bright, bottom dark" directional shading and
+/// its `quad_box` winds corners identically, so a held / dropped / icon cube is
+/// byte-identical to the world block. `quad_box(min, max)` also spans non-cube
+/// boxes (the chest's inset body and lid).
+const ALL_FACES: [Face; 6] = Face::ALL;
 
 #[inline]
 fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
@@ -285,7 +198,7 @@ pub(super) fn push_box_faces_lit(
         push_quad(
             verts,
             indices,
-            face.quad_box(min, max),
+            face.quad_box(min.to_array(), max.to_array()),
             mat.tint,
             face_bits_textured_lit(mat, face, skylight),
         );
@@ -326,11 +239,12 @@ pub(super) fn push_cube_solid_lit(
     size: f32,
     skylight: u8,
 ) {
+    let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
     for face in ALL_FACES {
         push_quad(
             verts,
             indices,
-            face.quad(origin, size),
+            face.quad_box(origin.to_array(), max.to_array()),
             tint,
             face_bits_solid_lit(face, skylight),
         );

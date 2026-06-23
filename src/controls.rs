@@ -40,35 +40,6 @@ pub struct Modifiers {
     pub shift: bool,
 }
 
-/// Map browser-style physical key codes (`KeyboardEvent.code`) to game controls.
-/// Native uses the winit-specific helper below so the binding table still lives
-/// in this module rather than in `bin/native.rs`.
-pub fn control_from_code(code: &str) -> Option<Control> {
-    match code {
-        "KeyW" => Some(Control::MoveForward),
-        "KeyS" => Some(Control::MoveBackward),
-        "KeyA" => Some(Control::MoveLeft),
-        "KeyD" => Some(Control::MoveRight),
-        "Space" => Some(Control::Jump),
-        "ShiftLeft" | "ShiftRight" => Some(Control::Sneak),
-        "ControlLeft" | "ControlRight" => Some(Control::Sprint),
-        "KeyE" => Some(Control::ToggleInventory),
-        "KeyY" => Some(Control::TogglePlayerMode),
-        "KeyQ" => Some(Control::DropItem),
-        "Escape" => Some(Control::CloseScreen),
-        "Digit1" => Some(Control::SelectHotbar(0)),
-        "Digit2" => Some(Control::SelectHotbar(1)),
-        "Digit3" => Some(Control::SelectHotbar(2)),
-        "Digit4" => Some(Control::SelectHotbar(3)),
-        "Digit5" => Some(Control::SelectHotbar(4)),
-        "Digit6" => Some(Control::SelectHotbar(5)),
-        "Digit7" => Some(Control::SelectHotbar(6)),
-        "Digit8" => Some(Control::SelectHotbar(7)),
-        "Digit9" => Some(Control::SelectHotbar(8)),
-        _ => None,
-    }
-}
-
 pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> {
     use winit::keyboard::KeyCode;
 
@@ -94,20 +65,5 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::Digit8 => Some(Control::SelectHotbar(7)),
         KeyCode::Digit9 => Some(Control::SelectHotbar(8)),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn browser_codes_map_to_controls() {
-        assert_eq!(control_from_code("KeyW"), Some(Control::MoveForward));
-        assert_eq!(control_from_code("KeyE"), Some(Control::ToggleInventory));
-        assert_eq!(control_from_code("Digit9"), Some(Control::SelectHotbar(8)));
-        assert_eq!(control_from_code("Escape"), Some(Control::CloseScreen));
-        assert_eq!(control_from_code("KeyQ"), Some(Control::DropItem));
-        assert_eq!(control_from_code("KeyZ"), None);
     }
 }

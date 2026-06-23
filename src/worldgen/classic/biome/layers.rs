@@ -1077,6 +1077,7 @@ impl Layer for Voronoi {
 
 #[cfg(test)]
 mod tests {
+    use super::super::stack::{biome_256, biome_edge_64, voronoi};
     use super::*;
 
     #[test]
@@ -1163,72 +1164,43 @@ mod tests {
         );
     }
 
-    /// The full cascade up to biome assignment (scale 256), in the 1.8 order/salts.
-    fn biome_stack(seed: i64) -> Box<dyn Layer> {
-        let l: Box<dyn Layer> = Box::new(Continent::new(seed));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2000, true, l)); // fuzzy
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 1, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2001, false, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 50, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 70, l));
-        let l: Box<dyn Layer> = Box::new(RemoveOcean::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Snow::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 3, l));
-        let l: Box<dyn Layer> = Box::new(Cool::new(l));
-        let l: Box<dyn Layer> = Box::new(Heat::new(l));
-        let l: Box<dyn Layer> = Box::new(Special::new(seed, 3, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2002, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2003, false, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 4, l));
-        let l: Box<dyn Layer> = Box::new(Mushroom::new(seed, 5, l));
-        let l: Box<dyn Layer> = Box::new(DeepOcean::new(l));
-        Box::new(Biome::new(seed, 200, l))
-    }
-
     #[test]
     fn biome_assignment_matches_reference() {
         // Full chain (continent..biome) bit-exact vs the per-layer oracle.
+        // Drives the SHIPPING `stack::biome_256` wiring directly (WP-H3).
         assert_eq!(
-            biome_stack(0).gen(0, 0, 4, 4),
+            biome_256(0).gen(0, 0, 4, 4),
             [1, 0, 24, 24, 0, 3, 0, 0, 0, 0, 0, 0, 6, 0, 2, 0]
         );
         assert_eq!(
-            biome_stack(1).gen(0, 0, 4, 4),
+            biome_256(1).gen(0, 0, 4, 4),
             [0, 21, 21, 21, 1, 4, 21, 3, 27, 4, 4, 3, 4, 3, 4, 4]
         );
         assert_eq!(
-            biome_stack(42).gen(0, 0, 4, 4),
+            biome_256(42).gen(0, 0, 4, 4),
             [12, 30, 12, 12, 12, 12, 27, 4, 30, 0, 3, 3, 0, 0, 3, 29]
         );
     }
 
-    /// continent..biome -> zoom128(1000) -> zoom64(1001) -> biomeEdge(1000).
-    fn biome_edge_stack(seed: i64) -> Box<dyn Layer> {
-        let l = biome_stack(seed);
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-        Box::new(BiomeEdge::new(seed, 1000, l))
-    }
-
     #[test]
     fn biome_edge_matches_reference() {
+        // Drives the SHIPPING `stack::biome_edge_64` wiring directly (WP-H3).
         assert_eq!(
-            biome_edge_stack(0).gen(0, 0, 8, 4),
+            biome_edge_64(0).gen(0, 0, 8, 4),
             [
                 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 3, 0,
                 0, 0, 0, 0
             ]
         );
         assert_eq!(
-            biome_edge_stack(1).gen(0, 0, 8, 4),
+            biome_edge_64(1).gen(0, 0, 8, 4),
             [
                 0, 0, 0, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21, 21, 0, 0, 4, 21, 21, 21, 21,
                 21, 1, 4, 4, 4, 4, 21, 21, 21
             ]
         );
         assert_eq!(
-            biome_edge_stack(42).gen(0, 0, 8, 4),
+            biome_edge_64(42).gen(0, 0, 8, 4),
             [
                 12, 12, 12, 30, 30, 30, 30, 12, 12, 12, 12, 12, 30, 30, 30, 12, 12, 12, 12, 12, 30,
                 30, 12, 12, 12, 12, 12, 12, 30, 12, 12, 12
@@ -1237,78 +1209,8 @@ mod tests {
     }
 
     // --- Full stack: the complete 1.8 biome cascade (incl. rivers + voronoi). ---
-
-    fn deep_ocean_256(seed: i64) -> Box<dyn Layer> {
-        let l: Box<dyn Layer> = Box::new(Continent::new(seed));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2000, true, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 1, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2001, false, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 50, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 70, l));
-        let l: Box<dyn Layer> = Box::new(RemoveOcean::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Snow::new(seed, 2, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 3, l));
-        let l: Box<dyn Layer> = Box::new(Cool::new(l));
-        let l: Box<dyn Layer> = Box::new(Heat::new(l));
-        let l: Box<dyn Layer> = Box::new(Special::new(seed, 3, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2002, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 2003, false, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 4, l));
-        let l: Box<dyn Layer> = Box::new(Mushroom::new(seed, 5, l));
-        Box::new(DeepOcean::new(l))
-    }
-
-    fn river_init(seed: i64) -> Box<dyn Layer> {
-        Box::new(RiverInit::new(seed, 100, deep_ocean_256(seed)))
-    }
-
-    fn hills_branch(seed: i64) -> Box<dyn Layer> {
-        // The hills-branch zooms use salt 0 (zero-init) for this ruleset.
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 0, false, river_init(seed)));
-        Box::new(Zoom::new(seed, 0, false, l))
-    }
-
-    fn main_branch(seed: i64) -> Box<dyn Layer> {
-        let l: Box<dyn Layer> = Box::new(Hills::new(
-            seed,
-            1000,
-            biome_edge_stack(seed),
-            hills_branch(seed),
-        ));
-        let l: Box<dyn Layer> = Box::new(Sunflower::new(seed, 1001, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
-        let l: Box<dyn Layer> = Box::new(Land::new(seed, 3, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-        let l: Box<dyn Layer> = Box::new(Shore::new(seed, 1000, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1002, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1003, false, l));
-        Box::new(Smooth::new(seed, 1000, l))
-    }
-
-    fn river_branch(seed: i64) -> Box<dyn Layer> {
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, river_init(seed)));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1002, false, l));
-        let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1003, false, l));
-        let l: Box<dyn Layer> = Box::new(River::new(seed, 1, l));
-        Box::new(Smooth::new(seed, 1000, l))
-    }
-
-    fn river_mix(seed: i64) -> Box<dyn Layer> {
-        Box::new(RiverMix::new(
-            seed,
-            100,
-            main_branch(seed),
-            river_branch(seed),
-        ))
-    }
-
-    fn full_biomes(seed: i64) -> Box<dyn Layer> {
-        Box::new(Voronoi::new(seed, 10, river_mix(seed)))
-    }
+    // The cascade wiring lives once in `stack.rs` (the shipping definition); these
+    // known-answer tests drive that wiring directly via `stack::voronoi` (WP-H3).
 
     fn fnv(ids: &[i32]) -> u64 {
         let mut h: u64 = 1469598103934665603;
@@ -1323,6 +1225,7 @@ mod tests {
         // Final per-block biome (river-mix + voronoi) over (0,0,128,128), hashed
         // and compared to the reference's per-block biome over the same region.
         // This region contains plains/forest/beach/ocean and ~415 river cells.
+        // Drives the SHIPPING `stack::voronoi` wiring directly (WP-H3).
         for &(seed, want) in &[
             (0i64, 18095362520938780919u64),
             (1, 16764737903282282348),
@@ -1330,7 +1233,7 @@ mod tests {
             (7, 10509617721058722691),
         ] {
             assert_eq!(
-                fnv(&full_biomes(seed).gen(0, 0, 128, 128)),
+                fnv(&voronoi(seed).gen(0, 0, 128, 128)),
                 want,
                 "final biome mismatch for seed {seed}"
             );
@@ -1340,9 +1243,9 @@ mod tests {
     #[test]
     fn full_biomes_match_reference_far_negative_offset() {
         // A region far from origin with negative coordinates — catches offset and
-        // sign bugs that an at-origin test would miss.
+        // sign bugs that an at-origin test would miss. Drives `stack::voronoi`.
         assert_eq!(
-            fnv(&full_biomes(12345).gen(-500, 300, 64, 64)),
+            fnv(&voronoi(12345).gen(-500, 300, 64, 64)),
             16344384467930091955,
             "final biome mismatch at far negative offset"
         );

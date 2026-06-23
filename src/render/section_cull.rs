@@ -1,10 +1,119 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::chunk::{ChunkPos, SECTION_COUNT};
+use crate::camera::Frustum;
+use crate::chunk::{ChunkPos, CHUNK_SY, SECTION_COUNT, SECTION_SIZE};
+use crate::mesh::MeshIndexSection;
 use crate::world::{SectionFace, SectionPos, World, SECTION_FACES};
 
 const MAX_VISIBLE_SECTIONS: usize = 512;
 const MAX_SECTION_VISIBILITY_BUILDS_PER_UPDATE: usize = 24;
+
+/// Below this many indices saved, a fragmented per-section draw list isn't worth
+/// the extra draw calls; the chunk falls back to one full-mesh draw.
+const MIN_SECTION_CULL_INDEX_SAVINGS: u32 = 2_048;
+
+/// The contiguous index ranges to submit for one chunk after section culling,
+/// plus the bookkeeping the render loop reports as stats. Built once per visible
+/// chunk per frame by [`section_draw_ranges`].
+pub(super) struct SectionDrawRanges {
+    ranges: [(u32, u32); SECTION_COUNT],
+    len: usize,
+    /// Total index count across `ranges` (≤ the chunk's full index count).
+    pub(super) submitted: u32,
+}
+
+impl SectionDrawRanges {
+    fn new() -> Self {
+        Self {
+            ranges: [(0, 0); SECTION_COUNT],
+            len: 0,
+            submitted: 0,
+        }
+    }
+
+    fn full(index_count: u32) -> Self {
+        let mut out = Self::new();
+        if index_count > 0 {
+            out.ranges[0] = (0, index_count);
+            out.len = 1;
+            out.submitted = index_count;
+        }
+        out
+    }
+
+    fn push(&mut self, start: u32, end: u32) {
+        if start >= end {
+            return;
+        }
+        if self.len > 0 && self.ranges[self.len - 1].1 == start {
+            self.ranges[self.len - 1].1 = end;
+        } else {
+            self.ranges[self.len] = (start, end);
+            self.len += 1;
+        }
+        self.submitted += end - start;
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.ranges[..self.len].iter().copied()
+    }
+}
+
+/// Compute the index ranges to draw for one chunk: the visible sections (per the
+/// connectivity `visible_mask`) that are also inside the view `frustum`, coalesced
+/// into contiguous runs. Falls back to one full-mesh draw when the per-section
+/// fragmentation wouldn't save enough indices to be worth the extra draw calls.
+pub(super) fn section_draw_ranges(
+    frustum: Frustum,
+    origin: (i32, i32),
+    full_idx_count: u32,
+    sections: &[MeshIndexSection; SECTION_COUNT],
+    visible_mask: u16,
+) -> SectionDrawRanges {
+    let mut out = SectionDrawRanges::new();
+    for (section_idx, section) in sections.iter().enumerate() {
+        if visible_mask & (1u16 << section_idx) == 0 || section.index_count == 0 {
+            continue;
+        }
+        if !section_visible(frustum, origin, section_idx) {
+            continue;
+        }
+        out.push(
+            section.first_index,
+            section.first_index + section.index_count,
+        );
+    }
+
+    if out.is_empty() || out.submitted >= full_idx_count {
+        return out;
+    }
+    if out.len == 1 {
+        return out;
+    }
+
+    let saved = full_idx_count - out.submitted;
+    let saves_enough_indices = saved >= MIN_SECTION_CULL_INDEX_SAVINGS;
+    let saves_enough_ratio = (out.submitted as u64) * 4 <= (full_idx_count as u64) * 3;
+    if saves_enough_indices && saves_enough_ratio {
+        out
+    } else {
+        SectionDrawRanges::full(full_idx_count)
+    }
+}
+
+/// Is one section's world-space AABB inside the view frustum?
+fn section_visible(frustum: Frustum, origin: (i32, i32), section_idx: usize) -> bool {
+    let (ox, oz) = origin;
+    let y0 = (section_idx * SECTION_SIZE) as f32;
+    let y1 = ((section_idx + 1) * SECTION_SIZE).min(CHUNK_SY) as f32;
+    let min = glam::Vec3::new(ox as f32, y0, oz as f32);
+    let max = glam::Vec3::new((ox + 16) as f32, y1, (oz + 16) as f32);
+    frustum.aabb_visible(min, max)
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct SectionVisibilityKey {
@@ -28,7 +137,7 @@ impl SectionVisibilityCache {
         );
         let key = SectionVisibilityKey {
             camera_cell,
-            world_revision: world.visibility_revision,
+            world_revision: world.visibility_revision(),
         };
         if self.key == Some(key) {
             return;
@@ -184,7 +293,7 @@ mod tests {
     use crate::chunk::{Chunk, CHUNK_SY};
 
     fn insert_visibility_chunk(world: &mut World, pos: ChunkPos, chunk: Chunk) {
-        world.chunks.insert(pos, chunk);
+        world.insert_chunk_for_test(pos, chunk);
         world.rebuild_section_visibility(pos);
     }
 
@@ -223,11 +332,73 @@ mod tests {
     #[test]
     fn open_sky_camera_disables_section_culling() {
         let mut world = World::new(0, 0);
-        world.chunks.insert(ChunkPos::new(0, 0), Chunk::new(0, 0));
+        world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         world.invalidate_section_visibility(ChunkPos::new(0, 0));
 
         let visible = compute_visible_sections(&mut world, (8, 80, 8));
 
         assert!(visible.is_none());
+    }
+
+    #[test]
+    fn section_draw_ranges_keep_single_visible_section() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[2] = MeshIndexSection {
+            first_index: 120,
+            index_count: 60,
+        };
+
+        let ranges = section_draw_ranges(frustum, (0, 0), 480, &sections, 1u16 << 2);
+
+        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(120, 180)]);
+        assert_eq!(ranges.submitted, 60);
+    }
+
+    #[test]
+    fn section_draw_ranges_fall_back_when_fragmented_savings_are_small() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[0] = MeshIndexSection {
+            first_index: 0,
+            index_count: 100,
+        };
+        sections[2] = MeshIndexSection {
+            first_index: 200,
+            index_count: 100,
+        };
+
+        let ranges = section_draw_ranges(frustum, (0, 0), 360, &sections, 0b0101);
+
+        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(0, 360)]);
+        assert_eq!(ranges.submitted, 360);
+    }
+
+    #[test]
+    fn section_draw_ranges_keep_fragmented_ranges_when_savings_are_large() {
+        let frustum = Frustum::permissive();
+        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
+        sections[0] = MeshIndexSection {
+            first_index: 0,
+            index_count: 600,
+        };
+        sections[8] = MeshIndexSection {
+            first_index: 8_000,
+            index_count: 600,
+        };
+
+        let ranges = section_draw_ranges(
+            frustum,
+            (0, 0),
+            12_000,
+            &sections,
+            (1u16 << 0) | (1u16 << 8),
+        );
+
+        assert_eq!(
+            ranges.iter().collect::<Vec<_>>(),
+            vec![(0, 600), (8_000, 8_600)]
+        );
+        assert_eq!(ranges.submitted, 1_200);
     }
 }

@@ -17,14 +17,46 @@ pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 pub struct Vertex {
     pub pos: [f32; 3],
     pub tint: [f32; 3],
-    /// bits 0..8 = tile id (`Tile as u32`), 8..10 = corner (0..3),
-    /// 10..12 = shade index (into `SHADES`), 12..20 = overlay tile,
-    /// 20 = has-overlay flag, 21..23 = AO level (0 dark .. 3 bright),
-    /// 23..29 = skylight level (0 dark .. 63 full sky).
-    /// For flowing water (no grass overlay) the 12..20 bits instead carry
-    /// shader-side flow data: a top face's quantized flow heading, or a side
-    /// face's height crop (see `mesh::builder` / `block.wgsl`).
+    /// Folded tile + corner + shade + overlay + AO + skylight. [`pack_vertex`] is
+    /// the sole owner of this bit layout (see its doc); the vertex shader decodes
+    /// it (selecting uv from the CPU-uploaded `tile_uv()` table — never recomputing
+    /// — and light from `SHADES * AO`).
     pub packed: u32,
+}
+
+/// Fold one vertex's attributes into the packed `u32` word — the SINGLE owner of
+/// the `Vertex::packed` bit layout. Everything that emits a mesh vertex (the chunk
+/// mesher's cube faces and cross-plants; `render::block_model` mirrors the same
+/// field meanings) routes through here, so the layout is defined in exactly one
+/// place.
+///
+/// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`'s
+/// decode — those WGSL shaders MUST be kept in sync if this ever changes, and the
+/// frozen golden `mesh::tests::mesh_bytes_golden_is_byte_stable` pins it):
+///   0..8 tile id | 8..10 corner (0..3) | 10..12 shade index (into `SHADES`)
+///   12..20 overlay tile | 20 has-overlay flag | 21..23 AO (0 dark..3 bright)
+///   23..29 skylight (0 dark..63 full sky)
+///
+/// `overlay`/`has_overlay` are the raw 12..20 payload and the bit-20 flag: a grass
+/// SIDE sets them to `(GrassSideOverlay, true)`; a flowing-water TOP reuses the
+/// same 8 bits to carry its quantized flow heading with `has_overlay = false` (so
+/// the fragment shader composites no overlay); everything else passes `(0, false)`.
+#[inline]
+pub(crate) fn pack_vertex(
+    tile: u32,
+    corner: u32,
+    shade_idx: u32,
+    overlay: u32,
+    has_overlay: bool,
+    ao: u32,
+    light: u32,
+) -> u32 {
+    tile | (corner << 8)
+        | (shade_idx << 10)
+        | (overlay << 12)
+        | ((has_overlay as u32) << 20)
+        | (ao << 21)
+        | (light << 23)
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

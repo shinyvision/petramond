@@ -2,7 +2,7 @@
 //! rest in.
 //!
 //! Each drop carries a tick lifetime (`DroppedItem::ticks_lived`). The timer is
-//! advanced once per fixed game tick by [`World::tick_item_lifetime`], and an
+//! advanced once per fixed game tick by [`DroppedItems::tick_lifetime`], and an
 //! item is removed when it reaches [`ITEM_LIFETIME_TICKS`]. Because an item lives
 //! only while its chunk is loaded — it unloads into the chunk's save record and
 //! reloads from it (see `world::stream` / `world::store`) — the timer naturally
@@ -12,13 +12,20 @@
 //! it never grows with far-flung frozen items; per-tick work is bounded by what
 //! the player can actually see. Physics ticks against an immutable `&World` via a
 //! `mem::take` of the list, keeping the borrow split clean.
+//!
+//! [`DroppedItems`] owns the active `Vec<DroppedItem>` and all of the management
+//! logic. It is **stateless with respect to `World`**: it stores no `&World`/
+//! `&mut World` borrow. The methods that need world access (loaded-chunk checks
+//! and skylight sampling) take the `&World` as a parameter per call; `World`
+//! drives them by temporarily moving the field out so the two borrows stay
+//! disjoint (see `World::tick_item_physics` and friends in this file).
 
 use std::collections::HashMap;
 
 use crate::chunk::ChunkPos;
 use crate::entity::DroppedItem;
 use crate::item::ItemStack;
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::{voxel_at, Vec3};
 
 use super::store::World;
 
@@ -32,76 +39,98 @@ pub const ITEM_LIFETIME_TICKS: u32 = 6000;
 /// can pull it back.
 pub const ITEM_PICKUP_DELAY_TICKS: u32 = 10;
 
-impl World {
+/// The world's active dropped-item entities: those resting in currently-loaded
+/// chunks. Owns the backing `Vec<DroppedItem>` and the entity-subsystem logic
+/// (physics ticking, pickup planning/splitting, lifetime/despawn, and the
+/// save-bundling helpers).
+///
+/// `DroppedItems` is **stateless with respect to `World`**: it holds no borrow of
+/// a world. Methods that read the world (loaded-chunk checks, skylight) take the
+/// `&World` they operate on as a parameter, so `World` can hand them `&self`
+/// without ever storing the borrow — see [`World::tick_item_physics`].
+#[derive(Default)]
+pub struct DroppedItems {
+    items: Vec<DroppedItem>,
+}
+
+impl DroppedItems {
     /// Add a dropped item to the active set (it must lie in a loaded chunk).
-    pub fn spawn_item(&mut self, item: DroppedItem) {
-        self.dropped.push(item);
+    pub fn spawn(&mut self, item: DroppedItem) {
+        self.items.push(item);
     }
 
     /// The active dropped items, for the renderer's per-frame instance mapping.
-    pub fn item_entities(&self) -> &[DroppedItem] {
-        &self.dropped
+    pub fn items(&self) -> &[DroppedItem] {
+        &self.items
     }
 
     /// Mutable access to the active item list, for tests that seed or trim it.
     #[cfg(test)]
-    pub fn item_entities_mut(&mut self) -> &mut Vec<DroppedItem> {
-        &mut self.dropped
+    pub fn items_mut(&mut self) -> &mut Vec<DroppedItem> {
+        &mut self.items
+    }
+
+    /// Whether there are no active drops (lets `World` skip the take/restore dance
+    /// without exposing the backing list).
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 
     /// Per-frame physics for active items: gravity, collision, spin, and the
     /// pickup magnet toward `magnet_target` (the player chest). Only drops marked
-    /// by [`request_item_pickups`](Self::request_item_pickups) are magnetised, so
-    /// inventory capacity is planned before movement starts.
-    /// Skylight is refreshed only when a drop crosses a voxel cell. With a save
-    /// attached, a drop sitting over a not-yet-loaded chunk is frozen so it can't
-    /// fall through missing terrain (in-memory worlds with no save always
-    /// simulate, matching the test setups).
-    pub fn tick_item_physics(&mut self, dt: f32, magnet_target: Vec3) {
-        if self.dropped.is_empty() {
-            return;
-        }
-        let freeze_unloaded = self.save.is_some();
-        // Detach the list so physics can read the rest of the world immutably.
-        let mut items = std::mem::take(&mut self.dropped);
-        for it in &mut items {
+    /// by [`request_pickups`](Self::request_pickups) are magnetised, so inventory
+    /// capacity is planned before movement starts.
+    ///
+    /// Skylight is refreshed only when a drop crosses a voxel cell. When
+    /// `freeze_unloaded` is set (a save is attached), a drop sitting over a
+    /// not-yet-loaded chunk is frozen so it can't fall through missing terrain
+    /// (in-memory worlds with no save always simulate, matching the test setups).
+    ///
+    /// Takes `world` (immutable) as a parameter; the caller must not be holding a
+    /// borrow of these `DroppedItems` through the same `World`.
+    pub fn tick_physics(
+        &mut self,
+        world: &World,
+        dt: f32,
+        magnet_target: Vec3,
+        freeze_unloaded: bool,
+    ) {
+        for it in &mut self.items {
             if freeze_unloaded {
                 let (cx, cz) = chunk_xz(it.pos);
-                if !self.chunk_loaded(cx, cz) {
+                if !world.chunk_loaded(cx, cz) {
                     continue;
                 }
             }
             let magnet = it.pickup_requested.then_some(magnet_target);
             let before = voxel_at(it.pos);
-            it.tick(dt, self, magnet);
+            it.tick(dt, world, magnet);
             let after = voxel_at(it.pos);
             if before != after {
-                it.skylight = self.skylight6_at_world(after.x, after.y, after.z);
+                it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
             }
         }
-        self.dropped = items;
     }
 
     /// Per fixed game-tick lifetime step: age each active item by one tick and
-    /// despawn those that reach [`ITEM_LIFETIME_TICKS`]. With a save attached, an
-    /// item over an unloaded chunk is paused (its timer does not advance) as a
-    /// safety net for a drop that drifted to the streamed edge before unload could
-    /// harvest it.
-    pub fn tick_item_lifetime(&mut self) {
-        let pause_unloaded = self.save.is_some();
-        let mut i = self.dropped.len();
+    /// despawn those that reach [`ITEM_LIFETIME_TICKS`]. When `pause_unloaded` is
+    /// set (a save is attached), an item over an unloaded chunk is paused (its
+    /// timer does not advance) as a safety net for a drop that drifted to the
+    /// streamed edge before unload could harvest it.
+    pub fn tick_lifetime(&mut self, world: &World, pause_unloaded: bool) {
+        let mut i = self.items.len();
         while i > 0 {
             i -= 1;
             if pause_unloaded {
-                let (cx, cz) = chunk_xz(self.dropped[i].pos);
-                if !self.chunk_loaded(cx, cz) {
+                let (cx, cz) = chunk_xz(self.items[i].pos);
+                if !world.chunk_loaded(cx, cz) {
                     continue;
                 }
             }
-            let lived = self.dropped[i].ticks_lived.saturating_add(1);
-            self.dropped[i].ticks_lived = lived;
+            let lived = self.items[i].ticks_lived.saturating_add(1);
+            self.items[i].ticks_lived = lived;
             if lived >= ITEM_LIFETIME_TICKS {
-                self.dropped.swap_remove(i);
+                self.items.swap_remove(i);
             }
         }
     }
@@ -115,13 +144,9 @@ impl World {
     ///
     /// Already-requested drops are planned first. That keeps a split-off stack from
     /// being duplicated every tick while it is flying toward the player.
-    pub fn request_item_pickups(
-        &mut self,
-        player_pos: Vec3,
-        mut request: impl FnMut(ItemStack) -> u8,
-    ) {
-        let len = self.dropped.len();
-        let was_requested: Vec<bool> = self.dropped.iter().map(|d| d.pickup_requested).collect();
+    pub fn request_pickups(&mut self, player_pos: Vec3, mut request: impl FnMut(ItemStack) -> u8) {
+        let len = self.items.len();
+        let was_requested: Vec<bool> = self.items.iter().map(|d| d.pickup_requested).collect();
         let mut split_offs = Vec::new();
 
         for i in 0..len {
@@ -129,12 +154,12 @@ impl World {
                 continue;
             }
             if !self.pickup_request_candidate(i, player_pos) {
-                self.dropped[i].clear_pickup_request();
+                self.items[i].clear_pickup_request();
                 continue;
             }
-            let count = request(self.dropped[i].stack).min(self.dropped[i].stack.count);
+            let count = request(self.items[i].stack).min(self.items[i].stack.count);
             if count == 0 {
-                self.dropped[i].clear_pickup_request();
+                self.items[i].clear_pickup_request();
             } else {
                 self.apply_pickup_request(i, count, &mut split_offs);
             }
@@ -144,49 +169,49 @@ impl World {
             if was_requested[i] || !self.pickup_request_candidate(i, player_pos) {
                 continue;
             }
-            let count = request(self.dropped[i].stack).min(self.dropped[i].stack.count);
+            let count = request(self.items[i].stack).min(self.items[i].stack.count);
             if count > 0 {
                 self.apply_pickup_request(i, count, &mut split_offs);
             }
         }
 
-        self.dropped.extend(split_offs);
+        self.items.extend(split_offs);
     }
 
     /// Per fixed game-tick pickup absorption. Only requested drops can be
     /// collected. `deposit` returns any leftover that did not fit; a leftover drop
     /// has its request cleared so the next planner pass can decide what to do.
-    pub fn collect_requested_item_pickups(
+    pub fn collect_requested_pickups(
         &mut self,
         player_pos: Vec3,
         mut deposit: impl FnMut(ItemStack) -> Option<ItemStack>,
     ) {
-        let mut i = self.dropped.len();
+        let mut i = self.items.len();
         while i > 0 {
             i -= 1;
-            if !self.dropped[i].pickup_requested {
+            if !self.items[i].pickup_requested {
                 continue;
             }
-            if !self.dropped[i].within_pickup(player_pos) {
+            if !self.items[i].within_pickup(player_pos) {
                 continue;
             }
-            match deposit(self.dropped[i].stack) {
+            match deposit(self.items[i].stack) {
                 None => {
-                    self.dropped.swap_remove(i);
+                    self.items.swap_remove(i);
                 }
                 Some(leftover) if leftover.is_empty() => {
-                    self.dropped.swap_remove(i);
+                    self.items.swap_remove(i);
                 }
                 Some(leftover) => {
-                    self.dropped[i].stack = leftover;
-                    self.dropped[i].clear_pickup_request();
+                    self.items[i].stack = leftover;
+                    self.items[i].clear_pickup_request();
                 }
             }
         }
     }
 
     fn pickup_request_candidate(&self, i: usize, player_pos: Vec3) -> bool {
-        let item = &self.dropped[i];
+        let item = &self.items[i];
         item.ticks_lived >= ITEM_PICKUP_DELAY_TICKS
             && !item.stack.is_empty()
             && item.within_attract(player_pos)
@@ -194,46 +219,41 @@ impl World {
 
     fn apply_pickup_request(&mut self, i: usize, count: u8, split_offs: &mut Vec<DroppedItem>) {
         debug_assert!(count > 0);
-        let stack_count = self.dropped[i].stack.count;
+        let stack_count = self.items[i].stack.count;
         if count >= stack_count {
-            self.dropped[i].request_pickup();
+            self.items[i].request_pickup();
             return;
         }
 
         // Clone the full physics state so the requested part starts exactly where
         // the source stack is. The remainder is left unrequested and therefore
         // will not be pulled by the magnet.
-        let mut split = self.dropped[i].clone();
+        let mut split = self.items[i].clone();
         split.stack.count = count;
         split.request_pickup();
-        self.dropped[i].stack.count -= count;
-        self.dropped[i].clear_pickup_request();
+        self.items[i].stack.count -= count;
+        self.items[i].clear_pickup_request();
         split_offs.push(split);
     }
 
     /// Recompute every active item's cached skylight (after a world light update).
-    pub fn refresh_item_lights(&mut self) {
-        if self.dropped.is_empty() {
-            return;
-        }
-        let mut items = std::mem::take(&mut self.dropped);
-        for it in &mut items {
+    pub fn refresh_lights(&mut self, world: &World) {
+        for it in &mut self.items {
             let c = voxel_at(it.pos);
-            it.skylight = self.skylight6_at_world(c.x, c.y, c.z);
+            it.skylight = world.skylight6_at_world(c.x, c.y, c.z);
         }
-        self.dropped = items;
     }
 
     /// Drain and return the active items resting in chunk `pos` — used to bundle
     /// them into that chunk's save record as it unloads.
     pub(super) fn take_items_in_chunk(&mut self, pos: ChunkPos) -> Vec<DroppedItem> {
         let mut taken = Vec::new();
-        let mut i = self.dropped.len();
+        let mut i = self.items.len();
         while i > 0 {
             i -= 1;
-            let (cx, cz) = chunk_xz(self.dropped[i].pos);
+            let (cx, cz) = chunk_xz(self.items[i].pos);
             if cx == pos.cx && cz == pos.cz {
-                taken.push(self.dropped.swap_remove(i));
+                taken.push(self.items.swap_remove(i));
             }
         }
         taken
@@ -244,21 +264,82 @@ impl World {
     /// a crash can't lose their lifetimes).
     pub(super) fn items_by_chunk(&self) -> HashMap<ChunkPos, Vec<DroppedItem>> {
         let mut map: HashMap<ChunkPos, Vec<DroppedItem>> = HashMap::new();
-        for it in &self.dropped {
+        for it in &self.items {
             let (cx, cz) = chunk_xz(it.pos);
             map.entry(ChunkPos::new(cx, cz)).or_default().push(it.clone());
         }
         map
     }
+
+    /// Append items read back from a chunk's save record (their paused lifetime
+    /// timers resume now that the chunk is loaded again).
+    pub(super) fn extend(&mut self, items: impl IntoIterator<Item = DroppedItem>) {
+        self.items.extend(items);
+    }
 }
 
-#[inline]
-fn voxel_at(pos: Vec3) -> IVec3 {
-    IVec3::new(
-        pos.x.floor() as i32,
-        pos.y.floor() as i32,
-        pos.z.floor() as i32,
-    )
+impl World {
+    /// Add a dropped item to the active set (it must lie in a loaded chunk).
+    pub fn spawn_item(&mut self, item: DroppedItem) {
+        self.dropped_items.spawn(item);
+    }
+
+    /// The active dropped items, for the renderer's per-frame instance mapping.
+    pub fn item_entities(&self) -> &[DroppedItem] {
+        self.dropped_items.items()
+    }
+
+    /// Mutable access to the active item list, for tests that seed or trim it.
+    #[cfg(test)]
+    pub fn item_entities_mut(&mut self) -> &mut Vec<DroppedItem> {
+        self.dropped_items.items_mut()
+    }
+
+    /// Mutable access to the active dropped items, so `Game` can borrow-split the
+    /// drops (owned here) against the player inventory (owned by `Game`) to plan
+    /// and absorb pickups without aliasing. The pickup-vs-inventory reconciliation
+    /// itself stays in `Game`; `World` never sees the player inventory.
+    pub fn dropped_items_mut(&mut self) -> &mut DroppedItems {
+        &mut self.dropped_items
+    }
+
+    /// Per-frame physics for active items (gravity, collision, spin, pickup
+    /// magnet). With a save attached, a drop over a not-yet-loaded chunk is frozen
+    /// so it can't fall through missing terrain. Drives the owned [`DroppedItems`]
+    /// against an immutable view of the rest of the world: the field is moved out
+    /// so the `&mut DroppedItems` and `&World` borrows stay disjoint.
+    pub fn tick_item_physics(&mut self, dt: f32, magnet_target: Vec3) {
+        if self.dropped_items.is_empty() {
+            return;
+        }
+        let freeze_unloaded = self.save.is_some();
+        let mut drops = std::mem::take(&mut self.dropped_items);
+        drops.tick_physics(self, dt, magnet_target, freeze_unloaded);
+        self.dropped_items = drops;
+    }
+
+    /// Per fixed game-tick lifetime step: age each active item and despawn those
+    /// past [`ITEM_LIFETIME_TICKS`]. With a save attached, an item over an unloaded
+    /// chunk is paused. See [`DroppedItems::tick_lifetime`].
+    pub fn tick_item_lifetime(&mut self) {
+        if self.dropped_items.is_empty() {
+            return;
+        }
+        let pause_unloaded = self.save.is_some();
+        let mut drops = std::mem::take(&mut self.dropped_items);
+        drops.tick_lifetime(self, pause_unloaded);
+        self.dropped_items = drops;
+    }
+
+    /// Recompute every active item's cached skylight (after a world light update).
+    pub fn refresh_item_lights(&mut self) {
+        if self.dropped_items.is_empty() {
+            return;
+        }
+        let mut drops = std::mem::take(&mut self.dropped_items);
+        drops.refresh_lights(self);
+        self.dropped_items = drops;
+    }
 }
 
 /// Chunk coordinates owning world position `pos`.
@@ -298,11 +379,12 @@ mod tests {
         let player = Vec3::new(0.5, 64.0, 0.5);
         w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
         let mut collected = 0u32;
-        w.request_item_pickups(player, |s| s.count);
-        w.collect_requested_item_pickups(player, |s| {
-            collected += s.count as u32;
-            None
-        });
+        w.dropped_items_mut().request_pickups(player, |s| s.count);
+        w.dropped_items_mut()
+            .collect_requested_pickups(player, |s| {
+                collected += s.count as u32;
+                None
+            });
         assert_eq!(collected, 0, "the pickup delay blocks collection");
         assert_eq!(w.item_entities().len(), 1);
         assert!(
@@ -311,11 +393,12 @@ mod tests {
         );
 
         w.item_entities_mut()[0].ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-        w.request_item_pickups(player, |s| s.count);
-        w.collect_requested_item_pickups(player, |s| {
-            collected += s.count as u32;
-            None
-        });
+        w.dropped_items_mut().request_pickups(player, |s| s.count);
+        w.dropped_items_mut()
+            .collect_requested_pickups(player, |s| {
+                collected += s.count as u32;
+                None
+            });
         assert_eq!(collected, 1, "collected once past the delay");
         assert!(w.item_entities().is_empty());
     }
@@ -330,7 +413,7 @@ mod tests {
         let origin_vel = item.vel; // the outward pop from `new`
         w.spawn_item(item);
         // The planned inventory can take only 6 of the 10.
-        w.request_item_pickups(player, |_| 6);
+        w.dropped_items_mut().request_pickups(player, |_| 6);
 
         // Two drops now: the reduced original and the requested split.
         assert_eq!(w.item_entities().len(), 2);
@@ -378,7 +461,7 @@ mod tests {
         w.spawn_item(item);
 
         let mut remaining = 6;
-        w.request_item_pickups(player, |s| {
+        w.dropped_items_mut().request_pickups(player, |s| {
             let count = remaining.min(s.count);
             remaining -= count;
             count
@@ -389,7 +472,7 @@ mod tests {
         // split. The planner must keep that request instead of splitting six more
         // from the original remainder.
         let mut remaining = 6;
-        w.request_item_pickups(player, |s| {
+        w.dropped_items_mut().request_pickups(player, |s| {
             let count = remaining.min(s.count);
             remaining -= count;
             count
@@ -427,7 +510,7 @@ mod tests {
         item.vel = Vec3::new(3.0, 0.0, 1.0); // sideways drift a position-only split would lose
         let player = Vec3::new(0.5, 80.0, 0.5);
         w.spawn_item(item);
-        w.request_item_pickups(player, |_| 6);
+        w.dropped_items_mut().request_pickups(player, |_| 6);
         assert_eq!(w.item_entities().len(), 2);
 
         // Free physics with the magnet target far away (no pull): both drops must
@@ -448,8 +531,9 @@ mod tests {
         let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
         item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
         w.spawn_item(item);
-        w.request_item_pickups(player, |_| 0);
-        w.collect_requested_item_pickups(player, |_| None);
+        w.dropped_items_mut().request_pickups(player, |_| 0);
+        w.dropped_items_mut()
+            .collect_requested_pickups(player, |_| None);
         assert_eq!(
             w.item_entities().len(),
             1,
@@ -495,7 +579,7 @@ mod tests {
         item.vel = Vec3::ZERO;
         item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
         w.spawn_item(item);
-        w.request_item_pickups(target, |s| s.count);
+        w.dropped_items_mut().request_pickups(target, |s| s.count);
         assert!(w.item_entities()[0].pickup_requested);
 
         let before_y = w.item_entities()[0].pos.y;
@@ -514,7 +598,7 @@ mod tests {
         let mut w = World::new(0, 0);
         w.spawn_item(drop_at(2.5, 2.5)); // chunk (0, 0)
         w.spawn_item(drop_at(20.5, 2.5)); // chunk (1, 0)
-        let taken = w.take_items_in_chunk(ChunkPos::new(0, 0));
+        let taken = w.dropped_items_mut().take_items_in_chunk(ChunkPos::new(0, 0));
         assert_eq!(taken.len(), 1, "only the (0,0) drop is harvested");
         assert_eq!(w.item_entities().len(), 1, "the (1,0) drop stays active");
         assert!(w.item_entities()[0].pos.x > 16.0);
@@ -526,7 +610,7 @@ mod tests {
         w.spawn_item(drop_at(2.5, 2.5)); // (0, 0)
         w.spawn_item(drop_at(5.5, 9.5)); // (0, 0)
         w.spawn_item(drop_at(20.5, 2.5)); // (1, 0)
-        let map = w.items_by_chunk();
+        let map = w.dropped_items_mut().items_by_chunk();
         assert_eq!(map[&ChunkPos::new(0, 0)].len(), 2);
         assert_eq!(map[&ChunkPos::new(1, 0)].len(), 1);
     }

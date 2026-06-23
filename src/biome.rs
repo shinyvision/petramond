@@ -79,7 +79,7 @@ impl Climate {
 /// height, so lowland biomes can become hilly without being relabelled as
 /// mountains by a local height spike.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct LandformWeights {
+struct LandformWeights {
     pub mountain: f32,
     pub foothill: f32,
     pub rolling: f32,
@@ -87,7 +87,7 @@ pub(crate) struct LandformWeights {
     pub wet_basin: f32,
 }
 
-pub(crate) fn landform_weights(c: Climate) -> LandformWeights {
+fn landform_weights(c: Climate) -> LandformWeights {
     let expanded01 = |v: f32, scale: f32| (v * scale).clamp(-1.0, 1.0) * 0.5 + 0.5;
     let cont = expanded01(c.continentalness, 2.8);
     let temp = c.temp01();
@@ -402,44 +402,55 @@ impl Biome {
     }
 }
 
+/// Every biome in id order — the canonical key list, pinned by the id-stability
+/// and registry-ordering tests. (Biome exposes no public `ALL` const; this is
+/// test-only.)
+#[cfg(test)]
+const ALL_BIOMES: [Biome; 29] = [
+    Biome::Ocean,
+    Biome::Beach,
+    Biome::River,
+    Biome::Desert,
+    Biome::Plains,
+    Biome::Savanna,
+    Biome::Forest,
+    Biome::BirchForest,
+    Biome::Swamp,
+    Biome::Taiga,
+    Biome::SnowyTundra,
+    Biome::SnowyTaiga,
+    Biome::Mountains,
+    Biome::SnowyPeaks,
+    Biome::DeepOcean,
+    Biome::Foothills,
+    Biome::Wetland,
+    Biome::Jungle,
+    Biome::Badlands,
+    Biome::DarkForest,
+    Biome::OldGrowthTaiga,
+    Biome::CherryGrove,
+    Biome::Meadow,
+    Biome::Grove,
+    Biome::SnowySlopes,
+    Biome::IceSpikes,
+    Biome::MushroomFields,
+    Biome::WindsweptHills,
+    Biome::StonyPeaks,
+];
+
+/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
+/// the `BIOME_DEFS` table is id-ordered and one-to-one with [`ALL_BIOMES`].
+#[cfg(test)]
+pub(crate) fn assert_registry_ordered() {
+    crate::registry::assert_id_ordered(data::BIOME_DEFS, &ALL_BIOMES);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        biome_at, blended_fog_color, data, landform_weights, Biome, Climate,
+        biome_at, blended_fog_color, data, landform_weights, Biome, Climate, ALL_BIOMES,
         SKY_FOG_BLEND_SPAN_BLOCKS,
     };
-
-    const EXPECTED_BIOMES: [Biome; 29] = [
-        Biome::Ocean,
-        Biome::Beach,
-        Biome::River,
-        Biome::Desert,
-        Biome::Plains,
-        Biome::Savanna,
-        Biome::Forest,
-        Biome::BirchForest,
-        Biome::Swamp,
-        Biome::Taiga,
-        Biome::SnowyTundra,
-        Biome::SnowyTaiga,
-        Biome::Mountains,
-        Biome::SnowyPeaks,
-        Biome::DeepOcean,
-        Biome::Foothills,
-        Biome::Wetland,
-        Biome::Jungle,
-        Biome::Badlands,
-        Biome::DarkForest,
-        Biome::OldGrowthTaiga,
-        Biome::CherryGrove,
-        Biome::Meadow,
-        Biome::Grove,
-        Biome::SnowySlopes,
-        Biome::IceSpikes,
-        Biome::MushroomFields,
-        Biome::WindsweptHills,
-        Biome::StonyPeaks,
-    ];
 
     fn climate(temp01: f32, humid01: f32, weirdness: f32) -> Climate {
         climate_params(temp01, humid01, 0.70, 0.70, 0.45, weirdness)
@@ -476,20 +487,11 @@ mod tests {
 
     #[test]
     fn ids_are_stable_and_append_only() {
-        for (id, biome) in EXPECTED_BIOMES.into_iter().enumerate() {
+        for (id, biome) in ALL_BIOMES.into_iter().enumerate() {
             assert_eq!(biome.id(), id as u8);
             assert_eq!(Biome::from_id(id as u8), biome);
         }
         assert_eq!(Biome::from_id(u8::MAX), Biome::Ocean);
-    }
-
-    #[test]
-    fn definitions_are_id_ordered() {
-        assert_eq!(data::BIOME_DEFS.len(), EXPECTED_BIOMES.len());
-        for def in data::BIOME_DEFS {
-            assert_eq!(Biome::from_id(def.biome.id()), def.biome);
-            assert_eq!(data::BIOME_DEFS[def.biome.id() as usize].biome, def.biome);
-        }
     }
 
     #[test]

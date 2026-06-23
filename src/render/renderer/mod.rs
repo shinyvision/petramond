@@ -1,22 +1,28 @@
 use crate::camera::{Camera, Frustum};
-use crate::chunk::{ChunkPos, CHUNK_SY, SECTION_COUNT, SECTION_SIZE};
+use crate::chunk::{ChunkPos, CHUNK_SY};
 use crate::mathh::SelectionShape;
-use crate::mesh::MeshIndexSection;
 use crate::world::World;
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
+mod dynamic_draw;
+mod lod;
+
+use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
+use lod::far_leaf_lod_active;
+
 use super::block_model::BillboardBasis;
 use super::break_overlay::build_break_overlay;
 use super::crosshair::crosshair_vertices;
-use super::hand::{build_hand_lit, HeldItemAnimator};
+use super::hand::build_hand_lit;
+use super::hand_animator::HeldItemAnimator;
 use super::chest_model::build_chests;
 use super::item_entity::build_item_entities;
 use super::particles::build_particles;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{create_atlas, create_depth, create_gui_atlas, upload_mesh, GpuMesh};
-use super::section_cull::SectionVisibilityCache;
+use super::section_cull::{section_draw_ranges, SectionVisibilityCache};
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
@@ -26,10 +32,6 @@ use super::{
 };
 use crate::inventory::TOTAL_SLOTS;
 use crate::item::ItemType;
-
-const FAR_LEAF_LOD_FADE_START: f32 = 128.0;
-const FAR_LEAF_LOD_FADE_END: f32 = 192.0;
-const MIN_SECTION_CULL_INDEX_SAVINGS: u32 = 2_048;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct RenderStats {
@@ -158,22 +160,18 @@ pub struct Renderer {
     /// `build_hand`, capacity retained — no per-frame allocation).
     hand_verts: Vec<crate::mesh::Vertex>,
     hand_indices: Vec<u32>,
-    /// Break-overlay (destroy crack) pipeline + its reusable dynamic buffers.
-    pub break_pipe: wgpu::RenderPipeline,
-    pub break_vbuf: wgpu::Buffer,
-    pub break_ibuf: wgpu::Buffer,
-    /// Index count of the break-overlay geometry this frame (0 = no overlay).
-    break_index_count: u32,
-    /// Item-entity dynamic buffers (drawn by the opaque pipeline).
-    pub item_entity_vbuf: wgpu::Buffer,
-    pub item_entity_ibuf: wgpu::Buffer,
-    /// Chest model dynamic buffers (drawn by the opaque pipeline, like item entities).
-    pub chest_vbuf: wgpu::Buffer,
-    pub chest_ibuf: wgpu::Buffer,
-    /// Particle billboard pipeline + its reusable vbuf and static quad ibuf.
-    pub particle_pipe: wgpu::RenderPipeline,
-    pub particle_vbuf: wgpu::Buffer,
-    pub particle_ibuf: wgpu::Buffer,
+    /// Break-overlay (destroy crack): its own pipeline + dynamic vbuf/ibuf + the
+    /// index count baked this frame (0 = no overlay), as one [`DynamicDraw`].
+    break_draw: DynamicDraw,
+    /// Item-entity dynamic draw (drawn by the EXISTING opaque pipeline — a cloned
+    /// handle — over its OWN fixed-size buffers, sized separately from chests).
+    item_entity_draw: DynamicDraw,
+    /// Chest model dynamic draw (opaque pipeline, like item entities; its caps are
+    /// separate so a wall of chests can't make dropped items vanish).
+    chest_draw: DynamicDraw,
+    /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
+    /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
+    particle_draw: DynamicVertexDraw,
     pub depth: wgpu::TextureView,
     pub chunk_meshes: HashMap<ChunkPos, GpuMesh>,
     /// Reusable per-frame draw order: `(dist_sq, ChunkPos)` for the visible chunks,
@@ -214,18 +212,12 @@ pub struct Renderer {
     item_entity_indices: Vec<u32>,
     /// Reusable scratch for the frustum-visible subset of `item_entities`.
     item_entity_visible: Vec<ItemEntityInstance>,
-    /// Index count of the item-entity geometry uploaded for this frame (0 = none).
-    item_entity_index_count: u32,
     /// Placed chests to draw in the world this frame.
     pub chests: Vec<ChestInstance>,
     /// Reusable scratch for the frustum-visible subset of `chests`.
     chest_visible: Vec<ChestInstance>,
-    /// Index count of the chest geometry uploaded for this frame (0 = none).
-    chest_index_count: u32,
     /// Reusable CPU staging for baked particle vertices.
     particle_verts: Vec<super::particles::ParticleVertex>,
-    /// Vertex count of the particle geometry uploaded for this frame (0 = none).
-    particle_vertex_count: u32,
     /// UI pipeline (2D HUD / inventory), its gui-atlas bind, and the reusable
     /// dynamic vbuf for UI quads.
     pub ui_pipe: wgpu::RenderPipeline,
@@ -254,6 +246,51 @@ struct UiIconDraw {
     index_start: u32,
     index_count: u32,
     base_vertex: i32,
+}
+
+/// Begin one render pass with a single color attachment over `view` and an
+/// optional depth attachment over `depth`. Collapses the near-identical
+/// `begin_render_pass` boilerplate every pass used to spell out — only the parts
+/// that actually vary are parameters: the debug `label`, the color load-op
+/// (`Clear` for the sky, `Load` everywhere after), and `depth_load`:
+/// - `Some(load_op)` → attach `depth` with that depth load-op (always store),
+///   no stencil — the world / overlay / hand passes.
+/// - `None` → no depth attachment — the sky, crosshair, and UI passes.
+///
+/// The store-ops, `depth_slice`, `resolve_target`, `timestamp_writes`, and
+/// `occlusion_query_set` are the same for every pass, so they live here.
+fn color_depth_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &'a wgpu::TextureView,
+    depth: &'a wgpu::TextureView,
+    label: &str,
+    color_load: wgpu::LoadOp<wgpu::Color>,
+    depth_load: Option<wgpu::LoadOp<f32>>,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: color_load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: depth_load.map(|load| {
+            wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
 }
 
 pub async fn new_renderer_from_target(
@@ -365,6 +402,12 @@ async fn new_renderer_inner(
     );
     let depth = create_depth(&device, width, height);
 
+    // Item entities + chests draw through the EXISTING opaque pipeline; clone its
+    // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
+    // the `opaque_pipe` field below still owns the original.
+    let item_entity_pipe = pipelines.opaque_pipe.clone();
+    let chest_pipe = pipelines.opaque_pipe.clone();
+
     Renderer {
         surface,
         device,
@@ -407,17 +450,33 @@ async fn new_renderer_inner(
         hand_index_count: 0,
         hand_verts: Vec::new(),
         hand_indices: Vec::new(),
-        break_pipe: pipelines.break_pipe,
-        break_vbuf: pipelines.break_vbuf,
-        break_ibuf: pipelines.break_ibuf,
-        break_index_count: 0,
-        item_entity_vbuf: pipelines.item_entity_vbuf,
-        item_entity_ibuf: pipelines.item_entity_ibuf,
-        chest_vbuf: pipelines.chest_vbuf,
-        chest_ibuf: pipelines.chest_ibuf,
-        particle_pipe: pipelines.particle_pipe,
-        particle_vbuf: pipelines.particle_vbuf,
-        particle_ibuf: pipelines.particle_ibuf,
+        break_draw: DynamicDraw::new(
+            pipelines.break_pipe,
+            pipelines.break_vbuf,
+            pipelines.break_ibuf,
+            super::pipeline::MAX_BREAK_VERTICES,
+            super::pipeline::MAX_BREAK_INDICES,
+        ),
+        item_entity_draw: DynamicDraw::new(
+            item_entity_pipe,
+            pipelines.item_entity_vbuf,
+            pipelines.item_entity_ibuf,
+            super::pipeline::MAX_ITEM_ENTITY_VERTICES,
+            super::pipeline::MAX_ITEM_ENTITY_INDICES,
+        ),
+        chest_draw: DynamicDraw::new(
+            chest_pipe,
+            pipelines.chest_vbuf,
+            pipelines.chest_ibuf,
+            super::pipeline::MAX_CHEST_VERTICES,
+            super::pipeline::MAX_CHEST_INDICES,
+        ),
+        particle_draw: DynamicVertexDraw::new(
+            pipelines.particle_pipe,
+            pipelines.particle_vbuf,
+            pipelines.particle_ibuf,
+            super::particles::MAX_PARTICLE_VERTICES as u64,
+        ),
         depth,
         chunk_meshes: HashMap::new(),
         draw_order: Vec::new(),
@@ -440,12 +499,9 @@ async fn new_renderer_inner(
         item_entity_verts: Vec::new(),
         item_entity_indices: Vec::new(),
         item_entity_visible: Vec::new(),
-        item_entity_index_count: 0,
         chests: Vec::new(),
         chest_visible: Vec::new(),
-        chest_index_count: 0,
         particle_verts: Vec::new(),
-        particle_vertex_count: 0,
         ui_pipe: pipelines.ui_pipe,
         ui_bind: pipelines.ui_bind,
         ui_vbuf: pipelines.ui_vbuf,
@@ -594,18 +650,17 @@ impl Renderer {
 
     /// Synchronize GPU meshes with the World's CPU meshes.
     pub fn sync_meshes(&mut self, world: &mut World) {
-        // Drop GPU meshes whose CPU chunk is gone — checked directly against the
-        // world's mesh map so no per-frame scratch set is allocated.
-        self.chunk_meshes
-            .retain(|p, _| world.meshes.contains_key(p));
+        // Drop GPU meshes whose CPU chunk is gone — checked through the world's
+        // mesh accessor so no per-frame scratch set is allocated.
+        self.chunk_meshes.retain(|p, _| world.has_mesh(*p));
         // Upload only meshes marked dirty by the world (newly built/changed) or
         // missing on the GPU; clear each CPU dirty flag as it is uploaded. Existing
         // unchanged meshes are left on the GPU untouched.
-        for (pos, mesh) in world.meshes.iter_mut() {
-            let need_upload = !self.chunk_meshes.contains_key(pos) || mesh.mesh_dirty;
+        for (pos, mesh) in world.iter_meshes_mut() {
+            let need_upload = !self.chunk_meshes.contains_key(&pos) || mesh.mesh_dirty;
             if need_upload {
-                let gm = upload_mesh(&self.device, mesh, *pos);
-                self.chunk_meshes.insert(*pos, gm);
+                let gm = upload_mesh(&self.device, mesh, pos);
+                self.chunk_meshes.insert(pos, gm);
                 mesh.mesh_dirty = false;
             }
         }
@@ -835,126 +890,76 @@ impl Renderer {
         // place — capacity is retained across frames.
         self.build_ui_frame();
 
-        // Build + upload the item-entity geometry (spinning cubes / sprite
-        // billboards) into the reusable model-format buffers. Frustum-culled
-        // against the camera so off-screen drops cost nothing. Drawn by the EXISTING
-        // opaque pipeline (no new pipeline) in the item-entity pass below.
-        self.item_entity_index_count = 0;
-        if !self.item_entities.is_empty() {
-            self.item_entity_visible.clear();
-            for inst in &self.item_entities {
-                // ~0.5 m cull box around the item centre.
-                let c = inst.pos;
-                let min = c - glam::Vec3::splat(0.5);
-                let max = c + glam::Vec3::new(0.5, 1.0, 0.5);
-                if self.frustum.aabb_visible(min, max) {
-                    self.item_entity_visible.push(*inst);
+        // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
+        // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
+        // `item_entity_indices`) in this exact order — `bake` (clear count → build
+        // → bounds-check → upload to that subsystem's OWN fixed buffers → store
+        // count) runs sequentially, never aliasing two GPU buffers at once. Each
+        // subsystem keeps its OWN buffer caps (item-entity vs chest sized apart so
+        // a wall of chests can't make dropped items vanish).
+
+        // Item entities (spinning cubes / sprite billboards), frustum-culled so
+        // off-screen drops cost nothing. Drawn by the EXISTING opaque pipeline.
+        self.item_entity_visible.clear();
+        for inst in &self.item_entities {
+            // ~0.5 m cull box around the item centre.
+            let c = inst.pos;
+            let min = c - glam::Vec3::splat(0.5);
+            let max = c + glam::Vec3::new(0.5, 1.0, 0.5);
+            if self.frustum.aabb_visible(min, max) {
+                self.item_entity_visible.push(*inst);
+            }
+        }
+        let basis = self.billboard_basis;
+        let visible = &self.item_entity_visible;
+        self.item_entity_draw.bake(
+            &self.queue,
+            &mut self.item_entity_verts,
+            &mut self.item_entity_indices,
+            |verts, indices| build_item_entities(visible, basis, verts, indices),
+        );
+
+        // Chests (inset body + hinged lid), frustum-culled like item entities and
+        // reusing their CPU scratch. Drawn by the EXISTING opaque pipeline.
+        self.chest_visible.clear();
+        for inst in &self.chests {
+            // Cull box: the block cell, expanded upward to include the open lid.
+            let min = inst.pos;
+            let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
+            if self.frustum.aabb_visible(min, max) {
+                self.chest_visible.push(*inst);
+            }
+        }
+        let chest_visible = &self.chest_visible;
+        self.chest_draw.bake(
+            &self.queue,
+            &mut self.item_entity_verts,
+            &mut self.item_entity_indices,
+            |verts, indices| build_chests(chest_visible, verts, indices),
+        );
+
+        // Break-overlay (destroy crack) cube, when a block is targeted.
+        let break_overlay = self.break_overlay;
+        self.break_draw.bake(
+            &self.queue,
+            &mut self.item_entity_verts,
+            &mut self.item_entity_indices,
+            |verts, indices| match break_overlay {
+                Some(view) => build_break_overlay(&view, verts, indices),
+                None => {
+                    verts.clear();
+                    indices.clear();
+                    0
                 }
-            }
-            let count = build_item_entities(
-                &self.item_entity_visible,
-                self.billboard_basis,
-                &mut self.item_entity_verts,
-                &mut self.item_entity_indices,
-            );
-            // Item entities use their own fixed-size dynamic buffers (not the
-            // model3d/hand buffers, which the hand pass writes separately). Bail if
-            // the bake would overflow the budget so the buffers stay fixed-size.
-            let vbuf_cap = super::pipeline::MAX_ITEM_ENTITY_VERTICES as usize;
-            let ibuf_cap = super::pipeline::MAX_ITEM_ENTITY_INDICES as usize;
-            if count > 0
-                && self.item_entity_verts.len() <= vbuf_cap
-                && self.item_entity_indices.len() <= ibuf_cap
-            {
-                self.queue.write_buffer(
-                    &self.item_entity_vbuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_verts),
-                );
-                self.queue.write_buffer(
-                    &self.item_entity_ibuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_indices),
-                );
-                self.item_entity_index_count = count;
-            }
-        }
+            },
+        );
 
-        // Build + upload the chest model geometry (inset body + hinged lid). Drawn by
-        // the EXISTING opaque pipeline in the chest pass below; frustum-culled like
-        // item entities and reusing their CPU scratch (already uploaded above).
-        self.chest_index_count = 0;
-        if !self.chests.is_empty() {
-            self.chest_visible.clear();
-            for inst in &self.chests {
-                // Cull box: the block cell, expanded upward to include the open lid.
-                let min = inst.pos;
-                let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
-                if self.frustum.aabb_visible(min, max) {
-                    self.chest_visible.push(*inst);
-                }
-            }
-            let count = build_chests(
-                &self.chest_visible,
-                &mut self.item_entity_verts,
-                &mut self.item_entity_indices,
-            );
-            let vbuf_cap = super::pipeline::MAX_CHEST_VERTICES as usize;
-            let ibuf_cap = super::pipeline::MAX_CHEST_INDICES as usize;
-            if count > 0
-                && self.item_entity_verts.len() <= vbuf_cap
-                && self.item_entity_indices.len() <= ibuf_cap
-            {
-                self.queue.write_buffer(
-                    &self.chest_vbuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_verts),
-                );
-                self.queue.write_buffer(
-                    &self.chest_ibuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_indices),
-                );
-                self.chest_index_count = count;
-            }
-        }
-
-        // Build + upload the break-overlay (destroy crack) cube, when targeted.
-        self.break_index_count = 0;
-        if let Some(view) = self.break_overlay {
-            let count = build_break_overlay(
-                &view,
-                &mut self.item_entity_verts,
-                &mut self.item_entity_indices,
-            );
-            if count > 0 {
-                self.queue.write_buffer(
-                    &self.break_vbuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_verts),
-                );
-                self.queue.write_buffer(
-                    &self.break_ibuf,
-                    0,
-                    bytemuck::cast_slice(&self.item_entity_indices),
-                );
-                self.break_index_count = count;
-            }
-        }
-
-        // Build + upload tiny 3D particle cubes into the reusable vbuf.
-        self.particle_vertex_count = 0;
-        if !self.particles.is_empty() {
-            let count = build_particles(&self.particles, &mut self.particle_verts);
-            if count > 0 {
-                self.queue.write_buffer(
-                    &self.particle_vbuf,
-                    0,
-                    bytemuck::cast_slice(&self.particle_verts),
-                );
-                self.particle_vertex_count = count;
-            }
-        }
+        // Tiny 3D particle cubes into the reusable vbuf (static quad ibuf).
+        let particles = &self.particles;
+        self.particle_draw
+            .bake(&self.queue, &mut self.particle_verts, |verts| {
+                build_particles(particles, verts)
+            });
 
         let mut enc = self
             .device
@@ -996,54 +1001,37 @@ impl Renderer {
             ..Default::default()
         };
         let cc = self.clear_color;
+        // SKY PASS: full-screen background triangle. The ONLY pass that CLEARS
+        // color (to the fog colour); no depth attachment.
         {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sky pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: cc[0] as f64,
-                            g: cc[1] as f64,
-                            b: cc[2] as f64,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "sky pass",
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: cc[0] as f64,
+                    g: cc[1] as f64,
+                    b: cc[2] as f64,
+                    a: 1.0,
+                }),
+                None,
+            );
             pass.set_pipeline(&self.sky_pipe);
             pass.set_bind_group(0, &self.sky_bind, &[]);
             pass.draw(0..3, 0..1);
         }
+        // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. CLEARS the
+        // depth buffer (the first depth user this frame); loads color over the sky.
         {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("opaque pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "opaque pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Clear(1.0)),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
@@ -1097,69 +1085,35 @@ impl Renderer {
         // sprite billboards, drawn by the EXISTING opaque pipeline (no new
         // pipeline) with the SAME uniform + atlas binds. Load color + depth,
         // depth test + write so items occlude and are occluded by terrain.
-        if self.item_entity_index_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("item entity pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.opaque_pipe);
+        if self.item_entity_draw.index_count > 0 {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "item entity pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.item_entity_vbuf.slice(..));
-            pass.set_index_buffer(self.item_entity_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.item_entity_index_count, 0, 0..1);
+            self.item_entity_draw.draw(&mut pass);
         }
         // CHEST PASS: placed chests (inset body + hinged lid) drawn as full opaque
         // geometry by the EXISTING opaque pipeline with the same uniform + atlas binds,
         // loading color + depth so chests occlude and are occluded by terrain — exactly
         // like the item-entity pass above.
-        if self.chest_index_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("chest pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.opaque_pipe);
+        if self.chest_draw.index_count > 0 {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "chest pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.chest_vbuf.slice(..));
-            pass.set_index_buffer(self.chest_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.chest_index_count, 0, 0..1);
+            self.chest_draw.draw(&mut pass);
         }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so
@@ -1169,35 +1123,18 @@ impl Renderer {
         // so the decal never misaligns), with a small polygon offset toward the
         // camera (BREAK_DEPTH_BIAS) so it wins the depth tie cleanly. Reuses
         // uniform_bind (view_proj + uv_rects) + atlas_bind.
-        if self.break_index_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("break overlay pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.break_pipe);
+        if self.break_draw.index_count > 0 {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "break overlay pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.break_vbuf.slice(..));
-            pass.set_index_buffer(self.break_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.break_index_count, 0, 0..1);
+            self.break_draw.draw(&mut pass);
         }
         // PARTICLE PASS (§8 3b): tiny 3D terrain particle cubes. Drawn BEFORE the
         // transparent water pass (but after the break overlay, so they sit in front
@@ -1205,61 +1142,33 @@ impl Renderer {
         // so water blends over the ones behind it (underwater dust reads as
         // submerged) while ones in front of the water still occlude it. Reuses
         // uniform_bind + atlas_bind. 24 verts / 36 indices per cube.
-        if self.particle_vertex_count > 0 {
-            let index_count = self.particle_vertex_count / super::particles::VERTS_PER_CUBE as u32
+        if self.particle_draw.vertex_count > 0 {
+            let index_count = self.particle_draw.vertex_count
+                / super::particles::VERTS_PER_CUBE as u32
                 * super::particles::INDICES_PER_CUBE as u32;
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("particle pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.particle_pipe);
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "particle pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            pass.set_vertex_buffer(0, self.particle_vbuf.slice(..));
-            pass.set_index_buffer(self.particle_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..index_count, 0, 0..1);
+            self.particle_draw.draw(&mut pass, index_count);
         }
+        // TRANSPARENT PASS: water, far→near for correct back-to-front alpha. Loads
+        // color + depth; depth test (no write) so it sorts behind solids.
         {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("transparent pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "transparent pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.transparent_pipe);
@@ -1304,28 +1213,14 @@ impl Renderer {
         // write) so it draws over terrain/water at the targeted block but stays
         // occluded behind nearer geometry.
         if self.selection.is_some() && self.outline_vertex_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("outline pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "outline pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
             pass.set_pipeline(&self.outline_pipe);
             pass.set_bind_group(0, &self.outline_bind, &[]);
             pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
@@ -1342,28 +1237,16 @@ impl Renderer {
         // empty in that case, so slot 0 is free). They are mutually exclusive, but
         // both are drawn here so the pass is correct regardless.
         if self.hand_index_count > 0 || self.item3d_vertex_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("hand pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            // NB: depth load-op is CLEAR(1.0) — this pass intentionally resets the
+            // depth buffer so the hand self-sorts in isolation from the world.
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "hand pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Clear(1.0)),
+            );
             // Bare arm / held block (model3d, depth-enabled hand variant).
             if self.hand_index_count > 0 {
                 pass.set_pipeline(&self.model3d_hand_pipe);
@@ -1382,22 +1265,16 @@ impl Renderer {
                 pass.draw(0..self.item3d_vertex_count, 0..1);
             }
         }
+        // CROSSHAIR PASS: the center invert-blend crosshair. Color Load, NO depth.
         if self.crosshair_vertex_count > 0 {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("crosshair pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "crosshair pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
             pass.set_pipeline(&self.crosshair_pipe);
             pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
             pass.draw(0..self.crosshair_vertex_count, 0..1);
@@ -1409,21 +1286,14 @@ impl Renderer {
         // per-slot 3D item icons (model3d_pipe, painting over the slots), then the
         // gui-atlas digit overlay (ui_pipe, painting over the icons).
         if self.ui_bg_vertex_count > 0 || !self.ui_icons.is_empty() {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ui pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "ui pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
             // 1) gui-atlas background (hotbar / panel / selection / dim).
             if self.ui_bg_vertex_count > 0 {
                 pass.set_pipeline(&self.ui_pipe);
@@ -1461,229 +1331,5 @@ impl Renderer {
         self.queue.submit(std::iter::once(enc.finish()));
         self.last_stats = stats;
         frame.present();
-    }
-}
-
-struct SectionDrawRanges {
-    ranges: [(u32, u32); SECTION_COUNT],
-    len: usize,
-    submitted: u32,
-}
-
-impl SectionDrawRanges {
-    fn new() -> Self {
-        Self {
-            ranges: [(0, 0); SECTION_COUNT],
-            len: 0,
-            submitted: 0,
-        }
-    }
-
-    fn full(index_count: u32) -> Self {
-        let mut out = Self::new();
-        if index_count > 0 {
-            out.ranges[0] = (0, index_count);
-            out.len = 1;
-            out.submitted = index_count;
-        }
-        out
-    }
-
-    fn push(&mut self, start: u32, end: u32) {
-        if start >= end {
-            return;
-        }
-        if self.len > 0 && self.ranges[self.len - 1].1 == start {
-            self.ranges[self.len - 1].1 = end;
-        } else {
-            self.ranges[self.len] = (start, end);
-            self.len += 1;
-        }
-        self.submitted += end - start;
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        self.ranges[..self.len].iter().copied()
-    }
-}
-
-fn section_draw_ranges(
-    frustum: Frustum,
-    origin: (i32, i32),
-    full_idx_count: u32,
-    sections: &[MeshIndexSection; SECTION_COUNT],
-    visible_mask: u16,
-) -> SectionDrawRanges {
-    let mut out = SectionDrawRanges::new();
-    for (section_idx, section) in sections.iter().enumerate() {
-        if visible_mask & (1u16 << section_idx) == 0 || section.index_count == 0 {
-            continue;
-        }
-        if !section_visible(frustum, origin, section_idx) {
-            continue;
-        }
-        out.push(
-            section.first_index,
-            section.first_index + section.index_count,
-        );
-    }
-
-    if out.is_empty() || out.submitted >= full_idx_count {
-        return out;
-    }
-    if out.len == 1 {
-        return out;
-    }
-
-    let saved = full_idx_count - out.submitted;
-    let saves_enough_indices = saved >= MIN_SECTION_CULL_INDEX_SAVINGS;
-    let saves_enough_ratio = (out.submitted as u64) * 4 <= (full_idx_count as u64) * 3;
-    if saves_enough_indices && saves_enough_ratio {
-        out
-    } else {
-        SectionDrawRanges::full(full_idx_count)
-    }
-}
-
-fn section_visible(frustum: Frustum, origin: (i32, i32), section_idx: usize) -> bool {
-    let (ox, oz) = origin;
-    let y0 = (section_idx * SECTION_SIZE) as f32;
-    let y1 = ((section_idx + 1) * SECTION_SIZE).min(CHUNK_SY) as f32;
-    let min = glam::Vec3::new(ox as f32, y0, oz as f32);
-    let max = glam::Vec3::new((ox + 16) as f32, y1, (oz + 16) as f32);
-    frustum.aabb_visible(min, max)
-}
-
-fn far_leaf_lod_active(dist_sq: f32, origin: (i32, i32), has_far_lod: bool) -> bool {
-    if !has_far_lod {
-        return false;
-    }
-
-    let dist = dist_sq.sqrt();
-    if dist <= FAR_LEAF_LOD_FADE_START {
-        return false;
-    }
-    if dist >= FAR_LEAF_LOD_FADE_END {
-        return true;
-    }
-
-    let t = (dist - FAR_LEAF_LOD_FADE_START) / (FAR_LEAF_LOD_FADE_END - FAR_LEAF_LOD_FADE_START);
-    let smooth = t * t * (3.0 - 2.0 * t);
-    smooth >= chunk_lod_threshold(origin)
-}
-
-fn chunk_lod_threshold(origin: (i32, i32)) -> f32 {
-    let mut h =
-        (origin.0 as u32).wrapping_mul(0x9E37_79B1) ^ (origin.1 as u32).wrapping_mul(0x85EB_CA77);
-    h ^= h >> 16;
-    h = h.wrapping_mul(0x7FEB_352D);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x846C_A68B);
-    h ^= h >> 16;
-    ((h & 0xFFFF) as f32 + 0.5) / 65_536.0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn section_draw_ranges_keep_single_visible_section() {
-        let frustum = Frustum::permissive();
-        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
-        sections[2] = MeshIndexSection {
-            first_index: 120,
-            index_count: 60,
-        };
-
-        let ranges = section_draw_ranges(frustum, (0, 0), 480, &sections, 1u16 << 2);
-
-        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(120, 180)]);
-        assert_eq!(ranges.submitted, 60);
-    }
-
-    #[test]
-    fn section_draw_ranges_fall_back_when_fragmented_savings_are_small() {
-        let frustum = Frustum::permissive();
-        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
-        sections[0] = MeshIndexSection {
-            first_index: 0,
-            index_count: 100,
-        };
-        sections[2] = MeshIndexSection {
-            first_index: 200,
-            index_count: 100,
-        };
-
-        let ranges = section_draw_ranges(frustum, (0, 0), 360, &sections, 0b0101);
-
-        assert_eq!(ranges.iter().collect::<Vec<_>>(), vec![(0, 360)]);
-        assert_eq!(ranges.submitted, 360);
-    }
-
-    #[test]
-    fn section_draw_ranges_keep_fragmented_ranges_when_savings_are_large() {
-        let frustum = Frustum::permissive();
-        let mut sections = [MeshIndexSection::default(); SECTION_COUNT];
-        sections[0] = MeshIndexSection {
-            first_index: 0,
-            index_count: 600,
-        };
-        sections[8] = MeshIndexSection {
-            first_index: 8_000,
-            index_count: 600,
-        };
-
-        let ranges = section_draw_ranges(
-            frustum,
-            (0, 0),
-            12_000,
-            &sections,
-            (1u16 << 0) | (1u16 << 8),
-        );
-
-        assert_eq!(
-            ranges.iter().collect::<Vec<_>>(),
-            vec![(0, 600), (8_000, 8_600)]
-        );
-        assert_eq!(ranges.submitted, 1_200);
-    }
-
-    #[test]
-    fn far_leaf_lod_stays_near_and_converges_far() {
-        assert!(!far_leaf_lod_active(200.0 * 200.0, (0, 0), false));
-        assert!(!far_leaf_lod_active(
-            FAR_LEAF_LOD_FADE_START * FAR_LEAF_LOD_FADE_START,
-            (0, 0),
-            true
-        ));
-        assert!(far_leaf_lod_active(
-            FAR_LEAF_LOD_FADE_END * FAR_LEAF_LOD_FADE_END,
-            (0, 0),
-            true
-        ));
-    }
-
-    #[test]
-    fn far_leaf_lod_transition_is_staggered_by_chunk() {
-        let mid = ((FAR_LEAF_LOD_FADE_START + FAR_LEAF_LOD_FADE_END) * 0.5).powi(2);
-        let mut near_count = 0;
-        let mut far_count = 0;
-        for z in -8..=8 {
-            for x in -8..=8 {
-                if far_leaf_lod_active(mid, (x * 16, z * 16), true) {
-                    far_count += 1;
-                } else {
-                    near_count += 1;
-                }
-            }
-        }
-
-        assert!(near_count > 0);
-        assert!(far_count > 0);
     }
 }

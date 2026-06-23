@@ -10,7 +10,7 @@
 //! Worldgen oceans/rivers are written as plain `Block::Water` with meta 0, i.e.
 //! sources — they sit still until disturbed (a neighbouring block change queues a
 //! block update; see [`super::tick`]). 10 ticks (0.5 s) after a disturbance a
-//! cell runs its [`World::water_flow_check`], which:
+//! cell runs its [`FluidSim::flow_check`], which:
 //!   1. (flowing only) re-levels from its upstream supplier, or dries up if the
 //!      supply is gone — this is how a sheet recedes when its source is removed;
 //!   2. pours straight down if there is space below;
@@ -23,7 +23,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::block::Block;
-use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 use crate::mathh::{IVec3, Vec3};
 
 use super::store::World;
@@ -159,28 +159,31 @@ const CARDINALS: [IVec3; 4] = [
     IVec3::new(-1, 0, 0),
 ];
 
-impl World {
-    #[inline]
-    fn block_at(&self, p: IVec3) -> Block {
-        Block::from_id(self.chunk_block(p.x, p.y, p.z))
-    }
-    #[inline]
-    fn meta_at(&self, p: IVec3) -> u8 {
-        self.water_meta_world(p.x, p.y, p.z)
-    }
+/// Read a block at world coords through a `World`. The flow algorithm only ever
+/// touches the world as a block/water read-write surface; these two helpers plus
+/// [`World::set_water_world`] are that whole surface.
+#[inline]
+fn block_at(world: &World, p: IVec3) -> Block {
+    Block::from_id(world.chunk_block(p.x, p.y, p.z))
+}
+#[inline]
+fn meta_at(world: &World, p: IVec3) -> u8 {
+    world.water_meta_world(p.x, p.y, p.z)
+}
 
+impl World {
     /// Horizontal direction entities should drift in when they overlap this water
     /// cell. This intentionally matches [`surface_flow_dir`], which is also what
     /// the mesher uses to face the flowing-water texture.
     pub fn water_flow_dir_at(&self, wx: i32, wy: i32, wz: i32) -> Vec3 {
-        let block_at = |x: i32, y: i32, z: i32| self.block_at(IVec3::new(x, y, z));
+        let block_at = |x: i32, y: i32, z: i32| block_at(self, IVec3::new(x, y, z));
         let fluid_at = |x: i32, y: i32, z: i32| -> Option<f32> {
             let p = IVec3::new(x, y, z);
-            if self.block_at(p) != Block::Water {
+            if block_at(p.x, p.y, p.z) != Block::Water {
                 return None;
             }
-            let water_above = self.block_at(p + UP) == Block::Water;
-            Some(fluid_height(self.meta_at(p), water_above))
+            let water_above = block_at(p.x, p.y + 1, p.z) == Block::Water;
+            Some(fluid_height(meta_at(self, p), water_above))
         };
         surface_flow_dir(wx, wy, wz, &block_at, &fluid_at)
     }
@@ -190,17 +193,14 @@ impl World {
     /// border when the cell sits on one, and announce the change to neighbours.
     /// Returns false if the target chunk is not loaded.
     pub(super) fn set_water_world(&mut self, pos: IVec3, block: Block, meta: u8) -> bool {
-        if pos.y < 0 || pos.y >= CHUNK_SY as i32 {
+        let Some((cpos, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
             return false;
-        }
-        let cpos = ChunkPos::new(pos.x >> 4, pos.z >> 4);
-        let lx = (pos.x & 0x0F) as usize;
-        let lz = (pos.z & 0x0F) as usize;
+        };
         {
             let Some(c) = self.chunks.get_mut(&cpos) else {
                 return false;
             };
-            c.set_water(lx, pos.y as usize, lz, block, meta);
+            c.set_water(lx, ly, lz, block, meta);
             c.modified = true;
         }
         self.invalidate_section_visibility(cpos);
@@ -219,16 +219,30 @@ impl World {
         self.notify_block_and_neighbors(pos.x, pos.y, pos.z);
         true
     }
+}
 
+/// The flowing-water simulation: the fluid-flow algorithm (falloff, thickness,
+/// supply chains, slope BFS), factored out of `World`.
+///
+/// `FluidSim` is **stateless with respect to `World`**: it holds no borrow of a
+/// world and no per-cell scratch that must outlive a call. Each method takes the
+/// `&World`/`&mut World` it operates on as a parameter, so the tick driver can
+/// construct a `FluidSim` at the call site and hand it the world (sequential
+/// reborrows) without ever storing a `&mut World` — see [`super::tick`]. The
+/// world is touched only through three accessors: the module-private
+/// [`block_at`]/[`meta_at`] reads and [`World::set_water_world`] writes.
+pub(super) struct FluidSim;
+
+impl FluidSim {
     /// The water flow update for the cell at `pos` (a scheduled block tick).
-    pub(super) fn water_flow_check(&mut self, pos: IVec3) {
-        if self.block_at(pos) != Block::Water {
+    pub(super) fn flow_check(&self, world: &mut World, pos: IVec3) {
+        if block_at(world, pos) != Block::Water {
             return; // no longer water
         }
-        let meta = self.meta_at(pos);
+        let meta = meta_at(world, pos);
 
         if is_falling(meta) {
-            self.falling_flow_check(pos);
+            self.falling_flow_check(world, pos);
             return;
         }
 
@@ -241,16 +255,16 @@ impl World {
         // cell re-sets when either changes, which notifies upstream neighbours to
         // thicken in turn, so the body fills in one step behind the advancing edge.
         if !source {
-            match self.best_supply(pos, fo) {
+            match self.best_supply(world, pos, fo) {
                 None => {
-                    self.set_water_world(pos, Block::Air, 0);
+                    world.set_water_world(pos, Block::Air, 0);
                     return;
                 }
                 Some(supply) => fo = supply,
             }
-            let th = self.flow_thickness(pos, fo);
+            let th = self.flow_thickness(world, pos, fo);
             if falloff(meta) != fo || thickness(meta) != th {
-                self.set_water_world(pos, Block::Water, flowing(fo, th));
+                world.set_water_world(pos, Block::Water, flowing(fo, th));
             }
         }
 
@@ -262,9 +276,9 @@ impl World {
         // non-source cell that is not on solid ground never spreads. (A source
         // always falls AND spreads.)
         let below = pos + DOWN;
-        let below_block = self.block_at(below);
+        let below_block = block_at(world, below);
         if fillable(below_block) {
-            self.pour_down(below);
+            self.pour_down(world, below);
         }
         let on_solid = below_block != Block::Air && below_block != Block::Water;
         if !source && !on_solid {
@@ -274,27 +288,27 @@ impl World {
         // Spread horizontally: source feeds level 1, flowing decrements by one.
         let spread = if source { 1 } else { fo + 1 };
         if spread <= MAX_FALLOFF {
-            self.spread_horizontally(pos, spread);
+            self.spread_horizontally(world, pos, spread);
         }
     }
 
     /// Flow update for a falling stream cell.
-    fn falling_flow_check(&mut self, pos: IVec3) {
+    fn falling_flow_check(&self, world: &mut World, pos: IVec3) {
         // Falling water is fed only from directly above (the cell that poured into
         // it). Once nothing waters it from above, it is orphaned and must dry up —
         // otherwise a waterfall whose source is cut off (and any pool it feeds)
         // would persist forever. This is what guarantees flowing water always
         // recedes to a real source rather than sustaining itself.
-        if self.block_at(pos + UP) != Block::Water {
-            self.set_water_world(pos, Block::Air, 0);
+        if block_at(world, pos + UP) != Block::Water {
+            world.set_water_world(pos, Block::Air, 0);
             return;
         }
-        let below = self.block_at(pos + DOWN);
+        let below = block_at(world, pos + DOWN);
         if fillable(below) {
-            self.pour_down(pos + DOWN); // keep falling to the floor
+            self.pour_down(world, pos + DOWN); // keep falling to the floor
         } else if below != Block::Water {
             // Landed on a solid floor: spread a level-1 ring like a source.
-            self.spread_horizontally(pos, 1);
+            self.spread_horizontally(world, pos, 1);
         }
         // else: mid-column (water below) — nothing to do.
     }
@@ -303,25 +317,25 @@ impl World {
     /// the descent downward one block per water tick on its own scheduled tick —
     /// the column is never filled all at once (water falls at the same rate it
     /// spreads, instead of teleporting straight to the floor).
-    fn pour_down(&mut self, start: IVec3) {
-        if start.y >= 0 && fillable(self.block_at(start)) {
-            self.set_water_world(start, Block::Water, FALLING);
+    fn pour_down(&self, world: &mut World, start: IVec3) {
+        if start.y >= 0 && fillable(block_at(world, start)) {
+            world.set_water_world(start, Block::Water, FALLING);
         }
     }
 
-    fn spread_horizontally(&mut self, pos: IVec3, spread: u8) {
-        for d in self.optimal_flow_dirs(pos, spread) {
+    fn spread_horizontally(&self, world: &mut World, pos: IVec3, spread: u8) {
+        for d in self.optimal_flow_dirs(world, pos, spread) {
             let np = pos + d;
-            let nb = self.block_at(np);
+            let nb = block_at(world, np);
             // A freshly-reached cell is the new leading edge: thinnest (thickness 1).
             // Its own flow checks thicken it once the flow extends past it.
             if fillable(nb) {
-                self.set_water_world(np, Block::Water, flowing(spread, 1));
+                world.set_water_world(np, Block::Water, flowing(spread, 1));
             } else if nb == Block::Water {
-                let nm = self.meta_at(np);
+                let nm = meta_at(world, np);
                 // Raise weaker downstream flowing water up to our level.
                 if !is_source(nm) && !is_falling(nm) && falloff(nm) > spread {
-                    self.set_water_world(np, Block::Water, flowing(spread, 1));
+                    world.set_water_world(np, Block::Water, flowing(spread, 1));
                 }
             }
         }
@@ -331,14 +345,14 @@ impl World {
     /// plus the greatest thickness among its strictly-downstream flowing
     /// neighbours (higher falloff), capped at the falloff target. So a cell stays
     /// thin until the flow has extended past it, then fills in toward full.
-    fn flow_thickness(&self, pos: IVec3, fo: u8) -> u8 {
+    fn flow_thickness(&self, world: &World, pos: IVec3, fo: u8) -> u8 {
         let mut max_down = 0u8;
         for d in CARDINALS {
             let np = pos + d;
-            if self.block_at(np) != Block::Water {
+            if block_at(world, np) != Block::Water {
                 continue;
             }
-            let nm = self.meta_at(np);
+            let nm = meta_at(world, np);
             if !is_source(nm) && !is_falling(nm) && falloff(nm) > fo {
                 max_down = max_down.max(thickness(nm));
             }
@@ -351,15 +365,15 @@ impl World {
     /// or falling stream directly above, an adjacent source/falling stream, or an
     /// adjacent flowing cell strictly closer to a source — every chain therefore
     /// terminates at a real source, so cutting the source drains everything.
-    fn best_supply(&self, pos: IVec3, fo: u8) -> Option<u8> {
+    fn best_supply(&self, world: &World, pos: IVec3, fo: u8) -> Option<u8> {
         // A vertical feed from above counts ONLY if it is a source or a falling
         // stream. Plain flowing water above is just horizontal flow that happens
         // to be stacked, NOT a feed — counting it would let a column of flowing
         // water mutually support itself and never recede (flowing water must
         // never become its own source).
         let up = pos + UP;
-        if self.block_at(up) == Block::Water {
-            let um = self.meta_at(up);
+        if block_at(world, up) == Block::Water {
+            let um = meta_at(world, up);
             if is_source(um) || is_falling(um) {
                 return Some(1);
             }
@@ -367,10 +381,10 @@ impl World {
         let mut best: Option<u8> = None;
         for d in CARDINALS {
             let np = pos + d;
-            if self.block_at(np) != Block::Water {
+            if block_at(world, np) != Block::Water {
                 continue;
             }
-            let nm = self.meta_at(np);
+            let nm = meta_at(world, np);
             let cand = if is_source(nm) || is_falling(nm) {
                 1
             } else {
@@ -390,16 +404,16 @@ impl World {
     /// Directions to spread into: prefer the cardinal(s) leading to the nearest
     /// downhill drop within [`SLOPE_FIND_DIST`]; if none, every open direction.
     /// Always includes adjacent weaker water that wants re-levelling.
-    fn optimal_flow_dirs(&self, pos: IVec3, spread: u8) -> Vec<IVec3> {
+    fn optimal_flow_dirs(&self, world: &World, pos: IVec3, spread: u8) -> Vec<IVec3> {
         let mut air_dirs: Vec<IVec3> = Vec::new();
         let mut upgrade_dirs: Vec<IVec3> = Vec::new();
         for d in CARDINALS {
             let np = pos + d;
-            let b = self.block_at(np);
+            let b = block_at(world, np);
             if fillable(b) {
                 air_dirs.push(d);
             } else if b == Block::Water {
-                let m = self.meta_at(np);
+                let m = meta_at(world, np);
                 if !is_source(m) && !is_falling(m) && falloff(m) > spread {
                     upgrade_dirs.push(d);
                 }
@@ -410,7 +424,7 @@ impl World {
             return upgrade_dirs;
         }
 
-        let mut out = match self.nearest_drop_dirs(pos, &air_dirs) {
+        let mut out = match self.nearest_drop_dirs(world, pos, &air_dirs) {
             Some(dirs) => dirs,
             None => air_dirs,
         };
@@ -422,7 +436,7 @@ impl World {
     /// cardinal they started from. Returns the start directions whose path
     /// reaches a downhill drop (an empty cell with empty space below) soonest, or
     /// `None` if no drop is in range.
-    fn nearest_drop_dirs(&self, pos: IVec3, air_dirs: &[IVec3]) -> Option<Vec<IVec3>> {
+    fn nearest_drop_dirs(&self, world: &World, pos: IVec3, air_dirs: &[IVec3]) -> Option<Vec<IVec3>> {
         let mut visited: HashMap<IVec3, usize> = HashMap::new();
         let mut queue: VecDeque<(IVec3, usize, i32)> = VecDeque::new();
         for (i, &d) in air_dirs.iter().enumerate() {
@@ -437,7 +451,7 @@ impl World {
             if dist > best_dist {
                 continue;
             }
-            if fillable(self.block_at(cell + DOWN)) {
+            if fillable(block_at(world, cell + DOWN)) {
                 if dist < best_dist {
                     best_dist = dist;
                     chosen.clear();
@@ -452,7 +466,7 @@ impl World {
             }
             for d2 in CARDINALS {
                 let n2 = cell + d2;
-                if visited.contains_key(&n2) || !fillable(self.block_at(n2)) {
+                if visited.contains_key(&n2) || !fillable(block_at(world, n2)) {
                     continue;
                 }
                 visited.insert(n2, origin);
@@ -491,8 +505,10 @@ mod tests {
     }
 
     fn run_ticks(w: &mut World, n: u32) {
+        // Water flow needs no recipes; an empty set keeps the furnace step a no-op.
+        let recipes = crate::crafting::Recipes::default();
         for _ in 0..n {
-            w.game_tick();
+            w.game_tick(&recipes);
         }
     }
 
@@ -528,7 +544,7 @@ mod tests {
         w.set_block_world(8, 65, 8, Block::Water);
         // First tick dispatches the placement update and schedules the flow check;
         // the source has not spread yet.
-        w.game_tick();
+        w.game_tick(&crate::crafting::Recipes::default());
         assert_eq!(w.current_tick(), 1);
         assert_eq!(block(&w, 9, 65, 8), Block::Air);
         // After the 10-tick delay the source has spread to its cardinal neighbours.

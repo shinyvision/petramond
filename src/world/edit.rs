@@ -1,5 +1,4 @@
 use crate::block::Block;
-use crate::chunk::{ChunkPos, CHUNK_SY};
 
 use super::store::World;
 
@@ -10,19 +9,14 @@ impl World {
     /// meshes. Returns false if the chunk is not loaded or `wy` is out of range.
     /// In-memory only.
     pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
-        if wy < 0 || wy >= CHUNK_SY as i32 {
+        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
             return false;
-        }
-        let cx = wx >> 4;
-        let cz = wz >> 4;
-        let lx = (wx & 0x0F) as usize;
-        let lz = (wz & 0x0F) as usize;
-        let pos = ChunkPos::new(cx, cz);
+        };
         {
             let Some(c) = self.chunks.get_mut(&pos) else {
                 return false;
             };
-            c.set_block(lx, wy as usize, lz, b);
+            c.set_block(lx, ly, lz, b);
             c.modified = true;
         }
         self.invalidate_section_visibility(pos);
