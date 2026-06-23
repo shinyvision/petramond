@@ -96,6 +96,8 @@ pub enum Block {
     CraftingTable,
     // --- Furnace update (id 82). ---
     Furnace,
+    // --- Chest update (id 83). ---
+    Chest,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
@@ -105,6 +107,29 @@ pub enum RenderShape {
     Cube,
     Cross,
 }
+
+/// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
+/// (`0.0..1.0` per axis). A block's full shape is a *list* of these (see
+/// [`Block::collision_boxes`]) — one for a full cube or the inset chest, several for
+/// shapes like stairs. The player collides via a swept-AABB over them, and the
+/// selection outline + break overlay derive from their union.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Aabb {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+/// The whole cell — the collision shape of every ordinary solid block.
+const FULL_CUBE_BOXES: &[Aabb] = &[Aabb {
+    min: [0.0, 0.0, 0.0],
+    max: [1.0, 1.0, 1.0],
+}];
+/// The chest's inset body+lid box (1/16 inset, 14/16 tall) — matches the model in
+/// `render::chest_model`, so collision, outline, and crack all hug the chest.
+const CHEST_BOXES: &[Aabb] = &[Aabb {
+    min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
+    max: [15.0 / 16.0, 14.0 / 16.0, 15.0 / 16.0],
+}];
 
 impl Block {
     pub const ALL: &'static [Block] = data::ALL_BLOCKS;
@@ -119,6 +144,48 @@ impl Block {
             ShortGrass | Fern | Dandelion | Poppy | Cornflower | Allium | AzureBluet
             | OxeyeDaisy | RedTulip | DeadBush | BrownMushroom | RedMushroom => RenderShape::Cross,
             _ => RenderShape::Cube,
+        }
+    }
+
+    /// The block's collision shape: a list of cell-local AABBs (`0.0..1.0`). Empty =
+    /// no collision (air, water, walk-through plants). One unit box for an ordinary
+    /// full cube; the chest is a single inset box; future stairs/slabs return several.
+    /// The single source of truth for player collision AND — via the union — the
+    /// selection outline + break overlay ([`visual_aabb`](Self::visual_aabb)).
+    #[inline]
+    pub fn collision_boxes(self) -> &'static [Aabb] {
+        if !self.is_solid() {
+            return &[];
+        }
+        match self {
+            Block::Chest => CHEST_BOXES,
+            _ => FULL_CUBE_BOXES,
+        }
+    }
+
+    /// The visual bounding box (cell-local) for a non-full-cube block — the union of
+    /// its [`collision_boxes`](Self::collision_boxes) — used for the selection outline
+    /// and the break-crack overlay so they hug the block's actual shape. `None` = an
+    /// ordinary full cube (or a non-colliding block), which needs no special outline.
+    #[inline]
+    pub fn visual_aabb(self) -> Option<([f32; 3], [f32; 3])> {
+        let boxes = self.collision_boxes();
+        if boxes.is_empty() {
+            return None;
+        }
+        let mut mn = [f32::INFINITY; 3];
+        let mut mx = [f32::NEG_INFINITY; 3];
+        for b in boxes {
+            for i in 0..3 {
+                mn[i] = mn[i].min(b.min[i]);
+                mx[i] = mx[i].max(b.max[i]);
+            }
+        }
+        // A full unit cube needs no special outline (the default selection is a cube).
+        if mn == [0.0; 3] && mx == [1.0; 3] {
+            None
+        } else {
+            Some((mn, mx))
         }
     }
 
@@ -336,6 +403,7 @@ mod tests {
             Block::MangrovePlanks,
             Block::CraftingTable,
             Block::Furnace,
+            Block::Chest,
         ];
 
         assert_eq!(Block::ALL, expected);

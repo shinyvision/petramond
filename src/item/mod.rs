@@ -122,6 +122,9 @@ pub enum ItemType {
     IronIngot,
     CopperIngot,
     Furnace,
+    // --- Chest update: the Chest block-item. Like the furnace, its item id is
+    // appended (NOT equal to `Block::Chest`'s id) and mapped explicitly below. ---
+    Chest,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -242,6 +245,7 @@ impl ItemType {
     pub fn from_block(b: Block) -> ItemType {
         match b {
             Block::Furnace => ItemType::Furnace,
+            Block::Chest => ItemType::Chest,
             _ => Self::from_id(b.id()),
         }
     }
@@ -254,6 +258,7 @@ impl ItemType {
     pub fn as_block(self) -> Option<Block> {
         match self {
             ItemType::Furnace => Some(Block::Furnace),
+            ItemType::Chest => Some(Block::Chest),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => {
                 Some(Block::from_id(self.id()))
             }
@@ -504,6 +509,7 @@ mod tests {
             ItemType::IronIngot,
             ItemType::CopperIngot,
             ItemType::Furnace,
+            ItemType::Chest,
         ];
 
         assert_eq!(ItemType::ALL, expected);

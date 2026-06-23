@@ -117,11 +117,12 @@ impl Player {
     /// [`Player::columns_loaded`]) before stepping survival physics. Spectator
     /// mode ignores world solidity and may move through unloaded columns.
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
-        let solid = |x: i32, y: i32, z: i32| Self::solid_world(world, x, y, z);
+        let boxes =
+            |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)).collision_boxes();
         let water =
             |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)) == Block::Water;
         let water_flow = |x: i32, y: i32, z: i32| world.water_flow_dir_at(x, y, z);
-        self.update_core_with_current(dt, &solid, &water, &water_flow, input);
+        self.update_core_with_current(dt, &boxes, &water, &water_flow, input);
     }
 
     /// Physics integration against arbitrary solidity + water predicates, so the
@@ -133,18 +134,23 @@ impl Player {
         W: Fn(i32, i32, i32) -> bool,
     {
         let still_water = |_: i32, _: i32, _: i32| Vec3::ZERO;
-        self.update_core_with_current(dt, solid, water, &still_water, input);
+        // Adapt the test's bool solidity to the general collision-box predicate: a
+        // solid cell is one full cube, an empty cell no box.
+        let boxes = |x: i32, y: i32, z: i32| {
+            if solid(x, y, z) { Block::Stone } else { Block::Air }.collision_boxes()
+        };
+        self.update_core_with_current(dt, &boxes, water, &still_water, input);
     }
 
     pub(super) fn update_core_with_current<F, W, C>(
         &mut self,
         dt: f32,
-        solid: &F,
+        boxes: &F,
         water: &W,
         water_flow: &C,
         input: Input,
     ) where
-        F: Fn(i32, i32, i32) -> bool,
+        F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
         C: Fn(i32, i32, i32) -> Vec3,
     {
@@ -154,6 +160,9 @@ impl Player {
         }
 
         let was_on_ground = self.on_ground;
+        // A cell counts as solid for the water climb-out ledge probe iff it has any
+        // collision box (full cube, slab, chest, …).
+        let solid = |x: i32, y: i32, z: i32| !boxes(x, y, z).is_empty();
 
         // Submerged enough to swim? Sample water ~thigh height above the feet, so
         // wading in shallow water still walks but deeper water switches to buoyant
@@ -196,7 +205,7 @@ impl Player {
             let climbing_out = input.jump
                 && self.vel.y >= 0.0
                 && input.wishdir.length_squared() > 1e-12
-                && self.ledge_ahead(input.wishdir, solid);
+                && self.ledge_ahead(input.wishdir, &solid);
             if climbing_out {
                 self.vel.y = self.vel.y.max(SWIM_CLIMB);
                 self.jumping = true;
@@ -220,7 +229,7 @@ impl Player {
             self.vel.y = (self.vel.y - g * dt).max(-TERMINAL);
         }
         let dy = self.vel.y * dt;
-        let blocked_y = self.sweep(Axis::Y, dy, solid);
+        let blocked_y = self.sweep_boxes(Axis::Y, dy, boxes);
         if blocked_y {
             // Landed if we were moving down; bonked head if moving up. Either way
             // the jump arc is over, so stop easing gravity.
@@ -333,10 +342,10 @@ impl Player {
 
         let dx = self.vel.x * dt;
         let dz = self.vel.z * dt;
-        if self.sweep(Axis::X, dx, solid) {
+        if self.sweep_boxes(Axis::X, dx, boxes) {
             self.vel.x = 0.0;
         }
-        if self.sweep(Axis::Z, dz, solid) {
+        if self.sweep_boxes(Axis::Z, dz, boxes) {
             self.vel.z = 0.0;
         }
     }

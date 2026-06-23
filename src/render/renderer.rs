@@ -11,6 +11,7 @@ use super::block_model::BillboardBasis;
 use super::break_overlay::build_break_overlay;
 use super::crosshair::crosshair_vertices;
 use super::hand::{build_hand_lit, HeldItemAnimator};
+use super::chest_model::build_chests;
 use super::item_entity::build_item_entities;
 use super::particles::build_particles;
 use super::pipeline::create_pipeline_resources;
@@ -20,7 +21,8 @@ use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
-    BreakOverlayView, HeldItemFrame, HeldItemView, ItemEntityInstance, ParticleInstance, UiFrame,
+    BreakOverlayView, ChestInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
+    ParticleInstance, UiFrame,
 };
 use crate::inventory::TOTAL_SLOTS;
 use crate::item::ItemType;
@@ -66,6 +68,9 @@ pub struct UiSnapshot {
     /// The open furnace's slots + progress gauges, or `None` when the open panel is
     /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
     pub furnace: Option<super::FurnaceView>,
+    /// The open chest's 27 storage slots, or `None`. When `Some`, the chest panel +
+    /// storage grid are drawn instead of the crafting grid.
+    pub chest: Option<super::ChestView>,
 }
 
 impl Default for UiSnapshot {
@@ -81,6 +86,7 @@ impl Default for UiSnapshot {
             result: None,
             cursor: None,
             furnace: None,
+            chest: None,
         }
     }
 }
@@ -161,6 +167,9 @@ pub struct Renderer {
     /// Item-entity dynamic buffers (drawn by the opaque pipeline).
     pub item_entity_vbuf: wgpu::Buffer,
     pub item_entity_ibuf: wgpu::Buffer,
+    /// Chest model dynamic buffers (drawn by the opaque pipeline, like item entities).
+    pub chest_vbuf: wgpu::Buffer,
+    pub chest_ibuf: wgpu::Buffer,
     /// Particle billboard pipeline + its reusable vbuf and static quad ibuf.
     pub particle_pipe: wgpu::RenderPipeline,
     pub particle_vbuf: wgpu::Buffer,
@@ -207,6 +216,12 @@ pub struct Renderer {
     item_entity_visible: Vec<ItemEntityInstance>,
     /// Index count of the item-entity geometry uploaded for this frame (0 = none).
     item_entity_index_count: u32,
+    /// Placed chests to draw in the world this frame.
+    pub chests: Vec<ChestInstance>,
+    /// Reusable scratch for the frustum-visible subset of `chests`.
+    chest_visible: Vec<ChestInstance>,
+    /// Index count of the chest geometry uploaded for this frame (0 = none).
+    chest_index_count: u32,
     /// Reusable CPU staging for baked particle vertices.
     particle_verts: Vec<super::particles::ParticleVertex>,
     /// Vertex count of the particle geometry uploaded for this frame (0 = none).
@@ -398,6 +413,8 @@ async fn new_renderer_inner(
         break_index_count: 0,
         item_entity_vbuf: pipelines.item_entity_vbuf,
         item_entity_ibuf: pipelines.item_entity_ibuf,
+        chest_vbuf: pipelines.chest_vbuf,
+        chest_ibuf: pipelines.chest_ibuf,
         particle_pipe: pipelines.particle_pipe,
         particle_vbuf: pipelines.particle_vbuf,
         particle_ibuf: pipelines.particle_ibuf,
@@ -424,6 +441,9 @@ async fn new_renderer_inner(
         item_entity_indices: Vec::new(),
         item_entity_visible: Vec::new(),
         item_entity_index_count: 0,
+        chests: Vec::new(),
+        chest_visible: Vec::new(),
+        chest_index_count: 0,
         particle_verts: Vec::new(),
         particle_vertex_count: 0,
         ui_pipe: pipelines.ui_pipe,
@@ -527,6 +547,13 @@ impl Renderer {
         self.item_entities.extend_from_slice(v);
     }
 
+    /// Store the placed chests to draw this frame. Reuses the existing `Vec`
+    /// capacity (clear + extend) to avoid per-frame reallocation.
+    pub fn set_chests(&mut self, v: &[ChestInstance]) {
+        self.chests.clear();
+        self.chests.extend_from_slice(v);
+    }
+
     /// Store the particle billboards to draw this frame. Reuses capacity.
     pub fn set_particles(&mut self, v: &[ParticleInstance]) {
         self.particles.clear();
@@ -553,6 +580,7 @@ impl Renderer {
         }
         self.ui.result = v.craft_result.map(|s| (s.item, s.count));
         self.ui.furnace = v.furnace;
+        self.ui.chest = v.chest;
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?
@@ -852,6 +880,45 @@ impl Renderer {
             }
         }
 
+        // Build + upload the chest model geometry (inset body + hinged lid). Drawn by
+        // the EXISTING opaque pipeline in the chest pass below; frustum-culled like
+        // item entities and reusing their CPU scratch (already uploaded above).
+        self.chest_index_count = 0;
+        if !self.chests.is_empty() {
+            self.chest_visible.clear();
+            for inst in &self.chests {
+                // Cull box: the block cell, expanded upward to include the open lid.
+                let min = inst.pos;
+                let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
+                if self.frustum.aabb_visible(min, max) {
+                    self.chest_visible.push(*inst);
+                }
+            }
+            let count = build_chests(
+                &self.chest_visible,
+                &mut self.item_entity_verts,
+                &mut self.item_entity_indices,
+            );
+            let vbuf_cap = super::pipeline::MAX_CHEST_VERTICES as usize;
+            let ibuf_cap = super::pipeline::MAX_CHEST_INDICES as usize;
+            if count > 0
+                && self.item_entity_verts.len() <= vbuf_cap
+                && self.item_entity_indices.len() <= ibuf_cap
+            {
+                self.queue.write_buffer(
+                    &self.chest_vbuf,
+                    0,
+                    bytemuck::cast_slice(&self.item_entity_verts),
+                );
+                self.queue.write_buffer(
+                    &self.chest_ibuf,
+                    0,
+                    bytemuck::cast_slice(&self.item_entity_indices),
+                );
+                self.chest_index_count = count;
+            }
+        }
+
         // Build + upload the break-overlay (destroy crack) cube, when targeted.
         self.break_index_count = 0;
         if let Some(view) = self.break_overlay {
@@ -1059,6 +1126,40 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.item_entity_vbuf.slice(..));
             pass.set_index_buffer(self.item_entity_ibuf.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..self.item_entity_index_count, 0, 0..1);
+        }
+        // CHEST PASS: placed chests (inset body + hinged lid) drawn as full opaque
+        // geometry by the EXISTING opaque pipeline with the same uniform + atlas binds,
+        // loading color + depth so chests occlude and are occluded by terrain — exactly
+        // like the item-entity pass above.
+        if self.chest_index_count > 0 {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("chest pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.opaque_pipe);
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_vertex_buffer(0, self.chest_vbuf.slice(..));
+            pass.set_index_buffer(self.chest_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.chest_index_count, 0, 0..1);
         }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so

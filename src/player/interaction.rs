@@ -127,6 +127,14 @@ fn hit(block_pos: IVec3, normal: IVec3, block: Block) -> RaycastHit {
 }
 
 fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
+    // Non-full-cube blocks (the chest) outline their inset visual box.
+    if let Some((mn, mx)) = block.visual_aabb() {
+        let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+        return SelectionShape::Box {
+            min: base + Vec3::new(mn[0], mn[1], mn[2]),
+            max: base + Vec3::new(mx[0], mx[1], mx[2]),
+        };
+    }
     if block.render_shape() != RenderShape::Cross {
         return SelectionShape::full_block(block_pos);
     }

@@ -10,6 +10,7 @@ pub mod atlas;
 pub mod biome;
 pub mod block;
 pub mod camera;
+pub mod chest;
 pub mod chunk;
 pub mod controls;
 pub mod crafting;

@@ -197,6 +197,12 @@ impl App {
                 self.open_furnace(pos);
             }
         }
+        // Right-clicking a placed chest opens its screen at that position.
+        if let Some(pos) = events.open_chest {
+            if self.screen.gameplay_enabled() {
+                self.open_chest(pos);
+            }
+        }
         self.pointer.clear_edges();
 
         let environment = self.game.environment(now);
@@ -219,6 +225,7 @@ impl App {
         renderer.set_held_item_light(self.game.held_item_skylight());
 
         renderer.set_item_entities(self.game.item_entity_instances());
+        renderer.set_chests(self.game.chest_instances());
         renderer.set_particles(self.game.particle_instances());
         renderer.set_ui(UiFrame {
             open: self.screen.ui_open(),
@@ -227,6 +234,7 @@ impl App {
             craft: self.game.craft_grid().cells(),
             craft_result: self.game.craft_grid().result().copied(),
             furnace: self.game.open_furnace_view(),
+            chest: self.game.open_chest_view(),
             screen: screen_size,
             cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
         });
@@ -288,6 +296,12 @@ impl App {
         self.game.open_furnace_screen(pos);
     }
 
+    /// Open the chest screen for the chest at `pos` (after right-clicking it).
+    fn open_chest(&mut self, pos: crate::mathh::IVec3) {
+        self.enter_menu(AppScreen::Chest);
+        self.game.open_chest_screen(pos);
+    }
+
     /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
@@ -301,10 +315,12 @@ impl App {
     /// Close any open menu: return crafting-grid items to the inventory, drop back
     /// to gameplay, and re-grab the pointer.
     fn close_menu(&mut self) {
-        // Both are safe to call regardless of which menu was open: a furnace screen
-        // leaves the craft grid empty, and the inventory/table leaves no open furnace.
+        // All three are safe to call regardless of which menu was open: a furnace /
+        // chest screen leaves the craft grid empty, and the inventory/table leaves no
+        // open furnace or chest.
         self.game.close_crafting();
         self.game.close_furnace();
+        self.game.close_chest();
         self.screen = AppScreen::Game;
         self.pointer.grabbing = true;
     }
@@ -359,6 +375,13 @@ impl App {
                 self.route_furnace_click(hit, button, shift);
                 return;
             }
+        } else if self.screen.is_chest() {
+            if let Some(slot) = crate::render::chest_slot_at_cursor(screen, cursor) {
+                // Left-clicks manage their own double-click streak inside
+                // route_chest_click (so a fast re-click gathers); don't reset it here.
+                self.route_chest_click(slot, button, shift, now);
+                return;
+            }
         } else if let Some(hit) =
             crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
         {
@@ -370,10 +393,13 @@ impl App {
             Some(slot) => {
                 if shift {
                     // In the furnace screen, shift-click sends #fuel / #smeltable
-                    // stacks into the right furnace slot; elsewhere it shuffles
-                    // between the hotbar and the main grid.
+                    // stacks into the right furnace slot; in the chest screen it
+                    // dumps the stack into the chest; elsewhere it shuffles between
+                    // the hotbar and the main grid.
                     if self.screen.is_furnace() {
                         self.game.furnace_shift_from_inventory(slot);
+                    } else if self.screen.is_chest() {
+                        self.game.chest_shift_from_inventory(slot);
                     } else {
                         self.game.shift_click_inventory_slot(slot);
                     }
@@ -404,7 +430,13 @@ impl App {
     /// fill); otherwise it's the normal whole-stack pick/drop/swap.
     fn left_click_slot(&mut self, slot: usize, now: f64) {
         if self.pointer.register_left_click(slot, now) && self.game.cursor_has_stack() {
-            self.game.collect_to_cursor();
+            // While the chest screen is open, a double-click gathers from the chest
+            // too (matching MC), not just the inventory.
+            if self.screen.is_chest() {
+                self.game.collect_to_cursor_in_chest();
+            } else {
+                self.game.collect_to_cursor();
+            }
         } else {
             self.game.click_inventory_slot(slot);
         }
@@ -477,6 +509,42 @@ impl App {
             }
         }
     }
+
+    /// Apply a click on a chest storage slot. Shift quick-moves the stack to the
+    /// inventory; right splits / places one; left does whole-stack pick/drop/swap —
+    /// except a fast second left click on the same slot while dragging gathers
+    /// matching items onto the cursor (double-click fill, from chest + inventory).
+    fn route_chest_click(&mut self, slot: usize, button: PointerButton, shift: bool, now: f64) {
+        if shift {
+            self.game.chest_shift_slot(slot);
+            self.pointer.reset_click_streak();
+        } else {
+            match button {
+                PointerButton::Primary => self.left_click_chest_slot(slot, now),
+                PointerButton::Secondary => {
+                    self.game.chest_right_click_slot(slot);
+                    self.pointer.reset_click_streak();
+                }
+            }
+        }
+    }
+
+    /// Left-click a chest storage slot. A fast second click on the same slot while a
+    /// stack is held gathers matching items into the cursor (from the chest AND the
+    /// inventory); otherwise it's the normal whole-stack pick/drop/swap. Chest slot
+    /// indices are namespaced past the inventory's (see [`CHEST_SLOT_STREAK_BASE`])
+    /// so a chest slot and an inventory slot with the same number aren't conflated.
+    fn left_click_chest_slot(&mut self, slot: usize, now: f64) {
+        if self
+            .pointer
+            .register_left_click(CHEST_SLOT_STREAK_BASE + slot, now)
+            && self.game.cursor_has_stack()
+        {
+            self.game.collect_to_cursor_in_chest();
+        } else {
+            self.game.chest_click_slot(slot);
+        }
+    }
 }
 
 /// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
@@ -492,6 +560,11 @@ const SCROLL_NOTCHES_PER_SLOT: f32 = 1.0;
 /// double-click, which gathers matching items onto the cursor instead of dropping
 /// the held stack back. Matches the classic ~250 ms double-click timeout.
 const DOUBLE_CLICK_SECS: f64 = 0.25;
+
+/// Offset added to a chest storage-slot index when feeding the double-click streak,
+/// so a chest slot and an inventory slot with the same number can't be conflated
+/// into a phantom double-click. Larger than any inventory slot index.
+const CHEST_SLOT_STREAK_BASE: usize = 1000;
 
 impl PointerState {
     /// Register a left-click on inventory `slot` at time `now`, returning whether

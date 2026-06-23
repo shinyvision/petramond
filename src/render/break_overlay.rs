@@ -22,7 +22,7 @@
 
 use glam::Vec3;
 
-use super::block_model::push_cube_textured;
+use super::block_model::{push_box_faces_lit, push_cube_textured};
 use super::BreakOverlayView;
 use crate::atlas::Tile;
 use crate::mesh::Vertex;
@@ -53,12 +53,28 @@ pub fn build_break_overlay(
     verts.clear();
     indices.clear();
     let tile = destroy_tile(view.stage);
-    let origin = Vec3::new(
+    let base = Vec3::new(
         view.block.x as f32,
         view.block.y as f32,
         view.block.z as f32,
     );
-    push_cube_textured(verts, indices, [tile; 3], origin, 1.0);
+    match view.block_kind.visual_aabb() {
+        // A non-full-cube block (the chest) cracks over its inset visual box, so the
+        // crack lands on the model rather than the empty cell faces around it.
+        Some((mn, mx)) => {
+            let min = base + Vec3::new(mn[0], mn[1], mn[2]);
+            let max = base + Vec3::new(mx[0], mx[1], mx[2]);
+            push_box_faces_lit(
+                verts,
+                indices,
+                [tile; 6],
+                min,
+                max,
+                super::lighting::FULL_SKYLIGHT,
+            );
+        }
+        None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
+    }
     indices.len() as u32
 }
 
@@ -81,6 +97,7 @@ mod tests {
         let mut i = Vec::new();
         let view = BreakOverlayView {
             block: IVec3::new(3, 64, -7),
+            block_kind: crate::block::Block::Stone,
             stage: 4,
         };
         let n = build_break_overlay(&view, &mut v, &mut i);
@@ -113,6 +130,7 @@ mod tests {
         let cap = v.capacity();
         let view = BreakOverlayView {
             block: IVec3::ZERO,
+            block_kind: crate::block::Block::Stone,
             stage: 0,
         };
         build_break_overlay(&view, &mut v, &mut i);

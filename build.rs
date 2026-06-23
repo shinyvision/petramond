@@ -164,6 +164,18 @@ const TILES: &[(&str, &str)] = &[
     ("furnace_side", "furnace_side.png"),
     ("iron_ingot", "iron_ingot.png"),
     ("copper_ingot", "copper_ingot.png"),
+    // Chest update (Survival 0.1): chest face tiles, sliced from the vanilla
+    // single-chest entity texture (entity/chest/normal.png) into per-face tiles.
+    // The placed chest is drawn as a custom inset body + hinged lid model (see
+    // render::chest_model); these tiles texture that model and the inventory icon.
+    // Appended last so every preceding tile id stays stable.
+    ("chest_top", "chest_top.png"),
+    ("chest_front", "chest_front.png"),
+    ("chest_side", "chest_side.png"),
+    ("chest_lid_front", "chest_lid_front.png"),
+    ("chest_lid_side", "chest_lid_side.png"),
+    ("chest_inside", "chest_inside.png"),
+    ("chest_latch", "chest_latch.png"),
 ];
 
 /// Animated flipbook tiles (name, file, frame_count). The source PNG is a

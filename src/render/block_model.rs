@@ -82,8 +82,21 @@ impl Face {
     /// `corner_uv` (0->bl, 1->br, 2->tr, 3->tl) maps tiles upright.
     #[inline]
     fn quad(self, o: Vec3, s: f32) -> [[f32; 3]; 4] {
-        let (x, y, z) = (o.x, o.y, o.z);
-        let p = |dx: f32, dy: f32, dz: f32| [x + dx * s, y + dy * s, z + dz * s];
+        self.quad_box(o, Vec3::new(o.x + s, o.y + s, o.z + s))
+    }
+
+    /// Like [`quad`](Self::quad) but spanning an arbitrary axis-aligned box
+    /// `[min, max]` (per-axis extents), for non-cube parts such as the chest's inset
+    /// body and lid. Corner order matches [`quad`] so `corner_uv` maps tiles upright.
+    #[inline]
+    fn quad_box(self, min: Vec3, max: Vec3) -> [[f32; 3]; 4] {
+        let p = |dx: f32, dy: f32, dz: f32| {
+            [
+                if dx == 0.0 { min.x } else { max.x },
+                if dy == 0.0 { min.y } else { max.y },
+                if dz == 0.0 { min.z } else { max.z },
+            ]
+        };
         match self {
             Face::PosX => [
                 p(1.0, 0.0, 1.0),
@@ -220,9 +233,12 @@ fn expand_tiles(tiles: [Tile; 3]) -> [Tile; 6] {
 /// a furnace instead of four mouths (the placed block is meshed directionally).
 pub(super) fn block_icon_faces(block: Block) -> [Tile; 6] {
     let mut faces = expand_tiles(block.tiles());
-    if block == Block::Furnace {
-        // Index 4 = PosZ, one of the two side faces the isometric icon presents.
-        faces[4] = Tile::FurnaceFront;
+    // Index 4 = PosZ, one of the two side faces the isometric icon presents, so a
+    // directional block shows its front there instead of repeating the side art.
+    match block {
+        Block::Furnace => faces[4] = Tile::FurnaceFront,
+        Block::Chest => faces[4] = Tile::ChestFront,
+        _ => {}
     }
     faces
 }
@@ -248,12 +264,28 @@ pub(super) fn push_cube_faces_lit(
     size: f32,
     skylight: u8,
 ) {
+    let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
+    push_box_faces_lit(verts, indices, faces, origin, max, skylight);
+}
+
+/// Append a textured box spanning `[min, max]` with explicit per-face tiles
+/// (`ALL_FACES` order: PosX, NegX, PosY, NegY, PosZ, NegZ), lit by `skylight`. Like
+/// [`push_cube_faces_lit`] but for an arbitrary (non-cube) box — used to build the
+/// chest's inset body and hinged lid. 24 verts / 36 indices, back-face culled.
+pub(super) fn push_box_faces_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    min: Vec3,
+    max: Vec3,
+    skylight: u8,
+) {
     for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
         push_quad(
             verts,
             indices,
-            face.quad(origin, size),
+            face.quad_box(min, max),
             mat.tint,
             face_bits_textured_lit(mat, face, skylight),
         );

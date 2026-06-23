@@ -4,6 +4,7 @@
 //! Gen is off-thread: see `worker` module. The facade keeps the public `World`
 //! API stable while the implementation is split by responsibility.
 
+mod chest;
 mod edit;
 mod entities;
 mod furnace;

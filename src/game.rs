@@ -4,8 +4,11 @@
 //! platform input, app screens, or hand animation; those belong to the app shell
 //! and render presentation layer.
 
+use std::collections::HashMap;
+
 use crate::block::Block;
 use crate::camera::Camera;
+use crate::chest::Chest;
 use crate::crafting::{load_recipes, CraftGrid, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::furnace::{Facing, Furnace};
@@ -14,7 +17,9 @@ use crate::item::{ItemStack, ItemTag, ItemType};
 use crate::mathh::{lerp, IVec3, SelectionShape, Vec3};
 use crate::mining::MiningState;
 use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
-use crate::render::{BreakOverlayView, FurnaceView, ItemEntityInstance, ParticleInstance};
+use crate::render::{
+    BreakOverlayView, ChestInstance, ChestView, FurnaceView, ItemEntityInstance, ParticleInstance,
+};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
@@ -39,6 +44,9 @@ const TICK_DT: f32 = 0.05;
 /// catch-up after a stall so the sim never spirals trying to replay lost time —
 /// it just runs the late tick and reschedules from now (per the design).
 const MAX_TICKS_PER_FRAME: u32 = 4;
+
+/// Chest-lid open/close speed (fraction per second)
+const CHEST_LID_SPEED: f32 = 3.5;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MovementInput {
@@ -79,6 +87,9 @@ pub struct GameEvents {
     /// The player right-clicked a placed furnace this frame (its world position).
     /// The app shell reacts by opening the furnace screen.
     pub open_furnace: Option<IVec3>,
+    /// The player right-clicked a placed chest this frame (its world position).
+    /// The app shell reacts by opening the chest screen.
+    pub open_chest: Option<IVec3>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -105,6 +116,15 @@ pub struct Game {
     mining_dust_t: f32,
     item_entity_instances: Vec<ItemEntityInstance>,
     particle_instances: Vec<ParticleInstance>,
+    /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
+    /// position. Eased toward open for the chest whose screen is up and toward closed
+    /// for the rest; client-side animation only, never persisted.
+    chest_lids: HashMap<IVec3, f32>,
+    /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
+    /// from the loaded chunks each frame; the lid angle is added from `chest_lids`.
+    chest_render_buf: Vec<(IVec3, Facing, u8)>,
+    /// Reusable buffer of the chest instances handed to the renderer each frame.
+    chest_instances: Vec<ChestInstance>,
     /// Wall-clock seconds banked toward the next fixed simulation tick.
     tick_accumulator: f32,
     /// Wall-clock seconds since the last background autosave.
@@ -128,6 +148,12 @@ pub struct Game {
     /// The position of the furnace whose screen is currently open (the GUI reads and
     /// edits the furnace stored there); `None` when no furnace screen is up.
     open_furnace: Option<IVec3>,
+    /// Set to a chest's position when right-clicked, so the next [`tick`](Self::tick)
+    /// asks the app shell to open the chest screen. One-shot.
+    request_open_chest: Option<IVec3>,
+    /// The position of the chest whose screen is currently open (the GUI reads and
+    /// edits the chest stored there); `None` when no chest screen is up.
+    open_chest: Option<IVec3>,
 }
 
 impl Game {
@@ -192,6 +218,9 @@ impl Game {
             mining_dust_t: 0.0,
             item_entity_instances: Vec::new(),
             particle_instances: Vec::new(),
+            chest_lids: HashMap::new(),
+            chest_render_buf: Vec::new(),
+            chest_instances: Vec::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
             threw_item: false,
@@ -200,6 +229,8 @@ impl Game {
             request_open_table: false,
             request_open_furnace: None,
             open_furnace: None,
+            request_open_chest: None,
+            open_chest: None,
         }
     }
 
@@ -237,6 +268,7 @@ impl Game {
         self.run_fixed_ticks(dt);
 
         self.tick_entities(dt);
+        self.advance_chest_lids(dt);
         self.tick_mesh_budget();
         self.refresh_dropped_item_lights_after_world_light_update();
 
@@ -251,6 +283,8 @@ impl Game {
             open_crafting_table: std::mem::take(&mut self.request_open_table),
             // Set when a furnace was right-clicked.
             open_furnace: std::mem::take(&mut self.request_open_furnace),
+            // Set when a chest was right-clicked.
+            open_chest: std::mem::take(&mut self.request_open_chest),
         }
     }
 
@@ -566,6 +600,97 @@ impl Game {
         self.world.mark_furnace_modified(pos);
     }
 
+    /// Begin a chest-screen session at `pos`: remember which chest the GUI reads and
+    /// edits. Defensively creates an empty chest if the block lacks one (placement
+    /// always inserts one, so this is belt-and-braces).
+    pub fn open_chest_screen(&mut self, pos: IVec3) {
+        if self.world.chest_at(pos).is_none() {
+            self.world.insert_chest(pos, Facing::default());
+        }
+        self.open_chest = Some(pos);
+    }
+
+    /// End the chest-screen session. The chest keeps its contents (like the furnace,
+    /// unlike the crafting grid which empties back into the inventory on close).
+    pub fn close_chest(&mut self) {
+        self.open_chest = None;
+    }
+
+    /// The view of the currently-open chest for the UI (its 27 storage slots), or
+    /// `None` if no chest screen is up or it has unloaded.
+    pub fn open_chest_view(&self) -> Option<ChestView> {
+        let pos = self.open_chest?;
+        let chest = self.world.chest_at(pos)?;
+        Some(ChestView { slots: chest.slots })
+    }
+
+    /// Run `edit` on the open chest's contents, then mark its chunk modified so the
+    /// change persists (an idle chest wouldn't otherwise be re-saved). No-op when no
+    /// chest screen is open or the chest has unloaded.
+    fn edit_open_chest(&mut self, edit: impl FnOnce(&mut Inventory, &mut Chest)) {
+        let Some(pos) = self.open_chest else { return };
+        if let Some(chest) = self.world.chest_at_mut(pos) {
+            edit(&mut self.player.inventory, chest);
+        }
+        self.world.mark_chest_modified(pos);
+    }
+
+    /// Left-click a chest storage slot: cursor pick/drop/merge/swap.
+    pub fn chest_click_slot(&mut self, i: usize) {
+        self.edit_open_chest(|inv, chest| {
+            if let Some(slot) = chest.slots.get_mut(i) {
+                inv.click_external_slot(slot);
+            }
+        });
+    }
+
+    /// Right-click a chest storage slot: split / place-one.
+    pub fn chest_right_click_slot(&mut self, i: usize) {
+        self.edit_open_chest(|inv, chest| {
+            if let Some(slot) = chest.slots.get_mut(i) {
+                inv.right_click_external_slot(slot);
+            }
+        });
+    }
+
+    /// Shift-click a chest storage slot: move its stack to the inventory (whatever
+    /// doesn't fit stays put).
+    pub fn chest_shift_slot(&mut self, i: usize) {
+        self.edit_open_chest(|inv, chest| {
+            if let Some(slot) = chest.slots.get_mut(i) {
+                transfer_to_inventory(inv, slot);
+            }
+        });
+    }
+
+    /// Shift-click inventory slot `i` while the chest screen is open: move its whole
+    /// stack into the chest (merging into matching stacks, then the first empty slot;
+    /// leftover stays in the inventory).
+    pub fn chest_shift_from_inventory(&mut self, i: usize) {
+        let Some(pos) = self.open_chest else { return };
+        if self.player.inventory.slot(i).is_none() {
+            return;
+        }
+        // `world` and `player` are disjoint fields, so the chest slots and the
+        // inventory slot can be borrowed together for the move.
+        {
+            let Some(chest) = self.world.chest_at_mut(pos) else {
+                return;
+            };
+            let Some(src) = self.player.inventory.slot_mut(i) else {
+                return;
+            };
+            move_into_slots(src, &mut chest.slots);
+        }
+        self.world.mark_chest_modified(pos);
+    }
+
+    /// Double-click gather in the open chest screen: top up the cursor-held stack
+    /// with matching items from BOTH the chest and the inventory.
+    pub fn collect_to_cursor_in_chest(&mut self) {
+        self.edit_open_chest(|inv, chest| inv.collect_to_cursor_including(&mut chest.slots));
+    }
+
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
     /// then click outside the panel). No-op when the cursor is empty.
     pub fn throw_cursor_stack(&mut self) {
@@ -625,14 +750,64 @@ impl Game {
 
     #[inline]
     pub fn break_overlay_view(&self) -> Option<BreakOverlayView> {
-        self.mining
-            .overlay()
-            .map(|(block, stage)| BreakOverlayView { block, stage })
+        self.mining.overlay().map(|(block, stage)| {
+            let block_kind = Block::from_id(self.world.chunk_block(block.x, block.y, block.z));
+            BreakOverlayView {
+                block,
+                block_kind,
+                stage,
+            }
+        })
     }
 
     pub fn item_entity_instances(&mut self) -> &[ItemEntityInstance] {
         self.map_item_entities();
         &self.item_entity_instances
+    }
+
+    /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
+    /// gathered from the loaded chunks. Reuses internal buffers (no per-frame alloc).
+    pub fn chest_instances(&mut self) -> &[ChestInstance] {
+        self.world.collect_chests(&mut self.chest_render_buf);
+        self.chest_instances.clear();
+        for idx in 0..self.chest_render_buf.len() {
+            let (pos, facing, skylight) = self.chest_render_buf[idx];
+            // Ease the linear open progress with a smoothstep so the lid accelerates
+            // and decelerates instead of swinging at a constant rate.
+            let raw = self.chest_lids.get(&pos).copied().unwrap_or(0.0);
+            let lid01 = raw * raw * (3.0 - 2.0 * raw);
+            self.chest_instances.push(ChestInstance {
+                pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
+                facing,
+                lid01,
+                skylight,
+            });
+        }
+        &self.chest_instances
+    }
+
+    /// Advance the transient chest-lid animation by `dt`: the open chest's lid eases
+    /// toward fully open, every other tracked lid toward closed, and lids that reach
+    /// closed (and aren't the open chest) are dropped. The open/closed target is
+    /// derived from `open_chest`, so the lid follows the GUI being open — purely
+    /// client-side, never saved.
+    fn advance_chest_lids(&mut self, dt: f32) {
+        let step = (dt * CHEST_LID_SPEED).clamp(0.0, 1.0);
+        // Ensure the open chest is tracked so it animates from closed on the first frame.
+        if let Some(pos) = self.open_chest {
+            self.chest_lids.entry(pos).or_insert(0.0);
+        }
+        let open = self.open_chest;
+        self.chest_lids.retain(|&pos, lid| {
+            let target = if Some(pos) == open { 1.0 } else { 0.0 };
+            if *lid < target {
+                *lid = (*lid + step).min(target);
+            } else if *lid > target {
+                *lid = (*lid - step).max(target);
+            }
+            // Keep while still animating, or while it is the open chest.
+            *lid > f32::EPSILON || Some(pos) == open
+        });
     }
 
     pub fn particle_instances(&mut self) -> &[ParticleInstance] {
@@ -789,6 +964,13 @@ impl Game {
                         self.spawn_item_stack(event.pos, stack, light);
                     }
                 }
+            } else if event.block == Block::Chest {
+                // A broken chest scatters its whole contents, regardless of tool.
+                if let Some(chest) = self.world.take_chest(event.pos) {
+                    for stack in chest.slots.into_iter().flatten() {
+                        self.spawn_item_stack(event.pos, stack, light);
+                    }
+                }
             }
             self.particles
                 .spawn_break_burst_lit(event.pos, event.block, light);
@@ -836,6 +1018,10 @@ impl Game {
                 self.request_open_furnace = Some(h.block);
                 true
             }
+            Block::Chest => {
+                self.request_open_chest = Some(h.block);
+                true
+            }
             _ => false,
         }
     }
@@ -860,11 +1046,14 @@ impl Game {
             && !self.player.intersects_block(p)
             && self.world.set_block_world(p.x, p.y, p.z, block)
         {
-            // A placed furnace gets an empty block-entity from the moment it exists,
-            // its front oriented to face the player.
+            // A placed furnace/chest gets an empty block-entity from the moment it
+            // exists, its front oriented to face the player.
             if block == Block::Furnace {
                 self.world
                     .insert_furnace(p, facing_from_forward(self.cam.forward()));
+            } else if block == Block::Chest {
+                self.world
+                    .insert_chest(p, facing_from_forward(self.cam.forward()));
             }
             self.player.inventory.decrement_selected();
             true
@@ -1048,6 +1237,39 @@ fn move_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
         }
         Some(_) => *src = Some(incoming),
     }
+}
+
+/// Move `src`'s whole stack into `slots` (a chest's storage): merge onto matching
+/// stacks with room in order, then drop the remainder into the first empty slot.
+/// Whatever still doesn't fit stays in `src`. Mirrors `Inventory::add` over an
+/// external slot array (a single source stack is ≤ one max stack, so one empty slot
+/// always suffices for the remainder). No-op on an empty `src`.
+fn move_into_slots(src: &mut Option<ItemStack>, slots: &mut [Option<ItemStack>]) {
+    let Some(mut incoming) = src.take() else {
+        return;
+    };
+    // Pass 1: top up matching, non-full stacks.
+    for slot in slots.iter_mut().flatten() {
+        if incoming.count == 0 {
+            break;
+        }
+        if slot.can_stack_with(&incoming) {
+            let moved = slot.space_left().min(incoming.count);
+            slot.count += moved;
+            incoming.count -= moved;
+        }
+    }
+    // Pass 2: the first empty slot takes the remainder.
+    if incoming.count > 0 {
+        for slot in slots.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(incoming);
+                incoming.count = 0;
+                break;
+            }
+        }
+    }
+    *src = (incoming.count > 0).then_some(incoming);
 }
 
 fn sky6_at_pos(world: &World, pos: Vec3) -> u8 {
@@ -1877,7 +2099,8 @@ mod tests {
         let mut game = game();
         install_empty_chunk(&mut game);
         let pos = IVec3::new(2, 64, 2);
-        game.world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        game.world
+            .set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         game.world.insert_furnace(pos, Facing::North);
         game.open_furnace_screen(pos);
 
@@ -1889,7 +2112,10 @@ mod tests {
 
         // Coal -> fuel slot.
         game.furnace_shift_from_inventory(0);
-        assert!(game.inventory().slot(0).is_none(), "coal left the inventory");
+        assert!(
+            game.inventory().slot(0).is_none(),
+            "coal left the inventory"
+        );
         assert_eq!(
             game.world.furnace_at(pos).unwrap().fuel,
             Some(ItemStack::new(ItemType::Coal, 5)),
@@ -1898,7 +2124,10 @@ mod tests {
 
         // Raw iron -> input slot.
         game.furnace_shift_from_inventory(1);
-        assert!(game.inventory().slot(1).is_none(), "raw iron left the inventory");
+        assert!(
+            game.inventory().slot(1).is_none(),
+            "raw iron left the inventory"
+        );
         assert_eq!(
             game.world.furnace_at(pos).unwrap().input,
             Some(ItemStack::new(ItemType::RawIron, 3)),
@@ -1908,13 +2137,18 @@ mod tests {
         // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
         // back to the ordinary hotbar->main-grid shuffle.
         game.furnace_shift_from_inventory(2);
-        assert!(game.inventory().slot(2).is_none(), "plank moved out of the hotbar slot");
+        assert!(
+            game.inventory().slot(2).is_none(),
+            "plank moved out of the hotbar slot"
+        );
         let f = game.world.furnace_at(pos).unwrap();
         assert_ne!(f.input.map(|s| s.item), Some(ItemType::OakPlanks));
         assert_ne!(f.fuel.map(|s| s.item), Some(ItemType::OakPlanks));
         // It landed in the main grid (first slot of the 27-slot region).
         assert_eq!(
-            game.inventory().slot(crate::inventory::HOTBAR_LEN).map(|s| s.item),
+            game.inventory()
+                .slot(crate::inventory::HOTBAR_LEN)
+                .map(|s| s.item),
             Some(ItemType::OakPlanks),
         );
     }
@@ -1924,7 +2158,8 @@ mod tests {
         let mut game = game();
         install_empty_chunk(&mut game);
         let pos = IVec3::new(3, 64, 3);
-        game.world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        game.world
+            .set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         game.world.insert_furnace(pos, Facing::North);
         // Seed the fuel slot with some coal already.
         game.world.furnace_at_mut(pos).unwrap().fuel = Some(ItemStack::new(ItemType::Coal, 60));
@@ -1943,10 +2178,16 @@ mod tests {
     fn furnace_front_faces_the_player_on_placement() {
         // The front points opposite the look direction (back toward the player).
         assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, 1.0)), Facing::North);
-        assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, -1.0)), Facing::South);
+        assert_eq!(
+            facing_from_forward(Vec3::new(0.0, 0.0, -1.0)),
+            Facing::South
+        );
         assert_eq!(facing_from_forward(Vec3::new(1.0, 0.0, 0.0)), Facing::West);
         assert_eq!(facing_from_forward(Vec3::new(-1.0, 0.0, 0.0)), Facing::East);
         // A pitched, mostly-horizontal look snaps to the dominant horizontal axis.
-        assert_eq!(facing_from_forward(Vec3::new(0.2, -0.9, 0.95)), Facing::North);
+        assert_eq!(
+            facing_from_forward(Vec3::new(0.2, -0.9, 0.95)),
+            Facing::North
+        );
     }
 }

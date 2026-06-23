@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::block::Block;
+use crate::chest::Chest;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
 
@@ -56,6 +57,11 @@ pub struct Chunk {
     /// outright by its chunk: it ticks here, persists in this chunk's save record,
     /// and the mesher reads its lit state locally. Empty for the common chunk.
     furnaces: HashMap<u16, Furnace>,
+    /// Chest block-entities in this chunk, keyed by local block index like
+    /// [`furnaces`](Self::furnaces). Like a furnace a chest never moves, so it's
+    /// owned outright by its chunk: it persists in this chunk's save record and the
+    /// renderer reads its contents/facing locally. Empty for the common chunk.
+    chests: HashMap<u16, Chest>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -89,6 +95,7 @@ impl Chunk {
             blocks,
             water: None,
             furnaces: HashMap::new(),
+            chests: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -140,8 +147,9 @@ impl Chunk {
             // Water meta does not affect skylight (water is transparent), so the
             // bake never reads it -- drop it to keep the snapshot small.
             water: None,
-            // Furnaces don't affect skylight either; the bake never needs them.
+            // Furnaces/chests don't affect skylight either; the bake never needs them.
             furnaces: HashMap::new(),
+            chests: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -298,34 +306,35 @@ impl Chunk {
 
     // --- Furnace block-entities -------------------------------------------------
 
-    /// Local block-index key for the furnace map (`idx` fits a u16; see field doc).
+    /// Local block-index key for a block-entity map (`idx` fits a u16; see field
+    /// doc). Shared by the furnace and chest maps — both are keyed by local index.
     #[inline]
-    fn furnace_key(x: usize, y: usize, z: usize) -> u16 {
+    fn block_entity_key(x: usize, y: usize, z: usize) -> u16 {
         idx(x, y, z) as u16
     }
 
     /// The furnace stored at a local voxel, if any.
     #[inline]
     pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
-        self.furnaces.get(&Self::furnace_key(x, y, z))
+        self.furnaces.get(&Self::block_entity_key(x, y, z))
     }
 
     /// Mutable handle to the furnace at a local voxel (for GUI edits).
     #[inline]
     pub fn furnace_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Furnace> {
-        self.furnaces.get_mut(&Self::furnace_key(x, y, z))
+        self.furnaces.get_mut(&Self::block_entity_key(x, y, z))
     }
 
     /// Install `furnace` at a local voxel (block placement). Marks the chunk
     /// modified so the furnace persists from the moment it is placed.
     pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace) {
-        self.furnaces.insert(Self::furnace_key(x, y, z), furnace);
+        self.furnaces.insert(Self::block_entity_key(x, y, z), furnace);
         self.modified = true;
     }
 
     /// Remove and return the furnace at a local voxel (block break), if any.
     pub fn take_furnace(&mut self, x: usize, y: usize, z: usize) -> Option<Furnace> {
-        let removed = self.furnaces.remove(&Self::furnace_key(x, y, z));
+        let removed = self.furnaces.remove(&Self::block_entity_key(x, y, z));
         if removed.is_some() {
             self.modified = true;
         }
@@ -351,6 +360,44 @@ impl Chunk {
     #[inline]
     pub fn furnaces(&self) -> &HashMap<u16, Furnace> {
         &self.furnaces
+    }
+
+    // --- Chest block-entities ---------------------------------------------------
+
+    /// The chest stored at a local voxel, if any.
+    #[inline]
+    pub fn chest_at(&self, x: usize, y: usize, z: usize) -> Option<&Chest> {
+        self.chests.get(&Self::block_entity_key(x, y, z))
+    }
+
+    /// Mutable handle to the chest at a local voxel (for GUI edits).
+    #[inline]
+    pub fn chest_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Chest> {
+        self.chests.get_mut(&Self::block_entity_key(x, y, z))
+    }
+
+    /// Install `chest` at a local voxel (block placement). Marks the chunk modified
+    /// so the chest persists from the moment it is placed.
+    pub fn insert_chest(&mut self, x: usize, y: usize, z: usize, chest: Chest) {
+        self.chests.insert(Self::block_entity_key(x, y, z), chest);
+        self.modified = true;
+    }
+
+    /// Remove and return the chest at a local voxel (block break), if any.
+    pub fn take_chest(&mut self, x: usize, y: usize, z: usize) -> Option<Chest> {
+        let removed = self.chests.remove(&Self::block_entity_key(x, y, z));
+        if removed.is_some() {
+            self.modified = true;
+        }
+        removed
+    }
+
+    /// The chest map, for saving and for the renderer's per-frame gather (keyed by
+    /// local block index — invert with `idx`: x = key & 15, z = (key >> 4) & 15,
+    /// y = key >> 8).
+    #[inline]
+    pub fn chests(&self) -> &HashMap<u16, Chest> {
+        &self.chests
     }
 
     /// Advance every furnace in this chunk one game tick. `smelt(item)` yields an
@@ -391,6 +438,7 @@ impl Chunk {
         biomes_src: &[u8],
         water: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
+        chests: HashMap<u16, Chest>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -400,6 +448,7 @@ impl Chunk {
             blocks,
             water,
             furnaces,
+            chests,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,

@@ -8,6 +8,7 @@
 //! drains loaded chunks via [`WorldSave::poll_loaded`], mirroring the chunk-gen
 //! worker pool.
 
+mod chest;
 mod codec;
 pub mod entities;
 mod furnace;

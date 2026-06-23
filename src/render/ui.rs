@@ -21,9 +21,11 @@
 use glam::{Mat4, Vec3};
 
 use super::block_model::{block_icon_faces, push_billboard_quad, push_cube_faces};
+use super::chest_model::push_chest_item_full;
 use super::renderer::UiSnapshot;
 use super::resources::GuiSprite;
 use super::ui_text;
+use crate::block::Block;
 use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemRenderKind, ItemType};
 use crate::mesh::Vertex;
@@ -80,6 +82,11 @@ const FURNACE_ARROW: (f32, f32) = (79.0, 35.0);
 /// Top-left of the lit fuel flame (14×14), which depletes top→down with remaining
 /// burn time over the panel's empty flame.
 const FURNACE_FLAME: (f32, f32) = (56.0, 36.0);
+
+/// Chest storage grid origin (px), relative to the 176×166 panel's top-left: a 3×9
+/// grid at (8, 18), matching the vanilla single-container art (`chest.png`). The
+/// player inventory + hotbar below reuse the shared [`slot_rect`] positions.
+const CHEST_GRID: (f32, f32) = (8.0, 18.0);
 
 /// One slot's pixel rectangle (interior, where the icon + digits go) and the GUI
 /// scale that produced it. All in physical pixels, top-left origin, y down.
@@ -407,6 +414,39 @@ pub fn furnace_slot_at_cursor(screen: (u32, u32), cursor_px: (f32, f32)) -> Opti
         .find(|&slot| inside(furnace_slot_rect(slot, screen, scale)))
 }
 
+/// Interior pixel rect of chest storage slot `i` (`0..27`, row-major 3×9), or
+/// `None` if out of range. Same panel placement + 18px pitch as the inventory grid.
+pub fn chest_slot_rect(i: usize, screen: (u32, u32), scale: f32) -> Option<SlotRect> {
+    if i >= crate::chest::CHEST_SLOTS {
+        return None;
+    }
+    let (ox, oy) = panel_origin(screen, scale);
+    let (gx, gy) = CHEST_GRID;
+    let col = (i % 9) as f32;
+    let row = (i / 9) as f32;
+    Some(SlotRect {
+        x: ox + (gx + col * PANEL_PITCH) * scale,
+        y: oy + (gy + row * PANEL_PITCH) * scale,
+        w: SLOT_PX * scale,
+        h: SLOT_PX * scale,
+    })
+}
+
+/// The chest storage-slot index (`0..27`) under the cursor, or `None`. Shared with
+/// the App so a visible chest slot is always the one that gets clicked.
+pub fn chest_slot_at_cursor(screen: (u32, u32), cursor_px: (f32, f32)) -> Option<usize> {
+    let scale = gui_scale(screen);
+    let (px, py) = cursor_px;
+    for i in 0..crate::chest::CHEST_SLOTS {
+        if let Some(r) = chest_slot_rect(i, screen, scale) {
+            if px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 /// Convert a physical-pixel point (top-left origin, y down) to NDC (y up).
 #[inline]
 fn to_ndc(screen: (u32, u32), x: f32, y: f32) -> [f32; 2] {
@@ -554,7 +594,9 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         // The panel, centered: the inventory sheet, or the crafting-table sheet
         // (both 176×166; the table sheet adds the 3×3 grid art).
         let (ox, oy) = panel_origin(screen, scale);
-        let panel_sprite = if ui.furnace.is_some() {
+        let panel_sprite = if ui.chest.is_some() {
+            GuiSprite::ChestPanel
+        } else if ui.furnace.is_some() {
             GuiSprite::FurnacePanel
         } else {
             match ui.panel {
@@ -627,8 +669,8 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     }
 
     // --- Crafting grid input cells + result preview (open crafting panels only;
-    // the furnace screen replaces the grid with its own slots below). ---
-    if ui.open && ui.furnace.is_none() {
+    // the furnace / chest screens replace the grid with their own slots below). ---
+    if ui.open && ui.furnace.is_none() && ui.chest.is_none() {
         let kind = ui.panel;
         for i in 0..kind.cols() * kind.cols() {
             let Some((item, count)) = ui.craft[i] else {
@@ -678,6 +720,23 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         push_furnace_flame(&mut build.verts, screen, scale, furnace.burn01);
     }
 
+    // --- Chest storage slots (chest screen only). ---
+    if let Some(chest) = ui.chest {
+        for (i, stack) in chest.slots.iter().enumerate() {
+            let Some(stack) = stack else { continue };
+            if stack.item == ItemType::Air || stack.count == 0 {
+                continue;
+            }
+            let Some(r) = chest_slot_rect(i, screen, scale) else {
+                continue;
+            };
+            push_slot_icon(build, screen, stack.item, r);
+            if stack.count > 1 {
+                push_count(&mut build.overlay_verts, screen, stack.count as u32, r, scale);
+            }
+        }
+    }
+
     // --- Drag cursor: the cursor-held stack icon, drawn last (on top). ---
     if ui.open {
         if let Some((item, count)) = ui.cursor {
@@ -710,14 +769,24 @@ fn push_slot_icon(build: &mut UiBuild, screen: (u32, u32), item: ItemType, r: Sl
         ItemRenderKind::BlockCube(block) => {
             // Unit cube centered on the origin, drawn with an isometric ortho MVP.
             // Per-face tiles so directional blocks (the furnace) show their front on
-            // one face rather than all four.
-            push_cube_faces(
-                &mut build.icon_verts,
-                &mut build.icon_indices,
-                block_icon_faces(block),
-                Vec3::splat(-0.5),
-                1.0,
-            );
+            // one face rather than all four. The chest instead draws its full inset
+            // 3D model (body + lid + latch) so the icon matches the placed block.
+            if block == Block::Chest {
+                push_chest_item_full(
+                    &mut build.icon_verts,
+                    &mut build.icon_indices,
+                    Vec3::splat(-0.5),
+                    1.0,
+                );
+            } else {
+                push_cube_faces(
+                    &mut build.icon_verts,
+                    &mut build.icon_indices,
+                    block_icon_faces(block),
+                    Vec3::splat(-0.5),
+                    1.0,
+                );
+            }
             iso_icon_mvp(screen, r)
         }
         ItemRenderKind::Sprite(tile) => {
@@ -851,6 +920,7 @@ mod tests {
             result: None,
             cursor: None,
             furnace: None,
+            chest: None,
         };
         // A block-cube item and a sprite item in the hotbar.
         s.slots[0] = Some((ItemType::Stone, 64));

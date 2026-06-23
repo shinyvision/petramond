@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
+use crate::chest::Chest;
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
 use crate::entity::DroppedItem;
 use crate::furnace::Furnace;
@@ -23,6 +24,7 @@ const CHUNK_REC_VERSION: u8 = 2;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
+const FLAG_HAS_CHESTS: u8 = 0x08;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -38,6 +40,9 @@ pub struct ChunkSnapshot {
     /// Furnace block-entities in this chunk, keyed by local block index, so their
     /// contents + smelting progress persist. Empty for the common chunk.
     pub furnaces: HashMap<u16, Furnace>,
+    /// Chest block-entities in this chunk, keyed by local block index, so their
+    /// contents persist. Empty for the common chunk.
+    pub chests: HashMap<u16, Chest>,
 }
 
 impl ChunkSnapshot {
@@ -51,6 +56,7 @@ impl ChunkSnapshot {
             water: c.water_slice().map(Box::from),
             entities: Vec::new(),
             furnaces: c.furnaces().clone(),
+            chests: c.chests().clone(),
         }
     }
 }
@@ -182,6 +188,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.furnaces.is_empty() {
         flags |= FLAG_HAS_FURNACES;
     }
+    if !s.chests.is_empty() {
+        flags |= FLAG_HAS_CHESTS;
+    }
     payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
@@ -193,6 +202,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     }
     if !s.furnaces.is_empty() {
         super::furnace::put_furnaces(&mut payload, &s.furnaces);
+    }
+    if !s.chests.is_empty() {
+        super::chest::put_chests(&mut payload, &s.chests);
     }
     deflate(&payload)
 }
@@ -224,8 +236,13 @@ pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<Dropped
     } else {
         HashMap::new()
     };
+    let chests = if flags & FLAG_HAS_CHESTS != 0 {
+        super::chest::get_chests(&mut r)?
+    } else {
+        HashMap::new()
+    };
     Some((
-        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces),
+        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces, chests),
         entities,
     ))
 }
@@ -311,6 +328,29 @@ mod tests {
         assert_eq!(f.burn_remaining, 1000);
         assert_eq!(f.facing, crate::furnace::Facing::West, "facing persists");
         assert!(f.is_lit(), "a saved burning furnace reloads lit");
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_chests() {
+        let mut c = Chunk::new(4, -2);
+        c.set_block(9, 66, 1, Block::Chest);
+        let mut chest = crate::chest::Chest {
+            facing: crate::furnace::Facing::South,
+            ..crate::chest::Chest::default()
+        };
+        chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
+        chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
+        c.insert_chest(9, 66, 1, chest);
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities) = decode_chunk(4, -2, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(9, 66, 1), Block::Chest.id());
+        let got = back.chest_at(9, 66, 1).expect("chest restored");
+        assert_eq!(got.slots[0], Some(ItemStack::new(ItemType::Stone, 64)));
+        assert_eq!(got.slots[26], Some(ItemStack::new(ItemType::OakLog, 5)));
+        assert_eq!(got.slots[5], None);
+        assert_eq!(got.facing, crate::furnace::Facing::South, "facing persists");
     }
 
     #[test]

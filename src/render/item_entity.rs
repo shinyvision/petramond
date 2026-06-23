@@ -17,6 +17,7 @@ use glam::Vec3;
 
 use super::block_model::{block_icon_faces, push_cube_faces_lit, BillboardBasis};
 use super::ItemEntityInstance;
+use crate::block::Block;
 use crate::item::ItemRenderKind;
 use crate::mesh::Vertex;
 
@@ -62,6 +63,12 @@ pub fn build_item_entities(
         // big count never bakes a wall of geometry. Always at least one layer.
         let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
         match inst.item.render_kind() {
+            ItemRenderKind::BlockCube(Block::Chest) => {
+                // A dropped chest spins as its full inset 3D model, not a plain cube.
+                for &offset in &STACK_LAYER_OFFSETS[..layers] {
+                    push_spinning_chest(verts, indices, inst, offset);
+                }
+            }
             ItemRenderKind::BlockCube(block) => {
                 let faces = block_icon_faces(block);
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
@@ -109,8 +116,7 @@ fn push_spinning_cube(
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
     // Append the cube centred on the origin (model space) directly into the
-    // caller's buffers (no temporary Vec), then rotate the just-appended verts in
-    // place about Y and translate them to the world centre.
+    // caller's buffers (no temporary Vec), then spin + place it in the world.
     let start = verts.len();
     push_cube_faces_lit(
         verts,
@@ -120,12 +126,37 @@ fn push_spinning_cube(
         ITEM_CUBE_SIZE,
         inst.skylight,
     );
+    spin_into_world(verts, start, inst, offset);
+}
+
+/// Like [`push_spinning_cube`] but bakes the chest's full inset 3D model (body + lid
+/// + latch) instead of a cube, so a dropped chest reads as a tiny chest.
+fn push_spinning_chest(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    inst: &ItemEntityInstance,
+    offset: Vec3,
+) {
+    let half = ITEM_CUBE_SIZE * 0.5;
+    let start = verts.len();
+    super::chest_model::push_chest_item(
+        verts,
+        indices,
+        Vec3::splat(-half),
+        ITEM_CUBE_SIZE,
+        inst.skylight,
+    );
+    spin_into_world(verts, start, inst, offset);
+}
+
+/// Rotate the just-appended verts `[start..]` about Y by `inst.spin` (offset within
+/// the pile first so layered copies spin coherently) and translate them to the
+/// world bob centre. Shared by the dropped cube and chest builders.
+fn spin_into_world(verts: &mut [Vertex], start: usize, inst: &ItemEntityInstance, offset: Vec3) {
     let (s, c) = inst.spin.sin_cos();
     let center = inst.pos + Vec3::new(0.0, BOB_BASE + bob(inst.spin), 0.0);
     for v in verts[start..].iter_mut() {
         let [x, y, z] = v.pos;
-        // Offset within the pile (model space) so the layers spin coherently,
-        // then rotate about Y and translate to the world centre.
         let (lx, ly, lz) = (x + offset.x, y + offset.y, z + offset.z);
         let rx = lx * c + lz * s;
         let rz = -lx * s + lz * c;

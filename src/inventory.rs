@@ -275,30 +275,54 @@ impl Inventory {
         // pass 1 skips full stacks, pass 2 (only reached if room remains) takes
         // from them too.
         for take_full in [false, true] {
-            for slot in self.slots.iter_mut() {
-                let space = cursor.space_left();
-                if space == 0 {
-                    break;
-                }
-                let Some(existing) = slot.as_mut() else {
-                    continue;
-                };
-                if !existing.can_stack_with(&cursor) {
-                    continue;
-                }
-                // Pass 1 leaves full stacks intact; pass 2 may break into them.
-                if !take_full && existing.count >= existing.item.max_stack_size() {
-                    continue;
-                }
-                let moved = space.min(existing.count);
-                cursor.count += moved;
-                existing.count -= moved;
-                if existing.count == 0 {
-                    *slot = None;
-                }
-            }
+            Self::drain_into(&mut cursor, &mut self.slots, take_full);
         }
         self.cursor = Some(cursor);
+    }
+
+    /// Like [`collect_to_cursor`](Self::collect_to_cursor) but also pulls from
+    /// `extra` — an open container's slots (a chest) — so a double-click in the
+    /// chest screen tops the cursor up from BOTH the chest and the inventory.
+    /// Partials are drained everywhere before any full stack is split: each pass
+    /// visits `extra` first (the open container the player clicked in) then the
+    /// inventory. No-op when the cursor is empty.
+    pub fn collect_to_cursor_including(&mut self, extra: &mut [Option<ItemStack>]) {
+        let Some(mut cursor) = self.cursor.take() else {
+            return;
+        };
+        for take_full in [false, true] {
+            Self::drain_into(&mut cursor, extra, take_full);
+            Self::drain_into(&mut cursor, &mut self.slots, take_full);
+        }
+        self.cursor = Some(cursor);
+    }
+
+    /// One gather pass for the double-click collect: pull matching items from
+    /// `slots` into `cursor` in slot order, clearing emptied slots and stopping once
+    /// the cursor is full. When `take_full` is false, only partial (non-max) stacks
+    /// are drained, so loose items consolidate before any full stack is split.
+    fn drain_into(cursor: &mut ItemStack, slots: &mut [Option<ItemStack>], take_full: bool) {
+        for slot in slots.iter_mut() {
+            let space = cursor.space_left();
+            if space == 0 {
+                return;
+            }
+            let Some(existing) = slot.as_mut() else {
+                continue;
+            };
+            if !existing.can_stack_with(cursor) {
+                continue;
+            }
+            if !take_full && existing.count >= existing.item.max_stack_size() {
+                continue;
+            }
+            let moved = space.min(existing.count);
+            cursor.count += moved;
+            existing.count -= moved;
+            if existing.count == 0 {
+                *slot = None;
+            }
+        }
     }
 
     /// Right-click drag/drop interaction on slot `i`:

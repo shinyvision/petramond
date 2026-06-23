@@ -113,6 +113,7 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::IronIngot,
     ItemType::CopperIngot,
     ItemType::Furnace,
+    ItemType::Chest,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -749,6 +750,14 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     ItemDef {
         item: ItemType::Furnace,
         name: "Furnace",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::Chest,
+        // Name → registry key `chest`, which the chest recipe's result resolves to.
+        name: "Chest",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
         tags: &[],

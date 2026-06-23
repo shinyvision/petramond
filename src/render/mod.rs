@@ -2,6 +2,7 @@
 
 mod block_model;
 mod break_overlay;
+mod chest_model;
 mod crosshair;
 mod foliage_tint;
 mod hand;
@@ -50,6 +51,11 @@ pub use ui::{craft_slot_at_cursor, CraftHit, CraftKind};
 /// in the open furnace screen routes to the right slot.
 pub use ui::{furnace_slot_at_cursor, FurnaceHit};
 
+/// Chest storage-slot hit-test (the `0..27` slot index under the cursor), shared
+/// with the App so a click in the open chest screen routes to the right slot.
+pub use ui::chest_slot_at_cursor;
+
+use crate::block::Block;
 use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Vec3};
 
@@ -59,6 +65,9 @@ use glam::{IVec3, Vec3};
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BreakOverlayView {
     pub block: IVec3,
+    /// The block kind at `block`, so a non-full-cube block (the chest) cracks over
+    /// its inset visual box instead of the whole cell.
+    pub block_kind: Block,
     /// 0..=9 crack stage (maps to `Tile::DestroyStage0..9`).
     pub stage: u8,
 }
@@ -118,6 +127,23 @@ pub struct ItemEntityInstance {
     pub skylight: u8,
 }
 
+/// A placed chest to draw in the world this frame: an inset body box plus a lid
+/// hinged open by `lid01` (`0` closed .. `1` fully open), oriented to `facing` at the
+/// block `pos` (the block's min corner). The game fills a slice of these from the
+/// loaded chunks' chest block-entities; the renderer frustum-culls + bakes them with
+/// [`chest_model::build_chests`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ChestInstance {
+    /// World position of the block's min corner (block coords as f32).
+    pub pos: Vec3,
+    /// Placement orientation (which way the front + latch face).
+    pub facing: crate::furnace::Facing,
+    /// Lid open fraction: `0.0` closed, `1.0` fully open.
+    pub lid01: f32,
+    /// 6-bit skylight sampled from the world at the chest's cell.
+    pub skylight: u8,
+}
+
 /// A single particle billboard to draw this frame. `uv_min` / `uv_size` are
 /// **absolute** atlas coordinates (sub-tile patch), produced by
 /// `crate::entity::Particle::atlas_uv`, so the particle pass samples the block
@@ -153,6 +179,14 @@ pub struct FurnaceView {
     pub burn01: f32,
 }
 
+/// A chest's view for the open chest screen: its 27 storage slots, row-major.
+/// `Copy` (`ItemStack` is `Copy`), so the renderer snapshots it by value with no
+/// borrow — exactly like [`FurnaceView`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ChestView {
+    pub slots: [Option<ItemStack>; crate::chest::CHEST_SLOTS],
+}
+
 /// Per-frame UI state handed to the renderer. Borrows the `Inventory` for the
 /// duration of the [`Renderer::set_ui`] call only; the renderer snapshots the
 /// small bits it needs into owned state so it never holds a borrow across frames.
@@ -168,6 +202,9 @@ pub struct UiFrame<'a> {
     /// The open furnace's slots + gauges, or `None` when the open panel is not a
     /// furnace. When `Some`, the furnace panel replaces the crafting grid.
     pub furnace: Option<FurnaceView>,
+    /// The open chest's 27 storage slots, or `None` when the open panel is not a
+    /// chest. When `Some`, the chest panel + storage grid replace the crafting grid.
+    pub chest: Option<ChestView>,
     /// Screen size in physical pixels `(width, height)`.
     pub screen: (u32, u32),
     /// Cursor position in physical pixels `(x, y)` (for the open-inventory cursor

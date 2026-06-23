@@ -25,6 +25,7 @@ use super::block_model::{block_icon_faces, push_cube_faces_lit, push_cube_solid_
 use super::lighting;
 use super::{HeldItemFrame, HeldItemView};
 use crate::atlas::Tile;
+use crate::block::Block;
 use crate::item::ItemRenderKind;
 use crate::mesh::Vertex;
 
@@ -157,15 +158,26 @@ pub(super) fn build_hand_lit(
         Some(item) => match item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
                 // Held block: a corner toward the camera (three-quarter view).
-                // Per-face tiles so the furnace shows its front, not four mouths.
-                push_cube_faces_lit(
-                    verts,
-                    indices,
-                    block_icon_faces(block),
-                    Vec3::new(-0.5, -0.5, -0.5),
-                    1.0,
-                    skylight,
-                );
+                // Per-face tiles so the furnace shows its front, not four mouths; the
+                // chest draws its full inset 3D model instead of a cube.
+                if block == Block::Chest {
+                    super::chest_model::push_chest_item(
+                        verts,
+                        indices,
+                        Vec3::new(-0.5, -0.5, -0.5),
+                        1.0,
+                        skylight,
+                    );
+                } else {
+                    push_cube_faces_lit(
+                        verts,
+                        indices,
+                        block_icon_faces(block),
+                        Vec3::new(-0.5, -0.5, -0.5),
+                        1.0,
+                        skylight,
+                    );
+                }
                 Mat4::from_scale_rotation_translation(
                     Vec3::splat(0.55),
                     Quat::from_rotation_y(0.55) * Quat::from_rotation_x(-0.20),

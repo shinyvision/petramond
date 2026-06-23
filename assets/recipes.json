@@ -17,6 +17,8 @@
 
     { "type": "shaped", "pattern": ["CCC", "C C", "CKC"], "key": { "C": "cobblestone", "K": "coal" }, "result": "furnace", "count": 1 },
 
+    { "type": "shaped", "pattern": ["PPP", "P P", "PPP"], "key": { "P": "#planks" }, "result": "chest", "count": 1 },
+
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" }
   ]

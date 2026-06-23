@@ -830,10 +830,10 @@ fn flowing_water_pushes_idle_player_along_current() {
             Vec3::ZERO
         }
     };
-    let no_solid = |_x: i32, _y: i32, _z: i32| false;
+    let no_boxes = |_x: i32, _y: i32, _z: i32| Block::Air.collision_boxes();
     let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
 
-    pl.update_core_with_current(0.05, &no_solid, &water, &flow, Input::default());
+    pl.update_core_with_current(0.05, &no_boxes, &water, &flow, Input::default());
 
     assert!(
         pl.vel.x > 0.0,
@@ -844,6 +844,53 @@ fn flowing_water_pushes_idle_player_along_current() {
         pl.pos.x > 0.5,
         "current should move the player: {}",
         pl.pos.x
+    );
+}
+
+#[test]
+fn chest_collides_as_its_inset_box() {
+    // A single chest at cell (0, 64, 0); every other cell is empty. Exercises the
+    // general collision-box sweep with a non-full-cube shape.
+    let boxes = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (0, 64, 0) {
+            Block::Chest
+        } else {
+            Block::Air
+        }
+        .collision_boxes()
+    };
+    let top = 64.0 + 14.0 / 16.0; // the chest's 14/16 collision top
+
+    // Falling onto the chest lands the feet on its 14/16 top, not the full cell top.
+    let mut faller = p(Vec3::new(0.5, 66.0, 0.5));
+    assert!(faller.sweep_boxes(Axis::Y, -5.0, &boxes), "lands on the chest");
+    assert!(
+        (faller.pos.y - top).abs() < 1e-3,
+        "feet rest on the 14/16 top, got {}",
+        faller.pos.y
+    );
+
+    // Standing on the chest top, you can walk off it (no full-cell wall blocking the
+    // body just because its feet share the chest's cell).
+    let mut on_top = p(Vec3::new(0.5, top, 0.5));
+    assert!(
+        !on_top.sweep_boxes(Axis::X, 1.0, &boxes),
+        "walking off the top is not blocked"
+    );
+    assert!(
+        (on_top.pos.x - 1.5).abs() < 1e-3,
+        "walked the full step, got {}",
+        on_top.pos.x
+    );
+
+    // At ground level beside the chest, walking into it stops at the 1/16 inset face,
+    // not the cell boundary.
+    let mut walker = p(Vec3::new(-1.0, 64.0, 0.5));
+    assert!(walker.sweep_boxes(Axis::X, 2.0, &boxes), "hits the chest side");
+    assert!(
+        (walker.aabb_max().x - 1.0 / 16.0).abs() < 1e-3,
+        "stops at the inset -X face (1/16), got {}",
+        walker.aabb_max().x
     );
 }
 

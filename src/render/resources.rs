@@ -34,10 +34,13 @@ pub enum GuiSprite {
     /// The lit fuel flame (14×14), drawn cropped bottom→up by remaining burn time
     /// over the panel's empty flame outline.
     FurnaceFlame,
+    /// The chest panel sheet (256×256; 176×166 art with three storage rows at the
+    /// top). Drawn when a chest is open. Reuses the vanilla single-container layout.
+    ChestPanel,
 }
 
 /// All GUI sprites in atlas-layout order. Used for compositing + iteration.
-const GUI_SPRITES: [GuiSprite; 8] = [
+const GUI_SPRITES: [GuiSprite; 9] = [
     GuiSprite::Hotbar,
     GuiSprite::HotbarSelection,
     GuiSprite::InventoryPanel,
@@ -46,13 +49,14 @@ const GUI_SPRITES: [GuiSprite; 8] = [
     GuiSprite::FurnacePanel,
     GuiSprite::FurnaceArrow,
     GuiSprite::FurnaceFlame,
+    GuiSprite::ChestPanel,
 ];
 
 /// Width / height (px) of the composited GUI atlas. Sprites are packed in a
 /// single row at fixed offsets (see [`GuiSprite::atlas_offset_px`]); height is the
 /// tallest sprite. Keep these in sync with the offsets/sizes below.
-pub const GUI_ATLAS_W: u32 = 1092; // 182 + 24 + 256 + 80 + 256 + 256 + 24 + 14
-pub const GUI_ATLAS_H: u32 = 256; // tallest sprite (inventory / table / furnace panel)
+pub const GUI_ATLAS_W: u32 = 1348; // 182 + 24 + 256 + 80 + 256 + 256 + 24 + 14 + 256
+pub const GUI_ATLAS_H: u32 = 256; // tallest sprite (inventory / table / furnace / chest panel)
 
 impl GuiSprite {
     /// Source pixel size `(w, h)` of this sprite (matches its PNG dimensions).
@@ -70,6 +74,7 @@ impl GuiSprite {
             GuiSprite::FurnacePanel => (256, 256),
             GuiSprite::FurnaceArrow => (24, 16),
             GuiSprite::FurnaceFlame => (14, 14),
+            GuiSprite::ChestPanel => (256, 256),
         }
     }
 
@@ -87,7 +92,8 @@ impl GuiSprite {
         match self {
             GuiSprite::InventoryPanel
             | GuiSprite::CraftingTablePanel
-            | GuiSprite::FurnacePanel => (176, 166),
+            | GuiSprite::FurnacePanel
+            | GuiSprite::ChestPanel => (176, 166),
             other => other.size_px(),
         }
     }
@@ -106,6 +112,7 @@ impl GuiSprite {
             GuiSprite::FurnacePanel => (798, 0),
             GuiSprite::FurnaceArrow => (1054, 0),
             GuiSprite::FurnaceFlame => (1078, 0),
+            GuiSprite::ChestPanel => (1092, 0),
         }
     }
 
@@ -136,6 +143,9 @@ impl GuiSprite {
             }
             GuiSprite::FurnaceFlame => {
                 include_bytes!("../../assets/textures/gui/furnace_flame.png")
+            }
+            GuiSprite::ChestPanel => {
+                include_bytes!("../../assets/textures/gui/chest.png")
             }
         }
     }

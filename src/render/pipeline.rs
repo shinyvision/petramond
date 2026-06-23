@@ -51,6 +51,14 @@ pub(super) const MAX_ITEM_ENTITY_VERTICES: u64 = 20480;
 /// Max indices in the item-entity dynamic ibuf (up to 180 per cube / 30 per
 /// sprite for a 5-layer stack), matching [`MAX_ITEM_ENTITY_VERTICES`].
 pub(super) const MAX_ITEM_ENTITY_INDICES: u64 = 30720;
+/// Max vertices in the chest dynamic vbuf. Each chest is a body box + lid box = 48
+/// verts, so this covers ~512 simultaneously-visible chests before the bake bails
+/// for that frame. Separate from the item-entity budget so a wall of chests can't
+/// make dropped items vanish.
+pub(super) const MAX_CHEST_VERTICES: u64 = 24576;
+/// Max indices in the chest dynamic ibuf (72 per chest), matching
+/// [`MAX_CHEST_VERTICES`].
+pub(super) const MAX_CHEST_INDICES: u64 = 36864;
 /// Max vertices in the reusable UI dynamic vbuf (gui quads + digit cells). The
 /// open inventory is ~40 slots + a 176×166 panel; digits are a few quads each.
 /// 6 verts/quad; 16384 covers the full open inventory with comfortable headroom.
@@ -110,6 +118,10 @@ pub(super) struct PipelineResources {
     pub item_entity_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for item-entity geometry.
     pub item_entity_ibuf: wgpu::Buffer,
+    /// Reusable dynamic vbuf for chest models (body + hinged lid, opaque pipe).
+    pub chest_vbuf: wgpu::Buffer,
+    /// Reusable dynamic ibuf for chest models.
+    pub chest_ibuf: wgpu::Buffer,
     /// Particle pipeline: camera-facing billboards. Reuses the block `uniform_bind`
     /// + `atlas_bind`, alpha-blended, depth-test (Load) / no-write.
     pub particle_pipe: wgpu::RenderPipeline,
@@ -959,6 +971,21 @@ pub(super) fn create_pipeline_resources(
         mapped_at_creation: false,
     });
 
+    // Chest model dynamic buffers (drawn by the opaque pipeline, like item entities;
+    // separate so a chest wall and the dropped-item budget don't fight).
+    let chest_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chest vbuf"),
+        size: MAX_CHEST_VERTICES * std::mem::size_of::<Vertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let chest_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chest ibuf"),
+        size: MAX_CHEST_INDICES * 4,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     // --- Particle pipeline (tiny 3D textured cubes). ---
     // Reuses the block `uniform_bgl` (group0) + `atlas_bgl` (group1) so it binds
     // the renderer's existing `uniform_bind` / `atlas_bind`. Compact 40-byte
@@ -1195,6 +1222,8 @@ pub(super) fn create_pipeline_resources(
         break_ibuf,
         item_entity_vbuf,
         item_entity_ibuf,
+        chest_vbuf,
+        chest_ibuf,
         particle_pipe,
         particle_vbuf,
         particle_ibuf,

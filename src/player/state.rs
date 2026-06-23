@@ -1,4 +1,3 @@
-use crate::block::Block;
 use crate::mathh::Vec3;
 use crate::world::World;
 
@@ -111,11 +110,6 @@ impl Player {
             self.pos.y + HEIGHT,
             self.pos.z + HALF_W,
         )
-    }
-
-    #[inline]
-    pub(super) fn solid_world(world: &World, x: i32, y: i32, z: i32) -> bool {
-        Block::from_id(world.chunk_block(x, y, z)).is_solid()
     }
 
     /// True if every chunk column the horizontal AABB overlaps is loaded. The

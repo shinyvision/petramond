@@ -6,6 +6,8 @@ pub enum AppScreen {
     CraftingTable,
     /// The furnace screen, opened by right-clicking a placed furnace.
     Furnace,
+    /// The chest screen (3×9 storage), opened by right-clicking a placed chest.
+    Chest,
 }
 
 impl AppScreen {
@@ -42,6 +44,13 @@ impl AppScreen {
     #[inline]
     pub fn is_furnace(self) -> bool {
         matches!(self, AppScreen::Furnace)
+    }
+
+    /// Whether the open menu is the chest screen — drives chest-specific click
+    /// routing and the chest panel + storage grid in place of the crafting grid.
+    #[inline]
+    pub fn is_chest(self) -> bool {
+        matches!(self, AppScreen::Chest)
     }
 }
 

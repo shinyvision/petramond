@@ -16,6 +16,10 @@ const LEAVES_FLAGS: BlockFlags = BlockFlags::SOLID
 // NOT solid (walk-through, not a build target), NOT opaque (neighbour cube faces
 // still draw toward them and they don't cull), NOT an AO occluder, NOT replaceable.
 const PLANT_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
+// Chest: SOLID (collision, raycast, a build target) but NOT opaque and NOT an AO
+// occluder — it's drawn as a custom inset model (the mesher skips its cell), so
+// neighbours must keep their faces toward it and it casts no full-cube shadow.
+const CHEST_FLAGS: BlockFlags = BlockFlags::SOLID;
 
 pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Air,
@@ -101,6 +105,7 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::MangrovePlanks,
     Block::CraftingTable,
     Block::Furnace,
+    Block::Chest,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -867,6 +872,22 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Stone,
         hardness: 3.5,
         drop: drops_self!(Furnace),
+    },
+    BlockDef {
+        block: Block::Chest,
+        // SOLID but non-opaque: the placed chest is drawn as a custom inset body +
+        // hinged lid (the mesher skips its cell — see render::chest_model), so
+        // neighbours keep their faces toward it and it casts no full-cube shadow.
+        flags: CHEST_FLAGS,
+        // [top, bottom, side] feeds only the inventory/held icon now (the placed block
+        // is drawn from its own model). The icon overrides the front face via
+        // render::block_model::block_icon_faces. Bottom reuses the side tile (the
+        // vanilla chest bottom is unpainted and never visible).
+        tiles: [Tile::ChestTop, Tile::ChestSide, Tile::ChestSide],
+        // Wood → hand-harvestable (no pickaxe needed), like planks/crafting table.
+        material: BlockMaterial::Wood,
+        hardness: 2.5,
+        drop: drops_self!(Chest),
     },
 ];
 

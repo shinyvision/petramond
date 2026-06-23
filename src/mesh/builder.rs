@@ -290,6 +290,15 @@ fn build_mesh_with_context(
                     continue;
                 }
 
+                // Chests are not meshed into the chunk: their inset body + hinged lid
+                // are drawn each frame as a dynamic model (see render::chest_model), so
+                // the chunk emits nothing here. The block stays SOLID (collision /
+                // raycast) but non-opaque, so neighbours keep their faces toward it and
+                // there's no hole behind the inset model.
+                if block == Block::Chest {
+                    continue;
+                }
+
                 // Cross-model plants: two diagonal billboard quads in the opaque
                 // (cutout) pass, then skip the cube face loop. They never cull or
                 // get culled (non-opaque), carry no directional shade or AO, and
