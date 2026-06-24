@@ -224,6 +224,8 @@ impl App {
             broke_block: events.broke_block,
             // Placing a block and throwing/dropping an item both flick the hand.
             placed: events.placed_block || events.threw_item,
+            // An attack swing (mob hit or punch at the air) flicks the hand once.
+            swung: events.swung_hand,
             dt,
         });
         // Bake the sim's per-frame world-render data (dropped items, particles,
@@ -270,6 +272,9 @@ impl App {
             look_delta,
             hotbar_scroll,
             break_held: self.pointer.left_held,
+            // The primary-button edge (a menu click already consumed it above). Drives
+            // a one-shot attack/punch, distinct from the held mining state.
+            attack_clicked: self.pointer.left_click,
             place_clicked: self.pointer.right_click,
         }
     }

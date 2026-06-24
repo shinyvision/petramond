@@ -1,0 +1,498 @@
+//! [`Mobs`]: the live-mob container owned by `Game`.
+//!
+//! Holds every active mob and drives them on the **game tick**. Spawning and
+//! despawning go through here, so adding a species to the world is `mobs.spawn(kind,
+//! …)` — never a new field. The render-side scene adapter reads [`Mobs::instances`].
+//!
+//! At construction it scans each species' model once for the metadata the AI needs
+//! (currently the `idle_*` animation count), so the per-tick idle-animation behavior
+//! only ever picks animations the model actually has.
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+use crate::block::Block;
+use crate::chunk::ChunkPos;
+use crate::mathh::{voxel_at, IVec3, Vec3};
+use crate::world::World;
+
+use super::model_meta::{self, IdleAnimMeta, Skeleton};
+use super::{def, push, spawn, Instance, Mob, MobRng, SavedMob, ALL_MOBS};
+
+/// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
+/// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
+#[derive(Copy, Clone, Debug)]
+pub struct DeathDrop {
+    pub kind: Mob,
+    pub pos: Vec3,
+    pub skylight: u8,
+}
+
+/// Hard cap on simultaneous mobs, so a spawn loop / debug key can't run the world
+/// out of memory. Spawns past this are dropped.
+const MAX_MOBS: usize = 256;
+
+/// Decorrelates the spawner's RNG stream from the per-mob AI streams (which seed
+/// from the spawn counter), so the two don't march in lockstep on a given world.
+const SPAWN_RNG_SALT: u64 = 0x5EED_5EED_5EED_5EED;
+
+/// Per-species, model-derived metadata the sim reads.
+struct MobMeta {
+    /// This species' `idle_*` animations (name-sorted; length + loop mode).
+    idle_anims: Vec<IdleAnimMeta>,
+    /// Bone hierarchy (pivots + parents) for the death ragdoll, matching the renderer's
+    /// bone order so a sim-computed pose drops into the render bake.
+    skeleton: Skeleton,
+}
+
+/// Every species' [`MobMeta`], indexed by `Mob as usize`. It's a pure function of the
+/// static [`MOB_DEFS`](super::MOB_DEFS) registry — identical for every world — so it's
+/// computed once for the whole process rather than rebuilt per [`Mobs`]; that keeps
+/// each `World::new` (of which the tests make dozens) from reparsing every species'
+/// `.bbmodel`.
+static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
+    ALL_MOBS
+        .iter()
+        .map(|&m| MobMeta {
+            idle_anims: model_meta::idle_anims(def(m).model_src),
+            skeleton: model_meta::skeleton(def(m).model_src),
+        })
+        .collect()
+});
+
+pub struct Mobs {
+    list: Vec<Instance>,
+    /// Monotonic counter seeding each mob's deterministic AI.
+    spawn_counter: u64,
+    /// Deterministic RNG driving the per-tick natural-spawn picker.
+    rng: MobRng,
+}
+
+impl Default for Mobs {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl Mobs {
+    /// `seed` (the world seed) makes natural spawning reproducible per world.
+    pub fn new(seed: u64) -> Self {
+        Mobs {
+            list: Vec::new(),
+            spawn_counter: 0,
+            rng: MobRng::new(seed ^ SPAWN_RNG_SALT),
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. Returns `false` if the
+    /// mob cap is reached (the spawn is dropped).
+    pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
+        if self.list.len() >= MAX_MOBS {
+            return false;
+        }
+        self.spawn_counter = self.spawn_counter.wrapping_add(1);
+        self.list
+            .push(Instance::new(kind, pos, yaw, self.spawn_counter));
+        true
+    }
+
+    /// Advance every mob by one game tick (passing each its species' idle-animation
+    /// metadata + ragdoll skeleton) and refresh its cached skylight, then resolve soft
+    /// entity pushing and remove any mob that should leave the live world: a finished
+    /// death corpse, or a hostile mob that has distance-despawned (culled, and so not
+    /// saved).
+    ///
+    /// `player_pos` is the player's body centre — the AI's player anchor for head-look
+    /// and distance-despawn. `player_body` is the player's *pushable* body, present only
+    /// when the player has a physical presence (a survival body, not a noclip spectator):
+    /// when present the mobs jostle it, and the returned [`Vec3`] is the net horizontal
+    /// push *velocity* they impart on it this tick, for the caller to add to the player's
+    /// own velocity (the player isn't owned here). It is [`Vec3::ZERO`] when there is no
+    /// pushable player.
+    ///
+    /// When `freeze_unloaded` is set (a save is attached), a mob standing over a
+    /// not-yet-loaded chunk is frozen — not simulated, and excluded from pushing — until
+    /// the unload harvests it into that chunk's record. This mirrors the dropped-item
+    /// freeze and stops a mob from falling through missing terrain at the streamed edge.
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        world: &World,
+        player_pos: Vec3,
+        player_body: Option<push::Body>,
+        freeze_unloaded: bool,
+    ) -> Vec3 {
+        for mob in &mut self.list {
+            if freeze_unloaded && !chunk_loaded_at(world, mob) {
+                continue;
+            }
+            let meta = &MOB_META[mob.kind as usize];
+            mob.tick(dt, world, player_pos, &meta.idle_anims, &meta.skeleton);
+            let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
+            mob.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
+        }
+        let player_push = self.resolve_pushes(world, player_body, freeze_unloaded);
+        self.list
+            .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
+        player_push
+    }
+
+    /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob↔player when
+    /// `player` is present — set each mob's push *velocity* away from the others, to be
+    /// applied (through the mob's own collision) on its next integrate. Returns the net
+    /// push velocity the mobs impart on the player (zero if there is no pushable player),
+    /// for the caller to add to the player's own velocity.
+    ///
+    /// Computed from a single up-front snapshot of every pushable body, so the result is
+    /// order-independent and symmetric — each member of a pair is pushed at the full
+    /// speed on its own pass (see [`push::separation`]) regardless of list order. A mob
+    /// that isn't pushable this tick (dead, or frozen over an unloaded chunk) neither
+    /// pushes nor is pushed.
+    fn resolve_pushes(
+        &mut self,
+        world: &World,
+        player: Option<push::Body>,
+        freeze_unloaded: bool,
+    ) -> Vec3 {
+        // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
+        let bodies: Vec<Option<push::Body>> = self
+            .list
+            .iter()
+            .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.push_body()))
+            .collect();
+
+        let mut player_push = Vec3::ZERO;
+        for i in 0..self.list.len() {
+            let Some(bi) = bodies[i] else { continue };
+            let mut push_vel = Vec3::ZERO;
+            // Off every other mob (each pair is seen from both ends — i off j here, j off
+            // i on its own pass — so each is pushed at the full speed).
+            for (j, bj) in bodies.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                if let Some(bj) = *bj {
+                    if let Some(p) = push::separation(bi, bj) {
+                        push_vel += p;
+                    }
+                }
+            }
+            // Off the player — and the equal-and-opposite reaction lands on the player.
+            if let Some(player) = player {
+                if let Some(p) = push::separation(bi, player) {
+                    push_vel += p;
+                    player_push -= p;
+                }
+            }
+            self.list[i].set_push(push_vel);
+        }
+        player_push
+    }
+
+    /// Apply `amount` damage to the mob at `index` (from attacker point `from`).
+    /// Returns the loot drop the mob leaves if the hit killed it, else `None`. Keeps
+    /// `list` private — `Game` never holds a `&mut Instance`.
+    pub fn hurt_mob(&mut self, index: usize, amount: f32, from: Vec3) -> Option<DeathDrop> {
+        let mob = self.list.get_mut(index)?;
+        if mob.hurt(amount, from) {
+            Some(DeathDrop {
+                kind: mob.kind,
+                pos: mob.pos,
+                skylight: mob.skylight,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Run one natural-spawn step: a single spawn attempt at a random loaded position.
+    /// Called once per game tick by `Game`, after [`tick`](Self::tick).
+    ///
+    /// Mobs that leave the loaded area are no longer dropped here — they are saved into
+    /// their chunk as it unloads (see [`take_in_chunk`](Self::take_in_chunk)) and reload
+    /// with it. Because the unload harvests them out of the live set, the set still only
+    /// holds loaded-area mobs, so the "in the loaded area" caps stay honest.
+    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) {
+        // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
+        let list = &self.list;
+        let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
+            spawn::has_room(list, kind)
+        });
+        if let Some(s) = chosen {
+            self.spawn(s.kind, s.pos, s.yaw);
+        }
+    }
+
+    /// Drain and return the live mobs resting in chunk `pos`, as [`SavedMob`]s — used to
+    /// bundle them into that chunk's save record as it unloads. A dead/ragdolling corpse
+    /// in the chunk is removed too, but *not* saved: a corpse is ephemeral (its loot
+    /// already dropped when it died), so only living mobs persist.
+    pub fn take_in_chunk(&mut self, pos: ChunkPos) -> Vec<SavedMob> {
+        let mut taken = Vec::new();
+        let mut i = self.list.len();
+        while i > 0 {
+            i -= 1;
+            let c = voxel_at(self.list[i].pos);
+            if c.x >> 4 == pos.cx && c.z >> 4 == pos.cz {
+                let mob = self.list.swap_remove(i);
+                if !mob.is_dead() {
+                    taken.push(SavedMob::of(&mob));
+                }
+            }
+        }
+        taken
+    }
+
+    /// Clone the live mobs grouped by owning chunk (as [`SavedMob`]s), for the periodic
+    /// save flush — the mobs stay active; the clones persist with the chunk records so a
+    /// crash can't lose them. Dead corpses are skipped, as in
+    /// [`take_in_chunk`](Self::take_in_chunk).
+    pub fn saved_by_chunk(&self) -> HashMap<ChunkPos, Vec<SavedMob>> {
+        let mut map: HashMap<ChunkPos, Vec<SavedMob>> = HashMap::new();
+        for m in &self.list {
+            if m.is_dead() {
+                continue;
+            }
+            let c = voxel_at(m.pos);
+            map.entry(ChunkPos::new(c.x >> 4, c.z >> 4))
+                .or_default()
+                .push(SavedMob::of(m));
+        }
+        map
+    }
+
+    /// Re-spawn mobs read back from a chunk's save record now that its chunk has loaded.
+    /// Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and is
+    /// subject to the mob cap like any spawn.
+    pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
+        for m in mobs {
+            self.spawn(m.kind, m.pos, m.yaw);
+        }
+    }
+
+    /// The live mobs, for the render-side scene adapter to bake (read-only).
+    #[inline]
+    pub fn instances(&self) -> &[Instance] {
+        &self.list
+    }
+
+    /// Whether placing `block` at cell `p` would clip into any live mob — its collision
+    /// box(es) at `p` overlapping a mob's body. A no-collision block (a torch, grass, a
+    /// fern, …) has no boxes, so this is always `false` and it may be placed freely even
+    /// on a mob; only a block that physically collides is blocked. A ragdolling corpse
+    /// (about to vanish) doesn't count. The placement code calls this to refuse dropping
+    /// a solid block on top of a mob.
+    pub fn any_overlapping_placement(&self, p: IVec3, block: Block) -> bool {
+        let cell = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+        block.collision_boxes().iter().any(|b| {
+            let bmin = cell + Vec3::new(b.min[0], b.min[1], b.min[2]);
+            let bmax = cell + Vec3::new(b.max[0], b.max[1], b.max[2]);
+            self.list
+                .iter()
+                .filter(|m| !m.is_dead())
+                .any(|m| aabb_overlaps(m.aabb(), (bmin, bmax)))
+        })
+    }
+}
+
+/// Strict AABB overlap with a small epsilon, so a block placed exactly flush against a
+/// mob (touching faces, not interpenetrating) is still allowed — only a genuine clip
+/// counts as an overlap.
+fn aabb_overlaps((amin, amax): (Vec3, Vec3), (bmin, bmax): (Vec3, Vec3)) -> bool {
+    const EPS: f32 = 1e-4;
+    amin.x < bmax.x - EPS
+        && bmin.x < amax.x - EPS
+        && amin.y < bmax.y - EPS
+        && bmin.y < amax.y - EPS
+        && amin.z < bmax.z - EPS
+        && bmin.z < amax.z - EPS
+}
+
+/// Whether the chunk `mob` stands over is loaded — the freeze gate shared by the tick
+/// loop and the push pass, so a mob over not-yet-generated terrain is skipped by both.
+fn chunk_loaded_at(world: &World, mob: &Instance) -> bool {
+    let c = voxel_at(mob.pos);
+    world.chunk_loaded(c.x >> 4, c.z >> 4)
+}
+
+/// Whether `mob` takes part in soft pushing this tick: it must be alive (a corpse
+/// ragdolls in place — its `pos` is the ragdoll origin, so shoving it would warp the
+/// corpse) and actually simulating (not frozen over an unloaded chunk).
+fn is_pushable(mob: &Instance, world: &World, freeze_unloaded: bool) -> bool {
+    !mob.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, mob))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn take_in_chunk_harvests_only_that_chunks_mobs() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5)); // chunk (0, 0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 1.0)); // chunk (1, 0)
+
+        let taken = mobs.take_in_chunk(ChunkPos::new(0, 0));
+        assert_eq!(taken.len(), 1, "only the (0,0) owl is harvested");
+        assert_eq!(taken[0].kind, Mob::Owl);
+        assert_eq!(taken[0].pos, Vec3::new(2.5, 64.0, 2.5));
+        assert_eq!(taken[0].yaw, 0.5, "facing is captured");
+        assert_eq!(mobs.len(), 1, "the (1,0) owl stays live");
+    }
+
+    #[test]
+    fn saved_by_chunk_groups_live_mobs_without_removing_them() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0)); // (0, 0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(5.5, 64.0, 9.5), 0.0)); // (0, 0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 0.0)); // (1, 0)
+
+        let map = mobs.saved_by_chunk();
+        assert_eq!(map[&ChunkPos::new(0, 0)].len(), 2);
+        assert_eq!(map[&ChunkPos::new(1, 0)].len(), 1);
+        assert_eq!(mobs.len(), 3, "the flush clones; the mobs stay live");
+    }
+
+    #[test]
+    fn restore_respawns_saved_mobs_with_their_pose() {
+        let mut mobs = Mobs::new(0);
+        mobs.restore([
+            SavedMob { kind: Mob::Owl, pos: Vec3::new(8.5, 70.0, 8.5), yaw: 1.25 },
+            SavedMob { kind: Mob::Owl, pos: Vec3::new(9.5, 70.0, 8.5), yaw: -0.5 },
+        ]);
+        assert_eq!(mobs.len(), 2);
+        let poses: Vec<(Vec3, f32)> =
+            mobs.instances().iter().map(|m| (m.pos, m.yaw)).collect();
+        assert!(poses.contains(&(Vec3::new(8.5, 70.0, 8.5), 1.25)), "first mob restored in place");
+        assert!(poses.contains(&(Vec3::new(9.5, 70.0, 8.5), -0.5)), "second mob restored in place");
+    }
+
+    /// The horizontal distance between the first two live mobs.
+    fn horizontal_gap(mobs: &Mobs) -> f32 {
+        let p = mobs.instances();
+        let (a, b) = (p[0].pos, p[1].pos);
+        ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt()
+    }
+
+    /// A point far from the origin — used as a parked player anchor / body so a tick
+    /// exercises only mob↔mob pushing.
+    fn far() -> Vec3 {
+        Vec3::new(1000.0, 64.0, 1000.0)
+    }
+
+    #[test]
+    fn overlapping_mobs_drift_apart_smoothly() {
+        // Two owls spawned almost on top of each other must ease apart *gradually* and
+        // monotonically — never snapping back (the jitter we're avoiding) — and settle
+        // just clear of each other (≈ their combined half-widths), not blow past. The
+        // empty world has no floor, so they also fall; the gap checked is horizontal. No
+        // player body this tick.
+        let world = World::new(0, 1);
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.05, 64.0, 8.0), 0.0));
+        let reach = 2.0 * def(Mob::Owl).size.half_width;
+
+        let gap0 = horizontal_gap(&mobs);
+        let mut gap = gap0;
+        let mut last_step = f32::INFINITY;
+        for _ in 0..40 {
+            mobs.tick(0.05, &world, far(), None, false);
+            let next = horizontal_gap(&mobs);
+            // No snap-back: the gap only ever grows — the jitter we were getting was the
+            // gap oscillating as positions were snapped each tick.
+            assert!(next >= gap - 1e-4, "the gap never shrinks (no snap-back): {gap} -> {next}");
+            last_step = next - gap;
+            gap = next;
+        }
+        assert!(gap > gap0 + 0.2, "the overlapping owls clearly separated: {gap0} -> {gap}");
+        assert!(gap > 0.9 * reach, "they ended up cleanly apart: gap {gap}, reach {reach}");
+        assert!(gap < 1.3 * reach, "they settled at contact, not flung apart: gap {gap}, reach {reach}");
+        // Eased to rest: the push fades out as they separate (proportional to the
+        // shrinking overlap), so by the end they've coasted to a stop — a gradual drift
+        // that converges, not a constant ram.
+        assert!(last_step < 0.005, "the push eases off as they part: final tick step {last_step}");
+    }
+
+    #[test]
+    fn a_mob_overlapping_the_player_shoves_it_away() {
+        // A mob jostles the player too: tick returns the net horizontal shove on the
+        // player, pointing away from the overlapping owl, for the caller to apply.
+        let world = World::new(0, 1);
+        let mut mobs = Mobs::new(0);
+        // Owl just east (+X) of the player's column, footprints overlapping.
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
+        let feet = Vec3::new(8.0, 64.0, 8.0);
+        let player_body = push::Body::new(feet, 0.3, 1.8);
+        let shove = mobs.tick(0.05, &world, feet, Some(player_body), false);
+        assert!(shove.x < 0.0, "the player is shoved -X, away from the owl: {shove:?}");
+        assert_eq!(shove.y, 0.0, "the shove is horizontal");
+    }
+
+    #[test]
+    fn a_distant_mob_does_not_shove_the_player() {
+        // No overlap, no shove — a mob across the world leaves the player be.
+        let world = World::new(0, 1);
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        let player_body = push::Body::new(far(), 0.3, 1.8);
+        let shove = mobs.tick(0.05, &world, far(), Some(player_body), false);
+        assert_eq!(shove, Vec3::ZERO, "an out-of-reach mob imparts no push");
+    }
+
+    #[test]
+    fn a_spectator_with_no_body_neither_pushes_nor_is_pushed() {
+        // A noclip spectator (no push body) overlapping a mob leaves it be and takes no
+        // shove itself — only the AI anchor (player_pos) is honoured, not a body.
+        let world = World::new(0, 1);
+        let mut mobs = Mobs::new(0);
+        let spot = Vec3::new(8.0, 64.0, 8.0);
+        assert!(mobs.spawn(Mob::Owl, spot, 0.0));
+        let before = mobs.instances()[0].pos;
+        let shove = mobs.tick(0.05, &world, spot, None, false);
+        assert_eq!(shove, Vec3::ZERO, "no body → no shove returned to the player");
+        let after = mobs.instances()[0].pos;
+        assert_eq!((before.x, before.z), (after.x, after.z), "the mob isn't shoved sideways by a bodiless player");
+    }
+
+    #[test]
+    fn a_harvested_corpse_is_dropped_not_saved() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0));
+        // Kill it: now a ragdolling corpse. Harvesting its chunk removes it but does not
+        // persist it (its loot already fell when it died).
+        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(5.0, 64.0, 2.5)).is_some());
+        let taken = mobs.take_in_chunk(ChunkPos::new(0, 0));
+        assert!(taken.is_empty(), "a corpse is not persisted");
+        assert_eq!(mobs.len(), 0, "but it is removed from the live set");
+    }
+
+    #[test]
+    fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0)); // body in cell (8,64,8)
+        let here = IVec3::new(8, 64, 8);
+        let away = IVec3::new(20, 64, 8);
+
+        // A solid full cube dropped into the owl's cell clips its body.
+        assert!(mobs.any_overlapping_placement(here, Block::Dirt), "a solid block in the owl's cell is blocked");
+        // The same cube well clear of the owl is fine.
+        assert!(!mobs.any_overlapping_placement(away, Block::Dirt), "a cell away from the owl is clear");
+        // A no-collision block (a torch) never clips anything, even right on the owl.
+        assert!(!mobs.any_overlapping_placement(here, Block::Torch), "a no-collision block is always placeable");
+
+        // A ragdolling corpse doesn't block placement (it's about to vanish).
+        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(9.0, 64.0, 8.5)).is_some());
+        assert!(!mobs.any_overlapping_placement(here, Block::Dirt), "a corpse doesn't block placement");
+    }
+}

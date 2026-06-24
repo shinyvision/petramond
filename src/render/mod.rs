@@ -1,5 +1,6 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
+mod bbmodel;
 mod block_model;
 mod break_overlay;
 mod chest_model;
@@ -10,6 +11,7 @@ mod hand_animator;
 mod item_entity;
 mod item_model;
 mod lighting;
+mod mob_model;
 mod particles;
 mod pipeline;
 mod renderer;
@@ -64,7 +66,8 @@ pub use ui::chest_slot_at_cursor;
 
 use crate::block::Block;
 use crate::item::{ItemStack, ItemType};
-use glam::{IVec3, Vec3};
+use glam::{IVec3, Quat, Vec3};
+use std::sync::Arc;
 
 /// The block-break overlay to draw this frame: a cracked-texture quad over
 /// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
@@ -115,6 +118,9 @@ pub struct HeldItemFrame {
     /// True on the frame the hand expels an item into the world — placing a block
     /// or throwing/dropping a stack — which plays the softer place jab.
     pub placed: bool,
+    /// True on the frame the player swings to attack — a mob hit or a punch at the
+    /// air — which plays a full-strength one-shot swing (like a block break).
+    pub swung: bool,
     pub dt: f32,
 }
 
@@ -132,6 +138,43 @@ pub struct ItemEntityInstance {
     pub spin: f32,
     /// 6-bit skylight sampled from the world at the dropped item's position.
     pub skylight: u8,
+}
+
+/// One animated mob to draw in the world this frame: a species (`kind`) posed at
+/// `anim_time` into its walk cycle (when `moving`; otherwise its rest pose), placed
+/// at `pos` (its feet) facing `yaw`, lit by the sampled `skylight`. The scene
+/// adapter fills a slice of these by interpolating the sim's live mob instances; the
+/// renderer groups them by species, frustum-culls, and bakes each with
+/// [`mob_model::build_mob_instances`] against that species' model + texture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MobRenderInstance {
+    /// Which species (selects the model / texture / draw buffers).
+    pub kind: crate::mob::Mob,
+    /// World position of the mob's feet (model `y=0`).
+    pub pos: Vec3,
+    /// Facing yaw in radians (rotation about Y).
+    pub yaw: f32,
+    /// Seconds into the active animation (walk or idle_*); used unless idle+resting.
+    pub anim_time: f32,
+    /// Whether the mob is walking this frame: plays the walk animation if so.
+    pub moving: bool,
+    /// When idle, which `idle_*` animation is playing (index), or `None` for the
+    /// neutral rest pose.
+    pub idle_anim: Option<u8>,
+    /// Head orientation relative to the body (radians): yaw swivel, pitch tilt.
+    /// Applied to the model's `head` bone unless the active animation moves the head.
+    pub head_yaw: f32,
+    pub head_pitch: f32,
+    /// 6-bit skylight sampled from the world at the mob's position.
+    pub skylight: u8,
+    /// Hurt-flash intensity in `[0, 1]`: tints the mob red after a non-lethal hit,
+    /// fading out. `0` for an unhurt or dead mob.
+    pub hurt: f32,
+    /// When the mob is dying, its per-bone ragdoll pose — `(pivot position, orientation)`
+    /// per bone in model space, already interpolated for this frame — used in place of
+    /// the animation pose. `None` for a live mob. `Arc` so cloning a visible instance
+    /// into its per-species batch stays cheap.
+    pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
 }
 
 /// A placed chest to draw in the world this frame: an inset body box plus a lid

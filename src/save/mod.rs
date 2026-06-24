@@ -13,6 +13,7 @@ mod codec;
 pub mod entities;
 mod furnace;
 pub mod level;
+pub mod mobs;
 mod region;
 mod torch;
 
@@ -26,6 +27,7 @@ use std::thread::JoinHandle;
 
 use crate::chunk::{Chunk, ChunkPos};
 use crate::entity::DroppedItem;
+use crate::mob::SavedMob;
 
 /// Messages from the game thread to the I/O thread.
 enum IoMsg {
@@ -36,11 +38,13 @@ enum IoMsg {
 }
 
 /// A chunk read back from disk (`chunk` is `None` if absent / corrupt) plus any
-/// item entities stored in its record (empty if absent / corrupt / none saved).
+/// item entities and mobs stored in its record (empty if absent / corrupt / none
+/// saved).
 pub struct LoadedChunk {
     pub pos: ChunkPos,
     pub chunk: Option<Chunk>,
     pub entities: Vec<DroppedItem>,
+    pub mobs: Vec<SavedMob>,
 }
 
 /// Live handle to a world's on-disk save and its I/O thread.
@@ -52,12 +56,13 @@ pub struct WorldSave {
     /// as we save. The load path consults it to choose load-from-disk vs
     /// regenerate.
     manifest: HashSet<ChunkPos>,
-    /// Chunk coords whose written record currently carries item entities. A
-    /// chunk leaves the set when re-saved without drops. The persist decision
-    /// consults it so a chunk whose drops were picked up (or despawned) is
-    /// rewritten to clear its now-stale record, instead of leaving the disk copy
-    /// to resurrect them on the next load. Populated both when we save a record
-    /// with drops and when we read one back (so cross-session staleness is seen).
+    /// Chunk coords whose written record currently carries live entities — dropped
+    /// items OR mobs. A chunk leaves the set when re-saved with neither. The persist
+    /// decision consults it so a chunk whose drops were picked up / despawned (or whose
+    /// mobs wandered off, died, or distance-despawned) is rewritten to clear its
+    /// now-stale record, instead of leaving the disk copy to resurrect them on the next
+    /// load. Populated both when we save such a record and when we read one back (so
+    /// cross-session staleness is seen).
     entities_on_disk: HashSet<ChunkPos>,
 }
 
@@ -74,18 +79,18 @@ impl WorldSave {
         self.manifest.contains(&pos)
     }
 
-    /// `true` if `pos`'s written record currently carries item entities — so a
-    /// save that now finds the chunk drop-free must rewrite it, or the stale
-    /// record resurrects those drops on the next load.
-    pub fn record_holds_drops(&self, pos: ChunkPos) -> bool {
+    /// `true` if `pos`'s written record currently carries live entities (dropped items
+    /// or mobs) — so a save that now finds the chunk free of both must rewrite it, or
+    /// the stale record resurrects them on the next load.
+    pub fn record_holds_entities(&self, pos: ChunkPos) -> bool {
         self.entities_on_disk.contains(&pos)
     }
 
-    /// Note that `pos`'s on-disk record carries item entities, learned by reading
-    /// it back. Mirrors what [`save_chunks`](Self::save_chunks) records when it
-    /// writes drops, so a record saved in a *previous* session is still rewritten
-    /// once its drops are gone.
-    pub fn note_record_holds_drops(&mut self, pos: ChunkPos) {
+    /// Note that `pos`'s on-disk record carries live entities (drops or mobs), learned
+    /// by reading it back. Mirrors what [`save_chunks`](Self::save_chunks) records when
+    /// it writes them, so a record saved in a *previous* session is still rewritten once
+    /// its entities are gone.
+    pub fn note_record_holds_entities(&mut self, pos: ChunkPos) {
         self.entities_on_disk.insert(pos);
     }
 
@@ -96,11 +101,11 @@ impl WorldSave {
         }
         for s in &snaps {
             self.manifest.insert(s.pos);
-            // Track whether the record we're about to write carries drops (matching
-            // `encode_snapshot`'s FLAG_HAS_ENTITIES). A chunk that loses its drops
-            // is then re-saved once to clear the record (see the persist decisions
-            // in `world::stream`/`world::store`).
-            if s.entities.is_empty() {
+            // Track whether the record we're about to write carries any live entities —
+            // drops or mobs (matching `encode_snapshot`'s FLAG_HAS_ENTITIES /
+            // FLAG_HAS_MOBS). A chunk that loses them all is then re-saved once to clear
+            // the record (see the persist decisions in `world::stream`/`world::store`).
+            if s.entities.is_empty() && s.mobs.is_empty() {
                 self.entities_on_disk.remove(&s.pos);
             } else {
                 self.entities_on_disk.insert(s.pos);
@@ -234,11 +239,12 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedChunk>) {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
             }
             IoMsg::Load(pos) => {
-                let (chunk, entities) = load_chunk(&region_dir, pos);
+                let (chunk, entities, mobs) = load_chunk(&region_dir, pos);
                 let _ = load_tx.send(LoadedChunk {
                     pos,
                     chunk,
                     entities,
+                    mobs,
                 });
             }
             IoMsg::Shutdown => break,
@@ -268,7 +274,10 @@ fn write_chunks(region_dir: &Path, snaps: Vec<ChunkSnapshot>) {
     }
 }
 
-fn load_chunk(region_dir: &Path, pos: ChunkPos) -> (Option<Chunk>, Vec<DroppedItem>) {
+fn load_chunk(
+    region_dir: &Path,
+    pos: ChunkPos,
+) -> (Option<Chunk>, Vec<DroppedItem>, Vec<SavedMob>) {
     let decoded = (|| {
         let (rx, rz) = region::region_of(pos);
         let path = region::region_path(region_dir, rx, rz);
@@ -277,8 +286,8 @@ fn load_chunk(region_dir: &Path, pos: ChunkPos) -> (Option<Chunk>, Vec<DroppedIt
         codec::decode_chunk(pos.cx, pos.cz, blob)
     })();
     match decoded {
-        Some((chunk, entities)) => (Some(chunk), entities),
-        None => (None, Vec::new()),
+        Some((chunk, entities, mobs)) => (Some(chunk), entities, mobs),
+        None => (None, Vec::new(), Vec::new()),
     }
 }
 
@@ -382,7 +391,7 @@ mod tests {
 
     /// The unload/reload dupe, at the save layer: a chunk record written with a
     /// drop, then re-saved drop-free (the drop was picked up), must not bring the
-    /// drop back on reload — and `record_holds_drops` must track the transition.
+    /// drop back on reload — and `record_holds_entities` must track the transition.
     #[test]
     fn re_saving_a_drop_free_chunk_clears_its_stale_record() {
         let dir = temp_world_dir("clear-stale-drops");
@@ -401,7 +410,7 @@ mod tests {
         ));
         opened.save.save_chunks(vec![snap]);
         assert!(
-            opened.save.record_holds_drops(pos),
+            opened.save.record_holds_entities(pos),
             "record now carries a drop"
         );
 
@@ -413,7 +422,7 @@ mod tests {
         let empty = ChunkSnapshot::from_chunk(&chunk); // entities default to empty
         opened.save.save_chunks(vec![empty]);
         assert!(
-            !opened.save.record_holds_drops(pos),
+            !opened.save.record_holds_entities(pos),
             "rewrite cleared the flag"
         );
 
@@ -427,6 +436,51 @@ mod tests {
             after.chunk.expect("chunk decodes").block_raw(1, 64, 1),
             Block::Stone.id()
         );
+
+        opened.save.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same stale-record guard, for mobs: a chunk record written with a mob, then
+    /// re-saved mob-free (the mob died, wandered off, or distance-despawned), must not
+    /// bring the mob back on reload — and `record_holds_entities` must track it. The
+    /// guard is one mechanism shared with dropped items, so this pins it for the mob
+    /// path too.
+    #[test]
+    fn re_saving_a_mob_free_chunk_clears_its_stale_record() {
+        let dir = temp_world_dir("clear-stale-mobs");
+        let pos = ChunkPos::new(-7, 3);
+
+        let mut opened = open_at(dir.clone()).expect("open fresh");
+
+        // Unload-with-mob: the record is written carrying one mob.
+        let chunk = Chunk::new(pos.cx, pos.cz);
+        let mut snap = ChunkSnapshot::from_chunk(&chunk);
+        snap.mobs.push(crate::mob::SavedMob {
+            kind: crate::mob::Mob::Owl,
+            pos: Vec3::new(-100.5, 65.0, 56.5),
+            yaw: 0.5,
+        });
+        opened.save.save_chunks(vec![snap]);
+        assert!(
+            opened.save.record_holds_entities(pos),
+            "record now carries a mob"
+        );
+
+        let with_mob = load_blocking(&opened.save, pos).expect("loads with mob");
+        assert_eq!(with_mob.mobs.len(), 1, "mob present before it leaves");
+
+        // The mob is gone: the chunk is re-saved mob-free. The record must be rewritten
+        // so the stale mob can't resurrect on the next load.
+        let empty = ChunkSnapshot::from_chunk(&chunk);
+        opened.save.save_chunks(vec![empty]);
+        assert!(
+            !opened.save.record_holds_entities(pos),
+            "rewrite cleared the flag"
+        );
+
+        let after = load_blocking(&opened.save, pos).expect("loads after");
+        assert!(after.mobs.is_empty(), "the stale mob must not resurrect");
 
         opened.save.shutdown();
         let _ = std::fs::remove_dir_all(&dir);

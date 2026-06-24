@@ -25,7 +25,14 @@ impl Player {
     /// first selectable block within `REACH`. Voxel DDA (Amanatides & Woo), with
     /// cross-model plants tested against their alpha-cutout billboards.
     pub fn raycast(eye: Vec3, dir: Vec3, world: &World) -> Option<RaycastHit> {
-        let mut hit = Self::raycast_blocks_core(
+        Self::raycast_with_dist(eye, dir, world).map(|(hit, _)| hit)
+    }
+
+    /// As [`raycast`](Self::raycast), but also returns the distance from `eye` to the
+    /// hit. Used to compare a block hit against a mob hit (the nearer wins, so looking
+    /// at a mob interrupts block selection).
+    pub(crate) fn raycast_with_dist(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
+        let (mut hit, dist) = Self::raycast_blocks_core(
             eye,
             dir,
             &|x, y, z| Block::from_id(world.chunk_block(x, y, z)),
@@ -43,7 +50,7 @@ impl Player {
                 transform: world.torch_placement(hit.block).model_transform(),
             };
         }
-        Some(hit)
+        Some((hit, dist))
     }
 
     #[cfg(test)]
@@ -66,14 +73,18 @@ impl Player {
             },
             &|_, _, _, _| None,
         )
+        .map(|(hit, _)| hit)
     }
 
+    /// The DDA core, returning the hit and its distance from `eye` (the entry
+    /// parameter — `t_enter` for a full cube, the precise crossing `t` for a
+    /// custom-shaped block / cross-plant).
     pub(super) fn raycast_blocks_core<F, S>(
         eye: Vec3,
         dir: Vec3,
         block_at: &F,
         shape_hit: &S,
-    ) -> Option<RaycastHit>
+    ) -> Option<(RaycastHit, f32)>
     where
         F: Fn(i32, i32, i32) -> Block,
         S: Fn(Vec3, Vec3, IVec3, Block) -> Option<f32>,
@@ -109,17 +120,17 @@ impl Player {
                 // only registers when the ray actually crosses its shape — otherwise
                 // the ray sees past the empty parts of its cell.
                 if block.visual_aabb().is_none() && block != Block::Torch {
-                    return Some(hit(pos, entry_normal, block));
+                    return Some((hit(pos, entry_normal, block), t_enter));
                 }
                 if let Some(t) = shape_hit(eye, dir, pos, block) {
                     if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
-                        return Some(hit(pos, entry_normal, block));
+                        return Some((hit(pos, entry_normal, block), t));
                     }
                 }
             } else if block.render_shape() == RenderShape::Cross {
                 if let Some(t) = intersect_cross_plant(eye, dir, pos, block) {
                     if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
-                        return Some(hit(pos, entry_normal, block));
+                        return Some((hit(pos, entry_normal, block), t));
                     }
                 }
             }
@@ -241,8 +252,9 @@ fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> 
 }
 
 /// Ray vs axis-aligned box (slab method): the entry distance `t >= 0`, or `None`
-/// when the ray misses the box or it lies entirely behind the eye.
-fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+/// when the ray misses the box or it lies entirely behind the eye. Shared with mob
+/// targeting (a mob is an AABB) — that's why it's crate-visible.
+pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let (e, d, lo, hi) = (
         eye.to_array(),
         dir.to_array(),

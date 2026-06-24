@@ -657,7 +657,7 @@ fn raycast_hits_opaque_plant_texel() {
         }
     };
     let eye = Vec3::new(0.5, 64.25, 0.5);
-    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
+    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
     assert_eq!(hit.block, IVec3::new(2, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
     assert!(matches!(hit.outline, SelectionShape::Cross { .. }));
@@ -673,7 +673,7 @@ fn raycast_short_grass_uses_full_block_outline() {
         }
     };
     let eye = Vec3::new(0.5, 64.25, 0.5);
-    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
+    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
     assert!(matches!(hit.outline, SelectionShape::Box { .. }));
 }
 
@@ -698,7 +698,7 @@ fn raycast_through_transparent_plant_texel_hits_block_behind() {
         _ => Block::Air,
     };
     let eye = Vec3::new(0.5, 64.95, 0.5);
-    let hit = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
+    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
     assert_eq!(hit.block, IVec3::new(3, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
 }

@@ -15,7 +15,7 @@
 
 use glam::{IVec3, Vec3};
 
-use super::{ChestInstance, ItemEntityInstance, ParticleInstance, Renderer};
+use super::{ChestInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer};
 use crate::furnace::Facing;
 use crate::game::Game;
 
@@ -30,6 +30,8 @@ pub struct Scene {
     particles: Vec<ParticleInstance>,
     /// Baked placed-chest instances for this frame.
     chests: Vec<ChestInstance>,
+    /// Baked (interpolated) mob instances for this frame.
+    mobs: Vec<MobRenderInstance>,
     /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
     /// from the loaded chunks; the lid angle is paired in from `Game::chest_lid_angle`.
     chest_scratch: Vec<(IVec3, Facing, u8)>,
@@ -51,6 +53,7 @@ impl Scene {
         bake_item_entities(game.item_entities(), &mut self.item_entities);
         bake_particles(game.particles(), &mut self.particles);
         self.bake_chests(game);
+        bake_mobs(game.mobs(), game.mob_interpolation(), &mut self.mobs);
         (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
     }
 
@@ -77,8 +80,45 @@ impl Scene {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_warm);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
+        renderer.set_mobs(&self.mobs);
         renderer.set_particles(&self.particles);
     }
+}
+
+/// Map each live mob to one interpolated [`MobRenderInstance`] (cleared + refilled,
+/// capacity reused). The simulation advances mobs on the fixed game tick; `alpha`
+/// (`0..1`, the fraction into the next tick) blends the previous and current tick
+/// poses so motion stays smooth at any frame rate. Reads only the mob's render
+/// fields, exactly as the dropped-item bake reads a `DroppedItem`.
+fn bake_mobs(mobs: &[crate::mob::Instance], alpha: f32, out: &mut Vec<MobRenderInstance>) {
+    out.clear();
+    out.extend(mobs.iter().map(|m| MobRenderInstance {
+        kind: m.kind,
+        pos: m.prev_pos.lerp(m.pos, alpha),
+        yaw: lerp_angle(m.prev_yaw, m.yaw, alpha),
+        anim_time: m.prev_anim_time + (m.anim_time - m.prev_anim_time) * alpha,
+        moving: m.moving,
+        idle_anim: m.idle_anim,
+        head_yaw: lerp_angle(m.prev_head_yaw, m.head_yaw, alpha),
+        head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
+        skylight: m.skylight,
+        // Red-flash intensity (0 when dead) and, while dying, the interpolated per-bone
+        // physics ragdoll pose used in place of the animation pose.
+        hurt: m.hurt_flash(alpha),
+        ragdoll: m.ragdoll_pose(alpha).map(Into::into),
+    }));
+}
+
+/// Interpolate from angle `a` to `b` along the shortest arc (radians).
+fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let mut d = (b - a) % TAU;
+    if d > PI {
+        d -= TAU;
+    } else if d < -PI {
+        d += TAU;
+    }
+    a + d * t
 }
 
 /// Map each dropped item to one [`ItemEntityInstance`] (cleared + refilled, capacity

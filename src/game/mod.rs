@@ -13,13 +13,16 @@ use crate::camera::Camera;
 use crate::crafting::{load_recipes, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::furnace::Facing;
-use crate::torch::TorchPlacement;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{lerp, voxel_at, IVec3, SelectionShape, Vec3};
 use crate::mining::MiningState;
+#[cfg(test)]
+use crate::mob::Mob;
+use crate::mob::{load_loot, DeathDrop, LootTables};
 use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
 use crate::render::{BreakOverlayView, ChestView, FurnaceView};
+use crate::torch::TorchPlacement;
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
@@ -36,6 +39,11 @@ const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
+
+/// Minimum wall-clock time (seconds) between two attack swings — a 300 ms cooldown, so a
+/// player mashing the attack button can't land hits every frame (which would, e.g.,
+/// instakill an owl). Measured in real time, independent of frame rate.
+const ATTACK_COOLDOWN: f32 = 0.3;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
 /// rate. World simulation (block updates, scheduled ticks, water flow) advances
@@ -72,6 +80,10 @@ pub struct GameInput {
     pub hotbar_scroll: i32,
     /// Level state: primary button held for mining.
     pub break_held: bool,
+    /// Edge state: primary button *pressed* this frame — one attack swing (damages a
+    /// targeted mob, or punches the air). Distinct from `break_held` (the held state
+    /// that drives mining a block).
+    pub attack_clicked: bool,
     /// Edge state: secondary button pressed for placement.
     pub place_clicked: bool,
 }
@@ -80,6 +92,9 @@ pub struct GameInput {
 pub struct GameEvents {
     pub placed_block: bool,
     pub broke_block: bool,
+    /// The hand swung this frame for an attack — a mob hit or a punch at the air.
+    /// Drives a one-shot first-person swing (like `broke_block`).
+    pub swung_hand: bool,
     /// An item/stack left the hand for the world this frame — a Q drop or an
     /// inventory drag-out. Drives the same first-person place jab as a placement.
     pub threw_item: bool,
@@ -106,8 +121,13 @@ pub struct Game {
     world: World,
     fallback_world: CascadeWorld,
     player: Player,
-    /// Block currently under the crosshair, refreshed each tick.
+    /// Block currently under the crosshair, refreshed each tick. Set to `None` when a
+    /// mob is the closer target (so looking at a mob interrupts block selection/mining).
     look: Option<RaycastHit>,
+    /// The mob under the crosshair (index into the world's live mob set) this frame,
+    /// nearer than any block, if any. Recomputed every frame — never stored across a
+    /// mob tick, so despawn-driven index shifts can't make it stale.
+    targeted_mob: Option<usize>,
     mining: MiningState,
     /// Tracks the world's lighting revision so item-entity skylight is only
     /// recomputed when a world light bake actually changed. The drops themselves
@@ -116,6 +136,10 @@ pub struct Game {
     particles: ParticleSystem,
     spawn_counter: u32,
     mining_dust_t: f32,
+    /// Wall-clock seconds remaining before the player may attack again — the
+    /// [`ATTACK_COOLDOWN`] gate. Counts down each frame; an attack is refused while it is
+    /// positive, so mashing the button can't land hits faster than the cooldown.
+    attack_cooldown: f32,
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
     /// for the rest; client-side animation only, never persisted. The render-side
@@ -136,6 +160,9 @@ pub struct Game {
     /// rather than on the menu — the menu would otherwise need a self-referential
     /// borrow during the tick.
     recipes: Recipes,
+    /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
+    /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
+    loot: LootTables,
     /// The open container GUI's persistent *edit target*: the block-entity (or the
     /// inventory-side craft grid) the screen currently mutates, plus its slot
     /// behaviour. NOT the screen authority — `App::AppScreen` decides which screen
@@ -217,16 +244,19 @@ impl Game {
             fallback_world,
             player,
             look: None,
+            targeted_mob: None,
             mining: MiningState::new(),
             dropped_light_revision: 0,
             particles: ParticleSystem::new(),
             spawn_counter: 0,
             mining_dust_t: 0.0,
+            attack_cooldown: 0.0,
             chest_lids: HashMap::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
             threw_item: false,
             recipes: load_recipes(),
+            loot: load_loot(),
             menu: ContainerMenu::new(),
             request_open_table: false,
             request_open_furnace: None,
@@ -262,8 +292,19 @@ impl Game {
         self.tick_player(dt, input);
         self.tick_world();
 
-        self.look = Player::raycast(self.cam.pos, self.cam.forward(), &self.world);
+        // Block hit (with its distance) and the closest mob in front. A mob nearer than
+        // the block wins the crosshair and nulls the block look, so block selection /
+        // mining / placement are interrupted while looking at a mob.
+        let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.world);
+        self.look = block_hit.map(|(h, _)| h);
+        let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
+        self.targeted_mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
+        if self.targeted_mob.is_some() {
+            self.look = None;
+        }
+
         let (placed_block, broke_block) = self.handle_block_actions(dt, input);
+        let swung_hand = self.handle_attack(dt, input);
 
         self.run_fixed_ticks(dt);
 
@@ -277,6 +318,7 @@ impl Game {
         GameEvents {
             placed_block,
             broke_block,
+            swung_hand,
             // Throws happen via input handlers before this tick; report and clear.
             threw_item: std::mem::take(&mut self.threw_item),
             // Set this tick by handle_block_actions when a table was right-clicked.
@@ -305,6 +347,22 @@ impl Game {
             // (the borrow split). Paced by the simulation clock, not the frame
             // rate — "a game tick decides the player picks it up".
             self.item_pickup_tick();
+            // Mob AI + physics also run on the fixed tick (per the design); the
+            // renderer interpolates between ticks for smooth motion (see
+            // `mob_interpolation`). Mobs are owned by `World` (they persist with their
+            // chunks, like dropped items), so the world drives them via a borrow-split.
+            // Mobs and the player softly push each other apart (no solid collision box):
+            // `tick_mobs` pushes the mobs and returns the player's share of the jostle as
+            // a velocity, which we add to the player's own velocity (Minecraft's model —
+            // the controller carries it and friction smooths it out). A noclip spectator
+            // has no physical body, so it neither pushes mobs nor is pushed (no push body).
+            let player_pos = self.player.body_center();
+            let player_body = (!self.player.is_spectator())
+                .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
+            let player_push = self.world.tick_mobs(TICK_DT, player_pos, player_body);
+            self.player.push(player_push);
+            // Natural spawning, one attempt per tick.
+            self.world.spawn_mobs_tick(player_pos);
             self.tick_accumulator -= TICK_DT;
             ran += 1;
         }
@@ -590,6 +648,20 @@ impl Game {
         &self.particles
     }
 
+    /// The live mobs, for the render-side scene adapter to interpolate + bake.
+    #[inline]
+    pub fn mobs(&self) -> &[crate::mob::Instance] {
+        self.world.mobs().instances()
+    }
+
+    /// Fraction (`0..1`) into the next fixed tick — the blend factor the scene uses
+    /// to interpolate each mob's render pose between its previous and current tick,
+    /// so mobs (which simulate at 20 TPS) move smoothly at any frame rate.
+    #[inline]
+    pub fn mob_interpolation(&self) -> f32 {
+        (self.tick_accumulator / TICK_DT).clamp(0.0, 1.0)
+    }
+
     /// Combined light + warm-tint amount at the player's eye, for lighting the
     /// first-person hand / held item — it brightens AND warms near torches/furnaces.
     pub fn held_item_light(&self) -> (u8, u8) {
@@ -703,11 +775,7 @@ impl Game {
 
     fn handle_block_actions(&mut self, dt: f32, input: &GameInput) -> (bool, bool) {
         // The held tool (None = bare hand) gates mining speed + whether drops fall.
-        let tool = self
-            .player
-            .inventory
-            .selected()
-            .and_then(|s| s.item.tool());
+        let tool = self.player.inventory.selected().and_then(|s| s.item.tool());
 
         if !input.gameplay_enabled {
             self.mining.update(
@@ -850,11 +918,16 @@ impl Game {
         };
 
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
-        // A torch has no collision, so it may sit in the player's own cell; every
-        // other block is gated on not overlapping the player.
-        let clear_of_player = block == Block::Torch || !self.player.intersects_block(p);
+        // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
+        // may be placed inside an entity; a block that WOULD collide can't be placed where
+        // it overlaps the player or a mob — the placement simply fails (the click does
+        // nothing and the held item isn't consumed).
+        let collides = block.blocks_movement();
+        let clear_of_player = !collides || !self.player.intersects_block(p);
+        let clear_of_mobs = !collides || !self.world.mobs().any_overlapping_placement(p, block);
         if target.is_replaceable()
             && clear_of_player
+            && clear_of_mobs
             && self.world.set_block_world(p.x, p.y, p.z, block)
         {
             // A placed furnace/chest gets an empty block-entity from the moment it
@@ -912,6 +985,81 @@ impl Game {
         self.world.spawn_item(drop);
     }
 
+    /// The closest mob in front of the eye whose AABB the ray enters within `max_dist`
+    /// (and within reach), skipping dead corpses. `max_dist` is the block hit distance,
+    /// so a mob *behind* the block isn't targeted (the block occludes it).
+    fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<usize> {
+        let limit = max_dist.min(player::REACH);
+        let mut best: Option<(usize, f32)> = None;
+        for (i, m) in self.world.mobs().instances().iter().enumerate() {
+            if m.is_dead() {
+                continue; // a corpse can't be targeted
+            }
+            let (min, max) = m.aabb();
+            if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
+                if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
+                    best = Some((i, t));
+                }
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
+    /// Handle a left-click attack: damage the targeted mob (rolling the held weapon's
+    /// damage and spawning loot if the hit kills it), or — looking at nothing — punch
+    /// the air. Returns whether the hand swung (drives the one-shot first-person swing).
+    /// Mining a block is the *held* action (`break_held`), separate from this edge.
+    ///
+    /// Rate-limited by [`ATTACK_COOLDOWN`]: the cooldown counts down in wall-clock time
+    /// each frame and an attack is refused (no swing, no damage) while it is still
+    /// running, so mashing the button can't land a hit every frame — only one swing per
+    /// cooldown connects. A click that isn't an attack (on a block, or empty-handed at
+    /// nothing) neither swings nor arms the cooldown.
+    fn handle_attack(&mut self, dt: f32, input: &GameInput) -> bool {
+        self.attack_cooldown = (self.attack_cooldown - dt).max(0.0);
+        if !input.gameplay_enabled || !input.attack_clicked || self.attack_cooldown > 0.0 {
+            return false;
+        }
+        let swung = if let Some(idx) = self.targeted_mob {
+            let (lo, hi) = crate::item::attack_damage(self.selected_item());
+            self.spawn_counter = self.spawn_counter.wrapping_add(1);
+            let damage = lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo);
+            let from = self.player.body_center();
+            if let Some(death) = self.world.mobs_mut().hurt_mob(idx, damage, from) {
+                self.spawn_mob_loot(death);
+            }
+            true
+        } else {
+            // No mob: a punch swing only when looking at nothing. A click on a block does
+            // nothing here — holding to mine drives its own (looping) swing.
+            self.look.is_none()
+        };
+        // Only an actual swing arms the cooldown — a no-op click stays free to attack.
+        if swung {
+            self.attack_cooldown = ATTACK_COOLDOWN;
+        }
+        swung
+    }
+
+    /// Roll a dead mob's loot table and scatter the drops at its body. Called the
+    /// instant a mob dies (from the attack that killed it), so loot appears "when
+    /// killed" while the corpse ragdolls. No-op for a species with no table.
+    fn spawn_mob_loot(&mut self, death: DeathDrop) {
+        let Some(table) = self.loot.get(crate::mob::def(death.kind).key) else {
+            return;
+        };
+        self.spawn_counter = self.spawn_counter.wrapping_add(1);
+        let stacks = table.roll(self.spawn_counter as u64);
+        // Pop from roughly the mob's body centre so drops don't clip into the floor.
+        let centre = death.pos + Vec3::new(0.0, 0.3, 0.0);
+        for stack in stacks {
+            self.spawn_counter = self.spawn_counter.wrapping_add(1);
+            let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+            drop.skylight = death.skylight;
+            self.world.spawn_item(drop);
+        }
+    }
+
     /// Per-frame entity update: item-entity physics (gravity, collision, pickup
     /// magnet) then particles. The drops live in `World` and the magnet target is
     /// the player chest; the per-item pickup delay is enforced inside the world
@@ -920,6 +1068,7 @@ impl Game {
         let player_pos = self.player.body_center();
         self.world.tick_item_physics(dt, player_pos);
         self.particles.tick(dt, &self.world);
+        // Mobs tick on the fixed game tick (see `run_fixed_ticks`), not here.
     }
 
     /// Per game-tick (20 TPS) item maintenance: advance every drop's lifetime
@@ -1119,6 +1268,142 @@ mod tests {
             normal,
             outline: SelectionShape::full_block(pos),
         }
+    }
+
+    #[test]
+    fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        game.cam.pos = Vec3::new(8.0, 66.0, 8.0);
+        game.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
+        let dir = game.cam.forward();
+        // An owl two metres ahead, feet dropped so the eye-level ray crosses its body.
+        let mut feet = game.cam.pos + dir * 2.0;
+        feet.y -= 0.35;
+        assert!(game.world.mobs_mut().spawn(Mob::Owl, feet, 0.0));
+
+        assert_eq!(
+            game.closest_mob(game.cam.pos, dir, player::REACH),
+            Some(0),
+            "a mob in front within reach is targeted"
+        );
+        assert_eq!(
+            game.closest_mob(game.cam.pos, dir, 1.0),
+            None,
+            "a nearer block (smaller max_dist) occludes the mob"
+        );
+        // A corpse can't be targeted.
+        assert!(game
+            .world
+            .mobs_mut()
+            .hurt_mob(0, 100.0, game.cam.pos)
+            .is_some());
+        assert_eq!(
+            game.closest_mob(game.cam.pos, dir, player::REACH),
+            None,
+            "a dead mob isn't targeted"
+        );
+    }
+
+    #[test]
+    fn fist_takes_four_hits_to_kill_an_owl() {
+        let mut game = game();
+        let pos = Vec3::new(8.0, 64.0, 8.0);
+        assert!(game.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
+        assert_eq!(crate::item::attack_damage(None), (1.0, 1.0));
+        let from = pos + Vec3::X;
+        for i in 0..3 {
+            assert!(
+                game.world.mobs_mut().hurt_mob(0, 1.0, from).is_none(),
+                "fist hit {i} isn't lethal"
+            );
+        }
+        assert!(
+            game.world.mobs_mut().hurt_mob(0, 1.0, from).is_some(),
+            "the 4th fist hit kills"
+        );
+    }
+
+    #[test]
+    fn attacks_are_rate_limited_so_spam_clicks_cant_instakill() {
+        let mut game = game();
+        assert!(game
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        game.targeted_mob = Some(0);
+        let click = GameInput {
+            gameplay_enabled: true,
+            attack_clicked: true,
+            ..Default::default()
+        };
+
+        // A burst of 1000 clicks within one cooldown window (~0.1 s of frames) lands
+        // exactly one attack — without the gate the 4-health owl would die in four hits.
+        let landed = (0..1000)
+            .filter(|_| game.handle_attack(0.0001, &click))
+            .count();
+        assert_eq!(landed, 1, "only one attack lands during a spam burst");
+        assert!(
+            !game.world.mobs().instances()[0].is_dead(),
+            "the spammed owl is still alive"
+        );
+
+        // Once the cooldown has elapsed, the next click connects again.
+        assert!(
+            game.handle_attack(ATTACK_COOLDOWN, &click),
+            "an attack lands once the cooldown has passed"
+        );
+    }
+
+    #[test]
+    fn a_killed_mob_ragdolls_then_despawns() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let pos = Vec3::new(8.0, 64.0, 8.0);
+        assert!(game.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
+        assert!(game
+            .world
+            .mobs_mut()
+            .hurt_mob(0, 100.0, pos + Vec3::X)
+            .is_some());
+        assert_eq!(
+            game.world.mobs().len(),
+            1,
+            "the corpse is present while ragdolling"
+        );
+        let player_pos = game.player.body_center();
+        let player_body = crate::mob::Body::new(game.player.pos, player::HALF_W, player::HEIGHT);
+        // 1.5 s ragdoll lifetime at 20 TPS = 30 ticks; run extra for margin.
+        for _ in 0..50 {
+            game.world.tick_mobs(TICK_DT, player_pos, Some(player_body));
+        }
+        assert_eq!(
+            game.world.mobs().len(),
+            0,
+            "the corpse despawns once the ragdoll finishes"
+        );
+    }
+
+    #[test]
+    fn killing_owls_drops_loot_into_the_world() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let pos = Vec3::new(8.0, 64.0, 8.0);
+        // Over many kills the owl table (50% sticks / 25% coal) virtually always yields
+        // something — this proves the death→loot path is wired, without pinning the
+        // (freely-editable) table contents.
+        for _ in 0..40 {
+            assert!(game.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
+            let idx = game.world.mobs().len() - 1;
+            if let Some(death) = game.world.mobs_mut().hurt_mob(idx, 100.0, pos + Vec3::X) {
+                game.spawn_mob_loot(death);
+            }
+        }
+        assert!(
+            !game.world.item_entities().is_empty(),
+            "killing owls drops loot via the loot table"
+        );
     }
 
     fn install_empty_chunk(game: &mut Game) {
@@ -1661,6 +1946,49 @@ mod tests {
 
         assert_eq!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)), block);
         assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
+    }
+
+    #[test]
+    fn cannot_place_a_solid_block_inside_a_mob() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        game.player.inventory = filled_inventory(); // a stack of Dirt
+        game.player.inventory.set_active(0);
+        // Park the player far off so only the mob can block placement here.
+        game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+
+        // An owl standing in cell (8, 200, 8), high up and clear of the player.
+        assert!(game
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.5, 200.0, 8.5), 0.0));
+
+        // Aiming a Dirt block into the owl's cell does nothing: no block lands and the
+        // held stack isn't consumed.
+        let before = game.player.inventory.selected().unwrap().count;
+        game.look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
+        assert!(
+            !game.try_place(),
+            "a solid block can't be placed inside the owl"
+        );
+        assert_eq!(
+            Block::from_id(game.world.chunk_block(8, 200, 8)),
+            Block::Air,
+            "nothing was placed"
+        );
+        assert_eq!(
+            game.player.inventory.selected().unwrap().count,
+            before,
+            "the held item wasn't consumed"
+        );
+
+        // A cell clear of the owl (and the player) places as usual.
+        game.look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y)); // p = (0, 200, 0)
+        assert!(game.try_place(), "an empty cell places normally");
+        assert_eq!(
+            Block::from_id(game.world.chunk_block(0, 200, 0)),
+            Block::Dirt
+        );
     }
 
     fn count_item(inv: &Inventory, item: ItemType) -> u32 {

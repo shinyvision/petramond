@@ -26,6 +26,12 @@ pub(super) const MAX_MODEL3D_INDICES: u64 = 8192;
 /// item). A 16×16 sprite extrudes to front+back + boundary walls; a dense flower
 /// silhouette is well under this (non-indexed triangle list, 6 verts/quad).
 pub(super) const MAX_ITEM3D_VERTICES: u64 = 4096;
+/// Max vertices / indices in the reusable `mob` dynamic buffers (animated entity
+/// models, e.g. the owl), drawn by the dedicated mob pipeline with the explicit-UV
+/// `ItemVertex`. One owl is well under ~300 verts; this covers a flock of dozens of
+/// simultaneously-visible owls before a bake bails for that frame.
+pub(super) const MAX_MOB_VERTICES: u64 = 20480;
+pub(super) const MAX_MOB_INDICES: u64 = 30720;
 /// Vertices in the break-overlay dynamic vbuf: exactly one block-sized cube (24).
 pub(super) const MAX_BREAK_VERTICES: u64 = 24;
 /// Indices in the break-overlay dynamic ibuf: one cube (36).
@@ -199,6 +205,10 @@ pub(super) const MAX_UI_VERTICES: u64 = 16384;
 pub(super) struct PipelineResources {
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
+    /// The atlas bind-group LAYOUT (texture + sampler), returned so the renderer
+    /// can build a separate bind group over the entity model texture for the `mob`
+    /// pipeline (same shape, different texture).
+    pub atlas_bgl: wgpu::BindGroupLayout,
     pub sky_pipe: wgpu::RenderPipeline,
     pub sky_bind: wgpu::BindGroup,
     pub opaque_pipe: wgpu::RenderPipeline,
@@ -238,6 +248,12 @@ pub(super) struct PipelineResources {
     /// Reusable dynamic vbuf for the extruded held-item geometry (non-indexed
     /// triangle list, rewritten in place per frame).
     pub item3d_vbuf: wgpu::Buffer,
+    /// `mob` pipeline: in-world animated entity models (the owl). Reuses the block
+    /// `uniform_bgl` + `atlas_bgl` pipeline layout (group0 = world `view_proj`,
+    /// group1 = the ENTITY texture bound by the renderer), the explicit-UV
+    /// `ItemVertex`, REPLACE blend + alpha-cutout, double-sided (flat sub-cubes show
+    /// from both sides), depth test + WRITE so the owl occludes terrain.
+    pub mob_pipe: wgpu::RenderPipeline,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
@@ -845,6 +861,35 @@ pub(super) fn create_pipeline_resources(
         mapped_at_creation: false,
     });
 
+    // --- mob pipeline (in-world animated entity models, e.g. the owl). ---
+    // Reuses the BLOCK pipeline layout (`layout` = [uniform_bgl, atlas_bgl]): group0
+    // is the world `view_proj` uniform (the shader reads only view_proj; the uv_rects
+    // binding in the layout is simply unused), group1 is an atlas-shaped texture+
+    // sampler — bound by the renderer to the ENTITY texture, not the block atlas.
+    // Same explicit-UV `ItemVertex` layout as item3d (the model carries arbitrary
+    // sub-rect UVs). REPLACE blend + cutout (opaque creature), depth test + WRITE,
+    // double-sided (cull off) so the owl's flat 2D sub-cubes show from both sides.
+    let mob_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mob shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mob.wgsl").into()),
+    });
+    let mob_pipe = world_pipeline(
+        device,
+        "mob pipe",
+        &layout,
+        &mob_shader,
+        "vs_mob",
+        "fs_mob",
+        std::slice::from_ref(&item3d_vbuf_layout),
+        &opaque_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::WriteLess),
+        sample_count,
+    );
+    // The mob pipeline is shared across species; each species' own vbuf/ibuf +
+    // bind group + DynamicDraw are built in the renderer by iterating `mob::MOB_DEFS`
+    // (each species has a distinct texture, so geometry can't share one buffer).
+
     // --- Break-overlay pipeline (the destroy crack). ---
     // Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
     // (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
@@ -1117,6 +1162,7 @@ pub(super) fn create_pipeline_resources(
     PipelineResources {
         uniform_bind,
         atlas_bind,
+        atlas_bgl,
         sky_pipe,
         sky_bind,
         opaque_pipe,
@@ -1135,6 +1181,7 @@ pub(super) fn create_pipeline_resources(
         item3d_pipe,
         item3d_mvp_bind,
         item3d_vbuf,
+        mob_pipe,
         break_pipe,
         break_vbuf,
         break_ibuf,

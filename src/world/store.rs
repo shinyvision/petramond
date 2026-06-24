@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::chunk::{self, Chunk, ChunkPos, CHUNK_SY, SECTION_COUNT};
 use crate::entity::DroppedItem;
+use crate::mathh::Vec3;
 use crate::mesh::ChunkMesh;
+use crate::mob::{Mobs, SavedMob};
 use crate::save::{ChunkSnapshot, WorldSave};
 use crate::worker::WorkerPool;
 
@@ -57,6 +59,13 @@ pub struct World {
     /// see. The entity subsystem (physics, pickup, lifetime, save-bundling) lives
     /// on [`DroppedItems`]; see `world::entities`.
     pub(super) dropped_items: DroppedItems,
+    /// Active mobs — those in currently-loaded chunks. Like [`dropped_items`], a mob
+    /// unloads with its chunk (saved into its record) and reloads with it, so this only
+    /// holds mobs the player can see. AI/physics/spawning + the save-bundling live on
+    /// [`Mobs`]; `Game` drives them through the world (the `tick_mobs` /
+    /// `spawn_mobs_tick` borrow-splits) and reads back the loot a kill drops. See
+    /// `mob::manager`.
+    pub(super) mobs: Mobs,
 }
 
 impl World {
@@ -77,6 +86,7 @@ impl World {
             sim: TickState::new(seed),
             save: None,
             dropped_items: DroppedItems::default(),
+            mobs: Mobs::new(seed as u64),
         }
     }
 
@@ -101,17 +111,17 @@ impl World {
     ///
     /// The gate persists a chunk when ANY of:
     /// - its blocks were modified,
-    /// - it carries item entities right now, or
-    /// - `record_holds_drops` — its on-disk record still holds drops it no longer
-    ///   carries, so the stale record must be rewritten or it resurrects them on
-    ///   reload. This signal is CROSS-SESSION: the caller computes it from the
-    ///   save handle (`WorldSave::record_holds_drops`), which also remembers
-    ///   records read back from a prior session (`note_record_holds_drops`), so a
-    ///   record written before this run is still cleared once its drops are gone.
+    /// - it carries item entities or mobs right now, or
+    /// - `record_holds_entities` — its on-disk record still holds drops/mobs it no
+    ///   longer carries, so the stale record must be rewritten or it resurrects them on
+    ///   reload. This signal is CROSS-SESSION: the caller computes it from the save
+    ///   handle (`WorldSave::record_holds_entities`), which also remembers records read
+    ///   back from a prior session (`note_record_holds_entities`), so a record written
+    ///   before this run is still cleared once its entities are gone.
     ///
-    /// The caller owns the harvest policy (which fed `entities`) and the
-    /// post-action (clear `modified` vs. evict), keeping flush's "drops stay
-    /// active" and unload's "drops pause" lifetimes distinct.
+    /// The caller owns the harvest policy (which fed `entities` / `mobs`) and the
+    /// post-action (clear `modified` vs. evict), keeping flush's "stay active" and
+    /// unload's "pause / save" lifetimes distinct.
     ///
     /// [`flush_modified_chunks`]: Self::flush_modified_chunks
     /// [`ChunkSnapshot`]: crate::save::ChunkSnapshot
@@ -119,12 +129,14 @@ impl World {
         &self,
         pos: ChunkPos,
         entities: Vec<DroppedItem>,
-        record_holds_drops: bool,
+        mobs: Vec<SavedMob>,
+        record_holds_entities: bool,
     ) -> Option<ChunkSnapshot> {
         let chunk = self.chunks.get(&pos)?;
-        if chunk.modified || !entities.is_empty() || record_holds_drops {
+        if chunk.modified || !entities.is_empty() || !mobs.is_empty() || record_holds_entities {
             let mut snap = ChunkSnapshot::from_chunk(chunk);
             snap.entities = entities;
+            snap.mobs = mobs;
             Some(snap)
         } else {
             None
@@ -139,19 +151,23 @@ impl World {
         if self.save.is_none() {
             return;
         }
-        // Flush's harvest policy: CLONE the resting drops (they stay active in
-        // memory) so a crash can't lose their lifetimes.
+        // Flush's harvest policy: CLONE the resting drops and mobs (they stay active in
+        // memory) so a crash can't lose them.
         let mut by_chunk = self.dropped_items.items_by_chunk();
+        let mut mobs_by_chunk = self.mobs.saved_by_chunk();
         let positions: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         let mut snaps = Vec::new();
         let mut persisted = Vec::new();
         for pos in positions {
             let entities = by_chunk.remove(&pos).unwrap_or_default();
-            let record_holds_drops = self
+            let mobs = mobs_by_chunk.remove(&pos).unwrap_or_default();
+            let record_holds_entities = self
                 .save
                 .as_ref()
-                .is_some_and(|s| s.record_holds_drops(pos));
-            if let Some(snap) = self.snapshot_chunk_for_save(pos, entities, record_holds_drops) {
+                .is_some_and(|s| s.record_holds_entities(pos));
+            if let Some(snap) =
+                self.snapshot_chunk_for_save(pos, entities, mobs, record_holds_entities)
+            {
                 snaps.push(snap);
                 persisted.push(pos);
             }
@@ -165,6 +181,59 @@ impl World {
         if let Some(save) = self.save.as_mut() {
             save.save_chunks(snaps);
         }
+    }
+
+    /// The active mobs (read-only), for `Game` to forward to the render-side scene
+    /// adapter and to ray-test for crosshair targeting.
+    #[inline]
+    pub fn mobs(&self) -> &Mobs {
+        &self.mobs
+    }
+
+    /// Mutable access to the active mobs, so `Game` can spawn (the debug owl key), apply
+    /// an attack (reading back the loot a kill drops), and otherwise drive them — while
+    /// the live set stays owned here, persisting with the chunks the mobs stand in.
+    #[inline]
+    pub fn mobs_mut(&mut self) -> &mut Mobs {
+        &mut self.mobs
+    }
+
+    /// Advance the mobs one fixed game tick (AI, physics, soft entity pushing, hostile
+    /// distance-despawn). Drives the owned [`Mobs`] against an immutable view of the rest
+    /// of the world: the field is moved out so the `&mut Mobs` and `&World` borrows stay
+    /// disjoint, mirroring [`tick_item_physics`](Self::tick_item_physics). With a save
+    /// attached, a mob over a not-yet-loaded chunk is frozen so it can't fall through
+    /// missing terrain.
+    ///
+    /// `player_pos` is the player's body centre (the AI's player anchor). `player_body`
+    /// is the player's *pushable* body — present only when the player has a physical
+    /// presence (`None` for a noclip spectator) — so the mobs jostle it. Returns the net
+    /// horizontal push *velocity* the mobs impart on the player this tick, which the
+    /// caller adds to the player's own velocity (the player isn't owned here); zero when
+    /// there is no pushable player.
+    pub fn tick_mobs(
+        &mut self,
+        dt: f32,
+        player_pos: Vec3,
+        player_body: Option<crate::mob::Body>,
+    ) -> Vec3 {
+        if self.mobs.is_empty() {
+            return Vec3::ZERO;
+        }
+        let freeze_unloaded = self.save.is_some();
+        let mut mobs = std::mem::take(&mut self.mobs);
+        let player_push = mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
+        self.mobs = mobs;
+        player_push
+    }
+
+    /// Run one natural mob-spawn attempt (one per game tick). Same borrow-split as
+    /// [`tick_mobs`](Self::tick_mobs); never early-returns, since an empty set is exactly
+    /// when a spawn may add the first mob.
+    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) {
+        let mut mobs = std::mem::take(&mut self.mobs);
+        mobs.spawn_tick(self, player_pos);
+        self.mobs = mobs;
     }
 
     #[inline]
@@ -338,7 +407,7 @@ mod tests {
         let mut opened = crate::save::open_at(dir.clone()).expect("open temp world");
 
         let pos = ChunkPos::new(0, 0);
-        opened.save.note_record_holds_drops(pos); // as the load path would
+        opened.save.note_record_holds_entities(pos); // as the load path would
         let mut world = World::new(0, 1);
         world.attach_save(opened.save);
         world.chunks.insert(pos, Chunk::new(pos.cx, pos.cz));
@@ -346,7 +415,7 @@ mod tests {
         world.flush_modified_chunks();
 
         assert!(
-            !world.save().expect("save").record_holds_drops(pos),
+            !world.save().expect("save").record_holds_entities(pos),
             "flush must rewrite the chunk and clear its stale drop record"
         );
 

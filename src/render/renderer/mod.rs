@@ -13,22 +13,27 @@ use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use lod::far_leaf_lod_active;
 
 use super::block_model::BillboardBasis;
+use super::bbmodel::Model;
 use super::break_overlay::build_break_overlay;
 use super::crosshair::crosshair_vertices;
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
 use super::chest_model::build_chests;
 use super::item_entity::build_item_entities;
+use super::item_model::ItemVertex;
+use super::mob_model::build_mob_instances;
 use super::particles::build_particles;
 use super::pipeline::create_pipeline_resources;
-use super::resources::{create_atlas, create_depth, create_gui_atlas, upload_mesh, GpuMesh};
+use super::resources::{
+    create_atlas, create_depth, create_gui_atlas, create_model_texture, upload_mesh, GpuMesh,
+};
 use super::section_cull::{section_draw_ranges, SectionVisibilityCache};
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
-    ParticleInstance, UiFrame,
+    MobRenderInstance, ParticleInstance, UiFrame,
 };
 use crate::inventory::TOTAL_SLOTS;
 use crate::item::ItemType;
@@ -91,6 +96,30 @@ impl Default for UiSnapshot {
             chest: None,
         }
     }
+}
+
+/// Per-species GPU resources for the mob pipeline, built once at renderer init by
+/// iterating [`crate::mob::MOB_DEFS`] (so the renderer never names a species). Holds
+/// the parsed model + its render scale, the species' own texture/sampler + group(1)
+/// bind, its dynamic draw buffers, and reused per-frame scratch (the visible subset
+/// + the baked `ItemVertex` geometry). The `Vec<MobGpu>` is in `Mob as usize` order.
+struct MobGpu {
+    model: super::bbmodel::Model,
+    scale: f32,
+    // Kept alive alongside the bind group that references them.
+    #[allow(dead_code)]
+    texture: wgpu::Texture,
+    #[allow(dead_code)]
+    view: wgpu::TextureView,
+    #[allow(dead_code)]
+    sampler: wgpu::Sampler,
+    bind: wgpu::BindGroup,
+    draw: DynamicDraw,
+    /// Frustum-visible subset of this species' instances this frame.
+    visible: Vec<MobRenderInstance>,
+    /// Reused CPU staging for this species' baked geometry.
+    verts: Vec<ItemVertex>,
+    indices: Vec<u32>,
 }
 
 pub struct Renderer {
@@ -169,6 +198,10 @@ pub struct Renderer {
     /// Chest model dynamic draw (opaque pipeline, like item entities; its caps are
     /// separate so a wall of chests can't make dropped items vanish).
     chest_draw: DynamicDraw,
+    /// Per-species mob render resources, indexed by `Mob as usize` (registry id
+    /// order). Built once from `mob::MOB_DEFS`; each frame the visible mobs are
+    /// grouped here by species, baked, and drawn in the mob pass.
+    mob_gpu: Vec<MobGpu>,
     /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
     /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
     particle_draw: DynamicVertexDraw,
@@ -217,6 +250,10 @@ pub struct Renderer {
     pub chests: Vec<ChestInstance>,
     /// Reusable scratch for the frustum-visible subset of `chests`.
     chest_visible: Vec<ChestInstance>,
+    /// Mobs to draw in the world this frame (the scene adapter fills this by
+    /// interpolating the sim's live mob instances). The per-species visible subset +
+    /// baked geometry live in `mob_gpu`.
+    pub mobs: Vec<MobRenderInstance>,
     /// Reusable CPU staging for baked particle vertices.
     particle_verts: Vec<super::particles::ParticleVertex>,
     /// UI pipeline (2D HUD / inventory), its gui-atlas bind, and the reusable
@@ -409,6 +446,74 @@ async fn new_renderer_inner(
     let item_entity_pipe = pipelines.opaque_pipe.clone();
     let chest_pipe = pipelines.opaque_pipe.clone();
 
+    // Build per-species mob render resources by iterating the mob registry: load each
+    // species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
+    // texture as a dedicated atlas, build its group(1) bind, and give it its own
+    // dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
+    // `mob::MOB_DEFS` — no renderer edit. A model parse failure degrades to an empty
+    // model (that species just doesn't draw) rather than crashing the renderer.
+    let mob_gpu: Vec<MobGpu> = crate::mob::ALL_MOBS
+        .iter()
+        .map(|&kind| {
+            let d = crate::mob::def(kind);
+            let model = Model::load(d.model_src).unwrap_or_else(|e| {
+                log::error!("mob model load failed for {kind:?}: {e}");
+                Model::empty()
+            });
+            let (texture, view, sampler) = create_model_texture(
+                &device,
+                &queue,
+                &model.texture_rgba,
+                model.tex_w,
+                model.tex_h,
+            );
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mob atlas bg"),
+                layout: &pipelines.atlas_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+            let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mob vbuf"),
+                size: super::pipeline::MAX_MOB_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mob ibuf"),
+                size: super::pipeline::MAX_MOB_INDICES * 4,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            MobGpu {
+                model,
+                scale: d.scale,
+                texture,
+                view,
+                sampler,
+                bind,
+                draw: DynamicDraw::new(
+                    pipelines.mob_pipe.clone(),
+                    vbuf,
+                    ibuf,
+                    super::pipeline::MAX_MOB_VERTICES,
+                    super::pipeline::MAX_MOB_INDICES,
+                ),
+                visible: Vec::new(),
+                verts: Vec::new(),
+                indices: Vec::new(),
+            }
+        })
+        .collect();
+
     Renderer {
         surface,
         device,
@@ -472,6 +577,7 @@ async fn new_renderer_inner(
             super::pipeline::MAX_CHEST_VERTICES,
             super::pipeline::MAX_CHEST_INDICES,
         ),
+        mob_gpu,
         particle_draw: DynamicVertexDraw::new(
             pipelines.particle_pipe,
             pipelines.particle_vbuf,
@@ -503,6 +609,7 @@ async fn new_renderer_inner(
         item_entity_visible: Vec::new(),
         chests: Vec::new(),
         chest_visible: Vec::new(),
+        mobs: Vec::new(),
         particle_verts: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
         ui_bind: pipelines.ui_bind,
@@ -612,6 +719,13 @@ impl Renderer {
     pub fn set_chests(&mut self, v: &[ChestInstance]) {
         self.chests.clear();
         self.chests.extend_from_slice(v);
+    }
+
+    /// Store the mobs to draw this frame (already interpolated by the scene adapter).
+    /// Reuses the existing `Vec` capacity.
+    pub fn set_mobs(&mut self, v: &[MobRenderInstance]) {
+        self.mobs.clear();
+        self.mobs.extend_from_slice(v);
     }
 
     /// Store the particle billboards to draw this frame. Reuses capacity.
@@ -952,6 +1066,39 @@ impl Renderer {
             |verts, indices| build_chests(chest_visible, verts, indices),
         );
 
+        // Mobs (animated entity models), grouped by species and frustum-culled, baked
+        // into each species' OWN `ItemVertex` buffers (a different vertex type from the
+        // packed block vertex). Each instance is posed by the walk animation at its
+        // `anim_time` when moving, else the model's rest pose.
+        for g in &mut self.mob_gpu {
+            g.visible.clear();
+        }
+        for inst in &self.mobs {
+            // Cull box: ~0.5 m around the feet, expanded up for the standing body. A
+            // killed mob is flung from its (frozen) death point and tumbles across the
+            // ground, so use a generous box while it's ragdolling so the flying corpse
+            // doesn't pop out of view.
+            let pad = if inst.ragdoll.is_some() {
+                glam::Vec3::splat(6.0)
+            } else {
+                glam::Vec3::new(0.5, 1.2, 0.5)
+            };
+            let min = inst.pos - pad;
+            let max = inst.pos + pad;
+            if self.frustum.aabb_visible(min, max) {
+                self.mob_gpu[inst.kind as usize].visible.push(inst.clone());
+            }
+        }
+        let queue = &self.queue;
+        for g in &mut self.mob_gpu {
+            let model = &g.model;
+            let scale = g.scale;
+            let visible = &g.visible;
+            g.draw.bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
+                build_mob_instances(model, scale, visible, verts, indices)
+            });
+        }
+
         // Break-overlay (destroy crack) cube, when a block is targeted.
         let break_overlay = self.break_overlay;
         self.break_draw.bake(
@@ -1128,6 +1275,30 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             self.chest_draw.draw(&mut pass);
+        }
+        // MOB PASS: animated entity models, one draw per visible species. Loads color
+        // + depth (test + WRITE) so mobs occlude and are occluded by terrain — like
+        // the item-entity / chest passes — but binds each species' OWN texture at
+        // group(1) (not the block atlas); the mob pipeline (set by each DynamicDraw)
+        // uses explicit-UV vertices so a model's arbitrary sub-rect UVs sample its
+        // own sheet.
+        if self.mob_gpu.iter().any(|g| g.draw.index_count > 0) {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "mob pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            for g in &self.mob_gpu {
+                if g.draw.index_count == 0 {
+                    continue;
+                }
+                pass.set_bind_group(1, &g.bind, &[]);
+                g.draw.draw(&mut pass);
+            }
         }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so

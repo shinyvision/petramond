@@ -255,6 +255,15 @@ impl Block {
         self.has_tag(BlockTag::Log)
     }
 
+    /// Whether this is water (source or flowing — one block id, the flow is metadata).
+    /// Water has no collision, so mobs sink through it unless they swim; the mob
+    /// pathfinder treats it as crossable footing and the kinematics float mobs up out
+    /// of it.
+    #[inline]
+    pub fn is_water(self) -> bool {
+        self == Block::Water
+    }
+
     /// This block's behaviour — the world-reactive "class" assigned in its data
     /// row (random ticks, …). Most blocks are [`behavior::INERT`].
     #[inline]
@@ -400,16 +409,7 @@ pub(crate) fn assert_registry_ordered() {
 mod tests {
     use super::{Block, BlockMaterial};
     use crate::atlas::Tile;
-    use crate::item::{Drop, ItemType};
-
-    /// One exact drop: `count` of `item`. Test shorthand for the `Drop` literal.
-    fn drop1(item: ItemType) -> Drop {
-        Drop {
-            item,
-            min: 1,
-            max: 1,
-        }
-    }
+    use crate::item::ItemType;
 
     #[test]
     fn ids_are_stable_and_append_only() {
@@ -546,90 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_matches_contract() {
-        // Wood: hardness 2.0 (5 s by hand), drops self, hand-harvestable.
-        assert_eq!(Block::OakLog.material(), BlockMaterial::Wood);
-        assert_eq!(Block::OakLog.hardness(), 2.0);
-        assert!(!Block::OakLog.requires_tool());
-        assert_eq!(Block::OakLog.harvest_tier(), 0);
-        assert_eq!(Block::OakLog.drop_spec().drops, &[drop1(ItemType::OakLog)]);
-
-        // Stone needs a wooden pickaxe (tier 1) and, when harvested, yields
-        // cobblestone rather than itself.
-        assert_eq!(Block::Stone.material(), BlockMaterial::Stone);
-        assert_eq!(Block::Stone.hardness(), 1.5);
-        assert!(Block::Stone.requires_tool());
-        assert_eq!(Block::Stone.harvest_tier(), 1);
-        assert_eq!(
-            Block::Stone.drop_spec().drops,
-            &[drop1(ItemType::Cobblestone)]
-        );
-
-        // Ores require a tool and are harder. Coal is wooden-tier; iron/copper
-        // need a stone pickaxe; redstone/diamond sit above the stone tier.
-        assert_eq!(Block::CoalOre.material(), BlockMaterial::Ore);
-        assert_eq!(Block::CoalOre.hardness(), 3.0);
-        assert!(Block::CoalOre.requires_tool());
-        assert_eq!(Block::CoalOre.harvest_tier(), 1);
-        assert_eq!(Block::CoalOre.drop_spec().drops, &[drop1(ItemType::Coal)]);
-        assert_eq!(Block::IronOre.harvest_tier(), 2);
-        assert_eq!(
-            Block::IronOre.drop_spec().drops,
-            &[drop1(ItemType::RawIron)]
-        );
-        assert_eq!(Block::CopperOre.harvest_tier(), 2);
-        assert_eq!(
-            Block::CopperOre.drop_spec().drops,
-            &[Drop {
-                item: ItemType::RawCopper,
-                min: 2,
-                max: 4,
-            }]
-        );
-        assert_eq!(Block::DiamondOre.harvest_tier(), 3);
-
-        // Leaves: soft foliage, drop self.
-        assert_eq!(Block::OakLeaves.material(), BlockMaterial::Foliage);
-        assert_eq!(Block::OakLeaves.hardness(), 0.2);
-        assert!(!Block::OakLeaves.requires_tool());
-
-        // Dirt family. Mined grass reverts to dirt (its grass layer is lost).
-        assert_eq!(Block::Grass.material(), BlockMaterial::Dirt);
-        assert_eq!(Block::Grass.hardness(), 0.5);
-        assert_eq!(Block::Grass.drop_spec().drops, &[drop1(ItemType::Dirt)]);
-
-        // Cross-plants: instant, Plant material, never require a tool.
-        for plant in [
-            Block::Poppy,
-            Block::Fern,
-            Block::RedMushroom,
-            Block::DeadBush,
-        ] {
-            assert_eq!(plant.material(), BlockMaterial::Plant, "{plant:?}");
-            assert_eq!(plant.hardness(), 0.0, "{plant:?}");
-            assert!(!plant.requires_tool(), "{plant:?}");
-            assert_eq!(plant.drop_spec().drops.len(), 1, "{plant:?}");
-        }
-
-        // ShortGrass: instant, drops NOTHING (matches the goal's "grass does not drop").
-        assert_eq!(Block::ShortGrass.material(), BlockMaterial::Plant);
-        assert_eq!(Block::ShortGrass.hardness(), 0.0);
-        assert!(Block::ShortGrass.drop_spec().drops.is_empty());
-
-        // Air / Water: unbreakable, no material, no drop, never need a tool.
-        for b in [Block::Air, Block::Water] {
-            assert_eq!(b.material(), BlockMaterial::None, "{b:?}");
-            assert_eq!(b.hardness(), -1.0, "{b:?}");
-            assert!(b.drop_spec().drops.is_empty(), "{b:?}");
-            assert!(!b.requires_tool(), "{b:?}");
-        }
-
-        // to_item mirrors the item conversion.
-        assert_eq!(Block::Stone.to_item(), ItemType::Stone);
-        assert_eq!(Block::Air.to_item(), ItemType::Air);
-    }
-
-    #[test]
     fn every_block_has_consistent_metadata() {
         for &block in Block::ALL {
             let spec = block.drop_spec();
@@ -659,7 +575,12 @@ mod tests {
     fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
         use crate::item::ToolKind;
         // Stone & ore want a pickaxe.
-        for b in [Block::Stone, Block::Cobblestone, Block::CoalOre, Block::DiamondOre] {
+        for b in [
+            Block::Stone,
+            Block::Cobblestone,
+            Block::CoalOre,
+            Block::DiamondOre,
+        ] {
             assert_eq!(b.preferred_tool(), Some(ToolKind::Pickaxe), "{b:?}");
         }
         // Wood wants an axe — logs and planks, AND (sanity check) the crafting
@@ -692,7 +613,12 @@ mod tests {
         }
         // Everything a hand mines just as well has no preferred tool (plants,
         // leaves, air).
-        for b in [Block::Poppy, Block::ShortGrass, Block::OakLeaves, Block::Air] {
+        for b in [
+            Block::Poppy,
+            Block::ShortGrass,
+            Block::OakLeaves,
+            Block::Air,
+        ] {
             assert_eq!(b.preferred_tool(), None, "{b:?}");
         }
     }

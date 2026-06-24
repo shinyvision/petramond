@@ -33,4 +33,5 @@ mod state;
 mod tests;
 
 pub use interaction::{RaycastHit, REACH};
+pub(crate) use interaction::ray_vs_aabb;
 pub use state::{Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT};

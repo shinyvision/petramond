@@ -248,6 +248,46 @@ pub struct Tool {
     pub tier: u8,
 }
 
+impl Tool {
+    /// The melee damage range `(min, max)` this tool rolls per hit. A weapon's damage
+    /// is a property of the tool itself — its KIND and material TIER: axes hit hardest,
+    /// shovels and pickaxes share a gentler curve, and every diamond tool one-shots a
+    /// small mob. The attacker rolls a uniform value in this range each swing, so a
+    /// tool's hits-to-kill against a given mob spans a small band rather than a fixed
+    /// count (a flat integer-per-hit couldn't produce e.g. "3–4 hits" on 4 health).
+    pub fn attack_damage(self) -> (f32, f32) {
+        use ToolKind::*;
+        // Diamond is uniformly lethal regardless of kind.
+        if self.tier >= 4 {
+            return (5.0, 7.0);
+        }
+        match (self.kind, self.tier) {
+            (Axe, 1) => (1.5, 2.5),
+            (Axe, 2) => (2.0, 3.0),
+            (Axe, 3) => (4.0, 6.0),
+            // Shovels and pickaxes share a curve (clumsier weapons than an axe).
+            (_, 1) => (1.0, 1.5),
+            (_, 2) => (1.0, 2.5),
+            (_, 3) => (2.5, 4.5),
+            // Tiers are 1..=4; anything else falls back to the fist baseline.
+            _ => FIST_DAMAGE,
+        }
+    }
+}
+
+/// Bare-hand (fist) melee damage — the baseline when nothing, or a non-weapon item, is
+/// held. Deterministic: exactly 1 per hit (so a fist always takes 4 hits on 4 health).
+pub const FIST_DAMAGE: (f32, f32) = (1.0, 1.0);
+
+/// The melee damage range `(min, max)` for attacking with `item` in hand: the tool's
+/// range if it's a weapon, else the [`FIST_DAMAGE`] baseline (an empty hand and a
+/// non-weapon item like a block both punch for 1).
+pub fn attack_damage(item: Option<ItemType>) -> (f32, f32) {
+    item.and_then(ItemType::tool)
+        .map(Tool::attack_damage)
+        .unwrap_or(FIST_DAMAGE)
+}
+
 /// How an item is drawn in inventory slots and in-hand.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ItemRenderKind {
@@ -536,6 +576,23 @@ impl ItemStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attack_damage_ranges_are_ordered_and_positive() {
+        // Mechanic, not the tuned numbers (which are free to change): an empty hand and
+        // a non-weapon item both punch for exactly 1, and every item's range is a valid,
+        // positive `lo <= hi`.
+        assert_eq!(attack_damage(None), (1.0, 1.0), "fist is a deterministic 1");
+        assert_eq!(attack_damage(Some(ItemType::Dirt)), (1.0, 1.0), "a non-weapon punches like a fist");
+        for &it in ItemType::ALL {
+            let (lo, hi) = attack_damage(Some(it));
+            assert!(lo > 0.0 && lo <= hi, "{it:?}: invalid range {lo}..{hi}");
+        }
+        // Every diamond tool one-shots a 4-health mob (its minimum damage alone is lethal).
+        for it in [ItemType::DiamondPickaxe, ItemType::DiamondAxe, ItemType::DiamondShovel] {
+            assert!(attack_damage(Some(it)).0 >= 4.0, "a diamond tool one-shots: {it:?}");
+        }
+    }
 
     #[test]
     fn ids_are_stable_and_append_only() {

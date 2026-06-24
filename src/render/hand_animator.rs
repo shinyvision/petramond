@@ -56,7 +56,10 @@ impl HeldItemAnimator {
             self.swing_scale = 1.0;
             self.swing_t = (self.swing_t + dt * HAND_SWING_HZ).fract();
         } else {
-            if frame.broke_block {
+            // A block break and an attack swing (mob hit / punch) both play a single
+            // full-strength swing. They never coincide with `mining` (mining needs a
+            // block under the crosshair; an attack nulls that look).
+            if frame.broke_block || frame.swung {
                 self.swing_finishing = true;
                 self.swing_scale = 1.0;
             }
@@ -95,6 +98,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -107,6 +111,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 0.5 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -121,6 +126,7 @@ mod tests {
             mining: false,
             broke_block: true,
             placed: false,
+            swung: false,
             dt: 0.0,
         });
         assert_eq!(
@@ -133,6 +139,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -145,9 +152,36 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
+    }
+
+    #[test]
+    fn animator_plays_one_full_swing_for_an_attack() {
+        let mut anim = HeldItemAnimator::default();
+        let started = anim.update(HeldItemFrame {
+            item: None,
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: true,
+            dt: 1.0 / 60.0,
+        });
+        assert!(started.swing > 0.0, "an attack begins a swing");
+        assert_eq!(started.swing_scale, 1.0, "an attack swings at full strength");
+
+        // It carries through and settles like any one-shot swing.
+        let settled = anim.update(HeldItemFrame {
+            item: None,
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: false,
+            dt: 1.0 / HAND_SWING_HZ,
+        });
+        assert_eq!(settled.swing, 0.0, "the attack swing completes");
     }
 
     #[test]
@@ -158,6 +192,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: true,
+            swung: false,
             dt: 1.0 / 60.0,
         });
         // A place starts a one-shot swing at the reduced place amplitude (softer
@@ -172,6 +207,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -187,6 +223,7 @@ mod tests {
             mining: false,
             broke_block: false,
             placed: true,
+            swung: false,
             dt: 1.0 / 60.0,
         });
         assert_eq!(
@@ -208,6 +245,7 @@ mod tests {
             mining: true,
             broke_block: false,
             placed: false,
+            swung: false,
             dt: 1.0 / 60.0,
         });
         assert_eq!(view.swing_scale, 1.0, "mining is the full-strength punch");

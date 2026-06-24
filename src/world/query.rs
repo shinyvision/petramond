@@ -126,4 +126,25 @@ impl World {
     pub fn chunk_loaded(&self, cx: i32, cz: i32) -> bool {
         self.chunks.contains_key(&ChunkPos::new(cx, cz))
     }
+
+    /// The loaded streaming disc — `(center_chunk_x, center_chunk_z, render_dist)`
+    /// the chunk loader is currently centered on — or `None` before the first load.
+    /// Natural mob spawning samples positions within this.
+    pub fn loaded_area(&self) -> Option<(i32, i32, i32)> {
+        self.last_load_target
+            .map(|t| (t.center.cx, t.center.cz, t.render_dist))
+    }
+
+    /// The Y of the topmost movement-blocking block in the loaded column at
+    /// `(wx, wz)` — the surface an entity's feet would rest on top of — or `None`
+    /// if the chunk is unloaded or the column has no solid block. Non-colliding
+    /// cover (tall grass, snow layers, water) is skipped, so the result is real
+    /// footing rather than whatever happens to top the column.
+    pub fn surface_collision_y(&self, wx: i32, wz: i32) -> Option<i32> {
+        let chunk = self.chunks.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
+        let top = chunk.surface_y(chunk::lx(wx), chunk::lz(wz));
+        (0..=top)
+            .rev()
+            .find(|&y| Block::from_id(self.chunk_block(wx, y, wz)).blocks_movement())
+    }
 }

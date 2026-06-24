@@ -22,6 +22,7 @@ pub mod item;
 pub mod mathh;
 pub mod mesh;
 pub mod mining;
+pub mod mob;
 pub mod platform;
 pub mod player;
 pub mod registry;

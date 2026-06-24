@@ -77,20 +77,24 @@ impl World {
             .filter(|p| (p.cx - center.cx).abs() > keep || (p.cz - center.cz).abs() > keep)
             .cloned()
             .collect();
-        // Persist any player-modified chunk, and any chunk holding item entities,
-        // before it leaves memory. Unload's harvest policy DRAINS the entities into
-        // the save record, which is what pauses their lifetime timers (they stop
-        // being simulated) until the chunk loads again. The gate + snapshot build
-        // itself is shared with the autosave flush (`snapshot_chunk_for_save`).
+        // Persist any player-modified chunk, and any chunk holding item entities or
+        // mobs, before it leaves memory. Unload's harvest policy DRAINS the drops and
+        // mobs into the save record: that pauses item lifetime timers (they stop being
+        // simulated) and takes the mobs out of the live set until the chunk loads again.
+        // The gate + snapshot build itself is shared with the autosave flush
+        // (`snapshot_chunk_for_save`).
         if self.save.is_some() {
             let mut snaps = Vec::new();
             for &pos in &to_drop {
                 let entities = self.dropped_items.take_items_in_chunk(pos);
-                let record_holds_drops = self
+                let mobs = self.mobs.take_in_chunk(pos);
+                let record_holds_entities = self
                     .save
                     .as_ref()
-                    .is_some_and(|s| s.record_holds_drops(pos));
-                if let Some(snap) = self.snapshot_chunk_for_save(pos, entities, record_holds_drops) {
+                    .is_some_and(|s| s.record_holds_entities(pos));
+                if let Some(snap) =
+                    self.snapshot_chunk_for_save(pos, entities, mobs, record_holds_entities)
+                {
                     snaps.push(snap);
                 }
             }
@@ -135,15 +139,17 @@ impl World {
             }
             match loaded.chunk {
                 Some(chunk) => {
-                    // The record carried drops: remember that, so a later flush
-                    // that finds this chunk drop-free rewrites the record instead
-                    // of leaving stale drops to resurrect (cross-session dupe).
-                    if !loaded.entities.is_empty() {
+                    // The record carried drops or mobs: remember that, so a later
+                    // flush that finds this chunk free of them rewrites the record
+                    // instead of leaving stale entities to resurrect (cross-session
+                    // dupe). Mobs rejoin the live set; drops resume their lifetimes.
+                    if !loaded.entities.is_empty() || !loaded.mobs.is_empty() {
                         if let Some(save) = self.save.as_mut() {
-                            save.note_record_holds_drops(pos);
+                            save.note_record_holds_entities(pos);
                         }
                     }
                     self.dropped_items.extend(loaded.entities);
+                    self.mobs.restore(loaded.mobs);
                     fresh.push((pos, chunk));
                 }
                 None => {
@@ -446,7 +452,7 @@ mod tests {
         let pos = ChunkPos::new(0, 0);
         // The save already holds a drop for this chunk (as a prior unload-with-item
         // left it); the chunk is back in memory now, drop-free and unmodified.
-        opened.save.note_record_holds_drops(pos); // mirrors the load path
+        opened.save.note_record_holds_entities(pos); // mirrors the load path
         let mut world = World::new(0, 1);
         world.attach_save(opened.save);
         world.chunks.insert(pos, Chunk::new(pos.cx, pos.cz));
@@ -455,7 +461,7 @@ mod tests {
         world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
 
         assert!(
-            !world.save().expect("save").record_holds_drops(pos),
+            !world.save().expect("save").record_holds_entities(pos),
             "unload must rewrite the chunk and clear its stale drop record"
         );
 
@@ -538,6 +544,59 @@ mod tests {
                 && mesh_len(w, pos).is_some_and(|n| n < before)),
             "REPRO: edit on the reloaded chunk must remesh (fewer faces after mining)"
         );
+
+        drop(world);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End-to-end mob persistence: a mob standing in a chunk is saved into that chunk's
+    /// record when it unloads (leaving the live set), and comes back — same species,
+    /// position and facing — when the chunk reloads from disk.
+    #[test]
+    fn a_mob_is_saved_on_unload_and_restored_on_reload() {
+        use crate::mathh::Vec3;
+        use crate::mob::Mob;
+
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-streamtest-{}-mob-persist",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let opened = crate::save::open_at(dir.clone()).expect("open temp world");
+        let mut world = World::new(0, 3);
+        world.attach_save(opened.save);
+        let pos = ChunkPos::new(0, 0);
+
+        // A loaded chunk with an owl standing in it, facing a known yaw.
+        world.insert_chunk_for_test(pos, flat_chunk(pos.cx, pos.cz));
+        let feet = Vec3::new(8.5, 65.0, 8.5);
+        assert!(world.mobs_mut().spawn(Mob::Owl, feet, 1.5));
+        assert_eq!(world.mobs().len(), 1);
+
+        // Stream far away: the owl's chunk unloads, harvesting it into the save record.
+        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
+        assert!(!world.chunk_loaded(pos.cx, pos.cz), "chunk evicted on unload");
+        assert_eq!(
+            world.mobs().len(),
+            0,
+            "the owl leaves the live set when its chunk unloads (it is saved, not simulated)"
+        );
+
+        // Reload the chunk from disk through the streamer's poll path: the owl returns.
+        world.save().expect("save").request_load(pos);
+        for _ in 0..1000 {
+            let _ = world.poll();
+            if world.chunk_loaded(pos.cx, pos.cz) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(world.chunk_loaded(pos.cx, pos.cz), "chunk reloads from disk");
+        assert_eq!(world.mobs().len(), 1, "REPRO: the saved owl returns with its chunk");
+        let owl = &world.mobs().instances()[0];
+        assert_eq!(owl.kind, Mob::Owl);
+        assert_eq!(owl.pos, feet, "restored in place");
+        assert_eq!(owl.yaw, 1.5, "facing restored");
 
         drop(world);
         let _ = std::fs::remove_dir_all(&dir);

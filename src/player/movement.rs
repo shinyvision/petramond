@@ -112,6 +112,21 @@ impl Player {
         step_at(base) || step_at(base + 1)
     }
 
+    /// Add a soft entity-push *velocity* to the player — a mob it overlaps jostling it
+    /// (mobs and the player push each other apart, but neither has a solid collision
+    /// box). Exactly Minecraft's model: the push goes into the player's horizontal
+    /// velocity, so the movement controller carries it and friction bleeds it off — the
+    /// player drifts smoothly out of the overlap rather than being teleported, and can
+    /// still walk against it. The vertical component is ignored (pushing is horizontal);
+    /// a noclip spectator has no body to jostle.
+    pub fn push(&mut self, vel: Vec3) {
+        if self.is_spectator() {
+            return;
+        }
+        self.vel.x += vel.x;
+        self.vel.z += vel.z;
+    }
+
     /// Advance the player by `dt` seconds against the world's solid voxels.
     /// The caller must ensure the overlapped columns are loaded (see
     /// [`Player::columns_loaded`]) before stepping survival physics. Spectator

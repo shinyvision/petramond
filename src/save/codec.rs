@@ -14,6 +14,7 @@ use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
 use crate::entity::DroppedItem;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
+use crate::mob::SavedMob;
 use crate::torch::TorchPlacement;
 
 const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
@@ -27,6 +28,7 @@ const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
 const FLAG_HAS_CHESTS: u8 = 0x08;
 const FLAG_HAS_TORCHES: u8 = 0x10;
+const FLAG_HAS_MOBS: u8 = 0x20;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -48,11 +50,17 @@ pub struct ChunkSnapshot {
     /// Torch orientations in this chunk, keyed by local block index, so a wall vs
     /// floor torch reloads the way it was placed. Empty for the common chunk.
     pub torches: HashMap<u16, TorchPlacement>,
+    /// Mobs resting in this chunk, captured at save time so a passive owl reloads
+    /// where it was left. Like [`entities`](Self::entities) these don't live in the
+    /// `Chunk`, so the world save paths set this from the live mob set. Empty for the
+    /// common chunk.
+    pub mobs: Vec<SavedMob>,
 }
 
 impl ChunkSnapshot {
-    /// Snapshot a chunk's terrain with no entities attached. The world save paths
-    /// set [`entities`](Self::entities) afterwards from the active item list.
+    /// Snapshot a chunk's terrain with no entities or mobs attached. The world save
+    /// paths set [`entities`](Self::entities) / [`mobs`](Self::mobs) afterwards from the
+    /// active item and mob sets.
     pub fn from_chunk(c: &Chunk) -> Self {
         Self {
             pos: ChunkPos::new(c.cx, c.cz),
@@ -63,6 +71,7 @@ impl ChunkSnapshot {
             furnaces: c.furnaces().clone(),
             chests: c.chests().clone(),
             torches: c.torches().clone(),
+            mobs: Vec::new(),
         }
     }
 }
@@ -239,6 +248,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.torches.is_empty() {
         flags |= FLAG_HAS_TORCHES;
     }
+    if !s.mobs.is_empty() {
+        flags |= FLAG_HAS_MOBS;
+    }
     payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
@@ -257,13 +269,20 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.torches.is_empty() {
         super::torch::put_torches(&mut payload, &s.torches);
     }
+    if !s.mobs.is_empty() {
+        super::mobs::put_mobs(&mut payload, &s.mobs);
+    }
     deflate(&payload)
 }
 
 /// Decode a compressed chunk record into a `Chunk` at `(cx, cz)` plus any item
-/// entities stored with it. `None` on corrupt / wrong-version / wrong-length
-/// data.
-pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<DroppedItem>)> {
+/// entities and mobs stored with it. `None` on corrupt / wrong-version /
+/// wrong-length data.
+pub fn decode_chunk(
+    cx: i32,
+    cz: i32,
+    blob: &[u8],
+) -> Option<(Chunk, Vec<DroppedItem>, Vec<SavedMob>)> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
     if r.u8()? != CHUNK_REC_VERSION {
@@ -297,9 +316,15 @@ pub fn decode_chunk(cx: i32, cz: i32, blob: &[u8]) -> Option<(Chunk, Vec<Dropped
     } else {
         HashMap::new()
     };
+    let mobs = if flags & FLAG_HAS_MOBS != 0 {
+        super::mobs::get_mobs(&mut r)?
+    } else {
+        Vec::new()
+    };
     Some((
         Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces, chests, torches),
         entities,
+        mobs,
     ))
 }
 
@@ -319,7 +344,7 @@ mod tests {
 
         let snap = ChunkSnapshot::from_chunk(&c);
         let blob = encode_snapshot(&snap);
-        let (back, entities) = decode_chunk(-3, 7, &blob).expect("decodes");
+        let (back, entities, mobs) = decode_chunk(-3, 7, &blob).expect("decodes");
 
         assert_eq!(back.cx, -3);
         assert_eq!(back.cz, 7);
@@ -332,6 +357,7 @@ mod tests {
         assert_eq!(back.surface_y(0, 0), 70);
         assert!(!back.modified);
         assert!(entities.is_empty(), "no entities attached");
+        assert!(mobs.is_empty(), "no mobs attached");
     }
 
     #[test]
@@ -348,10 +374,29 @@ mod tests {
         snap.entities.push(drop);
 
         let blob = encode_snapshot(&snap);
-        let (_back, entities) = decode_chunk(2, 2, &blob).expect("decodes");
+        let (_back, entities, _mobs) = decode_chunk(2, 2, &blob).expect("decodes");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].stack, ItemStack::new(ItemType::Stone, 7));
         assert_eq!(entities[0].ticks_lived, 1234, "remaining lifetime survives the save");
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_mobs() {
+        let mut c = Chunk::new(-1, 4);
+        c.set_block(8, 64, 8, Block::Dirt);
+        let mut snap = ChunkSnapshot::from_chunk(&c);
+        snap.mobs.push(SavedMob {
+            kind: crate::mob::Mob::Owl,
+            pos: Vec3::new(-12.5, 65.0, 72.25),
+            yaw: 1.75,
+        });
+
+        let blob = encode_snapshot(&snap);
+        let (_back, _entities, mobs) = decode_chunk(-1, 4, &blob).expect("decodes");
+        assert_eq!(mobs.len(), 1);
+        assert_eq!(mobs[0].kind, crate::mob::Mob::Owl);
+        assert_eq!(mobs[0].pos, Vec3::new(-12.5, 65.0, 72.25), "position persists");
+        assert_eq!(mobs[0].yaw, 1.75, "facing persists");
     }
 
     #[test]
@@ -374,7 +419,7 @@ mod tests {
         );
 
         let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities) = decode_chunk(1, 1, &blob).expect("decodes");
+        let (back, _entities, _mobs) = decode_chunk(1, 1, &blob).expect("decodes");
 
         assert_eq!(back.block_raw(2, 65, 3), Block::Furnace.id());
         let f = back.furnace_at(2, 65, 3).expect("furnace restored");
@@ -399,7 +444,7 @@ mod tests {
         c.insert_chest(9, 66, 1, chest);
 
         let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities) = decode_chunk(4, -2, &blob).expect("decodes");
+        let (back, _entities, _mobs) = decode_chunk(4, -2, &blob).expect("decodes");
 
         assert_eq!(back.block_raw(9, 66, 1), Block::Chest.id());
         let got = back.chest_at(9, 66, 1).expect("chest restored");
@@ -419,7 +464,7 @@ mod tests {
         c.insert_torch(3, 68, 4, TorchPlacement::Floor);
 
         let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities) = decode_chunk(6, 6, &blob).expect("decodes");
+        let (back, _entities, _mobs) = decode_chunk(6, 6, &blob).expect("decodes");
 
         assert_eq!(back.block_raw(3, 67, 4), Block::Torch.id());
         assert_eq!(back.torch_placement(3, 67, 4), TorchPlacement::East, "wall mount persists");
@@ -435,7 +480,7 @@ mod tests {
         let snap = ChunkSnapshot::from_chunk(&c);
         assert!(snap.water.is_none());
         let blob = encode_snapshot(&snap);
-        let (back, _) = decode_chunk(0, 0, &blob).expect("decodes");
+        let (back, _, _) = decode_chunk(0, 0, &blob).expect("decodes");
         assert_eq!(back.water_meta(8, 64, 8), 0);
     }
 
