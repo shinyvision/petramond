@@ -50,10 +50,13 @@ impl Scene {
     /// buffers. Read-only over `Game`: the dropped items' cached skylight is kept
     /// fresh by the sim's per-tick light refresh, so baking just reads it here.
     pub fn bake(&mut self, game: &Game) {
-        bake_item_entities(game.item_entities(), &mut self.item_entities);
+        // Items and mobs both simulate on the fixed game tick; `alpha` blends the
+        // previous and current tick poses so they move smoothly at any frame rate.
+        let alpha = game.tick_alpha();
+        bake_item_entities(game.item_entities(), alpha, &mut self.item_entities);
         bake_particles(game.particles(), &mut self.particles);
         self.bake_chests(game);
-        bake_mobs(game.mobs(), game.mob_interpolation(), &mut self.mobs);
+        bake_mobs(game.mobs(), alpha, &mut self.mobs);
         (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
     }
 
@@ -122,14 +125,16 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
 }
 
 /// Map each dropped item to one [`ItemEntityInstance`] (cleared + refilled, capacity
-/// reused). The skylight rides through from the item's cached value.
-fn bake_item_entities(items: &[crate::entity::DroppedItem], out: &mut Vec<ItemEntityInstance>) {
+/// reused). `alpha` (`0..1`, the fraction into the next tick) blends the previous and
+/// current tick pose so a falling/drifting drop moves smoothly, exactly like a mob. The
+/// skylight rides through from the item's cached value.
+fn bake_item_entities(items: &[crate::entity::DroppedItem], alpha: f32, out: &mut Vec<ItemEntityInstance>) {
     out.clear();
     out.extend(items.iter().map(|d| ItemEntityInstance {
-        pos: d.pos,
+        pos: d.prev_pos.lerp(d.pos, alpha),
         item: d.stack.item,
         count: d.stack.count,
-        spin: d.spin,
+        spin: lerp_angle(d.prev_spin, d.spin, alpha),
         skylight: d.skylight,
     }));
 }
@@ -169,12 +174,26 @@ mod tests {
             DroppedItem::new(Vec3::new(4.0, 5.0, 6.0), ItemStack::new(ItemType::Stone, 1), 2),
         ];
         let mut out = Vec::new();
-        bake_item_entities(&drops, &mut out);
+        bake_item_entities(&drops, 1.0, &mut out);
         assert_eq!(out.len(), 2);
+        // A fresh drop has prev_pos == pos, so any alpha bakes its live position.
         assert_eq!(out[0].pos, drops[0].pos);
         assert_eq!(out[0].item, ItemType::Dirt);
         assert_eq!(out[0].spin, drops[0].spin);
         assert_eq!(out[1].item, ItemType::Stone);
+    }
+
+    #[test]
+    fn bake_item_entities_interpolates_between_ticks() {
+        // A drop that moved last tick (prev_pos != pos) bakes at the blended position,
+        // so it renders smoothly between the 20 TPS physics ticks.
+        let mut drop =
+            DroppedItem::new(Vec3::new(0.0, 64.0, 0.0), ItemStack::new(ItemType::Dirt, 1), 1);
+        drop.prev_pos = Vec3::new(0.0, 64.0, 0.0);
+        drop.pos = Vec3::new(2.0, 64.0, 0.0);
+        let mut out = Vec::new();
+        bake_item_entities(std::slice::from_ref(&drop), 0.5, &mut out);
+        assert_eq!(out[0].pos, Vec3::new(1.0, 64.0, 0.0), "halfway between prev and current");
     }
 
     #[test]
@@ -183,11 +202,11 @@ mod tests {
             .map(|i| DroppedItem::new(Vec3::splat(i as f32), ItemStack::new(ItemType::Dirt, 1), i))
             .collect();
         let mut out = Vec::new();
-        bake_item_entities(&drops, &mut out);
+        bake_item_entities(&drops, 1.0, &mut out);
         let cap = out.capacity();
         // Fewer drops -> identical-or-smaller count, so the cleared+refilled buffer
         // keeps its capacity: rebuilding never reallocs.
-        bake_item_entities(&drops[..2], &mut out);
+        bake_item_entities(&drops[..2], 1.0, &mut out);
         assert_eq!(out.len(), 2);
         assert_eq!(out.capacity(), cap, "instance buffer reused");
     }

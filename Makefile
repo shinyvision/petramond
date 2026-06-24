@@ -9,7 +9,7 @@
 #   SEED=0x12345678 RD=12 make run
 
 CARGO ?= cargo
-SEED  ?= 0x72890188
+SEED  ?= 0x2
 RD    ?= 16
 
 .PHONY: run run-native dev build build-native clean

@@ -40,10 +40,10 @@ const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
 
-/// Minimum wall-clock time (seconds) between two attack swings — a 300 ms cooldown, so a
-/// player mashing the attack button can't land hits every frame (which would, e.g.,
-/// instakill an owl). Measured in real time, independent of frame rate.
-const ATTACK_COOLDOWN: f32 = 0.3;
+/// Minimum number of game ticks between two attack swings, so a player mashing the
+/// attack button can't land hits every tick (which would, e.g., instakill an owl).
+/// Counted in ticks now that attacks resolve on the fixed tick — 6 ticks ≈ 0.3 s.
+const ATTACK_COOLDOWN_TICKS: u32 = 6;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
 /// rate. World simulation (block updates, scheduled ticks, water flow) advances
@@ -109,6 +109,20 @@ pub struct GameEvents {
     pub open_chest: Option<IVec3>,
 }
 
+/// What the world-mutating actions did across the fixed tick(s) that ran this frame,
+/// surfaced back to the per-frame [`GameEvents`] so the presentation layer (hand
+/// animation, sounds) reacts. Bools because a frame runs at most a handful of ticks and
+/// each action happens at most once — only whether it happened matters.
+#[derive(Copy, Clone, Debug, Default)]
+struct TickEvents {
+    /// A block finished breaking on a tick.
+    broke_block: bool,
+    /// A block was placed on a tick.
+    placed_block: bool,
+    /// An attack swing connected on a tick (a mob hit or a punch at the air).
+    swung_hand: bool,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct GameEnvironment {
     pub fog: [f32; 3],
@@ -136,10 +150,34 @@ pub struct Game {
     particles: ParticleSystem,
     spawn_counter: u32,
     mining_dust_t: f32,
-    /// Wall-clock seconds remaining before the player may attack again — the
-    /// [`ATTACK_COOLDOWN`] gate. Counts down each frame; an attack is refused while it is
-    /// positive, so mashing the button can't land hits faster than the cooldown.
-    attack_cooldown: f32,
+    /// Game ticks remaining before the player may attack again — the
+    /// [`ATTACK_COOLDOWN_TICKS`] gate, decremented once per tick. An attack is refused
+    /// while it is positive, so mashing the button can't land hits faster than this.
+    attack_cooldown: u32,
+    /// --- Per-frame input intent, sampled in [`tick`](Self::tick) and consumed by the
+    /// fixed-tick loop, so every world/entity mutation happens on the game tick while
+    /// input is still read per-frame. ---
+    /// Primary button held this frame (mine the looked-at block); re-sampled each frame.
+    intent_break_held: bool,
+    /// Sneaking this frame (gates right-click interact vs. place); re-sampled each frame.
+    intent_sneak: bool,
+    /// Gameplay input is live this frame (false while a screen owns focus); re-sampled.
+    intent_gameplay: bool,
+    /// A primary-button *press* is waiting to be resolved as an attack on the next tick
+    /// (edge-latched; the tick consumes it). The visual swing is emitted when it resolves.
+    pending_attack: bool,
+    /// A secondary-button *press* is waiting to be resolved as a place/interact on the
+    /// next tick (edge-latched; the tick consumes it).
+    pending_place: bool,
+    /// Items dropped this frame (Q-drop, inventory throws, crafting overflow), built
+    /// against the current look but waiting to enter the world on the next tick — a drop
+    /// materialises on the tick, like every other entity. Drained each tick.
+    pending_drops: Vec<DroppedItem>,
+    /// Container-menu clicks (slot, button, shift, the App's double-click `gather`
+    /// verdict) latched this frame, applied in order on the next tick so chest / furnace /
+    /// inventory edits mutate state on the tick. Real clicks are >1 tick apart, so each is
+    /// applied before the next is decided. Drained each tick.
+    pending_menu_clicks: Vec<(MenuSlot, crate::controls::PointerButton, bool, bool)>,
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
     /// for the rest; client-side animation only, never persisted. The render-side
@@ -250,7 +288,14 @@ impl Game {
             particles: ParticleSystem::new(),
             spawn_counter: 0,
             mining_dust_t: 0.0,
-            attack_cooldown: 0.0,
+            attack_cooldown: 0,
+            intent_break_held: false,
+            intent_sneak: false,
+            intent_gameplay: false,
+            pending_attack: false,
+            pending_place: false,
+            pending_drops: Vec::new(),
+            pending_menu_clicks: Vec::new(),
             chest_lids: HashMap::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
@@ -287,14 +332,22 @@ impl Game {
     }
 
     pub fn tick(&mut self, dt: f32, input: &GameInput) -> GameEvents {
+        // --- Per-frame: input → look/camera, player movement, chunk streaming. These
+        // read the world but don't simulate it; the local player moves per-frame so the
+        // controls stay crisp (mouse-look + movement are presentation/input, not ticks). ---
         self.apply_camera_input(input);
         self.apply_hotbar_input(input);
         self.tick_player(dt, input);
+        // Mobs push the player out of an overlap per-frame (not on the tick) so the drift
+        // is perfectly smooth — player movement integrates every frame, and a 20 Hz shove
+        // would pulse. The mobs themselves are shoved on the tick (in `game_tick_step`).
+        self.apply_mob_push(dt);
         self.tick_world();
 
         // Block hit (with its distance) and the closest mob in front. A mob nearer than
         // the block wins the crosshair and nulls the block look, so block selection /
-        // mining / placement are interrupted while looking at a mob.
+        // mining / placement are interrupted while looking at a mob. Recomputed per frame
+        // for the crosshair and read by the tick when it resolves an action.
         let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.world);
         self.look = block_hit.map(|(h, _)| h);
         let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
@@ -303,11 +356,16 @@ impl Game {
             self.look = None;
         }
 
-        let (placed_block, broke_block) = self.handle_block_actions(dt, input);
-        let swung_hand = self.handle_attack(dt, input);
+        // Sample this frame's action intent for the fixed tick to consume — world/entity
+        // mutation (mining, placing, attacking, entity physics) all happens on the tick.
+        self.capture_intent(input);
 
-        self.run_fixed_ticks(dt);
+        // --- Fixed tick(s): the authoritative simulation. Returns what its world-mutating
+        // actions did, so the per-frame presentation layer can react. ---
+        let events = self.run_fixed_ticks(dt);
 
+        // --- Per-frame: presentation + infra (particles, chest-lid animation, meshing,
+        // light handoff, autosave). None of this changes world/entity state. ---
         self.tick_entities(dt);
         self.advance_chest_lids(dt);
         self.tick_mesh_budget();
@@ -316,12 +374,12 @@ impl Game {
         self.maybe_autosave(dt);
 
         GameEvents {
-            placed_block,
-            broke_block,
-            swung_hand,
+            placed_block: events.placed_block,
+            broke_block: events.broke_block,
+            swung_hand: events.swung_hand,
             // Throws happen via input handlers before this tick; report and clear.
             threw_item: std::mem::take(&mut self.threw_item),
-            // Set this tick by handle_block_actions when a table was right-clicked.
+            // Set on a tick by `tick_place` when a table was right-clicked.
             open_crafting_table: std::mem::take(&mut self.request_open_table),
             // Set when a furnace was right-clicked.
             open_furnace: std::mem::take(&mut self.request_open_furnace),
@@ -330,45 +388,84 @@ impl Game {
         }
     }
 
-    /// Advance the world simulation in fixed 50 ms steps, decoupled from the
-    /// frame rate: 0 steps on a fast frame, several to catch up on a slow one
-    /// (capped — never two running at once, the late one just runs and the clock
-    /// resyncs). Player movement, camera, and rendering stay per-frame above.
-    fn run_fixed_ticks(&mut self, dt: f32) {
+    /// Latch this frame's input into the action-intent fields the fixed tick consumes:
+    /// held states (mine / sneak / gameplay-enabled) are re-sampled every frame, while
+    /// button *presses* (attack / place) are edge-latched so a press is never lost on a
+    /// frame that runs no tick, and is consumed by the next tick that does.
+    fn capture_intent(&mut self, input: &GameInput) {
+        self.intent_gameplay = input.gameplay_enabled;
+        self.intent_sneak = input.movement.sneak;
+        // While a screen (inventory, chest, …) owns input, gameplay actions are off:
+        // don't mine, and drop any latched press so a buffered click can't fire on a
+        // tick that runs behind the open menu.
+        if !input.gameplay_enabled {
+            self.intent_break_held = false;
+            self.pending_attack = false;
+            self.pending_place = false;
+            return;
+        }
+        self.intent_break_held = input.break_held;
+        if input.attack_clicked {
+            self.pending_attack = true;
+        }
+        if input.place_clicked {
+            self.pending_place = true;
+        }
+    }
+
+    /// Advance the simulation in fixed 50 ms steps, decoupled from the frame rate: 0
+    /// steps on a fast frame, several to catch up on a slow one (capped, so a long stall
+    /// runs the late tick and resyncs rather than spiralling). Player movement, camera,
+    /// and rendering stay per-frame above. Returns the merged [`TickEvents`] of the
+    /// world-mutating actions across the tick(s) that ran, for the per-frame presentation.
+    fn run_fixed_ticks(&mut self, dt: f32) -> TickEvents {
         // Ignore absurd deltas (first frame, tab regaining focus) so a long pause
         // doesn't dump a burst of ticks; clamp keeps at most one step pending.
         self.tick_accumulator += dt.clamp(0.0, 1.0);
         let mut ran = 0;
+        let mut events = TickEvents::default();
         while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
-            // The world owns its per-tick sequence (scheduled ticks, block updates,
-            // furnace smelting). Recipes live in `Game`, so they're passed through.
-            self.world.game_tick(&self.recipes);
-            // Item lifetime + collection stay here: pickup needs `player.inventory`
-            // (the borrow split). Paced by the simulation clock, not the frame
-            // rate — "a game tick decides the player picks it up".
-            self.item_pickup_tick();
-            // Mob AI + physics also run on the fixed tick (per the design); the
-            // renderer interpolates between ticks for smooth motion (see
-            // `mob_interpolation`). Mobs are owned by `World` (they persist with their
-            // chunks, like dropped items), so the world drives them via a borrow-split.
-            // Mobs and the player softly push each other apart (no solid collision box):
-            // `tick_mobs` pushes the mobs and returns the player's share of the jostle as
-            // a velocity, which we add to the player's own velocity (Minecraft's model —
-            // the controller carries it and friction smooths it out). A noclip spectator
-            // has no physical body, so it neither pushes mobs nor is pushed (no push body).
-            let player_pos = self.player.body_center();
-            let player_body = (!self.player.is_spectator())
-                .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
-            let player_push = self.world.tick_mobs(TICK_DT, player_pos, player_body);
-            self.player.push(player_push);
-            // Natural spawning, one attempt per tick.
-            self.world.spawn_mobs_tick(player_pos);
+            self.game_tick_step(&mut events);
             self.tick_accumulator -= TICK_DT;
             ran += 1;
         }
         if self.tick_accumulator > TICK_DT {
             self.tick_accumulator = TICK_DT;
         }
+        events
+    }
+
+    /// One fixed game tick: every change to the world and the entities in it. Player
+    /// actions (sampled per-frame into intent fields) resolve first so the world reacts to
+    /// them the same tick, then the world simulation runs, then the entities (mobs, items).
+    /// Merges what its actions did into `events` for the per-frame presentation layer.
+    fn game_tick_step(&mut self, events: &mut TickEvents) {
+        // Player → world actions, on the tick.
+        self.tick_mining(events);
+        self.tick_place(events);
+        self.tick_attack(events);
+        self.tick_drops();
+        self.tick_menu();
+
+        // The world owns its per-tick sequence (scheduled ticks, block updates, furnace
+        // smelting). Recipes live in `Game`, so they're passed through. Then item lifetime
+        // + collection (pickup needs `player.inventory`, hence the borrow split here).
+        self.world.game_tick(&self.recipes);
+        self.item_pickup_tick();
+
+        // Entities. Mobs and dropped items are owned by `World` (they persist with their
+        // chunks); the world drives them via a borrow-split. Soft entity pushing shoves
+        // the MOBS here (mob↔mob, and off the player's body) — the reverse push on the
+        // player is applied per-frame (`apply_mob_push`), since it moves the player and
+        // player movement integrates per-frame for smoothness. A noclip spectator has no
+        // body, so mobs aren't shoved off it.
+        let player_pos = self.player.body_center();
+        let player_body = (!self.player.is_spectator())
+            .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
+        self.world.tick_mobs(TICK_DT, player_pos, player_body);
+        self.world.tick_item_physics(TICK_DT, player_pos);
+        // Natural spawning, one attempt per tick.
+        self.world.spawn_mobs_tick(player_pos);
     }
 
     #[inline]
@@ -439,10 +536,13 @@ impl Game {
         &self.menu
     }
 
-    /// Route a hit-tested container click (resolved by the App to a [`MenuSlot`] +
-    /// button + Shift, with the App's double-click `gather` verdict) to the open
-    /// menu. Splits the disjoint `world` / `inventory` borrows the menu needs and
-    /// lends the recipes; the menu decodes the interaction keyed on its target.
+    /// Latch a hit-tested container click — resolved by the App to a [`MenuSlot`], a
+    /// button, and Shift, with the App's double-click `gather` verdict — for the next game
+    /// tick. Container edits mutate world state (chest / furnace contents) and the
+    /// inventory, so they resolve on the tick like every other action — see
+    /// [`tick_menu`](Self::tick_menu). The verdict is captured now, against the live
+    /// cursor; since real clicks are more than a tick apart, each is applied before the
+    /// next one is decided.
     pub fn menu_click(
         &mut self,
         slot: MenuSlot,
@@ -450,15 +550,35 @@ impl Game {
         shift: bool,
         gather: bool,
     ) {
-        self.menu.click(
-            &mut self.world,
-            &mut self.player.inventory,
-            &self.recipes,
-            slot,
-            button,
-            shift,
-            gather,
-        );
+        self.pending_menu_clicks.push((slot, button, shift, gather));
+    }
+
+    /// Apply the player actions latched this frame — container edits and item drops — at
+    /// once, standing in for the game tick that resolves them in play. For App-level tests
+    /// that drive the input routing and then assert the resulting inventory / world state
+    /// (between two clicks a real tick interleaves, applying the first before the second is
+    /// decided — call this there too).
+    #[cfg(test)]
+    pub(crate) fn apply_latched_actions_for_test(&mut self) {
+        self.tick_menu();
+        self.tick_drops();
+    }
+
+    /// Apply this frame's latched container-menu clicks, in order, on the tick. Splits the
+    /// disjoint `menu` / `world` / `inventory` borrows the menu needs and lends the
+    /// recipes; the menu decodes each interaction keyed on its target.
+    fn tick_menu(&mut self) {
+        for (slot, button, shift, gather) in std::mem::take(&mut self.pending_menu_clicks) {
+            self.menu.click(
+                &mut self.world,
+                &mut self.player.inventory,
+                &self.recipes,
+                slot,
+                button,
+                shift,
+                gather,
+            );
+        }
     }
 
     /// The active crafting grid (for the UI to read cells + result preview).
@@ -550,14 +670,17 @@ impl Game {
         }
     }
 
-    /// Spawn `stack` as a thrown item flying out along the camera's look
-    /// direction, originating just in front of the eye so it clears the player.
+    /// Queue `stack` to be thrown into the world as a dropped item, flying out along the
+    /// camera's look direction and originating just in front of the eye so it clears the
+    /// player. The drop is built now (per frame, against the current look) but enters the
+    /// world on the next game tick — like every other entity, a drop materialises on the
+    /// tick (see [`tick_drops`](Self::tick_drops)). The item already left the inventory.
     fn throw_item(&mut self, stack: ItemStack) {
         let dir = self.cam.forward();
         let origin = self.cam.pos + dir * 0.3;
         let mut drop = DroppedItem::thrown(origin, stack, dir);
         drop.skylight = light6_at_pos(&self.world, origin);
-        self.world.spawn_item(drop);
+        self.pending_drops.push(drop);
         // Flick the hand forward (place jab) on the next rendered frame.
         self.threw_item = true;
     }
@@ -654,11 +777,11 @@ impl Game {
         self.world.mobs().instances()
     }
 
-    /// Fraction (`0..1`) into the next fixed tick — the blend factor the scene uses
-    /// to interpolate each mob's render pose between its previous and current tick,
-    /// so mobs (which simulate at 20 TPS) move smoothly at any frame rate.
+    /// Fraction (`0..1`) into the next fixed tick — the blend factor the scene uses to
+    /// interpolate each entity's render pose between its previous and current tick, so the
+    /// mobs and dropped items (which simulate at 20 TPS) move smoothly at any frame rate.
     #[inline]
-    pub fn mob_interpolation(&self) -> f32 {
+    pub fn tick_alpha(&self) -> f32 {
         (self.tick_accumulator / TICK_DT).clamp(0.0, 1.0)
     }
 
@@ -761,6 +884,24 @@ impl Game {
         self.cam.pos = self.player.eye();
     }
 
+    /// Push the player out of any mob it overlaps, per frame. The mobs sit at their
+    /// last-tick positions (fixed between ticks), so as the player moves each frame the
+    /// overlap — and the push — track the player smoothly; applied as a small
+    /// collision-resolved displacement (the push *velocity* over this frame's `dt`), it
+    /// never accumulates or fights the movement controller. A noclip spectator has no body
+    /// to jostle. The mobs' own half of the push runs on the tick (`game_tick_step`).
+    fn apply_mob_push(&mut self, dt: f32) {
+        if self.player.is_spectator() {
+            return;
+        }
+        let body = crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT);
+        let push = self.world.mobs().push_on_player(body);
+        if push != Vec3::ZERO {
+            self.player.shove(push * dt, &self.world);
+        }
+        self.cam.pos = self.player.eye();
+    }
+
     fn tick_world(&mut self) {
         let cam_cx = (self.cam.pos.x as i32) >> 4;
         let cam_cz = (self.cam.pos.z as i32) >> 4;
@@ -773,33 +914,23 @@ impl Game {
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
 
-    fn handle_block_actions(&mut self, dt: f32, input: &GameInput) -> (bool, bool) {
+    /// Mining, on the tick: advance the break timer against the block under the crosshair
+    /// (sampled per frame into `look`) by [`TICK_DT`], and when a block finishes breaking,
+    /// clear it, scatter any block-entity contents + harvested drops, and spawn the break
+    /// burst. Frame-rate independent. Gated off (progress reset) while a screen owns input
+    /// (`intent_gameplay` false) — that's `inventory_open` to the mining controller.
+    fn tick_mining(&mut self, events: &mut TickEvents) {
         // The held tool (None = bare hand) gates mining speed + whether drops fall.
         let tool = self.player.inventory.selected().and_then(|s| s.item.tool());
-
-        if !input.gameplay_enabled {
-            self.mining.update(
-                dt,
-                self.look.as_ref(),
-                input.break_held,
-                true,
-                &self.world,
-                tool,
-            );
-            self.mining_dust_t = 0.0;
-            return (false, false);
-        }
-
-        let mut broke_block = false;
         if let Some(event) = self.mining.update(
-            dt,
+            TICK_DT,
             self.look.as_ref(),
-            input.break_held,
-            false,
+            self.intent_break_held,
+            !self.intent_gameplay,
             &self.world,
             tool,
         ) {
-            broke_block = true;
+            events.broke_block = true;
             let hit_normal = self
                 .look
                 .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
@@ -834,9 +965,10 @@ impl Game {
             }
         }
 
+        // A small dust fleck every MINING_DUST_INTERVAL while actively breaking.
         if self.mining.is_mining() {
             if let Some(h) = self.look {
-                self.mining_dust_t += dt;
+                self.mining_dust_t += TICK_DT;
                 if self.mining_dust_t >= MINING_DUST_INTERVAL {
                     self.mining_dust_t = 0.0;
                     let block =
@@ -850,14 +982,30 @@ impl Game {
         } else {
             self.mining_dust_t = 0.0;
         }
+    }
 
-        // Right-clicking a placed interactable block (crafting table, furnace) opens
-        // its screen rather than placing into the cell — unless sneaking, which
-        // falls through so the player can still build against it.
-        let interact = input.place_clicked && !input.movement.sneak;
-        let interacted = interact && self.try_open_interactable();
-        let placed = !interacted && input.place_clicked && self.try_place();
-        (placed, broke_block)
+    /// Placement / interaction, on the tick: consume a buffered secondary-button press
+    /// once. Right-clicking a placed interactable block (crafting table, furnace, chest)
+    /// opens its screen rather than placing into the cell — unless sneaking, which falls
+    /// through so the player can still build against it.
+    fn tick_place(&mut self, events: &mut TickEvents) {
+        if !std::mem::take(&mut self.pending_place) {
+            return;
+        }
+        let interacted = !self.intent_sneak && self.try_open_interactable();
+        if !interacted && self.try_place() {
+            events.placed_block = true;
+        }
+    }
+
+    /// Spawn the items dropped this frame into the world — on the tick, so a drop enters
+    /// the world deterministically like every other entity (the item already left the
+    /// inventory per frame; it materialises here). Spawned before the tick's item physics
+    /// so a fresh drop gets its first physics step this tick.
+    fn tick_drops(&mut self) {
+        for drop in std::mem::take(&mut self.pending_drops) {
+            self.world.spawn_item(drop);
+        }
     }
 
     /// If the look target is an interactable block, request its screen and return
@@ -1005,22 +1153,34 @@ impl Game {
         best.map(|(i, _)| i)
     }
 
-    /// Handle a left-click attack: damage the targeted mob (rolling the held weapon's
-    /// damage and spawning loot if the hit kills it), or — looking at nothing — punch
-    /// the air. Returns whether the hand swung (drives the one-shot first-person swing).
-    /// Mining a block is the *held* action (`break_held`), separate from this edge.
-    ///
-    /// Rate-limited by [`ATTACK_COOLDOWN`]: the cooldown counts down in wall-clock time
-    /// each frame and an attack is refused (no swing, no damage) while it is still
-    /// running, so mashing the button can't land a hit every frame — only one swing per
-    /// cooldown connects. A click that isn't an attack (on a block, or empty-handed at
-    /// nothing) neither swings nor arms the cooldown.
-    fn handle_attack(&mut self, dt: f32, input: &GameInput) -> bool {
-        self.attack_cooldown = (self.attack_cooldown - dt).max(0.0);
-        if !input.gameplay_enabled || !input.attack_clicked || self.attack_cooldown > 0.0 {
-            return false;
+    /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
+    /// press never lands more than one hit). The damage lands the tick *after* the click —
+    /// `pending_attack` is latched per frame and consumed here. Rate-limited by
+    /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and an attack
+    /// is refused (no swing, no damage) while it's running, so mashing the button can't
+    /// land a hit every tick — only one swing per cooldown connects, so an owl can't be
+    /// spam-clicked to death. A swing that connects (a mob hit or a punch at the air) arms
+    /// the cooldown and reports `swung_hand`; a click on a block (mining) does neither.
+    fn tick_attack(&mut self, events: &mut TickEvents) {
+        self.attack_cooldown = self.attack_cooldown.saturating_sub(1);
+        // Consume the press whether or not it lands (no queuing past one tick); it only
+        // resolves once the cooldown has elapsed.
+        if !std::mem::take(&mut self.pending_attack) || self.attack_cooldown != 0 {
+            return;
         }
-        let swung = if let Some(idx) = self.targeted_mob {
+        if self.resolve_attack() {
+            self.attack_cooldown = ATTACK_COOLDOWN_TICKS;
+            events.swung_hand = true;
+        }
+    }
+
+    /// Apply one attack swing: damage the targeted mob (rolling the held weapon's damage
+    /// and spawning loot if the hit kills it), or — looking at nothing — punch the air.
+    /// Returns whether the hand swung (a mob hit or an air punch); a click on a block
+    /// doesn't swing (mining is the held action). Reads the `targeted_mob` / `look`
+    /// sampled this frame, before any mob tick has shifted indices.
+    fn resolve_attack(&mut self) -> bool {
+        if let Some(idx) = self.targeted_mob {
             let (lo, hi) = crate::item::attack_damage(self.selected_item());
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             let damage = lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo);
@@ -1030,15 +1190,9 @@ impl Game {
             }
             true
         } else {
-            // No mob: a punch swing only when looking at nothing. A click on a block does
-            // nothing here — holding to mine drives its own (looping) swing.
+            // No mob: a punch swing only when looking at nothing.
             self.look.is_none()
-        };
-        // Only an actual swing arms the cooldown — a no-op click stays free to attack.
-        if swung {
-            self.attack_cooldown = ATTACK_COOLDOWN;
         }
-        swung
     }
 
     /// Roll a dead mob's loot table and scatter the drops at its body. Called the
@@ -1060,15 +1214,12 @@ impl Game {
         }
     }
 
-    /// Per-frame entity update: item-entity physics (gravity, collision, pickup
-    /// magnet) then particles. The drops live in `World` and the magnet target is
-    /// the player chest; the per-item pickup delay is enforced inside the world
-    /// step. Lifetime/despawn and the actual pickup run on the fixed tick.
+    /// Per-frame presentation update: only particles, which are a purely visual effect
+    /// (they don't touch the world). Everything that simulates the world or its entities —
+    /// mob AI/physics AND dropped-item physics — runs on the fixed game tick (see
+    /// [`game_tick_step`](Self::game_tick_step)); the renderer interpolates between ticks.
     fn tick_entities(&mut self, dt: f32) {
-        let player_pos = self.player.body_center();
-        self.world.tick_item_physics(dt, player_pos);
         self.particles.tick(dt, &self.world);
-        // Mobs tick on the fixed game tick (see `run_fixed_ticks`), not here.
     }
 
     /// Per game-tick (20 TPS) item maintenance: advance every drop's lifetime
@@ -1325,35 +1476,72 @@ mod tests {
     }
 
     #[test]
-    fn attacks_are_rate_limited_so_spam_clicks_cant_instakill() {
+    fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         let mut game = game();
         assert!(game
             .world
             .mobs_mut()
             .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
         game.targeted_mob = Some(0);
+        let mut ev = TickEvents::default();
+
+        // A click resolves on the tick (the tick after it was registered).
+        game.pending_attack = true;
+        game.tick_attack(&mut ev);
+        assert!(ev.swung_hand, "the click lands on the tick");
+
+        // For the rest of the cooldown, a fresh click each tick lands nothing — even
+        // spamming can't beat the 6-tick gate.
+        for _ in 0..ATTACK_COOLDOWN_TICKS - 1 {
+            ev.swung_hand = false;
+            game.pending_attack = true;
+            game.tick_attack(&mut ev);
+            assert!(!ev.swung_hand, "locked out during the cooldown");
+        }
+
+        // The cooldown has now elapsed, so a pending click connects again.
+        ev.swung_hand = false;
+        game.pending_attack = true;
+        game.tick_attack(&mut ev);
+        assert!(ev.swung_hand, "the cooldown elapsed, the next attack lands");
+
+        // Only two fist hits (1 dmg each) landed across all those ticks, so the 4-health
+        // owl is still alive: the gate makes a spam-click instakill impossible.
+        assert!(
+            !game.world.mobs().instances()[0].is_dead(),
+            "rate-limited, so the owl survives the burst"
+        );
+    }
+
+    #[test]
+    fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
+        let mut game = game();
+        assert!(game
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        game.targeted_mob = Some(0);
+
+        // A click latches while playing...
         let click = GameInput {
             gameplay_enabled: true,
             attack_clicked: true,
             ..Default::default()
         };
+        game.capture_intent(&click);
+        assert!(game.pending_attack, "the click latched while playing");
 
-        // A burst of 1000 clicks within one cooldown window (~0.1 s of frames) lands
-        // exactly one attack — without the gate the 4-health owl would die in four hits.
-        let landed = (0..1000)
-            .filter(|_| game.handle_attack(0.0001, &click))
-            .count();
-        assert_eq!(landed, 1, "only one attack lands during a spam burst");
-        assert!(
-            !game.world.mobs().instances()[0].is_dead(),
-            "the spammed owl is still alive"
-        );
-
-        // Once the cooldown has elapsed, the next click connects again.
-        assert!(
-            game.handle_attack(ATTACK_COOLDOWN, &click),
-            "an attack lands once the cooldown has passed"
-        );
+        // ...then a screen takes input focus before any tick ran. The latched press is
+        // dropped, so the tick that still runs behind the menu lands no attack.
+        let menu = GameInput {
+            gameplay_enabled: false,
+            ..Default::default()
+        };
+        game.capture_intent(&menu);
+        assert!(!game.pending_attack, "opening a screen drops the latched press");
+        let mut ev = TickEvents::default();
+        game.tick_attack(&mut ev);
+        assert!(!ev.swung_hand, "no attack fires behind the open menu");
     }
 
     #[test]
@@ -1637,21 +1825,69 @@ mod tests {
         let d0 = (game.world.item_entities()[0].pos - chest).length();
         game.item_pickup_tick();
         assert!(game.world.item_entities()[0].pickup_requested);
-        game.tick_entities(1.0 / 60.0);
+        let pp = game.player.body_center();
+        game.world.tick_item_physics(TICK_DT, pp);
         if !game.world.item_entities().is_empty() {
             let d1 = (game.world.item_entities()[0].pos - chest).length();
             assert!(d1 < d0);
         }
-        // Magnet flies it in per frame; the fixed tick absorbs it once in range.
+        // Item physics + pickup both run on the fixed tick now: the magnet flies it in,
+        // and the pickup absorbs it once it's in range.
         for _ in 0..60 {
             if game.world.item_entities().is_empty() {
                 break;
             }
             game.item_pickup_tick();
-            game.tick_entities(1.0 / 60.0);
+            let pp = game.player.body_center();
+            game.world.tick_item_physics(TICK_DT, pp);
         }
         assert!(game.world.item_entities().is_empty());
         assert_eq!(count_item(&game.player.inventory, item), before + 1);
+    }
+
+    #[test]
+    fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
+        let mut game = game();
+        game.player.inventory = filled_inventory(); // a stack of Dirt
+        game.player.inventory.set_active(0);
+        let before = count_item(&game.player.inventory, ItemType::Dirt);
+
+        // Q-drop: the item leaves the inventory now, but isn't a world entity yet.
+        game.drop_selected_item(false);
+        assert_eq!(
+            count_item(&game.player.inventory, ItemType::Dirt),
+            before - 1,
+            "left the inventory this frame"
+        );
+        assert!(
+            game.world.item_entities().is_empty(),
+            "the drop hasn't entered the world until a tick runs"
+        );
+
+        // The tick materialises the queued drop as a world entity.
+        game.tick_drops();
+        assert_eq!(game.world.item_entities().len(), 1, "the drop spawns on the tick");
+    }
+
+    #[test]
+    fn container_edits_apply_on_the_tick_not_the_frame() {
+        let mut game = game();
+        game.player.inventory = filled_inventory(); // a stack of Dirt in hotbar slot 0
+
+        // Left-click that slot: it should pick the stack onto the cursor — but that's a
+        // container edit, so it's latched, not applied this frame.
+        game.menu_click(MenuSlot::Inventory(0), crate::controls::PointerButton::Primary, false, false);
+        assert!(
+            game.player.inventory.cursor().is_none(),
+            "the click hasn't applied yet — no cursor pickup this frame"
+        );
+
+        // The tick applies it, moving the stack onto the cursor.
+        game.tick_menu();
+        assert!(
+            game.player.inventory.cursor().is_some(),
+            "the tick applies the container edit (the stack is now on the cursor)"
+        );
     }
 
     #[test]
@@ -1667,7 +1903,8 @@ mod tests {
         game.world.spawn_item(drop);
 
         for _ in 0..60 {
-            game.tick_entities(1.0 / 60.0);
+            let pp = game.player.body_center();
+            game.world.tick_item_physics(TICK_DT, pp);
             game.item_pickup_tick();
         }
 
@@ -1746,6 +1983,7 @@ mod tests {
         assert!(game.world.item_entities().is_empty());
         game.throw_cursor_stack();
         assert!(game.player.inventory.cursor().is_none(), "cursor emptied");
+        game.tick_drops(); // the queued drop materialises in the world on the tick
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, held);
         assert_eq!(
@@ -1762,6 +2000,7 @@ mod tests {
         game.player.inventory.click_slot(0);
         let held = game.player.inventory.cursor().unwrap().count;
         game.throw_cursor_one();
+        game.tick_drops(); // the queued drop materialises in the world on the tick
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, 1);
         assert_eq!(game.player.inventory.cursor().unwrap().count, held - 1);
@@ -1818,6 +2057,7 @@ mod tests {
         game.player.inventory.set_active(0);
         let before = game.player.inventory.selected().unwrap().count;
         game.drop_selected_item(false);
+        game.tick_drops(); // the queued drop materialises in the world on the tick
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, 1);
         assert_eq!(
@@ -1835,6 +2075,7 @@ mod tests {
         game.player.inventory.set_active(0);
         let before = game.player.inventory.selected().unwrap().count;
         game.drop_selected_item(true);
+        game.tick_drops(); // the queued drop materialises in the world on the tick
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, before);
         assert!(
@@ -1946,6 +2187,24 @@ mod tests {
 
         assert_eq!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)), block);
         assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
+    }
+
+    #[test]
+    fn a_mob_pushes_the_player_per_frame() {
+        // The player is shoved out of an overlapping mob every frame (not on the tick),
+        // so the drift is smooth. An owl just east of the player pushes it west.
+        let mut game = game();
+        game.player.pos = Vec3::new(8.0, 64.0, 8.0);
+        assert!(game.world.mobs_mut().spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
+        let x0 = game.player.pos.x;
+        for _ in 0..30 {
+            game.apply_mob_push(1.0 / 60.0);
+        }
+        assert!(
+            game.player.pos.x < x0 - 0.05,
+            "the owl pushed the player -X, away from it: {x0} -> {}",
+            game.player.pos.x
+        );
     }
 
     #[test]

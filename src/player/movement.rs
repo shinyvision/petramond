@@ -112,19 +112,22 @@ impl Player {
         step_at(base) || step_at(base + 1)
     }
 
-    /// Add a soft entity-push *velocity* to the player — a mob it overlaps jostling it
-    /// (mobs and the player push each other apart, but neither has a solid collision
-    /// box). Exactly Minecraft's model: the push goes into the player's horizontal
-    /// velocity, so the movement controller carries it and friction bleeds it off — the
-    /// player drifts smoothly out of the overlap rather than being teleported, and can
-    /// still walk against it. The vertical component is ignored (pushing is horizontal);
-    /// a noclip spectator has no body to jostle.
-    pub fn push(&mut self, vel: Vec3) {
-        if self.is_spectator() {
+    /// Shove the player horizontally by `delta` — the soft push from a mob it overlaps
+    /// (mobs and the player push each other apart, but neither has a solid collision box).
+    /// Applied per frame as a small collision-resolved displacement (the per-frame push
+    /// velocity × `dt`), sliding along blocks via the same swept collision as movement so
+    /// it can't shove the player through terrain. Velocity is untouched, so the push
+    /// neither accumulates nor fights the movement controller — the player just drifts out
+    /// of the overlap smoothly and can still walk against it. Vertical is ignored (pushing
+    /// is horizontal); a noclip spectator has no body to jostle.
+    pub fn shove(&mut self, delta: Vec3, world: &World) {
+        if self.is_spectator() || (delta.x == 0.0 && delta.z == 0.0) {
             return;
         }
-        self.vel.x += vel.x;
-        self.vel.z += vel.z;
+        let boxes =
+            |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)).collision_boxes();
+        self.sweep_boxes(Axis::X, delta.x, &boxes);
+        self.sweep_boxes(Axis::Z, delta.z, &boxes);
     }
 
     /// Advance the player by `dt` seconds against the world's solid voxels.

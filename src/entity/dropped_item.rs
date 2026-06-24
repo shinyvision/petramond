@@ -73,6 +73,11 @@ pub struct DroppedItem {
     pub pickup_requested: bool,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
+    /// Previous-tick `pos`/`spin`, snapshotted at the top of each physics tick so the
+    /// renderer can interpolate between ticks (physics now runs on the fixed game tick,
+    /// like mobs). Transient — never saved; reconstructed equal to `pos`/`spin`.
+    pub prev_pos: Vec3,
+    pub prev_spin: f32,
 }
 
 impl DroppedItem {
@@ -89,6 +94,8 @@ impl DroppedItem {
         let speed = 1.0 + hash01(s ^ 0x5151) * 1.5; // 1.0..2.5 m/s
         let up = 2.5 + hash01(s ^ 0xA2A2) * 1.5; // 2.5..4.0 m/s upward pop
         let vel = Vec3::new(ang.cos() * speed, up, ang.sin() * speed);
+        // Stagger the starting spin so a pile of drops isn't phase-locked.
+        let spin = hash_signed(s ^ 0x3C3C) * std::f32::consts::PI;
         DroppedItem {
             pos,
             vel,
@@ -96,8 +103,9 @@ impl DroppedItem {
             skylight: 63,
             ticks_lived: 0,
             pickup_requested: false,
-            // Stagger the starting spin so a pile of drops isn't phase-locked.
-            spin: hash_signed(s ^ 0x3C3C) * std::f32::consts::PI,
+            spin,
+            prev_pos: pos,
+            prev_spin: spin,
         }
     }
 
@@ -118,6 +126,8 @@ impl DroppedItem {
             ticks_lived: 0,
             pickup_requested: false,
             spin: 0.0,
+            prev_pos: pos,
+            prev_spin: 0.0,
         }
     }
 
@@ -170,6 +180,10 @@ impl DroppedItem {
         solid_at: &impl Fn(IVec3) -> bool,
         flow_at: &impl Fn(IVec3) -> Vec3,
     ) {
+        // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
+        // (physics runs on the fixed game tick; frames in between blend prev → current).
+        self.prev_pos = self.pos;
+        self.prev_spin = self.spin;
         self.spin = (self.spin + SPIN_SPEED * dt) % std::f32::consts::TAU;
 
         // Magnet phase: if a target is within the attract radius, fly straight at

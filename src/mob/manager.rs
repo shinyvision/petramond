@@ -115,10 +115,10 @@ impl Mobs {
     /// `player_pos` is the player's body centre — the AI's player anchor for head-look
     /// and distance-despawn. `player_body` is the player's *pushable* body, present only
     /// when the player has a physical presence (a survival body, not a noclip spectator):
-    /// when present the mobs jostle it, and the returned [`Vec3`] is the net horizontal
-    /// push *velocity* they impart on it this tick, for the caller to add to the player's
-    /// own velocity (the player isn't owned here). It is [`Vec3::ZERO`] when there is no
-    /// pushable player.
+    /// when present the mobs are shoved off it (player→mob), on the tick. The reverse —
+    /// the mobs shoving the *player* — is NOT done here: that moves the player, which is
+    /// integrated per-frame for smoothness, so the caller applies it per-frame via
+    /// [`push_on_player`](Self::push_on_player).
     ///
     /// When `freeze_unloaded` is set (a save is attached), a mob standing over a
     /// not-yet-loaded chunk is frozen — not simulated, and excluded from pushing — until
@@ -131,7 +131,7 @@ impl Mobs {
         player_pos: Vec3,
         player_body: Option<push::Body>,
         freeze_unloaded: bool,
-    ) -> Vec3 {
+    ) {
         for mob in &mut self.list {
             if freeze_unloaded && !chunk_loaded_at(world, mob) {
                 continue;
@@ -141,29 +141,23 @@ impl Mobs {
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
         }
-        let player_push = self.resolve_pushes(world, player_body, freeze_unloaded);
+        self.resolve_pushes(world, player_body, freeze_unloaded);
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
-        player_push
     }
 
-    /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob↔player when
+    /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob←player when
     /// `player` is present — set each mob's push *velocity* away from the others, to be
-    /// applied (through the mob's own collision) on its next integrate. Returns the net
-    /// push velocity the mobs impart on the player (zero if there is no pushable player),
-    /// for the caller to add to the player's own velocity.
+    /// applied (through the mob's own collision) on its next integrate. This shoves only
+    /// *mobs* (which simulate on the tick); the player's own pushback is computed
+    /// per-frame in [`push_on_player`](Self::push_on_player), not here.
     ///
     /// Computed from a single up-front snapshot of every pushable body, so the result is
     /// order-independent and symmetric — each member of a pair is pushed at the full
     /// speed on its own pass (see [`push::separation`]) regardless of list order. A mob
     /// that isn't pushable this tick (dead, or frozen over an unloaded chunk) neither
     /// pushes nor is pushed.
-    fn resolve_pushes(
-        &mut self,
-        world: &World,
-        player: Option<push::Body>,
-        freeze_unloaded: bool,
-    ) -> Vec3 {
+    fn resolve_pushes(&mut self, world: &World, player: Option<push::Body>, freeze_unloaded: bool) {
         // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
         let bodies: Vec<Option<push::Body>> = self
             .list
@@ -171,7 +165,6 @@ impl Mobs {
             .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.push_body()))
             .collect();
 
-        let mut player_push = Vec3::ZERO;
         for i in 0..self.list.len() {
             let Some(bi) = bodies[i] else { continue };
             let mut push_vel = Vec3::ZERO;
@@ -187,16 +180,34 @@ impl Mobs {
                     }
                 }
             }
-            // Off the player — and the equal-and-opposite reaction lands on the player.
+            // Off the player (player→mob). The mob's reaction on the player is applied
+            // per-frame elsewhere, so nothing is accumulated for the player here.
             if let Some(player) = player {
                 if let Some(p) = push::separation(bi, player) {
                     push_vel += p;
-                    player_push -= p;
                 }
             }
             self.list[i].set_push(push_vel);
         }
-        player_push
+    }
+
+    /// The net horizontal push *velocity* the live mobs impart on the player right now,
+    /// from the player's current body — read-only, mutating no mob. The caller applies it
+    /// to the player **per-frame** (not on the tick) so the player drifts out of an
+    /// overlap perfectly smoothly: player movement is integrated every frame, and a 20 Hz
+    /// shove would pulse. A dead mob (a ragdolling corpse) doesn't push; a frozen mob over
+    /// an unloaded chunk is far from the player and never overlaps, so it's moot here.
+    pub fn push_on_player(&self, player: push::Body) -> Vec3 {
+        let mut push = Vec3::ZERO;
+        for m in &self.list {
+            if m.is_dead() {
+                continue;
+            }
+            if let Some(p) = push::separation(player, m.push_body()) {
+                push += p;
+            }
+        }
+        push
     }
 
     /// Apply `amount` damage to the mob at `index` (from attacker point `from`).
@@ -425,44 +436,44 @@ mod tests {
     }
 
     #[test]
-    fn a_mob_overlapping_the_player_shoves_it_away() {
-        // A mob jostles the player too: tick returns the net horizontal shove on the
-        // player, pointing away from the overlapping owl, for the caller to apply.
-        let world = World::new(0, 1);
+    fn a_mob_overlapping_the_player_pushes_it_away() {
+        // The mobs push the player too — but that's a per-frame query (`push_on_player`),
+        // not the tick, so the player drifts out smoothly. It points away from the owl.
         let mut mobs = Mobs::new(0);
         // Owl just east (+X) of the player's column, footprints overlapping.
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
-        let feet = Vec3::new(8.0, 64.0, 8.0);
-        let player_body = push::Body::new(feet, 0.3, 1.8);
-        let shove = mobs.tick(0.05, &world, feet, Some(player_body), false);
-        assert!(shove.x < 0.0, "the player is shoved -X, away from the owl: {shove:?}");
-        assert_eq!(shove.y, 0.0, "the shove is horizontal");
+        let player_body = push::Body::new(Vec3::new(8.0, 64.0, 8.0), 0.3, 1.8);
+        let push = mobs.push_on_player(player_body);
+        assert!(push.x < 0.0, "the player is pushed -X, away from the owl: {push:?}");
+        assert_eq!(push.y, 0.0, "the push is horizontal");
     }
 
     #[test]
-    fn a_distant_mob_does_not_shove_the_player() {
-        // No overlap, no shove — a mob across the world leaves the player be.
-        let world = World::new(0, 1);
+    fn a_distant_mob_does_not_push_the_player() {
+        // No overlap, no push — a mob across the world leaves the player be.
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
         let player_body = push::Body::new(far(), 0.3, 1.8);
-        let shove = mobs.tick(0.05, &world, far(), Some(player_body), false);
-        assert_eq!(shove, Vec3::ZERO, "an out-of-reach mob imparts no push");
+        assert_eq!(mobs.push_on_player(player_body), Vec3::ZERO, "an out-of-reach mob imparts no push");
     }
 
     #[test]
-    fn a_spectator_with_no_body_neither_pushes_nor_is_pushed() {
-        // A noclip spectator (no push body) overlapping a mob leaves it be and takes no
-        // shove itself — only the AI anchor (player_pos) is honoured, not a body.
+    fn a_bodiless_player_does_not_shove_mobs() {
+        // A noclip spectator (no push body) overlapping a mob leaves it be — the tick's
+        // player→mob shove is skipped when there's no body (the caller likewise skips the
+        // per-frame mob→player push for a spectator).
         let world = World::new(0, 1);
         let mut mobs = Mobs::new(0);
         let spot = Vec3::new(8.0, 64.0, 8.0);
         assert!(mobs.spawn(Mob::Owl, spot, 0.0));
         let before = mobs.instances()[0].pos;
-        let shove = mobs.tick(0.05, &world, spot, None, false);
-        assert_eq!(shove, Vec3::ZERO, "no body → no shove returned to the player");
+        mobs.tick(0.05, &world, spot, None, false);
         let after = mobs.instances()[0].pos;
-        assert_eq!((before.x, before.z), (after.x, after.z), "the mob isn't shoved sideways by a bodiless player");
+        assert_eq!(
+            (before.x, before.z),
+            (after.x, after.z),
+            "a player with no body doesn't shove the mob sideways"
+        );
     }
 
     #[test]

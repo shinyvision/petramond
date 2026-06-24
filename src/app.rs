@@ -524,6 +524,26 @@ fn now_seconds() -> f64 {
 }
 
 #[cfg(test)]
+impl App {
+    /// Route a screen click and then apply the latched container edit / drop, standing in
+    /// for the game tick that resolves it in play. Tests assert the resulting inventory /
+    /// world state right after, and a real tick interleaves between two clicks (applying
+    /// the first before the second is decided), so the per-click apply mirrors play.
+    fn click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
+        let consumed = self.route_screen_click(screen, now);
+        self.game.apply_latched_actions_for_test();
+        consumed
+    }
+
+    /// Right-click counterpart of [`click_screen_for_test`](Self::click_screen_for_test).
+    fn right_click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
+        let consumed = self.route_screen_right_click(screen, now);
+        self.game.apply_latched_actions_for_test();
+        consumed
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::controls::Control;
@@ -717,13 +737,13 @@ mod tests {
         // Pick the log up from inventory slot 0.
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
-        app.route_screen_click(screen, 0.0);
+        app.click_screen_for_test(screen, 0.0);
         assert!(app.game.inventory().cursor().is_some());
 
         // Drop it into the first 2×2 craft input cell -> planks preview appears.
         let cc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Input(0));
         app.set_cursor_position(cc.0, cc.1);
-        app.route_screen_click(screen, 0.1);
+        app.click_screen_for_test(screen, 0.1);
         assert!(
             app.game.inventory().cursor().is_none(),
             "log placed into the craft cell"
@@ -736,7 +756,7 @@ mod tests {
         // Click the result slot: 4 planks land on the cursor, ingredients consumed.
         let rc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Result);
         app.set_cursor_position(rc.0, rc.1);
-        app.route_screen_click(screen, 0.2);
+        app.click_screen_for_test(screen, 0.2);
         assert_eq!(
             app.game.inventory().cursor().map(|s| (s.item, s.count)),
             Some((ItemType::OakPlanks, 4))
@@ -754,14 +774,14 @@ mod tests {
         // Move the logs onto the cursor and into a craft cell.
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
-        app.route_screen_click(screen, 0.0);
+        app.click_screen_for_test(screen, 0.0);
         let cc = cursor_over_craft(
             screen,
             crate::render::CraftKind::Inventory,
             crate::render::CraftHit::Input(0),
         );
         app.set_cursor_position(cc.0, cc.1);
-        app.route_screen_click(screen, 0.1);
+        app.click_screen_for_test(screen, 0.1);
         // Close with Escape: the logs return to the inventory.
         assert!(app.handle_control(Control::CloseScreen, true));
         assert!(!app.inventory_open());
@@ -785,7 +805,7 @@ mod tests {
         assert!(app.game.inventory().cursor().is_none());
         let item0 = app.game.inventory().slot(0).unwrap().item;
 
-        let consumed = app.route_screen_click(screen, 0.0);
+        let consumed = app.click_screen_for_test(screen, 0.0);
         assert!(consumed);
         assert!(app.game.inventory().slot(0).is_none());
         assert_eq!(app.game.inventory().cursor().unwrap().item, item0);
@@ -802,8 +822,8 @@ mod tests {
         // First click picks the stack up; a second click within the double-click
         // window gathers matching items instead of dropping it back — so the stack
         // stays on the cursor and the source slot stays empty.
-        app.route_screen_click(screen, 0.0);
-        app.route_screen_click(screen, 0.1);
+        app.click_screen_for_test(screen, 0.0);
+        app.click_screen_for_test(screen, 0.1);
         assert!(
             app.game.inventory().cursor().is_some(),
             "stack stays on the cursor"
@@ -824,8 +844,8 @@ mod tests {
 
         // Two clicks spaced beyond the double-click window: the second is a normal
         // click that drops the held stack back into the now-empty slot.
-        app.route_screen_click(screen, 0.0);
-        app.route_screen_click(screen, 1.0);
+        app.click_screen_for_test(screen, 0.0);
+        app.click_screen_for_test(screen, 1.0);
         assert!(
             app.game.inventory().cursor().is_none(),
             "stack dropped back"
@@ -841,7 +861,7 @@ mod tests {
         // Pick up slot 0's stack.
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
-        app.route_screen_click(screen, 0.0);
+        app.click_screen_for_test(screen, 0.0);
         assert!(app.game.inventory().cursor().is_some());
 
         // A fast click on a DIFFERENT slot is a normal drop, not a gather: the held
@@ -849,7 +869,7 @@ mod tests {
         let dest = crate::inventory::HOTBAR_LEN;
         let (dx, dy) = cursor_over_slot(screen, dest);
         app.set_cursor_position(dx, dy);
-        app.route_screen_click(screen, 0.05);
+        app.click_screen_for_test(screen, 0.05);
         assert!(
             app.game.inventory().cursor().is_none(),
             "stack dropped into the new slot"
@@ -862,7 +882,7 @@ mod tests {
         let mut app = app();
         assert!(!app.inventory_open());
         let before = app.game.inventory().slot(0).map(|s| s.count);
-        let consumed = app.route_screen_click((1280, 720), 0.0);
+        let consumed = app.click_screen_for_test((1280, 720), 0.0);
         assert!(!consumed);
         assert!(app.game.inventory().cursor().is_none());
         assert_eq!(app.game.inventory().slot(0).map(|s| s.count), before);
@@ -924,7 +944,7 @@ mod tests {
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
         // Slot 0 starts at 64; right-click drags off the larger half (32).
-        let consumed = app.route_screen_right_click(screen, 0.0);
+        let consumed = app.right_click_screen_for_test(screen, 0.0);
         assert!(consumed);
         assert_eq!(app.game.inventory().cursor().unwrap().count, 32);
         assert_eq!(app.game.inventory().slot(0).unwrap().count, 32);
@@ -935,7 +955,7 @@ mod tests {
         // Closed inventory: a right-click is NOT consumed, so it can place a block.
         let mut app = app();
         assert!(!app.inventory_open());
-        assert!(!app.route_screen_right_click((1280, 720), 0.0));
+        assert!(!app.right_click_screen_for_test((1280, 720), 0.0));
     }
 
     #[test]
@@ -951,7 +971,7 @@ mod tests {
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
         let item0 = app.game.inventory().slot(0).unwrap().item;
-        app.route_screen_click(screen, 0.0);
+        app.click_screen_for_test(screen, 0.0);
         assert!(
             app.game.inventory().slot(0).is_none(),
             "hotbar slot emptied"
@@ -975,11 +995,11 @@ mod tests {
         // Drag slot 0's stack onto the cursor.
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
-        app.route_screen_click(screen, 0.0);
+        app.click_screen_for_test(screen, 0.0);
         assert!(app.game.inventory().cursor().is_some());
         // Click the top-left corner: confidently outside the inventory panel.
         app.set_cursor_position(0.0, 0.0);
-        app.route_screen_click(screen, 0.1);
+        app.click_screen_for_test(screen, 0.1);
         assert!(
             app.game.inventory().cursor().is_none(),
             "held stack thrown out of the inventory"
@@ -993,12 +1013,12 @@ mod tests {
         let screen = (1280, 720);
         let (cx, cy) = cursor_over_slot(screen, 0);
         app.set_cursor_position(cx, cy);
-        app.route_screen_click(screen, 0.0); // pick up the stack
+        app.click_screen_for_test(screen, 0.0); // pick up the stack
         assert!(app.game.inventory().cursor().is_some());
         // A point inside the panel but on no slot: the held stack is kept.
         let inside_panel_gap = panel_gap_point(screen);
         app.set_cursor_position(inside_panel_gap.0, inside_panel_gap.1);
-        app.route_screen_click(screen, 0.1);
+        app.click_screen_for_test(screen, 0.1);
         assert!(
             app.game.inventory().cursor().is_some(),
             "click on panel art must not throw the stack"

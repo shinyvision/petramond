@@ -207,24 +207,18 @@ impl World {
     ///
     /// `player_pos` is the player's body centre (the AI's player anchor). `player_body`
     /// is the player's *pushable* body — present only when the player has a physical
-    /// presence (`None` for a noclip spectator) — so the mobs jostle it. Returns the net
-    /// horizontal push *velocity* the mobs impart on the player this tick, which the
-    /// caller adds to the player's own velocity (the player isn't owned here); zero when
-    /// there is no pushable player.
-    pub fn tick_mobs(
-        &mut self,
-        dt: f32,
-        player_pos: Vec3,
-        player_body: Option<crate::mob::Body>,
-    ) -> Vec3 {
+    /// presence (`None` for a noclip spectator) — so the mobs are shoved off it
+    /// (player→mob) on the tick. The reverse push on the *player* is applied per-frame by
+    /// the caller (it moves the player, which integrates per-frame); see
+    /// [`Mobs::push_on_player`].
+    pub fn tick_mobs(&mut self, dt: f32, player_pos: Vec3, player_body: Option<crate::mob::Body>) {
         if self.mobs.is_empty() {
-            return Vec3::ZERO;
+            return;
         }
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);
-        let player_push = mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
+        mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
         self.mobs = mobs;
-        player_push
     }
 
     /// Run one natural mob-spawn attempt (one per game tick). Same borrow-split as
