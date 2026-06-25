@@ -1,6 +1,5 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-mod bbmodel;
 mod block_model;
 mod break_overlay;
 mod chest_model;

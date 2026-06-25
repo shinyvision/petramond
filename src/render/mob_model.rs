@@ -18,7 +18,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::bbmodel::{euler_quat, face_corners, Animation, Model};
+use crate::bbmodel::{euler_quat, face_corners, Animation, Model};
 use super::item_model::ItemVertex;
 use super::lighting::sky_light_factor;
 use super::MobRenderInstance;

@@ -1,16 +1,12 @@
-//! Lightweight, sim-side scan of a `.bbmodel` for the idle-animation info the AI
-//! needs without depending on the render-side parser: each `idle_*` animation's
-//! length and whether it loops.
+//! Sim-side metadata derived from a mob's compiled [`Model`](crate::bbmodel::Model): the
+//! idle-animation info the AI needs and the bone hierarchy the death ragdoll tumbles.
 //!
-//! The renderer's [`Model`](crate::render::bbmodel) owns the full geometry/animation
-//! parse; this is a tiny name-sorted pass (matching the renderer's idle index order)
-//! so the `mob` layer stays independent of `render`. Both agree on what counts as an
-//! idle animation (a name starting `idle_`) and on the loop modes.
+//! These are pure functions of the precached [`Model`] (see [`crate::mob::model`]) — the
+//! same in-memory asset the renderer bakes from — so the simulation reads `.llmob`-derived
+//! data and never re-parses a `.bbmodel`. Bone indices line up with the renderer's by
+//! construction, since both come from the one `Model`.
 
-use std::collections::HashMap;
-
-use serde_json::Value;
-
+use crate::bbmodel::Model;
 use crate::mathh::Vec3;
 
 /// What the AI needs to know about one `idle_*` animation.
@@ -22,33 +18,17 @@ pub struct IdleAnimMeta {
     pub looping: bool,
 }
 
-/// The `idle_*` animations of a `.bbmodel`, name-sorted (the order the renderer
-/// indexes them), each with its length + loop mode. Empty on any parse error.
-pub fn idle_anims(model_src: &str) -> Vec<IdleAnimMeta> {
-    let Ok(root) = serde_json::from_str::<Value>(model_src) else {
-        return Vec::new();
-    };
-    let Some(anims) = root.get("animations").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let mut idle: Vec<(&str, IdleAnimMeta)> = anims
-        .iter()
-        .filter_map(|a| {
-            let name = a.get("name").and_then(Value::as_str)?;
-            if !name.starts_with("idle_") {
-                return None;
-            }
-            let length = a.get("length").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-            let looping = match a.get("loop") {
-                Some(Value::String(s)) => s == "loop",
-                Some(Value::Bool(b)) => *b,
-                _ => false,
-            };
-            Some((name, IdleAnimMeta { length, looping }))
-        })
-        .collect();
-    idle.sort_by(|a, b| a.0.cmp(b.0));
-    idle.into_iter().map(|(_, m)| m).collect()
+/// This model's `idle_*` animations in its own stable (name-sorted) index order, each with
+/// its length + loop mode. The index lines up 1:1 with [`Model::idle_animation`], so an
+/// index the AI picks resolves to exactly the animation the renderer plays for it.
+pub fn idle_anims(model: &Model) -> Vec<IdleAnimMeta> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(a) = model.idle_animation(i) {
+        out.push(IdleAnimMeta { length: a.length, looping: a.looping });
+        i += 1;
+    }
+    out
 }
 
 /// One bone of the sim-side skeleton. The death ragdoll treats each bone as a rigid
@@ -60,16 +40,16 @@ pub fn idle_anims(model_src: &str) -> Vec<IdleAnimMeta> {
 pub struct SkBone {
     pub pivot: Vec3,
     /// Axis-aligned box covering the bone's cubes (model space), regularised to a
-    /// minimum thickness so even a flat cube is a genuine 3D body. A geometry-less group
+    /// minimum thickness so even a flat cube is a genuine 3D body. A geometry-less bone
     /// gets a small box around its `pivot`.
     pub bbox_min: Vec3,
     pub bbox_max: Vec3,
     pub parent: Option<usize>,
 }
 
-/// The bone hierarchy of a `.bbmodel`, in the SAME index order the renderer's
-/// [`Model`](crate::render::bbmodel) builds (the `groups` array order, parents from the
-/// `outliner`), so a sim-computed per-bone pose drops straight into the render bake.
+/// The bone hierarchy of a mob, in the SAME index order as the renderer's
+/// [`Model`](crate::bbmodel::Model) (it is derived from that very model), so a sim-computed
+/// per-bone pose drops straight into the render bake.
 #[derive(Clone, Debug, Default)]
 pub struct Skeleton {
     pub bones: Vec<SkBone>,
@@ -79,164 +59,89 @@ pub struct Skeleton {
 /// flat cube still has 3D thickness for the ragdoll to tumble realistically.
 const MIN_HALF: f32 = 0.5;
 
-/// Scan a `.bbmodel` for its bone hierarchy (pivots, parents, and a bounding box per
-/// bone from its cube geometry), mirroring the renderer's bone construction so
-/// indices/pivots line up. Empty on any parse error (the ragdoll then degrades to no
-/// flop rather than crashing).
-pub fn skeleton(model_src: &str) -> Skeleton {
-    let Ok(root) = serde_json::from_str::<Value>(model_src) else {
-        return Skeleton::default();
-    };
-    // Bones from `groups`.
-    let mut bones = Vec::new();
-    let mut by_uuid: HashMap<String, usize> = HashMap::new();
-    if let Some(groups) = root.get("groups").and_then(Value::as_array) {
-        for g in groups {
-            let uuid = g.get("uuid").and_then(Value::as_str).unwrap_or("").to_string();
-            let pivot = arr3(g.get("origin")).unwrap_or(Vec3::ZERO);
-            by_uuid.insert(uuid, bones.len());
-            bones.push(SkBone { pivot, bbox_min: pivot, bbox_max: pivot, parent: None });
-        }
+/// Build the sim skeleton from a compiled [`Model`]: each bone's pivot + parent come
+/// straight from the model, and its bounding box is grown from the cubes the model assigned
+/// to that bone (regularised to [`MIN_HALF`] thickness; a geometry-less bone gets a small
+/// box at its pivot). Indices/pivots match the renderer exactly because both come from this
+/// one `Model`.
+pub fn skeleton(model: &Model) -> Skeleton {
+    let n = model.bones.len();
+    let mut lo = vec![Vec3::splat(f32::INFINITY); n];
+    let mut hi = vec![Vec3::splat(f32::NEG_INFINITY); n];
+    for c in &model.cubes {
+        lo[c.bone] = lo[c.bone].min(c.from.min(c.to));
+        hi[c.bone] = hi[c.bone].max(c.from.max(c.to));
     }
-    // Cube boxes from `elements`, keyed by uuid (for each bone's bounding box).
-    let mut cube_box: HashMap<String, (Vec3, Vec3)> = HashMap::new();
-    if let Some(elements) = root.get("elements").and_then(Value::as_array) {
-        for e in elements {
-            let Some(uuid) = e.get("uuid").and_then(Value::as_str) else {
-                continue;
+    let bones = model
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let (centre, half) = if hi[i].cmpge(lo[i]).all() {
+                ((lo[i] + hi[i]) * 0.5, ((hi[i] - lo[i]) * 0.5).max(Vec3::splat(MIN_HALF)))
+            } else {
+                (b.pivot, Vec3::splat(MIN_HALF))
             };
-            let from = arr3(e.get("from")).unwrap_or(Vec3::ZERO);
-            let to = arr3(e.get("to")).unwrap_or(from);
-            cube_box.insert(uuid.to_string(), (from.min(to), from.max(to)));
-        }
-    }
-    // Walk the outliner: set parents, and grow each bone's box by its cubes.
-    let mut bbox = vec![(Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)); bones.len()];
-    if let Some(outliner) = root.get("outliner").and_then(Value::as_array) {
-        for node in outliner {
-            walk_outliner(node, None, &by_uuid, &cube_box, &mut bones, &mut bbox);
-        }
-    }
-    // Finalise each bone's box: the union of its cubes (regularised to a minimum
-    // thickness), or a small box around the pivot for a geometry-less group.
-    for (b, (mn, mx)) in bbox.into_iter().enumerate() {
-        let (centre, half) = if mx.cmpge(mn).all() {
-            ((mn + mx) * 0.5, ((mx - mn) * 0.5).max(Vec3::splat(MIN_HALF)))
-        } else {
-            (bones[b].pivot, Vec3::splat(MIN_HALF))
-        };
-        bones[b].bbox_min = centre - half;
-        bones[b].bbox_max = centre + half;
-    }
+            SkBone {
+                pivot: b.pivot,
+                bbox_min: centre - half,
+                bbox_max: centre + half,
+                parent: b.parent,
+            }
+        })
+        .collect();
     Skeleton { bones }
-}
-
-/// Set each bone's parent from one `outliner` node and grow its bounding box by its
-/// cubes. Group objects are bones; bare string children are cube uuids (this bone's
-/// geometry).
-fn walk_outliner(
-    node: &Value,
-    parent: Option<usize>,
-    by_uuid: &HashMap<String, usize>,
-    cube_box: &HashMap<String, (Vec3, Vec3)>,
-    bones: &mut [SkBone],
-    bbox: &mut [(Vec3, Vec3)],
-) {
-    match node {
-        // A cube uuid: grows the current (parent) bone's bounding box.
-        Value::String(uuid) => {
-            if let (Some(b), Some((f, t))) = (parent, cube_box.get(uuid)) {
-                bbox[b].0 = bbox[b].0.min(*f);
-                bbox[b].1 = bbox[b].1.max(*t);
-            }
-        }
-        Value::Object(_) => {
-            let this = node
-                .get("uuid")
-                .and_then(Value::as_str)
-                .and_then(|u| by_uuid.get(u).copied());
-            if let Some(b) = this {
-                bones[b].parent = parent;
-            }
-            if let Some(children) = node.get("children").and_then(Value::as_array) {
-                for child in children {
-                    walk_outliner(child, this, by_uuid, cube_box, bones, bbox);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// A `[x, y, z]` JSON array → `Vec3` (numbers or numeric strings).
-fn arr3(v: Option<&Value>) -> Option<Vec3> {
-    let a = v?.as_array()?;
-    if a.len() != 3 {
-        return None;
-    }
-    let n = |x: &Value| match x {
-        Value::Number(n) => n.as_f64().map(|f| f as f32),
-        Value::String(s) => s.trim().parse::<f32>().ok(),
-        _ => None,
-    };
-    Some(Vec3::new(n(&a[0])?, n(&a[1])?, n(&a[2])?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn owl_idle_animations_are_detected() {
+    fn owl() -> Model {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
-        let idle = idle_anims(src);
-        // The owl ships idle_* animations; the exact set is free to change, so just
-        // confirm they're found with sane lengths (the parsing is pinned below).
-        assert!(!idle.is_empty(), "owl idle animations should be detected");
-        assert!(idle.iter().all(|m| m.length > 0.0), "idle animations have a length");
+        Model::load(src).expect("owl.bbmodel parses")
     }
 
     #[test]
-    fn scans_idle_length_and_loop_mode_in_name_order() {
-        let json = r#"{"animations":[
-            {"name":"walk","loop":"loop","length":0.5},
-            {"name":"idle_1","loop":"loop","length":2.0},
-            {"name":"idle_0","loop":"once","length":1.0},
-            {"name":"attack","length":1.0}
-        ]}"#;
-        let v = idle_anims(json);
-        assert_eq!(v.len(), 2, "only idle_* animations, walk/attack ignored");
-        // Name-sorted: idle_0 (once, 1.0) then idle_1 (loop, 2.0).
-        assert!(!v[0].looping && (v[0].length - 1.0).abs() < 1e-6, "idle_0 once @1.0");
-        assert!(v[1].looping && (v[1].length - 2.0).abs() < 1e-6, "idle_1 loop @2.0");
+    fn owl_idle_animations_are_detected_with_sane_lengths() {
+        let v = idle_anims(&owl());
+        assert!(!v.is_empty(), "owl idle animations should be detected");
+        assert!(v.iter().all(|m| m.length > 0.0), "idle animations have a length");
     }
 
     #[test]
-    fn malformed_input_is_empty() {
-        assert!(idle_anims("not json").is_empty());
-        assert!(idle_anims("{}").is_empty());
+    fn idle_anims_line_up_with_the_models_idle_index() {
+        // The sim's list is 1:1 with the model's idle index, so an index the AI picks
+        // resolves to the same animation the renderer plays (no independent re-sorting).
+        let m = owl();
+        let v = idle_anims(&m);
+        for (i, meta) in v.iter().enumerate() {
+            let anim = m.idle_animation(i).expect("model has this idle index");
+            assert_eq!(meta.length, anim.length);
+            assert_eq!(meta.looping, anim.looping);
+        }
+        assert!(m.idle_animation(v.len()).is_none(), "the list covers exactly the model's idles");
     }
 
     #[test]
-    fn owl_skeleton_has_a_root_and_valid_parents() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
-        let skel = skeleton(src);
-        // Matches the renderer's bone count expectation (owl/head/wings/legs/...).
-        assert!(skel.bones.len() >= 6, "owl bones detected");
-        assert!(
-            skel.bones.iter().any(|b| b.parent.is_none()),
-            "the skeleton has a root bone"
-        );
+    fn owl_skeleton_matches_the_model_with_a_root_and_real_boxes() {
+        let m = owl();
+        let skel = skeleton(&m);
+        assert_eq!(skel.bones.len(), m.bones.len(), "one sk-bone per model bone");
+        assert!(skel.bones.iter().any(|b| b.parent.is_none()), "the skeleton has a root");
         for b in &skel.bones {
             if let Some(p) = b.parent {
                 assert!(p < skel.bones.len(), "parent index in range");
             }
+            // Regularised to MIN_HALF, so every bone is a genuine 3D body the ragdoll can tumble.
+            assert!((b.bbox_max - b.bbox_min).min_element() > 0.0, "non-degenerate box");
         }
     }
 
     #[test]
-    fn skeleton_of_malformed_input_is_empty() {
-        assert!(skeleton("not json").bones.is_empty());
-        assert!(skeleton("{}").bones.is_empty());
+    fn empty_model_yields_empty_metadata() {
+        let m = Model::empty();
+        assert!(idle_anims(&m).is_empty());
+        assert!(skeleton(&m).bones.is_empty());
     }
 }

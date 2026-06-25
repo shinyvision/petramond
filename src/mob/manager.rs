@@ -17,7 +17,7 @@ use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{def, push, spawn, Instance, Mob, MobRng, SavedMob, ALL_MOBS};
+use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, ALL_MOBS};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -45,17 +45,16 @@ struct MobMeta {
     skeleton: Skeleton,
 }
 
-/// Every species' [`MobMeta`], indexed by `Mob as usize`. It's a pure function of the
-/// static [`MOB_DEFS`](super::MOB_DEFS) registry — identical for every world — so it's
-/// computed once for the whole process rather than rebuilt per [`Mobs`]; that keeps
-/// each `World::new` (of which the tests make dozens) from reparsing every species'
-/// `.bbmodel`.
+/// Every species' [`MobMeta`], derived once for the whole process from the precached
+/// [`Model`](crate::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
+/// usize`. It's identical for every world, so computing it once keeps each `World::new` (of
+/// which the tests make dozens) from re-deriving it — and nothing here re-reads a `.bbmodel`.
 static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
     ALL_MOBS
         .iter()
         .map(|&m| MobMeta {
-            idle_anims: model_meta::idle_anims(def(m).model_src),
-            skeleton: model_meta::skeleton(def(m).model_src),
+            idle_anims: model_meta::idle_anims(model(m)),
+            skeleton: model_meta::skeleton(model(m)),
         })
         .collect()
 });
@@ -412,7 +411,7 @@ mod tests {
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.05, 64.0, 8.0), 0.0));
-        let reach = 2.0 * def(Mob::Owl).size.half_width;
+        let reach = 2.0 * crate::mob::def(Mob::Owl).size.half_width;
 
         let gap0 = horizontal_gap(&mobs);
         let mut gap = gap0;

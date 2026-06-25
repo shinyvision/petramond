@@ -242,7 +242,7 @@ pub(super) fn create_gui_atlas(
 /// Upload an entity model's RGBA texture (decoded from a `.bbmodel`) as its own
 /// GPU texture + nearest sampler — a SEPARATE atlas from the block atlas, because
 /// model faces carry arbitrary sub-rectangle UVs into this sheet (see
-/// `render::bbmodel`). Single mip, ClampToEdge, NEAREST (crisp pixel art), sRGB —
+/// `crate::bbmodel`). Single mip, ClampToEdge, NEAREST (crisp pixel art), sRGB —
 /// the same treatment as the block/GUI atlases. `w`/`h` of 0 are clamped to 1 so a
 /// missing/empty texture still yields a valid 1×1 binding.
 pub(super) fn create_model_texture(

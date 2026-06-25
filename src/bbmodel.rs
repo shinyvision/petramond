@@ -3,9 +3,12 @@
 //! Parses the subset of the bedrock-format `.bbmodel` we render: cube elements
 //! (box + pivot + static rotation + per-face UVs), the bone hierarchy (groups +
 //! the `outliner` tree), named bone-rotation animations, and the embedded texture.
-//! Everything here is render-side, GPU-agnostic data + pose math; the actual
-//! geometry bake lives in [`owl_model`](super::owl_model) and the texture upload in
-//! [`resources`](super::resources).
+//! This is GPU-agnostic data + pose math (no `wgpu`) — the engine's golden mob model,
+//! compiled from the `.bbmodel` once (see [`crate::asset_cache`]) and then shared: the
+//! renderer bakes geometry in [`crate::render::mob_model`] and uploads the texture in
+//! [`crate::render::resources`], while the simulation derives its skeleton + idle metadata
+//! in [`crate::mob::model_meta`]. At runtime nothing reads the `.bbmodel`; this `Model` (and
+//! its `.llmob`) is authoritative.
 //!
 //! Coordinate notes:
 //! - Cube coords are in the model's own units (this owl is built feet-at-`y=0`),
@@ -24,12 +27,15 @@
 use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::asset_cache::CompiledAsset;
 use crate::mesh::face::Face;
 
 /// One cube of the model: an axis-aligned box with a pivot + static rotation and a
 /// per-face UV rect (in `Face::ALL` order; `None` = the face is omitted).
+#[derive(Serialize, Deserialize)]
 pub struct Cube {
     pub from: Vec3,
     pub to: Vec3,
@@ -46,6 +52,7 @@ pub struct Cube {
 
 /// A bone: a named pivot in the hierarchy. Animation rotates geometry about
 /// `pivot`; `parent` chains the transform up to a root bone (`None`).
+#[derive(Serialize, Deserialize)]
 pub struct Bone {
     pub name: String,
     pub pivot: Vec3,
@@ -53,6 +60,7 @@ pub struct Bone {
 }
 
 /// One rotation keyframe: euler degrees at `time` seconds.
+#[derive(Serialize, Deserialize)]
 struct Keyframe {
     time: f32,
     rot: Vec3,
@@ -60,6 +68,7 @@ struct Keyframe {
 
 /// A named animation: per-bone rotation tracks (sorted keyframes), keyed by bone
 /// index. Only the rotation channel is read (the bundled owl animates rotation only).
+#[derive(Serialize, Deserialize)]
 pub struct Animation {
     pub length: f32,
     /// Whether the animation loops. Blockbench `loop: "loop"` loops; `"once"` /
@@ -79,6 +88,7 @@ impl Animation {
 }
 
 /// A parsed model: bones, cubes, animations, and the embedded RGBA texture.
+#[derive(Serialize, Deserialize)]
 pub struct Model {
     pub bones: Vec<Bone>,
     pub cubes: Vec<Cube>,
@@ -285,6 +295,23 @@ impl Model {
     }
 }
 
+impl CompiledAsset for Model {
+    /// `LLMOB` — the compiled mob/entity model container (one file holds geometry, bones,
+    /// animations and the decoded texture).
+    const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
+    /// v1: bones + cubes (per-face UV) + named rotation animations + the RGBA texture.
+    /// Bump on any change to these fields or to [`Model::load`]'s output.
+    const FORMAT_VERSION: u32 = 1;
+    const SUBDIR: &'static str = "models";
+    const EXTENSION: &'static str = "llmob";
+
+    /// Compile = parse the authored `.bbmodel` (UTF-8 JSON) via [`Model::load`].
+    fn compile(source: &[u8]) -> Result<Self, String> {
+        let src = std::str::from_utf8(source).map_err(|e| format!("bbmodel utf-8: {e}"))?;
+        Model::load(src)
+    }
+}
+
 /// Recursively assign bone parents + cube bones from one `outliner` node. A node
 /// is either a cube-uuid string (a leaf) or a group object (`uuid` + `children`).
 fn walk_outliner(
@@ -421,8 +448,8 @@ fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
 }
 
 /// Quaternion from euler degrees (XYZ order — exact for single-axis rotations).
-/// Shared with [`owl_model`](super::owl_model) for the static per-cube tilt.
-pub fn euler_quat(deg: Vec3) -> Quat {
+/// Shared with [`crate::render::mob_model`] for the static per-cube tilt.
+pub(crate) fn euler_quat(deg: Vec3) -> Quat {
     Quat::from_euler(
         glam::EulerRot::XYZ,
         deg.x.to_radians(),
@@ -524,7 +551,7 @@ fn num(v: &Value) -> Option<f32> {
 
 /// The four corners of cube face `f` over box `[from, to]`, in `quad_box` order
 /// (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left).
-pub fn face_corners(f: Face, from: Vec3, to: Vec3) -> [[f32; 3]; 4] {
+pub(crate) fn face_corners(f: Face, from: Vec3, to: Vec3) -> [[f32; 3]; 4] {
     f.quad_box(from.to_array(), to.to_array())
 }
 
@@ -535,6 +562,36 @@ mod tests {
     fn owl() -> Model {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
         Model::load(src).expect("owl.bbmodel parses")
+    }
+
+    /// The compiled `.llmob` payload round-trips the model with full fidelity: same
+    /// geometry, same texture and — crucially — the same posed animation. Pins the
+    /// serialization *contract* (every field survives), compared against the original, so
+    /// it pins no editable table value.
+    #[test]
+    fn compiled_model_roundtrips_with_full_fidelity() {
+        let m = owl();
+        let bytes = bincode::serialize(&m).expect("model serializes");
+        let m2: Model = bincode::deserialize(&bytes).expect("model deserializes");
+
+        assert_eq!(m.cubes.len(), m2.cubes.len());
+        assert_eq!(m.bones.len(), m2.bones.len());
+        assert_eq!((m.tex_w, m.tex_h), (m2.tex_w, m2.tex_h));
+        assert_eq!(m.texture_rgba, m2.texture_rgba, "texture bytes survive");
+        let mut names1: Vec<&String> = m.animations.keys().collect();
+        let mut names2: Vec<&String> = m2.animations.keys().collect();
+        names1.sort();
+        names2.sort();
+        assert_eq!(names1, names2, "animation set survives");
+
+        // Behaviour preserved: a pose from the round-tripped model matches the original
+        // (proves bones, pivots, parents and keyframes all survived intact).
+        let (walk1, walk2) = (m.animation("walk").unwrap(), m2.animation("walk").unwrap());
+        for &t in &[0.0f32, 0.17, 0.33, 0.5] {
+            for (a, b) in m.pose(walk1, t).iter().zip(m2.pose(walk2, t).iter()) {
+                assert!(a.abs_diff_eq(*b, 1e-6), "posed transforms match at t={t}");
+            }
+        }
     }
 
     #[test]

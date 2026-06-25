@@ -6,7 +6,9 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod app;
+pub mod asset_cache;
 pub mod atlas;
+pub mod bbmodel;
 pub mod biome;
 pub mod block;
 pub mod camera;

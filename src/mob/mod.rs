@@ -10,8 +10,9 @@
 //!
 //! Layering: `path` (pure A*), `brain` + `behavior` (composable per-tick AI), `nav`
 //! (path following + jumps), `instance` (shared kinematics), `manager` (the live
-//! set). Nothing here depends on `crate::render`; the renderer reads `model_src` /
-//! `scale` off the table, the simulation reads everything else.
+//! set). Nothing here depends on `crate::render`: each species' `.bbmodel` is precached
+//! into a compiled [`Model`](crate::bbmodel::Model) (via [`model`]) that the renderer and
+//! the simulation both read — the renderer also reads `scale` off the table.
 
 mod behavior;
 mod brain;
@@ -31,6 +32,9 @@ pub use loot::{load_loot, LootTable, LootTables};
 pub use manager::{DeathDrop, Mobs};
 pub use push::Body;
 
+use std::sync::LazyLock;
+
+use crate::bbmodel::Model;
 use crate::biome::Biome;
 use crate::block::Block;
 use crate::mathh::Vec3;
@@ -161,14 +165,17 @@ impl SavedMob {
     }
 }
 
-/// One row of the mob registry: everything that makes a species what it is. The
-/// render side reads `model_src` + `scale`; the simulation reads the rest.
+/// One row of the mob registry: everything that makes a species what it is. `model_src`
+/// and `scale` feed the renderer; the rest drives the simulation. (`model_src` is compiled
+/// once into the shared [`Model`](crate::bbmodel::Model) — see [`model`].)
 pub struct MobDef {
     pub mob: Mob,
     /// Stable snake_case identity (e.g. `"owl"`), independent of any display name —
     /// the key a loot table is looked up by. Mirrors [`crate::item::ItemType::key`].
     pub key: &'static str,
-    /// The embedded `.bbmodel` source (geometry + walk animation + texture).
+    /// The embedded `.bbmodel` source (geometry + walk animation + texture). Read only at
+    /// precache time (see [`model`]); at runtime the compiled
+    /// [`Model`](crate::bbmodel::Model) is authoritative.
     pub model_src: &'static str,
     /// Model-unit → metre scale for rendering.
     pub scale: f32,
@@ -273,6 +280,31 @@ pub fn from_id(id: u8) -> Mob {
 #[inline]
 pub fn def(mob: Mob) -> &'static MobDef {
     registry::def(MOB_DEFS, mob)
+}
+
+/// Every species' compiled [`Model`](crate::bbmodel::Model), indexed by `Mob as usize` —
+/// the in-memory golden asset, precached once on first use (compiling each `.bbmodel` →
+/// `.llmob` on a cache miss, else fast-loading the `.llmob`) and shared by the renderer and
+/// the simulation. After this builds, nothing in the running engine reads a `.bbmodel`.
+static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
+    ALL_MOBS
+        .iter()
+        .map(|&m| {
+            let d = def(m);
+            crate::asset_cache::load_or_compile::<Model>(d.key, d.model_src.as_bytes())
+                .unwrap_or_else(|e| {
+                    log::error!("mob model precache failed for {m:?}: {e}");
+                    Model::empty()
+                })
+        })
+        .collect()
+});
+
+/// This species' precached [`Model`](crate::bbmodel::Model), borrowed for the process
+/// lifetime: the renderer bakes geometry from it each frame and the simulation derives its
+/// skeleton + idle metadata from it (see `model_meta`).
+pub fn model(mob: Mob) -> &'static Model {
+    &MODELS[mob as usize]
 }
 
 /// A deterministic per-mob RNG (a SplitMix64-style finalizer over a seed + counter).

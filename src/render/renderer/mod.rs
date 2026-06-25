@@ -13,7 +13,7 @@ use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use lod::far_leaf_lod_active;
 
 use super::block_model::BillboardBasis;
-use super::bbmodel::Model;
+use crate::bbmodel::Model;
 use super::break_overlay::build_break_overlay;
 use super::crosshair::crosshair_vertices;
 use super::hand::build_hand_lit;
@@ -99,12 +99,12 @@ impl Default for UiSnapshot {
 }
 
 /// Per-species GPU resources for the mob pipeline, built once at renderer init by
-/// iterating [`crate::mob::MOB_DEFS`] (so the renderer never names a species). Holds
-/// the parsed model + its render scale, the species' own texture/sampler + group(1)
+/// iterating [`crate::mob::MOB_DEFS`] (so the renderer never names a species). Borrows
+/// the species' precached [`Model`] + its render scale, the species' own texture/sampler + group(1)
 /// bind, its dynamic draw buffers, and reused per-frame scratch (the visible subset
 /// + the baked `ItemVertex` geometry). The `Vec<MobGpu>` is in `Mob as usize` order.
 struct MobGpu {
-    model: super::bbmodel::Model,
+    model: &'static Model,
     scale: f32,
     // Kept alive alongside the bind group that references them.
     #[allow(dead_code)]
@@ -456,10 +456,10 @@ async fn new_renderer_inner(
         .iter()
         .map(|&kind| {
             let d = crate::mob::def(kind);
-            let model = Model::load(d.model_src).unwrap_or_else(|e| {
-                log::error!("mob model load failed for {kind:?}: {e}");
-                Model::empty()
-            });
+            // Borrow this species' precached model (compiled once on startup, shared with
+            // the simulation — see `crate::mob::model`). The renderer never reads a
+            // `.bbmodel`: at runtime the `.llmob` + this in-memory `Model` are golden.
+            let model = crate::mob::model(kind);
             let (texture, view, sampler) = create_model_texture(
                 &device,
                 &queue,
@@ -1091,7 +1091,7 @@ impl Renderer {
         }
         let queue = &self.queue;
         for g in &mut self.mob_gpu {
-            let model = &g.model;
+            let model = g.model;
             let scale = g.scale;
             let visible = &g.visible;
             g.draw.bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
