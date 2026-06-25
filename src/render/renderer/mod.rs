@@ -301,6 +301,8 @@ pub struct Renderer {
     icon_quad_verts: Vec<UiVertex>,
     /// Vertex count of the icon quads uploaded this frame (`0` = no icons).
     icon_quad_vertex_count: u32,
+    /// Vertex count of the cursor-held icon quads appended after normal icons.
+    drag_icon_quad_vertex_count: u32,
     /// Reusable CPU staging for the per-frame UI geometry (gui quads + per-slot
     /// icon quads + digit overlay quads), cleared + refilled each frame.
     ui_build: UiBuild,
@@ -308,6 +310,8 @@ pub struct Renderer {
     ui_bg_vertex_count: u32,
     /// Vertex count of the digit-overlay quads uploaded this frame (after the bg).
     ui_overlay_vertex_count: u32,
+    /// Vertex count of the cursor-held count overlay uploaded after normal digits.
+    ui_drag_overlay_vertex_count: u32,
 }
 
 /// Begin one render pass with a single color attachment over `view` and an
@@ -724,13 +728,17 @@ async fn new_renderer_inner(
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),
         icon_quad_vertex_count: 0,
+        drag_icon_quad_vertex_count: 0,
         ui_build: UiBuild {
             verts: Vec::new(),
             icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
+            drag_icon_quads: Vec::new(),
+            drag_overlay_verts: Vec::new(),
         },
         ui_bg_vertex_count: 0,
         ui_overlay_vertex_count: 0,
+        ui_drag_overlay_vertex_count: 0,
         hand_vertex_count: 0,
     }
 }
@@ -913,15 +921,19 @@ impl Renderer {
     fn build_ui_frame(&mut self) {
         self.ui_bg_vertex_count = 0;
         self.ui_overlay_vertex_count = 0;
+        self.ui_drag_overlay_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
+        self.drag_icon_quad_vertex_count = 0;
 
         // Disjoint-field borrow: `build_ui` reads the snapshot and writes the
         // scratch `UiBuild`, both distinct from the GPU buffers used below.
         build_ui(&self.ui, &mut self.ui_build);
 
-        // gui-atlas quads: background first (offset 0), then digit overlay.
+        // gui-atlas quads: background first (offset 0), then normal digit overlay,
+        // then the cursor-held digit overlay (drawn after the cursor icon).
         let bg = &self.ui_build.verts;
         let overlay = &self.ui_build.overlay_verts;
+        let drag_overlay = &self.ui_build.drag_overlay_verts;
         let cap = super::pipeline::MAX_UI_VERTICES as usize;
         if !bg.is_empty() && bg.len() <= cap {
             self.queue
@@ -935,11 +947,19 @@ impl Renderer {
                 .write_buffer(&self.ui_vbuf, byte_off, bytemuck::cast_slice(overlay));
             self.ui_overlay_vertex_count = overlay.len() as u32;
         }
+        let used = self.ui_bg_vertex_count as usize + self.ui_overlay_vertex_count as usize;
+        if !drag_overlay.is_empty() && used + drag_overlay.len() <= cap {
+            let byte_off = (used * std::mem::size_of::<UiVertex>()) as u64;
+            self.queue
+                .write_buffer(&self.ui_vbuf, byte_off, bytemuck::cast_slice(drag_overlay));
+            self.ui_drag_overlay_vertex_count = drag_overlay.len() as u32;
+        }
 
         // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's
         // pre-baked icon-atlas cell and emit a textured quad (6 verts) — slot rect →
         // NDC, cell rect → uv, white tint (so the quad samples the atlas, not the solid
-        // sentinel). The whole batch is one draw in the UI pass.
+        // sentinel). Normal icons draw in the UI pass; cursor-held icons are appended
+        // to the same buffer but drawn later, after normal stack-count overlays.
         let screen = self.ui.screen;
         let mut verts = std::mem::take(&mut self.icon_quad_verts);
         verts.clear();
@@ -958,6 +978,23 @@ impl Renderer {
                     [1.0, 1.0, 1.0, 1.0],
                 );
             }
+            let normal_icon_vertex_count = verts.len() as u32;
+            for &(item, r) in &self.ui_build.drag_icon_quads {
+                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
+                super::ui::push_quad_uv(
+                    &mut verts,
+                    screen,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h,
+                    [u0, v0],
+                    [u1, v1],
+                    [1.0, 1.0, 1.0, 1.0],
+                );
+            }
+            self.icon_quad_vertex_count = normal_icon_vertex_count;
+            self.drag_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
         }
         if !verts.is_empty() {
             // Icon-quad geometry is bounded by the visible slots but GROW the buffer to
@@ -975,7 +1012,6 @@ impl Renderer {
             }
             self.queue
                 .write_buffer(&self.icon_quad_vbuf, 0, bytemuck::cast_slice(&verts));
-            self.icon_quad_vertex_count = verts.len() as u32;
         }
         self.icon_quad_verts = verts;
     }
@@ -1677,8 +1713,8 @@ impl Renderer {
         // UI PASS (§8 5b): hotbar / open inventory background + the per-slot item
         // icons, both via `ui_pipe`. Its OWN alpha blend, NO depth; it must not
         // inherit the crosshair invert blend (separate pass). The icons are now 2D
-        // quads sampling the pre-baked icon atlas (one bind, one draw) rather than
-        // live 3D geometry; the digit overlay follows in its own pass on top.
+        // quads sampling the pre-baked icon atlas rather than live 3D geometry; the
+        // normal digit overlay and final drag-cursor layer follow in their own pass.
         if self.ui_bg_vertex_count > 0 || self.icon_quad_vertex_count > 0 {
             let mut pass = color_depth_pass(
                 &mut enc,
@@ -1703,24 +1739,41 @@ impl Renderer {
                 pass.draw(0..self.icon_quad_vertex_count, 0..1);
             }
         }
-        // UI OVERLAY PASS: gui-atlas digit overlay (stack counts + drag-count), over the
-        // icons. Depthless, after the UI pass so digits read on top.
-        if self.ui_overlay_vertex_count > 0 {
+        // UI OVERLAY / DRAG PASS: normal stack counts first, then the cursor-held
+        // icon, then its stack count. That keeps the whole dragged stack front-most.
+        if self.ui_overlay_vertex_count > 0
+            || self.drag_icon_quad_vertex_count > 0
+            || self.ui_drag_overlay_vertex_count > 0
+        {
             let mut pass = color_depth_pass(
                 &mut enc,
                 &view,
                 &self.depth,
-                "ui overlay pass",
+                "ui overlay / drag pass",
                 wgpu::LoadOp::Load,
                 None,
             );
             pass.set_pipeline(&self.ui_pipe);
-            pass.set_bind_group(0, &self.ui_bind, &[]);
-            pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
-            pass.draw(
-                self.ui_bg_vertex_count..self.ui_bg_vertex_count + self.ui_overlay_vertex_count,
-                0..1,
-            );
+            if self.ui_overlay_vertex_count > 0 {
+                pass.set_bind_group(0, &self.ui_bind, &[]);
+                pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
+                pass.draw(
+                    self.ui_bg_vertex_count..self.ui_bg_vertex_count + self.ui_overlay_vertex_count,
+                    0..1,
+                );
+            }
+            if self.drag_icon_quad_vertex_count > 0 {
+                let start = self.icon_quad_vertex_count;
+                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
+                pass.draw(start..start + self.drag_icon_quad_vertex_count, 0..1);
+            }
+            if self.ui_drag_overlay_vertex_count > 0 {
+                let start = self.ui_bg_vertex_count + self.ui_overlay_vertex_count;
+                pass.set_bind_group(0, &self.ui_bind, &[]);
+                pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
+                pass.draw(start..start + self.ui_drag_overlay_vertex_count, 0..1);
+            }
         }
         self.queue.submit(std::iter::once(enc.finish()));
         self.last_stats = stats;

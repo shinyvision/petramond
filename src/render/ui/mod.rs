@@ -25,8 +25,11 @@
 //!   icon-atlas texture (`render::renderer::icon_atlas`); the renderer resolves
 //!   each entry to its cell and draws a single textured quad via `ui_pipe` with the
 //!   icon atlas — no per-frame 3D geometry. These paint over the gui background.
-//! - **overlay quads** ([`UiBuild::overlay_verts`]): the stack-count digits, drawn
-//!   last (over both the background and the icons) so they read on top.
+//! - **overlay quads** ([`UiBuild::overlay_verts`]): the normal stack-count digits,
+//!   drawn over the background and slot icons so they read on top.
+//! - **drag quads** ([`UiBuild::drag_icon_quads`] + [`UiBuild::drag_overlay_verts`]):
+//!   the cursor-held stack, drawn after the normal overlay so both its icon and count
+//!   are always front-most.
 
 mod chest;
 mod crafting;
@@ -108,14 +111,18 @@ pub struct UiBuild {
     /// gui-atlas quads (sprites + solid fills), in paint order — the background
     /// drawn under the icons.
     pub verts: Vec<UiVertex>,
-    /// One `(item, slot rect)` per filled slot this frame (and the drag-cursor
-    /// stack last). Each item's icon was baked once into the icon atlas at renderer
-    /// init; the renderer resolves each entry to its cell and emits a textured quad
-    /// (no per-frame 3D geometry), painted over the gui background under the digits.
+    /// One `(item, slot rect)` per filled slot this frame. Each item's icon was
+    /// baked once into the icon atlas at renderer init; the renderer resolves each
+    /// entry to its cell and emits a textured quad (no per-frame 3D geometry),
+    /// painted over the gui background under the digits.
     pub icon_quads: Vec<(ItemType, SlotRect)>,
-    /// gui-atlas quads drawn AFTER the icons (stack-count digits + drag count),
-    /// so digits read on top of the icons.
+    /// gui-atlas quads drawn AFTER the normal icons (stack-count digits), so digits
+    /// read on top of the icons.
     pub overlay_verts: Vec<UiVertex>,
+    /// Cursor-held item icon quads, drawn after normal stack-count overlays.
+    pub drag_icon_quads: Vec<(ItemType, SlotRect)>,
+    /// Cursor-held stack-count digits, drawn after the cursor-held icon.
+    pub drag_overlay_verts: Vec<UiVertex>,
 }
 
 /// Integer GUI scale chosen from the screen height (vanilla-style auto scale):
@@ -213,6 +220,8 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     build.verts.clear();
     build.overlay_verts.clear();
     build.icon_quads.clear();
+    build.drag_icon_quads.clear();
+    build.drag_overlay_verts.clear();
 
     let screen = ui.screen;
     if screen.0 == 0 || screen.1 == 0 {
@@ -274,7 +283,7 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         }
     }
 
-    // --- Drag cursor: the cursor-held stack icon, drawn last (on top). ---
+    // --- Drag cursor: kept in its own final layer so icon + count stay in front. ---
     if ui.open {
         if let Some((item, count)) = ui.cursor {
             if item != ItemType::Air && count > 0 {
@@ -287,9 +296,15 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
                     w: s,
                     h: s,
                 };
-                icon::push_slot_icon(build, screen, item, r);
+                build.drag_icon_quads.push((item, r));
                 if count > 1 {
-                    icon::push_count(&mut build.overlay_verts, screen, count as u32, r, scale);
+                    icon::push_count(
+                        &mut build.drag_overlay_verts,
+                        screen,
+                        count as u32,
+                        r,
+                        scale,
+                    );
                 }
             }
         }
@@ -334,6 +349,8 @@ mod tests {
             verts: Vec::new(),
             icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
+            drag_icon_quads: Vec::new(),
+            drag_overlay_verts: Vec::new(),
         }
     }
 
@@ -355,8 +372,10 @@ mod tests {
         build_ui(&s, &mut build);
         // Dim quad + panel sprite = at least 12 verts.
         assert!(build.verts.len() >= 12);
-        // Two slot items + the drag cursor stack = 3 recorded icon quads.
-        assert_eq!(build.icon_quads.len(), 3);
+        // Two slot items in the normal layer + the drag cursor in the front layer.
+        assert_eq!(build.icon_quads.len(), 2);
+        assert_eq!(build.drag_icon_quads.len(), 1);
+        assert!(!build.drag_overlay_verts.is_empty());
     }
 
     #[test]
@@ -380,6 +399,10 @@ mod tests {
             ..snap_open(false)
         };
         build_ui(&s, &mut build);
-        assert!(build.verts.is_empty() && build.icon_quads.is_empty());
+        assert!(
+            build.verts.is_empty()
+                && build.icon_quads.is_empty()
+                && build.drag_icon_quads.is_empty()
+        );
     }
 }

@@ -1,6 +1,6 @@
 use crate::registry::{self, RegistryKey, TableEntry};
 
-use super::definition::{BiomeDef, Color, HumidityBand};
+use super::definition::{BiomeDef, HumidityBand};
 use super::Biome;
 
 pub(super) const DEEP_OCEAN_MAX_Y: i32 = 46;
@@ -28,12 +28,6 @@ pub(super) const MESIC_HUMIDITY_MIN: f32 = 0.40;
 pub(super) const TAIGA_TEMP_MAX: f32 = 0.38;
 pub(super) const BIRCH_TEMP_MIN: f32 = 0.62;
 pub(super) const TEMPERATE_DRY_DEFAULT: Biome = Biome::Plains;
-
-/// Grass-block top tint shared by every forest biome (Forest, BirchForest, DarkForest),
-/// so the forests read as one family of grass underfoot. Only the GRASS is shared — each
-/// forest keeps its own `foliage_color` (birch's lighter leaves, the dark forest's deep
-/// canopy). Editing this moves all forests together.
-const FOREST_GRASS: Color = [0.22, 0.82, 0.12];
 
 pub(super) const HOT_LOWLAND_BANDS: &[HumidityBand] = &[
     HumidityBand {

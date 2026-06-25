@@ -634,6 +634,15 @@ impl Game {
         self.menu.close_chest();
     }
 
+    /// Close-time cleanup for a cursor-held GUI stack: merge it back into matching
+    /// inventory stacks, then empty slots, and queue only any leftover to drop into
+    /// the world on the next tick.
+    pub fn close_cursor_stack(&mut self) {
+        if let Some(stack) = self.player.inventory.stash_cursor_in_inventory() {
+            self.throw_item(stack);
+        }
+    }
+
     /// The view of the currently-open chest for the UI, or `None` if no chest screen
     /// is up or it has unloaded.
     pub fn open_chest_view(&self) -> Option<ChestView> {
@@ -2103,6 +2112,82 @@ mod tests {
         assert!(!game.cursor_has_stack(), "nothing held initially");
         game.player.inventory.click_slot(0); // pick up hotbar slot 0
         assert!(game.cursor_has_stack(), "holding a stack after pickup");
+    }
+
+    #[test]
+    fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
+        let mut game = game();
+        let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); crate::inventory::TOTAL_SLOTS];
+        slots[4] = None;
+        game.player.inventory =
+            Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+
+        game.close_cursor_stack();
+
+        assert!(game.player.inventory.cursor().is_none());
+        assert_eq!(
+            game.player.inventory.slot(4),
+            Some(&ItemStack::new(ItemType::Dirt, 12))
+        );
+        game.tick_drops();
+        assert!(
+            game.world.item_entities().is_empty(),
+            "stashed cursor stack should not drop"
+        );
+    }
+
+    #[test]
+    fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
+        let mut game = game();
+        let slots = [Some(ItemStack::new(ItemType::Stone, 64)); crate::inventory::TOTAL_SLOTS];
+        game.player.inventory =
+            Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+
+        game.close_cursor_stack();
+
+        assert!(game.player.inventory.cursor().is_none());
+        assert!(
+            game.world.item_entities().is_empty(),
+            "drop waits for the next tick"
+        );
+        game.tick_drops();
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack,
+            ItemStack::new(ItemType::Dirt, 12)
+        );
+    }
+
+    #[test]
+    fn closing_cursor_stack_fills_matching_partials_then_drops_leftover() {
+        let mut game = game();
+        let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); crate::inventory::TOTAL_SLOTS];
+        slots[2] = Some(ItemStack::new(ItemType::Dirt, 60));
+        slots[10] = Some(ItemStack::new(ItemType::Dirt, 63));
+        game.player.inventory =
+            Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+
+        game.close_cursor_stack();
+
+        assert!(game.player.inventory.cursor().is_none());
+        assert_eq!(
+            game.player.inventory.slot(2),
+            Some(&ItemStack::new(ItemType::Dirt, 64))
+        );
+        assert_eq!(
+            game.player.inventory.slot(10),
+            Some(&ItemStack::new(ItemType::Dirt, 64))
+        );
+        assert!(
+            game.world.item_entities().is_empty(),
+            "leftover drop waits for the next tick"
+        );
+        game.tick_drops();
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack,
+            ItemStack::new(ItemType::Dirt, 7)
+        );
     }
 
     #[test]

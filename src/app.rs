@@ -340,6 +340,9 @@ impl App {
     /// Close any open menu: return crafting-grid items to the inventory, drop back
     /// to gameplay, and re-grab the pointer.
     fn close_menu(&mut self) {
+        // Prioritize the stack the user is actively dragging: closing a GUI merges it
+        // back into inventory capacity, then queues only any leftover to drop.
+        self.game.close_cursor_stack();
         // All three are safe to call regardless of which menu was open: a furnace /
         // chest screen leaves the craft grid empty, and the inventory/table leaves no
         // open furnace or chest.
@@ -808,6 +811,27 @@ mod tests {
             .map(|s| s.count as u32)
             .sum();
         assert_eq!(logs, 2, "craft-grid logs came back to the inventory");
+    }
+
+    #[test]
+    fn closing_a_menu_stashes_the_cursor_stack() {
+        let mut app = app_with_grass();
+        app.handle_control(Control::ToggleInventory, true);
+        let screen = (1280u32, 720u32);
+        let (cx, cy) = cursor_over_slot(screen, 0);
+        app.set_cursor_position(cx, cy);
+        app.click_screen_for_test(screen, 0.0);
+        assert!(app.game.inventory().cursor().is_some());
+
+        assert!(app.handle_control(Control::CloseScreen, true));
+
+        assert!(app.game.inventory().cursor().is_none());
+        let grass: u32 = (0..crate::inventory::TOTAL_SLOTS)
+            .filter_map(|i| app.game.inventory().slot(i))
+            .filter(|s| s.item == ItemType::Grass)
+            .map(|s| s.count as u32)
+            .sum();
+        assert_eq!(grass, 64, "cursor stack was parked back in inventory");
     }
 
     #[test]

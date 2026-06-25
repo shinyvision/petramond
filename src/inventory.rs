@@ -271,6 +271,17 @@ impl Inventory {
         Some(ItemStack::new(item, 1))
     }
 
+    /// Move the cursor-held stack back into the inventory, clearing the cursor.
+    /// Matching partial stacks are topped up first, then empty slots are filled.
+    /// Returns only the leftover that could not fit, so the caller can drop it.
+    pub fn stash_cursor_in_inventory(&mut self) -> Option<ItemStack> {
+        let stack = self.cursor.take()?;
+        if stack.is_empty() {
+            return None;
+        }
+        self.add(stack)
+    }
+
     /// Left-click drag/drop interaction on slot `i` (whole-stack semantics):
     ///  - cursor empty, slot full  → pick the whole slot up into the cursor
     ///  - cursor full,  slot empty → drop the cursor stack into the slot
@@ -716,6 +727,70 @@ mod tests {
         inv.click_slot(5);
         assert!(inv.cursor().is_none());
         assert_eq!(inv.slot(5), Some(&item(ItemType::Stone, 10)));
+    }
+
+    #[test]
+    fn stash_cursor_merges_matching_stacks_before_empty_slots() {
+        let mut inv = Inventory::new();
+        for i in 0..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.slots[3] = Some(item(ItemType::Dirt, 60));
+        inv.slots[5] = None;
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+
+        assert_eq!(inv.stash_cursor_in_inventory(), None);
+        assert!(inv.cursor().is_none());
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 64)));
+        assert!(inv.slot(5).is_none(), "matching partial stack filled first");
+    }
+
+    #[test]
+    fn stash_cursor_uses_empty_slot_after_matching_partials() {
+        let mut inv = Inventory::new();
+        for i in 0..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.slots[3] = Some(item(ItemType::Dirt, 60));
+        inv.slots[5] = None;
+        inv.cursor = Some(item(ItemType::Dirt, 8));
+
+        assert_eq!(inv.stash_cursor_in_inventory(), None);
+        assert!(inv.cursor().is_none());
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 64)));
+        assert_eq!(inv.slot(5), Some(&item(ItemType::Dirt, 4)));
+    }
+
+    #[test]
+    fn stash_cursor_returns_only_unabsorbed_leftover() {
+        let mut inv = Inventory::new();
+        for i in 0..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.slots[3] = Some(item(ItemType::Dirt, 60));
+        inv.cursor = Some(item(ItemType::Dirt, 10));
+
+        assert_eq!(
+            inv.stash_cursor_in_inventory(),
+            Some(item(ItemType::Dirt, 6))
+        );
+        assert!(inv.cursor().is_none());
+        assert_eq!(inv.slot(3), Some(&item(ItemType::Dirt, 64)));
+    }
+
+    #[test]
+    fn stash_cursor_returns_stack_when_no_free_slot() {
+        let mut inv = Inventory::new();
+        for i in 0..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.cursor = Some(item(ItemType::Dirt, 4));
+
+        assert_eq!(
+            inv.stash_cursor_in_inventory(),
+            Some(item(ItemType::Dirt, 4))
+        );
+        assert!(inv.cursor().is_none());
     }
 
     #[test]
