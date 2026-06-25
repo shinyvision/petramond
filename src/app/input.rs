@@ -11,8 +11,6 @@ pub enum ControlEvent {
     /// the whole stack is decided by the App from the physical Ctrl modifier, not
     /// here — keeping the drop key independent of the sprint binding.
     DropItem,
-    /// Debug: give one Furniture Workbench (edge-triggered, one per press).
-    DebugGiveWorkbench,
 }
 
 #[derive(Default)]
@@ -28,7 +26,6 @@ pub struct InputController {
     toggle_mode_chord: bool,
     inventory_toggle_held: bool,
     drop_item_held: bool,
-    debug_give_held: bool,
 }
 
 impl InputController {
@@ -79,12 +76,6 @@ impl InputController {
                 let edge = down && !self.drop_item_held;
                 self.drop_item_held = down;
                 edge.then_some(ControlEvent::DropItem)
-            }
-            Control::DebugGiveWorkbench => {
-                // Edge-triggered: one workbench per press (no auto-repeat while held).
-                let edge = down && !self.debug_give_held;
-                self.debug_give_held = down;
-                edge.then_some(ControlEvent::DebugGiveWorkbench)
             }
         };
 

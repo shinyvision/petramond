@@ -11,6 +11,7 @@
 
     { "type": "shaped", "pattern": ["#", "#"], "key": { "#": "#planks" }, "result": "stick", "count": 4 },
     { "type": "shaped", "pattern": ["##", "##"], "key": { "#": "#planks" }, "result": "crafting_table", "count": 1 },
+    { "type": "shaped", "pattern": [" T ", "LLL"], "key": { "T": "crafting_table", "L": "#logs" }, "result": "furniture_workbench", "count": 1 },
 
     { "type": "shaped", "pattern": ["PPP", " S ", " S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_pickaxe", "count": 1 },
     { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 },
@@ -39,6 +40,7 @@
 
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
-    { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" }
+    { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" },
+    { "type": "smelting", "ingredient": "cobblestone", "result": "stone" }
   ]
 }

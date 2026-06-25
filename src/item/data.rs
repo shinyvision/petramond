@@ -206,7 +206,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Oak Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::OakLeaves,
@@ -222,7 +222,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Spruce Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::BirchLog,
@@ -230,7 +230,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Birch Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::JungleLog,
@@ -238,7 +238,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Jungle Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::AcaciaLog,
@@ -246,7 +246,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Acacia Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::DarkOakLog,
@@ -254,7 +254,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Dark Oak Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::CherryLog,
@@ -262,7 +262,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Cherry Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::MangroveLog,
@@ -270,7 +270,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Mangrove Log",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Logs],
     },
     ItemDef {
         item: ItemType::SpruceLeaves,
@@ -726,7 +726,7 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Cobblestone",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
-        tags: &[],
+        tags: &[ItemTag::Smeltable],
     },
     ItemDef {
         item: ItemType::OakPlanks,

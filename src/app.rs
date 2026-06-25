@@ -121,17 +121,6 @@ impl App {
                 }
                 true
             }
-            ControlEvent::DebugGiveWorkbench => {
-                // Debug: drop a Furniture Workbench into the inventory to test the
-                // bbmodel-block path without a recipe.
-                if self.screen.gameplay_enabled() {
-                    self.game.add_to_inventory(crate::item::ItemStack::new(
-                        crate::item::ItemType::FurnitureWorkbench,
-                        1,
-                    ));
-                }
-                true
-            }
         }
     }
 

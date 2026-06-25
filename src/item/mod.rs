@@ -189,6 +189,8 @@ impl DropSpec {
 pub enum ItemTag {
     /// Any wood-type planks (mirrors Minecraft's `#planks`).
     Planks,
+    /// Any wood-type log (mirrors Minecraft's `#logs`).
+    Logs,
     /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
     Fuel,
     /// Anything a furnace can smelt — shift-clicked into the input slot.
@@ -201,6 +203,7 @@ impl ItemTag {
     pub fn from_key(key: &str) -> Option<ItemTag> {
         match key {
             "planks" => Some(ItemTag::Planks),
+            "logs" => Some(ItemTag::Logs),
             "fuel" => Some(ItemTag::Fuel),
             "smeltable" => Some(ItemTag::Smeltable),
             _ => None,
@@ -910,7 +913,7 @@ mod tests {
 
     #[test]
     fn item_tags_are_item_data() {
-        use ItemTag::Planks;
+        use ItemTag::{Logs, Planks};
         for p in [
             ItemType::OakPlanks,
             ItemType::SprucePlanks,
@@ -918,11 +921,26 @@ mod tests {
         ] {
             assert!(p.has_tag(Planks), "{p:?}");
         }
-        // Logs and sticks are not planks.
+        for log in [
+            ItemType::OakLog,
+            ItemType::SpruceLog,
+            ItemType::BirchLog,
+            ItemType::JungleLog,
+            ItemType::AcaciaLog,
+            ItemType::DarkOakLog,
+            ItemType::CherryLog,
+            ItemType::MangroveLog,
+        ] {
+            assert!(log.has_tag(Logs), "{log:?}");
+            assert!(!log.has_tag(Planks), "{log:?}");
+        }
+        // Sticks are neither logs nor planks.
         assert!(!ItemType::OakLog.has_tag(Planks));
+        assert!(!ItemType::Stick.has_tag(Logs));
         assert!(!ItemType::Stick.has_tag(Planks));
         // Tag names resolve from the recipe key.
         assert_eq!(ItemTag::from_key("planks"), Some(Planks));
+        assert_eq!(ItemTag::from_key("logs"), Some(Logs));
         assert_eq!(ItemTag::from_key("bogus"), None);
 
         // Furnace routing tags: coal is fuel; raw ores are smeltable; the products
@@ -931,6 +949,7 @@ mod tests {
         assert!(!ItemType::Coal.has_tag(ItemTag::Smeltable));
         assert!(ItemType::RawIron.has_tag(ItemTag::Smeltable));
         assert!(ItemType::RawCopper.has_tag(ItemTag::Smeltable));
+        assert!(ItemType::Cobblestone.has_tag(ItemTag::Smeltable));
         assert!(!ItemType::RawIron.has_tag(ItemTag::Fuel));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::Smeltable));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::Fuel));
