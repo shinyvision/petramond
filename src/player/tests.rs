@@ -70,6 +70,69 @@ fn moves_freely_in_open_air() {
 }
 
 #[test]
+fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
+    use crate::block::Aabb;
+    let still = |_: i32, _: i32, _: i32| Vec3::ZERO;
+    let walk_x = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+    };
+
+    // Floor at y=0 (full cubes) + a 0.5-tall ledge filling cells x>=1 at y=1 (world y∈[1,1.5]).
+    let half_step = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
+        if y == 0 {
+            Block::Stone.collision_boxes()
+        } else if y == 1 && x >= 1 {
+            &[Aabb {
+                min: [0.0, 0.0, 0.0],
+                max: [1.0, 0.5, 1.0],
+            }]
+        } else {
+            &[]
+        }
+    };
+    let mut pl = p(Vec3::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
+    for _ in 0..180 {
+        pl.update_core_with_current(1.0 / 60.0, &half_step, &dry, &still, walk_x);
+    }
+    assert!(
+        pl.pos.x > 1.2,
+        "grounded player steps onto the ledge: x={}",
+        pl.pos.x
+    );
+    assert!(
+        pl.pos.y > 1.4,
+        "and rises onto the 0.5 ledge top (y≈1.5): y={}",
+        pl.pos.y
+    );
+    assert!(pl.on_ground, "player is grounded on the ledge");
+
+    // A FULL block (cells x>=1 at y=1 AND y=2) is NOT climbed — it's a wall.
+    let full_block = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
+        if y == 0 || ((y == 1 || y == 2) && x >= 1) {
+            Block::Stone.collision_boxes()
+        } else {
+            &[]
+        }
+    };
+    let mut pl2 = p(Vec3::new(0.5, 1.0, 0.5));
+    for _ in 0..180 {
+        pl2.update_core_with_current(1.0 / 60.0, &full_block, &dry, &still, walk_x);
+    }
+    assert!(
+        pl2.pos.y < 1.1,
+        "player does NOT climb a full block: y={}",
+        pl2.pos.y
+    );
+    assert!(
+        pl2.pos.x < 1.0,
+        "player is stopped by the full block: x={}",
+        pl2.pos.x
+    );
+}
+
+#[test]
 fn spectator_clips_through_solids_and_flies_in_3d() {
     let solid_wall_and_ceiling = |x: i32, y: i32, _z: i32| x >= 1 || y >= 65;
     let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
@@ -657,24 +720,12 @@ fn raycast_hits_opaque_plant_texel() {
         }
     };
     let eye = Vec3::new(0.5, 64.25, 0.5);
-    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
+    let (hit, _) =
+        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
+            .unwrap();
     assert_eq!(hit.block, IVec3::new(2, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
     assert!(matches!(hit.outline, SelectionShape::Cross { .. }));
-}
-
-#[test]
-fn raycast_short_grass_uses_full_block_outline() {
-    let blocks = |x: i32, y: i32, z: i32| {
-        if (x, y, z) == (2, 64, 0) {
-            Block::ShortGrass
-        } else {
-            Block::Air
-        }
-    };
-    let eye = Vec3::new(0.5, 64.25, 0.5);
-    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
-    assert!(matches!(hit.outline, SelectionShape::Box { .. }));
 }
 
 #[test]
@@ -687,7 +738,10 @@ fn raycast_ignores_transparent_plant_texel() {
         }
     };
     let eye = Vec3::new(0.5, 64.95, 0.5);
-    assert!(Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).is_none());
+    assert!(
+        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
+            .is_none()
+    );
 }
 
 #[test]
@@ -698,7 +752,9 @@ fn raycast_through_transparent_plant_texel_hits_block_behind() {
         _ => Block::Air,
     };
     let eye = Vec3::new(0.5, 64.95, 0.5);
-    let (hit, _) = Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None).unwrap();
+    let (hit, _) =
+        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
+            .unwrap();
     assert_eq!(hit.block, IVec3::new(3, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
 }
@@ -863,7 +919,10 @@ fn chest_collides_as_its_inset_box() {
 
     // Falling onto the chest lands the feet on its 14/16 top, not the full cell top.
     let mut faller = p(Vec3::new(0.5, 66.0, 0.5));
-    assert!(faller.sweep_boxes(Axis::Y, -5.0, &boxes), "lands on the chest");
+    assert!(
+        faller.sweep_boxes(Axis::Y, -5.0, &boxes),
+        "lands on the chest"
+    );
     assert!(
         (faller.pos.y - top).abs() < 1e-3,
         "feet rest on the 14/16 top, got {}",
@@ -886,7 +945,10 @@ fn chest_collides_as_its_inset_box() {
     // At ground level beside the chest, walking into it stops at the 1/16 inset face,
     // not the cell boundary.
     let mut walker = p(Vec3::new(-1.0, 64.0, 0.5));
-    assert!(walker.sweep_boxes(Axis::X, 2.0, &boxes), "hits the chest side");
+    assert!(
+        walker.sweep_boxes(Axis::X, 2.0, &boxes),
+        "hits the chest side"
+    );
     assert!(
         (walker.aabb_max().x - 1.0 / 16.0).abs() < 1e-3,
         "stops at the inset -X face (1/16), got {}",

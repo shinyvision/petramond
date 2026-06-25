@@ -126,7 +126,13 @@ pub(super) fn build(ui: &UiSnapshot, build: &mut UiBuild, screen: (u32, u32), sc
         let r = furnace_slot_rect(slot, screen, scale);
         icon::push_slot_icon(build, screen, stack.item, r);
         if stack.count > 1 {
-            icon::push_count(&mut build.overlay_verts, screen, stack.count as u32, r, scale);
+            icon::push_count(
+                &mut build.overlay_verts,
+                screen,
+                stack.count as u32,
+                r,
+                scale,
+            );
         }
     }
     // Lit gauges paint over the panel's empty arrow/flame outlines.
@@ -150,7 +156,11 @@ mod tests {
             assert_eq!(furnace_slot_at_cursor(screen, c), Some(slot));
             // Furnace slots sit inside the panel and are not inventory slots.
             assert!(cursor_in_panel(screen, c), "{slot:?} inside panel");
-            assert_eq!(slot_at_cursor(screen, true, c), None, "{slot:?} not an inv slot");
+            assert_eq!(
+                slot_at_cursor(screen, true, c),
+                None,
+                "{slot:?} not an inv slot"
+            );
         }
         // The three slots are distinct positions.
         let centre = |s| {
@@ -176,9 +186,9 @@ mod tests {
             burn01: 0.5,
         });
         super::super::build_ui(&s, &mut build);
-        // 2 hotbar items (snap_open) + 3 furnace slots = 5 icons; the craft cell is
-        // NOT drawn (the furnace panel replaces the grid).
-        assert_eq!(build.icons.len(), 5);
+        // 2 hotbar items (snap_open) + 3 furnace slots = 5 icon quads; the craft cell
+        // is NOT drawn (the furnace panel replaces the grid).
+        assert_eq!(build.icon_quads.len(), 5);
         // The lit arrow + flame add gui quads over the panel background.
         assert!(build.verts.len() > 12, "panel + gauges drawn");
     }

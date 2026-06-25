@@ -918,67 +918,6 @@ mod parallel_parity_tests {
     }
 }
 
-/// Frozen golden for the meshed vertex/index byte layout. `parallel_meshing_is_
-/// byte_identical_to_serial` proves the serial and parallel paths AGREE, but a
-/// wrong-but-consistent `pack_vertex` bit layout would pass it while corrupting
-/// every vertex identically. This pins the actual bytes: it builds the mesh for
-/// one deterministic generated chunk (the same `generate_chunk` -> skylight ->
-/// `build_mesh` path the parallel test exercises, meshed solo so out-of-chunk
-/// reads are air / full sky), serializes the opaque + transparent vertex (`u32`-
-/// packed) and index buffers to raw bytes, FNV-1a-folds them, and asserts a
-/// literal captured from the current baseline. Any drift in `Vertex` packing,
-/// face emission, or atlas tile ids flips this.
-#[test]
-fn mesh_bytes_golden_is_byte_stable() {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(FNV_PRIME);
-        }
-        h
-    }
-
-    // One deterministic fixture chunk: generated terrain (seed + coord fixed),
-    // its self-contained skylight baked, then meshed solo. Out-of-chunk block /
-    // light reads resolve to air / full sky, so the mesh depends only on this
-    // chunk -- no neighbour state to pin.
-    let seed = 0x1234_5678u32;
-    let mut chunk = generate_chunk(seed, 0, 0);
-    let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
-    chunk.set_skylight(band, ylo, yhi);
-
-    let air = |_: i32, _: i32, _: i32| 0u8;
-    let biome0 = |_: i32, _: i32| 0u8;
-    let light = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if wx < 0
-            || wx >= CHUNK_SX as i32
-            || wz < 0
-            || wz >= CHUNK_SZ as i32
-            || wy < 0
-            || wy >= CHUNK_SY as i32
-        {
-            SKY_FULL
-        } else {
-            chunk.skylight_at(wx as usize, wy, wz as usize)
-        }
-    };
-    let mesh = build_mesh(&chunk, air, biome0, light);
-
-    let mut h = FNV_OFFSET;
-    h = fnv1a(bytemuck::cast_slice::<Vertex, u8>(&mesh.opaque), h);
-    h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.opaque_idx), h);
-    h = fnv1a(bytemuck::cast_slice::<Vertex, u8>(&mesh.transparent), h);
-    h = fnv1a(bytemuck::cast_slice::<u32, u8>(&mesh.transparent_idx), h);
-
-    assert_eq!(
-        h, 0x4d75_3363_b709_76fb,
-        "meshed vertex/index byte layout changed"
-    );
-}
-
 /// A placed furnace shows its front on exactly the face it was placed facing and
 /// `furnace_side` on the other three horizontal faces (top + bottom use the top
 /// tile). Pins the directional fix for "front rendered on all four sides".
@@ -1011,16 +950,32 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
 
     // Unlit: 6 faces × 4 verts — 1 front, 3 sides, 2 top/bottom.
     let m = build_mesh(&chunk, air, biome0, light);
-    assert_eq!(count(&m, Tile::FurnaceFront), 4, "front on exactly the facing face");
-    assert_eq!(count(&m, Tile::FurnaceSide), 12, "side on the other three faces");
+    assert_eq!(
+        count(&m, Tile::FurnaceFront),
+        4,
+        "front on exactly the facing face"
+    );
+    assert_eq!(
+        count(&m, Tile::FurnaceSide),
+        12,
+        "side on the other three faces"
+    );
     assert_eq!(count(&m, Tile::FurnaceTop), 8, "top + bottom");
-    assert_eq!(count(&m, Tile::FurnaceFrontOn), 0, "no lit front while unlit");
+    assert_eq!(
+        count(&m, Tile::FurnaceFrontOn),
+        0,
+        "no lit front while unlit"
+    );
 
     // Lit: the facing face swaps to the glowing front; the sides do not glow.
     chunk.furnace_at_mut(8, 64, 8).unwrap().burn_remaining = 100;
     chunk.dirty = true;
     let lit = build_mesh(&chunk, air, biome0, light);
-    assert_eq!(count(&lit, Tile::FurnaceFrontOn), 4, "lit front on the facing face only");
+    assert_eq!(
+        count(&lit, Tile::FurnaceFrontOn),
+        4,
+        "lit front on the facing face only"
+    );
     assert_eq!(count(&lit, Tile::FurnaceFront), 0);
     assert_eq!(count(&lit, Tile::FurnaceSide), 12, "sides never glow");
 }

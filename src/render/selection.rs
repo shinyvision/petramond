@@ -68,7 +68,11 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
     // pole on every face after the tilt (same purpose as box `INFLATE`).
     const INFLATE: f32 = 0.003;
     let lo = [-POLE_HALF - INFLATE, -INFLATE, -POLE_HALF - INFLATE];
-    let hi = [POLE_HALF + INFLATE, POLE_HEIGHT + INFLATE, POLE_HALF + INFLATE];
+    let hi = [
+        POLE_HALF + INFLATE,
+        POLE_HEIGHT + INFLATE,
+        POLE_HALF + INFLATE,
+    ];
     let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
     // World-space corner for (x_hi?, y_hi?, z_hi?), transformed then cell-offset.
     let c = |xh: bool, yh: bool, zh: bool| {

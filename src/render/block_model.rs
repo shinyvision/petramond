@@ -408,7 +408,11 @@ mod tests {
         let faces = block_icon_faces(Block::Furnace);
         assert_eq!(faces[2], Tile::FurnaceTop, "PosY top");
         assert_eq!(faces[3], Tile::FurnaceTop, "NegY bottom");
-        assert_eq!(faces[4], Tile::FurnaceFront, "front on PosZ (visible in the icon)");
+        assert_eq!(
+            faces[4],
+            Tile::FurnaceFront,
+            "front on PosZ (visible in the icon)"
+        );
         for i in [0usize, 1, 5] {
             assert_eq!(faces[i], Tile::FurnaceSide, "face {i} is a plain side");
         }

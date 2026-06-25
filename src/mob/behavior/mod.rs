@@ -32,7 +32,12 @@ pub fn owl_brain(def: &'static MobDef) -> Brain {
     Brain::new()
         .with(
             PRIORITY_WANDER,
-            WanderAi::new(OWL_WANDER_CHANCE, OWL_WANDER_RADIUS, &def.habitat, def.avoid_water),
+            WanderAi::new(
+                OWL_WANDER_CHANCE,
+                OWL_WANDER_RADIUS,
+                &def.habitat,
+                def.avoid_water,
+            ),
         )
         .with(PRIORITY_EXPRESSION, HeadLookAi::new())
         .with(PRIORITY_EXPRESSION, IdleAnimAi::new())

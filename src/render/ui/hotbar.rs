@@ -51,7 +51,12 @@ pub(super) fn hotbar_slot_rect(i: usize, screen: (u32, u32), scale: f32) -> Opti
 /// Draw the closed HUD background: the centred hotbar strip plus the selection
 /// highlight over the active slot. Called by [`super::build_ui`] when the inventory
 /// is closed, before the per-slot icons.
-pub(super) fn build_background(ui: &UiSnapshot, build: &mut UiBuild, screen: (u32, u32), scale: f32) {
+pub(super) fn build_background(
+    ui: &UiSnapshot,
+    build: &mut UiBuild,
+    screen: (u32, u32),
+    scale: f32,
+) {
     // The hotbar strip, centred at the bottom.
     let (ox, oy) = hotbar_origin(screen, scale);
     let (sw, sh) = GuiSprite::Hotbar.size_px();
@@ -107,10 +112,11 @@ pub fn hotbar_top_ndc(screen: (u32, u32)) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::gui_scale;
     use super::super::inventory::slot_rect;
     use super::super::tests::{empty_build, snap_open};
-    use super::super::gui_scale;
     use super::*;
+    use crate::item::ItemType;
     use crate::inventory::TOTAL_SLOTS;
 
     #[test]
@@ -160,26 +166,16 @@ mod tests {
         super::super::build_ui(&snap_open(false), &mut build);
         // Hotbar sprite + selection = at least 2 quads (12 verts).
         assert!(build.verts.len() >= 12);
-        // Two items -> two icons (a cube + a sprite billboard).
-        assert_eq!(build.icons.len(), 2);
-        // Icon geometry lives in the shared reused buffers, ranges cover it.
-        let cube = &build.icons[0];
-        let sprite = &build.icons[1];
-        assert_eq!(cube.vert_count, 24, "block-cube icon = 24 verts");
-        assert_eq!(cube.index_count, 36);
-        assert_eq!(sprite.vert_count, 8, "sprite icon = double-sided billboard");
-        assert_eq!(sprite.index_count, 12);
-        // The ranges tile the shared buffers without overlap (cube then sprite).
-        assert_eq!(cube.vert_start, 0);
-        assert_eq!(sprite.vert_start, cube.vert_count);
-        assert_eq!(
-            build.icon_verts.len() as u32,
-            cube.vert_count + sprite.vert_count
-        );
-        assert_eq!(
-            build.icon_indices.len() as u32,
-            cube.index_count + sprite.index_count
-        );
+        // Two filled hotbar slots -> two recorded icon quads, each carrying its
+        // item + the slot rect the renderer maps to that item's atlas cell.
+        assert_eq!(build.icon_quads.len(), 2);
+        let (cube_item, cube_rect) = build.icon_quads[0];
+        let (sprite_item, _) = build.icon_quads[1];
+        assert_eq!(cube_item, ItemType::Stone, "slot 0 = the cube item");
+        assert_eq!(sprite_item, ItemType::Poppy, "slot 7 = the sprite item");
+        // The recorded rect matches the slot's own layout rect.
+        let scale = gui_scale((1280, 720));
+        assert_eq!(cube_rect, slot_rect(0, (1280, 720), false, scale).unwrap());
         // Stone stack of 64 (>1) emits digit quads in the overlay.
         assert!(!build.overlay_verts.is_empty());
     }

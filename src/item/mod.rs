@@ -149,6 +149,10 @@ pub enum ItemType {
     StoneShovel,
     IronShovel,
     DiamondShovel,
+    // --- bbmodel block update: the FurnitureWorkbench block-item. Appended at the END
+    // (id NOT equal to `Block::FurnitureWorkbench`'s id) and mapped explicitly in
+    // `from_block` / `as_block`, like the furnace/chest/torch block-items. ---
+    FurnitureWorkbench,
 }
 
 /// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
@@ -296,6 +300,9 @@ pub enum ItemRenderKind {
     /// A flat sprite (cross-plant blocks like flowers/grass, and future tools):
     /// render the tile flat in slots, held as a flat billboard item.
     Sprite(Tile),
+    /// A data-driven bbmodel block: render its actual baked model (cubes + the model
+    /// atlas) in slots / in-hand / dropped, not a stand-in cube. See `crate::block_model`.
+    Model(crate::block_model::BlockModelKind),
 }
 
 /// First-person hold orientation for a [`Sprite`](ItemRenderKind::Sprite) item:
@@ -355,6 +362,7 @@ impl ItemType {
             Block::Furnace => ItemType::Furnace,
             Block::Chest => ItemType::Chest,
             Block::Torch => ItemType::Torch,
+            Block::FurnitureWorkbench => ItemType::FurnitureWorkbench,
             _ => Self::from_id(b.id()),
         }
     }
@@ -369,9 +377,8 @@ impl ItemType {
             ItemType::Furnace => Some(Block::Furnace),
             ItemType::Chest => Some(Block::Chest),
             ItemType::Torch => Some(Block::Torch),
-            _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => {
-                Some(Block::from_id(self.id()))
-            }
+            ItemType::FurnitureWorkbench => Some(Block::FurnitureWorkbench),
+            _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }
     }
@@ -476,6 +483,8 @@ impl ItemType {
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
                 // the cropped per-face tiles the in-world pole uses.
                 RenderShape::Torch => ItemRenderKind::Sprite(Tile::Torch),
+                // A bbmodel block renders its actual baked model everywhere it's shown.
+                RenderShape::Model(kind) => ItemRenderKind::Model(kind),
             },
             None => ItemRenderKind::Sprite(self.item_sprite()),
         }
@@ -583,14 +592,25 @@ mod tests {
         // a non-weapon item both punch for exactly 1, and every item's range is a valid,
         // positive `lo <= hi`.
         assert_eq!(attack_damage(None), (1.0, 1.0), "fist is a deterministic 1");
-        assert_eq!(attack_damage(Some(ItemType::Dirt)), (1.0, 1.0), "a non-weapon punches like a fist");
+        assert_eq!(
+            attack_damage(Some(ItemType::Dirt)),
+            (1.0, 1.0),
+            "a non-weapon punches like a fist"
+        );
         for &it in ItemType::ALL {
             let (lo, hi) = attack_damage(Some(it));
             assert!(lo > 0.0 && lo <= hi, "{it:?}: invalid range {lo}..{hi}");
         }
         // Every diamond tool one-shots a 4-health mob (its minimum damage alone is lethal).
-        for it in [ItemType::DiamondPickaxe, ItemType::DiamondAxe, ItemType::DiamondShovel] {
-            assert!(attack_damage(Some(it)).0 >= 4.0, "a diamond tool one-shots: {it:?}");
+        for it in [
+            ItemType::DiamondPickaxe,
+            ItemType::DiamondAxe,
+            ItemType::DiamondShovel,
+        ] {
+            assert!(
+                attack_damage(Some(it)).0 >= 4.0,
+                "a diamond tool one-shots: {it:?}"
+            );
         }
     }
 
@@ -704,6 +724,7 @@ mod tests {
             ItemType::StoneShovel,
             ItemType::IronShovel,
             ItemType::DiamondShovel,
+            ItemType::FurnitureWorkbench,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -780,16 +801,70 @@ mod tests {
         // Tools carry a kind + tier (gating mining); non-tools carry none. The
         // three families share the 1..=4 tier ladder (wooden, stone, iron, diamond).
         use ToolKind::{Axe, Pickaxe, Shovel};
-        assert_eq!(ItemType::WoodenPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 1 }));
-        assert_eq!(ItemType::StonePickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 2 }));
-        assert_eq!(ItemType::IronPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 3 }));
-        assert_eq!(ItemType::DiamondPickaxe.tool(), Some(Tool { kind: Pickaxe, tier: 4 }));
-        assert_eq!(ItemType::WoodenAxe.tool(), Some(Tool { kind: Axe, tier: 1 }));
-        assert_eq!(ItemType::DiamondAxe.tool(), Some(Tool { kind: Axe, tier: 4 }));
-        assert_eq!(ItemType::WoodenShovel.tool(), Some(Tool { kind: Shovel, tier: 1 }));
-        assert_eq!(ItemType::StoneShovel.tool(), Some(Tool { kind: Shovel, tier: 2 }));
-        assert_eq!(ItemType::IronShovel.tool(), Some(Tool { kind: Shovel, tier: 3 }));
-        assert_eq!(ItemType::DiamondShovel.tool(), Some(Tool { kind: Shovel, tier: 4 }));
+        assert_eq!(
+            ItemType::WoodenPickaxe.tool(),
+            Some(Tool {
+                kind: Pickaxe,
+                tier: 1
+            })
+        );
+        assert_eq!(
+            ItemType::StonePickaxe.tool(),
+            Some(Tool {
+                kind: Pickaxe,
+                tier: 2
+            })
+        );
+        assert_eq!(
+            ItemType::IronPickaxe.tool(),
+            Some(Tool {
+                kind: Pickaxe,
+                tier: 3
+            })
+        );
+        assert_eq!(
+            ItemType::DiamondPickaxe.tool(),
+            Some(Tool {
+                kind: Pickaxe,
+                tier: 4
+            })
+        );
+        assert_eq!(
+            ItemType::WoodenAxe.tool(),
+            Some(Tool { kind: Axe, tier: 1 })
+        );
+        assert_eq!(
+            ItemType::DiamondAxe.tool(),
+            Some(Tool { kind: Axe, tier: 4 })
+        );
+        assert_eq!(
+            ItemType::WoodenShovel.tool(),
+            Some(Tool {
+                kind: Shovel,
+                tier: 1
+            })
+        );
+        assert_eq!(
+            ItemType::StoneShovel.tool(),
+            Some(Tool {
+                kind: Shovel,
+                tier: 2
+            })
+        );
+        assert_eq!(
+            ItemType::IronShovel.tool(),
+            Some(Tool {
+                kind: Shovel,
+                tier: 3
+            })
+        );
+        assert_eq!(
+            ItemType::DiamondShovel.tool(),
+            Some(Tool {
+                kind: Shovel,
+                tier: 4
+            })
+        );
         assert_eq!(ItemType::Stick.tool(), None);
         assert_eq!(ItemType::Cobblestone.tool(), None);
     }
@@ -888,6 +963,9 @@ mod tests {
                         ItemRenderKind::Sprite(Tile::Torch),
                         "{block:?}"
                     );
+                }
+                RenderShape::Model(kind) => {
+                    assert_eq!(item.render_kind(), ItemRenderKind::Model(kind), "{block:?}");
                 }
             }
         }

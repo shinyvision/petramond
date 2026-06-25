@@ -12,6 +12,7 @@
 use crate::atlas::{self, Tile};
 use crate::biome::Biome;
 use crate::block::Block;
+use crate::block_model::{self, BlockModelKind};
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
@@ -75,11 +76,20 @@ pub struct Particle {
     /// re-sampled each tick; the render warms the fleck's tint by this so flecks near
     /// a torch/furnace glow warm.
     pub warm: u8,
-    /// Block face tile this fleck is cut from.
+    /// Block face tile this fleck is cut from (BLOCK-atlas flecks). Ignored when
+    /// [`model`](Self::model) is set — a bbmodel block has no block-atlas tile, so its
+    /// flecks sample the model atlas instead.
     pub tile: Tile,
-    /// Sub-tile patch origin in `[0, 1]` tile fractions (bottom-left).
+    /// `Some(kind)` for a bbmodel block's fleck: it samples the MODEL atlas (the block's
+    /// own texture) rather than `tile` in the block atlas, so a broken workbench throws
+    /// workbench flecks, not the crafting-table placeholder. `None` = an ordinary
+    /// block-atlas fleck. For a model fleck `uv_min`/`uv_size` are ABSOLUTE model-atlas
+    /// coords (resolved at spawn via [`block_model::particle_patch`]).
+    pub model: Option<BlockModelKind>,
+    /// Sub-tile patch origin in `[0, 1]` tile fractions (bottom-left) for a block fleck;
+    /// the absolute model-atlas min for a model fleck.
     pub uv_min: [f32; 2],
-    /// Sub-tile patch edge length in tile fractions.
+    /// Sub-tile patch edge length in tile fractions (block) / model-atlas units (model).
     pub uv_size: f32,
     /// RGB tint multiplied into the fleck's atlas colour (foliage-green for a
     /// fleck cut from a grass/leaf tile, white otherwise). Classified per-fleck
@@ -98,6 +108,12 @@ impl Particle {
     /// patch into the tile's rect from [`atlas::tile_uv`].
     #[inline]
     pub fn atlas_uv(&self) -> ([f32; 2], f32) {
+        // A model fleck already carries absolute model-atlas coords (the render side
+        // binds the model atlas for these); a block fleck maps its sub-patch into the
+        // block atlas tile rect.
+        if self.model.is_some() {
+            return (self.uv_min, self.uv_size);
+        }
         let [u0, v0, u1, v1] = atlas::tile_uv(self.tile);
         let tw = u1 - u0;
         let th = v1 - v0;
@@ -178,9 +194,10 @@ impl ParticleSystem {
     /// block-ground stop, age, then cull dead. Culling uses swap-remove so the
     /// live slice stays packed at the front.
     pub fn tick(&mut self, dt: f32, world: &World) {
-        self.tick_with(dt, &|p| {
-            Block::from_id(world.chunk_block(p.x, p.y, p.z)).blocks_movement()
-        });
+        // Model-aware: a fleck settles on a bbmodel block's actual leg/top and drifts
+        // through the empty space around it — the same `collision_boxes_at` shape source the
+        // player/mob/item bodies collide against (here the point case, `World::point_blocked`).
+        self.tick_with(dt, &|p| world.point_blocked(p));
         // Re-sample light each tick so a fleck dims/brightens as the lighting around
         // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
         // at its spawn light.
@@ -192,22 +209,19 @@ impl ParticleSystem {
         }
     }
 
-    /// Pure tick behind [`tick`](Self::tick); `solid_at` reports solid cells so
-    /// tests can run without a real `World`.
-    fn tick_with(&mut self, dt: f32, solid_at: &impl Fn(IVec3) -> bool) {
+    /// Pure tick behind [`tick`](Self::tick); `blocked(p)` reports whether a world point is
+    /// inside a collision box (the model-aware shape), so tests can run without a `World`.
+    fn tick_with(&mut self, dt: f32, blocked: &impl Fn(Vec3) -> bool) {
         let mut i = 0;
         while i < self.particles.len() {
             let p = &mut self.particles[i];
             p.age += dt;
             p.vel.y += PARTICLE_GRAVITY * dt;
             let next = p.pos + p.vel * dt;
-            // Stop on solid ground: if the next cell is solid, kill velocity and
-            // pin to the current cell so dust settles rather than tunnelling.
-            if solid_at(IVec3::new(
-                next.x.floor() as i32,
-                next.y.floor() as i32,
-                next.z.floor() as i32,
-            )) {
+            // Stop on a solid surface: if the next position lands inside a collision box,
+            // kill velocity and pin in place so dust settles on the surface (not the cell)
+            // rather than tunnelling through.
+            if blocked(next) {
                 p.vel = Vec3::ZERO;
             } else {
                 p.pos = next;
@@ -315,6 +329,7 @@ impl ParticleSystem {
                 skylight: skylight.min(63),
                 warm,
                 tile,
+                model: None,
                 uv_min,
                 uv_size: PATCH_FRAC,
                 tint,
@@ -333,7 +348,13 @@ impl ParticleSystem {
 
     /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with caller-provided
     /// render light (6-bit combined) and warm-tint amount; both re-sampled each tick.
-    pub fn spawn_break_burst_lit(&mut self, block_pos: IVec3, block: Block, skylight: u8, warm: u8) {
+    pub fn spawn_break_burst_lit(
+        &mut self,
+        block_pos: IVec3,
+        block: Block,
+        skylight: u8,
+        warm: u8,
+    ) {
         let tiles = block.tiles();
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
             + Vec3::splat(0.5);
@@ -367,6 +388,7 @@ impl ParticleSystem {
                 skylight: skylight.min(63),
                 warm,
                 tile,
+                model: None,
                 uv_min,
                 uv_size: PATCH_FRAC,
                 tint,
@@ -375,6 +397,109 @@ impl ParticleSystem {
                 size: PARTICLE_SIZE,
             });
         }
+    }
+
+    /// Break burst for a BBMODEL block (`kind`): the same 16–32-fleck eruption as
+    /// [`spawn_break_burst_lit`](Self::spawn_break_burst_lit), but every fleck samples an
+    /// opaque patch of the model's OWN texture (via [`block_model::particle_patch`]) so a
+    /// broken workbench throws workbench flecks, not the crafting-table placeholder.
+    pub fn spawn_break_burst_model(
+        &mut self,
+        block_pos: IVec3,
+        kind: BlockModelKind,
+        skylight: u8,
+        warm: u8,
+    ) {
+        let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
+            + Vec3::splat(0.5);
+        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31
+        for _ in 0..count {
+            let pos = center
+                + Vec3::new(
+                    (self.rand() - 0.5) * 0.8,
+                    (self.rand() - 0.5) * 0.8,
+                    (self.rand() - 0.5) * 0.8,
+                );
+            let dir = (pos - center).normalize_or_zero();
+            let speed = 1.0 + self.rand() * 2.5;
+            let vel = dir * speed + Vec3::new(0.0, 1.0 + self.rand() * 2.0, 0.0);
+            let lifetime = 1.0 + self.rand() * 2.0;
+            let patch_r = self.rand();
+            self.push(model_fleck(
+                kind, pos, vel, skylight, warm, lifetime, patch_r,
+            ));
+        }
+    }
+
+    /// Mining-face dust for a BBMODEL block — the model counterpart of
+    /// [`spawn_mining_lit`](Self::spawn_mining_lit): 2–4 flecks spat off the mined face
+    /// drifting along its normal, sampling the model's own texture.
+    pub fn spawn_mining_model(
+        &mut self,
+        block_pos: IVec3,
+        face_normal: IVec3,
+        kind: BlockModelKind,
+        skylight: u8,
+        warm: u8,
+    ) {
+        let n = Vec3::new(
+            face_normal.x as f32,
+            face_normal.y as f32,
+            face_normal.z as f32,
+        );
+        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4
+        let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+        for _ in 0..count {
+            let face_center = base + Vec3::splat(0.5) + n * 0.55;
+            let jitter = Vec3::new(
+                (self.rand() - 0.5) * 0.6,
+                (self.rand() - 0.5) * 0.6,
+                (self.rand() - 0.5) * 0.6,
+            );
+            let pos = face_center + jitter;
+            let vel = n * (0.5 + self.rand() * 1.0)
+                + Vec3::new(
+                    (self.rand() - 0.5) * 1.0,
+                    self.rand() * 1.5,
+                    (self.rand() - 0.5) * 1.0,
+                );
+            let lifetime = 0.5 + self.rand() * 1.0;
+            let patch_r = self.rand();
+            self.push(model_fleck(
+                kind, pos, vel, skylight, warm, lifetime, patch_r,
+            ));
+        }
+    }
+}
+
+/// One model-texture fleck: resolves an opaque model-atlas patch for `kind` and builds
+/// the particle (no foliage tint — a model fleck carries its own texture). Free function
+/// (not a method) so a spawn can build it inside `push(...)` without a self-borrow clash.
+fn model_fleck(
+    kind: BlockModelKind,
+    pos: Vec3,
+    vel: Vec3,
+    skylight: u8,
+    warm: u8,
+    lifetime: f32,
+    patch_r: f32,
+) -> Particle {
+    let (uv_min, uv_size) = block_model::particle_patch(kind, patch_r);
+    Particle {
+        pos,
+        vel,
+        skylight: skylight.min(63),
+        warm,
+        // `tile` is unused for a model fleck (the model atlas is sampled); a placeholder
+        // keeps the field populated.
+        tile: Tile::ALL[0],
+        model: Some(kind),
+        uv_min,
+        uv_size,
+        tint: NO_TINT,
+        age: 0.0,
+        lifetime,
+        size: PARTICLE_SIZE,
     }
 }
 
@@ -388,8 +513,8 @@ impl Default for ParticleSystem {
 mod tests {
     use super::*;
 
-    /// No solid blocks (particles never hit ground).
-    fn empty(_p: IVec3) -> bool {
+    /// No solid surfaces (particles never hit ground).
+    fn empty(_p: Vec3) -> bool {
         false
     }
 
@@ -403,6 +528,7 @@ mod tests {
             skylight: 63,
             warm: 0,
             tile,
+            model: None,
             uv_min: [0.25, 0.5],
             uv_size: 0.25,
             tint: NO_TINT,
@@ -429,6 +555,7 @@ mod tests {
             skylight: 63,
             warm: 0,
             tile: Tile::ALL[0],
+            model: None,
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
             tint: NO_TINT,
@@ -457,6 +584,7 @@ mod tests {
             skylight: 63,
             warm: 0,
             tile: Tile::ALL[0],
+            model: None,
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
             tint: NO_TINT,
@@ -504,6 +632,56 @@ mod tests {
         for p in sys.particles() {
             assert!((1.0..=3.0).contains(&p.lifetime), "burst lifetime 1-3s");
         }
+    }
+
+    #[test]
+    fn particle_passes_inset_margin_but_stops_in_the_box() {
+        // Model-aware: a fleck drifting through the empty SIDE MARGIN of an inset/model cell
+        // keeps moving; one dropping into the actual box stops. Proves particles settle on
+        // the real shape (`point_in_solid` / `World::point_blocked`), not the full cell.
+        let chest = Block::Chest.collision_boxes(); // inset: x/z in [1/16, 15/16]
+        let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
+        let blocked = |p: Vec3| {
+            crate::collision::point_in_solid(
+                [p.x, p.y, p.z],
+                |_x, y, _z| if y == 0 { chest } else { &[][..] },
+            )
+        };
+        let fleck = |pos: Vec3, vel: Vec3| Particle {
+            pos,
+            vel,
+            skylight: 63,
+            warm: 0,
+            tile: Tile::ALL[0],
+            model: None,
+            uv_min: [0.0; 2],
+            uv_size: 0.1,
+            tint: NO_TINT,
+            age: 0.0,
+            lifetime: 100.0,
+            size: 0.1,
+        };
+        // In the 1/16 side margin (x = 0.02, left of the inset face at 1/16): falls through.
+        let mut sys = ParticleSystem::new();
+        sys.push(fleck(Vec3::new(0.02, 0.5, 0.5), Vec3::new(0.0, -1.0, 0.0)));
+        let y0 = sys.particles()[0].pos.y;
+        sys.tick_with(0.05, &blocked);
+        assert!(
+            sys.particles()[0].pos.y < y0,
+            "a fleck in the side margin keeps falling"
+        );
+        // Centred, dropping just into the box top: stops dead on the surface.
+        let mut hit = ParticleSystem::new();
+        hit.push(fleck(
+            Vec3::new(0.5, chest_top + 0.02, 0.5),
+            Vec3::new(0.0, -1.0, 0.0),
+        ));
+        hit.tick_with(0.05, &blocked);
+        assert_eq!(
+            hit.particles()[0].vel,
+            Vec3::ZERO,
+            "a fleck entering the box stops"
+        );
     }
 
     #[test]

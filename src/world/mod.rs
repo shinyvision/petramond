@@ -10,6 +10,7 @@ mod entities;
 mod furnace;
 mod light_queue;
 mod mesh_queue;
+mod model;
 mod query;
 mod store;
 mod stream;

@@ -245,16 +245,28 @@ mod spruce_tests {
                 let top = IVec3::new(cx, base + h - 1, cz);
                 let mut rng = FeatureRng::positional(seed, 0xABCD, cx, 0, cz);
                 let mut ctx = FeatureCtx::new(&mut chunk);
-                let cone = ConiferFoliage { radius, skirt_ragged: 0.25 };
+                let cone = ConiferFoliage {
+                    radius,
+                    skirt_ragged: 0.25,
+                };
                 cone.place(&mut ctx, &[top], Block::SpruceLeaves, &mut rng);
 
                 let leaf = |x: i32, y: i32, z: i32| {
                     chunk.block_raw(x as usize, y as usize, z as usize) == Block::SpruceLeaves.id()
                 };
-                assert!(leaf(cx, top.y + 1, cz), "r{radius} seed {seed}: missing tip");
+                assert!(
+                    leaf(cx, top.y + 1, cz),
+                    "r{radius} seed {seed}: missing tip"
+                );
                 for (dx, dz) in FACES {
-                    assert!(leaf(cx + dx, top.y, cz + dz), "r{radius} seed {seed}: crown face {dx},{dz}");
-                    assert!(leaf(cx + dx, top.y - 2, cz + dz), "r{radius} seed {seed}: 3rd-block face {dx},{dz}");
+                    assert!(
+                        leaf(cx + dx, top.y, cz + dz),
+                        "r{radius} seed {seed}: crown face {dx},{dz}"
+                    );
+                    assert!(
+                        leaf(cx + dx, top.y - 2, cz + dz),
+                        "r{radius} seed {seed}: 3rd-block face {dx},{dz}"
+                    );
                 }
             }
         }

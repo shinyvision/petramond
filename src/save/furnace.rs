@@ -114,15 +114,23 @@ mod tests {
         assert_eq!(
             buf.as_slice(),
             &[
-                0x01, 0x00, // count = 1
-                0x34, 0x12, // idx = 0x1234
-                ItemType::RawIron.id(), 30, // input
-                ItemType::Coal.id(), 2, // fuel
-                ItemType::IronIngot.id(), 7, // output
-                123, 0x00, // cook_progress = 123
-                200, 0x01, // burn_remaining = 456
-                0xC0, 0x12, // burn_max = 4800
-                3, // facing = East
+                0x01,
+                0x00, // count = 1
+                0x34,
+                0x12, // idx = 0x1234
+                ItemType::RawIron.id(),
+                30, // input
+                ItemType::Coal.id(),
+                2, // fuel
+                ItemType::IronIngot.id(),
+                7, // output
+                123,
+                0x00, // cook_progress = 123
+                200,
+                0x01, // burn_remaining = 456
+                0xC0,
+                0x12, // burn_max = 4800
+                3,    // facing = East
             ][..],
             "furnace save framing changed"
         );

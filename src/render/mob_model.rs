@@ -18,10 +18,10 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::bbmodel::{euler_quat, face_corners, Animation, Model};
 use super::item_model::ItemVertex;
 use super::lighting::sky_light_factor;
 use super::MobRenderInstance;
+use crate::bbmodel::{euler_quat, face_corners, Animation, Model};
 use crate::mesh::face::Face;
 use crate::mesh::SHADES;
 
@@ -177,7 +177,10 @@ mod tests {
     use crate::mob::Mob;
 
     fn owl_model() -> Model {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/owl.bbmodel"
+        ));
         Model::load(src).expect("owl model")
     }
 
@@ -211,7 +214,13 @@ mod tests {
         let m = owl_model();
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_mob_instances(&m, 0.25, std::slice::from_ref(&instance(0.0, true)), &mut v, &mut i);
+        let n = build_mob_instances(
+            &m,
+            0.25,
+            std::slice::from_ref(&instance(0.0, true)),
+            &mut v,
+            &mut i,
+        );
         assert!(n > 0);
         assert_eq!(v.len() % 4, 0);
         assert_eq!(n as usize, i.len());
@@ -224,12 +233,27 @@ mod tests {
         let m = owl_model();
         let (mut v1, mut i1) = (Vec::new(), Vec::new());
         let (mut v2, mut i2) = (Vec::new(), Vec::new());
-        build_mob_instances(&m, 0.25, std::slice::from_ref(&instance(0.0, false)), &mut v1, &mut i1);
-        build_mob_instances(&m, 0.5, std::slice::from_ref(&instance(0.0, false)), &mut v2, &mut i2);
+        build_mob_instances(
+            &m,
+            0.25,
+            std::slice::from_ref(&instance(0.0, false)),
+            &mut v1,
+            &mut i1,
+        );
+        build_mob_instances(
+            &m,
+            0.5,
+            std::slice::from_ref(&instance(0.0, false)),
+            &mut v2,
+            &mut i2,
+        );
         // Same geometry, double scale -> double the vertical extent above the feet.
         let span = |v: &[ItemVertex]| v.iter().map(|x| x.pos[1]).fold(f32::MIN, f32::max) - 64.0;
         let (s1, s2) = (span(&v1), span(&v2));
-        assert!((s2 - s1 * 2.0).abs() < 1e-3, "scale should size the model: {s1} vs {s2}");
+        assert!(
+            (s2 - s1 * 2.0).abs() < 1e-3,
+            "scale should size the model: {s1} vs {s2}"
+        );
     }
 
     #[test]
@@ -239,12 +263,21 @@ mod tests {
         let m = owl_model();
         let bake = |t: f32, moving: bool| {
             let (mut v, mut i) = (Vec::new(), Vec::new());
-            build_mob_instances(&m, 0.25, std::slice::from_ref(&instance(t, moving)), &mut v, &mut i);
+            build_mob_instances(
+                &m,
+                0.25,
+                std::slice::from_ref(&instance(t, moving)),
+                &mut v,
+                &mut i,
+            );
             v
         };
         let walk_a = bake(0.0, true);
         let walk_b = bake(0.25, true);
-        let moved = walk_a.iter().zip(&walk_b).any(|(a, b)| (a.pos[2] - b.pos[2]).abs() > 1e-3);
+        let moved = walk_a
+            .iter()
+            .zip(&walk_b)
+            .any(|(a, b)| (a.pos[2] - b.pos[2]).abs() > 1e-3);
         assert!(moved, "walking mob's legs move between phases");
 
         let rest_a = bake(0.0, false);

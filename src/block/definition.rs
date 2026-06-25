@@ -82,6 +82,7 @@ impl BlockFlags {
     pub const AO_OCCLUDER: BlockFlags = BlockFlags(1 << 2);
     pub const TRANSPARENT: BlockFlags = BlockFlags(1 << 3);
     pub const REPLACEABLE: BlockFlags = BlockFlags(1 << 4);
+    pub const DIRECTIONAL_VIEW: BlockFlags = BlockFlags(1 << 5);
 
     #[inline]
     pub const fn with(self, flag: BlockFlags) -> BlockFlags {
@@ -111,6 +112,11 @@ impl BlockFlags {
     #[inline]
     pub const fn is_replaceable(self) -> bool {
         self.contains(BlockFlags::REPLACEABLE)
+    }
+
+    #[inline]
+    pub const fn is_directional_view(self) -> bool {
+        self.contains(BlockFlags::DIRECTIONAL_VIEW)
     }
 
     #[inline]

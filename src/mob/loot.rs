@@ -16,7 +16,10 @@ use crate::item::{ItemStack, ItemType};
 
 /// Embedded fallback so the game always has loot tables, even run outside the project
 /// tree. The on-disk copy, when found, takes priority.
-const EMBEDDED: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/loot_tables.json"));
+const EMBEDDED: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/loot_tables.json"
+));
 
 #[derive(Deserialize)]
 struct RawFile {
@@ -155,7 +158,11 @@ fn parse(text: &str) -> LootTables {
 
 fn resolve(d: RawDrop) -> Result<LootEntry, String> {
     let item = item_from_key(&d.item).ok_or_else(|| format!("unknown item '{}'", d.item))?;
-    let (min, max) = if d.min <= d.max { (d.min, d.max) } else { (d.max, d.min) };
+    let (min, max) = if d.min <= d.max {
+        (d.min, d.max)
+    } else {
+        (d.max, d.min)
+    };
     Ok(LootEntry {
         item,
         min,
@@ -194,7 +201,9 @@ mod tests {
             { "item": "mystery_meat", "chance": 1.0 }
         ] } }"#;
         let tables = parse(text);
-        let owl = tables.get("owl").expect("table present despite a bad entry");
+        let owl = tables
+            .get("owl")
+            .expect("table present despite a bad entry");
         assert_eq!(owl.entries.len(), 1, "only the valid entry survives");
         assert_eq!(owl.entries[0].item, ItemType::Stick);
     }
@@ -203,19 +212,36 @@ mod tests {
     fn roll_respects_chance_bounds_and_count_range() {
         // chance 1.0, count 2..=4: always drops, always within range.
         let table = LootTable {
-            entries: vec![LootEntry { item: ItemType::Stick, min: 2, max: 4, chance: 1.0 }],
+            entries: vec![LootEntry {
+                item: ItemType::Stick,
+                min: 2,
+                max: 4,
+                chance: 1.0,
+            }],
         };
         for seed in 0..200u64 {
             let stacks = table.roll(seed);
             assert_eq!(stacks.len(), 1, "chance 1.0 always drops");
             assert_eq!(stacks[0].item, ItemType::Stick);
-            assert!((2..=4).contains(&stacks[0].count), "count {} in 2..=4", stacks[0].count);
+            assert!(
+                (2..=4).contains(&stacks[0].count),
+                "count {} in 2..=4",
+                stacks[0].count
+            );
         }
         // chance 0.0 never drops.
         let never = LootTable {
-            entries: vec![LootEntry { item: ItemType::Coal, min: 1, max: 1, chance: 0.0 }],
+            entries: vec![LootEntry {
+                item: ItemType::Coal,
+                min: 1,
+                max: 1,
+                chance: 0.0,
+            }],
         };
-        assert!((0..200u64).all(|s| never.roll(s).is_empty()), "chance 0.0 never drops");
+        assert!(
+            (0..200u64).all(|s| never.roll(s).is_empty()),
+            "chance 0.0 never drops"
+        );
     }
 
     #[test]

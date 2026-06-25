@@ -434,7 +434,10 @@ mod tests {
         f.input = None;
         let progress = f.cook_progress;
         f.tick(smelt);
-        assert!(f.cook_progress < progress, "cook bar eases back when nothing smelts");
+        assert!(
+            f.cook_progress < progress,
+            "cook bar eases back when nothing smelts"
+        );
         assert!(f.is_lit(), "already-lit fuel keeps burning");
     }
 
@@ -447,7 +450,11 @@ mod tests {
             ..Default::default()
         };
         run(&mut f, 600);
-        assert_eq!(f.output.unwrap().count, 64, "no ingot added when output is full");
+        assert_eq!(
+            f.output.unwrap().count,
+            64,
+            "no ingot added when output is full"
+        );
         assert_eq!(f.input.unwrap().count, 5, "no input consumed");
         assert!(!f.is_lit(), "never lit: there was nothing it could smelt");
     }
@@ -462,6 +469,10 @@ mod tests {
         run(&mut f, 600);
         assert!(!f.is_lit());
         assert!(f.output.is_none(), "nothing smelts without real fuel");
-        assert_eq!(f.fuel, stack(ItemType::Dirt, 1), "non-fuel is left untouched");
+        assert_eq!(
+            f.fuel,
+            stack(ItemType::Dirt, 1),
+            "non-fuel is left untouched"
+        );
     }
 }

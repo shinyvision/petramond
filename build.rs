@@ -3,6 +3,7 @@
 // Reads block textures from assets/textures/*.png, tiles them into a single
 // PNG atlas, emits Rust constants for tile indices and atlas dimensions.
 // Each source texture is resampled to fixed 16x16 (one block-face tile).
+// Static entries that reference animated vertical strips use the first frame.
 
 use std::env;
 use std::fs;
@@ -208,15 +209,15 @@ const TILES: &[(&str, &str)] = &[
     ("diamond_shovel", "diamond_shovel.png"),
 ];
 
-/// Animated flipbook tiles (name, file, frame_count). The source PNG is a
-/// vertical strip of `frames` square cells; each is resampled to 16x16 and laid
-/// out as `frames` CONSECUTIVE atlas tiles starting at the base tile. The base
-/// `Tile` reports its frame count via `Tile::anim_frames`; the block shader
-/// advances `base + frame` over time (see `block.wgsl`). Appended after the
-/// static tiles so all existing tile ids stay stable.
-const ANIM_TILES: &[(&str, &str, u32)] = &[
-    ("water_still", "water_still.png", 32),
-    ("water_flow", "water_flow.png", 32),
+/// Animated flipbook tiles (name, file). The source PNG is a vertical strip of
+/// square cells; each is resampled to 16x16 and laid out as CONSECUTIVE atlas
+/// tiles starting at the base tile. The base `Tile` reports its derived frame
+/// count via `Tile::anim_frames`; the block shader advances `base + frame` over
+/// time (see `block.wgsl`). Appended after the static tiles so all existing tile
+/// ids stay stable.
+const ANIM_TILES: &[(&str, &str)] = &[
+    ("water_still", "water_still.png"),
+    ("water_flow", "water_flow.png"),
 ];
 
 fn main() {
@@ -241,7 +242,13 @@ fn main() {
         let img = image::open(&path)
             .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
             .to_rgba8();
-        image::imageops::resize(&img, TILE, TILE, image::imageops::FilterType::Nearest)
+        let (w, h) = (img.width(), img.height());
+        let frame = if w > 0 && h > w && h % w == 0 {
+            image::imageops::crop_imm(&img, 0, 0, w, w).to_image()
+        } else {
+            img
+        };
+        image::imageops::resize(&frame, TILE, TILE, image::imageops::FilterType::Nearest)
     };
 
     let mut cells: Vec<(String, image::RgbaImage)> = Vec::new();
@@ -249,7 +256,7 @@ fn main() {
         cells.push((name.to_string(), load_16(file)));
     }
     let mut anim_meta: Vec<(String, u32)> = Vec::new();
-    for (name, file, frames) in ANIM_TILES {
+    for (name, file) in ANIM_TILES {
         let path = in_dir.join(file);
         if !path.exists() {
             panic!("missing texture: {}", path.display());
@@ -258,10 +265,20 @@ fn main() {
             .unwrap_or_else(|e| panic!("failed to load {}: {}", path.display(), e))
             .to_rgba8();
         let (sw, sh) = (strip.width(), strip.height());
-        let fh = sh / frames;
-        for i in 0..*frames {
+        if sw == 0 || sh == 0 || sh % sw != 0 {
+            panic!(
+                "animated texture {} must be a vertical strip of square frames, got {}x{}",
+                path.display(),
+                sw,
+                sh
+            );
+        }
+        let frames = sh / sw;
+        for i in 0..frames {
+            let fh = sw;
             let frame = image::imageops::crop_imm(&strip, 0, i * fh, sw, fh).to_image();
-            let tile = image::imageops::resize(&frame, TILE, TILE, image::imageops::FilterType::Nearest);
+            let tile =
+                image::imageops::resize(&frame, TILE, TILE, image::imageops::FilterType::Nearest);
             let cell_name = if i == 0 {
                 name.to_string()
             } else {
@@ -269,7 +286,7 @@ fn main() {
             };
             cells.push((cell_name, tile));
         }
-        anim_meta.push((to_camel(name), *frames));
+        anim_meta.push((to_camel(name), frames));
     }
 
     let count = cells.len() as u32;

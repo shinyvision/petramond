@@ -67,8 +67,7 @@ impl NoiseCache {
     fn shard(&self, key: (i64, i32, i32)) -> &Mutex<CacheGen> {
         // Mix the cell coords; the seed is constant within a world so it would not
         // contribute to shard spread.
-        let h = (key.1 as u64)
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        let h = (key.1 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ (key.2 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
         &self.shards[(h >> 32) as usize % NOISE_CACHE_SHARDS]
     }
@@ -122,44 +121,44 @@ pub(crate) fn biome_height(id: i32) -> (f32, f32) {
     const LOW_LIFT: f32 = 0.08;
     let lo = |b: f32, v: f32| (b + LOW_LIFT, v);
     match id {
-        0 => (-1.0, 0.1),    // ocean
-        1 => lo(0.125, 0.05), // plains
-        2 => lo(0.125, 0.05), // desert
-        3 => (1.0, 0.5),     // mountains
-        4 => lo(0.1, 0.2),   // forest
-        5 => lo(0.2, 0.2),   // taiga
-        6 => (-0.2, 0.1),    // swamp
-        7 => (-0.5, 0.0),    // river
-        10 => (-1.0, 0.1),   // frozen_ocean
-        11 => (-0.5, 0.0),   // frozen_river
+        0 => (-1.0, 0.1),      // ocean
+        1 => lo(0.125, 0.05),  // plains
+        2 => lo(0.125, 0.05),  // desert
+        3 => (1.0, 0.5),       // mountains
+        4 => lo(0.1, 0.2),     // forest
+        5 => lo(0.2, 0.2),     // taiga
+        6 => (-0.2, 0.1),      // swamp
+        7 => (-0.5, 0.0),      // river
+        10 => (-1.0, 0.1),     // frozen_ocean
+        11 => (-0.5, 0.0),     // frozen_river
         12 => lo(0.125, 0.05), // snowy_tundra
-        13 => (0.45, 0.3),   // snowy_mountains
-        14 => lo(0.2, 0.3),  // mushroom_fields
-        15 => (0.0, 0.025),  // mushroom_field_shore
-        16 => (0.0, 0.025),  // beach
-        17 => (0.45, 0.3),   // desert_hills
-        18 => (0.45, 0.3),   // wooded_hills
-        19 => (0.45, 0.3),   // taiga_hills
-        20 => (0.8, 0.3),    // mountain_edge
-        21 => lo(0.1, 0.2),  // jungle
-        22 => (0.45, 0.3),   // jungle_hills
-        23 => lo(0.1, 0.2),  // jungle_edge
-        24 => (-1.8, 0.1),   // deep_ocean
-        25 => (0.1, 0.8),    // stone_shore
-        26 => (0.0, 0.025),  // snowy_beach
-        27 => lo(0.1, 0.2),  // birch_forest
-        28 => (0.45, 0.3),   // birch_forest_hills
-        29 => lo(0.1, 0.2),  // dark_forest
-        30 => lo(0.2, 0.2),  // snowy_taiga
-        31 => (0.45, 0.3),   // snowy_taiga_hills
-        32 => (0.2, 0.2),    // giant_tree_taiga
-        33 => (0.45, 0.3),   // giant_tree_taiga_hills
-        34 => (1.0, 0.5),    // wooded_mountains
+        13 => (0.45, 0.3),     // snowy_mountains
+        14 => lo(0.2, 0.3),    // mushroom_fields
+        15 => (0.0, 0.025),    // mushroom_field_shore
+        16 => (0.0, 0.025),    // beach
+        17 => (0.45, 0.3),     // desert_hills
+        18 => (0.45, 0.3),     // wooded_hills
+        19 => (0.45, 0.3),     // taiga_hills
+        20 => (0.8, 0.3),      // mountain_edge
+        21 => lo(0.1, 0.2),    // jungle
+        22 => (0.45, 0.3),     // jungle_hills
+        23 => lo(0.1, 0.2),    // jungle_edge
+        24 => (-1.8, 0.1),     // deep_ocean
+        25 => (0.1, 0.8),      // stone_shore
+        26 => (0.0, 0.025),    // snowy_beach
+        27 => lo(0.1, 0.2),    // birch_forest
+        28 => (0.45, 0.3),     // birch_forest_hills
+        29 => lo(0.1, 0.2),    // dark_forest
+        30 => lo(0.2, 0.2),    // snowy_taiga
+        31 => (0.45, 0.3),     // snowy_taiga_hills
+        32 => (0.2, 0.2),      // giant_tree_taiga
+        33 => (0.45, 0.3),     // giant_tree_taiga_hills
+        34 => (1.0, 0.5),      // wooded_mountains
         35 => lo(0.125, 0.05), // savanna
-        36 => (1.5, 0.025),  // savanna_plateau
-        37 => lo(0.1, 0.2),  // badlands
-        38 => (1.5, 0.025),  // wooded_badlands_plateau
-        39 => (1.5, 0.025),  // badlands_plateau
+        36 => (1.5, 0.025),    // savanna_plateau
+        37 => lo(0.1, 0.2),    // badlands
+        38 => (1.5, 0.025),    // wooded_badlands_plateau
+        39 => (1.5, 0.025),    // badlands_plateau
         _ if id >= 128 => biome_height(id - 128),
         _ => lo(0.1, 0.2),
     }
@@ -258,11 +257,13 @@ impl TerrainGen {
             684.412 / 80.0,
         );
         let mut min = [0.0f64; 33];
-        self.min
-            .sample_region(&mut min, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412);
+        self.min.sample_region(
+            &mut min, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412,
+        );
         let mut max = [0.0f64; 33];
-        self.max
-            .sample_region(&mut max, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412);
+        self.max.sample_region(
+            &mut max, cellx, 0, cellz, 1, 33, 1, 684.412, 684.412, 684.412,
+        );
         ColumnNoise {
             depth: depth[0],
             main,
@@ -417,10 +418,12 @@ impl TerrainGen {
             684.412 / 160.0,
             684.412 / 80.0,
         );
-        self.min
-            .sample_region(&mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
-        self.max
-            .sample_region(&mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412);
+        self.min.sample_region(
+            &mut min_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
+        );
+        self.max.sample_region(
+            &mut max_r, x0c, 0, z0c, nx, 33, nz, 684.412, 684.412, 684.412,
+        );
 
         let mut p = vec![0.0f64; nx * nz * 33];
         let mut didx = 0;

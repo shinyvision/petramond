@@ -63,7 +63,6 @@ pub use ui::{furnace_slot_at_cursor, FurnaceHit};
 /// with the App so a click in the open chest screen routes to the right slot.
 pub use ui::chest_slot_at_cursor;
 
-use crate::block::Block;
 use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Quat, Vec3};
 use std::sync::Arc;
@@ -71,12 +70,22 @@ use std::sync::Arc;
 /// The block-break overlay to draw this frame: a cracked-texture quad over
 /// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
 /// `None` (cleared via [`Renderer::set_break_overlay`]) draws nothing.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BreakOverlayView {
     pub block: IVec3,
-    /// The block kind at `block`, so a non-full-cube block (the chest) cracks over
-    /// its inset visual box instead of the whole cell.
-    pub block_kind: Block,
+    /// The cell-local visual box the crack hugs (a non-full-cube block — e.g. the chest —
+    /// cracks over its inset box, not the whole cell). `None` = an ordinary full cube.
+    /// Resolved position-aware by the game.
+    pub visual_box: Option<([f32; 3], [f32; 3])>,
+    /// A bbmodel block cracks over its CELL'S ACTUAL CUBE SURFACES (kind + the targeted
+    /// cell's authored footprint offset + placed facing), so the crack lands on the
+    /// rotated model — each leg / the top — instead of one coarse box floating in the
+    /// cell's air. `None` for a non-model block.
+    pub model: Option<(
+        crate::block_model::BlockModelKind,
+        [u8; 3],
+        crate::furnace::Facing,
+    )>,
     /// 0..=9 crack stage (maps to `Tile::DestroyStage0..9`).
     pub stage: u8,
 }

@@ -894,8 +894,16 @@ mod tests {
         assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
         assert!(inv.slot(0).is_none(), "first partial fully drained");
         assert!(inv.slot(3).is_none(), "second partial fully drained");
-        assert_eq!(inv.slot(HOTBAR_LEN).unwrap().count, 11, "last source keeps the remainder");
-        assert_eq!(inv.slot(2), Some(&item(ItemType::Stone, 30)), "other items untouched");
+        assert_eq!(
+            inv.slot(HOTBAR_LEN).unwrap().count,
+            11,
+            "last source keeps the remainder"
+        );
+        assert_eq!(
+            inv.slot(2),
+            Some(&item(ItemType::Stone, 30)),
+            "other items untouched"
+        );
     }
 
     #[test]
@@ -911,7 +919,11 @@ mod tests {
         // from the full stack, leaving it with 6 rather than splitting it first.
         assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
         assert!(inv.slot(1).is_none(), "partial consumed");
-        assert_eq!(inv.slot(0).unwrap().count, 6, "full stack broken only for the remainder");
+        assert_eq!(
+            inv.slot(0).unwrap().count,
+            6,
+            "full stack broken only for the remainder"
+        );
     }
 
     #[test]
@@ -953,7 +965,11 @@ mod tests {
         inv.slots[0] = Some(item(ItemType::Stone, 64));
         inv.slots[1] = Some(item(ItemType::Sand, 30));
         inv.collect_to_cursor();
-        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 5)), "nothing to gather");
+        assert_eq!(
+            inv.cursor(),
+            Some(&item(ItemType::Dirt, 5)),
+            "nothing to gather"
+        );
         assert_eq!(inv.slot(0), Some(&item(ItemType::Stone, 64)));
         assert_eq!(inv.slot(1), Some(&item(ItemType::Sand, 30)));
     }

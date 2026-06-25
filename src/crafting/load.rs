@@ -251,7 +251,11 @@ mod tests {
         ] }"#;
         let (grid, smelting) = parse(text);
         assert!(grid.is_empty());
-        assert_eq!(smelting.len(), 1, "the unknown-ingredient recipe is skipped");
+        assert_eq!(
+            smelting.len(),
+            1,
+            "the unknown-ingredient recipe is skipped"
+        );
         assert_eq!(smelting[0].input, ItemType::RawIron);
         assert_eq!(smelting[0].result, ItemStack::new(ItemType::IronIngot, 1));
     }
@@ -273,14 +277,27 @@ mod tests {
                 derived,
                 "{item:?} key must match its historical name-derived key"
             );
-            assert!(seen.insert(item.key()), "duplicate item key {:?}", item.key());
+            assert!(
+                seen.insert(item.key()),
+                "duplicate item key {:?}",
+                item.key()
+            );
         }
 
         // Spot-check round-tripping through the resolver used by the recipe loader.
         assert_eq!(item_from_key("oak_log"), Some(ItemType::OakLog));
-        assert_eq!(item_from_key("dark_oak_planks"), Some(ItemType::DarkOakPlanks));
-        assert_eq!(item_from_key("crafting_table"), Some(ItemType::CraftingTable));
-        assert_eq!(item_from_key("wooden_pickaxe"), Some(ItemType::WoodenPickaxe));
+        assert_eq!(
+            item_from_key("dark_oak_planks"),
+            Some(ItemType::DarkOakPlanks)
+        );
+        assert_eq!(
+            item_from_key("crafting_table"),
+            Some(ItemType::CraftingTable)
+        );
+        assert_eq!(
+            item_from_key("wooden_pickaxe"),
+            Some(ItemType::WoodenPickaxe)
+        );
         assert_eq!(item_from_key("cobblestone"), Some(ItemType::Cobblestone));
         assert_eq!(item_from_key("nope"), None);
     }

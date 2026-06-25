@@ -19,10 +19,10 @@
 //! player down — eased near the jump apex for a softer arc — and Space jumps.
 //! Spectator mode bypasses gravity and collision entirely, moving through the
 //! full 3-D wish direction.
-//! There is
-//! no auto step-up: every block is a full unit cube, so a sub-block step would
-//! never trigger and a full-block step would contradict the jump-to-climb feel
-//! (`JUMP_V0` clears ~1.26 blocks, enough to step onto a 1-block ledge).
+//! A grounded player auto-steps up a half-block ledge (a slab / a bbmodel block's low
+//! edge) via the shared `collision::step_horizontal` (`STEP_HEIGHT = 0.5`); a full block
+//! is still a jump-to-climb wall (`JUMP_V0` clears ~1.26 blocks). Step-up is gated on being
+//! grounded, so it never lifts a falling/jumping player.
 
 mod collision;
 mod interaction;
@@ -32,6 +32,6 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use interaction::{RaycastHit, REACH};
 pub(crate) use interaction::ray_vs_aabb;
+pub use interaction::{RaycastHit, REACH};
 pub use state::{Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT};

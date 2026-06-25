@@ -269,7 +269,10 @@ mod tests {
         for &desired in &[(-1.0f32, 0.0f32), (0.0, 1.0), (0.0, -1.0)] {
             let out = turn_limited(prev, desired, c, s);
             let len = (out.0 * out.0 + out.1 * out.1).sqrt();
-            assert!((len - 1.0).abs() < 1e-4, "heading must stay unit (len {len})");
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "heading must stay unit (len {len})"
+            );
             let ang = (prev.0 * out.0 + prev.1 * out.1).clamp(-1.0, 1.0).acos();
             assert!(
                 ang <= MAX_TURN + 1e-3,

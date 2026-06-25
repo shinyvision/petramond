@@ -265,7 +265,11 @@ impl World {
     /// only need the decode (e.g. to address an unloaded chunk) stop here. The
     /// out-of-range *fallback value* stays with each caller — this returns `None`.
     #[inline]
-    pub(super) fn split_world(wx: i32, wy: i32, wz: i32) -> Option<(ChunkPos, usize, usize, usize)> {
+    pub(super) fn split_world(
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> Option<(ChunkPos, usize, usize, usize)> {
         if wy < 0 || wy >= CHUNK_SY as i32 {
             return None;
         }

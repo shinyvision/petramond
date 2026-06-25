@@ -146,7 +146,11 @@ mod tests {
         // texture-swap remesh behind the async block-light bake, so re-settle the
         // light synchronously here — exactly as the test does before the initial mesh.
         let (band, ylo, yhi) = compute_chunk_skylight(world.chunks.get(&pos).unwrap());
-        world.chunks.get_mut(&pos).unwrap().set_skylight(band, ylo, yhi);
+        world
+            .chunks
+            .get_mut(&pos)
+            .unwrap()
+            .set_skylight(band, ylo, yhi);
         world.tick_mesh_budget(1);
 
         let mesh = world.meshes.get(&pos).expect("relit mesh rebuilt");

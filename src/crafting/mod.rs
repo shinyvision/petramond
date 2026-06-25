@@ -185,7 +185,10 @@ mod tests {
         // One oak log anywhere → 4 oak planks preview.
         *grid.cell_mut(0) = Some(ItemStack::new(ItemType::OakLog, 1));
         grid.recompute(&recipes);
-        assert_eq!(grid.result().map(|s| (s.item, s.count)), Some((ItemType::OakPlanks, 4)));
+        assert_eq!(
+            grid.result().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
 
         // Fill the 2×2 with planks → crafting table preview.
         grid.reset(2);

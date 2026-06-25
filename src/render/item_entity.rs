@@ -13,9 +13,10 @@
 //! The builder appends into caller-owned `Vec`s (cleared, capacity reused) so the
 //! renderer never reallocates when the per-frame instance count stays bounded.
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 use super::block_model::{block_icon_faces, push_cube_faces_lit, BillboardBasis};
+use super::item_model::ItemVertex;
 use super::ItemEntityInstance;
 use crate::block::Block;
 use crate::item::ItemRenderKind;
@@ -90,6 +91,45 @@ pub fn build_item_entities(
                     );
                 }
             }
+            // bbmodel items ride the explicit-UV model stream (own atlas), baked by
+            // `build_item_model_entities` and drawn by the model pipeline — skip here.
+            ItemRenderKind::Model(_) => {}
+        }
+    }
+    indices.len() as u32
+}
+
+/// Bake the bbmodel dropped-items into `verts`/`indices` (cleared first, capacity reused)
+/// as world-space [`ItemVertex`] geometry sampling the MODEL atlas — the explicit-UV
+/// counterpart of [`build_item_entities`], drawn by the model pipeline. Each shows its
+/// real baked model (spinning + bobbing like any dropped stack), not a stand-in cube.
+pub fn build_item_model_entities(
+    instances: &[ItemEntityInstance],
+    verts: &mut Vec<ItemVertex>,
+    indices: &mut Vec<u32>,
+) -> u32 {
+    verts.clear();
+    indices.clear();
+    for inst in instances {
+        let ItemRenderKind::Model(kind) = inst.item.render_kind() else {
+            continue;
+        };
+        let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
+        for &offset in &STACK_LAYER_OFFSETS[..layers] {
+            let center =
+                inst.pos + Vec3::new(offset.x, BOB_BASE + bob(inst.spin) + offset.y, offset.z);
+            let transform = Mat4::from_translation(center)
+                * Mat4::from_rotation_y(inst.spin)
+                * Mat4::from_scale(Vec3::splat(ITEM_CUBE_SIZE));
+            super::item_model::build_block_model_item(
+                kind,
+                transform,
+                inst.skylight,
+                0,
+                None,
+                verts,
+                indices,
+            );
         }
     }
     indices.len() as u32
@@ -280,10 +320,7 @@ mod tests {
         assert_eq!(n, 36 * 3);
 
         // A huge count is capped at 5 layered copies, not 64.
-        let huge = ItemEntityInstance {
-            count: 64,
-            ..three
-        };
+        let huge = ItemEntityInstance { count: 64, ..three };
         build_item_entities(std::slice::from_ref(&huge), basis(), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 5, "count capped at 5 layers");
 

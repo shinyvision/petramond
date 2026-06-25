@@ -381,7 +381,11 @@ impl HeightStats {
     fn from(values: &[i32]) -> Self {
         let n = values.len() as f64;
         let mean = values.iter().map(|&y| y as f64).sum::<f64>() / n;
-        let var = values.iter().map(|&y| (y as f64 - mean).powi(2)).sum::<f64>() / n;
+        let var = values
+            .iter()
+            .map(|&y| (y as f64 - mean).powi(2))
+            .sum::<f64>()
+            / n;
         let mut sorted = values.to_vec();
         sorted.sort_unstable();
         let pct = |p: f64| sorted[((sorted.len() - 1) as f64 * p) as usize];
@@ -528,8 +532,7 @@ pub fn relief_audit(seed: u32) -> ReliefStats {
                         if keep_wet(raw.biome_ids[ri]) || raw.surf[ri] >= 64 {
                             continue; // only the below-sea land band the clamp touched
                         }
-                        let gi =
-                            (wz - region.z0) as usize * region.w + (wx - region.x0) as usize;
+                        let gi = (wz - region.z0) as usize * region.w + (wx - region.x0) as usize;
                         // skip explicit-river columns (their water is intended)
                         if region.rivers[gi].influence > 0.05 {
                             continue;
@@ -719,7 +722,10 @@ mod tests {
         }
         occ[idx(1, 2, 1)] = true; // floating voxel (no floor under it)
         let reach = flood_reachable(&occ, w, depth);
-        assert!(reach[idx(0, 0, 0)] && reach[idx(0, 2, 0)], "pillar reachable");
+        assert!(
+            reach[idx(0, 0, 0)] && reach[idx(0, 2, 0)],
+            "pillar reachable"
+        );
         assert!(!reach[idx(1, 2, 1)], "detached voxel must be unreachable");
         let floaters = (0..occ.len()).filter(|&i| occ[i] && !reach[i]).count();
         assert_eq!(floaters, 1);

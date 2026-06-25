@@ -206,7 +206,10 @@ mod tests {
         Recipe::Shaped {
             width: 1,
             height: 2,
-            cells: vec![Some(Ingredient::Tag(ItemTag::Planks)), Some(Ingredient::Tag(ItemTag::Planks))],
+            cells: vec![
+                Some(Ingredient::Tag(ItemTag::Planks)),
+                Some(Ingredient::Tag(ItemTag::Planks)),
+            ],
             result: ItemStack::new(ItemType::Stick, 4),
         }
     }
@@ -222,10 +225,16 @@ mod tests {
             let mut items = [None; 4];
             items[slot] = Some(ItemType::OakLog);
             let g = grid_from(&items, 2);
-            assert_eq!(r.matches(&g, 2), Some(ItemStack::new(ItemType::OakPlanks, 4)));
+            assert_eq!(
+                r.matches(&g, 2),
+                Some(ItemStack::new(ItemType::OakPlanks, 4))
+            );
         }
         // Two logs (extra ingredient) does NOT match the one-log recipe.
-        let g = grid_from(&[Some(ItemType::OakLog), Some(ItemType::OakLog), None, None], 2);
+        let g = grid_from(
+            &[Some(ItemType::OakLog), Some(ItemType::OakLog), None, None],
+            2,
+        );
         assert_eq!(r.matches(&g, 2), None);
     }
 
@@ -234,7 +243,12 @@ mod tests {
         let r = stick_recipe();
         // Vertical pair in the left column of a 2×2.
         let g = grid_from(
-            &[Some(ItemType::OakPlanks), None, Some(ItemType::OakPlanks), None],
+            &[
+                Some(ItemType::OakPlanks),
+                None,
+                Some(ItemType::OakPlanks),
+                None,
+            ],
             2,
         );
         assert_eq!(r.matches(&g, 2), Some(ItemStack::new(ItemType::Stick, 4)));
@@ -246,7 +260,12 @@ mod tests {
         assert_eq!(r.matches(&g, 3), Some(ItemStack::new(ItemType::Stick, 4)));
         // A horizontal pair must NOT match the vertical pattern.
         let g = grid_from(
-            &[Some(ItemType::OakPlanks), Some(ItemType::OakPlanks), None, None],
+            &[
+                Some(ItemType::OakPlanks),
+                Some(ItemType::OakPlanks),
+                None,
+                None,
+            ],
             2,
         );
         assert_eq!(r.matches(&g, 2), None);

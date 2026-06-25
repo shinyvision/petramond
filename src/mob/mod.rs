@@ -219,7 +219,10 @@ pub const ALL_MOBS: &[Mob] = &[Mob::Owl];
 pub static MOB_DEFS: &[MobDef] = &[MobDef {
     mob: Mob::Owl,
     key: "owl",
-    model_src: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel")),
+    model_src: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/models/owl.bbmodel"
+    )),
     scale: 0.25,
     size: MobSize {
         half_width: 0.22,

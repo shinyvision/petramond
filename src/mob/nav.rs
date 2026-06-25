@@ -120,7 +120,11 @@ impl Navigator {
         let water = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).is_water();
         self.path = path::find_path(start, goal, self.params, solid, water);
         // Index 1 = the first cell to walk to (path[0] is the start).
-        self.index = if self.path.len() > 1 { 1 } else { self.path.len() };
+        self.index = if self.path.len() > 1 {
+            1
+        } else {
+            self.path.len()
+        };
         self.since_path = 0;
     }
 
@@ -253,7 +257,10 @@ mod tests {
         nav.update_goal(Some(goal), start, &world);
         let stale: Vec<IVec3> = nav.path().to_vec();
         let blocked = IVec3::new(4, 64, 1);
-        assert!(stale.contains(&blocked), "the open route runs straight through {blocked:?}");
+        assert!(
+            stale.contains(&blocked),
+            "the open route runs straight through {blocked:?}"
+        );
 
         // Drop a 2-high wall across that cell (its foothold + the cell above it), so the
         // straight route is no longer walkable — a detour via z = 0 / z = 2 remains.
@@ -264,12 +271,20 @@ mod tests {
         // per-tick re-pathing — holding a goal stays cheap).
         for _ in 0..REPATH_TICKS - 1 {
             nav.update_goal(Some(goal), start, &world);
-            assert_eq!(nav.path(), stale.as_slice(), "no re-path before the interval elapses");
+            assert_eq!(
+                nav.path(),
+                stale.as_slice(),
+                "no re-path before the interval elapses"
+            );
         }
 
         // The REPATH_TICKS-th held tick refreshes the route, which now avoids the wall.
         nav.update_goal(Some(goal), start, &world);
-        assert_ne!(nav.path(), stale.as_slice(), "re-paths once the interval elapses");
+        assert_ne!(
+            nav.path(),
+            stale.as_slice(),
+            "re-paths once the interval elapses"
+        );
         assert!(
             !nav.path().contains(&blocked),
             "the refreshed route avoids the newly-walled cell: {:?}",
@@ -300,6 +315,9 @@ mod tests {
                 break;
             }
         }
-        assert!(gave_up, "a permanently-wedged mob still abandons its goal despite re-pathing");
+        assert!(
+            gave_up,
+            "a permanently-wedged mob still abandons its goal despite re-pathing"
+        );
     }
 }

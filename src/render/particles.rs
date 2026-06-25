@@ -114,6 +114,9 @@ const FACES: [Face; 6] = [
 /// the size near end-of-life so a fading cube also shrinks. Every face samples
 /// the particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by
 /// `inst.tint` and shaded per-face.
+/// Block-atlas-only cube builder, kept as the focused unit-test entry for the per-cube
+/// geometry (faces, shades, centring, caps). The renderer uses [`build_particles_split`].
+#[cfg(test)]
 pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleVertex>) -> u32 {
     verts.clear();
     for inst in instances {
@@ -123,43 +126,84 @@ pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleV
         if inst.alpha <= 0.0 {
             continue;
         }
-        let h = inst.size * 0.5;
-        let c = Vec3::from(inst.pos.to_array());
-        let [u0, v0] = inst.uv_min;
-        let s = inst.uv_size;
-        let u1 = u0 + s;
-        let v1 = v0 + s;
-        let tint = inst.tint;
-        let alpha = inst.alpha;
-        let light = lighting::sky_light_factor(inst.skylight);
-        // UV per face: bl=(u0,v1), br=(u1,v1), tr=(u1,v0), tl=(u0,v0) to match the
-        // block pipeline (v grows downward in the atlas). The four corners follow
-        // the same CCW order as the uv corners: bl, br, tr, tl.
-        for face in &FACES {
-            let r = face.right * h;
-            let up = face.up * h;
-            // Offset the face plane outward along its normal (right x up points
-            // out) so each face sits on the cube SURFACE, not through the centre.
-            let fc = c + face.right.cross(face.up) * h;
-            let shade = face.shade * light;
-            let corners = [
-                (fc - r - up, [u0, v1]),
-                (fc + r - up, [u1, v1]),
-                (fc + r + up, [u1, v0]),
-                (fc - r + up, [u0, v0]),
-            ];
-            for (pos, uv) in corners {
-                verts.push(ParticleVertex {
-                    pos: pos.to_array(),
-                    uv,
-                    tint,
-                    shade,
-                    alpha,
-                });
-            }
-        }
+        push_particle_cube(inst, verts);
     }
     verts.len() as u32
+}
+
+/// Build BLOCK-atlas cubes then MODEL-atlas cubes into ONE vbuf (cleared, capacity
+/// reused, total capped at [`MAX_PARTICLE_VERTICES`]). Returns `(total_verts,
+/// block_verts)` — the renderer draws `[0..block_verts)` with the block atlas bound and
+/// `[block_verts..total)` with the model atlas bound, so bbmodel-block flecks sample
+/// their own texture in the same pass. Block cubes come first so the split is a single
+/// contiguous index boundary.
+pub fn build_particles_split(
+    block: &[ParticleInstance],
+    model: &[ParticleInstance],
+    verts: &mut Vec<ParticleVertex>,
+) -> (u32, u32) {
+    verts.clear();
+    for inst in block {
+        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
+            break;
+        }
+        if inst.alpha <= 0.0 {
+            continue;
+        }
+        push_particle_cube(inst, verts);
+    }
+    let block_verts = verts.len() as u32;
+    for inst in model {
+        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
+            break;
+        }
+        if inst.alpha <= 0.0 {
+            continue;
+        }
+        push_particle_cube(inst, verts);
+    }
+    (verts.len() as u32, block_verts)
+}
+
+/// Append one particle's textured cube (24 verts) to `verts`. Every face samples the
+/// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
+/// shaded per-face. The caller does the capacity + alpha gating.
+fn push_particle_cube(inst: &ParticleInstance, verts: &mut Vec<ParticleVertex>) {
+    let h = inst.size * 0.5;
+    let c = Vec3::from(inst.pos.to_array());
+    let [u0, v0] = inst.uv_min;
+    let s = inst.uv_size;
+    let u1 = u0 + s;
+    let v1 = v0 + s;
+    let tint = inst.tint;
+    let alpha = inst.alpha;
+    let light = lighting::sky_light_factor(inst.skylight);
+    // UV per face: bl=(u0,v1), br=(u1,v1), tr=(u1,v0), tl=(u0,v0) to match the
+    // block pipeline (v grows downward in the atlas). The four corners follow
+    // the same CCW order as the uv corners: bl, br, tr, tl.
+    for face in &FACES {
+        let r = face.right * h;
+        let up = face.up * h;
+        // Offset the face plane outward along its normal (right x up points
+        // out) so each face sits on the cube SURFACE, not through the centre.
+        let fc = c + face.right.cross(face.up) * h;
+        let shade = face.shade * light;
+        let corners = [
+            (fc - r - up, [u0, v1]),
+            (fc + r - up, [u1, v1]),
+            (fc + r + up, [u1, v0]),
+            (fc - r + up, [u0, v0]),
+        ];
+        for (pos, uv) in corners {
+            verts.push(ParticleVertex {
+                pos: pos.to_array(),
+                uv,
+                tint,
+                shade,
+                alpha,
+            });
+        }
+    }
 }
 
 /// The static index buffer for [`MAX_PARTICLE_CUBES`] cubes (six faces, two

@@ -16,29 +16,30 @@
 //! - [`chest`]: the 27-slot storage grid ([`chest_slot_at_cursor`]).
 //! - [`icon`]: per-slot item icon projection + stack-count digits.
 //!
-//! Two kinds of geometry come out of [`build_ui`]:
-//! - **gui quads** ([`UiBuild::verts`]): textured GUI sprites + solid-color fills
-//!   plus font digits, drawn by `ui_pipe` with the gui atlas. Emitted
-//!   back-to-front (dim background, panel/hotbar, selection, then digits) so later
-//!   quads paint over earlier ones.
-//! - **icon draws** ([`UiBuild::icons`]): per-slot item icons drawn by the
-//!   `model3d_pipe` (isometric cube for `BlockCube`, flat tile quad for `Sprite`)
-//!   with a per-icon MVP written into the model3d dynamic-offset uniform. These
-//!   paint between the gui background and the digits.
+//! Three kinds of geometry come out of [`build_ui`]:
+//! - **gui quads** ([`UiBuild::verts`]): textured GUI sprites + solid-color fills,
+//!   drawn by `ui_pipe` with the gui atlas. Emitted back-to-front (dim background,
+//!   panel/hotbar, selection) so later quads paint over earlier ones.
+//! - **icon quads** ([`UiBuild::icon_quads`]): one `(item, slot rect)` per filled
+//!   slot. Each item's icon is rendered ONCE at renderer init into a cell of an
+//!   icon-atlas texture (`render::renderer::icon_atlas`); the renderer resolves
+//!   each entry to its cell and draws a single textured quad via `ui_pipe` with the
+//!   icon atlas — no per-frame 3D geometry. These paint over the gui background.
+//! - **overlay quads** ([`UiBuild::overlay_verts`]): the stack-count digits, drawn
+//!   last (over both the background and the icons) so they read on top.
 
 mod chest;
 mod crafting;
 mod furnace;
 mod hotbar;
-mod icon;
+// `pub(crate)` so the one-time icon-atlas bake (`renderer::icon_atlas`) can reach
+// the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
+pub(crate) mod icon;
 mod inventory;
-
-use glam::Mat4;
 
 use super::renderer::UiSnapshot;
 use super::resources::GuiSprite;
 use crate::item::ItemType;
-use crate::mesh::Vertex;
 
 // Slot-count constants the per-screen submodules reach via `super::`.
 pub(super) use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
@@ -102,45 +103,16 @@ impl SlotRect {
     }
 }
 
-/// A per-slot item icon to draw with the model3d pipeline. The geometry lives in
-/// the shared [`UiBuild::icon_verts`]/[`UiBuild::icon_indices`] buffers (reused
-/// across frames); this records the sub-ranges plus the MVP placing it into the
-/// slot's NDC rect. Ranges (not owned `Vec`s) so building the UI allocates nothing
-/// per icon per frame.
-#[derive(Copy, Clone, Debug)]
-pub struct IconDraw {
-    /// Index of the first vertex of this icon in [`UiBuild::icon_verts`].
-    pub vert_start: u32,
-    /// Number of vertices this icon contributes.
-    pub vert_count: u32,
-    /// Index of the first element of this icon in [`UiBuild::icon_indices`].
-    /// The stored index VALUES are GLOBAL within [`UiBuild::icon_verts`] (they
-    /// point at this icon's vertices via their absolute position in the shared
-    /// vertex buffer), so the renderer draws every icon with a SINGLE shared
-    /// `base_vertex` (the offset of the whole icon block past the hand) — never a
-    /// per-icon base, which is what would otherwise drift consecutive icons.
-    pub index_start: u32,
-    /// Number of indices this icon contributes.
-    pub index_count: u32,
-    /// Clip-space transform mapping the unit-cube / billboard model into the slot.
-    pub mvp: Mat4,
-}
-
 /// The CPU-built UI for this frame.
 pub struct UiBuild {
-    /// gui-atlas quads (sprites + solid fills + digits), in paint order.
+    /// gui-atlas quads (sprites + solid fills), in paint order — the background
+    /// drawn under the icons.
     pub verts: Vec<UiVertex>,
-    /// Per-slot item icons drawn via the model3d pipeline (paint over the gui
-    /// background, under the digits). Also includes the drag-cursor icon last.
-    /// Each entry references a sub-range of [`Self::icon_verts`]/[`Self::icon_indices`].
-    pub icons: Vec<IconDraw>,
-    /// Shared, reused model3d vertices for ALL icons this frame (cleared + refilled,
-    /// capacity retained) — no per-icon `Vec` allocation.
-    pub icon_verts: Vec<Vertex>,
-    /// Shared, reused model3d indices for all icons this frame. Indices are LOCAL
-    /// to each icon (0-based within its own vertices); the renderer applies the
-    /// per-icon `base_vertex` when drawing.
-    pub icon_indices: Vec<u32>,
+    /// One `(item, slot rect)` per filled slot this frame (and the drag-cursor
+    /// stack last). Each item's icon was baked once into the icon atlas at renderer
+    /// init; the renderer resolves each entry to its cell and emits a textured quad
+    /// (no per-frame 3D geometry), painted over the gui background under the digits.
+    pub icon_quads: Vec<(ItemType, SlotRect)>,
     /// gui-atlas quads drawn AFTER the icons (stack-count digits + drag count),
     /// so digits read on top of the icons.
     pub overlay_verts: Vec<UiVertex>,
@@ -233,16 +205,14 @@ pub(super) fn push_quad_uv(
 }
 
 /// Build the full UI for `ui` this frame, dispatching to each screen's submodule.
-/// `verts`/`overlay_verts`/`icons` are the caller-owned reusable buffers (cleared,
-/// capacity retained). Paint order is back-to-front: screen background, the shared
-/// inventory slot icons, the open screen's extra slots/gauges, then the drag
-/// cursor on top — so later draws overpaint earlier ones.
+/// `verts`/`overlay_verts`/`icon_quads` are the caller-owned reusable buffers
+/// (cleared, capacity retained). Paint order is back-to-front: screen background,
+/// the shared inventory slot icons, the open screen's extra slots/gauges, then the
+/// drag cursor on top — so later draws overpaint earlier ones.
 pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     build.verts.clear();
     build.overlay_verts.clear();
-    build.icons.clear();
-    build.icon_verts.clear();
-    build.icon_indices.clear();
+    build.icon_quads.clear();
 
     let screen = ui.screen;
     if screen.0 == 0 || screen.1 == 0 {
@@ -362,9 +332,7 @@ mod tests {
     pub(super) fn empty_build() -> UiBuild {
         UiBuild {
             verts: Vec::new(),
-            icons: Vec::new(),
-            icon_verts: Vec::new(),
-            icon_indices: Vec::new(),
+            icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
         }
     }
@@ -387,27 +355,21 @@ mod tests {
         build_ui(&s, &mut build);
         // Dim quad + panel sprite = at least 12 verts.
         assert!(build.verts.len() >= 12);
-        // Two slot items + the drag cursor icon = 3 icons.
-        assert_eq!(build.icons.len(), 3);
+        // Two slot items + the drag cursor stack = 3 recorded icon quads.
+        assert_eq!(build.icon_quads.len(), 3);
     }
 
     #[test]
-    fn build_ui_reuses_icon_buffers_without_growth() {
-        // The shared icon buffers are cleared + refilled each frame, never
-        // reallocated, mirroring the per-frame no-allocation performance rule.
+    fn build_ui_reuses_icon_quads_without_growth() {
+        // The icon-quad list is cleared + refilled each frame, never reallocated,
+        // mirroring the per-frame no-allocation performance rule.
         let mut build = empty_build();
         build_ui(&snap_open(true), &mut build);
-        let vcap = build.icon_verts.capacity();
-        let icap = build.icon_indices.capacity();
-        assert!(vcap > 0, "first build should populate icon geometry");
+        let cap = build.icon_quads.capacity();
+        assert!(cap > 0, "first build should record icon quads");
         // Rebuild with the closed (smaller) UI: cleared + refilled, capacity kept.
         build_ui(&snap_open(false), &mut build);
-        assert_eq!(build.icon_verts.capacity(), vcap, "icon vert buffer reused");
-        assert_eq!(
-            build.icon_indices.capacity(),
-            icap,
-            "icon index buffer reused"
-        );
+        assert_eq!(build.icon_quads.capacity(), cap, "icon-quad buffer reused");
     }
 
     #[test]
@@ -418,7 +380,6 @@ mod tests {
             ..snap_open(false)
         };
         build_ui(&s, &mut build);
-        assert!(build.verts.is_empty() && build.icons.is_empty());
-        assert!(build.icon_verts.is_empty() && build.icon_indices.is_empty());
+        assert!(build.verts.is_empty() && build.icon_quads.is_empty());
     }
 }

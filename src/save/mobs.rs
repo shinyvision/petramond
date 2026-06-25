@@ -69,7 +69,10 @@ mod tests {
         let mut r = Reader::new(&buf);
         let got = get_mobs(&mut r).expect("decodes");
         assert_eq!(got.len(), 2);
-        assert_eq!(got[0], a, "species, position and facing survive the round-trip");
+        assert_eq!(
+            got[0], a,
+            "species, position and facing survive the round-trip"
+        );
         assert_eq!(got[1], b);
     }
 

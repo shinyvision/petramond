@@ -5,7 +5,6 @@
 //! cells without tunnelling). Spin and age advance for the renderer/pickup; the
 //! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
 
-use crate::block::Block;
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
@@ -117,7 +116,11 @@ impl DroppedItem {
     /// straight up (degenerate look direction).
     pub fn thrown(pos: Vec3, stack: ItemStack, dir: Vec3) -> Self {
         let d = dir.normalize_or_zero();
-        let vel = Vec3::new(d.x * THROW_SPEED, d.y * THROW_SPEED + THROW_UP, d.z * THROW_SPEED);
+        let vel = Vec3::new(
+            d.x * THROW_SPEED,
+            d.y * THROW_SPEED + THROW_UP,
+            d.z * THROW_SPEED,
+        );
         DroppedItem {
             pos,
             vel,
@@ -153,15 +156,16 @@ impl DroppedItem {
     /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
     /// (or a far target) to disable magnetism.
     pub fn tick(&mut self, dt: f32, world: &World, magnet_target: Option<Vec3>) {
-        let solid_at =
-            |p: IVec3| Block::from_id(world.chunk_block(p.x, p.y, p.z)).blocks_movement();
+        // The shared, model-aware box source — the item collides with a bbmodel block's
+        // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
+        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let flow_at = |p: IVec3| world.water_flow_dir_at(p.x, p.y, p.z);
-        self.integrate_with_flow(dt, magnet_target, &solid_at, &flow_at);
+        self.integrate_with_flow(dt, magnet_target, &boxes, &flow_at);
     }
 
     /// Pure integration behind [`tick`](Self::tick). `solid_at` reports whether a
-    /// block cell is solid. Split out so tests can drive the full physics against
-    /// a stub world (a real `World` spins up a worker pool).
+    /// block cell is solid; bridged here to the shared collision box source so tests can
+    /// drive the full physics against a stub world (a real `World` spins up a worker pool).
     #[cfg(test)]
     fn integrate(
         &mut self,
@@ -169,15 +173,22 @@ impl DroppedItem {
         magnet_target: Option<Vec3>,
         solid_at: &impl Fn(IVec3) -> bool,
     ) {
+        let boxes = |x: i32, y: i32, z: i32| {
+            if solid_at(IVec3::new(x, y, z)) {
+                crate::block::Block::Stone.collision_boxes()
+            } else {
+                &[][..]
+            }
+        };
         let still_water = |_: IVec3| Vec3::ZERO;
-        self.integrate_with_flow(dt, magnet_target, solid_at, &still_water);
+        self.integrate_with_flow(dt, magnet_target, &boxes, &still_water);
     }
 
     fn integrate_with_flow(
         &mut self,
         dt: f32,
         magnet_target: Option<Vec3>,
-        solid_at: &impl Fn(IVec3) -> bool,
+        boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         flow_at: &impl Fn(IVec3) -> Vec3,
     ) {
         // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
@@ -222,9 +233,24 @@ impl DroppedItem {
         // Gravity.
         self.vel.y += GRAVITY * dt;
 
-        // Axis-resolved movement: move + resolve each axis independently so a
-        // wall on one axis never blocks sliding along the others.
-        let grounded = self.move_axis_resolved(dt, solid_at);
+        // Axis-resolved movement via the shared swept-AABB resolver (same one the player
+        // and mobs use): slides along each axis against the block's real collision shape. An
+        // item never auto-steps (step_height = 0) — it's not walking, it tumbles/settles.
+        let h = ITEM_HALF_EXTENT;
+        let min = [self.pos.x - h, self.pos.y - h, self.pos.z - h];
+        let max = [self.pos.x + h, self.pos.y + h, self.pos.z + h];
+        let (moved, grounded, hit) =
+            crate::collision::resolve_body(min, max, self.vel.to_array(), dt, 0.0, boxes);
+        self.pos += Vec3::from(moved);
+        if hit[0] {
+            self.vel.x = 0.0;
+        }
+        if hit[1] {
+            self.vel.y = 0.0;
+        }
+        if hit[2] {
+            self.vel.z = 0.0;
+        }
 
         // Damping: strong on the ground (settle), mild in the air.
         let damp = if grounded {
@@ -238,59 +264,6 @@ impl DroppedItem {
         if grounded && self.vel.y < 0.0 {
             self.vel.y = 0.0;
         }
-    }
-
-    /// Move along each axis in turn, resolving against solid cells. Returns
-    /// `true` if the item is resting on solid ground after the move.
-    fn move_axis_resolved(&mut self, dt: f32, solid_at: &impl Fn(IVec3) -> bool) -> bool {
-        let mut grounded = false;
-
-        // Y first so we land cleanly before horizontal slide.
-        let dy = self.vel.y * dt;
-        self.pos.y += dy;
-        if self.collides(solid_at) {
-            self.pos.y -= dy;
-            if self.vel.y < 0.0 {
-                grounded = true;
-            }
-            self.vel.y = 0.0;
-        }
-
-        let dx = self.vel.x * dt;
-        self.pos.x += dx;
-        if self.collides(solid_at) {
-            self.pos.x -= dx;
-            self.vel.x = 0.0;
-        }
-
-        let dz = self.vel.z * dt;
-        self.pos.z += dz;
-        if self.collides(solid_at) {
-            self.pos.z -= dz;
-            self.vel.z = 0.0;
-        }
-
-        grounded
-    }
-
-    /// Does the item's AABB overlap any solid block cell?
-    fn collides(&self, solid_at: &impl Fn(IVec3) -> bool) -> bool {
-        let h = ITEM_HALF_EXTENT;
-        let min = self.pos - Vec3::splat(h);
-        let max = self.pos + Vec3::splat(h);
-        let (x0, x1) = (min.x.floor() as i32, max.x.floor() as i32);
-        let (y0, y1) = (min.y.floor() as i32, max.y.floor() as i32);
-        let (z0, z1) = (min.z.floor() as i32, max.z.floor() as i32);
-        for x in x0..=x1 {
-            for y in y0..=y1 {
-                for z in z0..=z1 {
-                    if solid_at(IVec3::new(x, y, z)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
     }
 
     /// `true` if `player_pos` (player body-centre) is within the inner
@@ -311,7 +284,6 @@ impl DroppedItem {
         d.length_squared() <= ATTRACT_RADIUS * ATTRACT_RADIUS
     }
 }
-
 
 fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec3 {
     let len_sq = dir.x * dir.x + dir.z * dir.z;
@@ -343,6 +315,21 @@ mod tests {
     /// No solid blocks anywhere.
     fn empty(_p: IVec3) -> bool {
         false
+    }
+
+    /// Bridge a cell-solid bool stub into the shared collision box source (a full cube per
+    /// solid cell) — the same mapping `integrate` uses, for tests that drive
+    /// `integrate_with_flow` directly.
+    fn boxes_of(
+        solid: impl Fn(IVec3) -> bool,
+    ) -> impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb] {
+        move |x, y, z| {
+            if solid(IVec3::new(x, y, z)) {
+                crate::block::Block::Stone.collision_boxes()
+            } else {
+                &[]
+            }
+        }
     }
 
     #[test]
@@ -395,7 +382,7 @@ mod tests {
             }
         };
 
-        d.integrate_with_flow(0.1, None, &empty, &flow);
+        d.integrate_with_flow(0.1, None, &boxes_of(empty), &flow);
 
         assert!(d.vel.z > 0.0, "current should add +Z velocity: {}", d.vel.z);
         assert!(d.pos.z > 0.5, "current should move the item: {}", d.pos.z);
@@ -422,6 +409,32 @@ mod tests {
         );
         // Vertical velocity is killed once grounded.
         assert!(d.vel.y.abs() < 1e-3, "grounded item should stop falling");
+    }
+
+    #[test]
+    fn item_rests_on_an_inset_block_top_not_the_cell_top() {
+        // Model-aware: an item dropped onto an INSET-shaped block (a chest, top at 14/16)
+        // settles on that real top, not the full-cube cell top (y = 1). Proves the dropped
+        // item now collides through the shared `collision_boxes_at` shape, like the player.
+        let chest = crate::block::Block::Chest.collision_boxes();
+        let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
+        assert!(
+            chest_top < 1.0,
+            "the chest box must actually be inset (top {chest_top})"
+        );
+        let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
+        let still = |_: IVec3| Vec3::ZERO;
+        let mut d = DroppedItem::new(Vec3::new(0.5, 3.0, 0.5), stack(), 1);
+        d.vel = Vec3::ZERO;
+        for _ in 0..300 {
+            d.integrate_with_flow(1.0 / 60.0, None, &boxes, &still);
+        }
+        // The item bottom rests on the chest top.
+        assert!(
+            (d.pos.y - ITEM_HALF_EXTENT - chest_top).abs() < 0.02,
+            "item should rest on the chest top {chest_top}, got bottom {}",
+            d.pos.y - ITEM_HALF_EXTENT
+        );
     }
 
     #[test]

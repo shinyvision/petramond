@@ -52,7 +52,13 @@ pub(super) fn build(ui: &UiSnapshot, build: &mut UiBuild, screen: (u32, u32), sc
         };
         icon::push_slot_icon(build, screen, stack.item, r);
         if stack.count > 1 {
-            icon::push_count(&mut build.overlay_verts, screen, stack.count as u32, r, scale);
+            icon::push_count(
+                &mut build.overlay_verts,
+                screen,
+                stack.count as u32,
+                r,
+                scale,
+            );
         }
     }
 }

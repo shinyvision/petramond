@@ -32,10 +32,15 @@ pub(super) const MAX_ITEM3D_VERTICES: u64 = 4096;
 /// simultaneously-visible owls before a bake bails for that frame.
 pub(super) const MAX_MOB_VERTICES: u64 = 20480;
 pub(super) const MAX_MOB_INDICES: u64 = 30720;
-/// Vertices in the break-overlay dynamic vbuf: exactly one block-sized cube (24).
-pub(super) const MAX_BREAK_VERTICES: u64 = 24;
-/// Indices in the break-overlay dynamic ibuf: one cube (36).
-pub(super) const MAX_BREAK_INDICES: u64 = 36;
+/// Boxes the break-overlay buffers must hold: a legacy block cracks over ONE cube, but a
+/// bbmodel block cracks over EVERY cube of its model (the workbench is ~36), so size for a
+/// comfortably complex model — otherwise the multi-box bake overflows and the whole crack
+/// silently vanishes (the bug this fixes).
+pub(super) const MAX_BREAK_BOXES: u64 = 256;
+/// Vertices in the break-overlay dynamic vbuf (24 per box).
+pub(super) const MAX_BREAK_VERTICES: u64 = MAX_BREAK_BOXES * 24;
+/// Indices in the break-overlay dynamic ibuf (36 per box).
+pub(super) const MAX_BREAK_INDICES: u64 = MAX_BREAK_BOXES * 36;
 /// Polygon offset for the break-overlay decal: nudge the crack toward the camera
 /// (depth is standard near=0/far=1, so negative = closer) so it reliably wins the
 /// `LessEqual` depth tie against the coincident block face despite the mesher's
@@ -92,12 +97,16 @@ enum DepthPreset {
 impl DepthPreset {
     fn state(self) -> wgpu::DepthStencilState {
         let (write, compare, bias) = match self {
-            DepthPreset::WriteLess => {
-                (true, wgpu::CompareFunction::Less, wgpu::DepthBiasState::default())
-            }
-            DepthPreset::ReadLess => {
-                (false, wgpu::CompareFunction::Less, wgpu::DepthBiasState::default())
-            }
+            DepthPreset::WriteLess => (
+                true,
+                wgpu::CompareFunction::Less,
+                wgpu::DepthBiasState::default(),
+            ),
+            DepthPreset::ReadLess => (
+                false,
+                wgpu::CompareFunction::Less,
+                wgpu::DepthBiasState::default(),
+            ),
             DepthPreset::ReadLessEqualBiased => {
                 (false, wgpu::CompareFunction::LessEqual, BREAK_DEPTH_BIAS)
             }
@@ -231,6 +240,15 @@ pub(super) struct PipelineResources {
     /// group(0) bind for model3d: the MVP buffer (dynamic offset) + the shared
     /// uv_rects table at binding 1. Bound with the per-draw 256-aligned offset.
     pub model3d_mvp_bind: wgpu::BindGroup,
+    /// The model3d group(0) bind-group LAYOUT (dynamic-offset MVP at binding 0 +
+    /// uv_rects at binding 1), exposed so the renderer can build a SEPARATE,
+    /// icon-count-sized MVP buffer + bind for the one-time icon-atlas bake (Pass A
+    /// needs one live MVP slot per cube/sprite icon simultaneously — more than the
+    /// per-frame [`MODEL3D_MVP_SLOTS`]).
+    pub model3d_mvp_bgl: wgpu::BindGroupLayout,
+    /// The shared uv-rect table buffer (binding 1 of the model3d group(0)), exposed
+    /// so the icon-atlas bake's own MVP bind group can reference the same table.
+    pub uv_rects_buf: wgpu::Buffer,
     /// Reusable dynamic vertex buffer for model3d draws (hand + icons).
     pub model3d_vbuf: wgpu::Buffer,
     /// Reusable dynamic index buffer for model3d draws.
@@ -284,6 +302,12 @@ pub(super) struct PipelineResources {
     pub ui_bind: wgpu::BindGroup,
     /// Reusable dynamic vbuf for UI quads (rewritten in place per frame).
     pub ui_vbuf: wgpu::Buffer,
+    /// model-icon pipeline: bbmodel-block icons. The icon MVP is baked into the
+    /// `ItemVertex` positions CPU-side and the faces self-sort by depth (the model is
+    /// double-sided like the in-world block), so this is a near pass-through sampling
+    /// the MODEL atlas at group(0); alpha-cutout, alpha-blended, depth test + write.
+    /// Used ONLY to bake the bbmodel-block cells of the icon atlas at renderer init.
+    pub model_icon_pipe: wgpu::RenderPipeline,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -432,9 +456,16 @@ pub(super) fn create_pipeline_resources(
         attributes: &vbuf_attrs,
     };
 
-    let opaque_targets = color_target(format, Some(wgpu::BlendState::REPLACE), wgpu::ColorWrites::ALL);
-    let transparent_targets =
-        color_target(format, Some(wgpu::BlendState::ALPHA_BLENDING), wgpu::ColorWrites::ALL);
+    let opaque_targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
+    let transparent_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
 
     let cull_back = wgpu::PrimitiveState {
         cull_mode: Some(wgpu::Face::Back),
@@ -502,7 +533,11 @@ pub(super) fn create_pipeline_resources(
         bind_group_layouts: &[&sky_bgl],
         push_constant_ranges: &[],
     });
-    let sky_targets = color_target(format, Some(wgpu::BlendState::REPLACE), wgpu::ColorWrites::ALL);
+    let sky_targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
     let sky_pipe = world_pipeline(
         device,
         "sky pipe",
@@ -560,8 +595,11 @@ pub(super) fn create_pipeline_resources(
             shader_location: 0,
         }],
     };
-    let outline_targets =
-        color_target(format, Some(wgpu::BlendState::REPLACE), wgpu::ColorWrites::ALL);
+    let outline_targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
     // Depth-test against terrain so edges behind blocks are hidden, but don't
     // write depth. The box is inflated slightly outward (see `outline_vertices`)
     // so visible front edges win the LessEqual test.
@@ -715,8 +753,11 @@ pub(super) fn create_pipeline_resources(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &vbuf_attrs,
     };
-    let model3d_targets =
-        color_target(format, Some(wgpu::BlendState::ALPHA_BLENDING), wgpu::ColorWrites::ALL);
+    let model3d_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
     // The two model3d pipelines share shader/layout/blend/cull and differ ONLY in
     // the depth attachment: `model3d_pipe` is depthless (the iso icons draw in the
     // depthless UI pass); `model3d_hand_pipe` adds depth Less + write so the
@@ -834,8 +875,11 @@ pub(super) fn create_pipeline_resources(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &item3d_vbuf_attrs,
     };
-    let item3d_targets =
-        color_target(format, Some(wgpu::BlendState::ALPHA_BLENDING), wgpu::ColorWrites::ALL);
+    let item3d_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
     // Double-sided (cull None): the back face + inward walls must never cull.
     // Depth-test + write against the hand pass's own (cleared) depth buffer so the
     // extruded mesh self-sorts: front, stepped side walls and back no longer
@@ -1137,8 +1181,11 @@ pub(super) fn create_pipeline_resources(
     };
     // UI quads are CPU-emitted CCW but disabling cull is robust against either
     // winding; no depth (last pass). Alpha blend.
-    let ui_targets =
-        color_target(format, Some(wgpu::BlendState::ALPHA_BLENDING), wgpu::ColorWrites::ALL);
+    let ui_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
     let ui_pipe = world_pipeline(
         device,
         "ui pipe",
@@ -1159,6 +1206,71 @@ pub(super) fn create_pipeline_resources(
         mapped_at_creation: false,
     });
 
+    // --- model-icon pipeline (bbmodel-block icon-atlas cells). ---
+    // Pass-through `ItemVertex` (positions already in clip space, the MVP baked in by
+    // `build_block_model_icon`) sampling the MODEL atlas at group(0). Depth test +
+    // WRITE: the double-sided model self-sorts by depth (the faces are also emitted
+    // far→near as a tiebreak). The same `item3d`/`mob` ItemVertex layout (pos f32x3 @0,
+    // uv f32x2 @12, shade f32 @20, tint f32x3 @24) feeds it, so the model-atlas
+    // validation test covers it. Used only to bake the model cells of the icon atlas.
+    let model_icon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("model icon shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/model_icon.wgsl").into()),
+    });
+    let model_icon_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("model icon layout"),
+        bind_group_layouts: &[&atlas_bgl],
+        push_constant_ranges: &[],
+    });
+    let model_icon_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32,
+            offset: 20,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 24,
+            shader_location: 3,
+        },
+    ];
+    let model_icon_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<super::item_model::ItemVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &model_icon_vbuf_attrs,
+    };
+    let model_icon_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
+    // Depth test + WRITE against the model-icon pass's OWN cleared depth buffer so the
+    // (double-sided) model self-sorts — the panels/drawers can't be ordered by a painter
+    // sort alone, exactly like the in-world block, which also leans on depth.
+    let model_icon_pipe = world_pipeline(
+        device,
+        "model icon pipe",
+        &model_icon_layout,
+        &model_icon_shader,
+        "vs_model_icon",
+        "fs_model_icon",
+        std::slice::from_ref(&model_icon_vbuf_layout),
+        &model_icon_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::WriteLess),
+        sample_count,
+    );
+
     PipelineResources {
         uniform_bind,
         atlas_bind,
@@ -1176,6 +1288,8 @@ pub(super) fn create_pipeline_resources(
         model3d_hand_pipe,
         model3d_mvp_buf,
         model3d_mvp_bind,
+        model3d_mvp_bgl,
+        uv_rects_buf,
         model3d_vbuf,
         model3d_ibuf,
         item3d_pipe,
@@ -1195,6 +1309,7 @@ pub(super) fn create_pipeline_resources(
         ui_pipe,
         ui_bind,
         ui_vbuf,
+        model_icon_pipe,
     }
 }
 
@@ -1288,10 +1403,7 @@ mod gpu_validation {
         );
 
         let err = pollster::block_on(device.pop_error_scope());
-        assert!(
-            err.is_none(),
-            "real-pipeline validation error: {err:?}"
-        );
+        assert!(err.is_none(), "real-pipeline validation error: {err:?}");
         // Confirm the assumption baked into the packing: tile ids fit in 8 bits.
         const { assert!(TILE_COUNT <= 256) };
         // Stride sanity: the compressed block vertex is exactly 28 bytes.

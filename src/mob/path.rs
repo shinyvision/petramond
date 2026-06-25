@@ -83,7 +83,11 @@ pub fn standing_cell(
     let mut best: Option<(IVec3, f32)> = None;
     for sx in [-half_width, half_width] {
         for sz in [-half_width, half_width] {
-            let c = IVec3::new((pos.x + sx).floor() as i32, feet_y, (pos.z + sz).floor() as i32);
+            let c = IVec3::new(
+                (pos.x + sx).floor() as i32,
+                feet_y,
+                (pos.z + sz).floor() as i32,
+            );
             if c == centre || !is_foothold(c, head, solid) {
                 continue;
             }
@@ -317,7 +321,11 @@ mod tests {
         assert_eq!(path.first(), Some(&start));
         assert_eq!(path.last(), Some(&goal));
         // 3 diagonal steps (4 cells), not the 6-step cardinal staircase.
-        assert_eq!(path.len(), 4, "open ground should route diagonally: {path:?}");
+        assert_eq!(
+            path.len(),
+            4,
+            "open ground should route diagonally: {path:?}"
+        );
         assert!(
             path.windows(2)
                 .any(|w| (w[1].x - w[0].x).abs() == 1 && (w[1].z - w[0].z).abs() == 1),
@@ -377,7 +385,11 @@ mod tests {
         let goal = IVec3::new(4, 1, 0);
         let path = find_path(start, goal, params(), solid, |_| false);
         // Unreachable: best-effort path stops on the near side (x < 2), never crosses.
-        assert!(path.last().unwrap().x < 2, "must not climb a 2-high wall: {:?}", path.last());
+        assert!(
+            path.last().unwrap().x < 2,
+            "must not climb a 2-high wall: {:?}",
+            path.last()
+        );
     }
 
     #[test]
@@ -392,9 +404,16 @@ mod tests {
         let start = IVec3::new(0, 4, 0);
         let goal = IVec3::new(3, 1, 0);
         let path = find_path(start, goal, params(), |c| w.solid_at(c), |_| false);
-        assert_eq!(path.last(), Some(&goal), "walks off the ledge to the low ground");
+        assert_eq!(
+            path.last(),
+            Some(&goal),
+            "walks off the ledge to the low ground"
+        );
         // The drop happens in one move (walk off), descending 3.
-        assert!(path.windows(2).any(|w2| w2[0].y - w2[1].y == 3), "single 3-block descent: {path:?}");
+        assert!(
+            path.windows(2).any(|w2| w2[0].y - w2[1].y == 3),
+            "single 3-block descent: {path:?}"
+        );
     }
 
     #[test]
@@ -406,7 +425,11 @@ mod tests {
         let goal = IVec3::new(3, 1, 0);
         let path = find_path(start, goal, params(), solid, |_| false);
         // 6 - 1 = 5 block drop > 4: must NOT step off into the pit.
-        assert!(path.last().unwrap().x < 2, "must not take a >4 drop: {:?}", path.last());
+        assert!(
+            path.last().unwrap().x < 2,
+            "must not take a >4 drop: {:?}",
+            path.last()
+        );
     }
 
     /// Two land platforms (top y==0 → foothold y==1) split by a deep trench at
@@ -430,8 +453,15 @@ mod tests {
         let goal = IVec3::new(4, 1, 0);
         let path = find_path(start, goal, params(), deep_trench_solid, water);
         assert_eq!(path.first(), Some(&start));
-        assert_eq!(path.last(), Some(&goal), "reaches the far shore across the water");
-        assert!(path.iter().all(|c| c.y == 1), "crosses at the surface level: {path:?}");
+        assert_eq!(
+            path.last(),
+            Some(&goal),
+            "reaches the far shore across the water"
+        );
+        assert!(
+            path.iter().all(|c| c.y == 1),
+            "crosses at the surface level: {path:?}"
+        );
     }
 
     #[test]
@@ -442,7 +472,11 @@ mod tests {
         let start = IVec3::new(0, 1, 0);
         let goal = IVec3::new(4, 1, 0);
         let path = find_path(start, goal, params(), deep_trench_solid, |_| false);
-        assert!(path.last().unwrap().x < 1, "no footing over the dry gap: {:?}", path.last());
+        assert!(
+            path.last().unwrap().x < 1,
+            "no footing over the dry gap: {:?}",
+            path.last()
+        );
     }
 
     #[test]
@@ -467,7 +501,11 @@ mod tests {
         // Centre just past the +X edge (cell (1,1,0) overhangs air), but the footprint
         // still rests on the block -> returns that block's foothold (0,1,0).
         let cell = standing_cell(Vec3::new(1.1, 1.0, 0.5), 0.25, 1, &solid);
-        assert_eq!(cell, Some(IVec3::new(0, 1, 0)), "edge overhang resolves to the block");
+        assert_eq!(
+            cell,
+            Some(IVec3::new(0, 1, 0)),
+            "edge overhang resolves to the block"
+        );
         // Centre squarely on the block -> the centre cell.
         let on = standing_cell(Vec3::new(0.5, 1.0, 0.5), 0.25, 1, &solid);
         assert_eq!(on, Some(IVec3::new(0, 1, 0)));
@@ -480,7 +518,10 @@ mod tests {
     fn start_equals_goal_is_a_singleton() {
         let w = Stub::new(1);
         let c = IVec3::new(5, 1, 5);
-        assert_eq!(find_path(c, c, params(), |p| w.solid_at(p), |_| false), vec![c]);
+        assert_eq!(
+            find_path(c, c, params(), |p| w.solid_at(p), |_| false),
+            vec![c]
+        );
     }
 
     #[test]
@@ -488,7 +529,14 @@ mod tests {
         // Start floating with no floor below: not a foothold.
         let w = Stub::new(1);
         let floating = IVec3::new(0, 10, 0);
-        assert!(find_path(floating, IVec3::new(1, 1, 0), params(), |c| w.solid_at(c), |_| false).is_empty());
+        assert!(find_path(
+            floating,
+            IVec3::new(1, 1, 0),
+            params(),
+            |c| w.solid_at(c),
+            |_| false
+        )
+        .is_empty());
     }
 
     #[test]
@@ -505,7 +553,11 @@ mod tests {
         let start = IVec3::new(0, 1, 0);
         let goal = IVec3::new(4, 1, 0);
         let path = find_path(start, goal, params(), |c| w.solid_at(c), |_| false);
-        assert_eq!(path.last(), Some(&goal), "finds the gap and reaches the goal");
+        assert_eq!(
+            path.last(),
+            Some(&goal),
+            "finds the gap and reaches the goal"
+        );
         assert!(
             path.iter().all(|c| !w.solid_at(*c)),
             "path never enters a solid cell"

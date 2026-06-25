@@ -158,8 +158,8 @@ mod tests {
         s.craft[4] = Some((ItemType::Stick, 3));
         s.result = Some((ItemType::WoodenPickaxe, 1));
         super::super::build_ui(&s, &mut build);
-        // 2 hotbar items + 2 craft cells + 1 result = 5 icons.
-        assert_eq!(build.icons.len(), 5);
+        // 2 hotbar items + 2 craft cells + 1 result = 5 icon quads.
+        assert_eq!(build.icon_quads.len(), 5);
         // The two craft cells + result land within the panel and never overlap an
         // inventory slot rect (craft sits in the panel's top band).
         let scale = gui_scale(s.screen);

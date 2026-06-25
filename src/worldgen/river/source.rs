@@ -51,7 +51,11 @@ impl RiverSystem {
             return None;
         }
         // Score (regional wetness) ranks sources for suppress-weaker-of-two.
-        Some(SourceGate { x, z, score: cluster })
+        Some(SourceGate {
+            x,
+            z,
+            score: cluster,
+        })
     }
 
     /// Suppress-weaker-of-two (decisions §4): drop this cell's source if a

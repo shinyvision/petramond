@@ -40,7 +40,14 @@ impl WaterSurface {
     /// is the cell's `fills_cell` result (passed in since the caller already has the
     /// `water_fills_cell` lookup); `block_at`/`fluid_at` sample the world for the
     /// corner-height average and the flow gradient.
-    pub(super) fn new<B, F>(wx: i32, wy: i32, wz: i32, full: bool, block_at: &B, fluid_at: &F) -> Self
+    pub(super) fn new<B, F>(
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        full: bool,
+        block_at: &B,
+        fluid_at: &F,
+    ) -> Self
     where
         B: Fn(i32, i32, i32) -> Block,
         F: Fn(i32, i32, i32) -> Option<f32>,
@@ -129,7 +136,12 @@ impl WaterSurface {
             let cx = ((p[0] - base_x) as usize).min(1);
             let cz = ((p[2] - base_z) as usize).min(1);
             if p[1] > base_y + 0.5 {
-                p[1] = base_y + if self.full { 1.0 } else { self.corner_h[cx][cz] };
+                p[1] = base_y
+                    + if self.full {
+                        1.0
+                    } else {
+                        self.corner_h[cx][cz]
+                    };
             } else if exposed_step {
                 p[1] = base_y + self.corner_h[cx][cz];
             }

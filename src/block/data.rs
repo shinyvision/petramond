@@ -1,4 +1,5 @@
 use crate::atlas::Tile;
+use crate::block_model::BlockModelKind;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::{self, RegistryKey, TableEntry};
 
@@ -29,6 +30,12 @@ const CHEST_FLAGS: BlockFlags = BlockFlags::SOLID;
 // raycast still selects it — by its `RenderShape::Torch` (its real pole is too thin
 // to DDA on cell entry), NOT by solidity. Drawn as a custom 3D pole (`mesh::torch`).
 const TORCH_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
+// bbmodel block (e.g. the workbench): SOLID (collision, raycast, a build target) but
+// NOT opaque and NOT an AO occluder — like the chest it is drawn from its own model and
+// the mesher skips its cell, so neighbours keep their faces toward it and it casts no
+// full-cube shadow. Its real collision/selection come from the model (per cell), not the
+// data row (see `Block::collision_boxes` / `block_model`).
+const MODEL_FLAGS: BlockFlags = BlockFlags::SOLID;
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
 // walk-through plants, and the torch — selectable by its shape but stepped through);
@@ -130,6 +137,7 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Furnace,
     Block::Chest,
     Block::Torch,
+    Block::FurnitureWorkbench,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -1415,7 +1423,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         emission: 28,
         tags: &[],
         behavior: &behavior::INERT,
-        flags: FULL_CUBE_FLAGS,
+        flags: FULL_CUBE_FLAGS.with(BlockFlags::DIRECTIONAL_VIEW),
         // [top, bottom, side]: the placed furnace is meshed directionally (front on
         // the facing face, `furnace_side` on the others — see mesh::builder), so the
         // default side is `furnace_side`. The inventory/held item cube puts the
@@ -1437,7 +1445,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         // SOLID but non-opaque: the placed chest is drawn as a custom inset body +
         // hinged lid (the mesher skips its cell — see render::chest_model), so
         // neighbours keep their faces toward it and it casts no full-cube shadow.
-        flags: CHEST_FLAGS,
+        flags: CHEST_FLAGS.with(BlockFlags::DIRECTIONAL_VIEW),
         // [top, bottom, side] feeds only the inventory/held icon now (the placed block
         // is drawn from its own model). The icon overrides the front face via
         // render::block_model::block_icon_faces. Bottom reuses the side tile (the
@@ -1469,6 +1477,31 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         harvest_tier: 0,
         hardness: 0.0,
         drop: drops_self!(Torch),
+    },
+    BlockDef {
+        block: Block::FurnitureWorkbench,
+        // The first data-driven Blockbench block: chunk-meshed from its `.bbmodel`
+        // (geometry/texture/collision/selection all baked from the model, multi-cell
+        // footprint auto-split — see `block_model`), not the atlas.
+        shape: RenderShape::Model(BlockModelKind::FurnitureWorkbench),
+        // Collision is model-driven per cell — `Block::collision_boxes` / `World::
+        // collision_boxes_at` read it from the model, never this field.
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[],
+        behavior: &behavior::INERT,
+        flags: MODEL_FLAGS.with(BlockFlags::DIRECTIONAL_VIEW),
+        // [top, bottom, side] feeds only the inventory/held icon for now (the placed
+        // block draws from its model); reuse the crafting-table art as a stand-in.
+        tiles: [
+            Tile::CraftingTableTop,
+            Tile::OakPlanks,
+            Tile::CraftingTableFront,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 2.5,
+        drop: drops_self!(FurnitureWorkbench),
     },
 ];
 

@@ -7,22 +7,23 @@ use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 mod dynamic_draw;
+mod icon_atlas;
 mod lod;
 
 use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
+use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
 
 use super::block_model::BillboardBasis;
-use crate::bbmodel::Model;
 use super::break_overlay::build_break_overlay;
+use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
-use super::chest_model::build_chests;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
-use super::particles::build_particles;
+use super::particles::build_particles_split;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
     create_atlas, create_depth, create_gui_atlas, create_model_texture, upload_mesh, GpuMesh,
@@ -35,6 +36,7 @@ use super::{
     BreakOverlayView, ChestInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleInstance, UiFrame,
 };
+use crate::bbmodel::Model;
 use crate::inventory::TOTAL_SLOTS;
 use crate::item::ItemType;
 
@@ -157,11 +159,10 @@ pub struct Renderer {
     pub uniform_buf: wgpu::Buffer,
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
-    /// model3d pipeline (iso slot icons, depthless UI pass): per-draw MVP via a
-    /// dynamic-offset uniform + the block atlas, full-bright, no depth.
-    pub model3d_pipe: wgpu::RenderPipeline,
     /// Depth-enabled model3d variant for the first-person held block in the hand
     /// pass (same shader; the hand pass clears depth so the held block self-sorts).
+    /// (The depthless `model3d_pipe` is now used only to bake the icon atlas at init,
+    /// so it isn't stored here.)
     pub model3d_hand_pipe: wgpu::RenderPipeline,
     /// Dynamic-offset MVP uniform buffer (256-byte slots); slot 0 is the hand.
     pub model3d_mvp_buf: wgpu::Buffer,
@@ -180,6 +181,9 @@ pub struct Renderer {
     item3d_verts: Vec<super::item_model::ItemVertex>,
     /// Vertex count of the extruded held item uploaded this frame (0 = none).
     item3d_vertex_count: u32,
+    /// True when this frame's item3d geometry is a held bbmodel block (drawn with the
+    /// MODEL atlas) rather than an extruded sprite (the block atlas).
+    held_is_model: bool,
     /// Index count of the hand geometry uploaded for this frame (0 = nothing).
     hand_index_count: u32,
     /// Vertex count of the hand geometry (icons are appended after it in the
@@ -202,6 +206,23 @@ pub struct Renderer {
     /// order). Built once from `mob::MOB_DEFS`; each frame the visible mobs are
     /// grouped here by species, baked, and drawn in the mob pass.
     mob_gpu: Vec<MobGpu>,
+    /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
+    /// pass plus the combined model atlas bound at group(1). The geometry itself lives
+    /// in each chunk's `GpuMesh::model_*` (baked by the mesher), so there's no per-frame
+    /// model bake — the model pass just draws the chunks' model streams.
+    model_pipe: wgpu::RenderPipeline,
+    #[allow(dead_code)]
+    model_atlas_texture: wgpu::Texture,
+    #[allow(dead_code)]
+    model_atlas_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    model_atlas_sampler: wgpu::Sampler,
+    model_atlas_bind: wgpu::BindGroup,
+    /// Dropped bbmodel item-entities (world-space ItemVertex, model atlas), drawn by the
+    /// model pipeline in the model pass — the explicit-UV counterpart of `item_entity_draw`.
+    item_model_entity_draw: DynamicDraw,
+    item_model_entity_verts: Vec<super::item_model::ItemVertex>,
+    item_model_entity_indices: Vec<u32>,
     /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
     /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
     particle_draw: DynamicVertexDraw,
@@ -233,8 +254,14 @@ pub struct Renderer {
     held_item_warm: u8,
     /// Dropped item-entities to draw in the world this frame.
     pub item_entities: Vec<ItemEntityInstance>,
-    /// Particle billboards to draw this frame.
+    /// Block-atlas particle cubes to draw this frame.
     pub particles: Vec<ParticleInstance>,
+    /// Model-atlas particle cubes (bbmodel-block flecks) to draw this frame — baked into
+    /// the SAME particle vbuf after the block cubes, then drawn with the model atlas bound.
+    pub model_particles: Vec<ParticleInstance>,
+    /// Vertex count of the BLOCK-atlas portion of `particle_draw` this frame (the split
+    /// point: `[0..this)` draws with the block atlas, the rest with the model atlas).
+    particle_block_vertex_count: u32,
     /// Snapshot of the UI/inventory to draw (owned, no borrow held).
     pub ui: UiSnapshot,
     /// Camera right/up basis for world-space billboards (item sprites + particles),
@@ -261,29 +288,26 @@ pub struct Renderer {
     pub ui_pipe: wgpu::RenderPipeline,
     pub ui_bind: wgpu::BindGroup,
     pub ui_vbuf: wgpu::Buffer,
+    /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
+    /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
+    /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
+    icon_atlas: IconAtlas,
+    /// Reusable dynamic vbuf for the per-frame icon QUADS (two triangles per filled
+    /// slot, sampling the icon atlas). Grown to fit if a frame ever exceeds it (never
+    /// a hard cap that would drop the whole batch).
+    icon_quad_vbuf: wgpu::Buffer,
+    /// Reusable CPU staging for the per-frame icon-quad vertices (cleared + refilled,
+    /// capacity retained — no per-frame allocation).
+    icon_quad_verts: Vec<UiVertex>,
+    /// Vertex count of the icon quads uploaded this frame (`0` = no icons).
+    icon_quad_vertex_count: u32,
     /// Reusable CPU staging for the per-frame UI geometry (gui quads + per-slot
-    /// icon draws + digit overlay quads), cleared + refilled each frame.
+    /// icon quads + digit overlay quads), cleared + refilled each frame.
     ui_build: UiBuild,
     /// Vertex count of the gui-quad background uploaded this frame (offset 0).
     ui_bg_vertex_count: u32,
     /// Vertex count of the digit-overlay quads uploaded this frame (after the bg).
     ui_overlay_vertex_count: u32,
-    /// Per-slot icon draws for the UI pass this frame. Each references a 256-aligned
-    /// MVP slot in `model3d_mvp_buf` and an index range in the shared model3d ibuf
-    /// (appended after the hand geometry, so `base_vertex` starts past the hand).
-    ui_icons: Vec<UiIconDraw>,
-}
-
-/// A baked UI icon's draw parameters for the UI pass: which model3d MVP slot holds
-/// its transform, and where its geometry lives in the shared model3d index/vertex
-/// buffers (appended after the hand each frame).
-#[derive(Copy, Clone, Debug)]
-struct UiIconDraw {
-    /// 256-byte dynamic offset into `model3d_mvp_buf` (slot index × 256).
-    mvp_offset: u32,
-    index_start: u32,
-    index_count: u32,
-    base_vertex: i32,
 }
 
 /// Begin one render pass with a single color attachment over `view` and an
@@ -316,15 +340,13 @@ fn color_depth_pass<'a>(
                 store: wgpu::StoreOp::Store,
             },
         })],
-        depth_stencil_attachment: depth_load.map(|load| {
-            wgpu::RenderPassDepthStencilAttachment {
-                view: depth,
-                depth_ops: Some(wgpu::Operations {
-                    load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }
+        depth_stencil_attachment: depth_load.map(|load| wgpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
         }),
         timestamp_writes: None,
         occlusion_query_set: None,
@@ -514,6 +536,74 @@ async fn new_renderer_inner(
         })
         .collect();
 
+    // bbmodel-block ("model") render resources: the combined model atlas (all kinds'
+    // textures packed into one sheet — see `block_model::atlas`) uploaded as its own GPU
+    // texture, bound at group(1) over the same atlas layout the mob pass uses, and the
+    // mob pipeline reused for the model pass (the chunk's `ModelVertex` stream shares the
+    // mob `ItemVertex` layout). The mesher bakes geometry into each chunk's model stream;
+    // this pass just draws it with full-block lighting already baked in.
+    let model_atlas = crate::block_model::atlas();
+    let (matlas_rgba, matlas_w, matlas_h) = model_atlas.texture();
+    let (model_atlas_texture, model_atlas_view, model_atlas_sampler) =
+        create_model_texture(&device, &queue, matlas_rgba, matlas_w, matlas_h);
+    let model_atlas_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("model atlas bg"),
+        layout: &pipelines.atlas_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&model_atlas_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&model_atlas_sampler),
+            },
+        ],
+    });
+    let model_pipe = pipelines.mob_pipe.clone();
+    // Dropped bbmodel item-entities ride the model pipeline (world-space ItemVertex,
+    // model atlas) in their OWN buffers, sized like the packed item-entity buffers.
+    let item_model_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("item model entity vbuf"),
+        size: super::pipeline::MAX_MOB_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let item_model_entity_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("item model entity ibuf"),
+        size: super::pipeline::MAX_MOB_INDICES * 4,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Bake every item's inventory icon into the icon atlas ONCE, here at init: the
+    // cube/sprite icons through the depthless `model3d_pipe` and the bbmodel-block
+    // icons through the depth-tested `model_icon_pipe` (these two pipelines are used
+    // only by this bake now — see `icon_atlas`). The atlas color format MUST match
+    // the surface (sRGB) so sampling/store cancel like the gui atlas (no double
+    // gamma). The per-slot UI pass then draws a textured quad sampling this.
+    let icon_atlas = icon_atlas::bake(
+        &device,
+        &queue,
+        format,
+        &pipelines.atlas_bgl,
+        &pipelines.atlas_bind,
+        &model_atlas_bind,
+        &pipelines.model3d_pipe,
+        &pipelines.model_icon_pipe,
+        &pipelines.model3d_mvp_bgl,
+        &pipelines.uv_rects_buf,
+    );
+    // Reusable dynamic vbuf for the per-frame icon quads (6 UiVertex per filled
+    // slot). Sized for the open inventory + craft/chest slots with headroom; grown
+    // to fit if ever exceeded (never a hard cap that drops the batch).
+    let icon_quad_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("icon quad vbuf"),
+        size: super::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     Renderer {
         surface,
         device,
@@ -542,7 +632,6 @@ async fn new_renderer_inner(
         uniform_buf,
         uniform_bind: pipelines.uniform_bind,
         atlas_bind: pipelines.atlas_bind,
-        model3d_pipe: pipelines.model3d_pipe,
         model3d_hand_pipe: pipelines.model3d_hand_pipe,
         model3d_mvp_buf: pipelines.model3d_mvp_buf,
         model3d_mvp_bind: pipelines.model3d_mvp_bind,
@@ -553,6 +642,7 @@ async fn new_renderer_inner(
         item3d_vbuf: pipelines.item3d_vbuf,
         item3d_verts: Vec::new(),
         item3d_vertex_count: 0,
+        held_is_model: false,
         hand_index_count: 0,
         hand_verts: Vec::new(),
         hand_indices: Vec::new(),
@@ -578,6 +668,20 @@ async fn new_renderer_inner(
             super::pipeline::MAX_CHEST_INDICES,
         ),
         mob_gpu,
+        model_pipe: model_pipe.clone(),
+        model_atlas_texture,
+        model_atlas_view,
+        model_atlas_sampler,
+        model_atlas_bind,
+        item_model_entity_draw: DynamicDraw::new(
+            model_pipe,
+            item_model_entity_vbuf,
+            item_model_entity_ibuf,
+            super::pipeline::MAX_MOB_VERTICES,
+            super::pipeline::MAX_MOB_INDICES,
+        ),
+        item_model_entity_verts: Vec::new(),
+        item_model_entity_indices: Vec::new(),
         particle_draw: DynamicVertexDraw::new(
             pipelines.particle_pipe,
             pipelines.particle_vbuf,
@@ -599,6 +703,8 @@ async fn new_renderer_inner(
         held_item_warm: 0,
         item_entities: Vec::new(),
         particles: Vec::new(),
+        model_particles: Vec::new(),
+        particle_block_vertex_count: 0,
         ui: UiSnapshot::default(),
         billboard_basis: BillboardBasis {
             right: glam::Vec3::X,
@@ -614,16 +720,17 @@ async fn new_renderer_inner(
         ui_pipe: pipelines.ui_pipe,
         ui_bind: pipelines.ui_bind,
         ui_vbuf: pipelines.ui_vbuf,
+        icon_atlas,
+        icon_quad_vbuf,
+        icon_quad_verts: Vec::new(),
+        icon_quad_vertex_count: 0,
         ui_build: UiBuild {
             verts: Vec::new(),
-            icons: Vec::new(),
-            icon_verts: Vec::new(),
-            icon_indices: Vec::new(),
+            icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
         },
         ui_bg_vertex_count: 0,
         ui_overlay_vertex_count: 0,
-        ui_icons: Vec::new(),
         hand_vertex_count: 0,
     }
 }
@@ -728,10 +835,18 @@ impl Renderer {
         self.mobs.extend_from_slice(v);
     }
 
-    /// Store the particle billboards to draw this frame. Reuses capacity.
+    /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
     pub fn set_particles(&mut self, v: &[ParticleInstance]) {
         self.particles.clear();
         self.particles.extend_from_slice(v);
+    }
+
+    /// Store the model-atlas particle cubes (bbmodel-block flecks) for this frame; they
+    /// bake into the same particle vbuf after the block cubes and draw with the model
+    /// atlas bound. Reuses capacity.
+    pub fn set_model_particles(&mut self, v: &[ParticleInstance]) {
+        self.model_particles.clear();
+        self.model_particles.extend_from_slice(v);
     }
 
     /// Snapshot the UI/inventory bits needed for this frame's UI pass. Extracts
@@ -788,19 +903,17 @@ impl Renderer {
         self.section_visibility.update(world, self.cam_pos);
     }
 
-    /// Build + upload this frame's UI geometry. Called from `render` after the hand
-    /// is uploaded (icons are appended into the SAME model3d vbuf/ibuf after the
-    /// hand). Fills:
+    /// Build + upload this frame's UI geometry. Fills:
     /// - `ui_vbuf`: gui-atlas quads — the background sprites/fills at offset 0
     ///   (`ui_bg_vertex_count` verts) then the digit-overlay quads right after
     ///   (`ui_overlay_vertex_count` verts).
-    /// - `model3d_vbuf` / `model3d_ibuf`: per-slot icon geometry appended past the
-    ///   hand (`hand_vertex_count` / `hand_index_count`).
-    /// - `model3d_mvp_buf`: each icon's MVP in its own 256-aligned slot (1..N).
+    /// - `icon_quad_vbuf`: one textured quad per filled slot (`icon_quad_vertex_count`
+    ///   verts), each sampling its item's pre-baked icon-atlas cell — no per-frame 3D
+    ///   icon geometry. Slot rect → NDC, cell rect → uv, white tint.
     fn build_ui_frame(&mut self) {
         self.ui_bg_vertex_count = 0;
         self.ui_overlay_vertex_count = 0;
-        self.ui_icons.clear();
+        self.icon_quad_vertex_count = 0;
 
         // Disjoint-field borrow: `build_ui` reads the snapshot and writes the
         // scratch `UiBuild`, both distinct from the GPU buffers used below.
@@ -823,65 +936,48 @@ impl Renderer {
             self.ui_overlay_vertex_count = overlay.len() as u32;
         }
 
-        // Per-slot icons: ALL icon geometry sits in the shared, reused
-        // `ui_build.icon_verts`/`icon_indices` (cleared + refilled by `build_ui`,
-        // no per-icon allocation). The indices are global within `icon_verts`, so
-        // the whole accepted prefix is one contiguous block appended after the hand
-        // in the model3d vbuf/ibuf; each icon draws its index sub-range with a
-        // shared `base_vertex` (the offset of the icon block past the hand).
-        let vstride = std::mem::size_of::<crate::mesh::Vertex>() as u64;
-        let vcap = super::pipeline::MAX_MODEL3D_VERTICES;
-        let icap = super::pipeline::MAX_MODEL3D_INDICES;
-        let slot_size = super::pipeline::MODEL3D_MVP_SLOT_SIZE;
-        let max_slots = super::pipeline::MODEL3D_MVP_SLOTS;
-        let vbase = self.hand_vertex_count as u64; // verts already used by the hand
-        let ibase = self.hand_index_count as u64; // indices already used by the hand
-                                                  // Decide which leading icons fit (vbuf/ibuf capacity + MVP slot count).
-                                                  // `icon_verts`/`icon_indices` are filled in icon order, so the fitting set
-                                                  // is always a prefix and its geometry is a contiguous slice.
-        let mut fit = 0usize;
-        for (i, icon) in self.ui_build.icons.iter().enumerate() {
-            let slot = (i + 1) as u64; // MVP slot 0 is the hand; icons use 1..
-            if slot >= max_slots {
-                break;
-            }
-            let v_end = vbase + (icon.vert_start + icon.vert_count) as u64;
-            let i_end = ibase + (icon.index_start + icon.index_count) as u64;
-            if v_end > vcap || i_end > icap {
-                break;
-            }
-            fit = i + 1;
-        }
-        if fit > 0 {
-            let last = &self.ui_build.icons[fit - 1];
-            let nv = (last.vert_start + last.vert_count) as usize;
-            let ni = (last.index_start + last.index_count) as usize;
-            // One batch upload of the accepted icon-geometry prefix past the hand.
-            self.queue.write_buffer(
-                &self.model3d_vbuf,
-                vbase * vstride,
-                bytemuck::cast_slice(&self.ui_build.icon_verts[..nv]),
-            );
-            self.queue.write_buffer(
-                &self.model3d_ibuf,
-                ibase * 4,
-                bytemuck::cast_slice(&self.ui_build.icon_indices[..ni]),
-            );
-            for (i, icon) in self.ui_build.icons[..fit].iter().enumerate() {
-                let slot = (i + 1) as u64;
-                self.queue.write_buffer(
-                    &self.model3d_mvp_buf,
-                    slot * slot_size,
-                    bytemuck::cast_slice(&icon.mvp.to_cols_array()),
+        // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's
+        // pre-baked icon-atlas cell and emit a textured quad (6 verts) — slot rect →
+        // NDC, cell rect → uv, white tint (so the quad samples the atlas, not the solid
+        // sentinel). The whole batch is one draw in the UI pass.
+        let screen = self.ui.screen;
+        let mut verts = std::mem::take(&mut self.icon_quad_verts);
+        verts.clear();
+        if screen.0 != 0 && screen.1 != 0 {
+            for &(item, r) in &self.ui_build.icon_quads {
+                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
+                super::ui::push_quad_uv(
+                    &mut verts,
+                    screen,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h,
+                    [u0, v0],
+                    [u1, v1],
+                    [1.0, 1.0, 1.0, 1.0],
                 );
-                self.ui_icons.push(UiIconDraw {
-                    mvp_offset: (slot * slot_size) as u32,
-                    index_start: ibase as u32 + icon.index_start,
-                    index_count: icon.index_count,
-                    base_vertex: vbase as i32,
+            }
+        }
+        if !verts.is_empty() {
+            // Icon-quad geometry is bounded by the visible slots but GROW the buffer to
+            // fit rather than capping — a fixed cap that drops the batch when exceeded
+            // would blank EVERY icon at once. Grow to the next power of two so it
+            // doesn't reallocate every frame.
+            let bytes = bytemuck::cast_slice::<_, u8>(verts.as_slice()).len() as u64;
+            if bytes > self.icon_quad_vbuf.size() {
+                self.icon_quad_vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("icon quad vbuf"),
+                    size: bytes.next_power_of_two(),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
                 });
             }
+            self.queue
+                .write_buffer(&self.icon_quad_vbuf, 0, bytemuck::cast_slice(&verts));
+            self.icon_quad_vertex_count = verts.len() as u32;
         }
+        self.icon_quad_verts = verts;
     }
 
     pub fn render(&mut self) {
@@ -972,13 +1068,47 @@ impl Renderer {
         // its MVP reuses slot 0 of `model3d_mvp_buf`. The item3d vbuf is rewritten
         // in place (no per-frame allocation beyond capacity).
         self.item3d_vertex_count = 0;
+        self.held_is_model = false;
         {
             let aspect = if self.config.height > 0 {
                 self.config.width as f32 / self.config.height as f32
             } else {
                 1.0
             };
-            if let Some((tile, mvp)) = super::hand::held_sprite(&self.held_item, aspect) {
+            if let Some((kind, mvp)) = super::hand::held_model(&self.held_item, aspect) {
+                // A held bbmodel block: bake its real model (model atlas) into the item3d
+                // vbuf and draw it through the item3d pipeline bound to the MODEL atlas.
+                // item3d is non-indexed, so expand the baked indexed mesh to a triangle
+                // list. Mutually exclusive with a held sprite (one render kind).
+                let mut iv = std::mem::take(&mut self.item3d_verts);
+                iv.clear();
+                let (mut tv, mut ti) = (Vec::new(), Vec::new());
+                super::item_model::build_block_model_item(
+                    kind,
+                    glam::Mat4::IDENTITY,
+                    self.held_item_skylight,
+                    self.held_item_warm,
+                    None,
+                    &mut tv,
+                    &mut ti,
+                );
+                for &idx in &ti {
+                    iv.push(tv[idx as usize]);
+                }
+                let cap = super::pipeline::MAX_ITEM3D_VERTICES as usize;
+                if !iv.is_empty() && iv.len() <= cap {
+                    self.queue
+                        .write_buffer(&self.item3d_vbuf, 0, bytemuck::cast_slice(&iv));
+                    self.queue.write_buffer(
+                        &self.model3d_mvp_buf,
+                        0,
+                        bytemuck::cast_slice(&mvp.to_cols_array()),
+                    );
+                    self.item3d_vertex_count = iv.len() as u32;
+                    self.held_is_model = true;
+                }
+                self.item3d_verts = iv;
+            } else if let Some((tile, mvp)) = super::hand::held_sprite(&self.held_item, aspect) {
                 let mut iv = std::mem::take(&mut self.item3d_verts);
                 let count = super::item_model::build_extruded_item_lit(
                     tile,
@@ -1011,11 +1141,9 @@ impl Renderer {
         }
 
         // Build the UI geometry for this frame: gui-atlas quads (background +
-        // digit overlay) into the UI vbuf, and the per-slot item icons appended
-        // into the SHARED model3d vbuf/ibuf AFTER the hand geometry. Each icon's
-        // MVP is written into its own 256-aligned slot of `model3d_mvp_buf`
-        // (slot 0 is the hand; icons take slots 1..). All buffers are rewritten in
-        // place — capacity is retained across frames.
+        // digit overlay) into the UI vbuf, and one textured quad per filled slot
+        // (sampling the pre-baked icon atlas) into the icon-quad vbuf. All buffers
+        // are rewritten in place — capacity is retained across frames.
         self.build_ui_frame();
 
         // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
@@ -1045,6 +1173,14 @@ impl Renderer {
             &mut self.item_entity_verts,
             &mut self.item_entity_indices,
             |verts, indices| build_item_entities(visible, basis, verts, indices),
+        );
+        // Dropped bbmodel items (their own model atlas), baked from the same visible set.
+        let visible = &self.item_entity_visible;
+        self.item_model_entity_draw.bake(
+            &self.queue,
+            &mut self.item_model_entity_verts,
+            &mut self.item_model_entity_indices,
+            |verts, indices| super::item_entity::build_item_model_entities(visible, verts, indices),
         );
 
         // Chests (inset body + hinged lid), frustum-culled like item entities and
@@ -1094,9 +1230,10 @@ impl Renderer {
             let model = g.model;
             let scale = g.scale;
             let visible = &g.visible;
-            g.draw.bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
-                build_mob_instances(model, scale, visible, verts, indices)
-            });
+            g.draw
+                .bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
+                    build_mob_instances(model, scale, visible, verts, indices)
+                });
         }
 
         // Break-overlay (destroy crack) cube, when a block is targeted.
@@ -1115,12 +1252,23 @@ impl Renderer {
             },
         );
 
-        // Tiny 3D particle cubes into the reusable vbuf (static quad ibuf).
+        // Tiny 3D particle cubes into the reusable vbuf (static quad ibuf): block-atlas
+        // flecks first, then bbmodel-block (model-atlas) flecks, so the draw splits at one
+        // contiguous index boundary (`particle_block_vertex_count`).
         let particles = &self.particles;
+        let model_particles = &self.model_particles;
+        let mut block_v = 0u32;
         self.particle_draw
             .bake(&self.queue, &mut self.particle_verts, |verts| {
-                build_particles(particles, verts)
+                let (total, nb) = build_particles_split(particles, model_particles, verts);
+                block_v = nb;
+                total
             });
+        self.particle_block_vertex_count = if self.particle_draw.vertex_count == 0 {
+            0
+        } else {
+            block_v
+        };
 
         let mut enc = self
             .device
@@ -1141,6 +1289,10 @@ impl Renderer {
         // draw loops look the mesh up by key. Cleared + refilled, capacity retained.
         let mut order = std::mem::take(&mut self.draw_order);
         order.clear();
+        // Whether any VISIBLE chunk carries model geometry — folded into the draw-order
+        // walk so the model pass needs no separate scan over all loaded chunks to decide
+        // whether to run (and never opens an empty pass for off-screen model blocks).
+        let mut any_model_visible = false;
         for gm in self.chunk_meshes.values() {
             if !self.chunk_visible(gm) {
                 continue;
@@ -1149,6 +1301,7 @@ impl Renderer {
             if section_culling_active && self.section_visibility.chunk_mask(gm.pos).is_none() {
                 continue;
             }
+            any_model_visible |= gm.model_idx_count > 0;
             let (ox, oz) = gm.origin;
             let c = glam::Vec3::new(ox as f32 + 8.0, CHUNK_SY as f32 * 0.5, oz as f32 + 8.0);
             order.push(((cam - c).length_squared(), gm.pos));
@@ -1242,6 +1395,37 @@ impl Renderer {
                 }
             }
         }
+        // MODEL PASS: bbmodel-block geometry (explicit-UV, sampling the model atlas),
+        // drawn per visible chunk with the mob pipeline (own texture + the same
+        // underwater/fog the world uses) over depth from the opaque pass — so a placed
+        // model occludes and is occluded by terrain like any block. Most chunks have no
+        // model geometry, so this is usually a no-op loop.
+        if any_model_visible || self.item_model_entity_draw.index_count > 0 {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "model pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
+            pass.set_pipeline(&self.model_pipe);
+            for (_, pos) in order.iter() {
+                let gm = &self.chunk_meshes[pos];
+                if gm.model_idx_count == 0 {
+                    continue;
+                }
+                if let (Some(vb), Some(ib)) = (&gm.model_vbuf, &gm.model_ibuf) {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..gm.model_idx_count, 0, 0..1);
+                }
+            }
+            // Dropped bbmodel items (world-space, same model atlas + pipeline).
+            self.item_model_entity_draw.draw(&mut pass);
+        }
         // ITEM-ENTITY PASS (§8 2b): dropped items as full-bright spinning cubes /
         // sprite billboards, drawn by the EXISTING opaque pipeline (no new
         // pipeline) with the SAME uniform + atlas binds. Load color + depth,
@@ -1328,9 +1512,11 @@ impl Renderer {
         // submerged) while ones in front of the water still occlude it. Reuses
         // uniform_bind + atlas_bind. 24 verts / 36 indices per cube.
         if self.particle_draw.vertex_count > 0 {
-            let index_count = self.particle_draw.vertex_count
-                / super::particles::VERTS_PER_CUBE as u32
-                * super::particles::INDICES_PER_CUBE as u32;
+            let verts_per_cube = super::particles::VERTS_PER_CUBE as u32;
+            let idx_per_cube = super::particles::INDICES_PER_CUBE as u32;
+            // Cube boundaries: block flecks occupy [0..block_cubes), model flecks the rest.
+            let total_cubes = self.particle_draw.vertex_count / verts_per_cube;
+            let block_cubes = self.particle_block_vertex_count / verts_per_cube;
             let mut pass = color_depth_pass(
                 &mut enc,
                 &view,
@@ -1340,8 +1526,26 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.particle_draw.draw(&mut pass, index_count);
+            // Block-atlas flecks: the leading index range via the standard draw.
+            if block_cubes > 0 {
+                pass.set_bind_group(1, &self.atlas_bind, &[]);
+                self.particle_draw
+                    .draw(&mut pass, block_cubes * idx_per_cube);
+            }
+            // Model-atlas flecks (bbmodel blocks): the trailing index range, same vbuf with
+            // the model atlas bound. Indices are absolute into the shared vbuf, so no base-
+            // vertex offset is needed.
+            if total_cubes > block_cubes {
+                pass.set_bind_group(1, &self.model_atlas_bind, &[]);
+                pass.set_pipeline(&self.particle_draw.pipeline);
+                pass.set_vertex_buffer(0, self.particle_draw.vbuf.slice(..));
+                pass.set_index_buffer(self.particle_draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(
+                    block_cubes * idx_per_cube..total_cubes * idx_per_cube,
+                    0,
+                    0..1,
+                );
+            }
         }
         // TRANSPARENT PASS: water, far→near for correct back-to-front alpha. Loads
         // color + depth; depth test (no write) so it sorts behind solids.
@@ -1441,11 +1645,17 @@ impl Renderer {
                 pass.set_index_buffer(self.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..self.hand_index_count, 0, 0..1);
             }
-            // Extruded held sprite (item3d, non-indexed triangle list).
+            // Extruded held sprite (block atlas) OR a held bbmodel block (model atlas) —
+            // both ride the item3d pipeline (non-indexed triangle list, depth-tested).
             if self.item3d_vertex_count > 0 {
                 pass.set_pipeline(&self.item3d_pipe);
                 pass.set_bind_group(0, &self.item3d_mvp_bind, &[0]);
-                pass.set_bind_group(1, &self.atlas_bind, &[]);
+                let atlas = if self.held_is_model {
+                    &self.model_atlas_bind
+                } else {
+                    &self.atlas_bind
+                };
+                pass.set_bind_group(1, atlas, &[]);
                 pass.set_vertex_buffer(0, self.item3d_vbuf.slice(..));
                 pass.draw(0..self.item3d_vertex_count, 0..1);
             }
@@ -1464,13 +1674,12 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
             pass.draw(0..self.crosshair_vertex_count, 0..1);
         }
-        // UI PASS (§8 5b): the LAST pass — hotbar / open inventory / slot icons /
-        // digits / drag cursor. Its OWN alpha blend, NO depth; it must not inherit
-        // the crosshair invert blend (separate pipeline + render pass). Within the
-        // one pass we interleave: gui-atlas background quads (ui_pipe), then the
-        // per-slot 3D item icons (model3d_pipe, painting over the slots), then the
-        // gui-atlas digit overlay (ui_pipe, painting over the icons).
-        if self.ui_bg_vertex_count > 0 || !self.ui_icons.is_empty() {
+        // UI PASS (§8 5b): hotbar / open inventory background + the per-slot item
+        // icons, both via `ui_pipe`. Its OWN alpha blend, NO depth; it must not
+        // inherit the crosshair invert blend (separate pass). The icons are now 2D
+        // quads sampling the pre-baked icon atlas (one bind, one draw) rather than
+        // live 3D geometry; the digit overlay follows in its own pass on top.
+        if self.ui_bg_vertex_count > 0 || self.icon_quad_vertex_count > 0 {
             let mut pass = color_depth_pass(
                 &mut enc,
                 &view,
@@ -1479,39 +1688,39 @@ impl Renderer {
                 wgpu::LoadOp::Load,
                 None,
             );
+            pass.set_pipeline(&self.ui_pipe);
             // 1) gui-atlas background (hotbar / panel / selection / dim).
             if self.ui_bg_vertex_count > 0 {
-                pass.set_pipeline(&self.ui_pipe);
                 pass.set_bind_group(0, &self.ui_bind, &[]);
                 pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
                 pass.draw(0..self.ui_bg_vertex_count, 0..1);
             }
-            // 2) per-slot 3D item icons (model3d pipeline + block atlas + per-icon
-            //    dynamic-offset MVP). Painted over the gui background.
-            if !self.ui_icons.is_empty() {
-                pass.set_pipeline(&self.model3d_pipe);
-                pass.set_bind_group(1, &self.atlas_bind, &[]);
-                pass.set_vertex_buffer(0, self.model3d_vbuf.slice(..));
-                pass.set_index_buffer(self.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                for icon in &self.ui_icons {
-                    pass.set_bind_group(0, &self.model3d_mvp_bind, &[icon.mvp_offset]);
-                    pass.draw_indexed(
-                        icon.index_start..icon.index_start + icon.index_count,
-                        icon.base_vertex,
-                        0..1,
-                    );
-                }
+            // 2) per-slot item icons: textured quads sampling the icon atlas, painted
+            //    over the gui background. One bind + one draw for the whole batch.
+            if self.icon_quad_vertex_count > 0 {
+                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
+                pass.draw(0..self.icon_quad_vertex_count, 0..1);
             }
-            // 3) gui-atlas digit overlay (counts + drag-count), over the icons.
-            if self.ui_overlay_vertex_count > 0 {
-                pass.set_pipeline(&self.ui_pipe);
-                pass.set_bind_group(0, &self.ui_bind, &[]);
-                pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
-                pass.draw(
-                    self.ui_bg_vertex_count..self.ui_bg_vertex_count + self.ui_overlay_vertex_count,
-                    0..1,
-                );
-            }
+        }
+        // UI OVERLAY PASS: gui-atlas digit overlay (stack counts + drag-count), over the
+        // icons. Depthless, after the UI pass so digits read on top.
+        if self.ui_overlay_vertex_count > 0 {
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "ui overlay pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
+            pass.set_pipeline(&self.ui_pipe);
+            pass.set_bind_group(0, &self.ui_bind, &[]);
+            pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
+            pass.draw(
+                self.ui_bg_vertex_count..self.ui_bg_vertex_count + self.ui_overlay_vertex_count,
+                0..1,
+            );
         }
         self.queue.submit(std::iter::once(enc.finish()));
         self.last_stats = stats;

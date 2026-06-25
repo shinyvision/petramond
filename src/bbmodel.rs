@@ -170,11 +170,23 @@ impl Model {
         let mut bone_by_uuid: HashMap<String, usize> = HashMap::new();
         if let Some(groups) = root.get("groups").and_then(Value::as_array) {
             for g in groups {
-                let uuid = g.get("uuid").and_then(Value::as_str).unwrap_or("").to_string();
+                let uuid = g
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let pivot = arr3(g.get("origin")).unwrap_or(Vec3::ZERO);
-                let name = g.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                let name = g
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 bone_by_uuid.insert(uuid, bones.len());
-                bones.push(Bone { name, pivot, parent: None });
+                bones.push(Bone {
+                    name,
+                    pivot,
+                    parent: None,
+                });
             }
         }
 
@@ -191,9 +203,20 @@ impl Model {
                 let origin = arr3(e.get("origin")).unwrap_or(from);
                 let rotation = arr3(e.get("rotation")).unwrap_or(Vec3::ZERO);
                 let faces = parse_faces(e.get("faces"), uv_w, uv_h);
-                let uuid = e.get("uuid").and_then(Value::as_str).unwrap_or("").to_string();
+                let uuid = e
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 cube_by_uuid.insert(uuid, cubes.len());
-                cubes.push(Cube { from, to, origin, rotation, bone: usize::MAX, faces });
+                cubes.push(Cube {
+                    from,
+                    to,
+                    origin,
+                    rotation,
+                    bone: usize::MAX,
+                    faces,
+                });
             }
         }
 
@@ -201,7 +224,14 @@ impl Model {
         // bone. Top-level nodes have no parent.
         if let Some(outliner) = root.get("outliner").and_then(Value::as_array) {
             for node in outliner {
-                walk_outliner(node, None, &bone_by_uuid, &cube_by_uuid, &mut bones, &mut cubes);
+                walk_outliner(
+                    node,
+                    None,
+                    &bone_by_uuid,
+                    &cube_by_uuid,
+                    &mut bones,
+                    &mut cubes,
+                );
             }
         }
 
@@ -209,7 +239,11 @@ impl Model {
         // model) gets a synthetic identity root bone so it still renders.
         if cubes.iter().any(|c| c.bone == usize::MAX) {
             let fallback = bones.len();
-            bones.push(Bone { name: "<root>".into(), pivot: Vec3::ZERO, parent: None });
+            bones.push(Bone {
+                name: "<root>".into(),
+                pivot: Vec3::ZERO,
+                parent: None,
+            });
             for c in cubes.iter_mut().filter(|c| c.bone == usize::MAX) {
                 c.bone = fallback;
             }
@@ -279,7 +313,10 @@ impl Model {
         for i in 0..self.bones.len() {
             self.resolve_world(i, &local, &mut world);
         }
-        world.into_iter().map(|m| m.unwrap_or(Mat4::IDENTITY)).collect()
+        world
+            .into_iter()
+            .map(|m| m.unwrap_or(Mat4::IDENTITY))
+            .collect()
     }
 
     fn resolve_world(&self, i: usize, local: &[Mat4], world: &mut [Option<Mat4>]) -> Mat4 {
@@ -360,7 +397,11 @@ fn parse_faces(faces: Option<&Value>, uv_w: f32, uv_h: f32) -> [Option<[f32; 4]>
     let mut out = [None; 6];
     let Some(faces) = faces else { return out };
     for (name, slot) in NAMES {
-        if let Some(uv) = faces.get(name).and_then(|f| f.get("uv")).and_then(Value::as_array) {
+        if let Some(uv) = faces
+            .get(name)
+            .and_then(|f| f.get("uv"))
+            .and_then(Value::as_array)
+        {
             if uv.len() == 4 {
                 let v: Vec<f32> = uv.iter().filter_map(num).collect();
                 if v.len() == 4 {
@@ -376,13 +417,20 @@ fn parse_faces(faces: Option<&Value>, uv_w: f32, uv_h: f32) -> [Option<[f32; 4]>
 
 /// Parse the `animations` array into named [`Animation`]s with per-bone rotation
 /// tracks. Animators are keyed by group uuid -> bone index.
-fn parse_animations(root: &Value, bone_by_uuid: &HashMap<String, usize>) -> HashMap<String, Animation> {
+fn parse_animations(
+    root: &Value,
+    bone_by_uuid: &HashMap<String, usize>,
+) -> HashMap<String, Animation> {
     let mut out = HashMap::new();
     let Some(anims) = root.get("animations").and_then(Value::as_array) else {
         return out;
     };
     for a in anims {
-        let name = a.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+        let name = a
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let length = a.get("length").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         // Blockbench loop modes: "loop" loops; "once"/"hold" (or absent) play once.
         // Some formats store a bool. Anything but a looping signal counts as one-shot.
@@ -394,7 +442,9 @@ fn parse_animations(root: &Value, bone_by_uuid: &HashMap<String, usize>) -> Hash
         let mut tracks: HashMap<usize, Vec<Keyframe>> = HashMap::new();
         if let Some(animators) = a.get("animators").and_then(Value::as_object) {
             for (uuid, animator) in animators {
-                let Some(&bone) = bone_by_uuid.get(uuid) else { continue };
+                let Some(&bone) = bone_by_uuid.get(uuid) else {
+                    continue;
+                };
                 let Some(kfs) = animator.get("keyframes").and_then(Value::as_array) else {
                     continue;
                 };
@@ -418,7 +468,14 @@ fn parse_animations(root: &Value, bone_by_uuid: &HashMap<String, usize>) -> Hash
                 }
             }
         }
-        out.insert(name, Animation { length, looping, tracks });
+        out.insert(
+            name,
+            Animation {
+                length,
+                looping,
+                tracks,
+            },
+        );
     }
     out
 }
@@ -440,7 +497,11 @@ fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
         let (a, b) = (&w[0], &w[1]);
         if t >= a.time && t <= b.time {
             let span = b.time - a.time;
-            let f = if span > 1e-6 { (t - a.time) / span } else { 0.0 };
+            let f = if span > 1e-6 {
+                (t - a.time) / span
+            } else {
+                0.0
+            };
             return a.rot + (b.rot - a.rot) * f;
         }
     }
@@ -461,7 +522,11 @@ pub(crate) fn euler_quat(deg: Vec3) -> Quat {
 /// The UV divisor `(width, height)`: the texture's `uv_width`/`uv_height`, falling
 /// back to the project `resolution`, then 16.
 fn uv_resolution(root: &Value) -> (f32, f32) {
-    if let Some(tex) = root.get("textures").and_then(Value::as_array).and_then(|t| t.first()) {
+    if let Some(tex) = root
+        .get("textures")
+        .and_then(Value::as_array)
+        .and_then(|t| t.first())
+    {
         let w = tex.get("uv_width").and_then(Value::as_f64);
         let h = tex.get("uv_height").and_then(Value::as_f64);
         if let (Some(w), Some(h)) = (w, h) {
@@ -560,7 +625,10 @@ mod tests {
     use super::*;
 
     fn owl() -> Model {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/owl.bbmodel"
+        ));
         Model::load(src).expect("owl.bbmodel parses")
     }
 
@@ -597,7 +665,11 @@ mod tests {
     #[test]
     fn parses_cubes_bones_and_texture() {
         let m = owl();
-        assert_eq!(m.cubes.len(), 11, "head, beak, body, 2 wings, 2 legs, 2 feet, 2 tail");
+        assert_eq!(
+            m.cubes.len(),
+            11,
+            "head, beak, body, 2 wings, 2 legs, 2 feet, 2 tail"
+        );
         assert!(m.bones.len() >= 6, "owl/head/lwing/rwing/lleg/rleg bones");
         // Embedded 32x32 texture decodes to RGBA.
         assert_eq!((m.tex_w, m.tex_h), (32, 32));
@@ -618,7 +690,10 @@ mod tests {
         let walk = m.animation("walk").expect("walk animation");
         assert!((walk.length - 0.5).abs() < 1e-6);
         // At least the two legs are animated.
-        assert!(walk.tracks.len() >= 2, "legs (and head) have rotation tracks");
+        assert!(
+            walk.tracks.len() >= 2,
+            "legs (and head) have rotation tracks"
+        );
     }
 
     #[test]
@@ -675,7 +750,10 @@ mod tests {
         let at_end = m.pose(idle, idle.length);
         let past_end = m.pose(idle, idle.length * 3.0);
         for (x, y) in at_end.iter().zip(past_end.iter()) {
-            assert!(x.abs_diff_eq(*y, 1e-5), "one-shot pose holds the final frame, not loops");
+            assert!(
+                x.abs_diff_eq(*y, 1e-5),
+                "one-shot pose holds the final frame, not loops"
+            );
         }
     }
 
@@ -684,11 +762,24 @@ mod tests {
         let m = owl();
         assert!(m.head_bone().is_some(), "owl has a head bone");
         // `affects_bone`: the walk animation drives the leg bones (its whole purpose).
-        let lleg = m.bones.iter().position(|b| b.name == "lleg").expect("lleg bone");
-        assert!(m.animation("walk").unwrap().affects_bone(lleg), "walk animates the legs");
+        let lleg = m
+            .bones
+            .iter()
+            .position(|b| b.name == "lleg")
+            .expect("lleg bone");
+        assert!(
+            m.animation("walk").unwrap().affects_bone(lleg),
+            "walk animates the legs"
+        );
         // The owl ships idle_* animations, exposed by a stable index.
-        assert!(m.idle_animation(0).is_some(), "idle animations exposed by index");
-        assert!(m.idle_animation(999).is_none(), "out-of-range idle index is None");
+        assert!(
+            m.idle_animation(0).is_some(),
+            "idle animations exposed by index"
+        );
+        assert!(
+            m.idle_animation(999).is_none(),
+            "out-of-range idle index is None"
+        );
     }
 
     #[test]

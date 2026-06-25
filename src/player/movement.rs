@@ -124,8 +124,8 @@ impl Player {
         if self.is_spectator() || (delta.x == 0.0 && delta.z == 0.0) {
             return;
         }
-        let boxes =
-            |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)).collision_boxes();
+        // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
+        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         self.sweep_boxes(Axis::X, delta.x, &boxes);
         self.sweep_boxes(Axis::Z, delta.z, &boxes);
     }
@@ -135,8 +135,8 @@ impl Player {
     /// [`Player::columns_loaded`]) before stepping survival physics. Spectator
     /// mode ignores world solidity and may move through unloaded columns.
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
-        let boxes =
-            |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)).collision_boxes();
+        // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
+        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water =
             |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)) == Block::Water;
         let water_flow = |x: i32, y: i32, z: i32| world.water_flow_dir_at(x, y, z);
@@ -155,7 +155,12 @@ impl Player {
         // Adapt the test's bool solidity to the general collision-box predicate: a
         // solid cell is one full cube, an empty cell no box.
         let boxes = |x: i32, y: i32, z: i32| {
-            if solid(x, y, z) { Block::Stone } else { Block::Air }.collision_boxes()
+            if solid(x, y, z) {
+                Block::Stone
+            } else {
+                Block::Air
+            }
+            .collision_boxes()
         };
         self.update_core_with_current(dt, &boxes, water, &still_water, input);
     }
@@ -360,10 +365,31 @@ impl Player {
 
         let dx = self.vel.x * dt;
         let dz = self.vel.z * dt;
-        if self.sweep_boxes(Axis::X, dx, boxes) {
+        // Horizontal slide with auto step-up: a grounded player walks up a half-block
+        // ledge (a slab / a model block's low edge) without jumping. Airborne → step 0.
+        // Same `collision::step_horizontal` the mob/item resolver uses.
+        let step = if self.on_ground {
+            crate::collision::STEP_HEIGHT
+        } else {
+            0.0
+        };
+        let mn = self.aabb_min();
+        let mx = self.aabb_max();
+        let (moved, hit_x, hit_z) = crate::collision::step_horizontal(
+            [mn.x, mn.y, mn.z],
+            [mx.x, mx.y, mx.z],
+            dx,
+            dz,
+            step,
+            boxes,
+        );
+        self.pos.x += moved[0];
+        self.pos.y += moved[1];
+        self.pos.z += moved[2];
+        if hit_x {
             self.vel.x = 0.0;
         }
-        if self.sweep_boxes(Axis::Z, dz, boxes) {
+        if hit_z {
             self.vel.z = 0.0;
         }
     }

@@ -25,7 +25,10 @@ pub fn idle_anims(model: &Model) -> Vec<IdleAnimMeta> {
     let mut out = Vec::new();
     let mut i = 0;
     while let Some(a) = model.idle_animation(i) {
-        out.push(IdleAnimMeta { length: a.length, looping: a.looping });
+        out.push(IdleAnimMeta {
+            length: a.length,
+            looping: a.looping,
+        });
         i += 1;
     }
     out
@@ -78,7 +81,10 @@ pub fn skeleton(model: &Model) -> Skeleton {
         .enumerate()
         .map(|(i, b)| {
             let (centre, half) = if hi[i].cmpge(lo[i]).all() {
-                ((lo[i] + hi[i]) * 0.5, ((hi[i] - lo[i]) * 0.5).max(Vec3::splat(MIN_HALF)))
+                (
+                    (lo[i] + hi[i]) * 0.5,
+                    ((hi[i] - lo[i]) * 0.5).max(Vec3::splat(MIN_HALF)),
+                )
             } else {
                 (b.pivot, Vec3::splat(MIN_HALF))
             };
@@ -98,7 +104,10 @@ mod tests {
     use super::*;
 
     fn owl() -> Model {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/models/owl.bbmodel"));
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/owl.bbmodel"
+        ));
         Model::load(src).expect("owl.bbmodel parses")
     }
 
@@ -106,7 +115,10 @@ mod tests {
     fn owl_idle_animations_are_detected_with_sane_lengths() {
         let v = idle_anims(&owl());
         assert!(!v.is_empty(), "owl idle animations should be detected");
-        assert!(v.iter().all(|m| m.length > 0.0), "idle animations have a length");
+        assert!(
+            v.iter().all(|m| m.length > 0.0),
+            "idle animations have a length"
+        );
     }
 
     #[test]
@@ -120,21 +132,34 @@ mod tests {
             assert_eq!(meta.length, anim.length);
             assert_eq!(meta.looping, anim.looping);
         }
-        assert!(m.idle_animation(v.len()).is_none(), "the list covers exactly the model's idles");
+        assert!(
+            m.idle_animation(v.len()).is_none(),
+            "the list covers exactly the model's idles"
+        );
     }
 
     #[test]
     fn owl_skeleton_matches_the_model_with_a_root_and_real_boxes() {
         let m = owl();
         let skel = skeleton(&m);
-        assert_eq!(skel.bones.len(), m.bones.len(), "one sk-bone per model bone");
-        assert!(skel.bones.iter().any(|b| b.parent.is_none()), "the skeleton has a root");
+        assert_eq!(
+            skel.bones.len(),
+            m.bones.len(),
+            "one sk-bone per model bone"
+        );
+        assert!(
+            skel.bones.iter().any(|b| b.parent.is_none()),
+            "the skeleton has a root"
+        );
         for b in &skel.bones {
             if let Some(p) = b.parent {
                 assert!(p < skel.bones.len(), "parent index in range");
             }
             // Regularised to MIN_HALF, so every bone is a genuine 3D body the ragdoll can tumble.
-            assert!((b.bbox_max - b.bbox_min).min_element() > 0.0, "non-degenerate box");
+            assert!(
+                (b.bbox_max - b.bbox_min).min_element() > 0.0,
+                "non-degenerate box"
+            );
         }
     }
 

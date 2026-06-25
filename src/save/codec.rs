@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use crate::chest::Chest;
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
 use crate::entity::DroppedItem;
-use crate::furnace::Furnace;
+use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
 use crate::mob::SavedMob;
 use crate::torch::TorchPlacement;
@@ -29,6 +29,8 @@ const FLAG_HAS_FURNACES: u8 = 0x04;
 const FLAG_HAS_CHESTS: u8 = 0x08;
 const FLAG_HAS_TORCHES: u8 = 0x10;
 const FLAG_HAS_MOBS: u8 = 0x20;
+const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
+const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -50,6 +52,13 @@ pub struct ChunkSnapshot {
     /// Torch orientations in this chunk, keyed by local block index, so a wall vs
     /// floor torch reloads the way it was placed. Empty for the common chunk.
     pub torches: HashMap<u16, TorchPlacement>,
+    /// Multi-cell bbmodel occupancy: each non-zero authored footprint offset, so a
+    /// placed multi-block (the workbench) reloads as one object. Empty for the common
+    /// chunk. See `Chunk::model_cells`.
+    pub model_cells: HashMap<u16, [u8; 3]>,
+    /// Per-cell facing for oriented bbmodel blocks, keyed like `model_cells`. Empty for
+    /// old/non-directional model placements. See `Chunk::model_facings`.
+    pub model_facings: HashMap<u16, Facing>,
     /// Mobs resting in this chunk, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Chunk`, so the world save paths set this from the live mob set. Empty for the
@@ -71,6 +80,8 @@ impl ChunkSnapshot {
             furnaces: c.furnaces().clone(),
             chests: c.chests().clone(),
             torches: c.torches().clone(),
+            model_cells: c.model_cells().clone(),
+            model_facings: c.model_facings().clone(),
             mobs: Vec::new(),
         }
     }
@@ -251,6 +262,12 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.mobs.is_empty() {
         flags |= FLAG_HAS_MOBS;
     }
+    if !s.model_cells.is_empty() {
+        flags |= FLAG_HAS_MODEL_CELLS;
+    }
+    if !s.model_facings.is_empty() {
+        flags |= FLAG_HAS_MODEL_FACINGS;
+    }
     payload.put_u8(flags);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
@@ -271,6 +288,19 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     }
     if !s.mobs.is_empty() {
         super::mobs::put_mobs(&mut payload, &s.mobs);
+    }
+    if !s.model_cells.is_empty() {
+        // Each record is the cell's 3-byte footprint offset (idx written by put_indexed).
+        put_indexed(&mut payload, &s.model_cells, 3, |buf, off| {
+            buf.put_u8(off[0]);
+            buf.put_u8(off[1]);
+            buf.put_u8(off[2]);
+        });
+    }
+    if !s.model_facings.is_empty() {
+        put_indexed(&mut payload, &s.model_facings, 1, |buf, facing| {
+            buf.put_u8(facing.to_u8());
+        });
     }
     deflate(&payload)
 }
@@ -321,8 +351,29 @@ pub fn decode_chunk(
     } else {
         Vec::new()
     };
+    let model_cells = if flags & FLAG_HAS_MODEL_CELLS != 0 {
+        get_indexed(&mut r, |r| Some([r.u8()?, r.u8()?, r.u8()?]))?
+    } else {
+        HashMap::new()
+    };
+    let model_facings = if flags & FLAG_HAS_MODEL_FACINGS != 0 {
+        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
+    } else {
+        HashMap::new()
+    };
     Some((
-        Chunk::from_saved(cx, cz, blocks, biomes, water, furnaces, chests, torches),
+        Chunk::from_saved(
+            cx,
+            cz,
+            blocks,
+            biomes,
+            water,
+            furnaces,
+            chests,
+            torches,
+            model_cells,
+            model_facings,
+        ),
         entities,
         mobs,
     ))
@@ -377,7 +428,10 @@ mod tests {
         let (_back, entities, _mobs) = decode_chunk(2, 2, &blob).expect("decodes");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].stack, ItemStack::new(ItemType::Stone, 7));
-        assert_eq!(entities[0].ticks_lived, 1234, "remaining lifetime survives the save");
+        assert_eq!(
+            entities[0].ticks_lived, 1234,
+            "remaining lifetime survives the save"
+        );
     }
 
     #[test]
@@ -395,7 +449,11 @@ mod tests {
         let (_back, _entities, mobs) = decode_chunk(-1, 4, &blob).expect("decodes");
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0].kind, crate::mob::Mob::Owl);
-        assert_eq!(mobs[0].pos, Vec3::new(-12.5, 65.0, 72.25), "position persists");
+        assert_eq!(
+            mobs[0].pos,
+            Vec3::new(-12.5, 65.0, 72.25),
+            "position persists"
+        );
         assert_eq!(mobs[0].yaw, 1.75, "facing persists");
     }
 
@@ -467,10 +525,49 @@ mod tests {
         let (back, _entities, _mobs) = decode_chunk(6, 6, &blob).expect("decodes");
 
         assert_eq!(back.block_raw(3, 67, 4), Block::Torch.id());
-        assert_eq!(back.torch_placement(3, 67, 4), TorchPlacement::East, "wall mount persists");
-        assert_eq!(back.torch_placement(3, 68, 4), TorchPlacement::Floor, "floor mount persists");
+        assert_eq!(
+            back.torch_placement(3, 67, 4),
+            TorchPlacement::East,
+            "wall mount persists"
+        );
+        assert_eq!(
+            back.torch_placement(3, 68, 4),
+            TorchPlacement::Floor,
+            "floor mount persists"
+        );
         // A cell with no torch reads the Floor default.
         assert_eq!(back.torch_placement(0, 0, 0), TorchPlacement::Floor);
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_model_cells() {
+        // A placed multi-block records authored footprint offsets and per-cell facing;
+        // both must survive a save/load so the block reloads as one object.
+        let mut c = Chunk::new(2, 3);
+        c.set_block(5, 64, 5, Block::FurnitureWorkbench);
+        c.set_block(6, 64, 5, Block::FurnitureWorkbench);
+        c.set_model_offset(6, 64, 5, [1, 0, 0]);
+        c.set_model_facing(6, 64, 5, Facing::East);
+        c.set_block(5, 65, 5, Block::FurnitureWorkbench);
+        c.set_model_offset(5, 65, 5, [0, 1, 0]);
+        c.set_model_facing(5, 65, 5, Facing::East);
+        c.set_model_facing(5, 64, 5, Facing::East);
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities, _mobs) = decode_chunk(2, 3, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(6, 64, 5), Block::FurnitureWorkbench.id());
+        assert_eq!(back.model_offset(6, 64, 5), [1, 0, 0], "x-offset persists");
+        assert_eq!(back.model_offset(5, 65, 5), [0, 1, 0], "y-offset persists");
+        assert_eq!(back.model_facing(6, 64, 5), Facing::East, "facing persists");
+        assert_eq!(back.model_facing(5, 65, 5), Facing::East, "facing persists");
+        assert_eq!(
+            back.model_facing(5, 64, 5),
+            Facing::East,
+            "origin facing persists"
+        );
+        // The origin cell stores no offset and reads the [0,0,0] default.
+        assert_eq!(back.model_offset(5, 64, 5), [0, 0, 0]);
     }
 
     #[test]

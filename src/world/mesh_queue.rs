@@ -121,7 +121,9 @@ impl World {
                     return 0;
                 }
                 match owner(wx >> 4, wz >> 4) {
-                    Some(c) => c.water_meta((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize),
+                    Some(c) => {
+                        c.water_meta((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize)
+                    }
                     None => 0,
                 }
             };
@@ -158,7 +160,13 @@ impl World {
             Some((
                 pos,
                 build_mesh_lods_with_loaded_neighbors(
-                    chunk, nb, nb_water, nb_biome, nb_light, nb_blocklight, nb_loaded,
+                    chunk,
+                    nb,
+                    nb_water,
+                    nb_biome,
+                    nb_light,
+                    nb_blocklight,
+                    nb_loaded,
                 ),
             ))
         };
@@ -257,6 +265,8 @@ mod tests {
             blocks,
             &biomes,
             None,
+            Default::default(),
+            Default::default(),
             Default::default(),
             Default::default(),
             Default::default(),

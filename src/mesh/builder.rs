@@ -1,11 +1,15 @@
+use glam::{IVec3, Vec3};
+
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
+use crate::block_model::{self, BlockModelKind};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
 use crate::torch::{warm_amount, warm_tint};
 
 use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::tint::{self, tile_tint};
+use super::vertex::ModelVertex;
 use super::water::{self, SideVsWater, WaterSurface};
 
 /// The horizontal cube face a furnace's front points to, for its [`Facing`].
@@ -174,6 +178,10 @@ fn build_mesh_with_context(
     let mut transparent = vec![];
     let mut transparent_idx = vec![];
     let mut transparent_sections = [MeshIndexSection::default(); SECTION_COUNT];
+    // bbmodel-block geometry (explicit-UV, model atlas), drawn in the dedicated model
+    // pass. Empty for the common chunk.
+    let mut model: Vec<ModelVertex> = vec![];
+    let mut model_idx: Vec<u32> = vec![];
 
     let (ox, oz) = chunk.chunk_origin_world();
 
@@ -327,6 +335,35 @@ fn build_mesh_with_context(
                         section_for_y(y),
                         first_index,
                         opaque_idx.len() as u32 - first_index,
+                    );
+                    continue;
+                }
+
+                // bbmodel blocks: NOT packed into the legacy mesh. Their geometry rides
+                // the explicit-UV `model` stream (own texture/atlas), but they're still
+                // chunk-meshed here — baked once per remesh and lit at mesh time exactly
+                // like any block. A multi-block cell renders only ITS footprint cubes
+                // (the split by `model_offset`); a missing-neighbour face isn't culled
+                // (the block is non-opaque), so it reads as a placed object, not a cube.
+                if let RenderShape::Model(kind) = block.render_shape() {
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let offset = chunk.model_offset(x, y, z);
+                    let facing = chunk.model_facing(x, y, z);
+                    let l = neighbour_light(wx, y as i32, wz) as u32;
+                    let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
+                    let (light6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    emit_model_block(
+                        &mut model,
+                        &mut model_idx,
+                        kind,
+                        offset,
+                        facing,
+                        wx,
+                        y as i32,
+                        wz,
+                        light6,
+                        warm,
                     );
                     continue;
                 }
@@ -558,8 +595,62 @@ fn build_mesh_with_context(
         far_opaque: vec![],
         far_opaque_idx: vec![],
         far_opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
+        model,
+        model_idx,
         mesh_dirty: true,
     }
+}
+
+/// Mesh-time brightness for a bbmodel-block face from the cell's combined 6-bit light.
+/// Mirrors `block.wgsl`'s skylight curve (the block pipeline applies this in the shader;
+/// the model pass shader just multiplies, so we bake the curve in here) — keep the
+/// constants in sync.
+#[inline]
+fn model_light_factor(light6: u32) -> f32 {
+    const SKY_MIN: f32 = 0.02;
+    const FINAL_MIN: f32 = 0.006;
+    let s = (light6 as f32 / 63.0).clamp(0.0, 1.0);
+    (SKY_MIN + (1.0 - SKY_MIN) * s * s * s).max(FINAL_MIN)
+}
+
+/// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
+/// startup-baked template (positions already taken through the cube rotation + placement
+/// facing) translated to the world base, folding the cell's combined light into each
+/// vertex's directional shade and applying the warm block-light tint. No matrices /
+/// quaternions / face-bias work happens per remesh — it's all resolved once in
+/// [`block_model::ModelInstance`], so meshing a placed model is a translate + scale + copy.
+#[allow(clippy::too_many_arguments)]
+fn emit_model_block(
+    verts: &mut Vec<ModelVertex>,
+    indices: &mut Vec<u32>,
+    kind: BlockModelKind,
+    offset: [u8; 3],
+    facing: Facing,
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    light6: u32,
+    warm: f32,
+) {
+    let inst = block_model::instance(kind);
+    let Some(tmpl) = inst.cell_template(offset, facing) else {
+        return;
+    };
+    // The chunk stores the authored cell offset + placed facing; together those resolve the
+    // rotated footprint base. The template's vertices are baked relative to that base, so
+    // placing the cell is one translate per vertex.
+    let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
+    let basef = Vec3::new(base.x as f32, base.y as f32, base.z as f32);
+    let light = model_light_factor(light6);
+    let tint = warm_tint([1.0, 1.0, 1.0], warm);
+    let start = verts.len() as u32;
+    verts.extend(tmpl.verts.iter().map(|v| ModelVertex {
+        pos: (basef + v.pos).to_array(),
+        uv: v.uv,
+        shade: v.shade * light,
+        tint,
+    }));
+    indices.extend(tmpl.indices.iter().map(|&i| start + i));
 }
 
 #[inline]
@@ -602,7 +693,10 @@ fn extend_section(
 #[inline]
 fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
     let light6 = ((sum_sky.max(sum_block) * 63 + denom / 2) / denom).min(63);
-    let warm = warm_amount(sum_sky as f32 / denom as f32, sum_block as f32 / denom as f32);
+    let warm = warm_amount(
+        sum_sky as f32 / denom as f32,
+        sum_block as f32 / denom as f32,
+    );
     (light6, warm)
 }
 

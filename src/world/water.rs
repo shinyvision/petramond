@@ -458,7 +458,12 @@ impl FluidSim {
     /// cardinal they started from. Returns the start directions whose path
     /// reaches a downhill drop (an empty cell with empty space below) soonest, or
     /// `None` if no drop is in range.
-    fn nearest_drop_dirs(&self, world: &World, pos: IVec3, air_dirs: &[IVec3]) -> Option<Vec<IVec3>> {
+    fn nearest_drop_dirs(
+        &self,
+        world: &World,
+        pos: IVec3,
+        air_dirs: &[IVec3],
+    ) -> Option<Vec<IVec3>> {
         let mut visited: HashMap<IVec3, usize> = HashMap::new();
         let mut queue: VecDeque<(IVec3, usize, i32)> = VecDeque::new();
         for (i, &d) in air_dirs.iter().enumerate() {
@@ -671,15 +676,27 @@ mod tests {
         run_ticks(&mut w, 300);
 
         // It reached the drop and poured a falling column...
-        assert_eq!(block(&w, 10, 65, 8), Block::Water, "stream reached the drop");
+        assert_eq!(
+            block(&w, 10, 65, 8),
+            Block::Water,
+            "stream reached the drop"
+        );
         assert!(
             is_falling(w.water_meta_world(10, 64, 8)),
             "the cell over the hole should pour straight down"
         );
         // ...but never crept east past it (the bug: a cell with falling water below
         // it must keep going down, not start spreading once the column exists).
-        assert_eq!(block(&w, 11, 65, 8), Block::Air, "must not creep past the drop");
-        assert_eq!(block(&w, 12, 65, 8), Block::Air, "must not creep past the drop");
+        assert_eq!(
+            block(&w, 11, 65, 8),
+            Block::Air,
+            "must not creep past the drop"
+        );
+        assert_eq!(
+            block(&w, 12, 65, 8),
+            Block::Air,
+            "must not creep past the drop"
+        );
     }
 
     /// Flowing water grows into its shape: a just-reached cell is the thinnest
@@ -713,7 +730,10 @@ mod tests {
             base_late > base_early,
             "the base must thicken as the flow extends ({base_early} -> {base_late})"
         );
-        assert!(base_late >= 7, "the base should fill in toward full (got {base_late})");
+        assert!(
+            base_late >= 7,
+            "the base should fill in toward full (got {base_late})"
+        );
         assert_eq!(edge, 1, "the leading edge stays the thinnest film");
     }
 
@@ -724,9 +744,9 @@ mod tests {
     #[test]
     fn flowing_water_does_not_flow_on_top_of_flowing_water() {
         let mut w = flat_world(); // stone floor at y=64
-        // Carve the floor and lay a lower one at y=62, in a 1-wide channel: the
-        // lower sheet sits on y=62 (water at y=63), and the upper flow would sit
-        // directly on that lower water (at y=64).
+                                  // Carve the floor and lay a lower one at y=62, in a 1-wide channel: the
+                                  // lower sheet sits on y=62 (water at y=63), and the upper flow would sit
+                                  // directly on that lower water (at y=64).
         for x in 5..14 {
             carve(&mut w, x, 64, 8);
             w.set_block_world(x, 62, 8, Block::Stone);
@@ -741,11 +761,23 @@ mod tests {
         run_ticks(&mut w, 400);
 
         // The lower sheet spreads out along its floor...
-        assert_eq!(block(&w, 11, 63, 8), Block::Water, "lower sheet should spread");
+        assert_eq!(
+            block(&w, 11, 63, 8),
+            Block::Water,
+            "lower sheet should spread"
+        );
         // ...but the upper level must NOT ride along on top of it. (A single cell
         // beside the source is fine; it must not propagate down the channel.)
-        assert_eq!(block(&w, 10, 64, 8), Block::Air, "flowing water must not flow on water");
-        assert_eq!(block(&w, 12, 64, 8), Block::Air, "flowing water must not climb the channel");
+        assert_eq!(
+            block(&w, 10, 64, 8),
+            Block::Air,
+            "flowing water must not flow on water"
+        );
+        assert_eq!(
+            block(&w, 12, 64, 8),
+            Block::Air,
+            "flowing water must not climb the channel"
+        );
     }
 
     /// The critical invariant: flowing water can never become its own source.
@@ -770,7 +802,10 @@ mod tests {
                 .any(|&(x, z)| block(&w, x, y, z) == Block::Water)
         });
         let any_pool = block(&w, 6, 65, 8) == Block::Water;
-        assert!(any_falling && any_pool, "setup should produce a waterfall + pool");
+        assert!(
+            any_falling && any_pool,
+            "setup should produce a waterfall + pool"
+        );
 
         // Cut the source.
         w.set_block_world(8, 67, 8, Block::Air);
@@ -801,7 +836,11 @@ mod tests {
         w.set_block_world(8, 65, 8, Block::Air);
         run_ticks(&mut w, 120);
         for r in 1..=4 {
-            assert_eq!(block(&w, 8 + r, 65, 8), Block::Air, "ring {r} should be dry");
+            assert_eq!(
+                block(&w, 8 + r, 65, 8),
+                Block::Air,
+                "ring {r} should be dry"
+            );
         }
         assert_eq!(block(&w, 8, 65, 8), Block::Air);
     }

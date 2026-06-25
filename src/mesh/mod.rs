@@ -16,14 +16,12 @@ mod torch;
 mod vertex;
 mod water;
 
-pub use builder::{
-    build_mesh, build_mesh_lods_with_loaded_neighbors, LeafMeshMode, MeshOptions,
-};
+pub use blocklight::compute_chunk_blocklight_with_neighbors;
 #[cfg(test)]
 pub use builder::build_mesh_with_options;
-pub use blocklight::compute_chunk_blocklight_with_neighbors;
+pub use builder::{build_mesh, build_mesh_lods_with_loaded_neighbors, LeafMeshMode, MeshOptions};
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
-pub use vertex::{ChunkMesh, MeshIndexSection, Vertex, SHADES};
+pub use vertex::{ChunkMesh, MeshIndexSection, ModelVertex, Vertex, SHADES};
 
 #[cfg(test)]
 mod tests;

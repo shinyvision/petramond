@@ -94,9 +94,8 @@ pub fn compute_chunk_blocklight_with_neighbors<'a>(
     };
     // Unloaded / out-of-bounds cells count as opaque so light never leaks past the
     // solved region (mirrors the skylight bake's closed boundaries).
-    let opaque_at = |wx: i32, wy: i32, wz: i32| -> bool {
-        block_at(wx, wy, wz).is_none_or(|b| b.is_opaque())
-    };
+    let opaque_at =
+        |wx: i32, wy: i32, wz: i32| -> bool { block_at(wx, wy, wz).is_none_or(|b| b.is_opaque()) };
 
     let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * sz + z) * sx + x) as usize };
     let mut light2 = vec![0u8; vol];
@@ -193,8 +192,7 @@ mod tests {
     fn a_torch_lights_its_cell_and_falls_off_one_level_per_block() {
         let c = torch_chunk(8, 70, 8);
         let emitters = [IVec3::new(8, 70, 8)];
-        let (band, ylo, yhi) =
-            compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
+        let (band, ylo, yhi) = compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
         let at = |x: i32, y: i32, z: i32| -> u8 {
             let ay = y - ylo;
             band[((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize]
@@ -216,8 +214,7 @@ mod tests {
         let mut c = torch_chunk(8, 70, 8);
         c.set_block(9, 70, 8, Block::Stone);
         let emitters = [IVec3::new(8, 70, 8)];
-        let (band, ylo, _yhi) =
-            compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
+        let (band, ylo, _yhi) = compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
         let at = |x: i32, y: i32, z: i32| -> u8 {
             let ay = y - ylo;
             band[((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize]
@@ -235,13 +232,15 @@ mod tests {
         let mut c = Chunk::new(0, 0);
         c.set_block(8, 70, 8, Block::Furnace);
         let emitters = [IVec3::new(8, 70, 8)];
-        let (band, ylo, _yhi) =
-            compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
+        let (band, ylo, _yhi) = compute_chunk_blocklight_with_neighbors(&c, |_, _| None, &emitters);
         let at = |x: i32, y: i32, z: i32| -> u8 {
             let ay = y - ylo;
             band[((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize]
         };
-        assert_eq!(Block::Furnace.light_emission(), Block::Torch.light_emission());
+        assert_eq!(
+            Block::Furnace.light_emission(),
+            Block::Torch.light_emission()
+        );
         // Air directly above the furnace gets the emission minus one block of falloff.
         assert_eq!(at(8, 71, 8), Block::Furnace.light_emission() - STEP as u8);
     }

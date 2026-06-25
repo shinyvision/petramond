@@ -78,7 +78,11 @@ const LATCH_FACES: [Tile; 6] = [Tile::ChestLatch; 6];
 
 /// Bake all `instances` into `verts`/`indices` (cleared first, capacity reused) and
 /// return the index count. The caller frustum-culls instances before calling.
-pub fn build_chests(instances: &[ChestInstance], verts: &mut Vec<Vertex>, indices: &mut Vec<u32>) -> u32 {
+pub fn build_chests(
+    instances: &[ChestInstance],
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) -> u32 {
     verts.clear();
     indices.clear();
     for inst in instances {
@@ -141,14 +145,40 @@ pub(super) fn push_chest_item(
     // Painter order: the inventory icon is drawn in the DEPTHLESS UI pass, so paint
     // back-to-front — body, then the lid over it, then the latch in front (otherwise
     // the lid would overpaint the latch).
-    push_box_faces_lit(verts, indices, BODY_FACES, map(BODY_MIN), map(BODY_MAX), skylight);
-    push_box_faces_lit(verts, indices, LID_FACES, map(LID_MIN), map(LID_MAX), skylight);
-    push_box_faces_lit(verts, indices, LATCH_FACES, map(LATCH_MIN), map(LATCH_MAX), skylight);
+    push_box_faces_lit(
+        verts,
+        indices,
+        BODY_FACES,
+        map(BODY_MIN),
+        map(BODY_MAX),
+        skylight,
+    );
+    push_box_faces_lit(
+        verts,
+        indices,
+        LID_FACES,
+        map(LID_MIN),
+        map(LID_MAX),
+        skylight,
+    );
+    push_box_faces_lit(
+        verts,
+        indices,
+        LATCH_FACES,
+        map(LATCH_MIN),
+        map(LATCH_MAX),
+        skylight,
+    );
 }
 
 /// Full-bright [`push_chest_item`] for the inventory icon (which is unlit, like the
 /// `block_model::push_cube_faces` icons).
-pub(super) fn push_chest_item_full(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, origin: Vec3, size: f32) {
+pub(super) fn push_chest_item_full(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    origin: Vec3,
+    size: f32,
+) {
     push_chest_item(verts, indices, origin, size, super::lighting::FULL_SKYLIGHT);
 }
 
@@ -180,7 +210,11 @@ mod tests {
     fn one_chest_bakes_three_boxes() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_chests(std::slice::from_ref(&inst(Facing::North, 0.0)), &mut v, &mut i);
+        let n = build_chests(
+            std::slice::from_ref(&inst(Facing::North, 0.0)),
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 72, "body + latch + lid = 3 boxes × 24 verts");
         assert_eq!(n, 108, "3 boxes × 36 indices");
     }
@@ -197,7 +231,11 @@ mod tests {
     fn closed_chest_fits_within_its_block_footprint() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        build_chests(std::slice::from_ref(&inst(Facing::North, 0.0)), &mut v, &mut i);
+        build_chests(
+            std::slice::from_ref(&inst(Facing::North, 0.0)),
+            &mut v,
+            &mut i,
+        );
         for vert in &v {
             let [x, y, z] = vert.pos;
             assert!((10.0..=11.0).contains(&x), "x within cell, got {x}");
@@ -210,15 +248,26 @@ mod tests {
     fn opening_the_lid_raises_geometry_above_the_block() {
         let mut closed_v = Vec::new();
         let mut closed_i = Vec::new();
-        build_chests(std::slice::from_ref(&inst(Facing::North, 0.0)), &mut closed_v, &mut closed_i);
+        build_chests(
+            std::slice::from_ref(&inst(Facing::North, 0.0)),
+            &mut closed_v,
+            &mut closed_i,
+        );
         let closed_top = closed_v.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
 
         let mut open_v = Vec::new();
         let mut open_i = Vec::new();
-        build_chests(std::slice::from_ref(&inst(Facing::North, 1.0)), &mut open_v, &mut open_i);
+        build_chests(
+            std::slice::from_ref(&inst(Facing::North, 1.0)),
+            &mut open_v,
+            &mut open_i,
+        );
         let open_top = open_v.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
 
         // The open lid swings up well above the closed chest's top.
-        assert!(open_top > closed_top + 0.3, "lid should rise when opening: {closed_top} -> {open_top}");
+        assert!(
+            open_top > closed_top + 0.3,
+            "lid should rise when opening: {closed_top} -> {open_top}"
+        );
     }
 }

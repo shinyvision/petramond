@@ -59,6 +59,21 @@ pub(crate) fn pack_vertex(
         | (light << 23)
 }
 
+/// GPU vertex for the chunk's bbmodel-block geometry: 36 bytes of EXPLICIT attributes
+/// (not the packed tile word), because a `.bbmodel` face carries an arbitrary
+/// sub-rectangle UV into the model atlas that the tile-packed [`Vertex`] can't express.
+/// Baked at mesh time with full mesh-time lighting folded into `shade` + the warm `tint`
+/// (the model pass shader does `tex * shade * tint`, like the mob pipeline whose
+/// `ItemVertex` layout this mirrors byte-for-byte so they share a pipeline).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ModelVertex {
+    pub pos: [f32; 3],
+    pub uv: [f32; 2],
+    pub shade: f32,
+    pub tint: [f32; 3],
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshIndexSection {
     pub first_index: u32,
@@ -78,6 +93,11 @@ pub struct ChunkMesh {
     pub far_opaque: Vec<Vertex>,
     pub far_opaque_idx: Vec<u32>,
     pub far_opaque_sections: [MeshIndexSection; SECTION_COUNT],
+    /// bbmodel-block geometry (explicit-UV [`ModelVertex`], sampling the model atlas),
+    /// drawn in the renderer's dedicated model pass. Baked here at remesh like the rest
+    /// of the chunk; empty for the common chunk with no bbmodel blocks.
+    pub model: Vec<ModelVertex>,
+    pub model_idx: Vec<u32>,
     /// True until GPU upload has happened. Set by `build_mesh`, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
@@ -95,11 +115,15 @@ impl ChunkMesh {
             far_opaque: vec![],
             far_opaque_idx: vec![],
             far_opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
+            model: vec![],
+            model_idx: vec![],
             mesh_dirty: false,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.opaque_idx.is_empty() && self.transparent_idx.is_empty()
+        // A chunk holding ONLY a bbmodel block (empty packed buffers) is NOT empty —
+        // its geometry lives in the model stream, which must still upload + draw.
+        self.opaque_idx.is_empty() && self.transparent_idx.is_empty() && self.model_idx.is_empty()
     }
 }

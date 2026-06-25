@@ -26,8 +26,11 @@ use crate::game::Game;
 pub struct Scene {
     /// Baked dropped-item billboards/cubes for this frame.
     item_entities: Vec<ItemEntityInstance>,
-    /// Baked particle billboards for this frame.
+    /// Baked block-atlas particle cubes for this frame.
     particles: Vec<ParticleInstance>,
+    /// Baked model-atlas particle cubes (bbmodel-block flecks) for this frame — drawn in
+    /// the same pass but bound to the model atlas.
+    model_particles: Vec<ParticleInstance>,
     /// Baked placed-chest instances for this frame.
     chests: Vec<ChestInstance>,
     /// Baked (interpolated) mob instances for this frame.
@@ -54,7 +57,11 @@ impl Scene {
         // previous and current tick poses so they move smoothly at any frame rate.
         let alpha = game.tick_alpha();
         bake_item_entities(game.item_entities(), alpha, &mut self.item_entities);
-        bake_particles(game.particles(), &mut self.particles);
+        bake_particles(
+            game.particles(),
+            &mut self.particles,
+            &mut self.model_particles,
+        );
         self.bake_chests(game);
         bake_mobs(game.mobs(), alpha, &mut self.mobs);
         (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
@@ -85,6 +92,7 @@ impl Scene {
         renderer.set_chests(&self.chests);
         renderer.set_mobs(&self.mobs);
         renderer.set_particles(&self.particles);
+        renderer.set_model_particles(&self.model_particles);
     }
 }
 
@@ -128,7 +136,11 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
 /// reused). `alpha` (`0..1`, the fraction into the next tick) blends the previous and
 /// current tick pose so a falling/drifting drop moves smoothly, exactly like a mob. The
 /// skylight rides through from the item's cached value.
-fn bake_item_entities(items: &[crate::entity::DroppedItem], alpha: f32, out: &mut Vec<ItemEntityInstance>) {
+fn bake_item_entities(
+    items: &[crate::entity::DroppedItem],
+    alpha: f32,
+    out: &mut Vec<ItemEntityInstance>,
+) {
     out.clear();
     out.extend(items.iter().map(|d| ItemEntityInstance {
         pos: d.prev_pos.lerp(d.pos, alpha),
@@ -139,13 +151,20 @@ fn bake_item_entities(items: &[crate::entity::DroppedItem], alpha: f32, out: &mu
     }));
 }
 
-/// Map each alive particle to one [`ParticleInstance`] (cleared + refilled, capacity
-/// reused), resolving its atlas patch, alpha, and render size.
-fn bake_particles(particles: &crate::entity::ParticleSystem, out: &mut Vec<ParticleInstance>) {
-    out.clear();
-    out.extend(particles.particles().iter().map(|p| {
+/// Map each alive particle to one [`ParticleInstance`], split by atlas: BLOCK-atlas
+/// flecks into `block_out`, bbmodel-block (MODEL-atlas) flecks into `model_out` (both
+/// cleared + refilled, capacity reused). The two are drawn in one pass with the matching
+/// texture bound, so a broken workbench's flecks sample its own texture.
+fn bake_particles(
+    particles: &crate::entity::ParticleSystem,
+    block_out: &mut Vec<ParticleInstance>,
+    model_out: &mut Vec<ParticleInstance>,
+) {
+    block_out.clear();
+    model_out.clear();
+    for p in particles.particles() {
         let (uv_min, uv_size) = p.atlas_uv();
-        ParticleInstance {
+        let inst = ParticleInstance {
             pos: p.pos,
             uv_min,
             uv_size,
@@ -156,8 +175,13 @@ fn bake_particles(particles: &crate::entity::ParticleSystem, out: &mut Vec<Parti
             alpha: p.alpha(),
             size: p.render_size(),
             skylight: p.skylight,
+        };
+        if p.model.is_some() {
+            model_out.push(inst);
+        } else {
+            block_out.push(inst);
         }
-    }));
+    }
 }
 
 #[cfg(test)]
@@ -170,8 +194,16 @@ mod tests {
     #[test]
     fn bake_item_entities_one_instance_per_drop() {
         let drops = vec![
-            DroppedItem::new(Vec3::new(1.0, 2.0, 3.0), ItemStack::new(ItemType::Dirt, 1), 1),
-            DroppedItem::new(Vec3::new(4.0, 5.0, 6.0), ItemStack::new(ItemType::Stone, 1), 2),
+            DroppedItem::new(
+                Vec3::new(1.0, 2.0, 3.0),
+                ItemStack::new(ItemType::Dirt, 1),
+                1,
+            ),
+            DroppedItem::new(
+                Vec3::new(4.0, 5.0, 6.0),
+                ItemStack::new(ItemType::Stone, 1),
+                2,
+            ),
         ];
         let mut out = Vec::new();
         bake_item_entities(&drops, 1.0, &mut out);
@@ -187,13 +219,20 @@ mod tests {
     fn bake_item_entities_interpolates_between_ticks() {
         // A drop that moved last tick (prev_pos != pos) bakes at the blended position,
         // so it renders smoothly between the 20 TPS physics ticks.
-        let mut drop =
-            DroppedItem::new(Vec3::new(0.0, 64.0, 0.0), ItemStack::new(ItemType::Dirt, 1), 1);
+        let mut drop = DroppedItem::new(
+            Vec3::new(0.0, 64.0, 0.0),
+            ItemStack::new(ItemType::Dirt, 1),
+            1,
+        );
         drop.prev_pos = Vec3::new(0.0, 64.0, 0.0);
         drop.pos = Vec3::new(2.0, 64.0, 0.0);
         let mut out = Vec::new();
         bake_item_entities(std::slice::from_ref(&drop), 0.5, &mut out);
-        assert_eq!(out[0].pos, Vec3::new(1.0, 64.0, 0.0), "halfway between prev and current");
+        assert_eq!(
+            out[0].pos,
+            Vec3::new(1.0, 64.0, 0.0),
+            "halfway between prev and current"
+        );
     }
 
     #[test]
@@ -218,11 +257,42 @@ mod tests {
         let alive = particles.particles().len();
         assert!(alive > 0);
         let mut out = Vec::new();
-        bake_particles(&particles, &mut out);
+        let mut model_out = Vec::new();
+        bake_particles(&particles, &mut out, &mut model_out);
+        // Dirt is a block-atlas block, so every fleck lands in the block list.
         assert_eq!(out.len(), alive);
+        assert!(
+            model_out.is_empty(),
+            "dirt flecks are block-atlas, not model-atlas"
+        );
         let (uv_min, uv_size) = particles.particles()[0].atlas_uv();
         assert_eq!(out[0].uv_min, uv_min);
         assert_eq!(out[0].uv_size, uv_size);
         assert_eq!(out[0].size, particles.particles()[0].size);
+    }
+
+    #[test]
+    fn bbmodel_block_flecks_route_to_the_model_atlas_list() {
+        // A bbmodel block's break flecks must bake into the MODEL list (drawn with the
+        // model atlas bound), never the block list — otherwise they'd sample the wrong
+        // texture (the crafting-table placeholder bug).
+        let mut particles = ParticleSystem::new();
+        particles.spawn_break_burst_model(
+            IVec3::new(0, 64, 0),
+            crate::block_model::BlockModelKind::FurnitureWorkbench,
+            crate::render::lighting::FULL_SKYLIGHT,
+            0,
+        );
+        let alive = particles.particles().len();
+        assert!(alive > 0);
+        let mut out = Vec::new();
+        let mut model_out = Vec::new();
+        bake_particles(&particles, &mut out, &mut model_out);
+        assert_eq!(
+            model_out.len(),
+            alive,
+            "every model fleck routes to the model list"
+        );
+        assert!(out.is_empty(), "no model fleck leaks into the block list");
     }
 }

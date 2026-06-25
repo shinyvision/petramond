@@ -68,6 +68,18 @@ pub struct Chunk {
     /// (floor vs which wall), which the mesher and selection outline read locally
     /// and the save record persists. Empty for the common chunk.
     torches: HashMap<u16, TorchPlacement>,
+    /// Multi-cell bbmodel block occupancy, keyed by local block index like the other
+    /// per-chunk maps. Stores the authored footprint offset for every cell whose offset
+    /// is not `[0,0,0]`; the authored-origin cell and single-cell models default to zero.
+    /// The mesher reads it with `model_facings` to know which authored cell a voxel is
+    /// (which cubes to render), and break/collision use both to find the rotated
+    /// footprint. Empty for the common chunk. See `crate::block_model`.
+    model_cells: HashMap<u16, [u8; 3]>,
+    /// Per-cell facing for placed bbmodel blocks that need orientation. Stored for every
+    /// occupied model cell (including the authored-origin cell) so meshing remains
+    /// chunk-local even when a multi-cell model crosses a chunk border. Empty for the
+    /// common chunk and for old/non-directional model placements.
+    model_facings: HashMap<u16, Facing>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -118,6 +130,8 @@ impl Chunk {
             furnaces: HashMap::new(),
             chests: HashMap::new(),
             torches: HashMap::new(),
+            model_cells: HashMap::new(),
+            model_facings: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -198,6 +212,8 @@ impl Chunk {
             furnaces: HashMap::new(),
             chests: HashMap::new(),
             torches: HashMap::new(),
+            model_cells: HashMap::new(),
+            model_facings: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -228,6 +244,7 @@ impl Chunk {
         self.blocks[i] = id;
         self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
+        self.clear_model_cell(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -239,9 +256,74 @@ impl Chunk {
         self.blocks[i] = id;
         self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
+        self.clear_model_cell(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
+    }
+
+    /// Drop any multi-block occupancy offset stored at local index `i` — the cell's
+    /// former occupant (possibly a multi-block cell) is being overwritten. Cheap no-op
+    /// for the common chunk (empty maps).
+    #[inline]
+    fn clear_model_cell(&mut self, i: usize) {
+        if !self.model_cells.is_empty() {
+            self.model_cells.remove(&(i as u16));
+        }
+        if !self.model_facings.is_empty() {
+            self.model_facings.remove(&(i as u16));
+        }
+    }
+
+    /// Record cell `(x,y,z)`'s authored offset within its multi-block footprint (called
+    /// by `World::place_model_block` for each non-zero offset). The authored-origin cell
+    /// is left unstored (it defaults to `[0,0,0]`).
+    #[inline]
+    pub fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
+        self.model_cells
+            .insert(Self::block_entity_key(x, y, z), offset);
+        self.dirty = true;
+    }
+
+    /// The cell's authored offset within its multi-block footprint, or `[0,0,0]` for a
+    /// single-cell model block or authored-origin cell. See the `model_cells` field.
+    #[inline]
+    pub fn model_offset(&self, x: usize, y: usize, z: usize) -> [u8; 3] {
+        self.model_cells
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or([0, 0, 0])
+    }
+
+    /// Record the facing for an occupied model cell. Unlike offsets, facing is stored
+    /// for every oriented cell, including the authored-origin cell.
+    #[inline]
+    pub fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
+        self.model_facings
+            .insert(Self::block_entity_key(x, y, z), facing);
+        self.dirty = true;
+    }
+
+    /// The facing of the placed model cell, or the canonical unrotated bbmodel facing
+    /// for old/non-oriented placements. bbmodel blocks author their front on -Z.
+    #[inline]
+    pub fn model_facing(&self, x: usize, y: usize, z: usize) -> Facing {
+        self.model_facings
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or(crate::block_model::DEFAULT_MODEL_FACING)
+    }
+
+    /// The chunk's multi-block occupancy map (local index → offset), for persistence.
+    #[inline]
+    pub fn model_cells(&self) -> &HashMap<u16, [u8; 3]> {
+        &self.model_cells
+    }
+
+    /// The chunk's model-facing map (local index → facing), for persistence.
+    #[inline]
+    pub fn model_facings(&self) -> &HashMap<u16, Facing> {
+        &self.model_facings
     }
 
     /// Water-flow metadata at a local voxel (0 where the cell is not flowing
@@ -425,7 +507,8 @@ impl Chunk {
     /// Install `furnace` at a local voxel (block placement). Marks the chunk
     /// modified so the furnace persists from the moment it is placed.
     pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace) {
-        self.furnaces.insert(Self::block_entity_key(x, y, z), furnace);
+        self.furnaces
+            .insert(Self::block_entity_key(x, y, z), furnace);
         self.modified = true;
     }
 
@@ -450,7 +533,8 @@ impl Chunk {
     /// face vs the sides.
     #[inline]
     pub fn furnace_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.furnace_at(x, y, z).map_or(Facing::default(), |f| f.facing)
+        self.furnace_at(x, y, z)
+            .map_or(Facing::default(), |f| f.facing)
     }
 
     /// The furnace map, for saving (parallel to `blocks_slice`).
@@ -522,7 +606,11 @@ impl Chunk {
     /// Forget the torch orientation at a local voxel (block break). Marks the chunk
     /// modified when an entry was actually removed.
     pub fn take_torch(&mut self, x: usize, y: usize, z: usize) {
-        if self.torches.remove(&Self::block_entity_key(x, y, z)).is_some() {
+        if self
+            .torches
+            .remove(&Self::block_entity_key(x, y, z))
+            .is_some()
+        {
             self.modified = true;
         }
     }
@@ -579,6 +667,8 @@ impl Chunk {
         furnaces: HashMap<u16, Furnace>,
         chests: HashMap<u16, Chest>,
         torches: HashMap<u16, TorchPlacement>,
+        model_cells: HashMap<u16, [u8; 3]>,
+        model_facings: HashMap<u16, Facing>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -591,6 +681,8 @@ impl Chunk {
             furnaces,
             chests,
             torches,
+            model_cells,
+            model_facings,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,

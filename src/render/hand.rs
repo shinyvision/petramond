@@ -122,6 +122,11 @@ pub(super) fn build_hand_lit(
                 // (extruded 3D) using `held_sprite`; emit no model3d geometry.
                 Mat4::IDENTITY
             }
+            ItemRenderKind::Model(_) => {
+                // bbmodel items are drawn by the renderer via the item3d pipeline bound
+                // to the MODEL atlas (see `held_model`); emit no model3d geometry here.
+                Mat4::IDENTITY
+            }
         },
     };
 
@@ -180,6 +185,32 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
             * held_item_placement(view, aspect)
             * Mat4::from_translation(nudge)
             * base_model,
+    ))
+}
+
+/// If `view` holds a bbmodel item, return its kind + the clip-space MVP to draw its
+/// actual baked model (centred in a unit cube by the baker) at the held three-quarter
+/// angle — the model counterpart of [`held_sprite`]. The renderer bakes the geometry
+/// (model atlas) and draws it through the item3d pipeline in the hand pass. `None` for a
+/// bare hand, a held block, or a sprite.
+pub fn held_model(
+    view: &HeldItemView,
+    aspect: f32,
+) -> Option<(crate::block_model::BlockModelKind, Mat4)> {
+    let item = view.item?;
+    let ItemRenderKind::Model(kind) = item.render_kind() else {
+        return None;
+    };
+    // Orient the held model by the AUTHORED Blockbench `firstperson_righthand` pose (its
+    // rotation), seated in our hand anchor + fit scale (the baker centres it to a unit
+    // cube). So the workbench is held exactly as designed in Blockbench, not at a
+    // hardcoded angle.
+    let pose = crate::block_model::display(kind).firstperson_righthand;
+    let base_model =
+        Mat4::from_scale_rotation_translation(Vec3::splat(0.55), pose.rotation_quat(), Vec3::ZERO);
+    Some((
+        kind,
+        hand_view_proj(aspect) * held_item_placement(view, aspect) * base_model,
     ))
 }
 

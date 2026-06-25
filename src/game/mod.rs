@@ -8,7 +8,7 @@ mod container;
 
 use std::collections::HashMap;
 
-use crate::block::Block;
+use crate::block::{Block, RenderShape};
 use crate::camera::Camera;
 use crate::crafting::{load_recipes, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
@@ -703,10 +703,27 @@ impl Game {
     #[inline]
     pub fn break_overlay_view(&self) -> Option<BreakOverlayView> {
         self.mining.overlay().map(|(block, stage)| {
-            let block_kind = Block::from_id(self.world.chunk_block(block.x, block.y, block.z));
+            // A bbmodel block cracks over its targeted cell's actual cube surfaces (kind
+            // + that cell's footprint offset); the chest over its inset box; everything
+            // else over the full cell (`None`).
+            let model = match Block::from_id(self.world.chunk_block(block.x, block.y, block.z))
+                .render_shape()
+            {
+                crate::block::RenderShape::Model(kind) => Some((
+                    kind,
+                    self.world.model_offset_at(block.x, block.y, block.z),
+                    self.world.model_facing_at(block.x, block.y, block.z),
+                )),
+                _ => None,
+            };
             BreakOverlayView {
                 block,
-                block_kind,
+                visual_box: if model.is_some() {
+                    None
+                } else {
+                    self.world.selection_box_at(block.x, block.y, block.z)
+                },
+                model,
                 stage,
             }
         })
@@ -936,8 +953,14 @@ impl Game {
                 .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
                 .map(|h| h.normal);
             let (light, warm) = break_light(&self.world, event.pos, hit_normal);
-            self.world
-                .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
+            // A bbmodel block breaks as a whole: removing any cell clears every footprint
+            // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
+            if matches!(event.block.render_shape(), RenderShape::Model(_)) {
+                self.world.remove_model_block(event.pos);
+            } else {
+                self.world
+                    .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
+            }
             // A broken furnace scatters whatever it held, regardless of tool (the
             // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
             if event.block == Block::Furnace {
@@ -958,8 +981,16 @@ impl Game {
                 // the freed cell carries no stale block-entity state.
                 self.world.take_torch(event.pos);
             }
-            self.particles
-                .spawn_break_burst_lit(event.pos, event.block, light, warm);
+            // A bbmodel block has no block-atlas tile, so its burst samples its own
+            // texture (the model atlas); every other block uses its face tiles.
+            match event.block.render_shape() {
+                RenderShape::Model(kind) => self
+                    .particles
+                    .spawn_break_burst_model(event.pos, kind, light, warm),
+                _ => self
+                    .particles
+                    .spawn_break_burst_lit(event.pos, event.block, light, warm),
+            }
             if event.harvested {
                 self.spawn_drops(event.pos, event.block, light);
             }
@@ -975,8 +1006,14 @@ impl Game {
                         Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
                     let cell = h.block + h.normal;
                     let (light, warm) = self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-                    self.particles
-                        .spawn_mining_lit(h.block, h.normal, block, light, warm);
+                    match block.render_shape() {
+                        RenderShape::Model(kind) => self
+                            .particles
+                            .spawn_mining_model(h.block, h.normal, kind, light, warm),
+                        _ => self
+                            .particles
+                            .spawn_mining_lit(h.block, h.normal, block, light, warm),
+                    }
                 }
             }
         } else {
@@ -1065,6 +1102,43 @@ impl Game {
             None
         };
 
+        // A bbmodel block places its WHOLE footprint (the workbench is 2×2×1): every
+        // occupied cell must be loaded + replaceable AND clear of the player/mobs, or the
+        // placement fails as a unit (nothing placed, the held item kept). Multi-cell
+        // models, and models marked directionalView, are oriented from the player's
+        // facing; `p` is the front-left bottom anchor from the player's view.
+        if let RenderShape::Model(kind) = block.render_shape() {
+            let player_facing = facing_from_forward(self.cam.forward());
+            let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
+            let facing = if block.directional_view() || multi_cell {
+                player_facing
+            } else {
+                crate::block_model::DEFAULT_MODEL_FACING
+            };
+            let base = if block.directional_view() || multi_cell {
+                crate::block_model::base_from_front_left_anchor(p, kind, facing)
+            } else {
+                p
+            };
+            if !self.world.model_footprint_clear_facing(base, kind, facing) {
+                return false;
+            }
+            let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
+                .into_iter()
+                .any(|(c, off)| {
+                    self.player.intersects_block(c)
+                        || self.world.mobs().any_overlapping_boxes(
+                            c,
+                            crate::block_model::collision_boxes_oriented(kind, off, facing),
+                        )
+                });
+            if !blocked && self.world.place_model_block_facing(base, block, facing) {
+                self.player.inventory.decrement_selected();
+                return true;
+            }
+            return false;
+        }
+
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
         // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
         // may be placed inside an entity; a block that WOULD collide can't be placed where
@@ -1079,14 +1153,18 @@ impl Game {
             && self.world.set_block_world(p.x, p.y, p.z, block)
         {
             // A placed furnace/chest gets an empty block-entity from the moment it
-            // exists, its front oriented to face the player; a torch records how it
-            // is mounted (floor vs which wall) for the mesher + outline.
+            // exists. Blocks marked directionalView have their front oriented to face
+            // the player; a torch records how it is mounted (floor vs which wall) for
+            // the mesher + outline.
+            let placed_facing = if block.directional_view() {
+                facing_from_forward(self.cam.forward())
+            } else {
+                crate::block_model::DEFAULT_MODEL_FACING
+            };
             if block == Block::Furnace {
-                self.world
-                    .insert_furnace(p, facing_from_forward(self.cam.forward()));
+                self.world.insert_furnace(p, placed_facing);
             } else if block == Block::Chest {
-                self.world
-                    .insert_chest(p, facing_from_forward(self.cam.forward()));
+                self.world.insert_chest(p, placed_facing);
             } else if let Some(tp) = torch_placement {
                 self.world.insert_torch(p, tp);
             }
@@ -1538,7 +1616,10 @@ mod tests {
             ..Default::default()
         };
         game.capture_intent(&menu);
-        assert!(!game.pending_attack, "opening a screen drops the latched press");
+        assert!(
+            !game.pending_attack,
+            "opening a screen drops the latched press"
+        );
         let mut ev = TickEvents::default();
         game.tick_attack(&mut ev);
         assert!(!ev.swung_hand, "no attack fires behind the open menu");
@@ -1866,7 +1947,11 @@ mod tests {
 
         // The tick materialises the queued drop as a world entity.
         game.tick_drops();
-        assert_eq!(game.world.item_entities().len(), 1, "the drop spawns on the tick");
+        assert_eq!(
+            game.world.item_entities().len(),
+            1,
+            "the drop spawns on the tick"
+        );
     }
 
     #[test]
@@ -1876,7 +1961,12 @@ mod tests {
 
         // Left-click that slot: it should pick the stack onto the cursor — but that's a
         // container edit, so it's latched, not applied this frame.
-        game.menu_click(MenuSlot::Inventory(0), crate::controls::PointerButton::Primary, false, false);
+        game.menu_click(
+            MenuSlot::Inventory(0),
+            crate::controls::PointerButton::Primary,
+            false,
+            false,
+        );
         assert!(
             game.player.inventory.cursor().is_none(),
             "the click hasn't applied yet — no cursor pickup this frame"
@@ -2195,7 +2285,10 @@ mod tests {
         // so the drift is smooth. An owl just east of the player pushes it west.
         let mut game = game();
         game.player.pos = Vec3::new(8.0, 64.0, 8.0);
-        assert!(game.world.mobs_mut().spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
+        assert!(game
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
         let x0 = game.player.pos.x;
         for _ in 0..30 {
             game.apply_mob_push(1.0 / 60.0);

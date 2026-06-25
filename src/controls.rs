@@ -20,6 +20,9 @@ pub enum Control {
     /// Drop the held (active hotbar) item: one item, or the whole stack when the
     /// sprint/Ctrl modifier is held.
     DropItem,
+    /// Debug: give the player one Furniture Workbench (the first bbmodel block), so it
+    /// can be placed/tested without a recipe. Bound to `O`.
+    DebugGiveWorkbench,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -54,6 +57,7 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::KeyE => Some(Control::ToggleInventory),
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
         KeyCode::KeyQ => Some(Control::DropItem),
+        KeyCode::KeyO => Some(Control::DebugGiveWorkbench),
         KeyCode::Escape => Some(Control::CloseScreen),
         KeyCode::Digit1 => Some(Control::SelectHotbar(0)),
         KeyCode::Digit2 => Some(Control::SelectHotbar(1)),

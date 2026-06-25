@@ -60,78 +60,18 @@ impl Player {
     where
         F: Fn(i32, i32, i32) -> &'static [Aabb],
     {
-        if delta == 0.0 {
-            return false;
-        }
         let mn = self.aabb_min();
         let mx = self.aabb_max();
-        let pmin = [mn.x, mn.y, mn.z];
-        let pmax = [mx.x, mx.y, mx.z];
-        let eps = EPS as f32;
         let ai = match axis {
             Axis::X => 0,
             Axis::Y => 1,
             Axis::Z => 2,
         };
-        // Broad-phase cell ranges over the swept volume: the body, with the swept axis
-        // extended by `delta` toward the move direction.
-        let mut lo = [
-            pmin[0].floor() as i32,
-            pmin[1].floor() as i32,
-            pmin[2].floor() as i32,
-        ];
-        let mut hi = [
-            pmax[0].floor() as i32,
-            pmax[1].floor() as i32,
-            pmax[2].floor() as i32,
-        ];
-        if delta > 0.0 {
-            hi[ai] = (pmax[ai] + delta).floor() as i32;
-        } else {
-            lo[ai] = (pmin[ai] + delta).floor() as i32;
-        }
-
-        let mut travel = delta;
-        for cx in lo[0]..=hi[0] {
-            for cy in lo[1]..=hi[1] {
-                for cz in lo[2]..=hi[2] {
-                    let cell = [cx as f32, cy as f32, cz as f32];
-                    for b in boxes(cx, cy, cz) {
-                        // Overlap on the two NON-swept axes (touching within EPS does
-                        // not count — matches the old cell sweep's EPS-shrunk faces).
-                        let mut cross = true;
-                        for i in 0..3 {
-                            if i == ai {
-                                continue;
-                            }
-                            let wlo = cell[i] + b.min[i];
-                            let whi = cell[i] + b.max[i];
-                            if !(pmax[i] > wlo + eps && pmin[i] < whi - eps) {
-                                cross = false;
-                                break;
-                            }
-                        }
-                        if !cross {
-                            continue;
-                        }
-                        // Clamp travel so the leading face just meets the box's near
-                        // face on the swept axis (only while the box is ahead of us).
-                        if delta > 0.0 {
-                            let allowed = (cell[ai] + b.min[ai]) - pmax[ai];
-                            if allowed >= -eps {
-                                travel = travel.min(allowed.max(0.0));
-                            }
-                        } else {
-                            let allowed = (cell[ai] + b.max[ai]) - pmin[ai];
-                            if allowed <= eps {
-                                travel = travel.max(allowed.min(0.0));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+        // The swept-AABB itself is the shared, model-aware primitive — every moving entity
+        // resolves against the same `collision::sweep_axis`; the player just applies the
+        // travel to its body and reports whether it was clamped short.
+        let travel =
+            crate::collision::sweep_axis([mn.x, mn.y, mn.z], [mx.x, mx.y, mx.z], ai, delta, boxes);
         match axis {
             Axis::X => self.pos.x += travel,
             Axis::Y => self.pos.y += travel,

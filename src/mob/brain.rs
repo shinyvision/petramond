@@ -101,7 +101,9 @@ pub struct Brain {
 
 impl Brain {
     pub fn new() -> Self {
-        Brain { entries: Vec::new() }
+        Brain {
+            entries: Vec::new(),
+        }
     }
 
     /// Add a behavior at `priority` (higher wins), keeping the list sorted so
@@ -183,7 +185,10 @@ mod tests {
     fn higher_priority_goal_wins_but_fields_compose() {
         let world = World::new(0, 1);
         let mut rng = MobRng::new(1);
-        let look = HeadLook { yaw: 0.5, pitch: 0.1 };
+        let look = HeadLook {
+            yaw: 0.5,
+            pitch: 0.1,
+        };
         // Wander (low) wants one goal, a high-priority behavior wants another + a
         // head-look. The goal comes from the high-priority one; the head-look (set by
         // nobody else) still composes in.
@@ -192,8 +197,16 @@ mod tests {
             .with(PRIORITY_EXPRESSION, Look(look))
             .with(PRIORITY_ATTACK, Goal(IVec3::new(9, 0, 0)));
         let d = brain.decide(&mut ctx(&world, &mut rng));
-        assert_eq!(d.goal, Some(IVec3::new(9, 0, 0)), "highest-priority goal wins");
-        assert_eq!(d.head_look, Some(look), "an orthogonal field still composes in");
+        assert_eq!(
+            d.goal,
+            Some(IVec3::new(9, 0, 0)),
+            "highest-priority goal wins"
+        );
+        assert_eq!(
+            d.head_look,
+            Some(look),
+            "an orthogonal field still composes in"
+        );
     }
 
     #[test]
@@ -212,9 +225,19 @@ mod tests {
         // The high-priority behavior only sets head_look; the low one supplies the goal.
         let mut brain = Brain::new()
             .with(PRIORITY_WANDER, Goal(IVec3::new(2, 0, 0)))
-            .with(PRIORITY_ATTACK, Look(HeadLook { yaw: 0.0, pitch: 0.0 }));
+            .with(
+                PRIORITY_ATTACK,
+                Look(HeadLook {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                }),
+            );
         let d = brain.decide(&mut ctx(&world, &mut rng));
-        assert_eq!(d.goal, Some(IVec3::new(2, 0, 0)), "goal falls through to wander");
+        assert_eq!(
+            d.goal,
+            Some(IVec3::new(2, 0, 0)),
+            "goal falls through to wander"
+        );
         assert!(d.head_look.is_some());
     }
 }

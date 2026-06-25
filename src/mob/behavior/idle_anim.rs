@@ -115,7 +115,10 @@ mod tests {
     #[test]
     fn one_shot_idle_plays_for_exactly_its_length() {
         // A 1.0 s one-shot at 20 TPS -> a 20-tick play (not the looping 40–100).
-        let idle = [IdleAnimMeta { length: 1.0, looping: false }];
+        let idle = [IdleAnimMeta {
+            length: 1.0,
+            looping: false,
+        }];
         let timer = ticks_until_start(&mut IdleAnimAi::new(), &idle).expect("idle starts");
         assert_eq!(timer, 20, "one-shot plays for its length in ticks");
     }
@@ -123,9 +126,15 @@ mod tests {
     #[test]
     fn looping_idle_plays_for_a_longer_random_while() {
         // A looping idle ignores its (short) length and plays for the random window.
-        let idle = [IdleAnimMeta { length: 0.1, looping: true }];
+        let idle = [IdleAnimMeta {
+            length: 0.1,
+            looping: true,
+        }];
         let timer = ticks_until_start(&mut IdleAnimAi::new(), &idle).expect("idle starts");
-        assert!(timer >= PLAY_MIN_TICKS, "looping idle uses the random play window: {timer}");
+        assert!(
+            timer >= PLAY_MIN_TICKS,
+            "looping idle uses the random play window: {timer}"
+        );
     }
 
     #[test]
@@ -137,7 +146,10 @@ mod tests {
     fn never_plays_an_idle_animation_while_in_water() {
         let world = World::new(0, 1);
         let mut rng = MobRng::new(7);
-        let idle = [IdleAnimMeta { length: 1.0, looping: false }];
+        let idle = [IdleAnimMeta {
+            length: 1.0,
+            looping: false,
+        }];
         let mut ai = IdleAnimAi::new();
         for _ in 0..20_000 {
             let mut ctx = AiCtx {
@@ -153,7 +165,10 @@ mod tests {
                 idle_anims: &idle,
                 rng: &mut rng,
             };
-            assert!(ai.tick(&mut ctx).idle_anim.is_none(), "no idle plays in water");
+            assert!(
+                ai.tick(&mut ctx).idle_anim.is_none(),
+                "no idle plays in water"
+            );
         }
     }
 }

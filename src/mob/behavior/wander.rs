@@ -291,7 +291,11 @@ mod tests {
         let first = IVec3::new(1, 0, 0);
         assert_eq!(p.offer(first, BiomeFit::Neutral), None);
         assert_eq!(p.offer(IVec3::new(2, 0, 0), BiomeFit::Neutral), None);
-        assert_eq!(p.into_fallback(), Some(first), "first allowed candidate wins the fallback");
+        assert_eq!(
+            p.into_fallback(),
+            Some(first),
+            "first allowed candidate wins the fallback"
+        );
     }
 
     #[test]
@@ -327,7 +331,11 @@ mod tests {
         assert!(!p.reject_water(true));
         let wet = IVec3::new(4, 0, 0);
         assert_eq!(p.offer(wet, BiomeFit::Neutral), None);
-        assert_eq!(p.into_fallback(), Some(wet), "settles for water after the escape hatch");
+        assert_eq!(
+            p.into_fallback(),
+            Some(wet),
+            "settles for water after the escape hatch"
+        );
     }
 
     #[test]

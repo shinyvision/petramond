@@ -68,11 +68,19 @@ mod tests {
 
     #[test]
     fn entities_roundtrip_through_a_buffer() {
-        let mut a = DroppedItem::new(Vec3::new(1.0, 64.0, 2.0), ItemStack::new(ItemType::Stone, 5), 1);
+        let mut a = DroppedItem::new(
+            Vec3::new(1.0, 64.0, 2.0),
+            ItemStack::new(ItemType::Stone, 5),
+            1,
+        );
         a.vel = Vec3::new(0.1, -0.2, 0.3);
         a.ticks_lived = 3000;
         a.spin = 1.25;
-        let b = DroppedItem::new(Vec3::new(-3.0, 70.0, 8.0), ItemStack::new(ItemType::Dirt, 1), 2);
+        let b = DroppedItem::new(
+            Vec3::new(-3.0, 70.0, 8.0),
+            ItemStack::new(ItemType::Dirt, 1),
+            2,
+        );
 
         let mut buf = Vec::new();
         put_entities(&mut buf, &[a.clone(), b.clone()]);
@@ -83,7 +91,10 @@ mod tests {
         assert_eq!(got[0].pos, a.pos);
         assert_eq!(got[0].vel, a.vel);
         assert_eq!(got[0].stack, a.stack);
-        assert_eq!(got[0].ticks_lived, 3000, "remaining lifetime survives the round-trip");
+        assert_eq!(
+            got[0].ticks_lived, 3000,
+            "remaining lifetime survives the round-trip"
+        );
         assert_eq!(got[0].spin, 1.25);
         assert_eq!(got[1].stack, b.stack);
         assert_eq!(got[1].ticks_lived, 0);

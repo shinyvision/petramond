@@ -237,10 +237,8 @@ mod tests {
     fn temp_root() -> PathBuf {
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-asset-cache-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("llamacraft-asset-cache-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -259,8 +257,15 @@ mod tests {
         // Tamper the payload (keeping a valid header + the SAME source hash). A second
         // load must return the tampered value — proving it read the file rather than
         // recompiling (a recompile would reproduce `first`).
-        let sentinel = Dummy { tag: "from-cache".into(), data: vec![7, 8, 9] };
-        atomic_write(&path, &encode::<Dummy>(hash_source(src), &sentinel).unwrap()).unwrap();
+        let sentinel = Dummy {
+            tag: "from-cache".into(),
+            data: vec![7, 8, 9],
+        };
+        atomic_write(
+            &path,
+            &encode::<Dummy>(hash_source(src), &sentinel).unwrap(),
+        )
+        .unwrap();
         let second = load_or_compile_in::<Dummy>(&root, "owl", src).unwrap();
         assert_eq!(second, sentinel, "a cache hit must not recompile");
 
@@ -277,8 +282,11 @@ mod tests {
         assert_eq!(b, Dummy::compile(b"source-b").unwrap());
         assert_ne!(a, b);
         // The on-disk entry now matches source-b, not source-a.
-        assert!(decode::<Dummy>(&std::fs::read(asset_path::<Dummy>(&root, "m")).unwrap(),
-            hash_source(b"source-b")).is_some());
+        assert!(decode::<Dummy>(
+            &std::fs::read(asset_path::<Dummy>(&root, "m")).unwrap(),
+            hash_source(b"source-b")
+        )
+        .is_some());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -306,7 +314,10 @@ mod tests {
     fn decode_rejects_wrong_magic_version_hash_and_truncation() {
         let hash = hash_source(b"src");
         let good = encode::<Dummy>(hash, &Dummy::compile(b"src").unwrap()).unwrap();
-        assert!(decode::<Dummy>(&good, hash).is_some(), "a faithful file decodes");
+        assert!(
+            decode::<Dummy>(&good, hash).is_some(),
+            "a faithful file decodes"
+        );
 
         // Wrong source hash (the source changed underneath it).
         assert!(decode::<Dummy>(&good, hash ^ 1).is_none());

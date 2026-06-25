@@ -140,6 +140,7 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::StoneShovel,
     ItemType::IronShovel,
     ItemType::DiamondShovel,
+    ItemType::FurnitureWorkbench,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -1004,6 +1005,14 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         name: "Diamond Shovel",
         max_stack_size: STACK,
         held_pose: TOOL_POSE,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::FurnitureWorkbench,
+        key: "furniture_workbench",
+        name: "Furniture Workbench",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
         tags: &[],
     },
 ];

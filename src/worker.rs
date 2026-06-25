@@ -4,9 +4,7 @@
 //! and drains results: `submit` requests, `try_recv` drains.
 
 use crate::chunk::Chunk;
-use crate::worldgen::{
-    classic::terrain::NoiseCache, driver::ChunkGenerator, generate_chunk_with,
-};
+use crate::worldgen::{classic::terrain::NoiseCache, driver::ChunkGenerator, generate_chunk_with};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;

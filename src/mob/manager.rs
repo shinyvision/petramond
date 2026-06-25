@@ -303,8 +303,15 @@ impl Mobs {
     /// (about to vanish) doesn't count. The placement code calls this to refuse dropping
     /// a solid block on top of a mob.
     pub fn any_overlapping_placement(&self, p: IVec3, block: Block) -> bool {
+        self.any_overlapping_boxes(p, block.collision_boxes())
+    }
+
+    /// Whether the supplied cell-local collision boxes at `p` overlap a mob's body.
+    /// Used by oriented bbmodel placement, where each occupied cell has its own rotated
+    /// per-cell shape.
+    pub fn any_overlapping_boxes(&self, p: IVec3, boxes: &[crate::block::Aabb]) -> bool {
         let cell = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-        block.collision_boxes().iter().any(|b| {
+        boxes.iter().any(|b| {
             let bmin = cell + Vec3::new(b.min[0], b.min[1], b.min[2]);
             let bmax = cell + Vec3::new(b.max[0], b.max[1], b.max[2]);
             self.list
@@ -377,14 +384,27 @@ mod tests {
     fn restore_respawns_saved_mobs_with_their_pose() {
         let mut mobs = Mobs::new(0);
         mobs.restore([
-            SavedMob { kind: Mob::Owl, pos: Vec3::new(8.5, 70.0, 8.5), yaw: 1.25 },
-            SavedMob { kind: Mob::Owl, pos: Vec3::new(9.5, 70.0, 8.5), yaw: -0.5 },
+            SavedMob {
+                kind: Mob::Owl,
+                pos: Vec3::new(8.5, 70.0, 8.5),
+                yaw: 1.25,
+            },
+            SavedMob {
+                kind: Mob::Owl,
+                pos: Vec3::new(9.5, 70.0, 8.5),
+                yaw: -0.5,
+            },
         ]);
         assert_eq!(mobs.len(), 2);
-        let poses: Vec<(Vec3, f32)> =
-            mobs.instances().iter().map(|m| (m.pos, m.yaw)).collect();
-        assert!(poses.contains(&(Vec3::new(8.5, 70.0, 8.5), 1.25)), "first mob restored in place");
-        assert!(poses.contains(&(Vec3::new(9.5, 70.0, 8.5), -0.5)), "second mob restored in place");
+        let poses: Vec<(Vec3, f32)> = mobs.instances().iter().map(|m| (m.pos, m.yaw)).collect();
+        assert!(
+            poses.contains(&(Vec3::new(8.5, 70.0, 8.5), 1.25)),
+            "first mob restored in place"
+        );
+        assert!(
+            poses.contains(&(Vec3::new(9.5, 70.0, 8.5), -0.5)),
+            "second mob restored in place"
+        );
     }
 
     /// The horizontal distance between the first two live mobs.
@@ -421,17 +441,32 @@ mod tests {
             let next = horizontal_gap(&mobs);
             // No snap-back: the gap only ever grows — the jitter we were getting was the
             // gap oscillating as positions were snapped each tick.
-            assert!(next >= gap - 1e-4, "the gap never shrinks (no snap-back): {gap} -> {next}");
+            assert!(
+                next >= gap - 1e-4,
+                "the gap never shrinks (no snap-back): {gap} -> {next}"
+            );
             last_step = next - gap;
             gap = next;
         }
-        assert!(gap > gap0 + 0.2, "the overlapping owls clearly separated: {gap0} -> {gap}");
-        assert!(gap > 0.9 * reach, "they ended up cleanly apart: gap {gap}, reach {reach}");
-        assert!(gap < 1.3 * reach, "they settled at contact, not flung apart: gap {gap}, reach {reach}");
+        assert!(
+            gap > gap0 + 0.2,
+            "the overlapping owls clearly separated: {gap0} -> {gap}"
+        );
+        assert!(
+            gap > 0.9 * reach,
+            "they ended up cleanly apart: gap {gap}, reach {reach}"
+        );
+        assert!(
+            gap < 1.3 * reach,
+            "they settled at contact, not flung apart: gap {gap}, reach {reach}"
+        );
         // Eased to rest: the push fades out as they separate (proportional to the
         // shrinking overlap), so by the end they've coasted to a stop — a gradual drift
         // that converges, not a constant ram.
-        assert!(last_step < 0.005, "the push eases off as they part: final tick step {last_step}");
+        assert!(
+            last_step < 0.005,
+            "the push eases off as they part: final tick step {last_step}"
+        );
     }
 
     #[test]
@@ -443,7 +478,10 @@ mod tests {
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
         let player_body = push::Body::new(Vec3::new(8.0, 64.0, 8.0), 0.3, 1.8);
         let push = mobs.push_on_player(player_body);
-        assert!(push.x < 0.0, "the player is pushed -X, away from the owl: {push:?}");
+        assert!(
+            push.x < 0.0,
+            "the player is pushed -X, away from the owl: {push:?}"
+        );
         assert_eq!(push.y, 0.0, "the push is horizontal");
     }
 
@@ -453,7 +491,11 @@ mod tests {
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
         let player_body = push::Body::new(far(), 0.3, 1.8);
-        assert_eq!(mobs.push_on_player(player_body), Vec3::ZERO, "an out-of-reach mob imparts no push");
+        assert_eq!(
+            mobs.push_on_player(player_body),
+            Vec3::ZERO,
+            "an out-of-reach mob imparts no push"
+        );
     }
 
     #[test]
@@ -495,14 +537,26 @@ mod tests {
         let away = IVec3::new(20, 64, 8);
 
         // A solid full cube dropped into the owl's cell clips its body.
-        assert!(mobs.any_overlapping_placement(here, Block::Dirt), "a solid block in the owl's cell is blocked");
+        assert!(
+            mobs.any_overlapping_placement(here, Block::Dirt),
+            "a solid block in the owl's cell is blocked"
+        );
         // The same cube well clear of the owl is fine.
-        assert!(!mobs.any_overlapping_placement(away, Block::Dirt), "a cell away from the owl is clear");
+        assert!(
+            !mobs.any_overlapping_placement(away, Block::Dirt),
+            "a cell away from the owl is clear"
+        );
         // A no-collision block (a torch) never clips anything, even right on the owl.
-        assert!(!mobs.any_overlapping_placement(here, Block::Torch), "a no-collision block is always placeable");
+        assert!(
+            !mobs.any_overlapping_placement(here, Block::Torch),
+            "a no-collision block is always placeable"
+        );
 
         // A ragdolling corpse doesn't block placement (it's about to vanish).
         assert!(mobs.hurt_mob(0, 100.0, Vec3::new(9.0, 64.0, 8.5)).is_some());
-        assert!(!mobs.any_overlapping_placement(here, Block::Dirt), "a corpse doesn't block placement");
+        assert!(
+            !mobs.any_overlapping_placement(here, Block::Dirt),
+            "a corpse doesn't block placement"
+        );
     }
 }

@@ -505,7 +505,10 @@ mod tests {
 
         // Install a chunk and edit it, so it is non-empty AND modified (persisted).
         world.insert_chunk_for_test(pos, flat_chunk(pos.cx, pos.cz));
-        assert!(world.set_block_world(8, 90, 8, Block::Stone), "place marker");
+        assert!(
+            world.set_block_world(8, 90, 8, Block::Stone),
+            "place marker"
+        );
         assert!(
             settle(&mut world, |w| mesh_len(w, pos).is_some_and(|n| n > 0)),
             "chunk meshes before unload"
@@ -514,7 +517,10 @@ mod tests {
 
         // Unload far away: the modified chunk is saved + evicted.
         world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
-        assert!(!world.chunk_loaded(pos.cx, pos.cz), "chunk evicted on unload");
+        assert!(
+            !world.chunk_loaded(pos.cx, pos.cz),
+            "chunk evicted on unload"
+        );
 
         // Reload it from disk through the streamer's poll ingestion path.
         world.save().expect("save").request_load(pos);
@@ -538,7 +544,10 @@ mod tests {
         );
 
         // An edit on the reloaded chunk must rebuild its mesh.
-        assert!(world.set_block_world(8, 90, 8, Block::Air), "mine the marker");
+        assert!(
+            world.set_block_world(8, 90, 8, Block::Air),
+            "mine the marker"
+        );
         assert!(
             settle(&mut world, |w| w.chunk_block(8, 90, 8) == Block::Air.id()
                 && mesh_len(w, pos).is_some_and(|n| n < before)),
@@ -575,7 +584,10 @@ mod tests {
 
         // Stream far away: the owl's chunk unloads, harvesting it into the save record.
         world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
-        assert!(!world.chunk_loaded(pos.cx, pos.cz), "chunk evicted on unload");
+        assert!(
+            !world.chunk_loaded(pos.cx, pos.cz),
+            "chunk evicted on unload"
+        );
         assert_eq!(
             world.mobs().len(),
             0,
@@ -591,8 +603,15 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        assert!(world.chunk_loaded(pos.cx, pos.cz), "chunk reloads from disk");
-        assert_eq!(world.mobs().len(), 1, "REPRO: the saved owl returns with its chunk");
+        assert!(
+            world.chunk_loaded(pos.cx, pos.cz),
+            "chunk reloads from disk"
+        );
+        assert_eq!(
+            world.mobs().len(),
+            1,
+            "REPRO: the saved owl returns with its chunk"
+        );
         let owl = &world.mobs().instances()[0];
         assert_eq!(owl.kind, Mob::Owl);
         assert_eq!(owl.pos, feet, "restored in place");

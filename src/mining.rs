@@ -575,10 +575,17 @@ mod tests {
                 break_time(wood, axe(1)) < break_time(wood, None),
                 "{wood:?} should mine faster with an axe"
             );
-            assert_eq!(break_time(wood, pick(4)), break_time(wood, None), "{wood:?}");
+            assert_eq!(
+                break_time(wood, pick(4)),
+                break_time(wood, None),
+                "{wood:?}"
+            );
         }
         // Conversely, an axe is the wrong kind for stone/ore: no speed-up.
-        assert_eq!(break_time(Block::Stone, axe(4)), break_time(Block::Stone, None));
+        assert_eq!(
+            break_time(Block::Stone, axe(4)),
+            break_time(Block::Stone, None)
+        );
     }
 
     #[test]
@@ -590,12 +597,18 @@ mod tests {
 
         // A shovel is, by design, a less efficient digger than the baseline kinds.
         let eff = ToolKind::Shovel.mining_efficiency();
-        assert!(eff < 1.0, "shovel must be less efficient than a pickaxe/axe");
+        assert!(
+            eff < 1.0,
+            "shovel must be less efficient than a pickaxe/axe"
+        );
 
         for tier in 1..=4u8 {
             let with_shovel = break_time(Block::Dirt, shovel(tier));
             // Still a real speed-up over the bare hand at every tier...
-            assert!(with_shovel < hand, "shovel tier {tier} should beat the hand");
+            assert!(
+                with_shovel < hand,
+                "shovel tier {tier} should beat the hand"
+            );
             // ...yet slower than a full-efficiency (pickaxe/axe-grade) tool of the
             // same tier would be — the kind penalty applies across the board.
             let full_speed = hand / tool_speed(tier);
@@ -618,8 +631,14 @@ mod tests {
         assert_eq!(break_time(Block::Dirt, pick(4)), hand);
         assert_eq!(break_time(Block::Dirt, axe(4)), hand);
         // And a shovel is the wrong kind for stone/wood: no speed-up there.
-        assert_eq!(break_time(Block::Stone, shovel(4)), break_time(Block::Stone, None));
-        assert_eq!(break_time(Block::OakLog, shovel(4)), break_time(Block::OakLog, None));
+        assert_eq!(
+            break_time(Block::Stone, shovel(4)),
+            break_time(Block::Stone, None)
+        );
+        assert_eq!(
+            break_time(Block::OakLog, shovel(4)),
+            break_time(Block::OakLog, None)
+        );
     }
 
     #[test]
@@ -635,8 +654,14 @@ mod tests {
             Block::DiamondOre,
             Block::RedstoneOre,
         ] {
-            assert!(harvests(ore, pick(3)), "iron pickaxe should harvest {ore:?}");
-            assert!(harvests(ore, pick(4)), "diamond pickaxe should harvest {ore:?}");
+            assert!(
+                harvests(ore, pick(3)),
+                "iron pickaxe should harvest {ore:?}"
+            );
+            assert!(
+                harvests(ore, pick(4)),
+                "diamond pickaxe should harvest {ore:?}"
+            );
         }
         // A stone pickaxe still can't harvest the tier-3 ores.
         assert!(!harvests(Block::GoldOre, pick(2)));
@@ -653,7 +678,8 @@ mod tests {
             let mut state = MiningState::new();
             let total = break_time(block, tool);
             for _ in 0..((total / dt) as usize + 2) {
-                if let Some(e) = step_with_tool(&mut state, dt, Some(&hit), true, false, tool, block)
+                if let Some(e) =
+                    step_with_tool(&mut state, dt, Some(&hit), true, false, tool, block)
                 {
                     return e;
                 }
@@ -686,7 +712,15 @@ mod tests {
         let (_, before) = state.overlay().unwrap();
         assert!(before > 0);
         // Pull out a pickaxe on the same cell: progress restarts this frame.
-        step_with_tool(&mut state, 0.1, Some(&hit), true, false, pick(1), Block::Stone);
+        step_with_tool(
+            &mut state,
+            0.1,
+            Some(&hit),
+            true,
+            false,
+            pick(1),
+            Block::Stone,
+        );
         let (_, stage) = state.overlay().unwrap();
         assert_eq!(stage, 0, "a tool switch resets elapsed to one frame of dt");
     }

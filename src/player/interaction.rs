@@ -31,7 +31,11 @@ impl Player {
     /// As [`raycast`](Self::raycast), but also returns the distance from `eye` to the
     /// hit. Used to compare a block hit against a mob hit (the nearer wins, so looking
     /// at a mob interrupts block selection).
-    pub(crate) fn raycast_with_dist(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
+    pub(crate) fn raycast_with_dist(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+    ) -> Option<(RaycastHit, f32)> {
         let (mut hit, dist) = Self::raycast_blocks_core(
             eye,
             dir,
@@ -44,11 +48,22 @@ impl Player {
         // A torch's outline traces its 3D pole, whose tilt depends on how it's
         // mounted — state that lives in the world's per-chunk torch map, not visible
         // to the block-only DDA core. Override the default full-cube outline here.
-        if Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z)) == Block::Torch {
+        let hit_block = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
+        if hit_block == Block::Torch {
             hit.outline = SelectionShape::Torch {
                 origin: hit.block,
                 transform: world.torch_placement(hit.block).model_transform(),
             };
+        } else if matches!(hit_block.render_shape(), RenderShape::Model(_)) {
+            // A bbmodel block outlines its WHOLE-MODEL bounding box (baked from geometry),
+            // drawn as one box hugging the model's real extent across all its cells — not
+            // a per-cell cube. (The DDA still TARGETS per cell, above.)
+            if let Some((mn, mx)) = world.model_outline_box(hit.block) {
+                hit.outline = SelectionShape::Box {
+                    min: Vec3::from(mn),
+                    max: Vec3::from(mx),
+                };
+            }
         }
         Some((hit, dist))
     }
@@ -218,17 +233,27 @@ fn should_outline_as_full_block(bounds: TileAlphaBounds) -> bool {
 /// inset chest body, or the torch pole — or `None` if the ray misses it. Full cubes
 /// never reach here (they stop the ray on cell entry); this is what lets selection
 /// ignore the empty parts of an inset/thin block's cell.
-fn precise_shape_hit(
-    eye: Vec3,
-    dir: Vec3,
-    pos: IVec3,
-    block: Block,
-    world: &World,
-) -> Option<f32> {
+fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &World) -> Option<f32> {
     if block == Block::Torch {
         return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
     }
-    // Any other custom-shaped solid (the chest) outlines its inset visual box.
+    // A bbmodel block is picked PIXEL-PERFECT: the ray is tested against the actual
+    // posed cubes of the whole model (in footprint space) with the entry face alpha-
+    // tested, so aiming through the gap between the legs / under the top / at a cut-out
+    // texel misses instead of selecting the block. The DDA's per-cell `t <= t_exit`
+    // window then attributes the crossing to whichever cell the surface falls in.
+    if let RenderShape::Model(kind) = block.render_shape() {
+        let off = world.model_offset_at(pos.x, pos.y, pos.z);
+        let facing = world.model_facing_at(pos.x, pos.y, pos.z);
+        let base = crate::block_model::base_from_cell(pos, kind, off, facing);
+        let inv = crate::block_model::placement_transform(base, kind, facing).inverse();
+        return crate::block_model::ray_vs_model(
+            inv.transform_point3(eye),
+            inv.transform_vector3(dir),
+            kind,
+        );
+    }
+    // Any other custom-shaped solid (the chest) tests its inset visual box.
     let (mn, mx) = block.visual_aabb()?;
     let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))

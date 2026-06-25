@@ -1,6 +1,9 @@
 //! Block registry + per-face tile mapping.
 
+use serde::{Deserialize, Serialize};
+
 use crate::atlas::Tile;
+use crate::block_model::BlockModelKind;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
 pub mod behavior;
@@ -102,6 +105,10 @@ pub enum Block {
     Chest,
     // --- Torch update (id 84). ---
     Torch,
+    // --- bbmodel block update (id 85): the first data-driven Blockbench block,
+    // rendered from its `.bbmodel` (see `crate::block_model` / `RenderShape::Model`)
+    // rather than the atlas, with collision + selection baked from the model. ---
+    FurnitureWorkbench,
 }
 
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
@@ -131,12 +138,17 @@ pub enum BlockTag {
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
 /// is an X of two diagonal billboard quads (grass, ferns, flowers, mushrooms);
 /// `Torch` is a thin pole (a small box) standing on the floor or tilted against a
-/// wall, with its orientation read from the chunk's torch map (see `mesh::torch`).
+/// wall, with its orientation read from the chunk's torch map (see `mesh::torch`);
+/// `Model` is a data-driven Blockbench block ([`BlockModelKind`]) — NOT chunk-meshed
+/// (like the chest it is drawn each frame as a placed model, see
+/// `render::placed_model`), with its own texture, collision and selection baked from
+/// the `.bbmodel` (see [`crate::block_model`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RenderShape {
     Cube,
     Cross,
     Torch,
+    Model(BlockModelKind),
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -144,7 +156,7 @@ pub enum RenderShape {
 /// [`Block::collision_boxes`]) — one for a full cube or the inset chest, several for
 /// shapes like stairs. The player collides via a swept-AABB over them, and the
 /// selection outline + break overlay derive from their union.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Aabb {
     pub min: [f32; 3],
     pub max: [f32; 3],
@@ -171,6 +183,14 @@ impl Block {
     /// ([`visual_aabb`](Self::visual_aabb)).
     #[inline]
     pub fn collision_boxes(self) -> &'static [Aabb] {
+        // A bbmodel block's collision comes from its model — see `block_model` — not the
+        // data row. This position-LESS accessor answers the footprint-origin cell (the
+        // whole block for a single-cell model); a multi-block's per-cell collision is
+        // answered by [`World::collision_boxes_at`](crate::world::World::collision_boxes_at),
+        // which knows the cell's offset.
+        if let RenderShape::Model(kind) = self.def().shape {
+            return crate::block_model::collision_boxes(kind, [0, 0, 0]);
+        }
         self.def().collision
     }
 
@@ -191,6 +211,14 @@ impl Block {
     /// ordinary full cube (or a non-colliding block), which needs no special outline.
     #[inline]
     pub fn visual_aabb(self) -> Option<([f32; 3], [f32; 3])> {
+        // A bbmodel block outlines its MODEL's selection box (raycast target + black
+        // wireframe + break overlay), independent of its collision — so a walk-through
+        // (no-collision) model block is still selectable. Position-LESS: answers the
+        // footprint-origin cell; the per-cell outline of a multi-block is resolved by
+        // [`World::selection_box_at`](crate::world::World::selection_box_at). See `block_model`.
+        if let RenderShape::Model(kind) = self.def().shape {
+            return crate::block_model::selection_aabb(kind, [0, 0, 0]);
+        }
         let boxes = self.collision_boxes();
         if boxes.is_empty() {
             return None;
@@ -323,6 +351,14 @@ impl Block {
     #[inline]
     pub fn is_replaceable(self) -> bool {
         self.def().flags.is_replaceable()
+    }
+
+    /// Whether a placed directional block should rotate its authored front toward the
+    /// player. Used by bbmodel blocks the same way furnaces/chests store a placement
+    /// facing for their front face.
+    #[inline]
+    pub fn directional_view(self) -> bool {
+        self.def().flags.is_directional_view()
     }
 
     /// Per-face tile: [top, bottom, side].
@@ -504,6 +540,7 @@ mod tests {
             Block::Furnace,
             Block::Chest,
             Block::Torch,
+            Block::FurnitureWorkbench,
         ];
 
         assert_eq!(Block::ALL, expected);
@@ -548,6 +585,22 @@ mod tests {
         assert!(Block::OakLeaves.occludes_ao());
         assert!(Block::OakLeaves.is_transparent());
         assert!(!Block::OakLeaves.is_replaceable());
+    }
+
+    #[test]
+    fn directional_view_is_block_data_for_blocks_with_a_front() {
+        for block in [Block::Furnace, Block::Chest, Block::FurnitureWorkbench] {
+            assert!(
+                block.directional_view(),
+                "{block:?} should face the player on placement"
+            );
+        }
+        for block in [Block::CraftingTable, Block::Torch, Block::Stone] {
+            assert!(
+                !block.directional_view(),
+                "{block:?} has no authored front view"
+            );
+        }
     }
 
     #[test]

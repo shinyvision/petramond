@@ -126,7 +126,10 @@ mod tests {
         assert_eq!(got.tick, 12_345);
         assert_eq!(got.inventory.active_slot(), 3);
         // Demo hotbar survives the round-trip.
-        assert_eq!(got.inventory.selected().map(|s| s.item), player.inventory.selected().map(|s| s.item));
+        assert_eq!(
+            got.inventory.selected().map(|s| s.item),
+            player.inventory.selected().map(|s| s.item)
+        );
     }
 
     #[test]

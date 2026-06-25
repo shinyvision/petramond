@@ -53,7 +53,10 @@ pub struct HeadLookAi {
 impl HeadLookAi {
     pub fn new() -> Self {
         HeadLookAi {
-            mode: LookMode::Glance(HeadLook { yaw: 0.0, pitch: 0.0 }),
+            mode: LookMode::Glance(HeadLook {
+                yaw: 0.0,
+                pitch: 0.0,
+            }),
             timer: 0,
         }
     }
@@ -126,7 +129,9 @@ fn head_look_toward(to: Vec3, body_yaw: f32) -> Option<HeadLook> {
         return None;
     }
     // Positive pitch looks up (target above the mob's head); clamp the tilt.
-    let pitch = to.y.atan2(horiz.max(1e-3)).clamp(-MAX_HEAD_PITCH, MAX_HEAD_PITCH);
+    let pitch =
+        to.y.atan2(horiz.max(1e-3))
+            .clamp(-MAX_HEAD_PITCH, MAX_HEAD_PITCH);
     Some(HeadLook { yaw, pitch })
 }
 
@@ -150,14 +155,23 @@ mod tests {
         // Model faces -Z; a target straight in front needs ~no head turn.
         let h = head_look_toward(Vec3::new(0.0, 0.0, -2.0), 0.0).expect("in front is lookable");
         assert!(h.yaw.abs() < 1e-3, "no yaw needed dead ahead: {}", h.yaw);
-        assert!(h.pitch.abs() < 1e-3, "level target needs no pitch: {}", h.pitch);
+        assert!(
+            h.pitch.abs() < 1e-3,
+            "level target needs no pitch: {}",
+            h.pitch
+        );
     }
 
     #[test]
     fn square_to_the_side_is_the_furthest_it_will_look() {
         // A target exactly 90° to the side is right at the limit — still lookable.
-        let h = head_look_toward(Vec3::new(2.0, 0.0, 0.0), 0.0).expect("square sideways is at the limit");
-        assert!((h.yaw.abs() - FRAC_PI_2).abs() < 1e-4, "looks square sideways: {}", h.yaw);
+        let h = head_look_toward(Vec3::new(2.0, 0.0, 0.0), 0.0)
+            .expect("square sideways is at the limit");
+        assert!(
+            (h.yaw.abs() - FRAC_PI_2).abs() < 1e-4,
+            "looks square sideways: {}",
+            h.yaw
+        );
     }
 
     #[test]
@@ -179,7 +193,10 @@ mod tests {
         // The same world target is in range when the body faces it and out of range once
         // the body has turned far enough away — the cap is relative to the body, not world.
         let target = Vec3::new(0.0, 0.0, -2.0); // due -Z in world
-        assert!(head_look_toward(target, 0.0).is_some(), "in front of a -Z-facing body");
+        assert!(
+            head_look_toward(target, 0.0).is_some(),
+            "in front of a -Z-facing body"
+        );
         assert!(
             head_look_toward(target, FRAC_PI_2 + 0.1).is_none(),
             "body turned >90° away can't look back at it"
@@ -192,6 +209,10 @@ mod tests {
         // than the pitch limit.
         let h = head_look_toward(Vec3::new(0.0, 5.0, -0.1), 0.0).expect("in front is lookable");
         assert!(h.pitch > 0.0, "looks up at a higher target: {}", h.pitch);
-        assert!(h.pitch <= MAX_HEAD_PITCH + 1e-6, "pitch is capped: {}", h.pitch);
+        assert!(
+            h.pitch <= MAX_HEAD_PITCH + 1e-6,
+            "pitch is capped: {}",
+            h.pitch
+        );
     }
 }

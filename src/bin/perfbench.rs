@@ -170,5 +170,58 @@ fn main() {
         total_quads
     );
 
+    // ---- bbmodel-block meshing: one chunk densely packed with model-block cells so the
+    // bbmodel hot path (template instancing) is measured on its own, not drowned out by
+    // terrain. A Y-band is filled with workbench cells, cycling the model's authored cell
+    // offsets so every cell's template is exercised, then meshed many times. ----
+    {
+        use llamacraft::block::Block;
+        use llamacraft::block_model::{instance, BlockModelKind};
+        use llamacraft::furnace::Facing;
+
+        let kind = BlockModelKind::FurnitureWorkbench;
+        let offsets: Vec<[u8; 3]> = instance(kind).cells.iter().map(|c| c.offset).collect();
+        let band = 64usize; // Y layers packed solid with model cells
+        let mut mc = Chunk::new(0, 0);
+        let mut n_cells = 0usize;
+        for y in 1..(1 + band) {
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    mc.set_block(x, y, z, Block::FurnitureWorkbench);
+                    mc.set_model_offset(x, y, z, offsets[n_cells % offsets.len()]);
+                    mc.set_model_facing(x, y, z, Facing::North);
+                    n_cells += 1;
+                }
+            }
+        }
+
+        let air = |_: i32, _: i32, _: i32| 0u8;
+        let biome0 = |_: i32, _: i32| 0u8;
+        let full = |_: i32, _: i32, _: i32| SKY_FULL;
+
+        let model_quads = build_mesh(&mc, air, biome0, full).model_idx.len() as u64 / 6;
+        let reps = 200usize;
+        let mut model_ns = u128::MAX;
+        for _ in 0..iters.max(1) {
+            let t = Instant::now();
+            let mut sink = 0u64;
+            for _ in 0..reps {
+                sink ^= build_mesh(&mc, air, biome0, full).model.len() as u64;
+            }
+            std::hint::black_box(sink);
+            model_ns = model_ns.min(t.elapsed().as_nanos());
+        }
+        let per_mesh = model_ns as f64 / 1e6 / reps as f64;
+        println!(
+            "model    : {:>8.4} ms/chunk | {:>6.2} ns/quad  ({} cells, {} model-quads, best of {}×{})",
+            per_mesh,
+            per_mesh * 1e6 / model_quads.max(1) as f64,
+            n_cells,
+            model_quads,
+            iters.max(1),
+            reps,
+        );
+    }
+
     let _ = (CHUNK_SX, CHUNK_SZ);
 }

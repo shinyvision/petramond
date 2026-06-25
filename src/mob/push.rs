@@ -103,7 +103,10 @@ mod tests {
         // Same column, but b sits a full body-height above a (a's [0,1], b's [2,3]).
         let a = body(0.0, 0.0, 0.0);
         let b = body(0.05, 2.0, 0.0);
-        assert!(separation(a, b).is_none(), "stacked, not side-by-side: no push");
+        assert!(
+            separation(a, b).is_none(),
+            "stacked, not side-by-side: no push"
+        );
     }
 
     #[test]
@@ -115,10 +118,17 @@ mod tests {
         assert!(pa.x < 0.0 && pa.z == 0.0, "a is pushed -X off b: {pa:?}");
         assert_eq!(pa.y, 0.0, "pushing is horizontal only");
         // Speed grows with overlap: 0.2 overlap → 0.2 * PUSH_STRENGTH m/s.
-        assert!((pa.x.abs() - 0.2 * PUSH_STRENGTH).abs() < 1e-5, "speed ∝ overlap: {}", pa.x);
+        assert!(
+            (pa.x.abs() - 0.2 * PUSH_STRENGTH).abs() < 1e-5,
+            "speed ∝ overlap: {}",
+            pa.x
+        );
         // Symmetric: b takes the exact opposite push (both get the full speed).
         let pb = separation(b, a).expect("overlap pushes");
-        assert!((pb.x + pa.x).abs() < 1e-6 && (pb.z + pa.z).abs() < 1e-6, "equal and opposite");
+        assert!(
+            (pb.x + pa.x).abs() < 1e-6 && (pb.z + pa.z).abs() < 1e-6,
+            "equal and opposite"
+        );
     }
 
     #[test]

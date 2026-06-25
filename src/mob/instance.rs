@@ -20,7 +20,7 @@ use super::nav::Navigator;
 use super::path;
 use super::push;
 use super::ragdoll::Ragdoll;
-use super::{def, Mob, MobDef, MobRng, MobSize};
+use super::{def, Mob, MobDef, MobRng};
 
 /// Downward acceleration (m/s²) applied to airborne mobs.
 const GRAVITY: f32 = -22.0;
@@ -211,8 +211,16 @@ impl Instance {
     pub fn aabb(&self) -> (Vec3, Vec3) {
         let s = def(self.kind).size;
         (
-            Vec3::new(self.pos.x - s.half_width, self.pos.y, self.pos.z - s.half_width),
-            Vec3::new(self.pos.x + s.half_width, self.pos.y + s.height, self.pos.z + s.half_width),
+            Vec3::new(
+                self.pos.x - s.half_width,
+                self.pos.y,
+                self.pos.z - s.half_width,
+            ),
+            Vec3::new(
+                self.pos.x + s.half_width,
+                self.pos.y + s.height,
+                self.pos.z + s.half_width,
+            ),
         )
     }
 
@@ -315,6 +323,9 @@ impl Instance {
         }
 
         let solid = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
+        // The model-aware box source for body collision (legs/top of a bbmodel block); the
+        // cell-based `solid` above still drives navigation (foothold/pathfinding/ledge).
+        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).is_water();
         // The foothold cell the mob is standing in — robust to standing at a block
         // edge, where the cell under its centre overhangs into air. Without this the
@@ -346,7 +357,7 @@ impl Instance {
         self.nav.update_goal(decision.goal, cell, world);
         let (wish, jump) = self.nav.follow(self.pos, self.on_ground);
         let water_flow = |c: IVec3| world.water_flow_dir_at(c.x, c.y, c.z);
-        self.integrate_with_flow(dt, d, wish, jump, &solid, &water, &water_flow);
+        self.integrate_with_flow(dt, d, wish, jump, &boxes, &solid, &water, &water_flow);
         self.apply_expression(dt, d, &decision);
     }
 
@@ -358,9 +369,13 @@ impl Instance {
         let vel = self.vel;
         let yaw = self.yaw;
         let pos = self.pos;
-        let rag = self.death.as_mut().expect("tick_ragdoll only runs when dead");
+        let rag = self
+            .death
+            .as_mut()
+            .expect("tick_ragdoll only runs when dead");
         if rag.is_initialized() {
-            let solid = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
+            let solid =
+                |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
             rag.step(dt, d.scale, pos, yaw, &solid);
         } else {
             rag.init(skeleton, d.scale, vel, yaw);
@@ -378,6 +393,7 @@ impl Instance {
         d: &MobDef,
         wish: Vec3,
         jump: bool,
+        boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
         water_flow: &impl Fn(IVec3) -> Vec3,
@@ -440,7 +456,34 @@ impl Instance {
         } else {
             self.vel.y += GRAVITY * dt;
         }
-        let grounded = self.move_axis_resolved(dt, d.size, solid);
+        // Body collision via the shared swept-AABB resolver (the same one the player and
+        // dropped items use) against the block's REAL collision shape — so a mob stops at a
+        // bbmodel block's legs/top, not its full cube. Navigation (foothold/pathfinding/
+        // `ledge_ahead`) stays cell-based (`solid`): that's "is this cell an obstacle", a
+        // separate concern from "does my body hit the shape".
+        let hw = d.size.half_width;
+        let min = [self.pos.x - hw, self.pos.y, self.pos.z - hw];
+        let max = [self.pos.x + hw, self.pos.y + d.size.height, self.pos.z + hw];
+        // A grounded mob auto-steps up a half-block ledge (a slab / a model block's low
+        // edge) without jumping — same `STEP_HEIGHT` the player uses.
+        let (moved, grounded, hit) = crate::collision::resolve_body(
+            min,
+            max,
+            self.vel.to_array(),
+            dt,
+            crate::collision::STEP_HEIGHT,
+            boxes,
+        );
+        self.pos += Vec3::from(moved);
+        if hit[0] {
+            self.vel.x = 0.0;
+        }
+        if hit[1] {
+            self.vel.y = 0.0;
+        }
+        if hit[2] {
+            self.vel.z = 0.0;
+        }
         self.on_ground = grounded;
         if grounded && self.vel.y < 0.0 {
             self.vel.y = 0.0;
@@ -464,7 +507,9 @@ impl Instance {
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
     ) {
-        self.integrate_with_flow(dt, d, wish, jump, solid, water, &|_| Vec3::ZERO);
+        self.integrate_with_flow(dt, d, wish, jump, &boxes_of(solid), solid, water, &|_| {
+            Vec3::ZERO
+        });
     }
 
     /// Apply the tick's expressive decision: choose + advance the active animation
@@ -513,41 +558,6 @@ impl Instance {
     /// Move along each axis in turn, resolving against solid cells; returns whether
     /// the mob is resting on the ground after the move. Mirrors the dropped-item
     /// integrator, sized to the mob's AABB.
-    fn move_axis_resolved(
-        &mut self,
-        dt: f32,
-        size: MobSize,
-        solid: &impl Fn(IVec3) -> bool,
-    ) -> bool {
-        let mut grounded = false;
-
-        let dy = self.vel.y * dt;
-        self.pos.y += dy;
-        if self.collides(size, solid) {
-            self.pos.y -= dy;
-            if self.vel.y < 0.0 {
-                grounded = true;
-            }
-            self.vel.y = 0.0;
-        }
-
-        let dx = self.vel.x * dt;
-        self.pos.x += dx;
-        if self.collides(size, solid) {
-            self.pos.x -= dx;
-            self.vel.x = 0.0;
-        }
-
-        let dz = self.vel.z * dt;
-        self.pos.z += dz;
-        if self.collides(size, solid) {
-            self.pos.z -= dz;
-            self.vel.z = 0.0;
-        }
-
-        grounded
-    }
-
     /// Is there a 1-block ledge to climb onto just ahead in `dir` (horizontal)? True
     /// when the cell just beyond the body is solid at the feet (or one above) with open
     /// space directly above it — a single step, not a taller wall (so swimming into a
@@ -566,27 +576,6 @@ impl Instance {
         // below the ledge top, giving runway to crest it).
         let step_at = |y: i32| solid(IVec3::new(fx, y, fz)) && !solid(IVec3::new(fx, y + 1, fz));
         step_at(base) || step_at(base + 1)
-    }
-
-    /// Does the mob's AABB (feet at `pos`, extending up by `size.height`) overlap any
-    /// solid cell?
-    fn collides(&self, size: MobSize, solid: &impl Fn(IVec3) -> bool) -> bool {
-        let hw = size.half_width;
-        let min = Vec3::new(self.pos.x - hw, self.pos.y, self.pos.z - hw);
-        let max = Vec3::new(self.pos.x + hw, self.pos.y + size.height, self.pos.z + hw);
-        let (x0, x1) = (min.x.floor() as i32, max.x.floor() as i32);
-        let (y0, y1) = (min.y.floor() as i32, max.y.floor() as i32);
-        let (z0, z1) = (min.z.floor() as i32, max.z.floor() as i32);
-        for x in x0..=x1 {
-            for y in y0..=y1 {
-                for z in z0..=z1 {
-                    if solid(IVec3::new(x, y, z)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
     }
 
     #[cfg(test)]
@@ -668,6 +657,22 @@ fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec
     Vec3::new(vel.x + nx * add, vel.y, vel.z + nz * add)
 }
 
+/// Bridge a cell-solid bool stub into the shared collision box source (a full cube per
+/// solid cell), so the kinematics tests keep driving body physics with a simple `solid`
+/// predicate while it routes through the same `collision::resolve_body` as production.
+#[cfg(test)]
+fn boxes_of(
+    solid: &impl Fn(IVec3) -> bool,
+) -> impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb] + '_ {
+    move |x, y, z| {
+        if solid(IVec3::new(x, y, z)) {
+            crate::block::Block::Stone.collision_boxes()
+        } else {
+            &[]
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,7 +696,10 @@ mod tests {
         // It takes a full uninterrupted run of HOSTILE_DESPAWN_TICKS to cross the line.
         let mut t = 0;
         for _ in 0..HOSTILE_DESPAWN_TICKS {
-            assert!(t < HOSTILE_DESPAWN_TICKS, "below threshold until the last tick");
+            assert!(
+                t < HOSTILE_DESPAWN_TICKS,
+                "below threshold until the last tick"
+            );
             t = next_despawn_timer(t, true);
         }
         assert!(t >= HOSTILE_DESPAWN_TICKS, "reaches the cull threshold");
@@ -721,6 +729,84 @@ mod tests {
         );
         assert!(owl.pos.y < 0.05, "mob rests on the floor: {}", owl.pos.y);
         assert!(owl.on_ground());
+    }
+
+    #[test]
+    fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
+        // Model-aware body collision: a mob settling onto an INSET block (a chest, top at
+        // 14/16) rests its feet on that real top, not the full-cube cell top (y = 1). The
+        // mob body now collides through the shared `collision_boxes_at` shape (nav stays
+        // cell-based, but that's a separate concern).
+        let chest = crate::block::Block::Chest.collision_boxes();
+        let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
+        assert!(
+            chest_top < 1.0,
+            "the chest box must be inset (top {chest_top})"
+        );
+        let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
+        let solid = |c: IVec3| c.y == 0; // nav sees the chest cell as a unit obstacle
+        let dry = |_: IVec3| false;
+        let still = |_: IVec3| Vec3::ZERO;
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+        for _ in 0..600 {
+            owl.integrate_with_flow(
+                1.0 / 60.0,
+                owl_def(),
+                Vec3::ZERO,
+                false,
+                &boxes,
+                &solid,
+                &dry,
+                &still,
+            );
+        }
+        assert!(owl.on_ground(), "mob should be grounded on the chest");
+        assert!(
+            (owl.pos.y - chest_top).abs() < 0.02,
+            "mob feet should rest on the chest top {chest_top}, got {}",
+            owl.pos.y
+        );
+    }
+
+    #[test]
+    fn grounded_mob_auto_steps_up_a_half_block() {
+        // A grounded mob walking into a 0.5-tall ledge auto-climbs it (same STEP_HEIGHT as
+        // the player), without needing a jump.
+        let half_step = |x: i32, y: i32, _z: i32| -> &'static [crate::block::Aabb] {
+            if y == 0 {
+                Block::Stone.collision_boxes()
+            } else if y == 1 && x >= 1 {
+                &[crate::block::Aabb {
+                    min: [0.0, 0.0, 0.0],
+                    max: [1.0, 0.5, 1.0],
+                }]
+            } else {
+                &[]
+            }
+        };
+        let solid = |c: IVec3| c.y == 0 || (c.y == 1 && c.x >= 1); // nav obstacle
+        let dry = |_: IVec3| false;
+        let still = |_: IVec3| Vec3::ZERO;
+        let wish = Vec3::new(1.0, 0.0, 0.0);
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
+        for _ in 0..180 {
+            owl.integrate_with_flow(
+                1.0 / 60.0,
+                owl_def(),
+                wish,
+                false,
+                &half_step,
+                &solid,
+                &dry,
+                &still,
+            );
+        }
+        assert!(owl.pos.x > 1.2, "mob steps onto the ledge: x={}", owl.pos.x);
+        assert!(
+            owl.pos.y > 1.4,
+            "mob rises onto the 0.5 ledge top: y={}",
+            owl.pos.y
+        );
     }
 
     #[test]
@@ -894,7 +980,10 @@ mod tests {
     #[test]
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(owl.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)), "one big hit kills");
+        assert!(
+            owl.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)),
+            "one big hit kills"
+        );
         // A corpse takes no more damage and reports no further lethal hits.
         assert!(!owl.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)));
         assert!(owl.is_dead());
@@ -904,14 +993,23 @@ mod tests {
     fn knockback_pushes_away_and_overrides_the_wish() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         // Settle on the floor first.
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
+            false
+        });
         let x0 = owl.pos.x;
         // Hit from the +X side → knockback toward -X. This is the key invariant: the
         // knockback survives `integrate`'s per-tick wish-velocity overwrite.
         assert!(!owl.hurt(1.0, Vec3::new(5.0, 0.0, 0.5)));
         // Wish toward +X (toward the attacker); the knockback must win during the stagger.
         for _ in 0..4 {
-            owl.integrate(0.05, owl_def(), Vec3::new(1.0, 0.0, 0.0), false, &floor_at_zero, &|_| false);
+            owl.integrate(
+                0.05,
+                owl_def(),
+                Vec3::new(1.0, 0.0, 0.0),
+                false,
+                &floor_at_zero,
+                &|_| false,
+            );
         }
         assert!(
             owl.pos.x < x0 - 0.05,
@@ -930,8 +1028,14 @@ mod tests {
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(dead.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)));
-        assert!(dead.hurt_flash(1.0) > 0.0, "the kill flashes red like a normal hit");
-        assert!(dead.ragdoll_pose(0.5).is_none(), "ragdoll pose is None until a dead tick inits it");
+        assert!(
+            dead.hurt_flash(1.0) > 0.0,
+            "the kill flashes red like a normal hit"
+        );
+        assert!(
+            dead.ragdoll_pose(0.5).is_none(),
+            "ragdoll pose is None until a dead tick inits it"
+        );
     }
 
     #[test]
@@ -1043,17 +1147,43 @@ mod tests {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
         let x0 = owl.pos.x;
         for _ in 0..60 {
-            owl.integrate_with_flow(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &solid, &water, &flow);
+            owl.integrate_with_flow(
+                1.0 / 60.0,
+                owl_def(),
+                Vec3::ZERO,
+                false,
+                &boxes_of(&solid),
+                &solid,
+                &water,
+                &flow,
+            );
         }
-        assert!(owl.pos.x > x0 + 0.3, "the current carries the mob downstream: {x0} -> {}", owl.pos.x);
+        assert!(
+            owl.pos.x > x0 + 0.3,
+            "the current carries the mob downstream: {x0} -> {}",
+            owl.pos.x
+        );
 
         // Still water (no current) leaves an idle mob where it is — proving it's the flow
         // doing the carrying, not stray drift.
         let still = |_: IVec3| Vec3::ZERO;
         let mut calm = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
         for _ in 0..60 {
-            calm.integrate_with_flow(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &solid, &water, &still);
+            calm.integrate_with_flow(
+                1.0 / 60.0,
+                owl_def(),
+                Vec3::ZERO,
+                false,
+                &boxes_of(&solid),
+                &solid,
+                &water,
+                &still,
+            );
         }
-        assert!((calm.pos.x - 0.5).abs() < 1e-3, "no current → no horizontal drift: x {}", calm.pos.x);
+        assert!(
+            (calm.pos.x - 0.5).abs() < 1e-3,
+            "no current → no horizontal drift: x {}",
+            calm.pos.x
+        );
     }
 }

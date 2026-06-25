@@ -170,7 +170,10 @@ mod tests {
             dt: 1.0 / 60.0,
         });
         assert!(started.swing > 0.0, "an attack begins a swing");
-        assert_eq!(started.swing_scale, 1.0, "an attack swings at full strength");
+        assert_eq!(
+            started.swing_scale, 1.0,
+            "an attack swings at full strength"
+        );
 
         // It carries through and settles like any one-shot swing.
         let settled = anim.update(HeldItemFrame {

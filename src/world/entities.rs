@@ -266,7 +266,9 @@ impl DroppedItems {
         let mut map: HashMap<ChunkPos, Vec<DroppedItem>> = HashMap::new();
         for it in &self.items {
             let (cx, cz) = chunk_xz(it.pos);
-            map.entry(ChunkPos::new(cx, cz)).or_default().push(it.clone());
+            map.entry(ChunkPos::new(cx, cz))
+                .or_default()
+                .push(it.clone());
         }
         map
     }
@@ -598,7 +600,9 @@ mod tests {
         let mut w = World::new(0, 0);
         w.spawn_item(drop_at(2.5, 2.5)); // chunk (0, 0)
         w.spawn_item(drop_at(20.5, 2.5)); // chunk (1, 0)
-        let taken = w.dropped_items_mut().take_items_in_chunk(ChunkPos::new(0, 0));
+        let taken = w
+            .dropped_items_mut()
+            .take_items_in_chunk(ChunkPos::new(0, 0));
         assert_eq!(taken.len(), 1, "only the (0,0) drop is harvested");
         assert_eq!(w.item_entities().len(), 1, "the (1,0) drop stays active");
         assert!(w.item_entities()[0].pos.x > 16.0);

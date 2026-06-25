@@ -19,6 +19,184 @@
 use super::foliage_tint;
 use super::lighting;
 use crate::atlas::{tile_alpha_opaque, tile_uv, Tile};
+use crate::bbmodel::face_corners;
+use crate::block_model::{self, BlockModelKind};
+use crate::mesh::face::Face;
+use crate::mesh::SHADES;
+use glam::{Mat4, Vec3};
+
+/// Bake a bbmodel block's baked model into indexed [`ItemVertex`] geometry (sampling the
+/// MODEL atlas, the same sheet the in-world block uses) — the model centred + uniformly
+/// scaled to a unit cube (`±0.5`), then placed by `transform`, lit by `skylight` (× the
+/// per-face directional shade) and warmed by `warm` (0..255). APPENDS (caller clears).
+/// Shared by the inventory ICON, the first-person HELD item, and the DROPPED item-entity
+/// so all three show the real workbench, not a stand-in cube.
+///
+/// `view_sort`, when `Some(dir)`, orders the cubes far→near along `dir` so a DEPTHLESS
+/// pass (the iso inventory icon) gets correct overlap by painter's algorithm; the
+/// depth-tested hand/world contexts pass `None`.
+pub fn build_block_model_item(
+    kind: BlockModelKind,
+    transform: Mat4,
+    skylight: u8,
+    warm: u8,
+    view_sort: Option<Vec3>,
+    verts: &mut Vec<ItemVertex>,
+    indices: &mut Vec<u32>,
+) {
+    let inst = block_model::instance(kind);
+    let fp = Vec3::new(
+        inst.footprint[0] as f32,
+        inst.footprint[1] as f32,
+        inst.footprint[2] as f32,
+    );
+    // Footprint space → a unit cube centred on the origin: subtract the footprint centre,
+    // then uniformly scale the largest axis to fill `±0.5` (keeping proportions). The
+    // caller's `transform` then sizes/places/spins it for its context.
+    let span = fp.max_element().max(1.0);
+    let map =
+        transform * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
+    let light = lighting::sky_light_factor(skylight);
+    let tint = crate::torch::warm_tint([1.0, 1.0, 1.0], warm as f32 / 255.0);
+
+    // Draw order (far→near for the depthless icon; natural otherwise).
+    let mut order: Vec<usize> = (0..inst.cubes.len()).collect();
+    if let Some(dir) = view_sort {
+        order.sort_by(|&a, &b| {
+            let da = ((inst.cubes[a].from + inst.cubes[a].to) * 0.5).dot(dir);
+            let db = ((inst.cubes[b].from + inst.cubes[b].to) * 0.5).dot(dir);
+            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    for &ci in &order {
+        let cube = &inst.cubes[ci];
+        let m = map
+            * Mat4::from_translation(cube.origin)
+            * Mat4::from_quat(crate::bbmodel::euler_quat(cube.rotation))
+            * Mat4::from_translation(-cube.origin);
+        for (slot, face) in Face::ALL.into_iter().enumerate() {
+            let Some(uv) = cube.faces[slot] else { continue };
+            let Some(bias) = block_model::render_face_bias(cube, &inst.cubes, face) else {
+                continue;
+            };
+            let local = face_corners(face, cube.from, cube.to);
+            let p: [Vec3; 4] = [
+                m.transform_point3(Vec3::from(local[0]) + bias),
+                m.transform_point3(Vec3::from(local[1]) + bias),
+                m.transform_point3(Vec3::from(local[2]) + bias),
+                m.transform_point3(Vec3::from(local[3]) + bias),
+            ];
+            if (p[1] - p[0]).cross(p[3] - p[0]).length_squared() < 1e-12 {
+                continue;
+            }
+            let shade = SHADES[face.shade_idx() as usize] * light;
+            let [u0, v0, u1, v1] = uv;
+            let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+            let start = verts.len() as u32;
+            for i in 0..4 {
+                verts.push(ItemVertex {
+                    pos: p[i].to_array(),
+                    uv: corner_uv[i],
+                    shade,
+                    tint,
+                });
+            }
+            indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        }
+    }
+}
+
+/// Bake a bbmodel block's model into [`ItemVertex`] geometry for the inventory-icon pass:
+/// like [`build_block_model_item`] but `transform` is the full icon clip-space MVP (so
+/// positions come out in clip space, ready for the pass-through `model_icon` shader). The
+/// model-icon pass is DEPTH-BUFFERED (the model is double-sided like the in-world block,
+/// so depth — not winding — orders its panels/drawers), but the faces are also emitted
+/// FAR→NEAR by clip-z as a cheap, stable tiebreak for coincident decals. Full-bright (no
+/// warm tint); APPENDS (caller clears).
+pub fn build_block_model_icon(
+    kind: BlockModelKind,
+    mvp: Mat4,
+    verts: &mut Vec<ItemVertex>,
+    indices: &mut Vec<u32>,
+) {
+    let inst = block_model::instance(kind);
+    let fp = Vec3::new(
+        inst.footprint[0] as f32,
+        inst.footprint[1] as f32,
+        inst.footprint[2] as f32,
+    );
+    // Footprint space → centred unit cube (same as `build_block_model_item`), then the
+    // caller's icon MVP — so positions land in clip space.
+    let span = fp.max_element().max(1.0);
+    let map = mvp * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
+    let light = lighting::sky_light_factor(super::lighting::FULL_SKYLIGHT);
+    let tint = [1.0, 1.0, 1.0];
+
+    // Collect every face with its mean clip-z, then sort far→near (painter's algorithm).
+    let mut faces: Vec<(f32, [ItemVertex; 4])> = Vec::new();
+    for cube in &inst.cubes {
+        let m = map
+            * Mat4::from_translation(cube.origin)
+            * Mat4::from_quat(crate::bbmodel::euler_quat(cube.rotation))
+            * Mat4::from_translation(-cube.origin);
+        for (slot, face) in Face::ALL.into_iter().enumerate() {
+            let Some(uv) = cube.faces[slot] else { continue };
+            let Some(bias) = block_model::render_face_bias(cube, &inst.cubes, face) else {
+                continue;
+            };
+            let local = face_corners(face, cube.from, cube.to);
+            let p: [Vec3; 4] = [
+                m.transform_point3(Vec3::from(local[0]) + bias),
+                m.transform_point3(Vec3::from(local[1]) + bias),
+                m.transform_point3(Vec3::from(local[2]) + bias),
+                m.transform_point3(Vec3::from(local[3]) + bias),
+            ];
+            if (p[1] - p[0]).cross(p[3] - p[0]).length_squared() < 1e-12 {
+                continue;
+            }
+            let shade = SHADES[face.shade_idx() as usize] * light;
+            let [u0, v0, u1, v1] = uv;
+            let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+            let quad = [
+                ItemVertex {
+                    pos: p[0].to_array(),
+                    uv: corner_uv[0],
+                    shade,
+                    tint,
+                },
+                ItemVertex {
+                    pos: p[1].to_array(),
+                    uv: corner_uv[1],
+                    shade,
+                    tint,
+                },
+                ItemVertex {
+                    pos: p[2].to_array(),
+                    uv: corner_uv[2],
+                    shade,
+                    tint,
+                },
+                ItemVertex {
+                    pos: p[3].to_array(),
+                    uv: corner_uv[3],
+                    shade,
+                    tint,
+                },
+            ];
+            let depth = (p[0].z + p[1].z + p[2].z + p[3].z) * 0.25;
+            faces.push((depth, quad));
+        }
+    }
+    // Larger clip-z is farther (wgpu z in [0,1], 0 = near): draw it FIRST so nearer faces
+    // overpaint it.
+    faces.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, quad) in faces {
+        let start = verts.len() as u32;
+        verts.extend_from_slice(&quad);
+        indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    }
+}
 
 /// One vertex of the extruded item mesh consumed by the `item3d` pipeline:
 /// explicit position, atlas UV, a directional shade multiplier, and an RGB tint
