@@ -83,6 +83,8 @@ pub(super) const PANEL_H: f32 = 166.0;
 /// the open inventory grid, the craft grid and the chest grid — NOT the closed
 /// hotbar widget (which uses its own 20px pitch in [`hotbar`]).
 pub(super) const PANEL_PITCH: f32 = 18.0;
+const SLOT_HOVER_FILL: [f32; 4] = [0.78, 0.98, 0.92, 0.13];
+const SLOT_HOVER_EDGE: [f32; 4] = [0.72, 1.0, 0.94, 0.24];
 
 /// One slot's pixel rectangle (interior, where the icon + digits go). All in
 /// physical pixels, top-left origin, y down. The single source of truth shared
@@ -211,6 +213,54 @@ pub(super) fn push_quad_uv(
     out.push(v(p_tr, uv_tr));
 }
 
+fn push_slot_hover(out: &mut Vec<UiVertex>, screen: (u32, u32), r: SlotRect, scale: f32) {
+    let b = scale.max(1.0).min(r.w * 0.25).min(r.h * 0.25);
+    push_solid(out, screen, r.x, r.y, r.w, r.h, SLOT_HOVER_FILL);
+    push_solid(out, screen, r.x, r.y, r.w, b, SLOT_HOVER_EDGE);
+    push_solid(out, screen, r.x, r.y + r.h - b, r.w, b, SLOT_HOVER_EDGE);
+    push_solid(out, screen, r.x, r.y, b, r.h, SLOT_HOVER_EDGE);
+    push_solid(out, screen, r.x + r.w - b, r.y, b, r.h, SLOT_HOVER_EDGE);
+}
+
+fn hovered_slot_rect(ui: &UiSnapshot, screen: (u32, u32), scale: f32) -> Option<SlotRect> {
+    let (px, py) = ui.cursor_px;
+    if ui.open {
+        if ui.furnace.is_some() {
+            for slot in [FurnaceHit::Input, FurnaceHit::Fuel, FurnaceHit::Output] {
+                let r = furnace::furnace_slot_rect(slot, screen, scale);
+                if r.contains(px, py) {
+                    return Some(r);
+                }
+            }
+        } else if ui.chest.is_some() {
+            for i in 0..crate::chest::CHEST_SLOTS {
+                if let Some(r) = chest::chest_slot_rect(i, screen, scale) {
+                    if r.contains(px, py) {
+                        return Some(r);
+                    }
+                }
+            }
+        } else {
+            for i in 0..ui.panel.cols() * ui.panel.cols() {
+                if let Some(r) = crafting::craft_slot_rect(ui.panel, i, screen, scale) {
+                    if r.contains(px, py) {
+                        return Some(r);
+                    }
+                }
+            }
+            let r = crafting::craft_result_rect(ui.panel, screen, scale);
+            if r.contains(px, py) {
+                return Some(r);
+            }
+        }
+    }
+
+    let limit = if ui.open { TOTAL_SLOTS } else { HOTBAR_LEN };
+    (0..limit)
+        .filter_map(|i| inventory::slot_rect(i, screen, ui.open, scale))
+        .find(|r| r.contains(px, py))
+}
+
 /// Build the full UI for `ui` this frame, dispatching to each screen's submodule.
 /// `verts`/`overlay_verts`/`icon_quads` are the caller-owned reusable buffers
 /// (cleared, capacity retained). Paint order is back-to-front: screen background,
@@ -265,6 +315,10 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         );
     } else {
         hotbar::build_background(ui, build, screen, scale);
+    }
+
+    if let Some(r) = hovered_slot_rect(ui, screen, scale) {
+        push_slot_hover(&mut build.verts, screen, r, scale);
     }
 
     // --- Per-slot item icons + stack-count digits (the inventory slots, shared by
@@ -352,6 +406,10 @@ mod tests {
             drag_icon_quads: Vec::new(),
             drag_overlay_verts: Vec::new(),
         }
+    }
+
+    fn center(r: SlotRect) -> (f32, f32) {
+        (r.x + r.w * 0.5, r.y + r.h * 0.5)
     }
 
     #[test]

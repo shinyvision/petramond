@@ -32,7 +32,7 @@ pub enum FurnaceHit {
 }
 
 /// Interior pixel rect of furnace slot `slot`, panel-relative like the inventory.
-fn furnace_slot_rect(slot: FurnaceHit, screen: (u32, u32), scale: f32) -> SlotRect {
+pub(super) fn furnace_slot_rect(slot: FurnaceHit, screen: (u32, u32), scale: f32) -> SlotRect {
     let (ox, oy) = panel_origin(screen, scale);
     let (sx, sy) = match slot {
         FurnaceHit::Input => FURNACE_INPUT,
