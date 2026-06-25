@@ -1,6 +1,6 @@
 use crate::registry::{self, RegistryKey, TableEntry};
 
-use super::definition::{BiomeDef, HumidityBand};
+use super::definition::{BiomeDef, Color, HumidityBand};
 use super::Biome;
 
 pub(super) const DEEP_OCEAN_MAX_Y: i32 = 46;
@@ -28,6 +28,12 @@ pub(super) const MESIC_HUMIDITY_MIN: f32 = 0.40;
 pub(super) const TAIGA_TEMP_MAX: f32 = 0.38;
 pub(super) const BIRCH_TEMP_MIN: f32 = 0.62;
 pub(super) const TEMPERATE_DRY_DEFAULT: Biome = Biome::Plains;
+
+/// Grass-block top tint shared by every forest biome (Forest, BirchForest, DarkForest),
+/// so the forests read as one family of grass underfoot. Only the GRASS is shared — each
+/// forest keeps its own `foliage_color` (birch's lighter leaves, the dark forest's deep
+/// canopy). Editing this moves all forests together.
+const FOREST_GRASS: Color = [0.22, 0.82, 0.12];
 
 pub(super) const HOT_LOWLAND_BANDS: &[HumidityBand] = &[
     HumidityBand {
@@ -86,8 +92,8 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::Plains,
         name: "plains",
         fog_color: [0.60, 0.82, 1.00],
-        grass_color: [0.48, 0.80, 0.28],
-        foliage_color: [0.42, 0.76, 0.24],
+        grass_color: [0.32, 0.78, 0.22],
+        foliage_color: [0.24, 0.72, 0.18],
         water_color: [0.12, 0.46, 0.86],
     },
     BiomeDef {
@@ -102,7 +108,7 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::Forest,
         name: "forest",
         fog_color: [0.48, 0.76, 1.00],
-        grass_color: [0.32, 0.78, 0.22],
+        grass_color: [0.12, 0.58, 0.02],
         foliage_color: [0.24, 0.72, 0.18],
         water_color: [0.10, 0.42, 0.82],
     },
@@ -110,8 +116,8 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::BirchForest,
         name: "birch_forest",
         fog_color: [0.52, 0.78, 1.00],
-        grass_color: [0.50, 0.82, 0.32],
-        foliage_color: [0.48, 0.84, 0.30],
+        grass_color: [0.12, 0.58, 0.02],
+        foliage_color: [0.24, 0.72, 0.18],
         water_color: [0.12, 0.46, 0.82],
     },
     BiomeDef {
@@ -166,8 +172,8 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::DeepOcean,
         name: "deep_ocean",
         fog_color: [0.22, 0.38, 0.76],
-        grass_color: [0.46, 0.68, 0.36],
-        foliage_color: [0.42, 0.64, 0.32],
+        grass_color: [0.12, 0.58, 0.02],
+        foliage_color: [0.24, 0.72, 0.18],
         water_color: [0.04, 0.22, 0.64],
     },
     BiomeDef {
@@ -206,8 +212,8 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         biome: Biome::DarkForest,
         name: "dark_forest",
         fog_color: [0.42, 0.58, 0.62],
-        grass_color: [0.20, 0.50, 0.14],
-        foliage_color: [0.16, 0.44, 0.10],
+        grass_color: [0.10, 0.50, 0.12],
+        foliage_color: [0.24, 0.72, 0.18],
         water_color: [0.10, 0.40, 0.66],
     },
     BiomeDef {

@@ -375,9 +375,9 @@ impl Biome {
         self as u8
     }
 
-    /// Grass-block top tint colour (linear sRGB 0..1) for biome. Forest/Plains are
-    /// a normal saturated green; Foothills/Mountains are desaturated (R≈G); Desert
-    /// is a deadish yellow, Savanna a yellow-green, Wetland dark green, Swamp darker.
+    /// Grass-block top tint colour (linear sRGB 0..1) for biome. Every biome
+    /// except Desert and Savanna uses a green-dominant, saturated tint, with
+    /// brightness varied by biome.
     #[inline]
     pub fn grass_color(self) -> [f32; 3] {
         self.def().grass_color
@@ -506,9 +506,41 @@ mod tests {
 
         assert_eq!(Biome::Beach.name(), "beach");
         assert_eq!(Biome::Beach.fog_color(), [0.97, 0.90, 0.72]);
-        assert_eq!(Biome::Forest.grass_color(), [0.32, 0.78, 0.22]);
+        assert_eq!(Biome::Forest.grass_color(), [0.22, 0.82, 0.12]);
         assert_eq!(Biome::Swamp.water_color(), [0.16, 0.38, 0.48]);
-        assert_eq!(Biome::SnowyPeaks.foliage_color(), [0.72, 0.84, 0.70]);
+        assert_eq!(Biome::SnowyPeaks.foliage_color(), [0.48, 0.84, 0.46]);
+    }
+
+    fn assert_vibrant_green(biome: Biome, label: &str, color: [f32; 3], min_green: f32) {
+        let strongest_other = color[0].max(color[2]);
+        assert!(
+            color[1] >= min_green,
+            "{biome:?} {label} green channel should be at least {min_green}: {color:?}"
+        );
+        assert!(
+            color[1] - strongest_other >= 0.16,
+            "{biome:?} {label} should be green-dominant: {color:?}"
+        );
+    }
+
+    #[test]
+    fn grass_and_foliage_are_vibrant_except_desert_and_savanna() {
+        for biome in ALL_BIOMES {
+            match biome {
+                Biome::Desert => {
+                    assert_eq!(biome.grass_color(), [0.84, 0.76, 0.30]);
+                    assert_eq!(biome.foliage_color(), [0.78, 0.70, 0.26]);
+                }
+                Biome::Savanna => {
+                    assert_eq!(biome.grass_color(), [0.72, 0.74, 0.26]);
+                    assert_eq!(biome.foliage_color(), [0.66, 0.68, 0.24]);
+                }
+                _ => {
+                    assert_vibrant_green(biome, "grass", biome.grass_color(), 0.62);
+                    assert_vibrant_green(biome, "foliage", biome.foliage_color(), 0.54);
+                }
+            }
+        }
     }
 
     #[test]
