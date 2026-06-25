@@ -13,12 +13,13 @@ use super::{grass, BlockBehavior};
 const SPREAD_RADIUS: i32 = 2;
 
 /// Dirt. On a random tick it greens into [`Block::Grass`] when its top is open and
-/// any grass block lies within [`SPREAD_RADIUS`] blocks, so grass creeps outward
-/// over exposed dirt across many ticks. The open-top requirement is the exact
-/// condition under which grass *survives* (see [`grass::covered_by_solid`]): dirt
-/// will not green a covered cell, since the grass there would only die back to dirt
-/// on its next tick. The dirt is the active party in the spread — it looks for
-/// grass and converts itself.
+/// dry — neither smothered by a solid cover nor under water — and any grass block
+/// lies within [`SPREAD_RADIUS`] blocks, so grass creeps outward over exposed dirt
+/// across many ticks. That is the exact condition under which grass *survives* (see
+/// [`grass::smothered`] / [`grass::submerged`]): dirt will not green a cell where the
+/// grass would only die back on its next tick. Like grass, dirt tolerates a leaf
+/// canopy and other `NoGrassDecay` cover but not a flood. The dirt is the active
+/// party in the spread — it looks for grass and converts itself.
 pub struct Dirt;
 
 impl BlockBehavior for Dirt {
@@ -27,9 +28,12 @@ impl BlockBehavior for Dirt {
     }
 
     fn random_tick(&self, world: &mut World, pos: IVec3) {
-        // Only green a cell where grass could actually live (open top), and only
-        // when there is grass within reach to spread from.
-        if !grass::covered_by_solid(world, pos) && grass_within(world, pos, SPREAD_RADIUS) {
+        // Only green a cell where grass could actually live — an open, dry top
+        // (not smothered, not flooded) — and only with grass within reach to spread.
+        if !grass::smothered(world, pos)
+            && !grass::submerged(world, pos)
+            && grass_within(world, pos, SPREAD_RADIUS)
+        {
             // Runs the usual block + light + mesh updates; the cell stays
             // random-tickable (grass ticks too), so the counter is unchanged.
             world.set_block_world(pos.x, pos.y, pos.z, Block::Grass);
@@ -130,6 +134,32 @@ mod tests {
         w.set_block_world(p.x, p.y, p.z, Block::Dirt);
         w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
         w.set_block_world(p.x, p.y + 1, p.z, Block::Stone); // but covered on top
+        DIRT.random_tick(&mut w, p);
+        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+    }
+
+    #[test]
+    fn dirt_under_no_grass_decay_cover_greens() {
+        // Grass spreads under a NoGrassDecay cover (leaves): the dirt greens even
+        // though its top is solid, because that cover does not smother grass.
+        let mut w = world_with_chunk();
+        let p = IVec3::new(8, 70, 8);
+        w.set_block_world(p.x, p.y, p.z, Block::Dirt);
+        w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
+        w.set_block_world(p.x, p.y + 1, p.z, Block::OakLeaves); // leaf canopy on top
+        DIRT.random_tick(&mut w, p);
+        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
+    }
+
+    #[test]
+    fn submerged_dirt_does_not_green_even_with_grass_in_range() {
+        // Dirt under water must stay dirt even with grass alongside — otherwise the
+        // spread would creep grass down a flooded slope (terrain under water is dirt).
+        let mut w = world_with_chunk();
+        let p = IVec3::new(8, 70, 8);
+        w.set_block_world(p.x, p.y, p.z, Block::Dirt);
+        w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
+        w.set_block_world(p.x, p.y + 1, p.z, Block::Water); // but flooded on top
         DIRT.random_tick(&mut w, p);
         assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }

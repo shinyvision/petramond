@@ -218,12 +218,18 @@ impl App {
         );
         renderer.set_selection(self.game.selection());
         renderer.set_break_overlay(self.game.break_overlay_view());
+        // Right-clicking a placed crafting table / furnace / chest opens its screen
+        // instead of placing — flick the hand for that interaction too.
+        let opened_interactable = events.open_crafting_table
+            || events.open_furnace.is_some()
+            || events.open_chest.is_some();
         renderer.set_held_item(HeldItemFrame {
             item: self.game.selected_item(),
             mining: self.game.is_mining(),
             broke_block: events.broke_block,
-            // Placing a block and throwing/dropping an item both flick the hand.
-            placed: events.placed_block || events.threw_item,
+            // Placing a block, throwing/dropping an item, and opening an interactable
+            // block all flick the hand with the same soft right-click jab.
+            placed: events.placed_block || events.threw_item || opened_interactable,
             // An attack swing (mob hit or punch at the air) flicks the hand once.
             swung: events.swung_hand,
             dt,

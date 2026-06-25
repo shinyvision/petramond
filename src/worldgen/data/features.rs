@@ -60,14 +60,6 @@ static OAK_SMALL_F: TreeFeature = TreeFeature {
     height: (5, 6),
     footprint: 3, // min trunk height 5
 };
-static OAK_LEAN_F: TreeFeature = TreeFeature {
-    trunk: &LEANING,
-    foliage: &BLOB_SMALL,
-    log: Block::OakLog,
-    leaf: Block::OakLeaves,
-    height: (5, 7),
-    footprint: 3,
-};
 static OAK_SWAMP_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
     foliage: &DROOPY,
@@ -153,9 +145,6 @@ static CHERRY_F: TreeFeature = TreeFeature {
 pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_SMALL_F,
 };
-pub static OAK_LEAN: ConfiguredFeature = ConfiguredFeature {
-    feature: &OAK_LEAN_F,
-};
 pub static OAK_SWAMP: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_SWAMP_F,
 };
@@ -209,7 +198,7 @@ pub fn pick_oak(rng: &mut FeatureRng, b: Biome) -> &'static ConfiguredFeature {
     match b {
         Biome::Forest => match rng.next_i32(0, 99) {
             0..=4 => &OAK_BIG,
-            5..=29 => &OAK_LEAN,
+            // Standard oaks are always straight-trunked — no leaning variant here.
             _ => &OAK_SMALL,
         },
         Biome::BirchForest => {

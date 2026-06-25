@@ -121,6 +121,11 @@ pub enum BlockTag {
     /// excluding tree parts and built blocks. Worldgen audits measure overhangs /
     /// floating debris against it (see `worldgen::audit`).
     Terrain,
+    /// A solid block that nonetheless does NOT smother the grass directly below it:
+    /// grass under it survives instead of dying back to dirt, and bare dirt can
+    /// still green over into grass beneath it. Leaves carry this — a leaf canopy
+    /// lets grass live, unlike a solid roof of stone or planks (see `behavior::grass`).
+    NoGrassDecay,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
