@@ -393,7 +393,7 @@ impl App {
         // hit-tester (furnace role / chest index / craft cell), replacing the old
         // is_furnace()/is_chest() ladder. A miss falls through to the inventory grid.
         let slot = self.panel_slot_at(screen, cursor).or_else(|| {
-            crate::render::slot_at_cursor(screen, true, cursor).map(MenuSlot::Inventory)
+            self.inv_slot_at(screen, cursor).map(MenuSlot::Inventory)
         });
         match slot {
             Some(slot) => {
@@ -422,13 +422,32 @@ impl App {
                 crate::render::furnace_slot_at_cursor(screen, cursor).map(MenuSlot::Furnace)
             }
             ContainerTarget::Chest(_) => {
-                crate::render::chest_slot_at_cursor(screen, cursor).map(MenuSlot::Chest)
+                // Data-driven chest layout when its manifest is loaded; otherwise
+                // the legacy hand-coded storage grid.
+                let hit = if crate::render::chest_active() {
+                    crate::render::chest_storage_at_cursor(screen, cursor)
+                } else {
+                    crate::render::chest_slot_at_cursor(screen, cursor)
+                };
+                hit.map(MenuSlot::Chest)
             }
             ContainerTarget::Inventory | ContainerTarget::Table => {
                 crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
                     .map(MenuSlot::Craft)
             }
             ContainerTarget::None => None,
+        }
+    }
+
+    /// The inventory slot (`0..36`) under the cursor: the data-driven chest layout
+    /// when the chest is the open, data-driven screen, otherwise the legacy shared
+    /// inventory layout. Every container shows the player's 36 slots, but a baked
+    /// panel places them at its own manifest positions.
+    fn inv_slot_at(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<usize> {
+        if matches!(self.game.menu().target(), ContainerTarget::Chest(_)) && crate::render::chest_active() {
+            crate::render::chest_inventory_at_cursor(screen, cursor)
+        } else {
+            crate::render::slot_at_cursor(screen, true, cursor)
         }
     }
 

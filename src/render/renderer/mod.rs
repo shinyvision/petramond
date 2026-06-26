@@ -23,10 +23,12 @@ use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
+use super::gui_def::GuiKind;
 use super::particles::build_particles_split;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
-    create_atlas, create_depth, create_gui_atlas, create_model_texture, upload_mesh, GpuMesh,
+    create_atlas, create_depth, create_gui_atlas, create_gui_panel, create_model_texture,
+    upload_mesh, GpuMesh,
 };
 use super::section_cull::{section_draw_ranges, SectionVisibilityCache};
 use super::selection::outline_vertices;
@@ -288,6 +290,18 @@ pub struct Renderer {
     pub ui_pipe: wgpu::RenderPipeline,
     pub ui_bind: wgpu::BindGroup,
     pub ui_vbuf: wgpu::Buffer,
+    /// Data-driven GUI panel textures (baked PNGs) keyed by kind, drawn between
+    /// the gui-atlas background and the slot icons via `ui_pipe`. See `gui_def`.
+    gui_panels: std::collections::HashMap<GuiKind, wgpu::BindGroup>,
+    /// Data-driven hover-highlight textures keyed by kind, drawn over the panel
+    /// (under the slot icons) on the hovered slot.
+    gui_hovers: std::collections::HashMap<GuiKind, wgpu::BindGroup>,
+    /// Dynamic vbuf for the data-driven panel quad(s) this frame + its vertex count.
+    ui_def_vbuf: wgpu::Buffer,
+    ui_def_vertex_count: u32,
+    /// Dynamic vbuf for the data-driven hover-highlight quad this frame + count.
+    ui_hover_vbuf: wgpu::Buffer,
+    ui_hover_vertex_count: u32,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
@@ -608,6 +622,45 @@ async fn new_renderer_inner(
         mapped_at_creation: false,
     });
 
+    // Data-driven GUI textures: upload each baked PNG (panel + optional hover
+    // highlight) into a texture + bind group (reusing the gui-atlas bind layout)
+    // keyed by GUI kind. Loaded from disk at runtime so re-baking + restarting
+    // picks them up with no recompile. See `gui_def`.
+    let load_panel_bind = |path: &std::path::Path| -> Option<wgpu::BindGroup> {
+        let bytes = std::fs::read(path).ok()?;
+        let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gui panel bind"),
+            layout: &pipelines.atlas_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        }))
+    };
+    let mut gui_panels = std::collections::HashMap::new();
+    for (kind, path) in super::gui_def::baked_panels() {
+        if let Some(bind) = load_panel_bind(&path) {
+            gui_panels.insert(kind, bind);
+        }
+    }
+    let mut gui_hovers = std::collections::HashMap::new();
+    for (kind, path) in super::gui_def::baked_hovers() {
+        if let Some(bind) = load_panel_bind(&path) {
+            gui_hovers.insert(kind, bind);
+        }
+    }
+    let new_ui_quad_vbuf = |label| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: 64 * std::mem::size_of::<UiVertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    };
+    let ui_def_vbuf = new_ui_quad_vbuf("ui def panel vbuf");
+    let ui_hover_vbuf = new_ui_quad_vbuf("ui hover vbuf");
+
     Renderer {
         surface,
         device,
@@ -724,6 +777,12 @@ async fn new_renderer_inner(
         ui_pipe: pipelines.ui_pipe,
         ui_bind: pipelines.ui_bind,
         ui_vbuf: pipelines.ui_vbuf,
+        gui_panels,
+        gui_hovers,
+        ui_def_vbuf,
+        ui_def_vertex_count: 0,
+        ui_hover_vbuf,
+        ui_hover_vertex_count: 0,
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),
@@ -731,6 +790,9 @@ async fn new_renderer_inner(
         drag_icon_quad_vertex_count: 0,
         ui_build: UiBuild {
             verts: Vec::new(),
+            def_verts: Vec::new(),
+            def_kind: None,
+            hover_verts: Vec::new(),
             icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
             drag_icon_quads: Vec::new(),
@@ -922,6 +984,8 @@ impl Renderer {
         self.ui_bg_vertex_count = 0;
         self.ui_overlay_vertex_count = 0;
         self.ui_drag_overlay_vertex_count = 0;
+        self.ui_def_vertex_count = 0;
+        self.ui_hover_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
@@ -953,6 +1017,22 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.ui_vbuf, byte_off, bytemuck::cast_slice(drag_overlay));
             self.ui_drag_overlay_vertex_count = drag_overlay.len() as u32;
+        }
+
+        // Data-driven panel quad(s) — uploaded to their own small vbuf, drawn with
+        // the matching baked-panel texture (`gui_panels[def_kind]`) in the UI pass.
+        let def_verts = &self.ui_build.def_verts;
+        if !def_verts.is_empty() && def_verts.len() <= 64 {
+            self.queue
+                .write_buffer(&self.ui_def_vbuf, 0, bytemuck::cast_slice(def_verts));
+            self.ui_def_vertex_count = def_verts.len() as u32;
+        }
+        // Data-driven hover-highlight quad — drawn with `gui_hovers[def_kind]`.
+        let hover_verts = &self.ui_build.hover_verts;
+        if !hover_verts.is_empty() && hover_verts.len() <= 64 {
+            self.queue
+                .write_buffer(&self.ui_hover_vbuf, 0, bytemuck::cast_slice(hover_verts));
+            self.ui_hover_vertex_count = hover_verts.len() as u32;
         }
 
         // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's
@@ -1715,7 +1795,11 @@ impl Renderer {
         // inherit the crosshair invert blend (separate pass). The icons are now 2D
         // quads sampling the pre-baked icon atlas rather than live 3D geometry; the
         // normal digit overlay and final drag-cursor layer follow in their own pass.
-        if self.ui_bg_vertex_count > 0 || self.icon_quad_vertex_count > 0 {
+        if self.ui_bg_vertex_count > 0
+            || self.ui_def_vertex_count > 0
+            || self.ui_hover_vertex_count > 0
+            || self.icon_quad_vertex_count > 0
+        {
             let mut pass = color_depth_pass(
                 &mut enc,
                 &view,
@@ -1730,6 +1814,24 @@ impl Renderer {
                 pass.set_bind_group(0, &self.ui_bind, &[]);
                 pass.set_vertex_buffer(0, self.ui_vbuf.slice(..));
                 pass.draw(0..self.ui_bg_vertex_count, 0..1);
+            }
+            // 1b) data-driven panel texture (baked PNG) for the open screen, drawn
+            //     over the dim background and under the slot icons.
+            if self.ui_def_vertex_count > 0 {
+                if let Some(bind) = self.ui_build.def_kind.and_then(|k| self.gui_panels.get(&k)) {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_def_vbuf.slice(..));
+                    pass.draw(0..self.ui_def_vertex_count, 0..1);
+                }
+            }
+            // 1c) data-driven hover highlight on the hovered slot — over the panel,
+            //     under the slot icons.
+            if self.ui_hover_vertex_count > 0 {
+                if let Some(bind) = self.ui_build.def_kind.and_then(|k| self.gui_hovers.get(&k)) {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_hover_vbuf.slice(..));
+                    pass.draw(0..self.ui_hover_vertex_count, 0..1);
+                }
             }
             // 2) per-slot item icons: textured quads sampling the icon atlas, painted
             //    over the gui background. One bind + one draw for the whole batch.

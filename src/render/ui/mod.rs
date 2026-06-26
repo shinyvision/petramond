@@ -40,6 +40,7 @@ mod hotbar;
 pub(crate) mod icon;
 mod inventory;
 
+use super::gui_def::{self, GuiKind};
 use super::renderer::UiSnapshot;
 use super::resources::GuiSprite;
 use crate::item::ItemType;
@@ -113,6 +114,16 @@ pub struct UiBuild {
     /// gui-atlas quads (sprites + solid fills), in paint order — the background
     /// drawn under the icons.
     pub verts: Vec<UiVertex>,
+    /// Data-driven panel quad(s): a full-texture quad sampling a baked GUI PNG
+    /// (its own bind group), drawn between the gui-atlas background and the slot
+    /// icons. Empty for legacy screens. See [`super::gui_def`].
+    pub def_verts: Vec<UiVertex>,
+    /// Which baked GUI the `def_verts` panel belongs to, so the renderer binds
+    /// the matching panel texture. `None` for legacy screens.
+    pub(crate) def_kind: Option<GuiKind>,
+    /// Data-driven hover-highlight quad (its own baked texture), drawn over the
+    /// panel and under the icons on the hovered slot. Empty when not hovering.
+    pub hover_verts: Vec<UiVertex>,
     /// One `(item, slot rect)` per filled slot this frame. Each item's icon was
     /// baked once into the icon atlas at renderer init; the renderer resolves each
     /// entry to its cell and emits a textured quad (no per-frame 3D geometry),
@@ -273,6 +284,9 @@ fn hovered_slot_rect(ui: &UiSnapshot, screen: (u32, u32), scale: f32) -> Option<
 /// drag cursor on top — so later draws overpaint earlier ones.
 pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     build.verts.clear();
+    build.def_verts.clear();
+    build.def_kind = None;
+    build.hover_verts.clear();
     build.overlay_verts.clear();
     build.icon_quads.clear();
     build.drag_icon_quads.clear();
@@ -284,7 +298,16 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     }
     let scale = gui_scale(screen);
 
-    // --- Background sprites (drawn first, under everything). ---
+    // The data-driven chest layout for this frame (baked PNG + manifest), or
+    // `None` to use the legacy hand-coded screens. Only the chest is baked so far;
+    // every other screen — and a chest with no/invalid manifest — stays legacy.
+    let dd = if ui.open && ui.chest.is_some() {
+        gui_def::def(GuiKind::Chest)
+    } else {
+        None
+    };
+
+    // --- Background (drawn first, under everything). ---
     if ui.open {
         // Dim the whole screen (~0.6 alpha black) behind the panel.
         push_solid(
@@ -296,49 +319,95 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
             screen.1 as f32,
             [0.0, 0.0, 0.0, 0.6],
         );
-        // The centred panel art for whichever open screen this is.
-        let panel_sprite = if ui.chest.is_some() {
-            GuiSprite::ChestPanel
-        } else if ui.furnace.is_some() {
-            GuiSprite::FurnacePanel
+        if let Some(def) = dd {
+            // The baked panel PNG draws from its OWN texture (def_verts), not the
+            // gui atlas: a full-texture quad over the panel rect.
+            build.def_kind = Some(GuiKind::Chest);
+            let pr = def.panel_rect(screen);
+            push_quad_uv(
+                &mut build.def_verts,
+                screen,
+                pr.x,
+                pr.y,
+                pr.w,
+                pr.h,
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0],
+            );
         } else {
-            match ui.panel {
-                CraftKind::Inventory => GuiSprite::InventoryPanel,
-                CraftKind::Table => GuiSprite::CraftingTablePanel,
-            }
-        };
-        let (ox, oy) = panel_origin(screen, scale);
-        push_sprite(
-            &mut build.verts,
-            screen,
-            panel_sprite,
-            ox,
-            oy,
-            PANEL_W * scale,
-            PANEL_H * scale,
-            [1.0, 1.0, 1.0, 1.0],
-        );
+            // Legacy: the centred panel sprite from the gui atlas.
+            let panel_sprite = if ui.chest.is_some() {
+                GuiSprite::ChestPanel
+            } else if ui.furnace.is_some() {
+                GuiSprite::FurnacePanel
+            } else {
+                match ui.panel {
+                    CraftKind::Inventory => GuiSprite::InventoryPanel,
+                    CraftKind::Table => GuiSprite::CraftingTablePanel,
+                }
+            };
+            let (ox, oy) = panel_origin(screen, scale);
+            push_sprite(
+                &mut build.verts,
+                screen,
+                panel_sprite,
+                ox,
+                oy,
+                PANEL_W * scale,
+                PANEL_H * scale,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+        }
     } else {
         hotbar::build_background(ui, build, screen, scale);
     }
 
-    if let Some(r) = hovered_slot_rect(ui, screen, scale) {
-        push_slot_hover(&mut build.verts, screen, r, scale);
+    // Hover highlight (legacy screens only — the data-driven panel skips it for now
+    // because its highlight would have to draw between the panel texture and the
+    // icons, a separate solid pass not yet wired).
+    if dd.is_none() {
+        if let Some(r) = hovered_slot_rect(ui, screen, scale) {
+            push_slot_hover(&mut build.verts, screen, r, scale);
+        }
     }
 
-    // --- Per-slot item icons + stack-count digits (the inventory slots, shared by
-    // every screen: closed = the 9 hotbar slots, open = all 36). ---
-    inventory::build_slots(ui, build, screen, scale);
-
-    // --- The open screen's own extra slots / gauges, replacing the craft grid for
-    // the furnace + chest screens. ---
-    if ui.open {
-        if ui.furnace.is_some() {
-            furnace::build(ui, build, screen, scale);
-        } else if ui.chest.is_some() {
-            chest::build(ui, build, screen, scale);
-        } else {
-            crafting::build(ui, build, screen, scale);
+    // --- Per-slot item icons + stack-count digits. ---
+    if let Some(def) = dd {
+        // Data-driven hover highlight: if the GUI declares a hover graphic, draw it
+        // over the hovered slot inflated by its margin (over the panel, under the
+        // icons). No graphic => no highlight (the user picks one in the builder).
+        if let Some(h) = def.hover() {
+            let (px, py) = ui.cursor_px;
+            if let Some(sr) = def.hovered_slot_rect(screen, (px, py)) {
+                let m = h.margin as f32 * scale;
+                push_quad_uv(
+                    &mut build.hover_verts,
+                    screen,
+                    sr.x - m,
+                    sr.y - m,
+                    sr.w + 2.0 * m,
+                    sr.h + 2.0 * m,
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    [1.0, 1.0, 1.0, h.opacity],
+                );
+            }
+        }
+        build_chest_dd(ui, build, def, screen, scale);
+    } else {
+        // Shared inventory slots (closed = the 9 hotbar slots, open = all 36).
+        inventory::build_slots(ui, build, screen, scale);
+        // The open screen's own extra slots / gauges (furnace + chest replace the
+        // craft grid).
+        if ui.open {
+            if ui.furnace.is_some() {
+                furnace::build(ui, build, screen, scale);
+            } else if ui.chest.is_some() {
+                chest::build(ui, build, screen, scale);
+            } else {
+                crafting::build(ui, build, screen, scale);
+            }
         }
     }
 
@@ -366,6 +435,44 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
                     );
                 }
             }
+        }
+    }
+}
+
+/// Data-driven chest layout: the storage grid (from `ui.chest`) plus the player
+/// inventory & hotbar (from `ui.slots`), each placed by the manifest's slot rects.
+/// The panel PNG itself is emitted to `build.def_verts` by [`build_ui`]; this only
+/// adds the per-slot icons + counts. Mirrors the legacy [`chest::build`] +
+/// [`inventory::build_slots`] but reads positions from the [`super::gui_def`] def.
+fn build_chest_dd(
+    ui: &UiSnapshot,
+    build: &mut UiBuild,
+    def: &crate::render::gui_def::GuiDef,
+    screen: (u32, u32),
+    scale: f32,
+) {
+    if let Some(chest) = ui.chest {
+        for (i, stack) in chest.slots.iter().enumerate() {
+            let Some(stack) = stack else { continue };
+            if stack.item == ItemType::Air || stack.count == 0 {
+                continue;
+            }
+            let Some(r) = def.storage_rect(i, screen) else { continue };
+            icon::push_slot_icon(build, screen, stack.item, r);
+            if stack.count > 1 {
+                icon::push_count(&mut build.overlay_verts, screen, stack.count as u32, r, scale);
+            }
+        }
+    }
+    for i in 0..TOTAL_SLOTS {
+        let Some((item, count)) = ui.slots[i] else { continue };
+        if item == ItemType::Air || count == 0 {
+            continue;
+        }
+        let Some(r) = def.inventory_rect(i, screen) else { continue };
+        icon::push_slot_icon(build, screen, item, r);
+        if count > 1 {
+            icon::push_count(&mut build.overlay_verts, screen, count as u32, r, scale);
         }
     }
 }
@@ -406,6 +513,9 @@ mod tests {
     pub(super) fn empty_build() -> UiBuild {
         UiBuild {
             verts: Vec::new(),
+            def_verts: Vec::new(),
+            def_kind: None,
+            hover_verts: Vec::new(),
             icon_quads: Vec::new(),
             overlay_verts: Vec::new(),
             drag_icon_quads: Vec::new(),

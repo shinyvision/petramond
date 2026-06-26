@@ -1,0 +1,306 @@
+{
+  "type": "inventory",
+  "canvas": {
+    "w": 352,
+    "h": 332
+  },
+  "scale": 2,
+  "image": "inventory.png",
+  "slots": [
+    {
+      "role": "player_inv",
+      "x": 18,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 54,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 90,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 126,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 162,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 198,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 234,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 270,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 306,
+      "y": 154,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 18,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 54,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 90,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 126,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 162,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 198,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 234,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 270,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 306,
+      "y": 190,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 18,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 54,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 90,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 126,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 162,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 198,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 234,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 270,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "player_inv",
+      "x": 306,
+      "y": 226,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 18,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 54,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 90,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 126,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 162,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 198,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 234,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 270,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "hotbar",
+      "x": 306,
+      "y": 283,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "craft_input",
+      "x": 114,
+      "y": 39,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "craft_input",
+      "x": 150,
+      "y": 39,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "craft_input",
+      "x": 114,
+      "y": 75,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "craft_input",
+      "x": 150,
+      "y": 75,
+      "w": 28,
+      "h": 28
+    },
+    {
+      "role": "craft_result",
+      "x": 221,
+      "y": 58,
+      "w": 28,
+      "h": 28
+    }
+  ],
+  "hover": {
+    "image": "inventory_hover.png",
+    "margin": 4,
+    "fit": {
+      "mode": "stretch"
+    },
+    "opacity": 1.0
+  }
+}

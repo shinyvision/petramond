@@ -1,0 +1,27 @@
+[package]
+name = "gui-builder"
+version = "0.1.0"
+edition = "2021"
+description = "Llamacraft data-driven GUI builder — compose GUI parts, place slots, bake PNG + JSON."
+license = "MIT"
+
+# Standalone: declare an empty workspace so this crate does NOT join the parent
+# llamacraft workspace. It builds with its own Cargo.lock and dependency graph.
+[workspace]
+
+[[bin]]
+name = "gui-builder"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.29"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Native file dialogs without a GTK build dependency: use the xdg-desktop-portal
+# backend (works on Wayland) with an async-std executor for the sync API.
+rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# Keep the editor responsive even in dev builds.
+[profile.dev]
+opt-level = 1

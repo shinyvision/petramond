@@ -240,6 +240,65 @@ pub(super) fn create_gui_atlas(
     (texture, view, sampler)
 }
 
+/// Upload a baked data-driven GUI panel PNG (from the `gui-builder`) as its own
+/// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size — each
+/// baked panel is its own image, not a fixed atlas slot. See `super::gui_def`.
+pub(super) fn create_gui_panel(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    png: &[u8],
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+    let img = image::load_from_memory(png)
+        .expect("decode gui panel png")
+        .to_rgba8();
+    let (w, h) = (img.width(), img.height());
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("gui panel"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        img.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(w * 4),
+            rows_per_image: Some(h),
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("gui panel sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    (texture, view, sampler)
+}
+
 /// Upload an entity/model RGBA texture (decoded from a `.bbmodel`) as its own GPU
 /// texture + nearest sampler — a SEPARATE atlas from the block atlas, because model
 /// faces carry arbitrary sub-rectangle UVs into this sheet (see `crate::bbmodel`).

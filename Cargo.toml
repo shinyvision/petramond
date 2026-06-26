@@ -8,6 +8,9 @@ license = "MIT"
 
 [workspace]
 members = ["."]
+# The GUI builder (./gui-builder) is a standalone tool crate with its own deps;
+# keep it out of the game's workspace so it doesn't affect the game build.
+exclude = ["gui-builder"]
 resolver = "2"
 
 [lib]

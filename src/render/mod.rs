@@ -18,6 +18,7 @@ mod resources;
 mod scene;
 mod section_cull;
 mod selection;
+mod gui_def;
 mod ui;
 mod ui_text;
 mod uniforms;
@@ -62,6 +63,14 @@ pub use ui::{furnace_slot_at_cursor, FurnaceHit};
 /// Chest storage-slot hit-test (the `0..27` slot index under the cursor), shared
 /// with the App so a click in the open chest screen routes to the right slot.
 pub use ui::chest_slot_at_cursor;
+
+/// Data-driven GUI (baked PNG + JSON manifest) layout + hit-tests. The forward
+/// path that coexists with the legacy `ui` screens; the App routes the chest's
+/// hit-tests here when [`chest_active`] is true (otherwise the legacy ones).
+pub use gui_def::{
+    chest_active, chest_inventory_at_cursor, chest_storage_at_cursor, data_driven_enabled,
+    set_data_driven_enabled,
+};
 
 use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Quat, Vec3};

@@ -1,0 +1,281 @@
+{
+  "version": 2,
+  "gui_type": "hotbar",
+  "scale": 2,
+  "canvas": {
+    "w": 364,
+    "h": 44
+  },
+  "nodes": [
+    {
+      "node": "group",
+      "id": 14,
+      "name": "Frame",
+      "visible": true,
+      "collapsed": false,
+      "children": [
+        {
+          "node": "group",
+          "id": 10,
+          "name": "Corners",
+          "visible": true,
+          "collapsed": false,
+          "children": []
+        }
+      ]
+    },
+    {
+      "node": "group",
+      "id": 79,
+      "name": "Hotbar",
+      "visible": true,
+      "collapsed": false,
+      "children": [
+        {
+          "node": "layer",
+          "id": 121,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 2,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 129,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 42,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 130,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 82,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 131,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 122,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 132,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 162,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 133,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 202,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 134,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 242,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 135,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 282,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        },
+        {
+          "node": "layer",
+          "id": 136,
+          "name": "slot",
+          "asset": {
+            "source": "file",
+            "path": "/home/rachel/Downloads/frame(1).png"
+          },
+          "rect": {
+            "x": 322,
+            "y": 2,
+            "w": 40,
+            "h": 40
+          },
+          "fit": {
+            "mode": "stretch"
+          },
+          "opacity": 1.0,
+          "visible": true,
+          "flip_h": false,
+          "flip_v": false,
+          "rotation": 0
+        }
+      ]
+    }
+  ],
+  "slots": [
+    {
+      "id": 97,
+      "role": "hotbar",
+      "rect": {
+        "x": 6,
+        "y": 6,
+        "w": 32,
+        "h": 32
+      },
+      "grid": {
+        "cols": 9,
+        "rows": 1,
+        "pitch_x": 40,
+        "pitch_y": 40
+      },
+      "color": [
+        220,
+        150,
+        90,
+        130
+      ],
+      "paint_frame": false,
+      "visible": true
+    }
+  ],
+  "hover": {
+    "asset": {
+      "source": "file",
+      "path": "/home/rachel/Downloads/frame_highlighted.png"
+    },
+    "margin": 4,
+    "fit": {
+      "mode": "stretch"
+    },
+    "opacity": 1.0
+  }
+}
