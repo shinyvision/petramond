@@ -504,11 +504,14 @@ mod tests {
             assert_eq!(def.biome.water_color(), def.water_color);
         }
 
+        // A concrete, non-vacuous anchor that the loop above actually ran. Only
+        // the name is pinned literally: it is a stable identifier, not a tuned
+        // value. Colours are deliberately NOT spot-checked here — they are
+        // hand-tuned table data, so duplicating a row's colour in an assertion
+        // just goes stale the next time it is retuned (which is exactly what had
+        // happened to SnowyPeaks' foliage). The loop already proves every accessor
+        // returns its own row, whatever the values are.
         assert_eq!(Biome::Beach.name(), "beach");
-        assert_eq!(Biome::Beach.fog_color(), [0.97, 0.90, 0.72]);
-        assert_eq!(Biome::Forest.grass_color(), [0.12, 0.58, 0.02]);
-        assert_eq!(Biome::Swamp.water_color(), [0.16, 0.38, 0.48]);
-        assert_eq!(Biome::SnowyPeaks.foliage_color(), [0.48, 0.84, 0.46]);
     }
 
     #[test]

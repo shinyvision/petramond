@@ -413,10 +413,6 @@ mod tests {
         }
     }
 
-    fn center(r: SlotRect) -> (f32, f32) {
-        (r.x + r.w * 0.5, r.y + r.h * 0.5)
-    }
-
     #[test]
     fn gui_scale_is_clamped_and_increases_with_height() {
         assert_eq!(gui_scale((320, 240)), 1.0);

@@ -13,8 +13,10 @@
 //! cell runs its [`FluidSim::flow_check`], which:
 //!   1. (flowing only) re-levels from its upstream supplier, or dries up if the
 //!      supply is gone — this is how a sheet recedes when its source is removed;
-//!   2. pours straight down if there is space below;
-//!   3. spreads horizontally, preferring the direction of the nearest downhill
+//!   2. (flowing only) settles into a SOURCE if it is one cell deep and flanked
+//!      by two or more source blocks — the infinite-water-source rule;
+//!   3. pours straight down if there is space below;
+//!   4. spreads horizontally, preferring the direction of the nearest downhill
 //!      drop within [`SLOPE_FIND_DIST`], else all four cardinals.
 //!
 //! Every cell it sets announces itself to its neighbours, so the sheet advances
@@ -306,6 +308,15 @@ impl FluidSim {
                 }
                 Some(supply) => fo = supply,
             }
+            // A shallow flow flanked by sources settles into a source itself (the
+            // infinite-water-source rule). Restricted to a one-cell-deep flow so a
+            // flooding cave can't convert to sources at an exponential pace — see
+            // [`FluidSim::becomes_source`]. The cell's identity changes here, so
+            // stop and let the fresh source pour/spread on its own next flow check.
+            if self.becomes_source(world, pos) {
+                world.set_water_world(pos, Block::Water, 0);
+                return;
+            }
             let th = self.flow_thickness(world, pos, fo);
             if falloff(meta) != fo || thickness(meta) != th {
                 world.set_water_world(pos, Block::Water, flowing(fo, th));
@@ -443,6 +454,43 @@ impl FluidSim {
             }
         }
         best
+    }
+
+    /// The infinite-water-source rule: a flowing cell settles into a source of
+    /// its own when it is **one cell deep** and flanked by sources on two or more
+    /// of its four horizontal faces. Evaluated on the cell's flow check — the
+    /// water tick ~[`WATER_FLOW_DELAY`] ticks after it formed. The caller has
+    /// already established this is flowing (non-source, non-falling) water.
+    ///
+    /// Requiring one-cell depth is what stops a flooding cave from turning to
+    /// sources at an exponential pace: a waterfall lip (air below) or the surface
+    /// of a churning column (flowing/falling below) is never one deep, so only
+    /// genuinely shallow pools fed from two sources fill in.
+    fn becomes_source(&self, world: &World, pos: IVec3) -> bool {
+        if !self.one_cell_deep(world, pos) {
+            return false;
+        }
+        let source_faces = CARDINALS
+            .iter()
+            .filter(|&&d| {
+                let np = pos + d;
+                block_at(world, np) == Block::Water && is_source(meta_at(world, np))
+            })
+            .count();
+        source_faces >= 2
+    }
+
+    /// Is this water cell exactly one cell deep — resting on firm support rather
+    /// than perched over a drop or a deeper body? Solid ground qualifies, and so
+    /// does a settled source directly below (a one-deep film on top of a source
+    /// still counts, per the spec). Air or moving water below does NOT: that is
+    /// the lip of a waterfall or the surface of a column, which must never convert
+    /// (see [`FluidSim::becomes_source`]).
+    fn one_cell_deep(&self, world: &World, pos: IVec3) -> bool {
+        match block_at(world, pos + DOWN) {
+            Block::Water => is_source(meta_at(world, pos + DOWN)),
+            ground => !fillable(ground),
+        }
     }
 
     /// Directions to spread into: prefer the cardinal(s) leading to the nearest
@@ -919,6 +967,73 @@ mod tests {
         assert!(
             w.chunks.get(&pos).unwrap().light_dirty,
             "a water write must reschedule the relight"
+        );
+    }
+
+    /// The infinite-water-source rule: two sources two cells apart on a solid
+    /// floor fill the gap with a one-cell-deep flow fed from both sides, and that
+    /// flow settles into a source of its own.
+    #[test]
+    fn one_deep_flow_between_two_sources_becomes_a_source() {
+        let mut w = flat_world();
+        w.set_block_world(7, 65, 8, Block::Water);
+        w.set_block_world(9, 65, 8, Block::Water);
+        run_ticks(&mut w, 60);
+
+        assert_eq!(block(&w, 8, 65, 8), Block::Water, "the gap filled with water");
+        assert!(
+            is_source(w.water_meta_world(8, 65, 8)),
+            "a one-deep flow flanked by two sources must become a source"
+        );
+        // The flanking sources are of course still sources, and the conversion
+        // did not run away across the open floor.
+        assert!(is_source(w.water_meta_world(7, 65, 8)));
+        assert!(is_source(w.water_meta_world(9, 65, 8)));
+        assert!(
+            !is_source(w.water_meta_world(8, 65, 7)),
+            "the surrounding ring (one source neighbour) stays flowing"
+        );
+    }
+
+    /// A flow resting on a SOURCE counts as one cell deep too (the spec's explicit
+    /// clause), so the top layer of a stacked pool can fill in as well. Stage a
+    /// lower source, two flanking sources above it, and a flow between them: the
+    /// flow rests on the lower source and converts.
+    #[test]
+    fn a_one_deep_flow_resting_on_a_source_becomes_a_source() {
+        let mut w = flat_world();
+        assert!(w.set_water_world(IVec3::new(8, 65, 8), Block::Water, 0)); // lower source
+        assert!(w.set_water_world(IVec3::new(7, 66, 8), Block::Water, 0)); // flank
+        assert!(w.set_water_world(IVec3::new(9, 66, 8), Block::Water, 0)); // flank
+        assert!(w.set_water_world(IVec3::new(8, 66, 8), Block::Water, flowing(1, 1)));
+        run_ticks(&mut w, 30);
+
+        assert!(
+            is_source(w.water_meta_world(8, 66, 8)),
+            "a one-deep flow resting on a source, flanked by two sources, converts"
+        );
+    }
+
+    /// The anti-flood guard: a flow perched over a drop (air below) is the lip of
+    /// a waterfall, NOT one cell deep, so it must NOT convert even when flanked by
+    /// two sources. This is what keeps a flooding cave from turning to sources at
+    /// an exponential pace.
+    #[test]
+    fn a_flow_over_a_drop_never_converts_even_between_two_sources() {
+        let mut w = flat_world();
+        carve(&mut w, 8, 64, 8); // air below the middle cell — a one-block drop
+        w.set_block_world(7, 65, 8, Block::Water);
+        w.set_block_world(9, 65, 8, Block::Water);
+        run_ticks(&mut w, 80);
+
+        assert_eq!(
+            block(&w, 8, 65, 8),
+            Block::Water,
+            "the gap still carries flowing water poured from the sources"
+        );
+        assert!(
+            !is_source(w.water_meta_world(8, 65, 8)),
+            "a flow resting on air (a waterfall lip) must never become a source"
         );
     }
 }
