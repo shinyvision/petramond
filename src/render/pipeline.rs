@@ -295,12 +295,11 @@ pub(super) struct PipelineResources {
     pub particle_vbuf: wgpu::Buffer,
     /// Static ibuf for particle quads (6 per quad), uploaded once.
     pub particle_ibuf: wgpu::Buffer,
-    /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Samples the
-    /// SEPARATE gui atlas (`ui_bind`), alpha-blended, NO depth, drawn last.
+    /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Alpha-blended,
+    /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
+    /// baked GUI texture or the icon atlas (solid quads ignore the sampler).
     pub ui_pipe: wgpu::RenderPipeline,
-    /// group(0) bind for the UI pass: the gui sprite atlas (texture + sampler).
-    pub ui_bind: wgpu::BindGroup,
-    /// Reusable dynamic vbuf for UI quads (rewritten in place per frame).
+    /// Reusable dynamic vbuf for the UI's solid quads (dim backdrop + digits).
     pub ui_vbuf: wgpu::Buffer,
     /// model-icon pipeline: bbmodel-block icons. The icon MVP is baked into the
     /// `ItemVertex` positions CPU-side and the faces self-sort by depth (the model is
@@ -318,8 +317,6 @@ pub(super) fn create_pipeline_resources(
     uniform_buf: &wgpu::Buffer,
     atlas_view: &wgpu::TextureView,
     atlas_sampler: &wgpu::Sampler,
-    gui_view: &wgpu::TextureView,
-    gui_sampler: &wgpu::Sampler,
 ) -> PipelineResources {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("block shader"),
@@ -1138,20 +1135,6 @@ pub(super) fn create_pipeline_resources(
             },
         ],
     });
-    let ui_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("ui bg"),
-        layout: &ui_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(gui_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(gui_sampler),
-            },
-        ],
-    });
     let ui_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("ui layout"),
         bind_group_layouts: &[&ui_bgl],
@@ -1307,7 +1290,6 @@ pub(super) fn create_pipeline_resources(
         particle_vbuf,
         particle_ibuf,
         ui_pipe,
-        ui_bind,
         ui_vbuf,
         model_icon_pipe,
     }
@@ -1374,7 +1356,6 @@ mod gpu_validation {
             view_formats: &[],
         });
         let atlas_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let gui_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("test sampler"),
             ..Default::default()
@@ -1397,8 +1378,6 @@ mod gpu_validation {
             1,
             &uniform_buf,
             &atlas_view,
-            &sampler,
-            &gui_view,
             &sampler,
         );
 

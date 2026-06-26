@@ -1,61 +1,38 @@
-//! UI / HUD geometry: builds the hotbar, open-inventory panel, per-slot item
-//! icons, stack-count digits and the drag cursor each frame from the renderer's
-//! [`UiSnapshot`] into a reusable dynamic vertex buffer of [`UiVertex`]s.
+//! UI / HUD geometry: turns the renderer's [`UiSnapshot`] into the per-frame
+//! vertex buffers for one GUI — the hotbar HUD, or an open inventory / crafting
+//! table / furnace / chest panel.
 //!
-//! ALL layout math (GUI scale, slot rectangles, panel placement) lives in this
-//! one module (split into per-screen submodules) so the renderer and the
-//! [`slot_at_cursor`] hit-test used by the App (contract §9) can never diverge.
-//! Coordinates are computed in **physical pixels** (origin top-left, y down) and
-//! converted to NDC only when emitting vertices, so the pixel-space slot rects are
-//! the shared source of truth. Each screen's layout, draw and hit-test live in one
-//! submodule reading the SAME [`SlotRect`] functions so render and hit-test agree:
-//! - [`hotbar`]: the closed HUD widget + selection highlight.
-//! - [`inventory`]: the open 36-slot panel ([`slot_at_cursor`], [`cursor_in_panel`]).
-//! - [`crafting`]: the 2×2 / 3×3 craft grid + result ([`craft_slot_at_cursor`]).
-//! - [`furnace`]: the furnace slots + smelt/burn gauges ([`furnace_slot_at_cursor`]).
-//! - [`chest`]: the 27-slot storage grid ([`chest_slot_at_cursor`]).
-//! - [`icon`]: per-slot item icon projection + stack-count digits.
+//! Every screen is DATA-DRIVEN: its panel art, slot positions, hover highlight and
+//! dynamic overlays come from a baked manifest ([`super::gui_def`]). There are no
+//! per-screen layout modules — [`build_ui`] is generic over [`GuiKind`], reading
+//! the open kind's [`GuiDef`] and the matching slice of game state from the
+//! snapshot. The SAME def backs the App's click hit-test ([`gui_def::hit`]), so
+//! what's drawn and what's clicked can never diverge.
 //!
-//! Three kinds of geometry come out of [`build_ui`]:
-//! - **gui quads** ([`UiBuild::verts`]): textured GUI sprites + solid-color fills,
-//!   drawn by `ui_pipe` with the gui atlas. Emitted back-to-front (dim background,
-//!   panel/hotbar, selection) so later quads paint over earlier ones.
-//! - **icon quads** ([`UiBuild::icon_quads`]): one `(item, slot rect)` per filled
-//!   slot. Each item's icon is rendered ONCE at renderer init into a cell of an
-//!   icon-atlas texture (`render::renderer::icon_atlas`); the renderer resolves
-//!   each entry to its cell and draws a single textured quad via `ui_pipe` with the
-//!   icon atlas — no per-frame 3D geometry. These paint over the gui background.
-//! - **overlay quads** ([`UiBuild::overlay_verts`]): the normal stack-count digits,
-//!   drawn over the background and slot icons so they read on top.
-//! - **drag quads** ([`UiBuild::drag_icon_quads`] + [`UiBuild::drag_overlay_verts`]):
-//!   the cursor-held stack, drawn after the normal overlay so both its icon and count
-//!   are always front-most.
+//! All layout math is in **physical pixels** (origin top-left, y down) and
+//! converted to NDC only when emitting vertices. [`build_ui`] fills, in paint
+//! order back-to-front:
+//! - `dim`: the fullscreen menu backdrop (solid; menus only).
+//! - `panel`: the baked panel PNG quad (its own texture).
+//! - `overlays`: dynamic [`OverlayTag`] quads clipped by game state (furnace
+//!   gauges), each its own texture — `overlay_spans` records the per-overlay
+//!   `(tag, vertex count)` so the renderer binds the right texture per quad.
+//! - `hover`: the hover / selection highlight (its own texture), over the slot
+//!   under the cursor — or, for the hotbar HUD, the active slot.
+//! - `icon_quads`: one `(item, slot rect)` per filled slot (icon atlas).
+//! - `counts`: stack-count digits (solid), over the icons.
+//! - `drag_icon_quads` + `drag_counts`: the cursor-held stack, front-most.
 
-mod chest;
-mod crafting;
-mod furnace;
-mod hotbar;
 // `pub(crate)` so the one-time icon-atlas bake (`renderer::icon_atlas`) can reach
 // the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
 pub(crate) mod icon;
-mod inventory;
 
-use super::gui_def::{self, GuiKind};
+use super::gui_def::{self, GuiKind, OverlayTag, Role};
 use super::renderer::UiSnapshot;
-use super::resources::GuiSprite;
+use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;
 
-// Slot-count constants the per-screen submodules reach via `super::`.
-pub(super) use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
-
-// --- App-facing hit-test re-exports (paths unchanged; consumed via `render::mod`
-// by `app.rs` + the app tests). Each lives in its screen's submodule. ---
-pub use chest::chest_slot_at_cursor;
-pub use crafting::{craft_slot_at_cursor, CraftHit, CraftKind};
-pub use furnace::{furnace_slot_at_cursor, FurnaceHit};
-pub use inventory::{cursor_in_panel, slot_at_cursor};
-
-/// A single UI vertex: NDC position (y up) + gui-atlas uv + RGBA color. `uv.x < 0`
+/// A single UI vertex: NDC position (y up) + texture uv + RGBA color. `uv.x < 0`
 /// is the solid-color sentinel (see `ui.wgsl`). 32 bytes.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -65,31 +42,19 @@ pub struct UiVertex {
     pub color: [f32; 4],
 }
 
-/// uv sentinel marking a solid-color quad (no atlas sample).
+/// uv sentinel marking a solid-color quad (no texture sample).
 pub(super) const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 
-// --- Shared layout constants (physical pixels at GUI scale 1). ---
+/// Opaque white tint: draw a textured quad at full color.
+const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
-/// Slot interior side (px) — the textured icon area. Shared by every screen.
+/// Slot interior side (logical px) — the textured icon area. The drag cursor
+/// sizes the held item to this; slot rects themselves come from the manifest.
 pub(super) const SLOT_PX: f32 = 16.0;
-
-/// Classic inventory panel size (px): the 176×166 art sits in the top-left of the
-/// 256×256 sheet. Shared by every OPEN screen (inventory / crafting / furnace /
-/// chest all draw on a 176×166 panel) for the centred [`panel_origin`].
-pub(super) const PANEL_W: f32 = 176.0;
-pub(super) const PANEL_H: f32 = 166.0;
-
-/// Open-inventory slot pitch (px): the classic `inventory.png` panel (176×166)
-/// lays its slots at an 18px pitch (16px interior + 1px border each side). Used by
-/// the open inventory grid, the craft grid and the chest grid — NOT the closed
-/// hotbar widget (which uses its own 20px pitch in [`hotbar`]).
-pub(super) const PANEL_PITCH: f32 = 18.0;
-const SLOT_HOVER_FILL: [f32; 4] = [0.78, 0.98, 0.92, 0.13];
-const SLOT_HOVER_EDGE: [f32; 4] = [0.72, 1.0, 0.94, 0.24];
 
 /// One slot's pixel rectangle (interior, where the icon + digits go). All in
 /// physical pixels, top-left origin, y down. The single source of truth shared
-/// between every screen's draw and its hit-test.
+/// between drawing and hit-testing.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SlotRect {
     pub x: f32,
@@ -100,47 +65,67 @@ pub struct SlotRect {
 
 impl SlotRect {
     /// Whether physical-pixel point `(px, py)` lies within this slot's interior
-    /// (half-open: includes the top-left edge, excludes the bottom-right). The one
-    /// rectangle test every screen's hit-test shares, so a visible slot is always
-    /// the slot that gets clicked.
+    /// (half-open: includes the top-left edge, excludes the bottom-right).
     #[inline]
     pub fn contains(&self, px: f32, py: f32) -> bool {
         px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
     }
 }
 
-/// The CPU-built UI for this frame.
-pub struct UiBuild {
-    /// gui-atlas quads (sprites + solid fills), in paint order — the background
-    /// drawn under the icons.
-    pub verts: Vec<UiVertex>,
-    /// Data-driven panel quad(s): a full-texture quad sampling a baked GUI PNG
-    /// (its own bind group), drawn between the gui-atlas background and the slot
-    /// icons. Empty for legacy screens. See [`super::gui_def`].
-    pub def_verts: Vec<UiVertex>,
-    /// Which baked GUI the `def_verts` panel belongs to, so the renderer binds
-    /// the matching panel texture. `None` for legacy screens.
-    pub(crate) def_kind: Option<GuiKind>,
-    /// Data-driven hover-highlight quad (its own baked texture), drawn over the
-    /// panel and under the icons on the hovered slot. Empty when not hovering.
-    pub hover_verts: Vec<UiVertex>,
-    /// One `(item, slot rect)` per filled slot this frame. Each item's icon was
-    /// baked once into the icon atlas at renderer init; the renderer resolves each
-    /// entry to its cell and emits a textured quad (no per-frame 3D geometry),
-    /// painted over the gui background under the digits.
-    pub icon_quads: Vec<(ItemType, SlotRect)>,
-    /// gui-atlas quads drawn AFTER the normal icons (stack-count digits), so digits
-    /// read on top of the icons.
-    pub overlay_verts: Vec<UiVertex>,
-    /// Cursor-held item icon quads, drawn after normal stack-count overlays.
-    pub drag_icon_quads: Vec<(ItemType, SlotRect)>,
-    /// Cursor-held stack-count digits, drawn after the cursor-held icon.
-    pub drag_overlay_verts: Vec<UiVertex>,
+/// One dynamic-overlay quad's place in [`UiBuild::overlays`]: which texture binds
+/// it ([`OverlayTag`]) and how many vertices it spans (always 6 for one quad).
+#[derive(Copy, Clone, Debug)]
+pub struct OverlaySpan {
+    pub tag: OverlayTag,
+    pub count: u32,
 }
 
-/// Integer GUI scale chosen from the screen height (vanilla-style auto scale):
-/// one scale step per ~240 logical px of height, clamped to `1..=4`. Returned as
-/// `f32` since all layout multiplies by it.
+/// The CPU-built UI for this frame, in paint order. Buffers are reused across
+/// frames (cleared, capacity retained) per the no-per-frame-allocation rule.
+#[derive(Default)]
+pub struct UiBuild {
+    /// Fullscreen dim backdrop behind an open menu (solid; empty for the HUD).
+    pub dim: Vec<UiVertex>,
+    /// The baked panel PNG quad (textured by its own panel bind group).
+    pub panel: Vec<UiVertex>,
+    /// Dynamic overlay quads (furnace gauges) concatenated; each its own texture.
+    pub overlays: Vec<UiVertex>,
+    /// Per-overlay `(tag, vertex count)` describing how to slice + bind `overlays`.
+    pub overlay_spans: Vec<OverlaySpan>,
+    /// Hover / selection highlight quad (its own texture). Empty when nothing is
+    /// highlighted.
+    pub hover: Vec<UiVertex>,
+    /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
+    /// pre-baked icon-atlas cell and emits a textured quad.
+    pub icon_quads: Vec<(ItemType, SlotRect)>,
+    /// Stack-count digits (solid), drawn over the icons.
+    pub counts: Vec<UiVertex>,
+    /// Cursor-held item icon, drawn front-most.
+    pub drag_icon_quads: Vec<(ItemType, SlotRect)>,
+    /// Cursor-held stack-count digits, drawn over the cursor icon.
+    pub drag_counts: Vec<UiVertex>,
+    /// Which baked GUI this frame draws, so the renderer binds the matching panel /
+    /// hover / overlay textures. `None` when nothing is drawn.
+    pub(crate) kind: Option<GuiKind>,
+}
+
+impl UiBuild {
+    fn clear(&mut self) {
+        self.dim.clear();
+        self.panel.clear();
+        self.overlays.clear();
+        self.overlay_spans.clear();
+        self.hover.clear();
+        self.icon_quads.clear();
+        self.counts.clear();
+        self.drag_icon_quads.clear();
+        self.drag_counts.clear();
+        self.kind = None;
+    }
+}
+
+/// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
+/// step per ~240 logical px of height (and ~320 of width), clamped to `1..=4`.
 pub fn gui_scale(screen: (u32, u32)) -> f32 {
     let (w, h) = screen;
     let by_h = (h / 240).max(1);
@@ -148,50 +133,15 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     by_h.min(by_w).clamp(1, 4) as f32
 }
 
-/// The inventory panel's top-left pixel position (centred) for `screen` at
-/// `scale`. The 176×166 art sits in the top-left of the 256×256 sheet. Shared by
-/// every open screen (inventory / crafting / furnace / chest) since all draw on
-/// the same centred 176×166 panel.
-pub(super) fn panel_origin(screen: (u32, u32), scale: f32) -> (f32, f32) {
-    let (w, h) = (screen.0 as f32, screen.1 as f32);
-    let pw = PANEL_W * scale;
-    let ph = PANEL_H * scale;
-    ((w - pw) * 0.5, (h - ph) * 0.5)
-}
-
-/// Convert a physical-pixel point (top-left origin, y down) to NDC (y up). The one
-/// pixel→clip conversion every UI submodule shares when emitting geometry.
+/// Convert a physical-pixel point (top-left origin, y down) to NDC (y up).
 #[inline]
 pub(super) fn pixel_to_ndc(screen: (u32, u32), x: f32, y: f32) -> [f32; 2] {
     let (w, h) = (screen.0 as f32, screen.1 as f32);
     [x / w * 2.0 - 1.0, 1.0 - y / h * 2.0]
 }
 
-/// Push a textured gui-sprite quad covering pixel rect `(x,y,w,h)` with `color`.
-pub(super) fn push_sprite(
-    out: &mut Vec<UiVertex>,
-    screen: (u32, u32),
-    sprite: GuiSprite,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    color: [f32; 4],
-) {
-    let [u0, v0, u1, v1] = sprite.rect();
-    push_quad_uv(out, screen, x, y, w, h, [u0, v0], [u1, v1], color);
-}
-
 /// Push a solid-color quad covering pixel rect `(x,y,w,h)`.
-pub(super) fn push_solid(
-    out: &mut Vec<UiVertex>,
-    screen: (u32, u32),
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    color: [f32; 4],
-) {
+pub(super) fn push_solid(out: &mut Vec<UiVertex>, screen: (u32, u32), x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
     push_quad_uv(out, screen, x, y, w, h, SOLID_UV, SOLID_UV, color);
 }
 
@@ -224,354 +174,191 @@ pub(super) fn push_quad_uv(
     out.push(v(p_tr, uv_tr));
 }
 
-fn push_slot_hover(out: &mut Vec<UiVertex>, screen: (u32, u32), r: SlotRect, scale: f32) {
-    let b = scale.max(1.0).min(r.w * 0.25).min(r.h * 0.25);
-    push_solid(out, screen, r.x, r.y, r.w, r.h, SLOT_HOVER_FILL);
-    push_solid(out, screen, r.x, r.y, r.w, b, SLOT_HOVER_EDGE);
-    push_solid(out, screen, r.x, r.y + r.h - b, r.w, b, SLOT_HOVER_EDGE);
-    push_solid(out, screen, r.x, r.y, b, r.h, SLOT_HOVER_EDGE);
-    push_solid(out, screen, r.x + r.w - b, r.y, b, r.h, SLOT_HOVER_EDGE);
+/// The game state filling slot `i` of `role`, as `(item, count)` — the one place
+/// that maps a manifest role to its backing model. `None` for an empty slot or a
+/// decorative role.
+fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
+    let stack = |s: crate::item::ItemStack| (s.item, s.count as u32);
+    match role {
+        Role::Storage => ui.chest.and_then(|c| c.slots.get(i).copied().flatten()).map(stack),
+        Role::Hotbar => ui.slots.get(i).copied().flatten().map(|(it, c)| (it, c as u32)),
+        Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten().map(|(it, c)| (it, c as u32)),
+        Role::CraftInput => ui.craft.get(i).copied().flatten().map(|(it, c)| (it, c as u32)),
+        Role::CraftResult => ui.result.map(|(it, c)| (it, c as u32)),
+        Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
+        Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
+        Role::FurnaceOutput => ui.furnace.and_then(|f| f.output).map(stack),
+        Role::Generic | Role::Other => None,
+    }
 }
 
-fn hovered_slot_rect(ui: &UiSnapshot, screen: (u32, u32), scale: f32) -> Option<SlotRect> {
-    // Slot hover is a GUI-only affordance: with no screen open the cursor is grabbed
-    // for mouse-look and isn't pointing at slots, so the closed HUD hotbar must never
-    // light up under the pointer (the active slot keeps its own selection box). Only an
-    // open screen highlights a slot on hover.
-    if !ui.open {
-        return None;
+/// Emit a dynamic overlay clipped by `frac` (`0..=1`) of game progress, recording
+/// its span so the renderer binds the overlay's own texture. No-op at `frac <= 0`.
+/// The fill direction is the overlay's defining behaviour: the smelt arrow grows
+/// left→right with cook progress; the burn flame depletes top→down (the bottom
+/// `frac` stays lit) as fuel runs out.
+fn push_overlay(build: &mut UiBuild, def: &gui_def::GuiDef, screen: (u32, u32), tag: OverlayTag, frac: f32) {
+    let frac = frac.clamp(0.0, 1.0);
+    if frac <= 0.0 {
+        return;
     }
-    let (px, py) = ui.cursor_px;
-    if ui.furnace.is_some() {
-        for slot in [FurnaceHit::Input, FurnaceHit::Fuel, FurnaceHit::Output] {
-            let r = furnace::furnace_slot_rect(slot, screen, scale);
-            if r.contains(px, py) {
-                return Some(r);
-            }
+    let Some(r) = def.overlay_rect(tag, screen) else { return };
+    let start = build.overlays.len();
+    match tag {
+        OverlayTag::FurnaceArrow => {
+            push_quad_uv(&mut build.overlays, screen, r.x, r.y, r.w * frac, r.h, [0.0, 0.0], [frac, 1.0], WHITE);
         }
-    } else if ui.chest.is_some() {
-        for i in 0..crate::chest::CHEST_SLOTS {
-            if let Some(r) = chest::chest_slot_rect(i, screen, scale) {
-                if r.contains(px, py) {
-                    return Some(r);
-                }
-            }
+        OverlayTag::FurnaceFlame => {
+            let lit_h = r.h * frac;
+            let top = r.h - lit_h;
+            push_quad_uv(&mut build.overlays, screen, r.x, r.y + top, r.w, lit_h, [0.0, 1.0 - frac], [1.0, 1.0], WHITE);
         }
-    } else {
-        for i in 0..ui.panel.cols() * ui.panel.cols() {
-            if let Some(r) = crafting::craft_slot_rect(ui.panel, i, screen, scale) {
-                if r.contains(px, py) {
-                    return Some(r);
-                }
-            }
-        }
-        let r = crafting::craft_result_rect(ui.panel, screen, scale);
-        if r.contains(px, py) {
-            return Some(r);
-        }
+        OverlayTag::Other => return,
     }
-
-    // The 36 shared inventory slots in their open layout.
-    (0..TOTAL_SLOTS)
-        .filter_map(|i| inventory::slot_rect(i, screen, true, scale))
-        .find(|r| r.contains(px, py))
+    let count = (build.overlays.len() - start) as u32;
+    build.overlay_spans.push(OverlaySpan { tag, count });
 }
 
-/// Build the full UI for `ui` this frame, dispatching to each screen's submodule.
-/// `verts`/`overlay_verts`/`icon_quads` are the caller-owned reusable buffers
-/// (cleared, capacity retained). Paint order is back-to-front: screen background,
-/// the shared inventory slot icons, the open screen's extra slots/gauges, then the
-/// drag cursor on top — so later draws overpaint earlier ones.
+/// Build the full UI for `ui` this frame from its open [`GuiKind`]'s baked def.
+/// The buffers are the caller-owned reusable [`UiBuild`] (cleared, capacity kept).
 pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
-    build.verts.clear();
-    build.def_verts.clear();
-    build.def_kind = None;
-    build.hover_verts.clear();
-    build.overlay_verts.clear();
-    build.icon_quads.clear();
-    build.drag_icon_quads.clear();
-    build.drag_overlay_verts.clear();
+    build.clear();
 
     let screen = ui.screen;
     if screen.0 == 0 || screen.1 == 0 {
         return;
     }
     let scale = gui_scale(screen);
-
-    // The data-driven chest layout for this frame (baked PNG + manifest), or
-    // `None` to use the legacy hand-coded screens. Only the chest is baked so far;
-    // every other screen — and a chest with no/invalid manifest — stays legacy.
-    let dd = if ui.open && ui.chest.is_some() {
-        gui_def::def(GuiKind::Chest)
-    } else {
-        None
+    let kind = ui.kind;
+    let Some(def) = gui_def::def(kind) else {
+        return; // No baked manifest for this screen => nothing to draw.
     };
+    build.kind = Some(kind);
 
-    // --- Background (drawn first, under everything). ---
+    // Dim the screen behind an open menu (the HUD hotbar has no backdrop).
     if ui.open {
-        // Dim the whole screen (~0.6 alpha black) behind the panel.
-        push_solid(
-            &mut build.verts,
-            screen,
-            0.0,
-            0.0,
-            screen.0 as f32,
-            screen.1 as f32,
-            [0.0, 0.0, 0.0, 0.6],
-        );
-        if let Some(def) = dd {
-            // The baked panel PNG draws from its OWN texture (def_verts), not the
-            // gui atlas: a full-texture quad over the panel rect.
-            build.def_kind = Some(GuiKind::Chest);
-            let pr = def.panel_rect(screen);
+        push_solid(&mut build.dim, screen, 0.0, 0.0, screen.0 as f32, screen.1 as f32, [0.0, 0.0, 0.0, 0.6]);
+    }
+
+    // Panel art.
+    let pr = def.panel_rect(screen);
+    push_quad_uv(&mut build.panel, screen, pr.x, pr.y, pr.w, pr.h, [0.0, 0.0], [1.0, 1.0], WHITE);
+
+    // Dynamic overlays (the furnace's smelt arrow + burn flame).
+    if let Some(f) = ui.furnace {
+        push_overlay(build, def, screen, OverlayTag::FurnaceArrow, f.cook01);
+        push_overlay(build, def, screen, OverlayTag::FurnaceFlame, f.burn01);
+    }
+
+    // Hover / selection highlight. The hotbar HUD always highlights the active
+    // slot (the held item); every open menu highlights the slot under the cursor.
+    if let Some(h) = def.hover() {
+        let highlighted = if kind == GuiKind::Hotbar {
+            def.role_rect(Role::Hotbar, ui.active as usize, screen)
+        } else {
+            def.hovered_slot_rect(screen, ui.cursor_px)
+        };
+        if let Some(sr) = highlighted {
+            let m = h.margin as f32 * scale;
             push_quad_uv(
-                &mut build.def_verts,
+                &mut build.hover,
                 screen,
-                pr.x,
-                pr.y,
-                pr.w,
-                pr.h,
+                sr.x - m,
+                sr.y - m,
+                sr.w + 2.0 * m,
+                sr.h + 2.0 * m,
                 [0.0, 0.0],
                 [1.0, 1.0],
-                [1.0, 1.0, 1.0, 1.0],
-            );
-        } else {
-            // Legacy: the centred panel sprite from the gui atlas.
-            let panel_sprite = if ui.chest.is_some() {
-                GuiSprite::ChestPanel
-            } else if ui.furnace.is_some() {
-                GuiSprite::FurnacePanel
-            } else {
-                match ui.panel {
-                    CraftKind::Inventory => GuiSprite::InventoryPanel,
-                    CraftKind::Table => GuiSprite::CraftingTablePanel,
-                }
-            };
-            let (ox, oy) = panel_origin(screen, scale);
-            push_sprite(
-                &mut build.verts,
-                screen,
-                panel_sprite,
-                ox,
-                oy,
-                PANEL_W * scale,
-                PANEL_H * scale,
-                [1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, h.opacity],
             );
         }
-    } else {
-        hotbar::build_background(ui, build, screen, scale);
     }
 
-    // Hover highlight (legacy screens only — the data-driven panel skips it for now
-    // because its highlight would have to draw between the panel texture and the
-    // icons, a separate solid pass not yet wired).
-    if dd.is_none() {
-        if let Some(r) = hovered_slot_rect(ui, screen, scale) {
-            push_slot_hover(&mut build.verts, screen, r, scale);
+    // Every filled slot's item icon + stack count.
+    def.for_each_slot(screen, |role, i, r| {
+        let Some((item, count)) = slot_item(ui, role, i) else { return };
+        if item == ItemType::Air || count == 0 {
+            return;
         }
-    }
+        icon::push_slot_icon(build, screen, item, r);
+        if count > 1 {
+            icon::push_count(&mut build.counts, screen, count, r, scale);
+        }
+    });
 
-    // --- Per-slot item icons + stack-count digits. ---
-    if let Some(def) = dd {
-        // Data-driven hover highlight: if the GUI declares a hover graphic, draw it
-        // over the hovered slot inflated by its margin (over the panel, under the
-        // icons). No graphic => no highlight (the user picks one in the builder).
-        if let Some(h) = def.hover() {
-            let (px, py) = ui.cursor_px;
-            if let Some(sr) = def.hovered_slot_rect(screen, (px, py)) {
-                let m = h.margin as f32 * scale;
-                push_quad_uv(
-                    &mut build.hover_verts,
-                    screen,
-                    sr.x - m,
-                    sr.y - m,
-                    sr.w + 2.0 * m,
-                    sr.h + 2.0 * m,
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    [1.0, 1.0, 1.0, h.opacity],
-                );
-            }
-        }
-        build_chest_dd(ui, build, def, screen, scale);
-    } else {
-        // Shared inventory slots (closed = the 9 hotbar slots, open = all 36).
-        inventory::build_slots(ui, build, screen, scale);
-        // The open screen's own extra slots / gauges (furnace + chest replace the
-        // craft grid).
-        if ui.open {
-            if ui.furnace.is_some() {
-                furnace::build(ui, build, screen, scale);
-            } else if ui.chest.is_some() {
-                chest::build(ui, build, screen, scale);
-            } else {
-                crafting::build(ui, build, screen, scale);
-            }
-        }
-    }
-
-    // --- Drag cursor: kept in its own final layer so icon + count stay in front. ---
+    // Cursor-held stack (drag/drop), front-most — only with a menu open.
     if ui.open {
         if let Some((item, count)) = ui.cursor {
             if item != ItemType::Air && count > 0 {
                 let s = SLOT_PX * scale;
                 let (cx, cy) = ui.cursor_px;
-                // Center the icon on the cursor.
-                let r = SlotRect {
-                    x: cx - s * 0.5,
-                    y: cy - s * 0.5,
-                    w: s,
-                    h: s,
-                };
+                let r = SlotRect { x: cx - s * 0.5, y: cy - s * 0.5, w: s, h: s };
                 build.drag_icon_quads.push((item, r));
                 if count > 1 {
-                    icon::push_count(
-                        &mut build.drag_overlay_verts,
-                        screen,
-                        count as u32,
-                        r,
-                        scale,
-                    );
+                    icon::push_count(&mut build.drag_counts, screen, count as u32, r, scale);
                 }
             }
         }
     }
 }
 
-/// Data-driven chest layout: the storage grid (from `ui.chest`) plus the player
-/// inventory & hotbar (from `ui.slots`), each placed by the manifest's slot rects.
-/// The panel PNG itself is emitted to `build.def_verts` by [`build_ui`]; this only
-/// adds the per-slot icons + counts. Mirrors the legacy [`chest::build`] +
-/// [`inventory::build_slots`] but reads positions from the [`super::gui_def`] def.
-fn build_chest_dd(
-    ui: &UiSnapshot,
-    build: &mut UiBuild,
-    def: &crate::render::gui_def::GuiDef,
-    screen: (u32, u32),
-    scale: f32,
-) {
-    if let Some(chest) = ui.chest {
-        for (i, stack) in chest.slots.iter().enumerate() {
-            let Some(stack) = stack else { continue };
-            if stack.item == ItemType::Air || stack.count == 0 {
-                continue;
-            }
-            let Some(r) = def.storage_rect(i, screen) else { continue };
-            icon::push_slot_icon(build, screen, stack.item, r);
-            if stack.count > 1 {
-                icon::push_count(&mut build.overlay_verts, screen, stack.count as u32, r, scale);
-            }
-        }
-    }
-    for i in 0..TOTAL_SLOTS {
-        let Some((item, count)) = ui.slots[i] else { continue };
-        if item == ItemType::Air || count == 0 {
-            continue;
-        }
-        let Some(r) = def.inventory_rect(i, screen) else { continue };
-        icon::push_slot_icon(build, screen, item, r);
-        if count > 1 {
-            icon::push_count(&mut build.overlay_verts, screen, count as u32, r, scale);
-        }
-    }
-}
-
-/// The hotbar widget's top edge in NDC — pinned by the first-person hand clearance
-/// test. Lives in [`hotbar`]; re-exported here so the public `ui::hotbar_top_ndc`
-/// path stays unchanged (consumed by the hand clearance regression test).
-#[cfg(test)]
-#[allow(unused_imports)]
-pub use hotbar::hotbar_top_ndc;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::ItemType;
 
-    pub(super) fn snap_open(open: bool) -> UiSnapshot {
-        let mut s = UiSnapshot {
-            open,
-            panel: CraftKind::Inventory,
-            screen: (1280, 720),
-            cursor_px: (640.0, 360.0),
-            active: 2,
-            slots: [None; TOTAL_SLOTS],
-            craft: [None; crate::crafting::MAX_CELLS],
-            result: None,
-            cursor: None,
-            furnace: None,
-            chest: None,
-        };
-        // A block-cube item and a sprite item in the hotbar.
+    fn snap(kind: GuiKind, open: bool) -> UiSnapshot {
+        let mut s = UiSnapshot { kind, open, screen: (1280, 720), cursor_px: (640.0, 360.0), active: 2, ..Default::default() };
         s.slots[0] = Some((ItemType::Stone, 64));
-        s.slots[7] = Some((ItemType::Poppy, 1));
         s
-    }
-
-    /// An empty reusable build buffer for the tests.
-    pub(super) fn empty_build() -> UiBuild {
-        UiBuild {
-            verts: Vec::new(),
-            def_verts: Vec::new(),
-            def_kind: None,
-            hover_verts: Vec::new(),
-            icon_quads: Vec::new(),
-            overlay_verts: Vec::new(),
-            drag_icon_quads: Vec::new(),
-            drag_overlay_verts: Vec::new(),
-        }
     }
 
     #[test]
     fn gui_scale_is_clamped_and_increases_with_height() {
         assert_eq!(gui_scale((320, 240)), 1.0);
         assert!(gui_scale((1920, 1080)) >= 2.0);
-        // Tiny screens never go below 1.
         assert_eq!(gui_scale((10, 10)), 1.0);
-        // Huge screens cap at 4.
         assert_eq!(gui_scale((10000, 10000)), 4.0);
     }
 
     #[test]
-    fn open_build_dims_and_draws_panel() {
-        let mut build = empty_build();
-        let mut s = snap_open(true);
+    fn zero_screen_builds_nothing() {
+        let mut b = UiBuild::default();
+        let s = UiSnapshot { screen: (0, 0), ..snap(GuiKind::Hotbar, false) };
+        build_ui(&s, &mut b);
+        assert!(b.panel.is_empty() && b.icon_quads.is_empty() && b.kind.is_none());
+    }
+
+    #[test]
+    fn hotbar_hud_draws_panel_active_selection_and_item() {
+        // Uses the real baked hotbar manifest (the contract guard ensures it loads).
+        let mut b = UiBuild::default();
+        build_ui(&snap(GuiKind::Hotbar, false), &mut b);
+        assert_eq!(b.kind, Some(GuiKind::Hotbar));
+        assert!(!b.panel.is_empty(), "hotbar panel drawn");
+        assert!(!b.hover.is_empty(), "active-slot selection drawn");
+        assert!(b.dim.is_empty(), "HUD has no dim backdrop");
+        assert_eq!(b.icon_quads.len(), 1, "the one hotbar item");
+    }
+
+    #[test]
+    fn open_menu_dims_and_draws_drag_cursor() {
+        let mut b = UiBuild::default();
+        let mut s = snap(GuiKind::Inventory, true);
         s.cursor = Some((ItemType::Dirt, 12));
-        build_ui(&s, &mut build);
-        // Dim quad + panel sprite = at least 12 verts.
-        assert!(build.verts.len() >= 12);
-        // Two slot items in the normal layer + the drag cursor in the front layer.
-        assert_eq!(build.icon_quads.len(), 2);
-        assert_eq!(build.drag_icon_quads.len(), 1);
-        assert!(!build.drag_overlay_verts.is_empty());
+        build_ui(&s, &mut b);
+        assert!(!b.dim.is_empty(), "menu dims the screen");
+        assert!(!b.panel.is_empty());
+        assert_eq!(b.drag_icon_quads.len(), 1);
+        assert!(!b.drag_counts.is_empty(), "drag count > 1 drawn");
     }
 
     #[test]
-    fn build_ui_reuses_icon_quads_without_growth() {
-        // The icon-quad list is cleared + refilled each frame, never reallocated,
-        // mirroring the per-frame no-allocation performance rule.
-        let mut build = empty_build();
-        build_ui(&snap_open(true), &mut build);
-        let cap = build.icon_quads.capacity();
-        assert!(cap > 0, "first build should record icon quads");
-        // Rebuild with the closed (smaller) UI: cleared + refilled, capacity kept.
-        build_ui(&snap_open(false), &mut build);
-        assert_eq!(build.icon_quads.capacity(), cap, "icon-quad buffer reused");
-    }
-
-    #[test]
-    fn empty_screen_builds_nothing() {
-        let mut build = empty_build();
-        let s = UiSnapshot {
-            screen: (0, 0),
-            ..snap_open(false)
-        };
-        build_ui(&s, &mut build);
-        assert!(
-            build.verts.is_empty()
-                && build.icon_quads.is_empty()
-                && build.drag_icon_quads.is_empty()
-        );
+    fn build_reuses_buffers_without_growth() {
+        let mut b = UiBuild::default();
+        build_ui(&snap(GuiKind::Inventory, true), &mut b);
+        let cap = b.icon_quads.capacity();
+        assert!(cap > 0);
+        build_ui(&snap(GuiKind::Hotbar, false), &mut b);
+        assert_eq!(b.icon_quads.capacity(), cap, "icon-quad buffer reused");
     }
 }

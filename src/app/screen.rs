@@ -28,14 +28,18 @@ impl AppScreen {
         !matches!(self, AppScreen::Game)
     }
 
-    /// The crafting layout shown by the open menu. Defaults to the inventory
-    /// layout when no menu is open (harmless: craft drawing/routing is gated on
-    /// [`ui_open`](Self::ui_open)).
+    /// Which baked GUI this screen draws: the open menu's kind, or `Hotbar` for the
+    /// HUD (gameplay). The single source of "which screen" for the data-driven GUI —
+    /// it selects both the rendered panel and the click hit-test's layout.
     #[inline]
-    pub fn craft_kind(self) -> crate::render::CraftKind {
+    pub fn gui_kind(self) -> crate::render::GuiKind {
+        use crate::render::GuiKind;
         match self {
-            AppScreen::CraftingTable => crate::render::CraftKind::Table,
-            _ => crate::render::CraftKind::Inventory,
+            AppScreen::Game => GuiKind::Hotbar,
+            AppScreen::Inventory => GuiKind::Inventory,
+            AppScreen::CraftingTable => GuiKind::CraftingTable,
+            AppScreen::Furnace => GuiKind::Furnace,
+            AppScreen::Chest => GuiKind::Chest,
         }
     }
 

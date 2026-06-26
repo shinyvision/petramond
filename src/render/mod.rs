@@ -19,6 +19,7 @@ mod scene;
 mod section_cull;
 mod selection;
 mod gui_def;
+mod gui_types;
 mod ui;
 mod ui_text;
 mod uniforms;
@@ -27,7 +28,7 @@ pub use renderer::{
     instance_descriptor, new_renderer, new_renderer_from_target, new_renderer_with_instance,
     Renderer, UiSnapshot,
 };
-pub use resources::{GpuMesh, GuiSprite};
+pub use resources::GpuMesh;
 
 /// The render-side scene adapter: bakes the sim's per-frame world-render data
 /// (dropped items, particles, chests, held-item light) into the renderer's wire
@@ -41,36 +42,17 @@ pub use block_model::{
     billboard_quad, cube_solid, cube_textured, BillboardBasis, SOLID_COLOR_FLAG,
 };
 
-/// Pure UI layout hit-test (contract §9): the inventory slot index under the
-/// cursor, or `None`. Shared with the App for drag/drop; uses the same slot-rect
-/// math the renderer draws with.
-pub use ui::slot_at_cursor;
+/// Slot-identity enums shared with the App's click routing and the game container
+/// menu (a craft input/result cell, a furnace role). See [`gui_types`].
+pub use gui_types::{CraftHit, FurnaceHit};
 
-/// Pure UI layout hit-test: whether the cursor is over the open inventory panel
-/// rectangle. Shared with the App to tell a "drop outside the inventory" click
-/// (throw the held stack) from a click on the panel itself. Uses the same panel
-/// placement the renderer draws with.
-pub use ui::cursor_in_panel;
-
-/// Crafting layout kind + the crafting-slot hit-test, shared with the App so a
-/// click on a craft input cell / result slot routes to the right action.
-pub use ui::{craft_slot_at_cursor, CraftHit, CraftKind};
-
-/// Furnace-slot hit-test (input / fuel / output), shared with the App so a click
-/// in the open furnace screen routes to the right slot.
-pub use ui::{furnace_slot_at_cursor, FurnaceHit};
-
-/// Chest storage-slot hit-test (the `0..27` slot index under the cursor), shared
-/// with the App so a click in the open chest screen routes to the right slot.
-pub use ui::chest_slot_at_cursor;
-
-/// Data-driven GUI (baked PNG + JSON manifest) layout + hit-tests. The forward
-/// path that coexists with the legacy `ui` screens; the App routes the chest's
-/// hit-tests here when [`chest_active`] is true (otherwise the legacy ones).
-pub use gui_def::{
-    chest_active, chest_inventory_at_cursor, chest_storage_at_cursor, data_driven_enabled,
-    set_data_driven_enabled,
-};
+/// Data-driven GUI layout + hit-tests (baked PNG + JSON manifest). Every screen
+/// reads its baked [`GuiKind`] def — the renderer draws it and the App routes a
+/// click through [`gui_hit`] (which slot the cursor is over, as a game `MenuSlot`)
+/// and [`gui_panel_contains`] (is the cursor over the panel). `GuiKind` lets the
+/// App name the open screen's kind for both.
+pub use gui_def::GuiKind;
+pub(crate) use gui_def::{hit as gui_hit, panel_contains as gui_panel_contains};
 
 use crate::item::{ItemStack, ItemType};
 use glam::{IVec3, Quat, Vec3};
@@ -259,8 +241,8 @@ pub struct ChestView {
 /// small bits it needs into owned state so it never holds a borrow across frames.
 pub struct UiFrame<'a> {
     pub open: bool,
-    /// Which crafting layout the open panel shows (2×2 inventory vs 3×3 table).
-    pub panel: CraftKind,
+    /// Which baked GUI to draw — the open menu's kind, or `Hotbar` for the HUD.
+    pub kind: GuiKind,
     pub inv: &'a crate::inventory::Inventory,
     /// The active crafting input cells (`len == panel.cols()²`).
     pub craft: &'a [Option<ItemStack>],

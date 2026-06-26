@@ -13,7 +13,7 @@ pub use screen::{AppScreen, CursorPolicy};
 use crate::app::input::{ControlEvent, InputController};
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton};
-use crate::game::{ContainerTarget, Game, GameInput, MenuSlot};
+use crate::game::{Game, GameInput, MenuSlot};
 use crate::render::{HeldItemFrame, Renderer, Scene, UiFrame};
 
 pub struct App {
@@ -240,7 +240,7 @@ impl App {
         self.scene.upload(renderer);
         renderer.set_ui(UiFrame {
             open: self.screen.ui_open(),
-            panel: self.screen.craft_kind(),
+            kind: self.screen.gui_kind(),
             inv: self.game.inventory(),
             craft: self.game.craft_grid().cells(),
             craft_result: self.game.craft_grid().result().copied(),
@@ -374,9 +374,11 @@ impl App {
     }
 
     /// Apply an inventory click (caller guarantees a menu is open). Hit-test the
-    /// pixel to a slot identity, then route it through the menu's single
-    /// [`Game::menu_click`] entry — one path keyed on the open container, instead of
-    /// a router per container type.
+    /// pixel to a game slot via the open GUI's baked def ([`render::gui_hit`]) — ONE
+    /// scan over every slot of every role that returns the `MenuSlot` directly — then
+    /// route it through the menu's single [`Game::menu_click`] entry. The manifest's
+    /// role→slot map (storage→chest, player_inv/hotbar→inventory, craft/furnace→
+    /// their roles) replaces App's old per-container hit-test ladder.
     ///
     /// On a slot: shift transfers (furnace tag-routes #fuel / #smeltable, chest
     /// dumps in, otherwise hotbar↔grid); right splits / drips one; left does
@@ -388,19 +390,13 @@ impl App {
     fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
         let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
         let shift = self.modifiers.shift;
-        // The open panel's own slots take priority over the inventory grid below.
-        // ONE match on the menu's edit target picks the panel's per-layout
-        // hit-tester (furnace role / chest index / craft cell), replacing the old
-        // is_furnace()/is_chest() ladder. A miss falls through to the inventory grid.
-        let slot = self.panel_slot_at(screen, cursor).or_else(|| {
-            self.inv_slot_at(screen, cursor).map(MenuSlot::Inventory)
-        });
-        match slot {
+        let kind = self.screen.gui_kind();
+        match crate::render::gui_hit(kind, screen, cursor) {
             Some(slot) => {
                 let gather = self.left_click_gather(slot, button, shift, now);
                 self.game.menu_click(slot, button, shift, gather);
             }
-            None if !crate::render::cursor_in_panel(screen, cursor) => {
+            None if !crate::render::gui_panel_contains(kind, screen, cursor) => {
                 self.pointer.reset_click_streak();
                 match button {
                     PointerButton::Primary => self.game.throw_cursor_stack(),
@@ -408,46 +404,6 @@ impl App {
                 }
             }
             None => {}
-        }
-    }
-
-    /// Hit-test the open panel's OWN slots (above the inventory grid), resolving the
-    /// pixel to the panel-specific slot identity. The per-layout geometry differs by
-    /// container (furnace slots vs chest slots sit at different pixels), so this stays
-    /// keyed on the open container — but it is the ONE place that branches on it, the
-    /// single decision point that replaced App's per-container click routers.
-    fn panel_slot_at(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<MenuSlot> {
-        match self.game.menu().target() {
-            ContainerTarget::Furnace(_) => {
-                crate::render::furnace_slot_at_cursor(screen, cursor).map(MenuSlot::Furnace)
-            }
-            ContainerTarget::Chest(_) => {
-                // Data-driven chest layout when its manifest is loaded; otherwise
-                // the legacy hand-coded storage grid.
-                let hit = if crate::render::chest_active() {
-                    crate::render::chest_storage_at_cursor(screen, cursor)
-                } else {
-                    crate::render::chest_slot_at_cursor(screen, cursor)
-                };
-                hit.map(MenuSlot::Chest)
-            }
-            ContainerTarget::Inventory | ContainerTarget::Table => {
-                crate::render::craft_slot_at_cursor(self.screen.craft_kind(), screen, cursor)
-                    .map(MenuSlot::Craft)
-            }
-            ContainerTarget::None => None,
-        }
-    }
-
-    /// The inventory slot (`0..36`) under the cursor: the data-driven chest layout
-    /// when the chest is the open, data-driven screen, otherwise the legacy shared
-    /// inventory layout. Every container shows the player's 36 slots, but a baked
-    /// panel places them at its own manifest positions.
-    fn inv_slot_at(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<usize> {
-        if matches!(self.game.menu().target(), ContainerTarget::Chest(_)) && crate::render::chest_active() {
-            crate::render::chest_inventory_at_cursor(screen, cursor)
-        } else {
-            crate::render::slot_at_cursor(screen, true, cursor)
         }
     }
 
@@ -724,37 +680,35 @@ mod tests {
         assert!((p.scroll_delta - 0.5).abs() < 1e-4);
     }
 
-    fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {
+    /// Brute-force a cursor pixel that the open GUI's hit-test resolves to `want`,
+    /// using the REAL baked geometry so tests never pin manifest pixel positions.
+    fn cursor_over_menu(screen: (u32, u32), kind: crate::render::GuiKind, want: MenuSlot) -> (f32, f32) {
         for y in 0..screen.1 {
             for x in 0..screen.0 {
                 let c = (x as f32 + 0.5, y as f32 + 0.5);
-                if crate::render::slot_at_cursor(screen, true, c) == Some(slot) {
+                if crate::render::gui_hit(kind, screen, c) == Some(want) {
                     return c;
                 }
             }
         }
-        panic!("no cursor position maps to slot {slot}");
+        panic!("no cursor position maps to {want:?} in {kind:?}");
+    }
+
+    fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {
+        cursor_over_menu(screen, crate::render::GuiKind::Inventory, MenuSlot::Inventory(slot))
     }
 
     fn cursor_over_craft(
         screen: (u32, u32),
-        kind: crate::render::CraftKind,
+        kind: crate::render::GuiKind,
         hit: crate::render::CraftHit,
     ) -> (f32, f32) {
-        for y in 0..screen.1 {
-            for x in 0..screen.0 {
-                let c = (x as f32 + 0.5, y as f32 + 0.5);
-                if crate::render::craft_slot_at_cursor(kind, screen, c) == Some(hit) {
-                    return c;
-                }
-            }
-        }
-        panic!("no cursor position maps to craft {hit:?}");
+        cursor_over_menu(screen, kind, MenuSlot::Craft(hit))
     }
 
     #[test]
     fn craft_slot_clicks_route_through_to_crafting() {
-        use crate::render::{CraftHit, CraftKind};
+        use crate::render::{CraftHit, GuiKind};
         let mut app = app();
         // Give the player one oak log and open the inventory (2×2 crafting).
         app.game
@@ -769,7 +723,7 @@ mod tests {
         assert!(app.game.inventory().cursor().is_some());
 
         // Drop it into the first 2×2 craft input cell -> planks preview appears.
-        let cc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Input(0));
+        let cc = cursor_over_craft(screen, GuiKind::Inventory, CraftHit::Input(0));
         app.set_cursor_position(cc.0, cc.1);
         app.click_screen_for_test(screen, 0.1);
         assert!(
@@ -782,7 +736,7 @@ mod tests {
         );
 
         // Click the result slot: 4 planks land on the cursor, ingredients consumed.
-        let rc = cursor_over_craft(screen, CraftKind::Inventory, CraftHit::Result);
+        let rc = cursor_over_craft(screen, GuiKind::Inventory, CraftHit::Result);
         app.set_cursor_position(rc.0, rc.1);
         app.click_screen_for_test(screen, 0.2);
         assert_eq!(
@@ -805,7 +759,7 @@ mod tests {
         app.click_screen_for_test(screen, 0.0);
         let cc = cursor_over_craft(
             screen,
-            crate::render::CraftKind::Inventory,
+            crate::render::GuiKind::Inventory,
             crate::render::CraftHit::Input(0),
         );
         app.set_cursor_position(cc.0, cc.1);
@@ -1076,11 +1030,12 @@ mod tests {
 
     /// A point inside the panel rectangle that is NOT over any slot.
     fn panel_gap_point(screen: (u32, u32)) -> (f32, f32) {
+        let kind = crate::render::GuiKind::Inventory;
         for y in 0..screen.1 {
             for x in 0..screen.0 {
                 let c = (x as f32 + 0.5, y as f32 + 0.5);
-                if crate::render::cursor_in_panel(screen, c)
-                    && crate::render::slot_at_cursor(screen, true, c).is_none()
+                if crate::render::gui_panel_contains(kind, screen, c)
+                    && crate::render::gui_hit(kind, screen, c).is_none()
                 {
                     return c;
                 }

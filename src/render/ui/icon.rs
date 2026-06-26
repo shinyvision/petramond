@@ -204,8 +204,22 @@ pub(super) fn push_count(
 #[cfg(test)]
 mod tests {
     use super::super::gui_scale;
-    use super::super::inventory::slot_rect;
     use super::*;
+
+    /// A simple on-screen slot rect for exercising the icon MVPs. Real slot
+    /// positions come from baked manifests; the icon projection only needs a rect,
+    /// distinct per index so the per-slot-translation test has two cells to compare.
+    fn slot_rect(i: usize, _screen: (u32, u32), _open: bool, scale: f32) -> Option<SlotRect> {
+        let s = super::super::SLOT_PX * scale;
+        let col = (i % 9) as f32;
+        let row = (i / 9) as f32;
+        Some(SlotRect {
+            x: 20.0 * scale + col * (s + 2.0),
+            y: 20.0 * scale + row * (s + 2.0),
+            w: s,
+            h: s,
+        })
+    }
 
     #[test]
     fn iso_mvp_keeps_cube_within_clip_xy() {
