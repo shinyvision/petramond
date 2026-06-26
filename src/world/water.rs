@@ -226,10 +226,16 @@ impl World {
         surface_flow_dir(wx, wy, wz, &block_at, &fluid_at)
     }
 
-    /// Set a water cell at world coords without dirtying skylight (water is
-    /// transparent so the skylight band never changes), remesh across the chunk
-    /// border when the cell sits on one, and announce the change to neighbours.
-    /// Returns false if the target chunk is not loaded.
+    /// Set a water cell at world coords: write the cell, remesh its chunk (plus
+    /// the neighbour across a shared border, whose culled faces change), and
+    /// announce the change to neighbours. Water is itself transparent and emits
+    /// nothing, but the announce still schedules the 3×3 relight — water can move
+    /// INTO a cell that held a torch or other emitter, washing it away (see
+    /// [`fill_with_water`]), so the block light there may have changed; the relight
+    /// rides with the announce (see [`notify_block_and_neighbors`]). Returns false
+    /// if the target chunk is not loaded.
+    ///
+    /// [`notify_block_and_neighbors`]: World::notify_block_and_neighbors
     pub(super) fn set_water_world(&mut self, pos: IVec3, block: Block, meta: u8) -> bool {
         let Some((cpos, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
             return false;
@@ -882,6 +888,37 @@ mod tests {
         assert!(
             breaks.iter().any(|&(p, b)| p == flower && b == Block::Poppy),
             "the washed-away flower was recorded for its drop + burst"
+        );
+    }
+
+    /// A water write must schedule the matching relight, like every other block
+    /// update. The water path used to skip it ("water is transparent"), but water
+    /// can move INTO a cell that held a torch (a light emitter) and wash it away —
+    /// and then the torch's glow lingered in the now-stale light band. We settle
+    /// the chunk's light first so a still-dirty band can't mask the regression.
+    #[test]
+    fn a_water_write_reschedules_the_light() {
+        let mut w = flat_world();
+        let cell = IVec3::new(10, 65, 8);
+        w.set_block_world(cell.x, cell.y, cell.z, Block::Torch);
+
+        // Bake the chunk's skylight so its `light_dirty` flag is clear — the
+        // baseline a fresh block update has to dirty again.
+        let pos = ChunkPos::new(0, 0);
+        let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(w.chunks.get(&pos).unwrap());
+        w.chunks.get_mut(&pos).unwrap().set_skylight(band, ylo, yhi);
+        assert!(
+            !w.chunks.get(&pos).unwrap().light_dirty,
+            "baseline: the chunk's light is settled"
+        );
+
+        // Water moves into the torch's cell; the announce must re-dirty the light
+        // so the lingering emitter glow gets rebaked.
+        assert!(w.set_water_world(cell, Block::Water, FALLING));
+        assert_eq!(block(&w, cell.x, cell.y, cell.z), Block::Water);
+        assert!(
+            w.chunks.get(&pos).unwrap().light_dirty,
+            "a water write must reschedule the relight"
         );
     }
 }

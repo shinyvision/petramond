@@ -219,10 +219,10 @@ impl World {
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
                 if seen.insert(pos) {
                     self.invalidate_section_visibility(pos);
-                    self.mark_light_dirty_neighborhood(pos, true);
                     self.mark_dirty_neighborhood(pos, true);
                 }
             }
+            // The matching 3×3 relight rides along with each cell's announce.
             self.notify_block_and_neighbors(c.x, c.y, c.z);
         }
     }

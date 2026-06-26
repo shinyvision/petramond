@@ -21,13 +21,13 @@ impl World {
         }
         self.invalidate_section_visibility(pos);
 
-        // Re-light and re-mesh the 3x3 so border flood, vertex light sampling,
-        // and cross-chunk face culling remain correct.
-        self.mark_light_dirty_neighborhood(pos, true);
+        // Re-mesh the 3x3 so the border flood, vertex light sampling, and
+        // cross-chunk face culling remain correct.
         self.mark_dirty_neighborhood(pos, true);
 
-        // Announce the change so reactive neighbours (e.g. water) re-evaluate on
-        // the next game tick.
+        // Announce the change: this re-lights the 3x3 (border flood) and lets
+        // reactive neighbours (e.g. water) re-evaluate on the next game tick — the
+        // relight rides along with the announce (see `notify_block_and_neighbors`).
         self.notify_block_and_neighbors(wx, wy, wz);
         true
     }

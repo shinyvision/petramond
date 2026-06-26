@@ -30,10 +30,10 @@ impl World {
 
         for (cpos, pos) in relit {
             self.mark_dirty_pos(cpos);
-            // A furnace's lit-state flip changes its block-light emission, so
-            // re-flood the 3x3 light neighbourhood; the relight then re-meshes every
-            // chunk the glow reaches (same path a torch placement takes).
-            self.mark_light_dirty_neighborhood(cpos, true);
+            // A furnace's lit-state flip changes its block-light emission. The
+            // announce re-floods the 3x3 light neighbourhood, and that relight then
+            // re-meshes every chunk the glow reaches (same path a torch placement
+            // takes).
             self.notify_block_and_neighbors(pos.x, pos.y, pos.z);
         }
     }

@@ -159,10 +159,22 @@ impl World {
         self.random_tick_chunks();
     }
 
-    /// Announce that the block at `(wx, wy, wz)` changed: queue a block update for
-    /// the cell itself and each of its 6 orthogonal neighbours (crossing chunk
-    /// borders). Deduped within the current tick.
+    /// Announce that the block at `(wx, wy, wz)` changed: schedule the light
+    /// rebake for its 3×3 chunk neighbourhood, then queue a block update for the
+    /// cell itself and each of its 6 orthogonal neighbours (crossing chunk
+    /// borders). Block updates are deduped within the current tick.
+    ///
+    /// The relight is emitted HERE, alongside the block update, so the two can
+    /// never drift apart: this is the single "a block changed" choke point that
+    /// every editor calls (`set_block_world`, `set_water_world`, the model and
+    /// furnace paths), and none has to remember a matching `mark_light_dirty` of
+    /// its own — forgetting one was the bug this consolidates away (water washing
+    /// a torch away changes the block light, but the water path never relit). Any
+    /// announced change may have moved opacity or an emitter, so any announced
+    /// change relights. The 3×3 covers the border flood: a cell's light can spill
+    /// one chunk in every direction.
     pub(super) fn notify_block_and_neighbors(&mut self, wx: i32, wy: i32, wz: i32) {
+        self.mark_light_dirty_neighborhood(ChunkPos::new(wx >> 4, wz >> 4), true);
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);
         for d in NEIGHBORS {

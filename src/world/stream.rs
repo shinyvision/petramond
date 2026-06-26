@@ -188,6 +188,14 @@ impl World {
     /// Queue block updates for reactive generated blocks whose final loaded
     /// neighbourhood already says they need work. This runs after a batch is
     /// inserted so same-batch chunk borders are visible.
+    ///
+    /// These post the raw [`queue_block_update`](World::queue_block_update) rather
+    /// than [`notify_block_and_neighbors`](World::notify_block_and_neighbors) — they
+    /// only *kick* already-placed generated water into flowing, changing no block,
+    /// and the relight that the announce would carry was already scheduled for the
+    /// whole batch at ingest (the `mark_light_dirty_neighborhood` loop in `poll`).
+    /// So they skip the per-update relight instead of redundantly re-dirtying every
+    /// ingested chunk's 3×3.
     fn queue_post_generation_block_updates(&mut self, ingested: &[ChunkPos]) -> usize {
         let mut updates = Vec::new();
         let fresh: HashSet<ChunkPos> = ingested.iter().copied().collect();
