@@ -451,6 +451,10 @@ impl Game {
         // smelting). Recipes live in `Game`, so they're passed through. Then item lifetime
         // + collection (pickup needs `player.inventory`, hence the borrow split here).
         self.world.game_tick(&self.recipes);
+        // Blocks the world simulation itself destroyed this tick (fragile blocks that
+        // lost their support, or were washed away by water) get a player-style break:
+        // the break-particle burst plus their rolled item drops.
+        self.process_natural_breaks();
         self.item_pickup_tick();
 
         // Entities. Mobs and dropped items are owned by `World` (they persist with their
@@ -1090,17 +1094,34 @@ impl Game {
             None => return false,
         };
 
-        let p = h.block + h.normal;
+        // Right-clicking a replaceable block (short grass, a fern…) while holding a block
+        // places straight INTO its cell, overwriting it with no drop — the block just
+        // disappears, as if the cell were empty. Otherwise the placement builds against
+        // the clicked face. Air is replaceable too (a placement may overwrite it) but is
+        // never itself a raycast hit, so exclude it. `p` then feeds the torch support
+        // gate, the model footprint, and the final replaceable check uniformly.
+        let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        let replacing_in_place = looked_at.is_replaceable() && looked_at != Block::Air;
+        let p = if replacing_in_place {
+            h.block
+        } else {
+            h.block + h.normal
+        };
 
-        // A torch only mounts on a floor or wall (never a ceiling) and needs a full
-        // solid face to attach to. Resolve that up front so an invalid spot is a
-        // no-op — the click neither places nor consumes the torch — rather than
-        // leaving a floating one. `support_cell` is the clicked block here, which the
-        // raycast already proved exists; the extra gate rejects non-full faces
-        // (leaves, a chest, another torch…).
+        // A torch only mounts on a floor or wall (never a ceiling) and needs a full solid
+        // face to attach to. Resolve that up front so an invalid spot is a no-op (the
+        // click neither places nor consumes the torch) rather than leaving a floating one.
+        // When REPLACING a plant the torch always drops to the FLOOR of that cell — so
+        // right-clicking grass from any angle, even its side, stands a floor torch where
+        // the grass was instead of failing on the side face's would-be wall mount.
         let torch_placement = if block == Block::Torch {
-            let Some(tp) = TorchPlacement::from_place_normal(h.normal) else {
-                return false;
+            let tp = if replacing_in_place {
+                TorchPlacement::Floor
+            } else {
+                match TorchPlacement::from_place_normal(h.normal) {
+                    Some(tp) => tp,
+                    None => return false,
+                }
             };
             let s = tp.support_cell(p);
             if !Block::from_id(self.world.chunk_block(s.x, s.y, s.z)).is_opaque() {
@@ -1148,6 +1169,16 @@ impl Game {
             return false;
         }
 
+        // Substrate gate: a block that roots in a particular ground — a flower in soil, a
+        // cactus in sand, a mushroom on soil or stone — places only when the cell directly
+        // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost
+        // all of them) accept anything; a torch is gated by its own opaque-face check
+        // above. Staying put once placed is the separate job of the FRAGILE behaviour.
+        let below = Block::from_id(self.world.chunk_block(p.x, p.y - 1, p.z));
+        if !block.can_root_on(below) {
+            return false;
+        }
+
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
         // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
         // may be placed inside an entity; a block that WOULD collide can't be placed where
@@ -1181,6 +1212,28 @@ impl Game {
             true
         } else {
             false
+        }
+    }
+
+    /// Drain the blocks the world simulation destroyed this tick (fragile blocks that
+    /// lost support or were washed away by water) and give each the same break a player
+    /// would — the break-particle burst plus its rolled item drops. Particles are purely
+    /// visual (Game-owned), so they're spawned here rather than inside the world tick; the
+    /// drops materialise on this tick like every other entity. The block is already gone
+    /// (the world cleared the cell), so light is sampled from the now-empty cell — which is
+    /// what the burst should glow with.
+    fn process_natural_breaks(&mut self) {
+        for (pos, block) in self.world.take_natural_breaks() {
+            let (light, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
+            match block.render_shape() {
+                RenderShape::Model(kind) => {
+                    self.particles.spawn_break_burst_model(pos, kind, light, warm)
+                }
+                _ => self.particles.spawn_break_burst_lit(pos, block, light, warm),
+            }
+            // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
+            // hand-break would (short grass yields nothing, a flower/torch yields itself).
+            self.spawn_drops(pos, block, light);
         }
     }
 
@@ -2362,6 +2415,88 @@ mod tests {
 
         assert_eq!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)), block);
         assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
+    }
+
+    #[test]
+    fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
+        // Right-clicking short grass (a replaceable plant) while holding a block places
+        // the block straight INTO the grass cell, overwriting it with no drop — not on
+        // top of it.
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        game.player.inventory = filled_inventory(); // a stack of Dirt
+        game.player.inventory.set_active(0);
+        game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
+
+        let g = IVec3::new(8, 100, 8);
+        game.world.set_block_world(g.x, g.y, g.z, Block::ShortGrass);
+        let before = game.player.inventory.selected().unwrap().count;
+
+        // Look straight at the grass and place into it.
+        game.look = Some(hit(g, IVec3::Y));
+        assert!(game.try_place(), "placing into replaceable grass succeeds");
+
+        assert_eq!(
+            Block::from_id(game.world.chunk_block(g.x, g.y, g.z)),
+            Block::Dirt,
+            "the block replaced the grass in its own cell, not the cell above"
+        );
+        assert_eq!(
+            game.player.inventory.selected().unwrap().count,
+            before - 1,
+            "one block was consumed"
+        );
+        assert!(
+            game.item_entities().is_empty(),
+            "the overwritten grass dropped nothing"
+        );
+    }
+
+    #[test]
+    fn rooted_plants_place_only_on_their_required_ground() {
+        // The data-driven substrate gate: a flower roots in soil (grass/dirt), a cactus
+        // in sand (sand/red sand). Building onto the wrong ground is a no-op; the right
+        // ground accepts it. Each case uses its own column so they don't interfere.
+        fn place_on(game: &mut Game, ground: Block, item: ItemType, col: i32) -> bool {
+            let g = IVec3::new(col, 100, col);
+            game.world.set_block_world(g.x, g.y, g.z, ground);
+            let mut inv = Inventory::new();
+            inv.add(ItemStack::new(item, 1));
+            game.player.inventory = inv;
+            game.player.inventory.set_active(0);
+            game.look = Some(hit(g, IVec3::Y)); // build on TOP of the ground block
+            let placed = game.try_place();
+            // The return must agree with whether the block actually landed above.
+            let above = Block::from_id(game.world.chunk_block(g.x, g.y + 1, g.z));
+            assert_eq!(
+                placed,
+                above == item.as_block().unwrap(),
+                "try_place() return must match whether the block landed"
+            );
+            placed
+        }
+
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+
+        // A flower (Dandelion) roots in soil only.
+        assert!(!place_on(&mut game, Block::Stone, ItemType::Dandelion, 2), "no flower on stone");
+        assert!(place_on(&mut game, Block::Grass, ItemType::Dandelion, 4), "flower on grass");
+        assert!(place_on(&mut game, Block::Dirt, ItemType::Dandelion, 6), "flower on dirt");
+        assert!(!place_on(&mut game, Block::Sand, ItemType::Dandelion, 8), "no flower on sand");
+
+        // A cactus roots in sand only.
+        assert!(!place_on(&mut game, Block::Grass, ItemType::Cactus, 10), "no cactus on grass");
+        assert!(place_on(&mut game, Block::Sand, ItemType::Cactus, 12), "cactus on sand");
+        assert!(place_on(&mut game, Block::RedSand, ItemType::Cactus, 14), "cactus on red sand");
+
+        // A mushroom roots in soil OR any stone (its two RootsIn* tags combine).
+        assert!(place_on(&mut game, Block::Grass, ItemType::BrownMushroom, 1), "mushroom on grass");
+        assert!(place_on(&mut game, Block::Stone, ItemType::BrownMushroom, 3), "mushroom on stone");
+        assert!(place_on(&mut game, Block::Cobblestone, ItemType::BrownMushroom, 5), "mushroom on cobblestone");
+        assert!(!place_on(&mut game, Block::Sand, ItemType::BrownMushroom, 7), "no mushroom on sand");
+        assert!(!place_on(&mut game, Block::OakPlanks, ItemType::BrownMushroom, 9), "no mushroom on wood");
     }
 
     #[test]

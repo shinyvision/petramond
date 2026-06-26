@@ -15,7 +15,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::block_model::{block_icon_faces, push_cube_faces_lit, BillboardBasis};
+use super::block_model::{push_block_item_cube_lit, BillboardBasis};
 use super::item_model::ItemVertex;
 use super::ItemEntityInstance;
 use crate::block::Block;
@@ -71,9 +71,8 @@ pub fn build_item_entities(
                 }
             }
             ItemRenderKind::BlockCube(block) => {
-                let faces = block_icon_faces(block);
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    push_spinning_cube(verts, indices, inst, faces, offset);
+                    push_spinning_cube(verts, indices, inst, block, offset);
                 }
             }
             ItemRenderKind::Sprite(tile) => {
@@ -151,17 +150,17 @@ fn push_spinning_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     inst: &ItemEntityInstance,
-    faces: [crate::atlas::Tile; 6],
+    block: Block,
     offset: Vec3,
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
     // Append the cube centred on the origin (model space) directly into the
     // caller's buffers (no temporary Vec), then spin + place it in the world.
     let start = verts.len();
-    push_cube_faces_lit(
+    push_block_item_cube_lit(
         verts,
         indices,
-        faces,
+        block,
         Vec3::splat(-half),
         ITEM_CUBE_SIZE,
         inst.skylight,

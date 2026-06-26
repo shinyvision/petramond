@@ -7,7 +7,7 @@ use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_S
 use crate::furnace::Facing;
 use crate::torch::{warm_amount, warm_tint};
 
-use super::face::{cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
+use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::tint::{self, tile_tint};
 use super::vertex::ModelVertex;
 use super::water::{self, SideVsWater, WaterSurface};
@@ -444,10 +444,15 @@ fn build_mesh_with_context(
                     // it punches a hole (the floor shows through where a block caps
                     // the water). Water's bottom/side faces against opaque still cull.
                     let is_water_top = is_water && matches!(face, Face::PosY);
-                    if nb.is_opaque() && !is_water_top {
+                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
+                    // A cactus's four sides are inset 1px (see `cactus_quad`), so they stay
+                    // visible in the gap even when a solid block sits flush against the cell
+                    // — never cull them. Its flush top/bottom DO cull normally, so the
+                    // bottom hides against the (opaque) block the cactus rests on.
+                    let is_cactus_side = block == Block::Cactus && is_side;
+                    if nb.is_opaque() && !is_water_top && !is_cactus_side {
                         continue;
                     }
-                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
                     if is_water && is_side && unloaded_horizontal_neighbor {
                         continue;
                     }
@@ -507,7 +512,18 @@ fn build_mesh_with_context(
                     // Positions are in world space (baked chunk origin) so each
                     // chunk renders at its actual world coordinates.
                     let base_y = y as f32;
-                    let mut corners = quad_for(face, base_x, base_y, base_z);
+                    // The cactus recesses its four side faces 1/16 so its spines show; every
+                    // other cube fills the cell. Top/bottom stay full (a flush stack of
+                    // segments; the cap overhangs the trunk).
+                    let mut corners = if block == Block::Cactus {
+                        cactus_quad(
+                            face,
+                            [base_x, base_y, base_z],
+                            [base_x + 1.0, base_y + 1.0, base_z + 1.0],
+                        )
+                    } else {
+                        quad_for(face, base_x, base_y, base_z)
+                    };
 
                     // Water vertices are warped onto the cell's surface (top edge to
                     // the per-corner height; exposed-step faces also trim the bottom).

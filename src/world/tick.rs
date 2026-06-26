@@ -61,6 +61,12 @@ pub(super) struct TickState {
     scheduled: BinaryHeap<Reverse<(u64, i32, i32, i32)>>,
     /// Positions with a scheduled tick already pending, for dedup.
     scheduled_set: HashSet<IVec3>,
+    /// Blocks the simulation itself destroyed this tick (a fragile block losing its
+    /// support, or one washed away by water), each as `(pos, block)`. Purely a
+    /// hand-off to the presentation layer: `Game` drains it right after the tick (see
+    /// [`World::take_natural_breaks`]) to play the break burst + roll the drops, so the
+    /// visual effect lives in `Game` while the world stays the authority on the change.
+    pending_breaks: Vec<(IVec3, crate::block::Block)>,
     /// xorshift64 state for random-tick cell selection (kept non-zero; see
     /// [`TickState::new`]).
     rng: u64,
@@ -180,6 +186,34 @@ impl World {
             let due = self.sim.tick.wrapping_add(delay);
             self.sim.scheduled.push(Reverse((due, pos.x, pos.y, pos.z)));
         }
+    }
+
+    /// Record that `block` at `pos` was destroyed by the simulation itself — a fragile
+    /// block that lost its support, or one a fluid washed away — so the presentation
+    /// layer gives it the same break a player's would: the particle burst plus the
+    /// block's rolled item drops (drained by `Game` via [`take_natural_breaks`] right
+    /// after this tick). Also forgets any block-entity state the block owned (a torch's
+    /// recorded orientation). Does NOT clear the cell: the caller writes the new
+    /// occupant — air for a support loss, water when a fluid took its place.
+    ///
+    /// [`take_natural_breaks`]: Self::take_natural_breaks
+    pub(crate) fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
+        self.sim.pending_breaks.push((pos, block));
+        // A torch keeps its mount direction in the chunk's torch map; clear it so the
+        // freed cell carries no stale orientation (mirrors the player-break path).
+        if block == Block::Torch {
+            self.take_torch(pos);
+        }
+    }
+
+    /// Take the blocks the simulation destroyed this tick (see [`note_block_destroyed`]),
+    /// leaving the queue empty. `Game` calls this immediately after [`game_tick`] to
+    /// spawn each one's break burst + drops on the same tick.
+    ///
+    /// [`note_block_destroyed`]: Self::note_block_destroyed
+    /// [`game_tick`]: Self::game_tick
+    pub fn take_natural_breaks(&mut self) -> Vec<(IVec3, Block)> {
+        std::mem::take(&mut self.sim.pending_breaks)
     }
 
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there

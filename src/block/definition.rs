@@ -77,11 +77,14 @@ pub(super) use drops_self;
 pub(super) struct BlockFlags(u8);
 
 impl BlockFlags {
+    /// No material properties at all (air). Replaceability is no longer a flag —
+    /// it migrated to [`BlockTag::Replaceable`](super::BlockTag::Replaceable) — so
+    /// air carries no flags; bit `1 << 4` is now unused.
+    pub const NONE: BlockFlags = BlockFlags(0);
     pub const SOLID: BlockFlags = BlockFlags(1 << 0);
     pub const OPAQUE: BlockFlags = BlockFlags(1 << 1);
     pub const AO_OCCLUDER: BlockFlags = BlockFlags(1 << 2);
     pub const TRANSPARENT: BlockFlags = BlockFlags(1 << 3);
-    pub const REPLACEABLE: BlockFlags = BlockFlags(1 << 4);
     pub const DIRECTIONAL_VIEW: BlockFlags = BlockFlags(1 << 5);
 
     #[inline]
@@ -107,11 +110,6 @@ impl BlockFlags {
     #[inline]
     pub const fn is_transparent(self) -> bool {
         self.contains(BlockFlags::TRANSPARENT)
-    }
-
-    #[inline]
-    pub const fn is_replaceable(self) -> bool {
-        self.contains(BlockFlags::REPLACEABLE)
     }
 
     #[inline]

@@ -28,6 +28,7 @@ mod leaves;
 // The behaviour registry: one re-export per behaviour, so a data row points at a
 // flat `&behavior::NAME`. Behaviours that reach into world internals live under
 // `world` (they can't from here) but are still listed here for one-stop reading.
+pub use crate::world::fragile::FRAGILE;
 pub use crate::world::water::WATER;
 pub use dirt::DIRT;
 pub use grass::GRASS;

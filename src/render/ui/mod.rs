@@ -223,41 +223,46 @@ fn push_slot_hover(out: &mut Vec<UiVertex>, screen: (u32, u32), r: SlotRect, sca
 }
 
 fn hovered_slot_rect(ui: &UiSnapshot, screen: (u32, u32), scale: f32) -> Option<SlotRect> {
+    // Slot hover is a GUI-only affordance: with no screen open the cursor is grabbed
+    // for mouse-look and isn't pointing at slots, so the closed HUD hotbar must never
+    // light up under the pointer (the active slot keeps its own selection box). Only an
+    // open screen highlights a slot on hover.
+    if !ui.open {
+        return None;
+    }
     let (px, py) = ui.cursor_px;
-    if ui.open {
-        if ui.furnace.is_some() {
-            for slot in [FurnaceHit::Input, FurnaceHit::Fuel, FurnaceHit::Output] {
-                let r = furnace::furnace_slot_rect(slot, screen, scale);
-                if r.contains(px, py) {
-                    return Some(r);
-                }
-            }
-        } else if ui.chest.is_some() {
-            for i in 0..crate::chest::CHEST_SLOTS {
-                if let Some(r) = chest::chest_slot_rect(i, screen, scale) {
-                    if r.contains(px, py) {
-                        return Some(r);
-                    }
-                }
-            }
-        } else {
-            for i in 0..ui.panel.cols() * ui.panel.cols() {
-                if let Some(r) = crafting::craft_slot_rect(ui.panel, i, screen, scale) {
-                    if r.contains(px, py) {
-                        return Some(r);
-                    }
-                }
-            }
-            let r = crafting::craft_result_rect(ui.panel, screen, scale);
+    if ui.furnace.is_some() {
+        for slot in [FurnaceHit::Input, FurnaceHit::Fuel, FurnaceHit::Output] {
+            let r = furnace::furnace_slot_rect(slot, screen, scale);
             if r.contains(px, py) {
                 return Some(r);
             }
         }
+    } else if ui.chest.is_some() {
+        for i in 0..crate::chest::CHEST_SLOTS {
+            if let Some(r) = chest::chest_slot_rect(i, screen, scale) {
+                if r.contains(px, py) {
+                    return Some(r);
+                }
+            }
+        }
+    } else {
+        for i in 0..ui.panel.cols() * ui.panel.cols() {
+            if let Some(r) = crafting::craft_slot_rect(ui.panel, i, screen, scale) {
+                if r.contains(px, py) {
+                    return Some(r);
+                }
+            }
+        }
+        let r = crafting::craft_result_rect(ui.panel, screen, scale);
+        if r.contains(px, py) {
+            return Some(r);
+        }
     }
 
-    let limit = if ui.open { TOTAL_SLOTS } else { HOTBAR_LEN };
-    (0..limit)
-        .filter_map(|i| inventory::slot_rect(i, screen, ui.open, scale))
+    // The 36 shared inventory slots in their open layout.
+    (0..TOTAL_SLOTS)
+        .filter_map(|i| inventory::slot_rect(i, screen, true, scale))
         .find(|r| r.contains(px, py))
 }
 

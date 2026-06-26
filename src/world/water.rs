@@ -164,11 +164,13 @@ where
     }
 }
 
-/// Can water occupy this block, displacing it? Empty air only — matches "flow to
-/// the adjacent empty space".
+/// Can water occupy this block, displacing it? Empty air, or any fragile block — water
+/// treats a fragile cell (grass, a flower, a torch) as empty space it may flow or fall
+/// into, washing the block away as it moves in (see [`fill_with_water`]). Matches "flow
+/// to the adjacent empty space", with fragile blocks counting as empty for the flow.
 #[inline]
 fn fillable(block: Block) -> bool {
-    block == Block::Air
+    block == Block::Air || block.is_fragile()
 }
 
 const DOWN: IVec3 = IVec3::new(0, -1, 0);
@@ -191,6 +193,20 @@ fn block_at(world: &World, p: IVec3) -> Block {
 #[inline]
 fn meta_at(world: &World, p: IVec3) -> u8 {
     world.water_meta_world(p.x, p.y, p.z)
+}
+
+/// Fill `pos` with water of metadata `meta`, first washing away any fragile block
+/// (grass, a flower, a torch) that occupied it — it breaks as the water moves in,
+/// dropping and bursting like a hand-break (recorded for the presentation layer via
+/// [`World::note_block_destroyed`]). The single choke point for water ENTERING a cell
+/// that was not already water, so every flow path that displaces a fragile block breaks
+/// it. The caller has already checked [`fillable`], so the occupant is air or fragile.
+fn fill_with_water(world: &mut World, pos: IVec3, meta: u8) {
+    let occupant = block_at(world, pos);
+    if occupant.is_fragile() {
+        world.note_block_destroyed(pos, occupant);
+    }
+    world.set_water_world(pos, Block::Water, meta);
 }
 
 impl World {
@@ -341,7 +357,7 @@ impl FluidSim {
     /// spreads, instead of teleporting straight to the floor).
     fn pour_down(&self, world: &mut World, start: IVec3) {
         if start.y >= 0 && fillable(block_at(world, start)) {
-            world.set_water_world(start, Block::Water, FALLING);
+            fill_with_water(world, start, FALLING);
         }
     }
 
@@ -352,7 +368,7 @@ impl FluidSim {
             // A freshly-reached cell is the new leading edge: thinnest (thickness 1).
             // Its own flow checks thicken it once the flow extends past it.
             if fillable(nb) {
-                world.set_water_world(np, Block::Water, flowing(spread, 1));
+                fill_with_water(world, np, flowing(spread, 1));
             } else if nb == Block::Water {
                 let nm = meta_at(world, np);
                 // Raise weaker downstream flowing water up to our level.
@@ -843,5 +859,29 @@ mod tests {
             );
         }
         assert_eq!(block(&w, 8, 65, 8), Block::Air);
+    }
+
+    #[test]
+    fn flowing_water_washes_away_a_fragile_plant() {
+        let mut w = flat_world();
+        // A flower standing on the floor, in the path of a source two cells west.
+        let flower = IVec3::new(10, 65, 8);
+        w.set_block_world(flower.x, flower.y, flower.z, Block::Poppy);
+        w.set_block_world(8, 65, 8, Block::Water);
+        run_ticks(&mut w, 80); // let the sheet reach the flower's cell
+
+        // Water flowed INTO the fragile cell, displacing the plant (a fragile block
+        // counts as fillable; the flower didn't stay standing in the water).
+        assert_eq!(
+            block(&w, flower.x, flower.y, flower.z),
+            Block::Water,
+            "water should flood the flower's cell, washing it away"
+        );
+        // ...and it was recorded as a hand-style break (drop + particle burst).
+        let breaks = w.take_natural_breaks();
+        assert!(
+            breaks.iter().any(|&(p, b)| p == flower && b == Block::Poppy),
+            "the washed-away flower was recorded for its drop + burst"
+        );
     }
 }

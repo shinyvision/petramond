@@ -7,6 +7,7 @@
 mod chest;
 mod edit;
 mod entities;
+pub(crate) mod fragile;
 mod furnace;
 mod light_queue;
 mod mesh_queue;

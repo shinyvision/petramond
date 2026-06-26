@@ -133,6 +133,41 @@ pub enum BlockTag {
     /// still green over into grass beneath it. Leaves carry this — a leaf canopy
     /// lets grass live, unlike a solid roof of stone or planks (see `behavior::grass`).
     NoGrassDecay,
+    /// A delicate block that cannot stand on its own: it shatters — dropping and
+    /// bursting as if a player hand-broke it — the instant it loses the support it
+    /// rests on (a plant whose ground is dug away; a wall-torch whose wall is mined),
+    /// and it is washed away when water flows or falls into its cell. The reactive
+    /// break is the [`FRAGILE`](behavior::FRAGILE) behaviour; this tag is the
+    /// *categorisation* the water sim reads to treat the cell as one it may flow
+    /// into. Carried by the cross-plants (grass, ferns, flowers, mushrooms), the
+    /// cactus, and the torch — every block whose row points at `behavior::FRAGILE`.
+    Fragile,
+    /// A cell a placement may overwrite in place: building into it — or right-clicking
+    /// it while holding a block — replaces it with no drop, as if it were empty.
+    /// Air and water carry it, as does walk-through grassy foliage (short grass, fern,
+    /// dead bush). The one predicate is [`Block::is_replaceable`].
+    Replaceable,
+    /// Fertile ground — grass and dirt — that small plants take root in: the
+    /// *category of ground* the cross-plants ([`RootsInSoil`](BlockTag::RootsInSoil))
+    /// require beneath them to be placed. Read via [`Block::required_ground`].
+    Soil,
+    /// Loose sandy ground — sand and red sand — that desert flora root in: the
+    /// substrate [`RootsInSand`](BlockTag::RootsInSand) blocks (cactus, dead bush)
+    /// require beneath them.
+    Sand,
+    /// A plant that may only be PLACED on [`Soil`](BlockTag::Soil) (grass or dirt) —
+    /// the cross-plants: flowers, ferns, short grass. The placement gate
+    /// (`game::try_place`) reads it through [`Block::required_ground`]; staying rooted
+    /// once placed is the separate physical job of [`FRAGILE`](behavior::FRAGILE).
+    RootsInSoil,
+    /// A plant that may only be PLACED on [`Sand`](BlockTag::Sand) (sand or red sand)
+    /// — the desert flora: cactus and dead bush.
+    RootsInSand,
+    /// A plant that may also be PLACED on stone — any block of the
+    /// [`BlockMaterial::Stone`] class (stone, cobblestone, sandstone, granite…). The
+    /// mushrooms carry it ALONGSIDE [`RootsInSoil`](BlockTag::RootsInSoil), so they take
+    /// to soil OR stone; the `RootsIn*` tags combine (see [`Block::can_root_on`]).
+    RootsInStone,
 }
 
 /// How a block's geometry is meshed. `Cube` is the standard 6-face box; `Cross`
@@ -346,11 +381,47 @@ impl Block {
         self.def().emission
     }
 
-    /// A cell a placement may overwrite: empty air, or water (building into water
-    /// displaces it). Mirrors the place-gate in app::handle_block_actions.
+    /// A cell a placement may overwrite in place: empty air, water (building into
+    /// water displaces it), or walk-through grassy foliage — the
+    /// [`Replaceable`](BlockTag::Replaceable) set. Mirrors the place-gate in
+    /// `game::try_place`.
     #[inline]
     pub fn is_replaceable(self) -> bool {
-        self.def().flags.is_replaceable()
+        self.has_tag(BlockTag::Replaceable)
+    }
+
+    /// Whether this block is [`Fragile`](BlockTag::Fragile) — it shatters when it
+    /// loses support or water enters its cell. Read by the water sim (a fragile cell
+    /// is one water may flow into) and paired with the [`FRAGILE`](behavior) break
+    /// behaviour on every fragile block's row.
+    #[inline]
+    pub fn is_fragile(self) -> bool {
+        self.has_tag(BlockTag::Fragile)
+    }
+
+    /// Whether `ground` (the block directly below) is a surface this block may be PLACED
+    /// on. Almost everything has no substrate rule and accepts anything; the plants gate
+    /// by their `RootsIn*` tags, which COMBINE — a block accepts a ground if *any* of its
+    /// requirements is met: [`RootsInSoil`](BlockTag::RootsInSoil) → [`Soil`](BlockTag::Soil)
+    /// (grass/dirt), [`RootsInSand`](BlockTag::RootsInSand) → [`Sand`](BlockTag::Sand)
+    /// (sand/red sand), [`RootsInStone`](BlockTag::RootsInStone) → any
+    /// [`BlockMaterial::Stone`] block. So a flower roots in soil, a cactus in sand, and a
+    /// mushroom (which carries both soil + stone) in soil or stone. `game::try_place`
+    /// refuses a spot this rejects. PLACEMENT only — whether an already-placed block
+    /// *stays* (its support wasn't dug out) is the separate physical
+    /// [`FRAGILE`](behavior::FRAGILE) check, which asks merely whether something solid is
+    /// still beneath it, not what type. A block joins a substrate class by editing the
+    /// `RootsIn*` tags on its data row.
+    pub fn can_root_on(self, ground: Block) -> bool {
+        let soil = self.has_tag(BlockTag::RootsInSoil);
+        let sand = self.has_tag(BlockTag::RootsInSand);
+        let stone = self.has_tag(BlockTag::RootsInStone);
+        if !(soil || sand || stone) {
+            return true; // no substrate rule — stands on anything
+        }
+        (soil && ground.has_tag(BlockTag::Soil))
+            || (sand && ground.has_tag(BlockTag::Sand))
+            || (stone && ground.material() == BlockMaterial::Stone)
     }
 
     /// Whether a placed directional block should rotate its authored front toward the

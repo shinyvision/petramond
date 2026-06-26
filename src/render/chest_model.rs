@@ -172,7 +172,7 @@ pub(super) fn push_chest_item(
 }
 
 /// Full-bright [`push_chest_item`] for the inventory icon (which is unlit, like the
-/// `block_model::push_cube_faces` icons).
+/// `block_model::push_block_item_cube` icons).
 pub(super) fn push_chest_item_full(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,

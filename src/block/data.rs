@@ -6,17 +6,18 @@ use crate::registry::{self, RegistryKey, TableEntry};
 use super::definition::{drops_self, BlockDef, BlockFlags, BlockMaterial};
 use super::{behavior, Aabb, Block, BlockTag, RenderShape};
 
-const AIR_FLAGS: BlockFlags = BlockFlags::REPLACEABLE;
+const AIR_FLAGS: BlockFlags = BlockFlags::NONE;
 const FULL_CUBE_FLAGS: BlockFlags = BlockFlags::SOLID
     .with(BlockFlags::OPAQUE)
     .with(BlockFlags::AO_OCCLUDER);
-const WATER_FLAGS: BlockFlags = BlockFlags::TRANSPARENT.with(BlockFlags::REPLACEABLE);
+const WATER_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 const LEAVES_FLAGS: BlockFlags = BlockFlags::SOLID
     .with(BlockFlags::AO_OCCLUDER)
     .with(BlockFlags::TRANSPARENT);
 // Cross-model plants (grass, ferns, flowers, mushrooms): transparent cutout only.
 // NOT solid (walk-through, not a build target), NOT opaque (neighbour cube faces
-// still draw toward them and they don't cull), NOT an AO occluder, NOT replaceable.
+// still draw toward them and they don't cull), NOT an AO occluder. Replaceability
+// and fragility are now BlockTags on the per-plant rows, not flags.
 const PLANT_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 // Chest: SOLID (collision, raycast, a build target) but NOT opaque and NOT an AO
 // occluder — it's drawn as a custom inset model (the mesher skips its cell), so
@@ -36,6 +37,14 @@ const TORCH_FLAGS: BlockFlags = BlockFlags::TRANSPARENT;
 // full-cube shadow. Its real collision/selection come from the model (per cell), not the
 // data row (see `Block::collision_boxes` / `block_model`).
 const MODEL_FLAGS: BlockFlags = BlockFlags::SOLID;
+// Cactus: a SOLID cube that is NOT opaque. Its four sides are inset 1px (see
+// `mesh::face::cactus_quad`) so they don't cover the cell's faces — marking it a full
+// opaque cube would cull the NEIGHBOURS' faces toward it and leave a see-through gap
+// behind the recessed trunk. Non-opaque keeps those neighbour faces drawn (the fix); it
+// still occludes AO, so it grounds with a contact shadow like leaves. The only trade-off
+// (no full-cube skylight shadow) is fine for an open-desert plant. Its sand-only
+// placement and break-when-undermined come from the row's tags/behaviour, not these flags.
+const CACTUS_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::AO_OCCLUDER);
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
 // walk-through plants, and the torch — selectable by its shape but stepped through);
@@ -49,6 +58,14 @@ const FULL_CUBE_BOXES: &[Aabb] = &[Aabb {
 const CHEST_BOXES: &[Aabb] = &[Aabb {
     min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
     max: [15.0 / 16.0, 14.0 / 16.0, 15.0 / 16.0],
+}];
+// Cactus: the body is inset 1px on its four sides (the mesh recesses the side faces
+// so the spines stand proud — see `mesh::face::cactus_quad`), full height. Collision
+// AND the selection outline / break overlay (their union, via `Block::visual_aabb`)
+// hug this inset body, so you collide with and target the 14-wide trunk, not the cell.
+const CACTUS_BOXES: &[Aabb] = &[Aabb {
+    min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
+    max: [15.0 / 16.0, 1.0, 15.0 / 16.0],
 }];
 
 pub(super) const ALL_BLOCKS: &[Block] = &[
@@ -146,7 +163,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
+        tags: &[BlockTag::Replaceable],
         behavior: &behavior::INERT,
         flags: AIR_FLAGS,
         tiles: [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves],
@@ -160,7 +177,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: FULL_CUBE_BOXES,
         emission: 0,
-        tags: &[BlockTag::Terrain],
+        tags: &[BlockTag::Terrain, BlockTag::Soil],
         // Dies back to dirt when smothered by a solid block (see `behavior::grass`).
         behavior: &behavior::GRASS,
         flags: FULL_CUBE_FLAGS,
@@ -181,7 +198,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: FULL_CUBE_BOXES,
         emission: 0,
-        tags: &[BlockTag::Terrain],
+        tags: &[BlockTag::Terrain, BlockTag::Soil],
         // Greens over into grass when grass is nearby (see `behavior::dirt`).
         behavior: &behavior::DIRT,
         flags: FULL_CUBE_FLAGS,
@@ -217,7 +234,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: FULL_CUBE_BOXES,
         emission: 0,
-        tags: &[BlockTag::Terrain],
+        tags: &[BlockTag::Terrain, BlockTag::Sand],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Sand, Tile::Sand, Tile::Sand],
@@ -245,7 +262,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
+        tags: &[BlockTag::Replaceable],
         behavior: &behavior::WATER,
         flags: WATER_FLAGS,
         tiles: [Tile::Water, Tile::Water, Tile::Water],
@@ -513,7 +530,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cube,
         collision: FULL_CUBE_BOXES,
         emission: 0,
-        tags: &[],
+        tags: &[BlockTag::Sand],
         behavior: &behavior::INERT,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::RedSand, Tile::RedSand, Tile::RedSand],
@@ -1078,11 +1095,14 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     BlockDef {
         block: Block::Cactus,
         shape: RenderShape::Cube,
-        collision: FULL_CUBE_BOXES,
+        collision: CACTUS_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
-        flags: FULL_CUBE_FLAGS,
+        // Fragile + roots in sand: it breaks when the sand beneath it is dug (like the
+        // dead bush) and may only be placed on sandy ground. Non-opaque (see
+        // CACTUS_FLAGS) so neighbours keep their faces toward the inset trunk.
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSand],
+        behavior: &behavior::FRAGILE,
+        flags: CACTUS_FLAGS,
         tiles: [Tile::CactusTop, Tile::CactusBottom, Tile::CactusSide],
         material: BlockMaterial::Plant,
         harvest_tier: 0,
@@ -1094,8 +1114,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::Replaceable, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::ShortGrass, Tile::ShortGrass, Tile::ShortGrass],
         material: BlockMaterial::Plant,
@@ -1108,8 +1128,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::Replaceable, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::Fern, Tile::Fern, Tile::Fern],
         material: BlockMaterial::Plant,
@@ -1122,8 +1142,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::Dandelion, Tile::Dandelion, Tile::Dandelion],
         material: BlockMaterial::Plant,
@@ -1136,8 +1156,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::Poppy, Tile::Poppy, Tile::Poppy],
         material: BlockMaterial::Plant,
@@ -1150,8 +1170,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::Cornflower, Tile::Cornflower, Tile::Cornflower],
         material: BlockMaterial::Plant,
@@ -1164,8 +1184,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::Allium, Tile::Allium, Tile::Allium],
         material: BlockMaterial::Plant,
@@ -1178,8 +1198,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::AzureBluet, Tile::AzureBluet, Tile::AzureBluet],
         material: BlockMaterial::Plant,
@@ -1192,8 +1212,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::OxeyeDaisy, Tile::OxeyeDaisy, Tile::OxeyeDaisy],
         material: BlockMaterial::Plant,
@@ -1206,8 +1226,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::RedTulip, Tile::RedTulip, Tile::RedTulip],
         material: BlockMaterial::Plant,
@@ -1220,8 +1240,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile, BlockTag::Replaceable, BlockTag::RootsInSand],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::DeadBush, Tile::DeadBush, Tile::DeadBush],
         material: BlockMaterial::Plant,
@@ -1234,8 +1254,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        // Soil or any stone: grass/dirt or a BlockMaterial::Stone surface (see `can_root_on`).
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil, BlockTag::RootsInStone],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [
             Tile::BrownMushroom,
@@ -1252,8 +1273,9 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Cross,
         collision: NO_BOXES,
         emission: 0,
-        tags: &[],
-        behavior: &behavior::INERT,
+        // Soil or any stone: grass/dirt or a BlockMaterial::Stone surface (see `can_root_on`).
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil, BlockTag::RootsInStone],
+        behavior: &behavior::FRAGILE,
         flags: PLANT_FLAGS,
         tiles: [Tile::RedMushroom, Tile::RedMushroom, Tile::RedMushroom],
         material: BlockMaterial::Plant,
@@ -1462,8 +1484,8 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         shape: RenderShape::Torch,
         collision: NO_BOXES,
         emission: 28,
-        tags: &[],
-        behavior: &behavior::INERT,
+        tags: &[BlockTag::Fragile],
+        behavior: &behavior::FRAGILE,
         flags: TORCH_FLAGS,
         // [top, bottom, side]: the in-world pole (see mesh::torch) caps the top with
         // the flame tile and wraps the four thin sides with the center-strip body;

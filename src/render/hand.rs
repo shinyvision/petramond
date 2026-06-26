@@ -20,7 +20,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::block_model::{block_icon_faces, push_cube_faces_lit, push_cube_solid_lit};
+use super::block_model::{push_block_item_cube_lit, push_cube_solid_lit};
 #[cfg(test)]
 use super::lighting;
 use super::HeldItemView;
@@ -102,10 +102,10 @@ pub(super) fn build_hand_lit(
                         skylight,
                     );
                 } else {
-                    push_cube_faces_lit(
+                    push_block_item_cube_lit(
                         verts,
                         indices,
-                        block_icon_faces(block),
+                        block,
                         Vec3::new(-0.5, -0.5, -0.5),
                         1.0,
                         skylight,

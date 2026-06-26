@@ -181,3 +181,24 @@ pub(super) fn should_flip(ao: [u32; 4]) -> bool {
 pub(super) fn quad_for(face: Face, x: f32, y: f32, z: f32) -> [[f32; 3]; 4] {
     face.quad_box([x, y, z], [x + 1.0, y + 1.0, z + 1.0])
 }
+
+/// A cactus face over the box `[min, max]`: the four side faces are recessed 1/16 of
+/// the box inward along their own normal (so the spines, drawn at the texture edges,
+/// stand proud of the 14-wide trunk and read against the gap), while the top and bottom
+/// stay flush — the box's top cap therefore slightly overhangs the recessed sides, the
+/// canonical inset-cactus look. Shared by the chunk mesher and the icon / held / dropped
+/// cube (`render::block_model`) so a cactus reads the same in the world and in the hand.
+pub(crate) fn cactus_quad(face: Face, min: [f32; 3], max: [f32; 3]) -> [[f32; 3]; 4] {
+    let inset_x = (max[0] - min[0]) / 16.0;
+    let inset_z = (max[2] - min[2]) / 16.0;
+    let (mut mn, mut mx) = (min, max);
+    match face {
+        Face::PosX => mx[0] -= inset_x,
+        Face::NegX => mn[0] += inset_x,
+        Face::PosZ => mx[2] -= inset_z,
+        Face::NegZ => mn[2] += inset_z,
+        // Top and bottom stay full so the cap overhangs the recessed trunk.
+        Face::PosY | Face::NegY => {}
+    }
+    face.quad_box(mn, mx)
+}

@@ -38,7 +38,7 @@ use crate::item::{ItemRenderKind, ItemType};
 use crate::render::ui::icon::{flat_icon_mvp, iso_icon_mvp, model_icon_mvp};
 use crate::render::ui::SlotRect;
 
-use super::super::block_model::{block_icon_faces, push_billboard_quad, push_cube_faces};
+use super::super::block_model::{push_billboard_quad, push_block_item_cube};
 use super::super::chest_model::push_chest_item_full;
 use super::super::item_model::{build_block_model_icon, ItemVertex};
 use crate::block::Block;
@@ -205,7 +205,7 @@ pub(super) fn bake(
 
     // --- Build all icon geometry CPU-side, grouped by render kind. ---
     // Cube/sprite icons (block atlas, model3d pipe): one shared vbuf/ibuf with GLOBAL
-    // indices (push_cube_faces/push_billboard_quad base each quad at verts.len()), so
+    // indices (push_block_item_cube/push_billboard_quad base each quad at verts.len()), so
     // every icon draws with base_vertex 0 and its own index sub-range. Each also gets
     // its own MVP slot (Pass A holds them all live at once).
     let mut cube_verts: Vec<Vertex> = Vec::new();
@@ -235,10 +235,10 @@ pub(super) fn bake(
                         1.0,
                     );
                 } else {
-                    push_cube_faces(
+                    push_block_item_cube(
                         &mut cube_verts,
                         &mut cube_indices,
-                        block_icon_faces(block),
+                        block,
                         Vec3::splat(-0.5),
                         1.0,
                     );

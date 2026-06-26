@@ -156,19 +156,6 @@ pub(super) fn block_icon_faces(block: Block) -> [Tile; 6] {
     faces
 }
 
-/// Append a full-bright textured cube with explicit per-face tiles (`ALL_FACES`
-/// order). Like [`push_cube_textured`] but each of the 6 faces can differ — used
-/// for directional item cubes (e.g. the furnace front). 24 verts / 36 indices.
-pub(super) fn push_cube_faces(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    faces: [Tile; 6],
-    origin: Vec3,
-    size: f32,
-) {
-    push_cube_faces_lit(verts, indices, faces, origin, size, lighting::FULL_SKYLIGHT);
-}
-
 pub(super) fn push_cube_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -202,6 +189,63 @@ pub(super) fn push_box_faces_lit(
             mat.tint,
             face_bits_textured_lit(mat, face, skylight),
         );
+    }
+}
+
+/// As [`push_box_faces_lit`] but recessing the four side faces 1/16 inward (via
+/// [`cactus_quad`](crate::mesh::face::cactus_quad)) so the box reads as a cactus —
+/// the icon / held / dropped counterpart of the chunk mesher's inset cactus.
+fn push_cactus_faces_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    min: Vec3,
+    max: Vec3,
+    skylight: u8,
+) {
+    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
+        let mat = foliage_tint::face_material(tile);
+        push_quad(
+            verts,
+            indices,
+            crate::mesh::face::cactus_quad(face, min.to_array(), max.to_array()),
+            mat.tint,
+            face_bits_textured_lit(mat, face, skylight),
+        );
+    }
+}
+
+/// Append `block` as an inventory / held / dropped cube into `[origin, origin+size]`,
+/// full-bright. The single entry point so every place a block is drawn as a small cube
+/// shares the cactus special-case (its recessed spiny sides); see the `_lit` variant.
+pub(super) fn push_block_item_cube(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    block: Block,
+    origin: Vec3,
+    size: f32,
+) {
+    push_block_item_cube_lit(verts, indices, block, origin, size, lighting::FULL_SKYLIGHT);
+}
+
+/// As [`push_block_item_cube`] but lit by `skylight` (a held item / dropped stack samples
+/// world light). Per-face tiles come from [`block_icon_faces`] (so a furnace shows its
+/// front); the cactus draws via [`push_cactus_faces_lit`] so its inset sides match the
+/// placed block, every other block is a plain cube.
+pub(super) fn push_block_item_cube_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    block: Block,
+    origin: Vec3,
+    size: f32,
+    skylight: u8,
+) {
+    let faces = block_icon_faces(block);
+    if block == Block::Cactus {
+        let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
+        push_cactus_faces_lit(verts, indices, faces, origin, max, skylight);
+    } else {
+        push_cube_faces_lit(verts, indices, faces, origin, size, skylight);
     }
 }
 
