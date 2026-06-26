@@ -192,6 +192,31 @@ pub fn tree_density(b: Biome) -> f32 {
     }
 }
 
+/// Pick the tree a placed sapling grows into when it matures (see
+/// `world::sapling`). An oak sapling becomes the big fancy oak 20% of the time and
+/// the ordinary small oak otherwise (the task's rule); every other sapling grows
+/// into the single feature for its species. `rng` is drawn for the oak roll and
+/// then consumed by the chosen feature's own geometry. A non-sapling block can't
+/// reach here from the sapling behaviour; it falls back to the small oak.
+pub fn sapling_tree(sapling: Block, rng: &mut FeatureRng) -> &'static ConfiguredFeature {
+    match sapling {
+        Block::OakSapling => {
+            if rng.chance(0.2) {
+                &OAK_BIG
+            } else {
+                &OAK_SMALL
+            }
+        }
+        Block::SpruceSapling => &SPRUCE,
+        Block::BirchSapling => &BIRCH,
+        Block::JungleSapling => &JUNGLE,
+        Block::AcaciaSapling => &ACACIA,
+        Block::DarkOakSapling => &DARK_OAK,
+        Block::CherrySapling => &CHERRY,
+        _ => &OAK_SMALL,
+    }
+}
+
 /// Pick a tree variant for a biome. Every arm draws EXACTLY ONE `next_i32(0,99)`
 /// so the RNG stream offset is biome-independent (seam replay stays deterministic).
 pub fn pick_oak(rng: &mut FeatureRng, b: Biome) -> &'static ConfiguredFeature {

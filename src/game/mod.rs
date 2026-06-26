@@ -1241,6 +1241,13 @@ impl Game {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
+            // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
+            // a guaranteed drop (chance 1.0) always passes. Reuses the same seeded
+            // hash the count roll uses, so the roll stays deterministic on the tick.
+            if d.chance < 1.0 && crate::entity::hash01(self.spawn_counter as u64) >= d.chance {
+                continue;
+            }
+            self.spawn_counter = self.spawn_counter.wrapping_add(1);
             // Roll a count in [min, max] (a fixed amount when min == max, e.g. the
             // 2–4 raw copper from copper ore).
             let count = if d.min >= d.max {

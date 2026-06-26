@@ -109,6 +109,17 @@ pub enum Block {
     // rendered from its `.bbmodel` (see `crate::block_model` / `RenderShape::Model`)
     // rather than the atlas, with collision + selection baked from the model. ---
     FurnitureWorkbench,
+    // --- Saplings update (ids 86..): cross-plant saplings dropped by leaves and
+    // grown into trees on random ticks (see `behavior::SAPLING`). One per tree
+    // species that has a worldgen feature; mangrove/azalea leaves have no feature,
+    // so no sapling. Appended at the end so every id above stays frozen. ---
+    OakSapling,
+    SpruceSapling,
+    BirchSapling,
+    JungleSapling,
+    AcaciaSapling,
+    DarkOakSapling,
+    CherrySapling,
 }
 
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
@@ -612,6 +623,13 @@ mod tests {
             Block::Chest,
             Block::Torch,
             Block::FurnitureWorkbench,
+            Block::OakSapling,
+            Block::SpruceSapling,
+            Block::BirchSapling,
+            Block::JungleSapling,
+            Block::AcaciaSapling,
+            Block::DarkOakSapling,
+            Block::CherrySapling,
         ];
 
         assert_eq!(Block::ALL, expected);

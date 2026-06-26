@@ -3,7 +3,7 @@ use crate::block_model::BlockModelKind;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::{self, RegistryKey, TableEntry};
 
-use super::definition::{drops_self, BlockDef, BlockFlags, BlockMaterial};
+use super::definition::{drops_sapling, drops_self, BlockDef, BlockFlags, BlockMaterial};
 use super::{behavior, Aabb, Block, BlockTag, RenderShape};
 
 const AIR_FLAGS: BlockFlags = BlockFlags::NONE;
@@ -155,6 +155,13 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Chest,
     Block::Torch,
     Block::FurnitureWorkbench,
+    Block::OakSapling,
+    Block::SpruceSapling,
+    Block::BirchSapling,
+    Block::JungleSapling,
+    Block::AcaciaSapling,
+    Block::DarkOakSapling,
+    Block::CherrySapling,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -190,6 +197,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::Dirt,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -226,6 +234,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::Cobblestone,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -297,7 +306,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(OakLeaves),
+        drop: drops_sapling!(OakSapling),
     },
     BlockDef {
         block: Block::SpruceLog,
@@ -417,7 +426,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(SpruceLeaves),
+        drop: drops_sapling!(SpruceSapling),
     },
     BlockDef {
         block: Block::BirchLeaves,
@@ -431,7 +440,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(BirchLeaves),
+        drop: drops_sapling!(BirchSapling),
     },
     BlockDef {
         block: Block::JungleLeaves,
@@ -445,7 +454,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(JungleLeaves),
+        drop: drops_sapling!(JungleSapling),
     },
     BlockDef {
         block: Block::AcaciaLeaves,
@@ -459,7 +468,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(AcaciaLeaves),
+        drop: drops_sapling!(AcaciaSapling),
     },
     BlockDef {
         block: Block::DarkOakLeaves,
@@ -477,7 +486,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(DarkOakLeaves),
+        drop: drops_sapling!(DarkOakSapling),
     },
     BlockDef {
         block: Block::MangroveLeaves,
@@ -495,7 +504,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(MangroveLeaves),
+        drop: DropSpec::NONE,
     },
     BlockDef {
         block: Block::CherryLeaves,
@@ -509,7 +518,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(CherryLeaves),
+        drop: drops_sapling!(CherrySapling),
     },
     BlockDef {
         block: Block::AzaleaLeaves,
@@ -523,7 +532,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         material: BlockMaterial::Foliage,
         harvest_tier: 0,
         hardness: 0.2,
-        drop: drops_self!(AzaleaLeaves),
+        drop: DropSpec::NONE,
     },
     BlockDef {
         block: Block::RedSand,
@@ -925,6 +934,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::Coal,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -946,6 +956,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::RawIron,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -967,6 +978,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::RawCopper,
                 min: 2,
                 max: 4,
+                chance: 1.0,
             }],
         },
     },
@@ -989,6 +1001,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::RawGold,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -1026,6 +1039,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::LapisLazuli,
                 min: 2,
                 max: 4,
+                chance: 1.0,
             }],
         },
     },
@@ -1047,6 +1061,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
                 item: ItemType::Diamond,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         },
     },
@@ -1524,6 +1539,131 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         harvest_tier: 0,
         hardness: 2.5,
         drop: drops_self!(FurnitureWorkbench),
+    },
+    // --- Saplings: cross-plant blocks that root in soil (grass/dirt) and are
+    // fragile (shatter when undermined), exactly like a flower — but their
+    // behaviour is `SAPLING`, which both keeps the fragile break (it delegates to
+    // the FRAGILE hooks) AND takes random ticks that grow the sapling into its
+    // tree. Each drops itself when broken/undermined; the 10% drop FROM LEAVES is a
+    // separate chance-drop on the leaf rows. One sapling per species with a tree
+    // feature (see `worldgen::data::features::sapling_tree`). ---
+    BlockDef {
+        block: Block::OakSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [Tile::OakSapling, Tile::OakSapling, Tile::OakSapling],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(OakSapling),
+    },
+    BlockDef {
+        block: Block::SpruceSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [
+            Tile::SpruceSapling,
+            Tile::SpruceSapling,
+            Tile::SpruceSapling,
+        ],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(SpruceSapling),
+    },
+    BlockDef {
+        block: Block::BirchSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [Tile::BirchSapling, Tile::BirchSapling, Tile::BirchSapling],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(BirchSapling),
+    },
+    BlockDef {
+        block: Block::JungleSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [
+            Tile::JungleSapling,
+            Tile::JungleSapling,
+            Tile::JungleSapling,
+        ],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(JungleSapling),
+    },
+    BlockDef {
+        block: Block::AcaciaSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [
+            Tile::AcaciaSapling,
+            Tile::AcaciaSapling,
+            Tile::AcaciaSapling,
+        ],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(AcaciaSapling),
+    },
+    BlockDef {
+        block: Block::DarkOakSapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [
+            Tile::DarkOakSapling,
+            Tile::DarkOakSapling,
+            Tile::DarkOakSapling,
+        ],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(DarkOakSapling),
+    },
+    BlockDef {
+        block: Block::CherrySapling,
+        shape: RenderShape::Cross,
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[BlockTag::Fragile, BlockTag::RootsInSoil],
+        behavior: &behavior::SAPLING,
+        flags: PLANT_FLAGS,
+        tiles: [
+            Tile::CherrySapling,
+            Tile::CherrySapling,
+            Tile::CherrySapling,
+        ],
+        material: BlockMaterial::Plant,
+        harvest_tier: 0,
+        hardness: 0.0,
+        drop: drops_self!(CherrySapling),
     },
 ];
 

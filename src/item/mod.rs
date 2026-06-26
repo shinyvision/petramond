@@ -153,15 +153,29 @@ pub enum ItemType {
     // (id NOT equal to `Block::FurnitureWorkbench`'s id) and mapped explicitly in
     // `from_block` / `as_block`, like the furnace/chest/torch block-items. ---
     FurnitureWorkbench,
+    // --- Saplings update: the block-items for the cross-plant saplings. Appended at
+    // the END (ids NOT equal to their block ids) and mapped explicitly in
+    // `from_block` / `as_block`, like the furnace/chest/torch/workbench block-items. ---
+    OakSapling,
+    SpruceSapling,
+    BirchSapling,
+    JungleSapling,
+    AcaciaSapling,
+    DarkOakSapling,
+    CherrySapling,
 }
 
-/// One harvested drop: `min..=max` of `item`. A range (e.g. copper's 2–4) is
-/// rolled at spawn time; `min == max` is an exact count.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
+/// A range (e.g. copper's 2–4) is rolled at spawn time; `min == max` is an exact
+/// count. `chance` is the independent probability this drop appears at all (`1.0`
+/// = always, e.g. ore yields); a sub-1 chance models an occasional yield such as
+/// the 10% sapling a broken or decayed leaf sheds.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Drop {
     pub item: ItemType,
     pub min: u8,
     pub max: u8,
+    pub chance: f32,
 }
 
 /// What a block drops when harvested (with a sufficient tool, per the mining
@@ -366,6 +380,13 @@ impl ItemType {
             Block::Chest => ItemType::Chest,
             Block::Torch => ItemType::Torch,
             Block::FurnitureWorkbench => ItemType::FurnitureWorkbench,
+            Block::OakSapling => ItemType::OakSapling,
+            Block::SpruceSapling => ItemType::SpruceSapling,
+            Block::BirchSapling => ItemType::BirchSapling,
+            Block::JungleSapling => ItemType::JungleSapling,
+            Block::AcaciaSapling => ItemType::AcaciaSapling,
+            Block::DarkOakSapling => ItemType::DarkOakSapling,
+            Block::CherrySapling => ItemType::CherrySapling,
             _ => Self::from_id(b.id()),
         }
     }
@@ -381,6 +402,13 @@ impl ItemType {
             ItemType::Chest => Some(Block::Chest),
             ItemType::Torch => Some(Block::Torch),
             ItemType::FurnitureWorkbench => Some(Block::FurnitureWorkbench),
+            ItemType::OakSapling => Some(Block::OakSapling),
+            ItemType::SpruceSapling => Some(Block::SpruceSapling),
+            ItemType::BirchSapling => Some(Block::BirchSapling),
+            ItemType::JungleSapling => Some(Block::JungleSapling),
+            ItemType::AcaciaSapling => Some(Block::AcaciaSapling),
+            ItemType::DarkOakSapling => Some(Block::DarkOakSapling),
+            ItemType::CherrySapling => Some(Block::CherrySapling),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }
@@ -728,6 +756,13 @@ mod tests {
             ItemType::IronShovel,
             ItemType::DiamondShovel,
             ItemType::FurnitureWorkbench,
+            ItemType::OakSapling,
+            ItemType::SpruceSapling,
+            ItemType::BirchSapling,
+            ItemType::JungleSapling,
+            ItemType::AcaciaSapling,
+            ItemType::DarkOakSapling,
+            ItemType::CherrySapling,
         ];
 
         assert_eq!(ItemType::ALL, expected);

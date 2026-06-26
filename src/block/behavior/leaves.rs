@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 
-use crate::block::Block;
 use crate::mathh::IVec3;
 use crate::world::World;
 
@@ -39,8 +38,10 @@ impl BlockBehavior for Leaves {
 
     fn random_tick(&self, world: &mut World, pos: IVec3) {
         if !leaf_supported(world, pos) {
-            // Removes the leaf and runs the usual block + light + mesh updates.
-            world.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+            // A leaf cut off from wood crumbles: break it as a natural break so it
+            // gets the same burst + rolled drops a hand-break would — for leaves,
+            // the 10% chance of a matching sapling (see the leaf rows' `drop`).
+            world.break_block_naturally(pos);
         }
     }
 }
@@ -92,6 +93,7 @@ fn leaf_supported(world: &World, start: IVec3) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos};
 
     fn world_with_chunk() -> World {
@@ -141,5 +143,23 @@ mod tests {
         let p = IVec3::new(8, 70, 8);
         w.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
         assert!(!leaf_supported(&w, p));
+    }
+
+    #[test]
+    fn a_decaying_leaf_breaks_naturally_so_its_drop_can_roll() {
+        // A leaf cut off from wood doesn't vanish silently: it breaks as a NATURAL
+        // break, so `Game` plays the burst and rolls the leaf's drop table — the 10%
+        // sapling. Here we assert the decay is recorded as a natural break (the drop
+        // hand-off), independent of the probabilistic roll itself.
+        let mut w = world_with_chunk();
+        let p = IVec3::new(8, 70, 8);
+        w.set_block_world(p.x, p.y, p.z, Block::OakLeaves); // isolated → unsupported
+        LEAVES.random_tick(&mut w, p);
+        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Air), "the leaf decayed");
+        let breaks = w.take_natural_breaks();
+        assert!(
+            breaks.iter().any(|&(bp, b)| bp == p && b == Block::OakLeaves),
+            "a decayed leaf is recorded as a natural break so its sapling drop rolls",
+        );
     }
 }

@@ -13,6 +13,7 @@ mod light_queue;
 mod mesh_queue;
 mod model;
 mod query;
+pub(crate) mod sapling;
 mod store;
 mod stream;
 mod tick;

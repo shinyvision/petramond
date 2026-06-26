@@ -207,6 +207,17 @@ const TILES: &[(&str, &str)] = &[
     ("stone_shovel", "stone_shovel.png"),
     ("iron_shovel", "iron_shovel.png"),
     ("diamond_shovel", "diamond_shovel.png"),
+    // Saplings update: the cross-plant saplings dropped by leaves and grown into
+    // trees (one per tree species that has a feature). Cutout sprites rendered as
+    // `RenderShape::Cross`, like the flowers. Appended last so every preceding
+    // tile id stays stable.
+    ("oak_sapling", "oak_sapling.png"),
+    ("spruce_sapling", "spruce_sapling.png"),
+    ("birch_sapling", "birch_sapling.png"),
+    ("jungle_sapling", "jungle_sapling.png"),
+    ("acacia_sapling", "acacia_sapling.png"),
+    ("dark_oak_sapling", "dark_oak_sapling.png"),
+    ("cherry_sapling", "cherry_sapling.png"),
 ];
 
 /// Animated flipbook tiles (name, file). The source PNG is a vertical strip of

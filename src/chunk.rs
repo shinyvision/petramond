@@ -80,6 +80,12 @@ pub struct Chunk {
     /// chunk-local even when a multi-cell model crosses a chunk border. Empty for the
     /// common chunk and for old/non-directional model placements.
     model_facings: HashMap<u16, Facing>,
+    /// Growth stage (`0..=2`, i.e. the 1st..3rd stage) of each sapling in this chunk,
+    /// keyed by local block index like the other per-instance maps. A sapling block with
+    /// no entry reads stage `0` (freshly placed), and every block setter clears the entry
+    /// (a removed/grown sapling forgets its stage), so the map holds only living saplings
+    /// past stage 0. Sparse — empty for the common chunk. See `world::sapling`.
+    sapling_stages: HashMap<u16, u8>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -132,6 +138,7 @@ impl Chunk {
             torches: HashMap::new(),
             model_cells: HashMap::new(),
             model_facings: HashMap::new(),
+            sapling_stages: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -214,6 +221,7 @@ impl Chunk {
             torches: HashMap::new(),
             model_cells: HashMap::new(),
             model_facings: HashMap::new(),
+            sapling_stages: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -245,6 +253,7 @@ impl Chunk {
         self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
         self.clear_model_cell(i);
+        self.clear_sapling_stage(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -257,6 +266,7 @@ impl Chunk {
         self.adjust_random_tick_count(old, id);
         self.clear_water_meta(i);
         self.clear_model_cell(i);
+        self.clear_sapling_stage(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -324,6 +334,49 @@ impl Chunk {
     #[inline]
     pub fn model_facings(&self) -> &HashMap<u16, Facing> {
         &self.model_facings
+    }
+
+    // --- Sapling growth stage ---------------------------------------------------
+
+    /// Growth stage (`0..=2`, i.e. the 1st..3rd stage) of the sapling at a local
+    /// voxel — `0` when no stage is recorded (a freshly placed sapling, or any
+    /// non-sapling cell). See `world::sapling`.
+    #[inline]
+    pub fn sapling_stage(&self, x: usize, y: usize, z: usize) -> u8 {
+        self.sapling_stages
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Record a sapling's growth `stage` at a local voxel (stage `0` removes the
+    /// entry, since absence reads as `0`). Marks the chunk modified so the stage
+    /// persists. Does NOT change the block id — advancing a stage leaves the
+    /// sapling block in place (only its metadata moves).
+    pub fn set_sapling_stage(&mut self, x: usize, y: usize, z: usize, stage: u8) {
+        let key = Self::block_entity_key(x, y, z);
+        if stage == 0 {
+            self.sapling_stages.remove(&key);
+        } else {
+            self.sapling_stages.insert(key, stage);
+        }
+        self.modified = true;
+    }
+
+    /// Forget a sapling's growth stage at local index `i` — its cell is being
+    /// overwritten (broken, or grown into a log). Cheap no-op for the common chunk
+    /// (empty map), mirroring [`clear_model_cell`](Self::clear_model_cell).
+    #[inline]
+    fn clear_sapling_stage(&mut self, i: usize) {
+        if !self.sapling_stages.is_empty() {
+            self.sapling_stages.remove(&(i as u16));
+        }
+    }
+
+    /// The sapling-stage map, for saving (keyed by local block index).
+    #[inline]
+    pub fn sapling_stages(&self) -> &HashMap<u16, u8> {
+        &self.sapling_stages
     }
 
     /// Water-flow metadata at a local voxel (0 where the cell is not flowing
@@ -669,6 +722,7 @@ impl Chunk {
         torches: HashMap<u16, TorchPlacement>,
         model_cells: HashMap<u16, [u8; 3]>,
         model_facings: HashMap<u16, Facing>,
+        sapling_stages: HashMap<u16, u8>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -683,6 +737,7 @@ impl Chunk {
             torches,
             model_cells,
             model_facings,
+            sapling_stages,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,

@@ -46,8 +46,8 @@ impl BlockBehavior for Fragile {
         if !block.is_fragile() || world.fragile_supported(pos, block) {
             return;
         }
-        world.note_block_destroyed(pos, block);
-        world.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+        // Shatter it as a natural break — drops + burst, exactly as a hand-break.
+        world.break_block_naturally(pos);
     }
 }
 

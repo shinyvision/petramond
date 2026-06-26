@@ -216,6 +216,20 @@ impl World {
         std::mem::take(&mut self.sim.pending_breaks)
     }
 
+    /// Destroy the block at `pos` the way the simulation does when it is lost — a
+    /// fragile block undermined, or a leaf decaying — by handing it the same break a
+    /// player's hand would: record it as a natural break (so `Game` plays the burst
+    /// and rolls its drops, e.g. a decayed leaf's 10% sapling) and clear the cell to
+    /// air. Reads the current occupant at `pos`; a no-op if that cell is already air.
+    pub(crate) fn break_block_naturally(&mut self, pos: IVec3) {
+        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        if block == Block::Air {
+            return;
+        }
+        self.note_block_destroyed(pos, block);
+        self.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+    }
+
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there
     /// and route it to that block's [`behavior`](crate::block::behavior). Names no
     /// concrete block — water (and any future reactor) carries its own reaction.

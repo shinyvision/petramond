@@ -18,11 +18,14 @@ use crate::mob::SavedMob;
 use crate::torch::TorchPlacement;
 
 const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
-/// Current chunk-record version. Extra sections (item entities, furnaces) are
-/// gated by flag bits and appended at the end, so adding one keeps the version
-/// stable: old code ignores trailing bytes it doesn't recognise, and new code
-/// reads a missing section as empty when its flag is clear.
-const CHUNK_REC_VERSION: u8 = 2;
+/// Current chunk-record version. Flag-gated sections are appended at the end, so a
+/// section that fits a free flag bit needs no version bump. Version `3` introduced a
+/// SECOND flags byte (the first eight bits were exhausted) for the sapling-stage
+/// section: a v2 record has no second flags byte and decodes with it treated as `0`,
+/// so existing saves keep loading.
+const CHUNK_REC_VERSION: u8 = 3;
+/// Oldest chunk-record version this build can still read.
+const CHUNK_REC_MIN_VERSION: u8 = 2;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -31,6 +34,8 @@ const FLAG_HAS_TORCHES: u8 = 0x10;
 const FLAG_HAS_MOBS: u8 = 0x20;
 const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
 const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
+/// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
+const FLAG2_HAS_SAPLINGS: u8 = 0x01;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -59,6 +64,10 @@ pub struct ChunkSnapshot {
     /// Per-cell facing for oriented bbmodel blocks, keyed like `model_cells`. Empty for
     /// old/non-directional model placements. See `Chunk::model_facings`.
     pub model_facings: HashMap<u16, Facing>,
+    /// Sapling growth stages (`0..=2`) in this chunk, keyed by local block index, so a
+    /// half-grown sapling reloads at the stage it reached. Empty for the common chunk.
+    /// See `Chunk::sapling_stages`.
+    pub sapling_stages: HashMap<u16, u8>,
     /// Mobs resting in this chunk, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Chunk`, so the world save paths set this from the live mob set. Empty for the
@@ -82,6 +91,7 @@ impl ChunkSnapshot {
             torches: c.torches().clone(),
             model_cells: c.model_cells().clone(),
             model_facings: c.model_facings().clone(),
+            sapling_stages: c.sapling_stages().clone(),
             mobs: Vec::new(),
         }
     }
@@ -268,7 +278,12 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.model_facings.is_empty() {
         flags |= FLAG_HAS_MODEL_FACINGS;
     }
+    let mut flags2 = 0u8;
+    if !s.sapling_stages.is_empty() {
+        flags2 |= FLAG2_HAS_SAPLINGS;
+    }
     payload.put_u8(flags);
+    payload.put_u8(flags2);
     payload.extend_from_slice(&s.blocks);
     payload.extend_from_slice(&s.biomes);
     if let Some(w) = &s.water {
@@ -302,6 +317,12 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
             buf.put_u8(facing.to_u8());
         });
     }
+    if !s.sapling_stages.is_empty() {
+        // Each record is the cell's 1-byte growth stage (idx written by put_indexed).
+        put_indexed(&mut payload, &s.sapling_stages, 1, |buf, stage| {
+            buf.put_u8(*stage);
+        });
+    }
     deflate(&payload)
 }
 
@@ -315,10 +336,13 @@ pub fn decode_chunk(
 ) -> Option<(Chunk, Vec<DroppedItem>, Vec<SavedMob>)> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
-    if r.u8()? != CHUNK_REC_VERSION {
+    let version = r.u8()?;
+    if !(CHUNK_REC_MIN_VERSION..=CHUNK_REC_VERSION).contains(&version) {
         return None;
     }
     let flags = r.u8()?;
+    // The second flags byte exists only from v3 on; a v2 record has none (read 0).
+    let flags2 = if version >= 3 { r.u8()? } else { 0 };
     let blocks = r.bytes(VOLUME)?.to_vec().into_boxed_slice();
     let biomes = r.bytes(BIOME_BYTES)?;
     let water = if flags & FLAG_HAS_WATER != 0 {
@@ -361,6 +385,11 @@ pub fn decode_chunk(
     } else {
         HashMap::new()
     };
+    let sapling_stages = if flags2 & FLAG2_HAS_SAPLINGS != 0 {
+        get_indexed(&mut r, |r| r.u8())?
+    } else {
+        HashMap::new()
+    };
     Some((
         Chunk::from_saved(
             cx,
@@ -373,6 +402,7 @@ pub fn decode_chunk(
             torches,
             model_cells,
             model_facings,
+            sapling_stages,
         ),
         entities,
         mobs,
@@ -568,6 +598,26 @@ mod tests {
         );
         // The origin cell stores no offset and reads the [0,0,0] default.
         assert_eq!(back.model_offset(5, 64, 5), [0, 0, 0]);
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_sapling_stages() {
+        // A half-grown sapling must reload at the stage it reached (chunk-record v3's
+        // second flags byte). The stage is set AFTER the block (set_block clears it).
+        let mut c = Chunk::new(5, -1);
+        c.set_block(2, 64, 3, Block::OakSapling);
+        c.set_sapling_stage(2, 64, 3, 2);
+        c.set_block(7, 70, 1, Block::BirchSapling);
+        c.set_sapling_stage(7, 70, 1, 1);
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities, _mobs) = decode_chunk(5, -1, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(2, 64, 3), Block::OakSapling.id());
+        assert_eq!(back.sapling_stage(2, 64, 3), 2, "oak stage persists");
+        assert_eq!(back.sapling_stage(7, 70, 1), 1, "birch stage persists");
+        // A cell with no recorded stage reads 0.
+        assert_eq!(back.sapling_stage(0, 0, 0), 0);
     }
 
     #[test]

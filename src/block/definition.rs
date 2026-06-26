@@ -67,11 +67,34 @@ macro_rules! drops_self {
                 item: ItemType::$item,
                 min: 1,
                 max: 1,
+                chance: 1.0,
             }],
         }
     };
 }
 pub(super) use drops_self;
+
+/// `drops one sapling, 10% of the time` — the yield of a leaf block when it is
+/// broken OR decays (see `behavior::leaves`). The one occasional ([`chance`] < 1)
+/// drop in the table: leaves shed a matching sapling roughly one break in ten and
+/// nothing else, so a felled canopy seeds the next generation of trees. A leaf
+/// species with no tree feature (mangrove/azalea) carries [`DropSpec::NONE`]
+/// instead — it has no sapling to drop.
+///
+/// [`chance`]: crate::item::Drop::chance
+macro_rules! drops_sapling {
+    ($item:ident) => {
+        DropSpec {
+            drops: &[Drop {
+                item: ItemType::$item,
+                min: 1,
+                max: 1,
+                chance: 0.1,
+            }],
+        }
+    };
+}
+pub(super) use drops_sapling;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct BlockFlags(u8);

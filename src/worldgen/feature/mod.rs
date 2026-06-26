@@ -84,22 +84,32 @@ pub struct PlacedFeature {
     pub placement: &'static [placement::PlacementModifier],
 }
 
-/// Bounded voxel writer — the ONLY place imperative feature writes happen.
-///
-/// Coordinates are WORLD coords. Writes are clipped to this chunk's own
-/// `[0,16)×[0,16)` (and `[0,256)` vertically); out-of-footprint writes are
-/// dropped and out-of-footprint reads return Air. Because every retained write
-/// only ever reads in-chunk cells, a feature rooted in a neighbour materialises
-/// its overlapping voxels here identically to how the owner chunk does — giving
-/// seam-consistent cross-chunk features with no shared buffer. Reproduces the
-/// god file's three overwrite predicates (`log_at`/`leaf_at`/`oak_big`-branch).
-pub struct FeatureCtx<'a> {
+/// A destination a feature paints voxels into. Abstracting WHERE the writes land
+/// lets the SAME `Feature` / placer code drive two callers: worldgen, which writes
+/// into one [`Chunk`] clipped to its footprint ([`ChunkSink`]), and runtime sapling
+/// growth, which writes into the live `World` through a validating overlay (see
+/// `world::sapling`). `get` returns the sink's CURRENT occupant so the overwrite
+/// predicates on [`FeatureCtx`] see a feature's own earlier writes; it reads `Air`
+/// for any cell the sink can't address.
+pub trait VoxelSink {
+    fn get(&self, p: IVec3) -> Block;
+    fn set(&mut self, p: IVec3, b: Block);
+}
+
+/// Worldgen voxel sink: writes into one [`Chunk`], in WORLD coords clipped to the
+/// chunk's own `[0,16)×[0,16)×[0,256)` footprint. Out-of-footprint writes are
+/// dropped and out-of-footprint reads return `Air`. That clipping IS the seam
+/// mechanism: because every retained write only reads in-chunk cells, a feature
+/// rooted in a neighbour materialises its overlapping voxels here identically to
+/// how the owner chunk does — seam-consistent cross-chunk features with no shared
+/// buffer.
+pub struct ChunkSink<'a> {
     chunk: &'a mut Chunk,
     ox: i32,
     oz: i32,
 }
 
-impl<'a> FeatureCtx<'a> {
+impl<'a> ChunkSink<'a> {
     pub fn new(chunk: &'a mut Chunk) -> Self {
         let (ox, oz) = chunk.chunk_origin_world();
         Self { chunk, ox, oz }
@@ -115,49 +125,74 @@ impl<'a> FeatureCtx<'a> {
         }
         Some((lx as usize, p.y as usize, lz as usize))
     }
+}
 
-    /// Unconditional write (== `trees::log_at`).
-    pub fn set_log(&mut self, p: IVec3, b: Block) {
+impl VoxelSink for ChunkSink<'_> {
+    #[inline]
+    fn get(&self, p: IVec3) -> Block {
+        match self.local(p) {
+            Some((x, y, z)) => self.chunk.block(x, y, z),
+            None => Block::Air,
+        }
+    }
+    #[inline]
+    fn set(&mut self, p: IVec3, b: Block) {
         if let Some((x, y, z)) = self.local(p) {
             self.chunk.set_block_raw(x, y, z, b.id());
         }
     }
+}
+
+/// Bounded voxel writer — the ONLY place imperative feature writes happen. Holds a
+/// `&mut dyn VoxelSink` so one set of placer code targets either a chunk (worldgen)
+/// or the world (growth). The overwrite predicates (`set_leaf` over air/water,
+/// `set_branch` over air/leaves/water, `replace_block` over an expected block) read
+/// the sink's CURRENT occupant, so a feature's own earlier writes are honoured.
+/// Reproduces the god file's three overwrite predicates
+/// (`log_at`/`leaf_at`/`oak_big`-branch).
+pub struct FeatureCtx<'a> {
+    sink: &'a mut dyn VoxelSink,
+}
+
+impl<'a> FeatureCtx<'a> {
+    pub fn new(sink: &'a mut dyn VoxelSink) -> Self {
+        Self { sink }
+    }
+
+    /// Unconditional write (== `trees::log_at`).
+    pub fn set_log(&mut self, p: IVec3, b: Block) {
+        self.sink.set(p, b);
+    }
 
     /// Write over Air/Water only (== `trees::leaf_at`).
     pub fn set_leaf(&mut self, p: IVec3, b: Block) {
-        if let Some((x, y, z)) = self.local(p) {
-            let c = self.chunk.block_raw(x, y, z);
-            if c == Block::Air.id() || c == Block::Water.id() {
-                self.chunk.set_block_raw(x, y, z, b.id());
-            }
+        let c = self.sink.get(p);
+        if c == Block::Air || c == Block::Water {
+            self.sink.set(p, b);
         }
     }
 
-    /// Write over Air/OakLeaves/Water (== `oak_big` branch predicate).
+    /// Write over Air/OakLeaves/Water (== `oak_big` branch predicate). Only the
+    /// giant oak draws branches, and it is an oak, so the tolerated leaf is the
+    /// literal `OakLeaves` (a branch may pass through the crown's own leaves).
     pub fn set_branch(&mut self, p: IVec3, b: Block) {
-        if let Some((x, y, z)) = self.local(p) {
-            let c = self.chunk.block_raw(x, y, z);
-            if c == Block::Air.id() || c == Block::OakLeaves.id() || c == Block::Water.id() {
-                self.chunk.set_block_raw(x, y, z, b.id());
-            }
+        let c = self.sink.get(p);
+        if c == Block::Air || c == Block::OakLeaves || c == Block::Water {
+            self.sink.set(p, b);
         }
     }
 
     /// Unconditional leaf write (== `leaf_blob` with `allow_overwrite = true`).
     pub fn set_leaf_force(&mut self, p: IVec3, b: Block) {
-        if let Some((x, y, z)) = self.local(p) {
-            self.chunk.set_block_raw(x, y, z, b.id());
-        }
+        self.sink.set(p, b);
     }
 
     /// Replace a voxel only when it currently equals `expect`. Used by the
     /// underground ore / stone-blob veins, which overwrite Stone (and never air,
     /// dirt, or an already-placed ore). World coords; clipped to this chunk.
     pub fn replace_block(&mut self, p: IVec3, expect: Block, b: Block) {
-        if let Some((x, y, z)) = self.local(p) {
-            if self.chunk.block_raw(x, y, z) == expect.id() {
-                self.chunk.set_block_raw(x, y, z, b.id());
-            }
+        if self.sink.get(p) == expect {
+            self.sink.set(p, b);
         }
     }
 }
@@ -261,8 +296,9 @@ fn tree_spacing_allows(
 /// are clipped to this chunk, so seams are continuous with no double-placement
 /// and the old chunk-edge skip is gone.
 pub fn place_features(chunk: &mut Chunk, field: &RegionCells, seed: u32) {
-    let mut ctx = FeatureCtx::new(chunk);
-    let (ox, oz) = (ctx.ox, ctx.oz);
+    let (ox, oz) = chunk.chunk_origin_world();
+    let mut sink = ChunkSink::new(chunk);
+    let mut ctx = FeatureCtx::new(&mut sink);
     let margin = super::proto::MARGIN;
 
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {

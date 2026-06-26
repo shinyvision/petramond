@@ -18,7 +18,7 @@ use crate::chunk::{Chunk, CHUNK_SY};
 use crate::mathh::IVec3;
 
 use super::super::rng::FeatureRng;
-use super::FeatureCtx;
+use super::{ChunkSink, FeatureCtx};
 
 /// One scatter species: a block that overwrites Stone in `count` veins per chunk,
 /// each ~`size` blocks, within a world-Y band.
@@ -76,7 +76,8 @@ static CONFIGS: &[ScatterConfig] = &[
 /// Place all underground veins for `chunk`. Pure function of `(seed, cx, cz)`.
 pub fn place_underground(chunk: &mut Chunk, seed: u32) {
     let (ccx, ccz) = (chunk.cx, chunk.cz);
-    let mut ctx = FeatureCtx::new(chunk);
+    let mut sink = ChunkSink::new(chunk);
+    let mut ctx = FeatureCtx::new(&mut sink);
     // 3x3 neighbourhood so border-straddling veins appear from both sides.
     for dcz in -1..=1 {
         for dcx in -1..=1 {

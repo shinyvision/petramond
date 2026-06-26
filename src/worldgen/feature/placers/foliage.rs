@@ -244,7 +244,8 @@ mod spruce_tests {
                 }
                 let top = IVec3::new(cx, base + h - 1, cz);
                 let mut rng = FeatureRng::positional(seed, 0xABCD, cx, 0, cz);
-                let mut ctx = FeatureCtx::new(&mut chunk);
+                let mut sink = crate::worldgen::feature::ChunkSink::new(&mut chunk);
+                let mut ctx = FeatureCtx::new(&mut sink);
                 let cone = ConiferFoliage {
                     radius,
                     skirt_ragged: 0.25,
