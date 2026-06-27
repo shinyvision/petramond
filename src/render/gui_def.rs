@@ -26,7 +26,7 @@
 //! counts and the row-major ordering at load, so a future re-bake can never
 //! silently mis-route a click.
 
-use super::gui_types::{CraftHit, FurnaceHit};
+use super::gui_types::{CraftHit, FurnaceHit, WorkbenchHit};
 use super::ui::{gui_scale, SlotRect};
 use crate::game::MenuSlot;
 use crate::inventory::HOTBAR_LEN;
@@ -146,6 +146,7 @@ pub enum GuiKind {
     CraftingTable,
     Furnace,
     Hotbar,
+    FurnitureWorkbench,
     #[serde(other)]
     Other,
 }
@@ -164,6 +165,8 @@ pub(crate) enum Role {
     FurnaceInput,
     FurnaceFuel,
     FurnaceOutput,
+    WorkbenchInput,
+    WorkbenchResult,
     #[serde(other)]
     Other,
 }
@@ -182,6 +185,8 @@ impl Role {
             Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
             Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
             Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
+            Role::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
+            Role::WorkbenchResult => MenuSlot::Workbench(WorkbenchHit::Result(i)),
             Role::Generic | Role::Other => return None,
         })
     }
@@ -352,6 +357,12 @@ impl GuiDef {
                 (Role::FurnaceOutput, 1),
             ],
             GuiKind::Hotbar => &[(Role::Hotbar, 9)],
+            GuiKind::FurnitureWorkbench => &[
+                (Role::PlayerInv, 27),
+                (Role::Hotbar, 9),
+                (Role::WorkbenchInput, 1),
+                (Role::WorkbenchResult, 21),
+            ],
             GuiKind::Other => return Err("unknown gui type".to_string()),
         };
         for &(role, count) in want {
@@ -360,7 +371,13 @@ impl GuiDef {
             }
         }
         // Multi-slot roles must be row-major so in-role index == game slot index.
-        for role in [Role::Storage, Role::PlayerInv, Role::Hotbar, Role::CraftInput] {
+        for role in [
+            Role::Storage,
+            Role::PlayerInv,
+            Role::Hotbar,
+            Role::CraftInput,
+            Role::WorkbenchResult,
+        ] {
             check_row_major(role, self.role_slots(role))?;
         }
         Ok(())
@@ -579,6 +596,7 @@ mod tests {
             GuiKind::CraftingTable,
             GuiKind::Furnace,
             GuiKind::Hotbar,
+            GuiKind::FurnitureWorkbench,
         ] {
             assert!(def(kind).is_some(), "{kind:?} manifest missing or invalid");
         }

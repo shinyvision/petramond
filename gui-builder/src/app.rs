@@ -470,6 +470,7 @@ pub fn gui_file_stem(ty: GuiType) -> &'static str {
         GuiType::CraftingTable => "crafting_table",
         GuiType::Furnace => "furnace",
         GuiType::Hotbar => "hotbar",
+        GuiType::FurnitureWorkbench => "furniture_workbench",
         GuiType::Custom => "gui",
     }
 }

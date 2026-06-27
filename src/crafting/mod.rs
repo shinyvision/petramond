@@ -10,7 +10,7 @@ mod load;
 mod recipe;
 
 pub use load::load_recipes;
-pub use recipe::{Ingredient, Recipe, Recipes, SmeltingRecipe};
+pub use recipe::{FurnitureRecipe, Ingredient, Recipe, Recipes, SmeltingRecipe};
 
 use crate::inventory::SlotGrid;
 use crate::item::ItemStack;

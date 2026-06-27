@@ -41,6 +41,15 @@
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
     { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" },
-    { "type": "smelting", "ingredient": "cobblestone", "result": "stone" }
+    { "type": "smelting", "ingredient": "cobblestone", "result": "stone" },
+
+    { "type": "furniture", "input": "oak_planks", "result": "oak_door", "cost": 1 },
+    { "type": "furniture", "input": "spruce_planks", "result": "spruce_door", "cost": 1 },
+    { "type": "furniture", "input": "birch_planks", "result": "birch_door", "cost": 1 },
+    { "type": "furniture", "input": "jungle_planks", "result": "jungle_door", "cost": 1 },
+    { "type": "furniture", "input": "acacia_planks", "result": "acacia_door", "cost": 1 },
+    { "type": "furniture", "input": "dark_oak_planks", "result": "dark_oak_door", "cost": 1 },
+    { "type": "furniture", "input": "cherry_planks", "result": "cherry_door", "cost": 1 },
+    { "type": "furniture", "input": "mangrove_planks", "result": "mangrove_door", "cost": 1 }
   ]
 }

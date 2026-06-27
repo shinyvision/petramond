@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 
 use crate::chest::Chest;
 use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
+use crate::door::DoorState;
 use crate::entity::DroppedItem;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
@@ -36,6 +37,7 @@ const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
 const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 /// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
 const FLAG2_HAS_SAPLINGS: u8 = 0x01;
+const FLAG2_HAS_DOORS: u8 = 0x02;
 
 /// Owned, send-able copy of the per-chunk save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -68,6 +70,10 @@ pub struct ChunkSnapshot {
     /// half-grown sapling reloads at the stage it reached. Empty for the common chunk.
     /// See `Chunk::sapling_stages`.
     pub sapling_stages: HashMap<u16, u8>,
+    /// Door state (facing + open + which-half), keyed by local block index, so a placed
+    /// door reloads on the same edge and in the same open/closed pose. Empty for the
+    /// common chunk. See `Chunk::doors` / [`crate::door`].
+    pub doors: HashMap<u16, DoorState>,
     /// Mobs resting in this chunk, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Chunk`, so the world save paths set this from the live mob set. Empty for the
@@ -92,6 +98,7 @@ impl ChunkSnapshot {
             model_cells: c.model_cells().clone(),
             model_facings: c.model_facings().clone(),
             sapling_stages: c.sapling_stages().clone(),
+            doors: c.doors().clone(),
             mobs: Vec::new(),
         }
     }
@@ -282,6 +289,9 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     if !s.sapling_stages.is_empty() {
         flags2 |= FLAG2_HAS_SAPLINGS;
     }
+    if !s.doors.is_empty() {
+        flags2 |= FLAG2_HAS_DOORS;
+    }
     payload.put_u8(flags);
     payload.put_u8(flags2);
     payload.extend_from_slice(&s.blocks);
@@ -321,6 +331,12 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
         // Each record is the cell's 1-byte growth stage (idx written by put_indexed).
         put_indexed(&mut payload, &s.sapling_stages, 1, |buf, stage| {
             buf.put_u8(*stage);
+        });
+    }
+    if !s.doors.is_empty() {
+        // Each record is the cell's 1-byte packed door state (idx written by put_indexed).
+        put_indexed(&mut payload, &s.doors, 1, |buf, state| {
+            buf.put_u8(state.encode());
         });
     }
     deflate(&payload)
@@ -390,6 +406,11 @@ pub fn decode_chunk(
     } else {
         HashMap::new()
     };
+    let doors = if flags2 & FLAG2_HAS_DOORS != 0 {
+        get_indexed(&mut r, |r| Some(DoorState::decode(r.u8()?)))?
+    } else {
+        HashMap::new()
+    };
     Some((
         Chunk::from_saved(
             cx,
@@ -403,6 +424,7 @@ pub fn decode_chunk(
             model_cells,
             model_facings,
             sapling_stages,
+            doors,
         ),
         entities,
         mobs,
@@ -618,6 +640,57 @@ mod tests {
         assert_eq!(back.sapling_stage(7, 70, 1), 1, "birch stage persists");
         // A cell with no recorded stage reads 0.
         assert_eq!(back.sapling_stage(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn chunk_record_roundtrips_doors() {
+        // A placed door's facing + open + which-half state must reload exactly (the v3
+        // second flags byte, alongside saplings). State is set AFTER the block.
+        use crate::door::DoorState;
+        use crate::furnace::Facing;
+        let mut c = Chunk::new(3, 7);
+        c.set_block(4, 64, 5, Block::OakDoor);
+        c.set_door_state(
+            4,
+            64,
+            5,
+            DoorState {
+                facing: Facing::East,
+                open: true,
+                top: false,
+            },
+        );
+        c.set_block(4, 65, 5, Block::OakDoor);
+        c.set_door_state(
+            4,
+            65,
+            5,
+            DoorState {
+                facing: Facing::East,
+                open: true,
+                top: true,
+            },
+        );
+
+        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
+        let (back, _entities, _mobs) = decode_chunk(3, 7, &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(4, 64, 5), Block::OakDoor.id());
+        assert_eq!(
+            back.door_state(4, 64, 5),
+            Some(DoorState {
+                facing: Facing::East,
+                open: true,
+                top: false
+            })
+        );
+        assert_eq!(
+            back.door_state(4, 65, 5).map(|s| s.top),
+            Some(true),
+            "the upper half persists its top bit"
+        );
+        // A non-door cell carries no door state.
+        assert_eq!(back.door_state(0, 0, 0), None);
     }
 
     #[test]

@@ -8,6 +8,9 @@ pub enum AppScreen {
     Furnace,
     /// The chest screen (3×9 storage), opened by right-clicking a placed chest.
     Chest,
+    /// The furniture-workbench screen (one input block + a grid of craftable results),
+    /// opened by right-clicking a placed workbench.
+    FurnitureWorkbench,
 }
 
 impl AppScreen {
@@ -40,6 +43,7 @@ impl AppScreen {
             AppScreen::CraftingTable => GuiKind::CraftingTable,
             AppScreen::Furnace => GuiKind::Furnace,
             AppScreen::Chest => GuiKind::Chest,
+            AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
         }
     }
 

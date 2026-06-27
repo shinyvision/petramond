@@ -15,7 +15,11 @@
 
 use glam::{IVec3, Vec3};
 
-use super::{ChestInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer};
+use super::{
+    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer,
+};
+use crate::atlas::Tile;
+use crate::door::DoorState;
 use crate::furnace::Facing;
 use crate::game::Game;
 
@@ -33,11 +37,16 @@ pub struct Scene {
     model_particles: Vec<ParticleInstance>,
     /// Baked placed-chest instances for this frame.
     chests: Vec<ChestInstance>,
+    /// Baked placed-door instances for this frame.
+    doors: Vec<DoorInstance>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
     /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
     /// from the loaded chunks; the lid angle is paired in from `Game::chest_lid_angle`.
     chest_scratch: Vec<(IVec3, Facing, u8)>,
+    /// Reusable scratch for gathering door render data (lower pos, state, the two
+    /// halves' tiles, skylight); the swing angle is paired in from `Game::door_swing_angle`.
+    door_scratch: Vec<(IVec3, DoorState, [Tile; 3], u8)>,
     /// Combined sky+block light + warm-tint amount for the first-person hand / held
     /// item, sampled at the camera each frame so it brightens AND warms near torches.
     held_item_skylight: u8,
@@ -63,6 +72,7 @@ impl Scene {
             &mut self.model_particles,
         );
         self.bake_chests(game);
+        self.bake_doors(game);
         bake_mobs(game.mobs(), alpha, &mut self.mobs);
         (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
     }
@@ -85,11 +95,34 @@ impl Scene {
         }
     }
 
+    /// The placed doors to draw this frame (lower pos, facing, swing angle, the two
+    /// halves' tiles, skylight), gathered from the loaded chunks. The linear swing is
+    /// smoothstepped so it accelerates and decelerates instead of turning at a constant
+    /// rate — exactly like the chest lid.
+    fn bake_doors(&mut self, game: &Game) {
+        game.collect_door_render_data(&mut self.door_scratch);
+        self.doors.clear();
+        for &(pos, state, [bottom_tile, top_tile, side_tile], skylight) in &self.door_scratch {
+            let raw = game.door_swing_angle(pos);
+            let open01 = raw * raw * (3.0 - 2.0 * raw);
+            self.doors.push(DoorInstance {
+                pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
+                facing: state.facing,
+                open01,
+                bottom_tile,
+                top_tile,
+                side_tile,
+                skylight,
+            });
+        }
+    }
+
     /// Hand the baked instances + held-item light to the renderer for this frame.
     pub fn upload(&self, renderer: &mut Renderer) {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_warm);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
+        renderer.set_doors(&self.doors);
         renderer.set_mobs(&self.mobs);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);

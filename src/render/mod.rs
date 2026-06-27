@@ -4,6 +4,7 @@ mod block_model;
 mod break_overlay;
 mod chest_model;
 mod crosshair;
+mod door_model;
 mod foliage_tint;
 mod hand;
 mod hand_animator;
@@ -44,7 +45,7 @@ pub use block_model::{
 
 /// Slot-identity enums shared with the App's click routing and the game container
 /// menu (a craft input/result cell, a furnace role). See [`gui_types`].
-pub use gui_types::{CraftHit, FurnaceHit};
+pub use gui_types::{CraftHit, FurnaceHit, WorkbenchHit};
 
 /// Data-driven GUI layout + hit-tests (baked PNG + JSON manifest). Every screen
 /// reads its baked [`GuiKind`] def — the renderer draws it and the App routes a
@@ -193,6 +194,31 @@ pub struct ChestInstance {
     pub skylight: u8,
 }
 
+/// A placed door to draw in the world this frame: a 2-tall thin slab on the `facing`
+/// edge of cell `pos` (the lower cell's min corner), swung open by `open01`
+/// (`0` closed .. `1` fully open). The game fills a slice of these from the loaded
+/// chunks' door state; the renderer frustum-culls + bakes them with
+/// [`door_model::build_doors`]. The two halves carry different art (`bottom_tile` /
+/// `top_tile`).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DoorInstance {
+    /// World position of the lower cell's min corner (block coords as f32).
+    pub pos: Vec3,
+    /// The edge the CLOSED door rests on (its outward normal); see [`crate::door`].
+    pub facing: crate::furnace::Facing,
+    /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
+    pub open01: f32,
+    /// Atlas tile for the lower half's front/back (door art).
+    pub bottom_tile: crate::atlas::Tile,
+    /// Atlas tile for the upper half's front/back (door art).
+    pub top_tile: crate::atlas::Tile,
+    /// Atlas tile for the four thin EDGE faces (the door's side — distinct from the
+    /// front art, e.g. a plank strip).
+    pub side_tile: crate::atlas::Tile,
+    /// 6-bit skylight sampled from the world at the door's lower cell.
+    pub skylight: u8,
+}
+
 /// A single particle billboard to draw this frame. `uv_min` / `uv_size` are
 /// **absolute** atlas coordinates (sub-tile patch), produced by
 /// `crate::entity::Particle::atlas_uv`, so the particle pass samples the block
@@ -236,6 +262,19 @@ pub struct ChestView {
     pub slots: [Option<ItemStack>; crate::chest::CHEST_SLOTS],
 }
 
+/// A furniture workbench's view for its open screen: the placed input block and the
+/// list of results it offers, each flagged craftable (enough input) or not (shown
+/// greyed). Computed from the input + the furniture recipes (see
+/// [`crate::crafting::Recipes::furniture_for`]); the result list is row-major, mapping
+/// to the manifest's result slots. Not `Copy` (the `Vec`); snapshotted by move per
+/// frame, like a small render-side scratch.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkbenchView {
+    pub input: Option<ItemStack>,
+    /// `(result item, craftable now)` per offered recipe, row-major.
+    pub results: Vec<(crate::item::ItemType, bool)>,
+}
+
 /// Per-frame UI state handed to the renderer. Borrows the `Inventory` for the
 /// duration of the [`Renderer::set_ui`] call only; the renderer snapshots the
 /// small bits it needs into owned state so it never holds a borrow across frames.
@@ -254,6 +293,9 @@ pub struct UiFrame<'a> {
     /// The open chest's 27 storage slots, or `None` when the open panel is not a
     /// chest. When `Some`, the chest panel + storage grid replace the crafting grid.
     pub chest: Option<ChestView>,
+    /// The open furniture workbench's input + offered results, or `None` when the open
+    /// panel is not a workbench. When `Some`, the workbench panel replaces the grid.
+    pub workbench: Option<WorkbenchView>,
     /// Screen size in physical pixels `(width, height)`.
     pub screen: (u32, u32),
     /// Cursor position in physical pixels `(x, y)` (for the open-inventory cursor

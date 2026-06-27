@@ -98,6 +98,9 @@ pub struct UiBuild {
     /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
     /// pre-baked icon-atlas cell and emits a textured quad.
     pub icon_quads: Vec<(ItemType, SlotRect)>,
+    /// Like [`icon_quads`](Self::icon_quads) but drawn semi-transparent (greyed) — the
+    /// furniture-workbench results the placed block can't yet make (not enough input).
+    pub dim_icon_quads: Vec<(ItemType, SlotRect)>,
     /// Stack-count digits (solid), drawn over the icons.
     pub counts: Vec<UiVertex>,
     /// Cursor-held item icon, drawn front-most.
@@ -117,6 +120,7 @@ impl UiBuild {
         self.overlay_spans.clear();
         self.hover.clear();
         self.icon_quads.clear();
+        self.dim_icon_quads.clear();
         self.counts.clear();
         self.drag_icon_quads.clear();
         self.drag_counts.clear();
@@ -188,6 +192,10 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
         Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
         Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
         Role::FurnaceOutput => ui.furnace.and_then(|f| f.output).map(stack),
+        Role::WorkbenchInput => ui.workbench.as_ref().and_then(|w| w.input).map(stack),
+        // The result grid carries a craftable flag (greyed when not), so it's drawn
+        // specially in `build_ui` rather than through this (item, count) mapping.
+        Role::WorkbenchResult => None,
         Role::Generic | Role::Other => None,
     }
 }
@@ -276,6 +284,20 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
 
     // Every filled slot's item icon + stack count.
     def.for_each_slot(screen, |role, i, r| {
+        // The workbench result grid is a list of offered recipes, each greyed when the
+        // placed block isn't yet enough to craft it — drawn here (no stack count).
+        if role == Role::WorkbenchResult {
+            if let Some(&(item, craftable)) = ui.workbench.as_ref().and_then(|w| w.results.get(i)) {
+                if item != ItemType::Air {
+                    if craftable {
+                        icon::push_slot_icon(build, screen, item, r);
+                    } else {
+                        icon::push_dim_slot_icon(build, screen, item, r);
+                    }
+                }
+            }
+            return;
+        }
         let Some((item, count)) = slot_item(ui, role, i) else { return };
         if item == ItemType::Air || count == 0 {
             return;

@@ -16,6 +16,19 @@ pub struct SmeltingRecipe {
     pub result: ItemStack,
 }
 
+/// A furniture-workbench recipe: placing `cost` of `input` in the workbench lets you
+/// craft `result`. Looked up by the input item (see [`Recipes::furniture_for`]): the
+/// workbench shows every result whose `input` matches the placed block, each greyed
+/// out until at least `cost` of it is present. Separate from the grid [`Recipe`]s
+/// because the workbench takes a single block, not a grid.
+#[derive(Clone, Copy, Debug)]
+pub struct FurnitureRecipe {
+    pub input: ItemType,
+    pub result: ItemStack,
+    /// How many `input` items one craft consumes.
+    pub cost: u8,
+}
+
 /// One cell's requirement: an exact item, or any item carrying a tag (tag
 /// membership is defined in item data — see [`ItemType::has_tag`]).
 #[derive(Clone, Debug)]
@@ -75,16 +88,26 @@ impl Recipe {
 }
 
 /// The loaded recipe set: grid (crafting) recipes searched in declaration order,
-/// plus the smelting table looked up by input item.
+/// the smelting table looked up by input item, and the furniture-workbench recipes
+/// looked up by their input block.
 #[derive(Default)]
 pub struct Recipes {
     list: Vec<Recipe>,
     smelting: Vec<SmeltingRecipe>,
+    furniture: Vec<FurnitureRecipe>,
 }
 
 impl Recipes {
-    pub fn new(list: Vec<Recipe>, smelting: Vec<SmeltingRecipe>) -> Self {
-        Recipes { list, smelting }
+    pub fn new(
+        list: Vec<Recipe>,
+        smelting: Vec<SmeltingRecipe>,
+        furniture: Vec<FurnitureRecipe>,
+    ) -> Self {
+        Recipes {
+            list,
+            smelting,
+            furniture,
+        }
     }
 
     /// Number of grid (crafting) recipes.
@@ -108,6 +131,12 @@ impl Recipes {
             .iter()
             .find(|r| r.input == input)
             .map(|r| r.result)
+    }
+
+    /// Every furniture-workbench recipe whose input is `input`, in declaration order —
+    /// the items the workbench offers when that block is placed in it.
+    pub fn furniture_for(&self, input: ItemType) -> impl Iterator<Item = &FurnitureRecipe> {
+        self.furniture.iter().filter(move |r| r.input == input)
     }
 }
 

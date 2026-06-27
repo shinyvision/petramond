@@ -64,6 +64,16 @@ impl Player {
                     max: Vec3::from(mx),
                 };
             }
+        } else if hit_block.render_shape() == RenderShape::Door {
+            // A door outlines the actual slab where it is (facing + open state), so the
+            // wireframe + break crack hug the panel rather than the row's default box.
+            if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z) {
+                let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
+                hit.outline = SelectionShape::Box {
+                    min: base + Vec3::from(mn),
+                    max: base + Vec3::from(mx),
+                };
+            }
         }
         Some((hit, dist))
     }
@@ -252,6 +262,13 @@ fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &Wor
             inv.transform_vector3(dir),
             kind,
         );
+    }
+    // A door's thin slab depends on its facing + open state (the chunk door map), so
+    // test the position-aware box rather than the block row's position-less default.
+    if block.render_shape() == RenderShape::Door {
+        let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
     // Any other custom-shaped solid (the chest) tests its inset visual box.
     let (mn, mx) = block.visual_aabb()?;

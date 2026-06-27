@@ -45,6 +45,13 @@ const MODEL_FLAGS: BlockFlags = BlockFlags::SOLID;
 // (no full-cube skylight shadow) is fine for an open-desert plant. Its sand-only
 // placement and break-when-undermined come from the row's tags/behaviour, not these flags.
 const CACTUS_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::AO_OCCLUDER);
+// Door: SOLID (a build/raycast target whose closed slab obstructs movement) but NOT
+// opaque and NOT an AO occluder — like the chest it is drawn as its own dynamic model
+// (the mesher skips its cell — see `render::door_model`), so neighbours keep their faces
+// toward the thin slab and it casts no full-cube shadow. Its real per-cell collision /
+// selection come from the chunk door state (facing + open), not the data row — see
+// `crate::door` / `world::door`.
+const DOOR_FLAGS: BlockFlags = BlockFlags::SOLID;
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
 // walk-through plants, and the torch — selectable by its shape but stepped through);
@@ -162,6 +169,14 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::AcaciaSapling,
     Block::DarkOakSapling,
     Block::CherrySapling,
+    Block::OakDoor,
+    Block::SpruceDoor,
+    Block::BirchDoor,
+    Block::JungleDoor,
+    Block::AcaciaDoor,
+    Block::DarkOakDoor,
+    Block::CherryDoor,
+    Block::MangroveDoor,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -1664,6 +1679,169 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         harvest_tier: 0,
         hardness: 0.0,
         drop: drops_self!(CherrySapling),
+    },
+    // --- Doors: a 2-tall thin slab on a cell edge, one per plank species. Drawn as a
+    // dynamic hinged model (see `render::door_model`), so `collision` here is only the
+    // position-LESS default (closed, south edge) — the real per-cell shape is resolved
+    // from the chunk door state in `world::door`. `tiles` = [top-half art, bottom-half
+    // art, side] feeding the door model; the inventory icon is a flat sprite (see
+    // `ItemType::render_kind`). Drops one door item even though it spans two cells (the
+    // break path removes the pair and drops once). ---
+    BlockDef {
+        block: Block::OakDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [Tile::OakDoorTop, Tile::OakDoorBottom, Tile::OakPlanks],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(OakDoor),
+    },
+    BlockDef {
+        block: Block::SpruceDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::SpruceDoorTop,
+            Tile::SpruceDoorBottom,
+            Tile::SprucePlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(SpruceDoor),
+    },
+    BlockDef {
+        block: Block::BirchDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::BirchDoorTop,
+            Tile::BirchDoorBottom,
+            Tile::BirchPlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(BirchDoor),
+    },
+    BlockDef {
+        block: Block::JungleDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::JungleDoorTop,
+            Tile::JungleDoorBottom,
+            Tile::JunglePlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(JungleDoor),
+    },
+    BlockDef {
+        block: Block::AcaciaDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::AcaciaDoorTop,
+            Tile::AcaciaDoorBottom,
+            Tile::AcaciaPlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(AcaciaDoor),
+    },
+    BlockDef {
+        block: Block::DarkOakDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::DarkOakDoorTop,
+            Tile::DarkOakDoorBottom,
+            Tile::DarkOakPlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(DarkOakDoor),
+    },
+    BlockDef {
+        block: Block::CherryDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::CherryDoorTop,
+            Tile::CherryDoorBottom,
+            Tile::CherryPlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(CherryDoor),
+    },
+    BlockDef {
+        block: Block::MangroveDoor,
+        shape: RenderShape::Door,
+        collision: crate::door::DEFAULT_BOXES,
+        emission: 0,
+        // NoGrassDecay: a door is SOLID but must not smother the grass it stands over
+        // (same exemption leaves use). DOOR behaviour breaks the pair if its floor goes.
+        tags: &[BlockTag::NoGrassDecay],
+        behavior: &behavior::DOOR,
+        flags: DOOR_FLAGS,
+        tiles: [
+            Tile::MangroveDoorTop,
+            Tile::MangroveDoorBottom,
+            Tile::MangrovePlanks,
+        ],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 3.0,
+        drop: drops_self!(MangroveDoor),
     },
 ];
 

@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
-use super::recipe::{Ingredient, Recipe, Recipes, SmeltingRecipe};
+use super::recipe::{FurnitureRecipe, Ingredient, Recipe, Recipes, SmeltingRecipe};
 
 /// Embedded fallback, so the game always has recipes even when run outside the
 /// project tree. The on-disk copy, when found, takes priority.
@@ -47,12 +47,26 @@ enum RawRecipe {
         #[serde(default = "one")]
         count: u8,
     },
+    /// A furniture-workbench recipe: placing `cost` of `input` lets you craft `count`
+    /// of `result`. The workbench offers it whenever that block is in the input slot.
+    Furniture {
+        input: String,
+        result: String,
+        /// Input items consumed per craft (default 1).
+        #[serde(default = "one")]
+        cost: u8,
+        /// Result items produced per craft (default 1).
+        #[serde(default = "one")]
+        count: u8,
+    },
 }
 
-/// A converted recipe sorted into the grid list or the smelting table.
+/// A converted recipe sorted into the grid list, the smelting table, or the
+/// furniture-workbench table.
 enum Converted {
     Grid(Recipe),
     Smelt(SmeltingRecipe),
+    Furniture(FurnitureRecipe),
 }
 
 fn one() -> u8 {
@@ -63,8 +77,8 @@ fn one() -> u8 {
 /// back to the embedded copy. Malformed individual recipes are logged and
 /// skipped rather than aborting the world load.
 pub fn load_recipes() -> Recipes {
-    let (grid, smelting) = parse(&read_recipes_text());
-    Recipes::new(grid, smelting)
+    let (grid, smelting, furniture) = parse(&read_recipes_text());
+    Recipes::new(grid, smelting, furniture)
 }
 
 fn read_recipes_text() -> String {
@@ -95,24 +109,26 @@ fn candidate_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>) {
+fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {
     let file: RawFile = match serde_json::from_str(text) {
         Ok(f) => f,
         Err(e) => {
             log::error!("recipes.json is not valid JSON: {e}");
-            return (Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new());
         }
     };
     let mut grid = Vec::new();
     let mut smelting = Vec::new();
+    let mut furniture = Vec::new();
     for (i, raw) in file.recipes.into_iter().enumerate() {
         match convert(raw) {
             Ok(Converted::Grid(r)) => grid.push(r),
             Ok(Converted::Smelt(r)) => smelting.push(r),
+            Ok(Converted::Furniture(r)) => furniture.push(r),
             Err(e) => log::error!("skipping recipe #{i}: {e}"),
         }
     }
-    (grid, smelting)
+    (grid, smelting, furniture)
 }
 
 fn convert(raw: RawRecipe) -> Result<Converted, String> {
@@ -126,6 +142,21 @@ fn convert(raw: RawRecipe) -> Result<Converted, String> {
                 .ok_or_else(|| format!("unknown smelting ingredient '{ingredient}'"))?;
             let result = item_stack(&result, count)?;
             Ok(Converted::Smelt(SmeltingRecipe { input, result }))
+        }
+        RawRecipe::Furniture {
+            input,
+            result,
+            cost,
+            count,
+        } => {
+            let input = item_from_key(&input)
+                .ok_or_else(|| format!("unknown furniture input '{input}'"))?;
+            let result = item_stack(&result, count)?;
+            Ok(Converted::Furniture(FurnitureRecipe {
+                input,
+                result,
+                cost: cost.max(1),
+            }))
         }
         RawRecipe::Shapeless {
             ingredients,
@@ -230,10 +261,10 @@ mod tests {
     #[test]
     fn embedded_recipes_parse_without_error() {
         // The shipped recipes.json must convert fully (no skipped recipes).
-        let (grid, smelting) = parse(EMBEDDED);
+        let (grid, smelting, furniture) = parse(EMBEDDED);
         let raw: RawFile = serde_json::from_str(EMBEDDED).expect("valid json");
         assert_eq!(
-            grid.len() + smelting.len(),
+            grid.len() + smelting.len() + furniture.len(),
             raw.recipes.len(),
             "every shipped recipe should convert"
         );
@@ -241,6 +272,8 @@ mod tests {
         assert!(grid.len() >= 13);
         // Iron + copper smelting at minimum.
         assert!(smelting.len() >= 2);
+        // The 8 plank → door furniture recipes.
+        assert!(furniture.len() >= 8);
     }
 
     #[test]
@@ -249,7 +282,7 @@ mod tests {
             { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
             { "type": "smelting", "ingredient": "mystery", "result": "iron_ingot" }
         ] }"#;
-        let (grid, smelting) = parse(text);
+        let (grid, smelting, _furniture) = parse(text);
         assert!(grid.is_empty());
         assert_eq!(
             smelting.len(),
@@ -303,6 +336,27 @@ mod tests {
     }
 
     #[test]
+    fn furniture_recipes_parse_and_look_up_by_input() {
+        let text = r#"{ "recipes": [
+            { "type": "furniture", "input": "oak_planks", "result": "oak_door", "cost": 1 },
+            { "type": "furniture", "input": "spruce_planks", "result": "spruce_door", "cost": 6 },
+            { "type": "furniture", "input": "mystery", "result": "oak_door" }
+        ] }"#;
+        let (grid, smelting, furniture) = parse(text);
+        assert!(grid.is_empty() && smelting.is_empty());
+        assert_eq!(furniture.len(), 2, "the unknown-input recipe is skipped");
+        let recipes = Recipes::new(grid, smelting, furniture);
+        // The workbench offers oak_door for oak_planks (cost 1) and nothing for a log.
+        let oak: Vec<_> = recipes.furniture_for(ItemType::OakPlanks).collect();
+        assert_eq!(oak.len(), 1);
+        assert_eq!(oak[0].result.item, ItemType::OakDoor);
+        assert_eq!(oak[0].cost, 1);
+        let spruce: Vec<_> = recipes.furniture_for(ItemType::SprucePlanks).collect();
+        assert_eq!(spruce[0].cost, 6, "cost carries through");
+        assert_eq!(recipes.furniture_for(ItemType::OakLog).count(), 0);
+    }
+
+    #[test]
     fn tag_and_item_ingredients_parse() {
         assert!(matches!(
             parse_ingredient("#planks"),
@@ -324,8 +378,9 @@ mod tests {
             { "type": "shaped", "pattern": ["X"], "key": {}, "result": "stick" }
         ] }"#;
         // Only the first (valid) recipe survives; the other two are skipped.
-        let (grid, smelting) = parse(text);
+        let (grid, smelting, furniture) = parse(text);
         assert_eq!(grid.len(), 1);
         assert!(smelting.is_empty());
+        assert!(furniture.is_empty());
     }
 }

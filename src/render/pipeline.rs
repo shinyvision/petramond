@@ -206,6 +206,12 @@ pub(super) const MAX_CHEST_VERTICES: u64 = 24576;
 /// Max indices in the chest dynamic ibuf (72 per chest), matching
 /// [`MAX_CHEST_VERTICES`].
 pub(super) const MAX_CHEST_INDICES: u64 = 36864;
+/// Max vertices in the door dynamic vbuf. Each door is two boxes (lower + upper half)
+/// = 48 verts, so this covers ~512 simultaneously-visible doors before the bake bails.
+/// Separate from the chest budget so a wall of doors can't make chests vanish.
+pub(super) const MAX_DOOR_VERTICES: u64 = 24576;
+/// Max indices in the door dynamic ibuf (72 per door), matching [`MAX_DOOR_VERTICES`].
+pub(super) const MAX_DOOR_INDICES: u64 = 36864;
 /// Max vertices in the reusable UI dynamic vbuf (gui quads + digit cells). The
 /// open inventory is ~40 slots + a 176×166 panel; digits are a few quads each.
 /// 6 verts/quad; 16384 covers the full open inventory with comfortable headroom.
@@ -288,6 +294,10 @@ pub(super) struct PipelineResources {
     pub chest_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for chest models.
     pub chest_ibuf: wgpu::Buffer,
+    /// Reusable dynamic vbuf for door models (2-tall hinged slab, opaque pipe).
+    pub door_vbuf: wgpu::Buffer,
+    /// Reusable dynamic ibuf for door models.
+    pub door_ibuf: wgpu::Buffer,
     /// Particle pipeline: camera-facing billboards. Reuses the block `uniform_bind`
     /// + `atlas_bind`, alpha-blended, depth-test (Load) / no-write.
     pub particle_pipe: wgpu::RenderPipeline,
@@ -1030,6 +1040,18 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let door_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("door vbuf"),
+        size: MAX_DOOR_VERTICES * std::mem::size_of::<Vertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let door_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("door ibuf"),
+        size: MAX_DOOR_INDICES * 4,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     // --- Particle pipeline (tiny 3D textured cubes). ---
     // Reuses the block `uniform_bgl` (group0) + `atlas_bgl` (group1) so it binds
@@ -1286,6 +1308,8 @@ pub(super) fn create_pipeline_resources(
         item_entity_ibuf,
         chest_vbuf,
         chest_ibuf,
+        door_vbuf,
+        door_ibuf,
         particle_pipe,
         particle_vbuf,
         particle_ibuf,

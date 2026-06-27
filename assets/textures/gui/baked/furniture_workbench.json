@@ -1,5 +1,5 @@
 {
-  "type": "custom",
+  "type": "furniture_workbench",
   "canvas": {
     "w": 352,
     "h": 332
@@ -260,154 +260,154 @@
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 90,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 126,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 162,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 198,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 234,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 270,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 306,
       "y": 22,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 90,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 126,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 162,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 198,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 234,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 270,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 306,
       "y": 58,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 90,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 126,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 162,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 198,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 234,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 270,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_result",
+      "role": "workbench_result",
       "x": 306,
       "y": 94,
       "w": 28,
       "h": 28
     },
     {
-      "role": "craft_input",
+      "role": "workbench_input",
       "x": 19,
       "y": 55,
       "w": 28,

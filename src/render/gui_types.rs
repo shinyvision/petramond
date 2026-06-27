@@ -24,3 +24,12 @@ pub enum FurnaceHit {
     Fuel,
     Output,
 }
+
+/// A hit-tested furniture-workbench slot: the single input block, or one of the
+/// take-only result cells (`0..` row-major, indexing the recipes the placed block
+/// offers — see [`crate::crafting::Recipes::furniture_for`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WorkbenchHit {
+    Input,
+    Result(usize),
+}

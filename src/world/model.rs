@@ -50,6 +50,13 @@ impl World {
                 self.model_facing_at(wx, wy, wz),
             );
         }
+        // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
+        // open — both read from the chunk door state (see `world::door` / `crate::door`).
+        if block.render_shape() == RenderShape::Door {
+            if let Some(state) = self.door_state_at(wx, wy, wz) {
+                return crate::door::collision_boxes(state);
+            }
+        }
         block.collision_boxes()
     }
 
@@ -67,6 +74,13 @@ impl World {
                 self.model_offset_at(wx, wy, wz),
                 self.model_facing_at(wx, wy, wz),
             );
+        }
+        // A door targets the thin slab where it actually is (closed/open edge), so the
+        // raycast + break overlay hug the panel rather than the whole cell.
+        if block.render_shape() == RenderShape::Door {
+            if let Some(state) = self.door_state_at(wx, wy, wz) {
+                return Some(crate::door::selection_aabb(state));
+            }
         }
         block.visual_aabb()
     }
@@ -213,7 +227,7 @@ impl World {
     /// multi-cell edit.
     ///
     /// [`set_block_world`]: Self::set_block_world
-    fn refresh_region(&mut self, cells: &[IVec3]) {
+    pub(super) fn refresh_region(&mut self, cells: &[IVec3]) {
         let mut seen = std::collections::HashSet::new();
         for &c in cells {
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {

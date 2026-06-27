@@ -269,6 +269,14 @@ fn build_mesh_with_context(
                     continue;
                 }
 
+                // Doors are not meshed into the chunk either: each is drawn every frame
+                // as a dynamic hinged slab (see render::door_model) so it can swing. The
+                // block stays SOLID (collision / raycast) but non-opaque, so neighbours
+                // keep their faces toward the thin panel.
+                if block.render_shape() == RenderShape::Door {
+                    continue;
+                }
+
                 // Cross-model plants: two diagonal billboard quads in the opaque
                 // (cutout) pass, then skip the cube face loop. They never cull or
                 // get culled (non-opaque), carry no directional shade or AO, and

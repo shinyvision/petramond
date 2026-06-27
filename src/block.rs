@@ -120,6 +120,20 @@ pub enum Block {
     AcaciaSapling,
     DarkOakSapling,
     CherrySapling,
+    // --- Doors update (ids 93..): per-species wooden doors. A door is a 2-tall thin
+    // slab placed on a cell edge, drawn as a dynamic hinged model (NOT chunk-meshed —
+    // like the chest, see `render::door_model`) so it can swing open/closed. Its
+    // facing + open + which-half state lives in the chunk door map; per-cell collision
+    // and selection are resolved position-aware in `world::door` from that state (see
+    // `crate::door`). Appended at the end so every id above stays frozen. ---
+    OakDoor,
+    SpruceDoor,
+    BirchDoor,
+    JungleDoor,
+    AcaciaDoor,
+    DarkOakDoor,
+    CherryDoor,
+    MangroveDoor,
 }
 
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
@@ -195,6 +209,13 @@ pub enum RenderShape {
     Cross,
     Torch,
     Model(BlockModelKind),
+    /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT
+    /// chunk-meshed — it is drawn each frame as a dynamic hinged model (see
+    /// `render::door_model`) so the leaf can swing smoothly. Its facing + open +
+    /// which-half state lives in the chunk door map; the per-cell collision and
+    /// selection boxes are resolved position-aware in `world::door` from that state
+    /// (see [`crate::door`]). The mesher skips a door cell, exactly like a chest.
+    Door,
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -630,6 +651,14 @@ mod tests {
             Block::AcaciaSapling,
             Block::DarkOakSapling,
             Block::CherrySapling,
+            Block::OakDoor,
+            Block::SpruceDoor,
+            Block::BirchDoor,
+            Block::JungleDoor,
+            Block::AcaciaDoor,
+            Block::DarkOakDoor,
+            Block::CherryDoor,
+            Block::MangroveDoor,
         ];
 
         assert_eq!(Block::ALL, expected);

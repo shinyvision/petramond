@@ -218,6 +218,35 @@ const TILES: &[(&str, &str)] = &[
     ("acacia_sapling", "acacia_sapling.png"),
     ("dark_oak_sapling", "dark_oak_sapling.png"),
     ("cherry_sapling", "cherry_sapling.png"),
+    // Doors update: per-species wooden doors. Each door is a 2-tall thin block
+    // drawn as a dynamic hinged model (see render::door_model), so the `_top` /
+    // `_bottom` tiles texture the upper / lower halves' front+back faces (and a
+    // 3px slice of each textures the thin side edges), while `_door_item` is the
+    // flat inventory sprite. Appended last so every preceding tile id stays stable.
+    ("oak_door_top", "oak_door_top.png"),
+    ("oak_door_bottom", "oak_door_bottom.png"),
+    ("spruce_door_top", "spruce_door_top.png"),
+    ("spruce_door_bottom", "spruce_door_bottom.png"),
+    ("birch_door_top", "birch_door_top.png"),
+    ("birch_door_bottom", "birch_door_bottom.png"),
+    ("jungle_door_top", "jungle_door_top.png"),
+    ("jungle_door_bottom", "jungle_door_bottom.png"),
+    ("acacia_door_top", "acacia_door_top.png"),
+    ("acacia_door_bottom", "acacia_door_bottom.png"),
+    ("dark_oak_door_top", "dark_oak_door_top.png"),
+    ("dark_oak_door_bottom", "dark_oak_door_bottom.png"),
+    ("cherry_door_top", "cherry_door_top.png"),
+    ("cherry_door_bottom", "cherry_door_bottom.png"),
+    ("mangrove_door_top", "mangrove_door_top.png"),
+    ("mangrove_door_bottom", "mangrove_door_bottom.png"),
+    ("oak_door_item", "oak_door_item.png"),
+    ("spruce_door_item", "spruce_door_item.png"),
+    ("birch_door_item", "birch_door_item.png"),
+    ("jungle_door_item", "jungle_door_item.png"),
+    ("acacia_door_item", "acacia_door_item.png"),
+    ("dark_oak_door_item", "dark_oak_door_item.png"),
+    ("cherry_door_item", "cherry_door_item.png"),
+    ("mangrove_door_item", "mangrove_door_item.png"),
 ];
 
 /// Animated flipbook tiles (name, file). The source PNG is a vertical strip of

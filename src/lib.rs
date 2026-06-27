@@ -18,6 +18,7 @@ pub mod chunk;
 pub mod collision;
 pub mod controls;
 pub mod crafting;
+pub mod door;
 pub mod entity;
 pub mod furnace;
 pub mod game;

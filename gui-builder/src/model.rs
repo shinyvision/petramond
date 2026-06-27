@@ -17,16 +17,18 @@ pub enum GuiType {
     CraftingTable,
     Furnace,
     Hotbar,
+    FurnitureWorkbench,
     Custom,
 }
 
 impl GuiType {
-    pub const ALL: [GuiType; 6] = [
+    pub const ALL: [GuiType; 7] = [
         GuiType::Chest,
         GuiType::Inventory,
         GuiType::CraftingTable,
         GuiType::Furnace,
         GuiType::Hotbar,
+        GuiType::FurnitureWorkbench,
         GuiType::Custom,
     ];
 
@@ -37,6 +39,7 @@ impl GuiType {
             GuiType::CraftingTable => "Crafting Table",
             GuiType::Furnace => "Furnace",
             GuiType::Hotbar => "Hotbar",
+            GuiType::FurnitureWorkbench => "Furniture Workbench",
             GuiType::Custom => "Custom",
         }
     }
@@ -48,12 +51,15 @@ impl GuiType {
             GuiType::CraftingTable => (176, 166),
             GuiType::Furnace => (176, 166),
             GuiType::Hotbar => (182, 22),
+            GuiType::FurnitureWorkbench => (176, 166),
             GuiType::Custom => (176, 166),
         }
     }
 
     pub fn aspect_locked(self) -> bool {
-        !matches!(self, GuiType::Custom)
+        // The workbench, like a custom GUI, keeps a free canvas (its result grid drove a
+        // bespoke layout); the fixed-size vanilla screens stay aspect-locked.
+        !matches!(self, GuiType::Custom | GuiType::FurnitureWorkbench)
     }
 }
 
@@ -69,10 +75,12 @@ pub enum SlotRole {
     FurnaceInput,
     FurnaceFuel,
     FurnaceOutput,
+    WorkbenchInput,
+    WorkbenchResult,
 }
 
 impl SlotRole {
-    pub const ALL: [SlotRole; 9] = [
+    pub const ALL: [SlotRole; 11] = [
         SlotRole::Generic,
         SlotRole::Storage,
         SlotRole::PlayerInv,
@@ -82,6 +90,8 @@ impl SlotRole {
         SlotRole::FurnaceInput,
         SlotRole::FurnaceFuel,
         SlotRole::FurnaceOutput,
+        SlotRole::WorkbenchInput,
+        SlotRole::WorkbenchResult,
     ];
 
     pub fn label(self) -> &'static str {
@@ -95,6 +105,8 @@ impl SlotRole {
             SlotRole::FurnaceInput => "Furnace Input",
             SlotRole::FurnaceFuel => "Furnace Fuel",
             SlotRole::FurnaceOutput => "Furnace Output",
+            SlotRole::WorkbenchInput => "Workbench Input",
+            SlotRole::WorkbenchResult => "Workbench Result",
         }
     }
 
@@ -109,6 +121,8 @@ impl SlotRole {
             SlotRole::FurnaceInput => [110, 200, 210],
             SlotRole::FurnaceFuel => [210, 110, 110],
             SlotRole::FurnaceOutput => [150, 200, 110],
+            SlotRole::WorkbenchInput => [130, 180, 230],
+            SlotRole::WorkbenchResult => [230, 160, 120],
         }
     }
 }

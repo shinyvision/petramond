@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::block::Block;
 use crate::chest::Chest;
+use crate::door::DoorState;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
 use crate::torch::TorchPlacement;
@@ -86,6 +87,13 @@ pub struct Chunk {
     /// (a removed/grown sapling forgets its stage), so the map holds only living saplings
     /// past stage 0. Sparse — empty for the common chunk. See `world::sapling`.
     sapling_stages: HashMap<u16, u8>,
+    /// Door state (facing + open + which-half) of each door cell in this chunk, keyed
+    /// by local block index like the other per-instance maps. A door spans two stacked
+    /// cells, each with its own entry (the upper carries `top = true`). Read by the
+    /// dynamic door renderer + the position-aware collision/selection in `world::door`,
+    /// and persisted in the save record. Sparse — empty for the common chunk. See
+    /// [`crate::door`].
+    doors: HashMap<u16, DoorState>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -139,6 +147,7 @@ impl Chunk {
             model_cells: HashMap::new(),
             model_facings: HashMap::new(),
             sapling_stages: HashMap::new(),
+            doors: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
@@ -222,6 +231,7 @@ impl Chunk {
             model_cells: HashMap::new(),
             model_facings: HashMap::new(),
             sapling_stages: HashMap::new(),
+            doors: HashMap::new(),
             heightmap: self.heightmap.clone(),
             biomes: self.biomes.clone(),
             dirty: false,
@@ -254,6 +264,7 @@ impl Chunk {
         self.clear_water_meta(i);
         self.clear_model_cell(i);
         self.clear_sapling_stage(i);
+        self.clear_door(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -267,6 +278,7 @@ impl Chunk {
         self.clear_water_meta(i);
         self.clear_model_cell(i);
         self.clear_sapling_stage(i);
+        self.clear_door(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
@@ -377,6 +389,40 @@ impl Chunk {
     #[inline]
     pub fn sapling_stages(&self) -> &HashMap<u16, u8> {
         &self.sapling_stages
+    }
+
+    // --- Door state -------------------------------------------------------------
+
+    /// The door state (facing + open + which-half) at a local voxel, or `None` when no
+    /// door is recorded there. See [`crate::door`] / `world::door`.
+    #[inline]
+    pub fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
+        self.doors.get(&Self::block_entity_key(x, y, z)).copied()
+    }
+
+    /// Record a door's `state` at a local voxel. Marks the chunk modified so the door
+    /// persists. Does NOT change the block id — toggling open/closed leaves the door
+    /// block in place (only its metadata moves), like a sapling's growth stage.
+    pub fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
+        self.doors
+            .insert(Self::block_entity_key(x, y, z), state);
+        self.modified = true;
+    }
+
+    /// Forget the door state at local index `i` — its cell is being overwritten
+    /// (broken). Cheap no-op for the common chunk (empty map), mirroring
+    /// [`clear_sapling_stage`](Self::clear_sapling_stage).
+    #[inline]
+    fn clear_door(&mut self, i: usize) {
+        if !self.doors.is_empty() {
+            self.doors.remove(&(i as u16));
+        }
+    }
+
+    /// The door-state map, for saving (keyed by local block index).
+    #[inline]
+    pub fn doors(&self) -> &HashMap<u16, DoorState> {
+        &self.doors
     }
 
     /// Water-flow metadata at a local voxel (0 where the cell is not flowing
@@ -723,6 +769,7 @@ impl Chunk {
         model_cells: HashMap<u16, [u8; 3]>,
         model_facings: HashMap<u16, Facing>,
         sapling_stages: HashMap<u16, u8>,
+        doors: HashMap<u16, DoorState>,
     ) -> Self {
         let mut biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         biomes.copy_from_slice(biomes_src);
@@ -738,6 +785,7 @@ impl Chunk {
             model_cells,
             model_facings,
             sapling_stages,
+            doors,
             heightmap: Box::new([0u16; CHUNK_SX * CHUNK_SZ]),
             biomes,
             dirty: true,

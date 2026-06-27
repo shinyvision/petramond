@@ -321,10 +321,12 @@ fn stack_onto_cursor(cursor: &mut Option<ItemStack>, stack: ItemStack) -> bool {
     }
 }
 
-/// Move `src`'s stack into `dst` (one furnace slot): merge onto a matching item up to
-/// its max, or fill an empty slot; whatever doesn't fit stays in `src`. A different
-/// item in `dst` blocks the move. No-op on an empty `src`.
-fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
+/// Move `src`'s stack into `dst` (one destination slot): merge onto a matching item up
+/// to its max, or fill an empty slot; whatever doesn't fit stays in `src`. A different
+/// item in `dst` blocks the move. No-op on an empty `src`. Used by the furnace shift-in
+/// and the furniture-workbench input shift-in (both move one inventory slot into one
+/// single destination slot).
+pub(crate) fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
     let Some(mut incoming) = src.take() else {
         return;
     };

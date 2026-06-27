@@ -29,6 +29,13 @@ const SKY_GAMMA: f32 = 3.0;
 // while submerged.
 const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
+// Thin-face UV slice (packed bits 29..31): a 3/16-deep face would squish a whole
+// 16px tile across its thin edge, so dynamic thin geometry (the door's 3/16 side
+// edges) sets a slice mode and the shader crops the tile to a matching slice
+// instead — keeping the texel density equal to the wide front face. Mirrors
+// `door::THICKNESS`; the chunk mesher never sets these bits (mode 0 = no crop).
+const THIN_SLICE: f32 = 3.0 / 16.0;
+
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
 // The shader only SELECTS from it — no arithmetic — so uvs are bit-identical
@@ -125,6 +132,22 @@ fn vs_main(in: VsIn) -> VsOut {
             var lh = in.pos.y - floor(in.pos.y);
             if ((corner == 2u || corner == 3u) && lh < 0.001) { lh = 1.0; }
             uv.y = r.y + (1.0 - lh) * (r.w - r.y);
+        }
+    }
+    // Thin-face slice (bits 29..31): crop the tile to a `THIN_SLICE`-wide strip
+    // along the squished axis so a 3/16-deep edge shows a matching slice instead
+    // of the whole tile crushed flat. Mode 1 crops U (faces whose thin world
+    // extent maps to U), mode 2 crops V; mode 0 (all chunk geometry) is untouched.
+    // Doors set this on their canonical side/edge faces (see `render::door_model`).
+    let slice_mode = (in.packed >> 29u) & 0x3u;
+    if (slice_mode != 0u) {
+        let sr = uv_rects[atile];
+        if (slice_mode == 1u) {
+            let lu = select(0.0, 1.0, corner == 1u || corner == 2u);
+            uv.x = sr.x + lu * THIN_SLICE * (sr.z - sr.x);
+        } else {
+            let lv = select(0.0, 1.0, corner == 0u || corner == 1u);
+            uv.y = sr.y + lv * THIN_SLICE * (sr.w - sr.y);
         }
     }
     out.uv = uv;

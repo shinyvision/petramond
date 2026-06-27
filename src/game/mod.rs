@@ -58,6 +58,10 @@ const MAX_TICKS_PER_FRAME: u32 = 4;
 /// Chest-lid open/close speed (fraction per second)
 const CHEST_LID_SPEED: f32 = 3.5;
 
+/// Door swing open/close speed (fraction per second). A touch slower than the chest
+/// lid so the 90° swing reads as a deliberate door, not a snap.
+const DOOR_SWING_SPEED: f32 = 4.5;
+
 /// How near (blocks) a mob/dropped item must be — and it must also be in the camera
 /// frustum — for its animation to force a redraw. Past this it's too small on screen to
 /// read, so it keeps simulating but doesn't hold the frame rate up while the player idles.
@@ -112,6 +116,13 @@ pub struct GameEvents {
     /// The player right-clicked a placed chest this frame (its world position).
     /// The app shell reacts by opening the chest screen.
     pub open_chest: Option<IVec3>,
+    /// The player right-clicked a placed furniture workbench this frame (its position).
+    /// The app shell reacts by opening the workbench screen.
+    pub open_furniture_workbench: Option<IVec3>,
+    /// The player right-clicked a door this frame (toggling it open/closed). Drives the
+    /// same soft hand jab as opening an interactable — the toggle itself is applied on
+    /// the tick, this only animates the hand.
+    pub toggled_door: bool,
 }
 
 /// What the world-mutating actions did across the fixed tick(s) that ran this frame,
@@ -189,6 +200,13 @@ pub struct Game {
     /// scene adapter reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
     /// the easing in [`Game::advance_chest_lids`] is the owning sim/animation state.
     chest_lids: HashMap<IVec3, f32>,
+    /// Transient per-door swing angle (`0.0` closed .. `1.0` open), keyed by the door's
+    /// LOWER cell. A door enters the map when right-click toggles it and is eased toward
+    /// its (now flipped) logical open state by [`Game::advance_door_swings`]; once it
+    /// reaches the target it is dropped (the renderer then reads the resting angle
+    /// straight from the door state). Client-side animation only, never persisted — the
+    /// authoritative open/closed bit lives in the chunk door map. See [`crate::door`].
+    door_swings: HashMap<IVec3, f32>,
     /// Wall-clock seconds banked toward the next fixed simulation tick.
     tick_accumulator: f32,
     /// Wall-clock seconds since the last background autosave.
@@ -224,6 +242,13 @@ pub struct Game {
     /// asks the app shell to open the chest screen. One-shot open request (consumed
     /// via [`GameEvents`]).
     request_open_chest: Option<IVec3>,
+    /// Set to a furniture workbench's position when right-clicked, so the next
+    /// [`tick`](Self::tick) asks the app shell to open the workbench screen. One-shot
+    /// open request (consumed via [`GameEvents`]).
+    request_open_workbench: Option<IVec3>,
+    /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can flick
+    /// the hand (the toggle itself already applied). One-shot (consumed via `GameEvents`).
+    toggled_door: bool,
 }
 
 impl Game {
@@ -302,6 +327,7 @@ impl Game {
             pending_drops: Vec::new(),
             pending_menu_clicks: Vec::new(),
             chest_lids: HashMap::new(),
+            door_swings: HashMap::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
             threw_item: false,
@@ -311,6 +337,8 @@ impl Game {
             request_open_table: false,
             request_open_furnace: None,
             request_open_chest: None,
+            request_open_workbench: None,
+            toggled_door: false,
         }
     }
 
@@ -373,6 +401,7 @@ impl Game {
         // light handoff, autosave). None of this changes world/entity state. ---
         self.tick_entities(dt);
         self.advance_chest_lids(dt);
+        self.advance_door_swings(dt);
         self.tick_mesh_budget();
         self.refresh_dropped_item_lights_after_world_light_update();
 
@@ -390,6 +419,10 @@ impl Game {
             open_furnace: std::mem::take(&mut self.request_open_furnace),
             // Set when a chest was right-clicked.
             open_chest: std::mem::take(&mut self.request_open_chest),
+            // Set when a furniture workbench was right-clicked.
+            open_furniture_workbench: std::mem::take(&mut self.request_open_workbench),
+            // Set when a door was toggled — animates the hand like opening a container.
+            toggled_door: std::mem::take(&mut self.toggled_door),
         }
     }
 
@@ -643,6 +676,29 @@ impl Game {
         self.menu.close_chest();
     }
 
+    /// Begin a furniture-workbench session (the input slot starts empty).
+    pub fn open_workbench_screen(&mut self) {
+        self.menu.open_workbench();
+    }
+
+    /// End the workbench session: return the input block to the inventory (overflow
+    /// thrown into the world), like closing the crafting grid.
+    pub fn close_workbench(&mut self) {
+        let mut overflow = Vec::new();
+        self.menu
+            .close_workbench(&mut self.player.inventory, |stack| overflow.push(stack));
+        for stack in overflow {
+            self.throw_item(stack);
+        }
+    }
+
+    /// The view of the currently-open furniture workbench for the UI (its input block +
+    /// the results it offers, each flagged craftable), or `None` if no workbench screen
+    /// is up.
+    pub fn open_workbench_view(&self) -> Option<crate::render::WorkbenchView> {
+        self.menu.open_workbench_view(&self.recipes)
+    }
+
     /// Close-time cleanup for a cursor-held GUI stack: merge it back into matching
     /// inventory stacks, then empty slots, and queue only any leftover to drop into
     /// the world on the next tick.
@@ -766,6 +822,17 @@ impl Game {
         self.world.collect_chests(out);
     }
 
+    /// Gather the doors to draw this frame (lower cell, state, the two halves' tiles,
+    /// skylight). The render-side scene adapter pairs each with its swing angle (via
+    /// [`door_swing_angle`](Self::door_swing_angle)) to bake a `DoorInstance`.
+    #[inline]
+    pub fn collect_door_render_data(
+        &self,
+        out: &mut Vec<(IVec3, crate::door::DoorState, [crate::atlas::Tile; 3], u8)>,
+    ) {
+        self.world.collect_doors(out);
+    }
+
     /// The transient open progress (`0.0` closed .. `1.0` open) of the chest at
     /// `pos`, or `0.0` if it isn't tracked. The render-side scene adapter reads this
     /// to bake the chest's lid hinge; the easing/animation lives in
@@ -796,6 +863,46 @@ impl Game {
             }
             // Keep while still animating, or while it is the open chest.
             *lid > f32::EPSILON || Some(pos) == open
+        });
+    }
+
+    /// The transient swing angle (`0.0` closed .. `1.0` open) of the door whose LOWER
+    /// cell is `lower`. While a door is mid-swing the eased value is read from
+    /// [`door_swings`](Self::door_swings); once it settles the entry is dropped and the
+    /// door rests at its logical open state (read straight from the door map). The
+    /// render-side scene adapter calls this per visible door to bake its hinge.
+    #[inline]
+    pub fn door_swing_angle(&self, lower: IVec3) -> f32 {
+        if let Some(&a) = self.door_swings.get(&lower) {
+            return a;
+        }
+        // Not animating: rest at the door's logical state.
+        match self.world.door_state_at(lower.x, lower.y, lower.z) {
+            Some(s) if s.open => 1.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Advance the transient door-swing animation by `dt`: each tracked door eases
+    /// toward its current logical open state (flipped on the tick by [`World::toggle_door`]),
+    /// and a door that reaches its target is dropped (it then rests at that state). Purely
+    /// client-side, never saved — like [`advance_chest_lids`](Self::advance_chest_lids).
+    fn advance_door_swings(&mut self, dt: f32) {
+        let step = (dt * DOOR_SWING_SPEED).clamp(0.0, 1.0);
+        self.door_swings.retain(|&lower, angle| {
+            let target = match self.world.door_state_at(lower.x, lower.y, lower.z) {
+                Some(s) if s.open => 1.0,
+                Some(_) => 0.0,
+                // The door was removed while swinging — stop tracking it.
+                None => return false,
+            };
+            if *angle < target {
+                *angle = (*angle + step).min(target);
+            } else if *angle > target {
+                *angle = (*angle - step).max(target);
+            }
+            // Keep only while still travelling toward the target.
+            (*angle - target).abs() > f32::EPSILON
         });
     }
 
@@ -834,6 +941,7 @@ impl Game {
             || self.is_mining()
             || self.world.has_dirty_meshes()
             || self.chest_lids.values().any(|&lid| lid > f32::EPSILON && lid < 1.0)
+            || !self.door_swings.is_empty()
             || self.entity_animating_in_view()
     }
 
@@ -1020,6 +1128,15 @@ impl Game {
             // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
             if matches!(event.block.render_shape(), RenderShape::Model(_)) {
                 self.world.remove_model_block(event.pos);
+            } else if event.block.render_shape() == RenderShape::Door {
+                // A door breaks as a whole: removing either cell clears both halves and
+                // drops one door item (the `spawn_drops` below). Forget any swing too.
+                if let Some(lower) =
+                    self.world.door_lower_cell(event.pos.x, event.pos.y, event.pos.z)
+                {
+                    self.door_swings.remove(&lower);
+                }
+                self.world.remove_door(event.pos);
             } else {
                 self.world
                     .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
@@ -1113,7 +1230,8 @@ impl Game {
     /// furnace opens the furnace screen at that position.
     fn try_open_interactable(&mut self) -> bool {
         let Some(h) = self.look else { return false };
-        match Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z)) {
+        let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        match block {
             Block::CraftingTable => {
                 self.request_open_table = true;
                 true
@@ -1124,6 +1242,26 @@ impl Game {
             }
             Block::Chest => {
                 self.request_open_chest = Some(h.block);
+                true
+            }
+            Block::FurnitureWorkbench => {
+                self.request_open_workbench = Some(h.block);
+                true
+            }
+            // Right-clicking a door toggles it: the open/closed bit flips on this tick
+            // (so collision updates at once and the player can step through), and the
+            // visual swing is eased from the door's current angle. Seed the swing entry
+            // BEFORE the toggle so it starts from the old pose, then eases to the new one.
+            _ if block.render_shape() == RenderShape::Door => {
+                if let Some(lower) =
+                    self.world.door_lower_cell(h.block.x, h.block.y, h.block.z)
+                {
+                    let start = self.door_swing_angle(lower);
+                    self.door_swings.entry(lower).or_insert(start);
+                    self.world.toggle_door(h.block);
+                    // Flick the hand for the interaction (same jab as opening a chest).
+                    self.toggled_door = true;
+                }
                 true
             }
             _ => false,
@@ -1213,6 +1351,35 @@ impl Game {
                         )
                 });
             if !blocked && self.world.place_model_block_facing(base, block, facing) {
+                self.player.inventory.decrement_selected();
+                return true;
+            }
+            return false;
+        }
+
+        // A door is a 2-tall thin block: its lower cell is `p`, the upper is the cell
+        // above. Both must be loaded + replaceable AND give it a floor to stand on
+        // (`door_footprint_clear`), and the closed slab must not trap the player or a
+        // mob. It sits on the edge nearest the placer (the player's facing). Placement
+        // + the paired door state live in `World::place_door`.
+        if block.render_shape() == RenderShape::Door {
+            let facing = facing_from_forward(self.cam.forward());
+            let upper = p + IVec3::new(0, 1, 0);
+            if !self.world.door_footprint_clear(p) {
+                return false;
+            }
+            let closed = |top: bool| {
+                crate::door::collision_boxes(crate::door::DoorState {
+                    facing,
+                    open: false,
+                    top,
+                })
+            };
+            let blocked = [(p, false), (upper, true)].into_iter().any(|(c, top)| {
+                self.player.intersects_block(c)
+                    || self.world.mobs().any_overlapping_boxes(c, closed(top))
+            });
+            if !blocked && self.world.place_door(p, block, facing) {
                 self.player.inventory.decrement_selected();
                 return true;
             }

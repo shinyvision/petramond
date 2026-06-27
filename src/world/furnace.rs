@@ -100,6 +100,7 @@ mod tests {
                 input: ItemType::RawIron,
                 result: ItemStack::new(ItemType::IronIngot, 1),
             }],
+            Vec::new(),
         )
     }
 

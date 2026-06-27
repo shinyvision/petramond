@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "gui_type": "custom",
+  "gui_type": "furniture_workbench",
   "scale": 2,
   "canvas": {
     "w": 352,
@@ -1923,7 +1923,7 @@
     },
     {
       "id": 102,
-      "role": "craft_result",
+      "role": "workbench_result",
       "rect": {
         "x": 90,
         "y": 22,
@@ -1947,7 +1947,7 @@
     },
     {
       "id": 119,
-      "role": "craft_input",
+      "role": "workbench_input",
       "rect": {
         "x": 19,
         "y": 55,

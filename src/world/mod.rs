@@ -5,6 +5,7 @@
 //! API stable while the implementation is split by responsibility.
 
 mod chest;
+pub(crate) mod door;
 mod edit;
 mod entities;
 pub(crate) mod fragile;

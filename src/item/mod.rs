@@ -163,6 +163,18 @@ pub enum ItemType {
     AcaciaSapling,
     DarkOakSapling,
     CherrySapling,
+    // --- Doors update: the block-items for the per-species wooden doors. Appended at
+    // the END (ids NOT equal to their block ids) and mapped explicitly in
+    // `from_block` / `as_block`, like the furnace/chest/torch/workbench/sapling
+    // block-items. Each renders as a flat door sprite (see `render_kind`). ---
+    OakDoor,
+    SpruceDoor,
+    BirchDoor,
+    JungleDoor,
+    AcaciaDoor,
+    DarkOakDoor,
+    CherryDoor,
+    MangroveDoor,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -387,6 +399,14 @@ impl ItemType {
             Block::AcaciaSapling => ItemType::AcaciaSapling,
             Block::DarkOakSapling => ItemType::DarkOakSapling,
             Block::CherrySapling => ItemType::CherrySapling,
+            Block::OakDoor => ItemType::OakDoor,
+            Block::SpruceDoor => ItemType::SpruceDoor,
+            Block::BirchDoor => ItemType::BirchDoor,
+            Block::JungleDoor => ItemType::JungleDoor,
+            Block::AcaciaDoor => ItemType::AcaciaDoor,
+            Block::DarkOakDoor => ItemType::DarkOakDoor,
+            Block::CherryDoor => ItemType::CherryDoor,
+            Block::MangroveDoor => ItemType::MangroveDoor,
             _ => Self::from_id(b.id()),
         }
     }
@@ -409,6 +429,14 @@ impl ItemType {
             ItemType::AcaciaSapling => Some(Block::AcaciaSapling),
             ItemType::DarkOakSapling => Some(Block::DarkOakSapling),
             ItemType::CherrySapling => Some(Block::CherrySapling),
+            ItemType::OakDoor => Some(Block::OakDoor),
+            ItemType::SpruceDoor => Some(Block::SpruceDoor),
+            ItemType::BirchDoor => Some(Block::BirchDoor),
+            ItemType::JungleDoor => Some(Block::JungleDoor),
+            ItemType::AcaciaDoor => Some(Block::AcaciaDoor),
+            ItemType::DarkOakDoor => Some(Block::DarkOakDoor),
+            ItemType::CherryDoor => Some(Block::CherryDoor),
+            ItemType::MangroveDoor => Some(Block::MangroveDoor),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }
@@ -516,6 +544,9 @@ impl ItemType {
                 RenderShape::Torch => ItemRenderKind::Sprite(Tile::Torch),
                 // A bbmodel block renders its actual baked model everywhere it's shown.
                 RenderShape::Model(kind) => ItemRenderKind::Model(kind),
+                // A door shows its flat door icon (the `_door_item` art), not the
+                // per-half slab tiles the in-world model uses — like the torch.
+                RenderShape::Door => ItemRenderKind::Sprite(self.item_sprite()),
             },
             None => ItemRenderKind::Sprite(self.item_sprite()),
         }
@@ -531,12 +562,22 @@ impl ItemType {
         self.def().held_pose
     }
 
-    /// The flat atlas sprite for an item-only item (tools + raw drops).
-    /// Block-items get their icon from the underlying block and never call this.
+    /// The flat atlas sprite for an item drawn as a billboard — item-only items
+    /// (tools + raw drops) and the doors (which place a block but show a flat icon,
+    /// like the torch). Cube/cross/model block-items get their icon from the block
+    /// and never call this.
     #[inline]
     fn item_sprite(self) -> Tile {
         use ItemType::*;
         match self {
+            OakDoor => Tile::OakDoorItem,
+            SpruceDoor => Tile::SpruceDoorItem,
+            BirchDoor => Tile::BirchDoorItem,
+            JungleDoor => Tile::JungleDoorItem,
+            AcaciaDoor => Tile::AcaciaDoorItem,
+            DarkOakDoor => Tile::DarkOakDoorItem,
+            CherryDoor => Tile::CherryDoorItem,
+            MangroveDoor => Tile::MangroveDoorItem,
             Stick => Tile::Stick,
             WoodenPickaxe => Tile::WoodenPickaxe,
             StonePickaxe => Tile::StonePickaxe,
@@ -763,6 +804,14 @@ mod tests {
             ItemType::AcaciaSapling,
             ItemType::DarkOakSapling,
             ItemType::CherrySapling,
+            ItemType::OakDoor,
+            ItemType::SpruceDoor,
+            ItemType::BirchDoor,
+            ItemType::JungleDoor,
+            ItemType::AcaciaDoor,
+            ItemType::DarkOakDoor,
+            ItemType::CherryDoor,
+            ItemType::MangroveDoor,
         ];
 
         assert_eq!(ItemType::ALL, expected);
@@ -1020,6 +1069,12 @@ mod tests {
                 }
                 RenderShape::Model(kind) => {
                     assert_eq!(item.render_kind(), ItemRenderKind::Model(kind), "{block:?}");
+                }
+                RenderShape::Door => {
+                    assert!(
+                        matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                        "{block:?} door renders as a flat sprite"
+                    );
                 }
             }
         }

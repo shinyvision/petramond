@@ -263,13 +263,20 @@ impl App {
                 self.open_chest(pos);
             }
         }
+        // Right-clicking a placed furniture workbench opens its screen.
+        if events.open_furniture_workbench.is_some() && self.screen.gameplay_enabled() {
+            self.open_furniture_workbench();
+        }
         self.pointer.clear_edges();
 
-        // Right-clicking a placed crafting table / furnace / chest opens its screen
-        // instead of placing — flick the hand for that interaction too.
+        // Right-clicking a placed crafting table / furnace / chest / workbench opens its
+        // screen instead of placing, and right-clicking a door toggles it — flick the
+        // hand for any of these interactions too.
         let opened_interactable = events.open_crafting_table
             || events.open_furnace.is_some()
-            || events.open_chest.is_some();
+            || events.open_chest.is_some()
+            || events.open_furniture_workbench.is_some()
+            || events.toggled_door;
         // Latch the hand-animation triggers so the next `render` plays them even if a
         // draw is skipped between now and then (OR-merged, never dropped).
         self.hand.broke |= events.broke_block;
@@ -333,6 +340,7 @@ impl App {
             craft_result: self.game.craft_grid().result().copied(),
             furnace: self.game.open_furnace_view(),
             chest: self.game.open_chest_view(),
+            workbench: self.game.open_workbench_view(),
             screen: screen_size,
             cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
         });
@@ -423,6 +431,12 @@ impl App {
         self.game.open_chest_screen(pos);
     }
 
+    /// Open the furniture-workbench screen (after right-clicking a placed workbench).
+    fn open_furniture_workbench(&mut self) {
+        self.enter_menu(AppScreen::FurnitureWorkbench);
+        self.game.open_workbench_screen();
+    }
+
     /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
@@ -445,6 +459,7 @@ impl App {
         self.game.close_crafting();
         self.game.close_furnace();
         self.game.close_chest();
+        self.game.close_workbench();
         self.screen = AppScreen::Game;
         self.pointer.grabbing = true;
     }
@@ -534,7 +549,9 @@ impl App {
             _ if shift || button != PointerButton::Primary => None,
             MenuSlot::Inventory(i) => Some(i),
             MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
-            MenuSlot::Craft(_) | MenuSlot::Furnace(_) => None,
+            // Craft / furnace / workbench slots don't gather on a double-click (their
+            // results are take-only and the inputs are single slots).
+            MenuSlot::Craft(_) | MenuSlot::Furnace(_) | MenuSlot::Workbench(_) => None,
         };
         match streak_key {
             Some(key) => self.pointer.register_left_click(key, now) && self.game.cursor_has_stack(),

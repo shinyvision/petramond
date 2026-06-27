@@ -18,6 +18,7 @@ use super::block_model::BillboardBasis;
 use super::break_overlay::build_break_overlay;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
+use super::door_model::build_doors;
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
@@ -34,7 +35,7 @@ use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
-    BreakOverlayView, ChestInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
+    BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleInstance, UiFrame,
 };
 use crate::bbmodel::Model;
@@ -93,6 +94,9 @@ pub struct UiSnapshot {
     /// The open chest's 27 storage slots, or `None`. When `Some`, the chest panel +
     /// storage grid are drawn instead of the crafting grid.
     pub chest: Option<super::ChestView>,
+    /// The open furniture workbench's input + offered results, or `None`. When `Some`,
+    /// the workbench panel is drawn with the result grid (greyed where not craftable).
+    pub workbench: Option<super::WorkbenchView>,
 }
 
 impl Default for UiSnapshot {
@@ -109,6 +113,7 @@ impl Default for UiSnapshot {
             cursor: None,
             furnace: None,
             chest: None,
+            workbench: None,
         }
     }
 }
@@ -210,6 +215,9 @@ pub struct Renderer {
     /// Chest model dynamic draw (opaque pipeline, like item entities; its caps are
     /// separate so a wall of chests can't make dropped items vanish).
     chest_draw: DynamicDraw,
+    /// Door model dynamic draw (opaque pipeline like chests; separate caps so a wall of
+    /// doors can't make chests vanish).
+    door_draw: DynamicDraw,
     /// Per-species mob render resources, indexed by `Mob as usize` (registry id
     /// order). Built once from `mob::MOB_DEFS`; each frame the visible mobs are
     /// grouped here by species, baked, and drawn in the mob pass.
@@ -285,6 +293,10 @@ pub struct Renderer {
     pub chests: Vec<ChestInstance>,
     /// Reusable scratch for the frustum-visible subset of `chests`.
     chest_visible: Vec<ChestInstance>,
+    /// Placed doors to draw in the world this frame.
+    pub doors: Vec<DoorInstance>,
+    /// Reusable scratch for the frustum-visible subset of `doors`.
+    door_visible: Vec<DoorInstance>,
     /// Mobs to draw in the world this frame (the scene adapter fills this by
     /// interpolating the sim's live mob instances). The per-species visible subset +
     /// baked geometry live in `mob_gpu`.
@@ -504,6 +516,7 @@ async fn new_renderer_inner(
     // the `opaque_pipe` field below still owns the original.
     let item_entity_pipe = pipelines.opaque_pipe.clone();
     let chest_pipe = pipelines.opaque_pipe.clone();
+    let door_pipe = pipelines.opaque_pipe.clone();
 
     // Build per-species mob render resources by iterating the mob registry: load each
     // species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
@@ -745,6 +758,13 @@ async fn new_renderer_inner(
             super::pipeline::MAX_CHEST_VERTICES,
             super::pipeline::MAX_CHEST_INDICES,
         ),
+        door_draw: DynamicDraw::new(
+            door_pipe,
+            pipelines.door_vbuf,
+            pipelines.door_ibuf,
+            super::pipeline::MAX_DOOR_VERTICES,
+            super::pipeline::MAX_DOOR_INDICES,
+        ),
         mob_gpu,
         model_pipe: model_pipe.clone(),
         model_atlas_texture,
@@ -793,6 +813,8 @@ async fn new_renderer_inner(
         item_entity_visible: Vec::new(),
         chests: Vec::new(),
         chest_visible: Vec::new(),
+        doors: Vec::new(),
+        door_visible: Vec::new(),
         mobs: Vec::new(),
         particle_verts: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
@@ -910,6 +932,13 @@ impl Renderer {
         self.chests.extend_from_slice(v);
     }
 
+    /// Store the placed doors to draw this frame. Reuses the existing `Vec` capacity
+    /// (clear + extend) to avoid per-frame reallocation.
+    pub fn set_doors(&mut self, v: &[DoorInstance]) {
+        self.doors.clear();
+        self.doors.extend_from_slice(v);
+    }
+
     /// Store the mobs to draw this frame (already interpolated by the scene adapter).
     /// Reuses the existing `Vec` capacity.
     pub fn set_mobs(&mut self, v: &[MobRenderInstance]) {
@@ -952,6 +981,7 @@ impl Renderer {
         self.ui.result = v.craft_result.map(|s| (s.item, s.count));
         self.ui.furnace = v.furnace;
         self.ui.chest = v.chest;
+        self.ui.workbench = v.workbench;
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?
@@ -1070,6 +1100,22 @@ impl Renderer {
                     [u0, v0],
                     [u1, v1],
                     [1.0, 1.0, 1.0, 1.0],
+                );
+            }
+            // Greyed (semi-transparent) icons — workbench results not yet craftable.
+            // Same icon-atlas quad, drawn at reduced alpha so the panel shows through.
+            for &(item, r) in &self.ui_build.dim_icon_quads {
+                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
+                super::ui::push_quad_uv(
+                    &mut verts,
+                    screen,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h,
+                    [u0, v0],
+                    [u1, v1],
+                    [1.0, 1.0, 1.0, 0.35],
                 );
             }
             let normal_icon_vertex_count = verts.len() as u32;
@@ -1332,6 +1378,25 @@ impl Renderer {
             |verts, indices| build_chests(chest_visible, verts, indices),
         );
 
+        // Doors (2-tall hinged slab), frustum-culled and baked exactly like chests,
+        // reusing the same CPU scratch. Drawn by the EXISTING opaque pipeline.
+        self.door_visible.clear();
+        for inst in &self.doors {
+            // Cull box: the door's two-cell column (its swung slab stays within it).
+            let min = inst.pos;
+            let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
+            if self.frustum.aabb_visible(min, max) {
+                self.door_visible.push(*inst);
+            }
+        }
+        let door_visible = &self.door_visible;
+        self.door_draw.bake(
+            &self.queue,
+            &mut self.item_entity_verts,
+            &mut self.item_entity_indices,
+            |verts, indices| build_doors(door_visible, verts, indices),
+        );
+
         // Mobs (animated entity models), grouped by species and frustum-culled, baked
         // into each species' OWN `ItemVertex` buffers (a different vertex type from the
         // packed block vertex). Each instance is posed by the walk animation at its
@@ -1573,22 +1638,23 @@ impl Renderer {
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             self.item_entity_draw.draw(&mut pass);
         }
-        // CHEST PASS: placed chests (inset body + hinged lid) drawn as full opaque
-        // geometry by the EXISTING opaque pipeline with the same uniform + atlas binds,
-        // loading color + depth so chests occlude and are occluded by terrain — exactly
-        // like the item-entity pass above.
-        if self.chest_draw.index_count > 0 {
+        // CHEST + DOOR PASS: placed chests (inset body + hinged lid) and doors (2-tall
+        // hinged slab) drawn as full opaque geometry by the EXISTING opaque pipeline
+        // with the same uniform + atlas binds, loading color + depth so they occlude and
+        // are occluded by terrain — exactly like the item-entity pass above.
+        if self.chest_draw.index_count > 0 || self.door_draw.index_count > 0 {
             let mut pass = color_depth_pass(
                 &mut enc,
                 &view,
                 &self.depth,
-                "chest pass",
+                "chest+door pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             self.chest_draw.draw(&mut pass);
+            self.door_draw.draw(&mut pass);
         }
         // MOB PASS: animated entity models, one draw per visible species. Loads color
         // + depth (test + WRITE) so mobs occlude and are occluded by terrain — like

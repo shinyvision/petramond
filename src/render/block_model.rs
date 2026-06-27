@@ -192,6 +192,68 @@ pub(super) fn push_box_faces_lit(
     }
 }
 
+/// Packed bit shift for the thin-face UV-slice mode (bits 29..31, above the 6-bit
+/// skylight that tops out at bit 28). 0 = no crop, 1 = crop U, 2 = crop V — read by
+/// `block.wgsl`'s `slice_mode` branch. Only dynamic thin geometry (the door's 3/16
+/// side/edge faces) sets it; the chunk mesher leaves these bits 0.
+pub(super) const UV_SLICE_SHIFT: u32 = 29;
+
+/// As [`push_box_faces_lit`] but, per face (`ALL_FACES` order):
+/// - MIRRORS the texture horizontally where `mirror_u` is set — used by the door so
+///   its BACK face is the mirror image of its front (hinge/handle stay on the same
+///   physical side from either side). Mirroring is pure UV: the quad's corner indices
+///   are swapped left↔right (`[1,0,3,2]`), flipping `u`, no geometry/winding change.
+/// - applies a thin-face UV-SLICE mode from `slice_mode` (0 none, 1 crop-U, 2 crop-V),
+///   packed into bits 29..31 ([`UV_SLICE_SHIFT`]) so the shader crops a 3/16-deep face
+///   to a matching strip of its tile instead of squishing the whole tile flat — used
+///   by the door's thin side (crop-U) and top/bottom edge (crop-V) faces.
+pub(super) fn push_box_faces_lit_mirrored(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    min: Vec3,
+    max: Vec3,
+    skylight: u8,
+    mirror_u: [bool; 6],
+    slice_mode: [u32; 6],
+) {
+    for (((tile, face), mir), slice) in
+        faces.into_iter().zip(ALL_FACES).zip(mirror_u).zip(slice_mode)
+    {
+        let mat = foliage_tint::face_material(tile);
+        let corners = face.quad_box(min.to_array(), max.to_array());
+        let bits = face_bits_textured_lit(mat, face, skylight) | (slice << UV_SLICE_SHIFT);
+        if mir {
+            push_quad_uflip(verts, indices, corners, mat.tint, bits);
+        } else {
+            push_quad(verts, indices, corners, mat.tint, bits);
+        }
+    }
+}
+
+/// [`push_quad`] with the texture mirrored horizontally: each geometric corner is given
+/// the UV of its left↔right partner (`corner_uv` maps 0/1/2/3 to bl/br/tr/tl, so the
+/// swap `[1,0,3,2]` flips `u`). Geometry + winding are unchanged.
+#[inline]
+fn push_quad_uflip(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    tint: [f32; 3],
+    base_bits: u32,
+) {
+    const MIRROR: [u32; 4] = [1, 0, 3, 2];
+    let start = verts.len() as u32;
+    for (i, pos) in corners.into_iter().enumerate() {
+        verts.push(Vertex {
+            pos,
+            tint,
+            packed: base_bits | (MIRROR[i] << 8),
+        });
+    }
+    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+}
+
 /// As [`push_box_faces_lit`] but recessing the four side faces 1/16 inward (via
 /// [`cactus_quad`](crate::mesh::face::cactus_quad)) so the box reads as a cactus —
 /// the icon / held / dropped counterpart of the chunk mesher's inset cactus.
