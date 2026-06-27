@@ -99,14 +99,21 @@ pub struct GameInput {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameEvents {
-    pub placed_block: bool,
-    pub broke_block: bool,
+    /// The block placed this frame, if any — drives the client's place sound and the
+    /// first-person place jab.
+    pub placed_block: Option<Block>,
+    /// The block broken (player-mined) this frame, if any — drives the client's break
+    /// sound and the first-person break swing.
+    pub broke_block: Option<Block>,
     /// The hand swung this frame for an attack — a mob hit or a punch at the air.
     /// Drives a one-shot first-person swing (like `broke_block`).
     pub swung_hand: bool,
     /// An item/stack left the hand for the world this frame — a Q drop or an
     /// inventory drag-out. Drives the same first-person place jab as a placement.
     pub threw_item: bool,
+    /// At least one dropped item was collected into the inventory this frame — drives
+    /// the global item-pickup sound.
+    pub picked_up_item: bool,
     /// The player right-clicked a placed crafting table this frame. The app shell
     /// reacts by opening the 3×3 crafting screen (the game can't own screens).
     pub open_crafting_table: bool,
@@ -127,16 +134,19 @@ pub struct GameEvents {
 
 /// What the world-mutating actions did across the fixed tick(s) that ran this frame,
 /// surfaced back to the per-frame [`GameEvents`] so the presentation layer (hand
-/// animation, sounds) reacts. Bools because a frame runs at most a handful of ticks and
-/// each action happens at most once — only whether it happened matters.
+/// animation, sounds) reacts. A frame runs at most a handful of ticks and each action
+/// happens at most once, so a bool — or, where the client needs to know *which* block,
+/// an `Option<Block>` — suffices; the last occurrence in the frame wins.
 #[derive(Copy, Clone, Debug, Default)]
 struct TickEvents {
-    /// A block finished breaking on a tick.
-    broke_block: bool,
-    /// A block was placed on a tick.
-    placed_block: bool,
+    /// The block (player-mined) that finished breaking on a tick, if any.
+    broke_block: Option<Block>,
+    /// The block placed on a tick, if any.
+    placed_block: Option<Block>,
     /// An attack swing connected on a tick (a mob hit or a punch at the air).
     swung_hand: bool,
+    /// At least one dropped item was collected into the inventory on a tick.
+    picked_up_item: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -411,6 +421,8 @@ impl Game {
             placed_block: events.placed_block,
             broke_block: events.broke_block,
             swung_hand: events.swung_hand,
+            // A dropped item was collected this frame → the global pickup sound.
+            picked_up_item: events.picked_up_item,
             // Throws happen via input handlers before this tick; report and clear.
             threw_item: std::mem::take(&mut self.threw_item),
             // Set on a tick by `tick_place` when a table was right-clicked.
@@ -493,7 +505,9 @@ impl Game {
         // lost their support, or were washed away by water) get a player-style break:
         // the break-particle burst plus their rolled item drops.
         self.process_natural_breaks();
-        self.item_pickup_tick();
+        if self.item_pickup_tick() {
+            events.picked_up_item = true;
+        }
 
         // Entities. Mobs and dropped items are owned by `World` (they persist with their
         // chunks); the world drives them via a borrow-split. Soft entity pushing shoves
@@ -767,6 +781,19 @@ impl Game {
     #[inline]
     pub fn is_mining(&self) -> bool {
         self.mining.is_mining()
+    }
+
+    /// The block the player is actively mining right now, if any — a presentation
+    /// query the client maps to a mining sound (see [`crate::audio`]). The mining
+    /// itself runs on the tick; this just reports its current target so audio (which
+    /// must stay off the tick) can react per frame.
+    #[inline]
+    pub fn mining_block(&self) -> Option<Block> {
+        if self.mining.is_mining() {
+            self.mining.block()
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -1118,7 +1145,7 @@ impl Game {
             &self.world,
             tool,
         ) {
-            events.broke_block = true;
+            events.broke_block = Some(event.block);
             let hit_normal = self
                 .look
                 .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
@@ -1210,8 +1237,13 @@ impl Game {
             return;
         }
         let interacted = !self.intent_sneak && self.try_open_interactable();
-        if !interacted && self.try_place() {
-            events.placed_block = true;
+        if !interacted {
+            // Capture the held block before `try_place` consumes it: on success that is
+            // exactly the block placed, which the client maps to a place sound.
+            let held = self.player.inventory.selected().and_then(|s| s.item.as_block());
+            if self.try_place() {
+                events.placed_block = held;
+            }
         }
     }
 
@@ -1589,8 +1621,9 @@ impl Game {
     /// Per game-tick (20 TPS) item maintenance: advance every drop's lifetime
     /// timer (despawning those past their 5-minute limit) and pull any eligible
     /// drop within the player's pickup radius into the inventory. Driven from the
-    /// fixed-tick loop, so both are paced by the simulation clock.
-    fn item_pickup_tick(&mut self) {
+    /// fixed-tick loop, so both are paced by the simulation clock. Returns whether at
+    /// least one item was collected this tick, so the client can play the pickup sound.
+    fn item_pickup_tick(&mut self) -> bool {
         self.world.tick_item_lifetime();
         let player_pos = self.player.body_center();
         // Plan first against a cloned inventory, reserving capacity without
@@ -1615,9 +1648,14 @@ impl Game {
         // aliasing. Actual inventory mutation only happens after a requested drop
         // reaches the absorb radius.
         let inventory = &mut self.player.inventory;
+        let mut collected = false;
         self.world
             .dropped_items_mut()
-            .collect_requested_pickups(player_pos, |stack| inventory.add(stack));
+            .collect_requested_pickups(player_pos, |stack| {
+                collected = true;
+                inventory.add(stack)
+            });
+        collected
     }
 
     fn refresh_dropped_item_lights_after_world_light_update(&mut self) {

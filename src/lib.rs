@@ -8,6 +8,7 @@
 pub mod app;
 pub mod asset_cache;
 pub mod atlas;
+pub mod audio;
 pub mod bbmodel;
 pub mod biome;
 pub mod block;

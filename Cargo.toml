@@ -58,6 +58,9 @@ flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"
+# Audio playback (cpal output + symphonia ogg/vorbis decode only — no mp3/flac/wav/
+# recording), kept lean like `image`/`noise`. Used by `crate::audio`.
+rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"] }
 
 [profile.release]
 opt-level = 3

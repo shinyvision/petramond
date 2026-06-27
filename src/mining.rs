@@ -170,6 +170,13 @@ impl MiningState {
         self.target
     }
 
+    /// The block being mined (cached at mining start), if any. Lets the tick resolve
+    /// the block's mining sound without re-reading the world mid-break.
+    #[inline]
+    pub fn block(&self) -> Option<Block> {
+        self.block
+    }
+
     #[inline]
     fn reset(&mut self) {
         self.target = None;

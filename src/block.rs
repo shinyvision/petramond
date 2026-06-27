@@ -3,14 +3,17 @@
 use serde::{Deserialize, Serialize};
 
 use crate::atlas::Tile;
+use crate::audio::Sound;
 use crate::block_model::BlockModelKind;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
 pub mod behavior;
 mod data;
 mod definition;
+mod sounds;
 
 pub use behavior::BlockBehavior;
+pub use sounds::BlockSoundAction;
 pub(crate) use definition::BlockMaterial;
 
 #[repr(u8)]
@@ -534,6 +537,28 @@ impl Block {
     #[inline]
     pub fn harvest_tier(self) -> u8 {
         self.def().harvest_tier
+    }
+
+    /// The [`Sound`](crate::audio::Sound) this block makes for `action` — mining,
+    /// breaking, placing, a footstep — or `None` if that interaction is silent.
+    ///
+    /// Data-driven and resolved by **material** (wood sounds woody, stone stony),
+    /// exactly as [`preferred_tool`](Self::preferred_tool) is, so a new block of an
+    /// existing material is heard automatically. The mapping lives in
+    /// [`sounds`]; the simulation emits the resolved id as an `audio::SoundEvent`
+    /// for the client to play (see [`crate::audio`]).
+    #[inline]
+    pub fn sound(self, action: BlockSoundAction) -> Option<Sound> {
+        self.sound_set().get(action)
+    }
+
+    /// The shared [`BlockSoundSet`](sounds::BlockSoundSet) for this block's material.
+    #[inline]
+    fn sound_set(self) -> &'static sounds::BlockSoundSet {
+        match self.material() {
+            BlockMaterial::Wood => &sounds::WOOD,
+            _ => &sounds::SILENT,
+        }
     }
 
     #[inline]

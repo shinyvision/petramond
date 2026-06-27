@@ -11,6 +11,8 @@ mod screen;
 pub use screen::{AppScreen, CursorPolicy};
 
 use crate::app::input::{ControlEvent, InputController};
+use crate::audio::{Audio, Sound};
+use crate::block::BlockSoundAction;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton};
 use crate::game::{Game, GameInput, MenuSlot};
@@ -21,6 +23,9 @@ pub struct App {
     /// Render-side translation of the sim's per-frame world data (dropped items,
     /// particles, chests, held-item light) into the renderer's wire structs.
     scene: Scene,
+    /// Client-side sound engine. Drains the sim's per-tick [`crate::audio::SoundEvent`]s
+    /// each frame and plays them; never part of the deterministic simulation.
+    audio: Audio,
     last: f64,
     input: InputController,
     pointer: PointerState,
@@ -81,6 +86,7 @@ impl App {
         Self {
             game: Game::new(cam, world_name, seed, render_dist),
             scene: Scene::new(),
+            audio: Audio::new(),
             last: now_seconds(),
             input: InputController::default(),
             pointer: PointerState::default(),
@@ -247,6 +253,32 @@ impl App {
 
         let game_input = self.take_game_input();
         let events = self.game.tick(dt, &game_input);
+        // Drive the mining loop sound from the client, never the game tick (audio is
+        // presentation): play the dig sound for whatever block is being mined,
+        // repeating at the clip's own length. The sim only reports *which block* is
+        // under the player's mining; the engine handles timing + per-hit pitch.
+        let mining_sound = self
+            .game
+            .mining_block()
+            .and_then(|b| b.sound(BlockSoundAction::Dig));
+        self.audio.set_loop(mining_sound, now);
+        // A block placed this frame plays its one-shot place sound — also client-side
+        // and data-driven (wood today; silent for materials without a place asset yet).
+        if let Some(b) = events.placed_block {
+            if let Some(s) = b.sound(BlockSoundAction::Place) {
+                self.audio.play(s);
+            }
+        }
+        // ...and a block broken (player-mined) this frame plays its one-shot break sound.
+        if let Some(b) = events.broke_block {
+            if let Some(s) = b.sound(BlockSoundAction::Break) {
+                self.audio.play(s);
+            }
+        }
+        // Collecting a dropped item plays the global pickup sound (not a block sound).
+        if events.picked_up_item {
+            self.audio.play(Sound::ItemPickup);
+        }
         // Right-clicking a placed crafting table opens its 3×3 screen.
         if events.open_crafting_table && self.screen.gameplay_enabled() {
             self.open_crafting_table();
@@ -279,15 +311,15 @@ impl App {
             || events.toggled_door;
         // Latch the hand-animation triggers so the next `render` plays them even if a
         // draw is skipped between now and then (OR-merged, never dropped).
-        self.hand.broke |= events.broke_block;
+        self.hand.broke |= events.broke_block.is_some();
         // Placing a block, throwing/dropping an item, and opening an interactable block
         // all flick the hand with the same soft right-click jab.
-        self.hand.placed |= events.placed_block || events.threw_item || opened_interactable;
+        self.hand.placed |= events.placed_block.is_some() || events.threw_item || opened_interactable;
         // An attack swing (mob hit or punch at the air) flicks the hand once.
         self.hand.swung |= events.swung_hand;
 
-        let acted = events.broke_block
-            || events.placed_block
+        let acted = events.broke_block.is_some()
+            || events.placed_block.is_some()
             || events.threw_item
             || events.swung_hand
             || opened_interactable;
