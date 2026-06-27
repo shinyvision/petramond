@@ -19,12 +19,12 @@ use super::break_overlay::build_break_overlay;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
+use super::gui_def::{GuiKind, OverlayTag};
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
-use super::gui_def::{GuiKind, OverlayTag};
 use super::particles::build_particles_split;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
@@ -665,8 +665,14 @@ async fn new_renderer_inner(
             label: Some("gui texture bind"),
             layout: &pipelines.atlas_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         }))
     };
@@ -911,6 +917,14 @@ impl Renderer {
         self.held_item = self.held_item_anim.update(v);
     }
 
+    /// Whether the renderer-owned first-person hand animation is still moving.
+    /// The app uses this to keep redraw-on-demand alive for one-shot place/break/
+    /// attack swings after the sim event frame has already passed.
+    #[inline]
+    pub fn hand_animation_active(&self) -> bool {
+        self.held_item_anim.is_active()
+    }
+
     /// Store the combined light + warm-tint amount to apply to the first-person hand
     /// / held item (so it brightens AND warms near torches/furnaces).
     pub fn set_held_item_light(&mut self, skylight: u8, warm: u8) {
@@ -1048,34 +1062,46 @@ impl Renderer {
         let counts = &self.ui_build.counts;
         let drag_counts = &self.ui_build.drag_counts;
         if !dim.is_empty() && dim.len() <= cap {
-            self.queue.write_buffer(&self.ui_solid_vbuf, 0, bytemuck::cast_slice(dim));
+            self.queue
+                .write_buffer(&self.ui_solid_vbuf, 0, bytemuck::cast_slice(dim));
             self.ui_dim_vertex_count = dim.len() as u32;
         }
         let mut off = self.ui_dim_vertex_count as usize;
         if !counts.is_empty() && off + counts.len() <= cap {
-            self.queue.write_buffer(&self.ui_solid_vbuf, (off * vsize) as u64, bytemuck::cast_slice(counts));
+            self.queue.write_buffer(
+                &self.ui_solid_vbuf,
+                (off * vsize) as u64,
+                bytemuck::cast_slice(counts),
+            );
             self.ui_count_vertex_count = counts.len() as u32;
             off += counts.len();
         }
         if !drag_counts.is_empty() && off + drag_counts.len() <= cap {
-            self.queue.write_buffer(&self.ui_solid_vbuf, (off * vsize) as u64, bytemuck::cast_slice(drag_counts));
+            self.queue.write_buffer(
+                &self.ui_solid_vbuf,
+                (off * vsize) as u64,
+                bytemuck::cast_slice(drag_counts),
+            );
             self.ui_drag_count_vertex_count = drag_counts.len() as u32;
         }
 
         // Baked panel + dynamic overlays + hover highlight, each its own buffer.
         let panel = &self.ui_build.panel;
         if !panel.is_empty() && panel.len() <= cap {
-            self.queue.write_buffer(&self.ui_panel_vbuf, 0, bytemuck::cast_slice(panel));
+            self.queue
+                .write_buffer(&self.ui_panel_vbuf, 0, bytemuck::cast_slice(panel));
             self.ui_panel_vertex_count = panel.len() as u32;
         }
         let overlays = &self.ui_build.overlays;
         if !overlays.is_empty() && overlays.len() <= cap {
-            self.queue.write_buffer(&self.ui_overlay_vbuf, 0, bytemuck::cast_slice(overlays));
+            self.queue
+                .write_buffer(&self.ui_overlay_vbuf, 0, bytemuck::cast_slice(overlays));
             self.ui_overlay_vertex_count = overlays.len() as u32;
         }
         let hover = &self.ui_build.hover;
         if !hover.is_empty() && hover.len() <= cap {
-            self.queue.write_buffer(&self.ui_hover_vbuf, 0, bytemuck::cast_slice(hover));
+            self.queue
+                .write_buffer(&self.ui_hover_vbuf, 0, bytemuck::cast_slice(hover));
             self.ui_hover_vertex_count = hover.len() as u32;
         }
 
@@ -1881,7 +1907,14 @@ impl Renderer {
             || self.ui_hover_vertex_count > 0
             || self.icon_quad_vertex_count > 0
         {
-            let mut pass = color_depth_pass(&mut enc, &view, &self.depth, "ui pass", wgpu::LoadOp::Load, None);
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "ui pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
             pass.set_pipeline(&self.ui_pipe);
             // 1) Dim backdrop behind an open menu.
             if self.ui_dim_vertex_count > 0 {
@@ -1904,7 +1937,9 @@ impl Renderer {
                 let mut start = 0u32;
                 for span in &self.ui_build.overlay_spans {
                     let end = start + span.count;
-                    if let Some(bind) = kind.and_then(|k| self.gui_textures.get(&GuiTexId::Overlay(k, span.tag))) {
+                    if let Some(bind) =
+                        kind.and_then(|k| self.gui_textures.get(&GuiTexId::Overlay(k, span.tag)))
+                    {
                         pass.set_bind_group(0, bind, &[]);
                         pass.draw(start..end, 0..1);
                     }
@@ -1932,7 +1967,14 @@ impl Renderer {
             || self.drag_icon_quad_vertex_count > 0
             || self.ui_drag_count_vertex_count > 0
         {
-            let mut pass = color_depth_pass(&mut enc, &view, &self.depth, "ui overlay / drag pass", wgpu::LoadOp::Load, None);
+            let mut pass = color_depth_pass(
+                &mut enc,
+                &view,
+                &self.depth,
+                "ui overlay / drag pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
             pass.set_pipeline(&self.ui_pipe);
             // Normal stack counts (solid), packed after the dim backdrop.
             if self.ui_count_vertex_count > 0 {

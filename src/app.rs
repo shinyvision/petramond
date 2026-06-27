@@ -218,9 +218,9 @@ impl App {
     /// wake (at least at the tick rate) whether or not it then draws, so
     /// [`Game::tick`]'s fixed-step accumulator holds the world at 20 TPS regardless of
     /// frame rate. A redraw is needed when input changed something ([`dirty`]), the
-    /// view moved, a hand action fired, terrain is (re)meshing, or anything on screen
-    /// is animating ([`Game::is_visually_active`]). Slow sky drift is left to the
-    /// host's keep-alive redraw.
+    /// view moved, a hand action fired or is still animating, terrain is (re)meshing,
+    /// or anything on screen is animating ([`Game::is_visually_active`]). Slow sky
+    /// drift is left to the host's keep-alive redraw.
     ///
     /// [`dirty`]: Self::dirty
     pub fn update(&mut self, renderer: &Renderer) -> bool {
@@ -326,6 +326,7 @@ impl App {
         // `dirty` is peeked-and-cleared here: a redraw consumes the pending-input flag.
         std::mem::take(&mut self.dirty)
             || acted
+            || renderer.hand_animation_active()
             || mesh_pending
             || self.camera_moved()
             || self.game.is_visually_active()

@@ -80,6 +80,11 @@ impl HeldItemAnimator {
             swing_scale: self.swing_scale,
         }
     }
+
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.swing_finishing || self.swing_t > 0.0
+    }
 }
 
 #[cfg(test)]
