@@ -23,6 +23,14 @@ impl World {
         self.meshes.contains_key(&pos)
     }
 
+    /// Are any chunks still queued for a (re)mesh? Drives the app shell's
+    /// redraw-on-demand: while terrain meshing is pending, the visible world is
+    /// about to change, so a frame must be drawn (the mesh budget builds these in
+    /// `tick_mesh_budget` and the renderer uploads them in `sync_meshes`).
+    pub fn has_dirty_meshes(&self) -> bool {
+        !self.dirty_meshes.is_empty()
+    }
+
     /// Monotonic counter bumped whenever section visibility changes; the
     /// renderer's section-cull cache keys on it to know when to recompute.
     #[inline]

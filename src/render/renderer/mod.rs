@@ -397,9 +397,24 @@ pub async fn new_renderer_with_instance(
     new_renderer_inner(instance, surface, width, height).await
 }
 
-/// Instance descriptor selecting all native backends (Vulkan/Metal/DX12/GL).
+/// Instance descriptor selecting native backends (Vulkan/Metal/DX12/GL).
+///
+/// Honors `WGPU_BACKEND` (`vulkan` | `gl`) to pin a single backend; unset = all.
+/// This matters on a hybrid-GPU Wayland session: the discrete NVIDIA GPU's Vulkan
+/// WSI can't present to a Wayland surface it isn't driving (it reports
+/// `VK_KHR_wayland_surface` present = false), so wgpu's surface-compatible pick
+/// falls back to the Intel iGPU. Its EGL/GLES path *can* present there, so
+/// `WGPU_BACKEND=gl` (with the EGL vendor pointed at NVIDIA) renders on the dGPU.
 pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
-    wgpu::InstanceDescriptor::default()
+    let mut desc = wgpu::InstanceDescriptor::default();
+    if let Ok(name) = std::env::var("WGPU_BACKEND") {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "vulkan" | "vk" => desc.backends = wgpu::Backends::VULKAN,
+            "gl" | "gles" | "opengl" => desc.backends = wgpu::Backends::GL,
+            _ => {}
+        }
+    }
+    desc
 }
 
 pub async fn new_renderer(surface: wgpu::Surface<'static>, width: u32, height: u32) -> Renderer {

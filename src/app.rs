@@ -32,6 +32,31 @@ pub struct App {
     /// Set when the inventory opens so the UI cursor is centred on the next tick,
     /// where the renderer surface size is known.
     recenter_cursor: bool,
+    /// Set whenever input or a state change means the next frame would differ from
+    /// the last drawn one. Drives redraw-on-demand: the host draws only when this (or
+    /// camera motion / [`Game::is_visually_active`]) holds, instead of every frame.
+    /// Consumed (peeked-and-cleared) by [`update`](Self::update).
+    dirty: bool,
+    /// `now_seconds` of the last [`render`](Self::render). Render runs on demand, not
+    /// once per update, so the held-item animation advances by its own delta.
+    last_render: f64,
+    /// Camera pose `[x, y, z, yaw, pitch]` at the last render, to detect a moved view
+    /// (the dominant redraw trigger) without redrawing an unchanged one. Standing still
+    /// reproduces bit-identical values, so equality means "view unchanged".
+    last_pose: Option<[f32; 5]>,
+    /// First-person hand-animation triggers latched since the last render, so a
+    /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
+    hand: HandTriggers,
+}
+
+/// One-shot first-person hand-animation triggers, latched by [`App::update`] and
+/// consumed by the next [`App::render`]. OR-merged across updates so none is dropped
+/// when several sim updates run between two draws.
+#[derive(Default, Copy, Clone)]
+struct HandTriggers {
+    broke: bool,
+    placed: bool,
+    swung: bool,
 }
 
 #[derive(Default, Copy, Clone, Debug)]
@@ -62,6 +87,11 @@ impl App {
             screen: AppScreen::Game,
             modifiers: Modifiers::default(),
             recenter_cursor: false,
+            // Draw the first frame unconditionally (also forced by `last_pose: None`).
+            dirty: true,
+            last_render: now_seconds(),
+            last_pose: None,
+            hand: HandTriggers::default(),
         }
     }
 
@@ -88,11 +118,15 @@ impl App {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.game.set_aspect(width as f32 / height.max(1) as f32);
+        self.dirty = true;
     }
 
     /// Apply a shared control event. Returns false only when the app did not
     /// consume the control, e.g. Escape with no screen open on native.
     pub fn handle_control(&mut self, control: Control, down: bool) -> bool {
+        // Any control edge (move, look-bind, hotbar, menu toggle, …) changes what the
+        // next frame shows, so force a redraw; movement is also caught by camera motion.
+        self.dirty = true;
         let Some(event) = self.input.set_control(control, down) else {
             return true;
         };
@@ -132,14 +166,17 @@ impl App {
         self.pointer.dx += dx;
         self.pointer.dy += dy;
         self.pointer.grabbing = true;
+        self.dirty = true;
     }
 
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.pointer.cursor_x = x;
         self.pointer.cursor_y = y;
+        self.dirty = true;
     }
 
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
+        self.dirty = true;
         match (button, down) {
             (PointerButton::Primary, true) => {
                 self.pointer.left_click = true;
@@ -159,6 +196,7 @@ impl App {
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
         self.pointer.scroll_delta += delta;
+        self.dirty = true;
     }
 
     /// Update the tracked physical keyboard modifiers (Ctrl / Shift) from the
@@ -166,9 +204,20 @@ impl App {
     /// Sprint/Sneak controls.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
+        self.dirty = true;
     }
 
-    pub fn tick(&mut self, renderer: &mut Renderer) {
+    /// Advance input and the simulation for this wake, and report whether the frame
+    /// must be redrawn. The sim is decoupled from drawing: the host calls this every
+    /// wake (at least at the tick rate) whether or not it then draws, so
+    /// [`Game::tick`]'s fixed-step accumulator holds the world at 20 TPS regardless of
+    /// frame rate. A redraw is needed when input changed something ([`dirty`]), the
+    /// view moved, a hand action fired, terrain is (re)meshing, or anything on screen
+    /// is animating ([`Game::is_visually_active`]). Slow sky drift is left to the
+    /// host's keep-alive redraw.
+    ///
+    /// [`dirty`]: Self::dirty
+    pub fn update(&mut self, renderer: &Renderer) -> bool {
         let now = now_seconds();
         let dt = (now - self.last) as f32;
         self.last = now;
@@ -178,6 +227,7 @@ impl App {
             self.pointer.cursor_x = screen_size.0 as f32 * 0.5;
             self.pointer.cursor_y = screen_size.1 as f32 * 0.5;
             self.recenter_cursor = false;
+            self.dirty = true;
         }
 
         // Route inventory clicks before reading game input, so a right-click
@@ -188,6 +238,12 @@ impl App {
         if self.pointer.right_click && self.route_screen_right_click(screen_size, now) {
             self.pointer.right_click = false;
         }
+
+        // Sampled BEFORE the tick: `game.tick` runs the mesh budget, which drains the
+        // dirty-mesh queue into built-but-unuploaded meshes that `render` uploads. Reading
+        // it here keeps build + upload in the same frame, so a changed chunk can never
+        // settle without being drawn.
+        let mesh_pending = self.game.has_dirty_meshes();
 
         let game_input = self.take_game_input();
         let events = self.game.tick(dt, &game_input);
@@ -209,6 +265,44 @@ impl App {
         }
         self.pointer.clear_edges();
 
+        // Right-clicking a placed crafting table / furnace / chest opens its screen
+        // instead of placing — flick the hand for that interaction too.
+        let opened_interactable = events.open_crafting_table
+            || events.open_furnace.is_some()
+            || events.open_chest.is_some();
+        // Latch the hand-animation triggers so the next `render` plays them even if a
+        // draw is skipped between now and then (OR-merged, never dropped).
+        self.hand.broke |= events.broke_block;
+        // Placing a block, throwing/dropping an item, and opening an interactable block
+        // all flick the hand with the same soft right-click jab.
+        self.hand.placed |= events.placed_block || events.threw_item || opened_interactable;
+        // An attack swing (mob hit or punch at the air) flicks the hand once.
+        self.hand.swung |= events.swung_hand;
+
+        let acted = events.broke_block
+            || events.placed_block
+            || events.threw_item
+            || events.swung_hand
+            || opened_interactable;
+        // `dirty` is peeked-and-cleared here: a redraw consumes the pending-input flag.
+        std::mem::take(&mut self.dirty)
+            || acted
+            || mesh_pending
+            || self.camera_moved()
+            || self.game.is_visually_active()
+    }
+
+    /// Draw the current frame. The host calls this only when [`update`](Self::update)
+    /// (or its periodic keep-alive) decided the frame would differ from the last one,
+    /// so drawing is fully decoupled from the simulation tick.
+    pub fn render(&mut self, renderer: &mut Renderer) {
+        let now = now_seconds();
+        // The hand animation advances by render time (not sim time); clamp so a long
+        // idle gap before the first active frame can't jump a swing mid-flight.
+        let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
+        self.last_render = now;
+        let screen_size = renderer.screen_size();
+
         let environment = self.game.environment(now);
         renderer.update_uniforms(
             self.game.camera(),
@@ -218,20 +312,13 @@ impl App {
         );
         renderer.set_selection(self.game.selection());
         renderer.set_break_overlay(self.game.break_overlay_view());
-        // Right-clicking a placed crafting table / furnace / chest opens its screen
-        // instead of placing — flick the hand for that interaction too.
-        let opened_interactable = events.open_crafting_table
-            || events.open_furnace.is_some()
-            || events.open_chest.is_some();
+        let hand = std::mem::take(&mut self.hand);
         renderer.set_held_item(HeldItemFrame {
             item: self.game.selected_item(),
             mining: self.game.is_mining(),
-            broke_block: events.broke_block,
-            // Placing a block, throwing/dropping an item, and opening an interactable
-            // block all flick the hand with the same soft right-click jab.
-            placed: events.placed_block || events.threw_item || opened_interactable,
-            // An attack swing (mob hit or punch at the air) flicks the hand once.
-            swung: events.swung_hand,
+            broke_block: hand.broke,
+            placed: hand.placed,
+            swung: hand.swung,
             dt,
         });
         // Bake the sim's per-frame world-render data (dropped items, particles,
@@ -253,6 +340,26 @@ impl App {
         renderer.sync_meshes(self.game.world_mut());
         renderer.update_section_visibility(self.game.world_mut());
         renderer.render();
+
+        // Remember the drawn view so the next `update` can tell a still camera (idle)
+        // from a moved one and redraw only on change.
+        let c = self.game.camera();
+        self.last_pose = Some([c.pos.x, c.pos.y, c.pos.z, c.yaw, c.pitch]);
+    }
+
+    /// Whether the camera pose changed since the last [`render`](Self::render). At rest
+    /// on the ground the pose is reproduced bit-for-bit, so this is `false` when idle;
+    /// `None` (before the first draw) counts as moved so the opening frame is drawn.
+    fn camera_moved(&self) -> bool {
+        let c = self.game.camera();
+        self.last_pose != Some([c.pos.x, c.pos.y, c.pos.z, c.yaw, c.pitch])
+    }
+
+    /// Does pending input want a frame? Peeked (not cleared) by the host between updates
+    /// to serve input promptly without busy-waiting; [`update`](Self::update) clears it.
+    #[inline]
+    pub fn wants_redraw(&self) -> bool {
+        self.dirty
     }
 
     fn take_game_input(&mut self) -> GameInput {

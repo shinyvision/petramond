@@ -25,6 +25,10 @@ impl DirtyMeshQueue {
         self.pending.remove(&pos);
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
     /// Pop up to `max` chunks, those nearest `center` (the player's chunk) first,
     /// so nearby terrain meshes before distant terrain. Meshing is idempotent (a
     /// rebuild from current state), so the order is a priority, not a contract — a

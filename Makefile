@@ -9,20 +9,27 @@
 #
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
+#   NV_OFFLOAD= make run        -- run on the Intel iGPU instead of the NVIDIA dGPU
 
 CARGO ?= cargo
 SEED  ?= 0x2
 RD    ?= 16
 
+# Run on the discrete NVIDIA GPU via PRIME render offload. The game renders through
+# Vulkan, so __VK_LAYER_NV_optimus=NVIDIA_only (which hides the Intel iGPU from the
+# Vulkan loader) is what actually steers adapter selection — the __GLX_ var only
+# affects OpenGL/GLES. Override with `make run NV_OFFLOAD=` to use the Intel iGPU.
+NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
+
 .PHONY: run run-native dev build build-native clean gui-builder gui-builder-dev
 
 run: run-native
 run-native: build-native
-	LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
+	$(NV_OFFLOAD) LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
 		$(CARGO) run --release --bin llamacraft_native
 
 dev:
-	LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
+	$(NV_OFFLOAD) LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
 		$(CARGO) run --bin llamacraft_native
 
 build: build-native

@@ -9,7 +9,7 @@ mod container;
 use std::collections::HashMap;
 
 use crate::block::{Block, RenderShape};
-use crate::camera::Camera;
+use crate::camera::{Camera, Frustum};
 use crate::crafting::{load_recipes, Recipes};
 use crate::entity::{DroppedItem, ParticleSystem};
 use crate::furnace::Facing;
@@ -57,6 +57,11 @@ const MAX_TICKS_PER_FRAME: u32 = 4;
 
 /// Chest-lid open/close speed (fraction per second)
 const CHEST_LID_SPEED: f32 = 3.5;
+
+/// How near (blocks) a mob/dropped item must be — and it must also be in the camera
+/// frustum — for its animation to force a redraw. Past this it's too small on screen to
+/// read, so it keeps simulating but doesn't hold the frame rate up while the player idles.
+const ENTITY_ACTIVITY_RANGE: f32 = 50.0;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MovementInput {
@@ -813,6 +818,51 @@ impl Game {
     #[inline]
     pub fn tick_alpha(&self) -> f32 {
         (self.tick_accumulator / TICK_DT).clamp(0.0, 1.0)
+    }
+
+    /// Whether anything on screen is currently moving or pending, so the app shell knows
+    /// this frame would differ from the last and must be drawn. Covers a mob or dropped
+    /// item that is both close and in view (see [`entity_animating_in_view`]), live
+    /// particles, an in-progress mining crack, chest lids mid-swing, and chunks still
+    /// awaiting a (re)mesh. Camera motion, raw input, and open-menu interaction are tracked
+    /// by the shell; slow sky/fog drift by the host's keep-alive redraw. A mob behind the
+    /// player or far off keeps simulating but does NOT hold the frame at full rate.
+    ///
+    /// [`entity_animating_in_view`]: Self::entity_animating_in_view
+    pub fn is_visually_active(&self) -> bool {
+        !self.particles.is_empty()
+            || self.is_mining()
+            || self.world.has_dirty_meshes()
+            || self.chest_lids.values().any(|&lid| lid > f32::EPSILON && lid < 1.0)
+            || self.entity_animating_in_view()
+    }
+
+    /// Is a mob or dropped item both within [`ENTITY_ACTIVITY_RANGE`] and inside the
+    /// camera frustum? Only then does its per-frame animation/interpolation actually
+    /// change the rendered image and warrant holding the frame rate up. Off-screen or
+    /// distant entities still simulate on the tick — they just don't force redraws,
+    /// which is what lets a stationary player idle in a populated overworld.
+    fn entity_animating_in_view(&self) -> bool {
+        let eye = self.cam.pos;
+        let r2 = ENTITY_ACTIVITY_RANGE * ENTITY_ACTIVITY_RANGE;
+        let frustum = Frustum::from_view_proj(self.cam.view_proj());
+        // A coarse upright box around the entity's feet — generous enough that an entity
+        // near a frustum edge isn't missed for the frame it slips into view.
+        let visible = |p: Vec3| {
+            (p - eye).length_squared() <= r2
+                && frustum.aabb_visible(p - Vec3::new(0.5, 0.0, 0.5), p + Vec3::new(0.5, 2.0, 0.5))
+        };
+        self.mobs().iter().any(|m| visible(m.pos))
+            || self.item_entities().iter().any(|d| visible(d.pos))
+    }
+
+    /// Whether terrain (re)meshing is queued. The app shell samples this *before*
+    /// the tick (which runs the mesh budget and drains the queue into built-but-
+    /// unuploaded meshes) so it forces the draw that uploads them. See
+    /// [`is_visually_active`](Self::is_visually_active).
+    #[inline]
+    pub fn has_dirty_meshes(&self) -> bool {
+        self.world.has_dirty_meshes()
     }
 
     /// Combined light + warm-tint amount at the player's eye, for lighting the
