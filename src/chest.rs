@@ -8,9 +8,9 @@
 //! contents. Mirrors [`crate::furnace::Furnace`] minus the smelting machinery.
 
 use crate::furnace::Facing;
+use crate::gui::ChestView;
 use crate::inventory::SlotGrid;
 use crate::item::ItemStack;
-use crate::render::ChestView;
 
 /// Storage slots in one chest: 3 rows × 9 columns, row-major (matching the GUI grid
 /// and the player inventory's main grid).

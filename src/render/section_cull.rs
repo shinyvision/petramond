@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::camera::Frustum;
 use crate::chunk::{ChunkPos, CHUNK_SY, SECTION_COUNT, SECTION_SIZE};
 use crate::mesh::MeshIndexSection;
-use crate::world::{SectionFace, SectionPos, World, SECTION_FACES};
+use crate::world::{SectionFace, SectionPos, TerrainVisibilitySource, SECTION_FACES};
 
 const MAX_VISIBLE_SECTIONS: usize = 512;
 const MAX_SECTION_VISIBILITY_BUILDS_PER_UPDATE: usize = 24;
@@ -129,7 +129,11 @@ pub(super) struct SectionVisibilityCache {
 }
 
 impl SectionVisibilityCache {
-    pub(super) fn update(&mut self, world: &mut World, camera: glam::Vec3) {
+    pub(super) fn update(
+        &mut self,
+        terrain: &mut impl TerrainVisibilitySource,
+        camera: glam::Vec3,
+    ) {
         let camera_cell = (
             camera.x.floor() as i32,
             camera.y.floor() as i32,
@@ -137,7 +141,7 @@ impl SectionVisibilityCache {
         );
         let key = SectionVisibilityKey {
             camera_cell,
-            world_revision: world.visibility_revision(),
+            world_revision: terrain.visibility_revision(),
         };
         if self.key == Some(key) {
             return;
@@ -145,7 +149,7 @@ impl SectionVisibilityCache {
 
         self.chunk_masks.clear();
         self.active = false;
-        if let Some(chunk_masks) = compute_visible_sections(world, camera_cell) {
+        if let Some(chunk_masks) = compute_visible_sections(terrain, camera_cell) {
             self.chunk_masks = chunk_masks;
             self.active = true;
         }
@@ -174,10 +178,11 @@ impl SectionVisibilityCache {
 }
 
 fn compute_visible_sections(
-    world: &mut World,
+    terrain: &mut impl TerrainVisibilitySource,
     camera_cell: (i32, i32, i32),
 ) -> Option<HashMap<ChunkPos, u16>> {
-    let (start, exits) = world.camera_section_exits(camera_cell.0, camera_cell.1, camera_cell.2)?;
+    let (start, exits) =
+        terrain.camera_section_exits(camera_cell.0, camera_cell.1, camera_cell.2)?;
     let mut chunk_masks = HashMap::new();
     let mut visited_entries: HashSet<(SectionPos, SectionFace)> = HashSet::new();
     let mut queue = VecDeque::new();
@@ -186,7 +191,7 @@ fn compute_visible_sections(
 
     mark_visible(&mut chunk_masks, start, &mut visible_sections)?;
     enqueue_exits(
-        world,
+        terrain,
         start,
         exits,
         &mut chunk_masks,
@@ -197,11 +202,11 @@ fn compute_visible_sections(
     )?;
 
     while let Some((section, entry_face)) = queue.pop_front() {
-        let Some(connectivity) = section_connectivity(world, section, &mut built_chunks)? else {
+        let Some(connectivity) = section_connectivity(terrain, section, &mut built_chunks)? else {
             continue;
         };
         enqueue_exits(
-            world,
+            terrain,
             section,
             connectivity.exits_from(entry_face),
             &mut chunk_masks,
@@ -216,28 +221,28 @@ fn compute_visible_sections(
 }
 
 fn section_connectivity(
-    world: &mut World,
+    terrain: &mut impl TerrainVisibilitySource,
     section: SectionPos,
     built_chunks: &mut usize,
 ) -> Option<Option<crate::world::SectionConnectivity>> {
     let chunk_pos = section.chunk_pos();
-    if !world.has_section_visibility(chunk_pos) {
-        if !world.chunk_loaded(chunk_pos.cx, chunk_pos.cz) {
+    if !terrain.has_section_visibility(chunk_pos) {
+        if !terrain.chunk_loaded(chunk_pos) {
             return Some(None);
         }
         if *built_chunks >= MAX_SECTION_VISIBILITY_BUILDS_PER_UPDATE {
             return None;
         }
-        if !world.ensure_section_visibility(chunk_pos) {
+        if !terrain.ensure_section_visibility(chunk_pos) {
             return Some(None);
         }
         *built_chunks += 1;
     }
-    Some(world.section_connectivity(section))
+    Some(terrain.section_connectivity(section))
 }
 
 fn enqueue_exits(
-    world: &mut World,
+    terrain: &mut impl TerrainVisibilitySource,
     section: SectionPos,
     exits: u8,
     chunk_masks: &mut HashMap<ChunkPos, u16>,
@@ -253,7 +258,7 @@ fn enqueue_exits(
         let Some(next) = section.neighbor(exit) else {
             continue;
         };
-        let Some(_) = section_connectivity(world, next, built_chunks)? else {
+        let Some(_) = section_connectivity(terrain, next, built_chunks)? else {
             continue;
         };
 
@@ -291,6 +296,7 @@ mod tests {
     use super::*;
     use crate::block::Block;
     use crate::chunk::{Chunk, CHUNK_SY};
+    use crate::world::World;
 
     fn insert_visibility_chunk(world: &mut World, pos: ChunkPos, chunk: Chunk) {
         world.insert_chunk_for_test(pos, chunk);
@@ -322,7 +328,8 @@ mod tests {
         insert_visibility_chunk(&mut world, wall_pos, wall);
         insert_visibility_chunk(&mut world, behind_pos, Chunk::new(2, 0));
 
-        let visible = compute_visible_sections(&mut world, (8, 8, 8)).unwrap();
+        let mut terrain = world.terrain_render_handoff();
+        let visible = compute_visible_sections(&mut terrain, (8, 8, 8)).unwrap();
 
         assert!(visible.get(&left_pos).is_some_and(|m| m & 1 != 0));
         assert!(visible.get(&wall_pos).is_some_and(|m| m & 1 != 0));
@@ -335,7 +342,8 @@ mod tests {
         world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         world.invalidate_section_visibility(ChunkPos::new(0, 0));
 
-        let visible = compute_visible_sections(&mut world, (8, 80, 8));
+        let mut terrain = world.terrain_render_handoff();
+        let visible = compute_visible_sections(&mut terrain, (8, 80, 8));
 
         assert!(visible.is_none());
     }

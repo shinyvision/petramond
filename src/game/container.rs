@@ -11,10 +11,12 @@ use crate::chest::Chest;
 use crate::controls::PointerButton;
 use crate::crafting::{CraftGrid, Recipes};
 use crate::furnace::Furnace;
+use crate::gui::{
+    ChestView, CraftHit, FurnaceHit, FurnaceView, MenuSlot, WorkbenchHit, WorkbenchView,
+};
 use crate::inventory::{Inventory, SlotGrid};
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::IVec3;
-use crate::render::{ChestView, CraftHit, FurnaceHit, FurnaceView, WorkbenchHit, WorkbenchView};
 use crate::world::World;
 
 /// What the open GUI is acting on — named for the thing being edited, not for the
@@ -50,27 +52,6 @@ impl ContainerTarget {
             _ => None,
         }
     }
-}
-
-/// A click hit-tested to a concrete slot identity, the unit the App routes through
-/// [`ContainerMenu::click`]. The App's per-layout hit-testers resolve a pixel to one
-/// of these (a role for the furnace, an index for chest/craft/inventory); the menu
-/// then decodes the (slot × button × shift) taxonomy in ONE place keyed on its
-/// [`ContainerTarget`], instead of the App carrying a router per container type.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum MenuSlot {
-    /// A main inventory/hotbar slot (the 36-slot grid drawn under every panel).
-    /// What a shift-click does depends on the open target — the furnace tag-routes
-    /// it to fuel/input, the chest dumps it in, otherwise it shuffles hotbar↔grid.
-    Inventory(usize),
-    /// A crafting input cell or the result slot of the open craft grid.
-    Craft(CraftHit),
-    /// A furnace role slot (smeltable input, fuel, or take-only output).
-    Furnace(FurnaceHit),
-    /// A chest storage slot index.
-    Chest(usize),
-    /// A furniture-workbench slot: the input block, or a take-only result cell.
-    Workbench(WorkbenchHit),
 }
 
 /// A block-entity container the open GUI can edit in place: the one accessor that
@@ -658,7 +639,12 @@ impl ContainerMenu {
     /// falls back to the ordinary hotbar↔grid move so shift-click still does something —
     /// mirroring the furnace's tag-routed shift-in. The reverse direction (input → inv)
     /// is [`workbench_shift_input`](Self::workbench_shift_input).
-    pub fn workbench_shift_from_inventory(&mut self, inv: &mut Inventory, recipes: &Recipes, i: usize) {
+    pub fn workbench_shift_from_inventory(
+        &mut self,
+        inv: &mut Inventory,
+        recipes: &Recipes,
+        i: usize,
+    ) {
         let Some(stack) = inv.slot(i).copied() else {
             return;
         };
@@ -975,7 +961,11 @@ mod tests {
         let mut inv = Inventory::new();
         menu.open_workbench();
         // Empty input offers nothing.
-        assert!(menu.open_workbench_view(&recipes).unwrap().results.is_empty());
+        assert!(menu
+            .open_workbench_view(&recipes)
+            .unwrap()
+            .results
+            .is_empty());
 
         // Three oak planks in → oak door offered and craftable (cost 1).
         place_in_workbench_input(
@@ -1008,7 +998,14 @@ mod tests {
             inv.cursor().map(|s| (s.item, s.count)),
             Some((ItemType::OakDoor, 1))
         );
-        assert_eq!(menu.open_workbench_view(&recipes).unwrap().input.unwrap().count, 2);
+        assert_eq!(
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .unwrap()
+                .count,
+            2
+        );
     }
 
     #[test]
@@ -1031,7 +1028,10 @@ mod tests {
             false,
         );
         assert_eq!(
-            menu.open_workbench_view(&recipes).unwrap().input.map(|s| (s.item, s.count)),
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .map(|s| (s.item, s.count)),
             Some((ItemType::OakPlanks, 5)),
             "the whole plank stack moved into the input",
         );
@@ -1100,6 +1100,13 @@ mod tests {
             false,
         );
         assert!(inv.cursor().is_none(), "no craft below cost");
-        assert_eq!(menu.open_workbench_view(&recipes).unwrap().input.unwrap().count, 3);
+        assert_eq!(
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .unwrap()
+                .count,
+            3
+        );
     }
 }

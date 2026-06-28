@@ -1,7 +1,7 @@
 use crate::camera::{Camera, Frustum};
 use crate::chunk::{ChunkPos, CHUNK_SY};
 use crate::mathh::SelectionShape;
-use crate::world::World;
+use crate::world::{TerrainMeshUploadSource, TerrainVisibilitySource};
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
@@ -19,7 +19,6 @@ use super::break_overlay::build_break_overlay;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
-use super::gui_def::{GuiKind, OverlayTag};
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
@@ -36,9 +35,10 @@ use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
-    MobRenderInstance, ParticleInstance, UiFrame,
+    MobRenderInstance, ParticleInstance,
 };
 use crate::bbmodel::Model;
+use crate::gui::{GuiKind, OverlayTag};
 use crate::inventory::TOTAL_SLOTS;
 use crate::item::ItemType;
 
@@ -66,10 +66,9 @@ pub struct RenderStats {
     pub section_culling_active: bool,
 }
 
-/// An owned, render-side snapshot of the bits of [`UiFrame`] the renderer needs
-/// to draw the hotbar / open inventory. Captured each frame in
-/// [`Renderer::set_ui`] so the renderer never holds a borrow of the game's
-/// `Inventory` across frames (render reads flat data — contract §rules).
+/// An owned, render-side snapshot of the flat UI data needed to draw the hotbar
+/// or open menu. Built by the app presentation boundary before it reaches the
+/// renderer.
 #[derive(Clone, Debug)]
 pub struct UiSnapshot {
     pub open: bool,
@@ -290,11 +289,11 @@ pub struct Renderer {
     /// Reusable scratch for the frustum-visible subset of `item_entities`.
     item_entity_visible: Vec<ItemEntityInstance>,
     /// Placed chests to draw in the world this frame.
-    pub chests: Vec<ChestInstance>,
+    chests: Vec<ChestInstance>,
     /// Reusable scratch for the frustum-visible subset of `chests`.
     chest_visible: Vec<ChestInstance>,
     /// Placed doors to draw in the world this frame.
-    pub doors: Vec<DoorInstance>,
+    doors: Vec<DoorInstance>,
     /// Reusable scratch for the frustum-visible subset of `doors`.
     door_visible: Vec<DoorInstance>,
     /// Mobs to draw in the world this frame (the scene adapter fills this by
@@ -308,7 +307,7 @@ pub struct Renderer {
     pub ui_pipe: wgpu::RenderPipeline,
     /// Every baked GUI texture (panel / hover / overlay) as its own bind group,
     /// keyed by [`GuiTexId`]. Loaded from disk at init; the UI pass looks each up
-    /// by the open kind. See `gui_def`.
+    /// by the open kind. See `crate::gui`.
     gui_textures: std::collections::HashMap<GuiTexId, wgpu::BindGroup>,
     /// Solid-color quads (the menu dim backdrop + all stack-count digits) packed
     /// into one buffer: dim `[0, dim)`, then normal counts, then drag counts. Drawn
@@ -657,7 +656,7 @@ async fn new_renderer_inner(
     // Data-driven GUI textures: upload each baked PNG (panel + optional hover +
     // each dynamic overlay) into its own bind group (reusing the gui-atlas bind
     // layout) keyed by GuiTexId. Loaded from disk at runtime so re-baking +
-    // restarting picks them up with no recompile. See `gui_def`.
+    // restarting picks them up with no recompile. See `crate::gui`.
     let load_gui_bind = |path: &std::path::Path| -> Option<wgpu::BindGroup> {
         let bytes = std::fs::read(path).ok()?;
         let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
@@ -677,17 +676,17 @@ async fn new_renderer_inner(
         }))
     };
     let mut gui_textures = std::collections::HashMap::new();
-    for (kind, path) in super::gui_def::baked_panels() {
+    for (kind, path) in crate::gui::baked_panels() {
         if let Some(bind) = load_gui_bind(&path) {
             gui_textures.insert(GuiTexId::Panel(kind), bind);
         }
     }
-    for (kind, path) in super::gui_def::baked_hovers() {
+    for (kind, path) in crate::gui::baked_hovers() {
         if let Some(bind) = load_gui_bind(&path) {
             gui_textures.insert(GuiTexId::Hover(kind), bind);
         }
     }
-    for (kind, tag, path) in super::gui_def::baked_overlays() {
+    for (kind, tag, path) in crate::gui::baked_overlays() {
         if let Some(bind) = load_gui_bind(&path) {
             gui_textures.insert(GuiTexId::Overlay(kind, tag), bind);
         }
@@ -941,14 +940,14 @@ impl Renderer {
 
     /// Store the placed chests to draw this frame. Reuses the existing `Vec`
     /// capacity (clear + extend) to avoid per-frame reallocation.
-    pub fn set_chests(&mut self, v: &[ChestInstance]) {
+    pub(in crate::render) fn set_chests(&mut self, v: &[ChestInstance]) {
         self.chests.clear();
         self.chests.extend_from_slice(v);
     }
 
     /// Store the placed doors to draw this frame. Reuses the existing `Vec` capacity
     /// (clear + extend) to avoid per-frame reallocation.
-    pub fn set_doors(&mut self, v: &[DoorInstance]) {
+    pub(in crate::render) fn set_doors(&mut self, v: &[DoorInstance]) {
         self.doors.clear();
         self.doors.extend_from_slice(v);
     }
@@ -974,28 +973,9 @@ impl Renderer {
         self.model_particles.extend_from_slice(v);
     }
 
-    /// Snapshot the UI/inventory bits needed for this frame's UI pass. Extracts
-    /// the small flat state (open flag, screen, cursor, 36 slot stacks, active
-    /// slot, cursor stack) into owned `Renderer` state so the renderer never
-    /// holds a borrow of the game `Inventory`.
-    pub fn set_ui(&mut self, v: UiFrame) {
-        self.ui.open = v.open;
-        self.ui.kind = v.kind;
-        self.ui.screen = v.screen;
-        self.ui.cursor_px = v.cursor_px;
-        self.ui.active = v.inv.active_slot();
-        for (i, slot) in self.ui.slots.iter_mut().enumerate() {
-            *slot = v.inv.slot(i).map(|s| (s.item, s.count));
-        }
-        self.ui.cursor = v.inv.cursor().map(|s| (s.item, s.count));
-        // Snapshot the crafting grid (cells past the live range stay cleared).
-        for (i, cell) in self.ui.craft.iter_mut().enumerate() {
-            *cell = v.craft.get(i).copied().flatten().map(|s| (s.item, s.count));
-        }
-        self.ui.result = v.craft_result.map(|s| (s.item, s.count));
-        self.ui.furnace = v.furnace;
-        self.ui.chest = v.chest;
-        self.ui.workbench = v.workbench;
+    /// Store the already-owned UI state needed for this frame's UI pass.
+    pub fn set_ui(&mut self, v: UiSnapshot) {
+        self.ui = v;
     }
 
     /// Is this chunk mesh's bounding box inside the current view frustum?
@@ -1007,26 +987,28 @@ impl Renderer {
         self.frustum.aabb_visible(min, max)
     }
 
-    /// Synchronize GPU meshes with the World's CPU meshes.
-    pub fn sync_meshes(&mut self, world: &mut World) {
-        // Drop GPU meshes whose CPU chunk is gone — checked through the world's
-        // mesh accessor so no per-frame scratch set is allocated.
-        self.chunk_meshes.retain(|p, _| world.has_mesh(*p));
+    /// Synchronize GPU meshes with the terrain CPU meshes.
+    pub(crate) fn sync_meshes(&mut self, terrain: &mut impl TerrainMeshUploadSource) {
+        // Drop GPU meshes whose CPU chunk is gone through the terrain handoff so
+        // no per-frame scratch set is allocated.
+        self.chunk_meshes.retain(|p, _| terrain.has_mesh(*p));
         // Upload only meshes marked dirty by the world (newly built/changed) or
-        // missing on the GPU; clear each CPU dirty flag as it is uploaded. Existing
-        // unchanged meshes are left on the GPU untouched.
-        for (pos, mesh) in world.iter_meshes_mut() {
-            let need_upload = !self.chunk_meshes.contains_key(&pos) || mesh.mesh_dirty;
+        // missing on the GPU. The handoff clears the CPU dirty flag only after
+        // this callback reports a completed upload.
+        let device = &self.device;
+        let chunk_meshes = &mut self.chunk_meshes;
+        terrain.for_each_mesh_upload(|pos, mesh, dirty| {
+            let need_upload = !chunk_meshes.contains_key(&pos) || dirty;
             if need_upload {
-                let gm = upload_mesh(&self.device, mesh, pos);
-                self.chunk_meshes.insert(pos, gm);
-                mesh.mesh_dirty = false;
+                let gm = upload_mesh(device, mesh, pos);
+                chunk_meshes.insert(pos, gm);
             }
-        }
+            need_upload
+        });
     }
 
-    pub fn update_section_visibility(&mut self, world: &mut World) {
-        self.section_visibility.update(world, self.cam_pos);
+    pub(crate) fn update_section_visibility(&mut self, terrain: &mut impl TerrainVisibilitySource) {
+        self.section_visibility.update(terrain, self.cam_pos);
     }
 
     /// Build + upload this frame's UI geometry from the [`UiBuild`] that

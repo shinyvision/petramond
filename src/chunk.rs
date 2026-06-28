@@ -404,8 +404,7 @@ impl Chunk {
     /// persists. Does NOT change the block id — toggling open/closed leaves the door
     /// block in place (only its metadata moves), like a sapling's growth stage.
     pub fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
-        self.doors
-            .insert(Self::block_entity_key(x, y, z), state);
+        self.doors.insert(Self::block_entity_key(x, y, z), state);
         self.modified = true;
     }
 

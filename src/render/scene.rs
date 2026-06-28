@@ -1,33 +1,30 @@
-//! Render-side scene adapter: bakes the simulation's per-frame world-render data
-//! into the renderer's flat wire structs.
+//! Render-side scene adapter: bakes neutral per-frame presentation data into the
+//! renderer's flat wire structs.
 //!
-//! [`Scene`] is the translation layer the App owns between [`Game`](crate::game::Game)
-//! (the simulation) and the [`Renderer`]. Each frame the App calls [`Scene::bake`]
-//! with the read-only `Game`, then [`Scene::upload`] to hand the baked instances to
-//! the renderer. Keeping the wire structs (`ItemEntityInstance` / `ParticleInstance`
-//! / `ChestInstance`) and their reused scratch buffers here keeps the renderer's
-//! presentation types out of `Game`.
+//! [`Scene`] is the translation layer the App owns between the neutral game
+//! presentation snapshot and the [`Renderer`]. Each frame the App builds the snapshot,
+//! calls [`Scene::bake`], then [`Scene::upload`] to hand the baked instances to the
+//! renderer. Keeping the wire structs (`ItemEntityInstance` / `ParticleInstance` /
+//! `ChestInstance`) and their reused buffers here keeps renderer presentation types out
+//! of simulation code.
 //!
-//! The instances are baked from DOMAIN accessors on `Game` (the dropped items, the
-//! loaded chests' render data, the particle system, the chest-lid angles, the held
-//! item's skylight) — never from `World`/`ParticleSystem` internals. The buffers are
-//! cleared + refilled (capacity reused) so a bounded per-frame count never reallocs.
+//! The buffers are cleared + refilled (capacity reused) so a bounded per-frame count
+//! never reallocs.
 
-use glam::{IVec3, Vec3};
+#[cfg(test)]
+use glam::IVec3;
+use glam::Vec3;
 
 use super::{
     ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer,
 };
-use crate::atlas::Tile;
-use crate::door::DoorState;
-use crate::furnace::Facing;
-use crate::game::Game;
+use crate::game::presentation::{ChestPresentation, DoorPresentation, GamePresentation};
 
-/// Per-frame world-render translation state, owned by the App. Holds the renderer's
-/// flat instance buffers (reused across frames) and the scratch buffer for gathering
-/// chest render data, plus the held-item skylight sampled this frame.
+/// Per-frame presentation translation state, owned by the App. Holds the renderer's
+/// flat instance buffers reused across frames, plus the held-item skylight sampled
+/// this frame.
 #[derive(Default)]
-pub struct Scene {
+pub(crate) struct Scene {
     /// Baked dropped-item billboards/cubes for this frame.
     item_entities: Vec<ItemEntityInstance>,
     /// Baked block-atlas particle cubes for this frame.
@@ -41,12 +38,6 @@ pub struct Scene {
     doors: Vec<DoorInstance>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
-    /// Reusable scratch for gathering chest render data (world pos, facing, skylight)
-    /// from the loaded chunks; the lid angle is paired in from `Game::chest_lid_angle`.
-    chest_scratch: Vec<(IVec3, Facing, u8)>,
-    /// Reusable scratch for gathering door render data (lower pos, state, the two
-    /// halves' tiles, skylight); the swing angle is paired in from `Game::door_swing_angle`.
-    door_scratch: Vec<(IVec3, DoorState, [Tile; 3], u8)>,
     /// Combined sky+block light + warm-tint amount for the first-person hand / held
     /// item, sampled at the camera each frame so it brightens AND warms near torches.
     held_item_skylight: u8,
@@ -54,43 +45,43 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Translate the sim's current world-render data into this scene's reused
-    /// buffers. Read-only over `Game`: the dropped items' cached skylight is kept
-    /// fresh by the sim's per-tick light refresh, so baking just reads it here.
-    pub fn bake(&mut self, game: &Game) {
+    /// Translate the current presentation snapshot into this scene's reused buffers.
+    /// Dropped items' cached skylight is kept fresh by the sim's per-tick light refresh,
+    /// so baking just reads it here.
+    pub(crate) fn bake(&mut self, presentation: &GamePresentation<'_>) {
         // Items and mobs both simulate on the fixed game tick; `alpha` blends the
         // previous and current tick poses so they move smoothly at any frame rate.
-        let alpha = game.tick_alpha();
-        bake_item_entities(game.item_entities(), alpha, &mut self.item_entities);
+        let alpha = presentation.tick_alpha;
+        bake_item_entities(presentation.item_entities, alpha, &mut self.item_entities);
         bake_particles(
-            game.particles(),
+            presentation.particles,
             &mut self.particles,
             &mut self.model_particles,
         );
-        self.bake_chests(game);
-        self.bake_doors(game);
-        bake_mobs(game.mobs(), alpha, &mut self.mobs);
-        (self.held_item_skylight, self.held_item_warm) = game.held_item_light();
+        self.bake_chests(presentation.chests);
+        self.bake_doors(presentation.doors);
+        bake_mobs(presentation.mobs, alpha, &mut self.mobs);
+        (self.held_item_skylight, self.held_item_warm) = presentation.held_item_light;
     }
 
     /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
     /// gathered from the loaded chunks. The linear open progress is smoothstepped so
     /// the lid accelerates and decelerates instead of swinging at a constant rate.
-    fn bake_chests(&mut self, game: &Game) {
-        game.collect_chest_render_data(&mut self.chest_scratch);
+    fn bake_chests(&mut self, chests: &[ChestPresentation]) {
         self.chests.clear();
-        for &(pos, facing, skylight) in &self.chest_scratch {
-            let raw = game.chest_lid_angle(pos);
+        for chest in chests {
+            let pos = chest.pos;
+            let raw = chest.lid_progress;
             let lid01 = raw * raw * (3.0 - 2.0 * raw);
             self.chests.push(ChestInstance {
                 pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
-                facing,
+                facing: chest.facing,
                 lid01,
-                skylight,
+                skylight: chest.skylight,
             });
         }
     }
@@ -99,26 +90,27 @@ impl Scene {
     /// halves' tiles, skylight), gathered from the loaded chunks. The linear swing is
     /// smoothstepped so it accelerates and decelerates instead of turning at a constant
     /// rate — exactly like the chest lid.
-    fn bake_doors(&mut self, game: &Game) {
-        game.collect_door_render_data(&mut self.door_scratch);
+    fn bake_doors(&mut self, doors: &[DoorPresentation]) {
         self.doors.clear();
-        for &(pos, state, [bottom_tile, top_tile, side_tile], skylight) in &self.door_scratch {
-            let raw = game.door_swing_angle(pos);
+        for door in doors {
+            let pos = door.pos;
+            let [bottom_tile, top_tile, side_tile] = door.tiles;
+            let raw = door.swing_progress;
             let open01 = raw * raw * (3.0 - 2.0 * raw);
             self.doors.push(DoorInstance {
                 pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
-                facing: state.facing,
+                facing: door.state.facing,
                 open01,
                 bottom_tile,
                 top_tile,
                 side_tile,
-                skylight,
+                skylight: door.skylight,
             });
         }
     }
 
     /// Hand the baked instances + held-item light to the renderer for this frame.
-    pub fn upload(&self, renderer: &mut Renderer) {
+    pub(crate) fn upload(&self, renderer: &mut Renderer) {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_warm);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);

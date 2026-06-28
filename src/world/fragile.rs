@@ -115,7 +115,11 @@ mod tests {
         // Dig the support out: the flower is scheduled, then breaks on the next tick.
         w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
         run_ticks(&mut w, 2);
-        assert_eq!(block(&w, plant), Block::Air, "unsupported flower must break");
+        assert_eq!(
+            block(&w, plant),
+            Block::Air,
+            "unsupported flower must break"
+        );
         // ...and it was handed to the presentation layer as a hand-style break.
         let breaks = w.take_natural_breaks();
         assert!(
@@ -138,10 +142,16 @@ mod tests {
         // Dig the sand out: the cactus is scheduled, then breaks on the next tick.
         w.set_block_world(sand.x, sand.y, sand.z, Block::Air);
         run_ticks(&mut w, 2);
-        assert_eq!(block(&w, cactus), Block::Air, "an undermined cactus must break");
+        assert_eq!(
+            block(&w, cactus),
+            Block::Air,
+            "an undermined cactus must break"
+        );
         let breaks = w.take_natural_breaks();
         assert!(
-            breaks.iter().any(|&(p, b)| p == cactus && b == Block::Cactus),
+            breaks
+                .iter()
+                .any(|&(p, b)| p == cactus && b == Block::Cactus),
             "the broken cactus was recorded for its drop + particle burst",
         );
     }
@@ -174,7 +184,11 @@ mod tests {
         // Mine the wall: the torch loses its sideways support and breaks next tick.
         w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
         run_ticks(&mut w, 2);
-        assert_eq!(block(&w, torch), Block::Air, "a wall torch falls with its wall");
+        assert_eq!(
+            block(&w, torch),
+            Block::Air,
+            "a wall torch falls with its wall"
+        );
         let breaks = w.take_natural_breaks();
         assert!(breaks.iter().any(|&(p, b)| p == torch && b == Block::Torch));
     }

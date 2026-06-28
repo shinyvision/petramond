@@ -191,7 +191,8 @@ impl World {
     /// the lower cell, so the toggle path resolves it before flipping the state.
     #[inline]
     pub fn door_lower_cell(&self, wx: i32, wy: i32, wz: i32) -> Option<IVec3> {
-        self.door_cells(IVec3::new(wx, wy, wz)).map(|(lower, _)| lower)
+        self.door_cells(IVec3::new(wx, wy, wz))
+            .map(|(lower, _)| lower)
     }
 
     /// The (lower, upper) cells of the door `pos` belongs to, found via the recorded
@@ -269,7 +270,10 @@ mod tests {
         assert!(w.place_door(base, DOOR, Facing::South));
         let upper = base + UP;
         assert_eq!(Block::from_id(w.chunk_block(base.x, base.y, base.z)), DOOR);
-        assert_eq!(Block::from_id(w.chunk_block(upper.x, upper.y, upper.z)), DOOR);
+        assert_eq!(
+            Block::from_id(w.chunk_block(upper.x, upper.y, upper.z)),
+            DOOR
+        );
         let lo = w.door_state_at(base.x, base.y, base.z).unwrap();
         let hi = w.door_state_at(upper.x, upper.y, upper.z).unwrap();
         assert_eq!(lo.facing, Facing::South);

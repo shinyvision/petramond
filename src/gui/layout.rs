@@ -1,7 +1,7 @@
 //! The data-driven GUI model: every screen (hotbar HUD, inventory, crafting
 //! table, furnace, chest) is a baked PNG panel + a JSON manifest of typed slots,
 //! authored in the `gui-builder` tool. This module owns the parsed model and ALL
-//! of its layout math; both the renderer ([`super::ui::build_ui`]) and the App's
+//! of its layout math; both the renderer UI builder and the App's
 //! click hit-test read the SAME [`GuiDef`] so what's drawn and what's clicked can
 //! never diverge.
 //!
@@ -26,10 +26,7 @@
 //! counts and the row-major ordering at load, so a future re-bake can never
 //! silently mis-route a click.
 
-use super::gui_types::{CraftHit, FurnaceHit, WorkbenchHit};
-use super::ui::{gui_scale, SlotRect};
-use crate::game::MenuSlot;
-use crate::inventory::HOTBAR_LEN;
+use super::{gui_scale, GuiKind, MenuSlot, Role, SlotRect};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,7 +62,9 @@ fn load_baked() -> Vec<Loaded> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let Some(def) = GuiDef::from_manifest(&text) else {
             eprintln!("gui: ignoring unparseable manifest {}", path.display());
             continue;
@@ -76,10 +75,18 @@ fn load_baked() -> Vec<Loaded> {
         }
         let panel_path = dir.join(&def.image);
         if !panel_path.exists() {
-            eprintln!("gui: ignoring {} — missing panel art {}", path.display(), def.image);
+            eprintln!(
+                "gui: ignoring {} — missing panel art {}",
+                path.display(),
+                def.image
+            );
             continue;
         }
-        let hover_path = def.hover.as_ref().map(|h| dir.join(&h.image)).filter(|p| p.exists());
+        let hover_path = def
+            .hover
+            .as_ref()
+            .map(|h| dir.join(&h.image))
+            .filter(|p| p.exists());
         let overlay_paths = def
             .overlays
             .iter()
@@ -88,7 +95,12 @@ fn load_baked() -> Vec<Loaded> {
                 p.exists().then_some((o.tag, p))
             })
             .collect();
-        out.push(Loaded { def, panel_path, hover_path, overlay_paths });
+        out.push(Loaded {
+            def,
+            panel_path,
+            hover_path,
+            overlay_paths,
+        });
     }
     out
 }
@@ -99,30 +111,42 @@ fn registry() -> &'static [Loaded] {
 
 /// The def for `kind`, or `None` if no (valid) manifest is baked for it.
 pub(crate) fn def(kind: GuiKind) -> Option<&'static GuiDef> {
-    registry().iter().find(|l| l.def.kind == kind).map(|l| &l.def)
+    registry()
+        .iter()
+        .find(|l| l.def.kind == kind)
+        .map(|l| &l.def)
 }
 
 /// (kind, panel PNG path) for every baked GUI — the renderer uploads each into a
 /// texture + bind group keyed by [`GuiTexId::Panel`].
 pub(crate) fn baked_panels() -> Vec<(GuiKind, PathBuf)> {
-    registry().iter().map(|l| (l.def.kind, l.panel_path.clone())).collect()
+    registry()
+        .iter()
+        .map(|l| (l.def.kind, l.panel_path.clone()))
+        .collect()
 }
 
 /// (kind, hover PNG path) for every baked GUI that declares a hover highlight.
 pub(crate) fn baked_hovers() -> Vec<(GuiKind, PathBuf)> {
-    registry().iter().filter_map(|l| l.hover_path.clone().map(|p| (l.def.kind, p))).collect()
+    registry()
+        .iter()
+        .filter_map(|l| l.hover_path.clone().map(|p| (l.def.kind, p)))
+        .collect()
 }
 
 /// (kind, tag, overlay PNG path) for every baked dynamic overlay (furnace gauges).
 pub(crate) fn baked_overlays() -> Vec<(GuiKind, OverlayTag, PathBuf)> {
     registry()
         .iter()
-        .flat_map(|l| l.overlay_paths.iter().map(move |(t, p)| (l.def.kind, *t, p.clone())))
+        .flat_map(|l| {
+            l.overlay_paths
+                .iter()
+                .map(move |(t, p)| (l.def.kind, *t, p.clone()))
+        })
         .collect()
 }
 
-/// The slot under the cursor in `kind`'s layout, as a game [`MenuSlot`] — the one
-/// hit-test the App routes through `ContainerMenu::click`. `None` if the cursor is
+/// The logical slot under the cursor in `kind`'s layout. `None` if the cursor is
 /// over no slot (or `kind` has no baked manifest).
 pub(crate) fn hit(kind: GuiKind, screen: (u32, u32), cursor: (f32, f32)) -> Option<MenuSlot> {
     let (role, i) = def(kind)?.role_at_any(screen, cursor)?;
@@ -136,61 +160,6 @@ pub(crate) fn panel_contains(kind: GuiKind, screen: (u32, u32), cursor: (f32, f3
 }
 
 // ---- manifest JSON (the gui-builder bake format) --------------------------
-
-/// Which container a baked GUI is for. Matches the gui-builder's `type` field.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GuiKind {
-    Chest,
-    Inventory,
-    CraftingTable,
-    Furnace,
-    Hotbar,
-    FurnitureWorkbench,
-    #[serde(other)]
-    Other,
-}
-
-/// A slot's purpose. Matches the gui-builder's slot `role` field. Each role maps
-/// to a concrete game [`MenuSlot`] via [`Role::menu_slot`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Role {
-    Generic,
-    Storage,
-    PlayerInv,
-    Hotbar,
-    CraftInput,
-    CraftResult,
-    FurnaceInput,
-    FurnaceFuel,
-    FurnaceOutput,
-    WorkbenchInput,
-    WorkbenchResult,
-    #[serde(other)]
-    Other,
-}
-
-impl Role {
-    /// Map this role + its in-role index to the game slot a click resolves to.
-    /// `None` for decorative roles (`Generic`/`Other`) that own no game slot, so a
-    /// stray such slot in a bake can never route a click.
-    pub(crate) fn menu_slot(self, i: usize) -> Option<MenuSlot> {
-        Some(match self {
-            Role::Storage => MenuSlot::Chest(i),
-            Role::Hotbar => MenuSlot::Inventory(i),
-            Role::PlayerInv => MenuSlot::Inventory(HOTBAR_LEN + i),
-            Role::CraftInput => MenuSlot::Craft(CraftHit::Input(i)),
-            Role::CraftResult => MenuSlot::Craft(CraftHit::Result),
-            Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
-            Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
-            Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
-            Role::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
-            Role::WorkbenchResult => MenuSlot::Workbench(WorkbenchHit::Result(i)),
-            Role::Generic | Role::Other => return None,
-        })
-    }
-}
 
 /// A dynamic overlay drawn over the panel and clipped at runtime by game state —
 /// the furnace's smelt arrow (fills with cook progress) and burn flame (depletes
@@ -306,10 +275,12 @@ impl GuiDef {
         // logical/base pixels so the game applies its own gui_scale on top.
         let mut roles: HashMap<Role, Vec<[f32; 4]>> = HashMap::new();
         for s in &m.slots {
-            roles
-                .entry(s.role)
-                .or_default()
-                .push([logical(s.x), logical(s.y), logical(s.w), logical(s.h)]);
+            roles.entry(s.role).or_default().push([
+                logical(s.x),
+                logical(s.y),
+                logical(s.w),
+                logical(s.h),
+            ]);
         }
         let overlays = m
             .tagged
@@ -342,13 +313,23 @@ impl GuiDef {
     fn validate(&self) -> Result<(), String> {
         let n = |r: Role| self.role_slots(r).len();
         let want: &[(Role, usize)] = match self.kind {
-            GuiKind::Chest => &[(Role::Storage, 27), (Role::PlayerInv, 27), (Role::Hotbar, 9)],
-            GuiKind::Inventory => {
-                &[(Role::PlayerInv, 27), (Role::Hotbar, 9), (Role::CraftInput, 4), (Role::CraftResult, 1)]
-            }
-            GuiKind::CraftingTable => {
-                &[(Role::PlayerInv, 27), (Role::Hotbar, 9), (Role::CraftInput, 9), (Role::CraftResult, 1)]
-            }
+            GuiKind::Chest => &[
+                (Role::Storage, 27),
+                (Role::PlayerInv, 27),
+                (Role::Hotbar, 9),
+            ],
+            GuiKind::Inventory => &[
+                (Role::PlayerInv, 27),
+                (Role::Hotbar, 9),
+                (Role::CraftInput, 4),
+                (Role::CraftResult, 1),
+            ],
+            GuiKind::CraftingTable => &[
+                (Role::PlayerInv, 27),
+                (Role::Hotbar, 9),
+                (Role::CraftInput, 9),
+                (Role::CraftResult, 1),
+            ],
             GuiKind::Furnace => &[
                 (Role::PlayerInv, 27),
                 (Role::Hotbar, 9),
@@ -367,7 +348,11 @@ impl GuiDef {
         };
         for &(role, count) in want {
             if n(role) != count {
-                return Err(format!("{:?} wants {count} {role:?} slots, found {}", self.kind, n(role)));
+                return Err(format!(
+                    "{:?} wants {count} {role:?} slots, found {}",
+                    self.kind,
+                    n(role)
+                ));
             }
         }
         // Multi-slot roles must be row-major so in-role index == game slot index.
@@ -404,7 +389,12 @@ impl GuiDef {
 
     fn rect(&self, base: [f32; 4], screen: (u32, u32)) -> SlotRect {
         let (ox, oy, s) = self.placement(screen);
-        SlotRect { x: ox + base[0] * s, y: oy + base[1] * s, w: base[2] * s, h: base[3] * s }
+        SlotRect {
+            x: ox + base[0] * s,
+            y: oy + base[1] * s,
+            w: base[2] * s,
+            h: base[3] * s,
+        }
     }
 
     fn role_slots(&self, role: Role) -> &[[f32; 4]] {
@@ -426,11 +416,18 @@ impl GuiDef {
 
     /// Screen rect of the dynamic overlay `tag`, or `None` if this GUI has none.
     pub(crate) fn overlay_rect(&self, tag: OverlayTag, screen: (u32, u32)) -> Option<SlotRect> {
-        self.overlays.iter().find(|o| o.tag == tag).map(|o| self.rect(o.base, screen))
+        self.overlays
+            .iter()
+            .find(|o| o.tag == tag)
+            .map(|o| self.rect(o.base, screen))
     }
 
     /// Visit every slot of every role with its screen rect (for emitting icons).
-    pub(crate) fn for_each_slot(&self, screen: (u32, u32), mut f: impl FnMut(Role, usize, SlotRect)) {
+    pub(crate) fn for_each_slot(
+        &self,
+        screen: (u32, u32),
+        mut f: impl FnMut(Role, usize, SlotRect),
+    ) {
         for (&role, rects) in &self.roles {
             for (i, b) in rects.iter().enumerate() {
                 f(role, i, self.rect(*b, screen));
@@ -440,7 +437,11 @@ impl GuiDef {
 
     /// The (role, in-role index) of the slot under the cursor, or `None`. Slots
     /// never overlap, so the first containing rect is unambiguous.
-    pub(crate) fn role_at_any(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<(Role, usize)> {
+    pub(crate) fn role_at_any(
+        &self,
+        screen: (u32, u32),
+        cursor: (f32, f32),
+    ) -> Option<(Role, usize)> {
         for (&role, rects) in &self.roles {
             for (i, b) in rects.iter().enumerate() {
                 if self.rect(*b, screen).contains(cursor.0, cursor.1) {
@@ -453,8 +454,13 @@ impl GuiDef {
 
     /// The screen rect of the slot under the cursor — used to place the hover
     /// highlight (inflated by the hover margin).
-    pub(crate) fn hovered_slot_rect(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<SlotRect> {
-        self.role_at_any(screen, cursor).and_then(|(role, i)| self.role_rect(role, i, screen))
+    pub(crate) fn hovered_slot_rect(
+        &self,
+        screen: (u32, u32),
+        cursor: (f32, f32),
+    ) -> Option<SlotRect> {
+        self.role_at_any(screen, cursor)
+            .and_then(|(role, i)| self.role_rect(role, i, screen))
     }
 }
 
@@ -476,6 +482,8 @@ fn check_row_major(role: Role, rects: &[[f32; 4]]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::{CraftHit, FurnaceHit};
+    use crate::inventory::HOTBAR_LEN;
 
     // Inline samples so tests exercise the parser/geometry without pinning the
     // user's freely-re-baked manifests (their exact slot pixels are table data).
@@ -544,10 +552,22 @@ mod tests {
     fn role_maps_to_the_right_menu_slot() {
         assert_eq!(Role::Storage.menu_slot(5), Some(MenuSlot::Chest(5)));
         assert_eq!(Role::Hotbar.menu_slot(3), Some(MenuSlot::Inventory(3)));
-        assert_eq!(Role::PlayerInv.menu_slot(0), Some(MenuSlot::Inventory(HOTBAR_LEN)));
-        assert_eq!(Role::CraftInput.menu_slot(4), Some(MenuSlot::Craft(CraftHit::Input(4))));
-        assert_eq!(Role::CraftResult.menu_slot(0), Some(MenuSlot::Craft(CraftHit::Result)));
-        assert_eq!(Role::FurnaceFuel.menu_slot(0), Some(MenuSlot::Furnace(FurnaceHit::Fuel)));
+        assert_eq!(
+            Role::PlayerInv.menu_slot(0),
+            Some(MenuSlot::Inventory(HOTBAR_LEN))
+        );
+        assert_eq!(
+            Role::CraftInput.menu_slot(4),
+            Some(MenuSlot::Craft(CraftHit::Input(4)))
+        );
+        assert_eq!(
+            Role::CraftResult.menu_slot(0),
+            Some(MenuSlot::Craft(CraftHit::Result))
+        );
+        assert_eq!(
+            Role::FurnaceFuel.menu_slot(0),
+            Some(MenuSlot::Furnace(FurnaceHit::Fuel))
+        );
         assert_eq!(Role::Generic.menu_slot(0), None);
     }
 

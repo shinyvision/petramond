@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 
 /// Upload a baked data-driven GUI panel PNG (from the `gui-builder`) as its own
 /// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size — each
-/// baked panel is its own image, not a fixed atlas slot. See `super::gui_def`.
+/// baked panel is its own image, not a fixed atlas slot. See `crate::gui`.
 pub(super) fn create_gui_panel(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

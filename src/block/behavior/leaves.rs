@@ -155,10 +155,16 @@ mod tests {
         let p = IVec3::new(8, 70, 8);
         w.set_block_world(p.x, p.y, p.z, Block::OakLeaves); // isolated → unsupported
         LEAVES.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Air), "the leaf decayed");
+        assert_eq!(
+            w.block_if_loaded(p.x, p.y, p.z),
+            Some(Block::Air),
+            "the leaf decayed"
+        );
         let breaks = w.take_natural_breaks();
         assert!(
-            breaks.iter().any(|&(bp, b)| bp == p && b == Block::OakLeaves),
+            breaks
+                .iter()
+                .any(|&(bp, b)| bp == p && b == Block::OakLeaves),
             "a decayed leaf is recorded as a natural break so its sapling drop rolls",
         );
     }

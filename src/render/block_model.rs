@@ -217,8 +217,11 @@ pub(super) fn push_box_faces_lit_mirrored(
     mirror_u: [bool; 6],
     slice_mode: [u32; 6],
 ) {
-    for (((tile, face), mir), slice) in
-        faces.into_iter().zip(ALL_FACES).zip(mirror_u).zip(slice_mode)
+    for (((tile, face), mir), slice) in faces
+        .into_iter()
+        .zip(ALL_FACES)
+        .zip(mirror_u)
+        .zip(slice_mode)
     {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(min.to_array(), max.to_array());

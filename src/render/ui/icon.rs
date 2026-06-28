@@ -13,7 +13,8 @@
 use glam::{Mat4, Vec3};
 
 use super::super::ui_text;
-use super::{pixel_to_ndc, push_solid, SlotRect, UiBuild, UiVertex};
+use super::{pixel_to_ndc, push_solid, UiBuild, UiVertex};
+use crate::gui::SlotRect;
 use crate::item::ItemType;
 
 /// Record that `item` occupies slot pixel rect `r` this frame. The renderer
@@ -22,7 +23,12 @@ use crate::item::ItemType;
 /// cursor. (`screen` is accepted for call-site symmetry with [`push_count`] but is
 /// unused — the atlas cell UV is screen-independent; the slot→NDC mapping happens
 /// in the renderer.)
-pub(super) fn push_slot_icon(build: &mut UiBuild, _screen: (u32, u32), item: ItemType, r: SlotRect) {
+pub(super) fn push_slot_icon(
+    build: &mut UiBuild,
+    _screen: (u32, u32),
+    item: ItemType,
+    r: SlotRect,
+) {
     build.icon_quads.push((item, r));
 }
 
@@ -215,8 +221,8 @@ pub(super) fn push_count(
 
 #[cfg(test)]
 mod tests {
-    use super::super::gui_scale;
     use super::*;
+    use crate::gui::gui_scale;
 
     /// A simple on-screen slot rect for exercising the icon MVPs. Real slot
     /// positions come from baked manifests; the icon projection only needs a rect,

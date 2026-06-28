@@ -81,9 +81,18 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     SoundDef {
         sound: Sound::WoodPunch,
         variants: &[
-            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wood_punch_1.ogg")),
-            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wood_punch_2.ogg")),
-            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wood_punch_3.ogg")),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/wood_punch_1.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/wood_punch_2.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/wood_punch_3.ogg"
+            )),
         ],
         gain: 1.0,
         // ±12% speed: a clearly audible but natural variation, in the Minecraft range.

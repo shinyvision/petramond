@@ -4,38 +4,55 @@
 //! platform input, app screens, or hand animation; those belong to the app shell
 //! and render presentation layer.
 
+mod breaking;
 mod container;
+mod drops;
+mod entities;
+mod environment;
+mod frame;
+mod local_player;
+mod menu;
+mod placement;
+pub(crate) mod presentation;
+mod session;
+mod terrain_render;
+mod tick;
 
 use std::collections::HashMap;
 
-use crate::block::{Block, RenderShape};
+#[cfg(test)]
+use crate::block::Block;
 use crate::camera::{Camera, Frustum};
-use crate::crafting::{load_recipes, Recipes};
-use crate::entity::{DroppedItem, ParticleSystem};
+use crate::crafting::Recipes;
+#[cfg(test)]
+use crate::entity::DroppedItem;
+use crate::entity::ParticleSystem;
+#[cfg(test)]
 use crate::furnace::Facing;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
-use crate::mathh::{lerp, voxel_at, IVec3, SelectionShape, Vec3};
+#[cfg(test)]
+use crate::mathh::SelectionShape;
+use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::mining::MiningState;
+use crate::mob::LootTables;
 #[cfg(test)]
 use crate::mob::Mob;
-use crate::mob::{load_loot, DeathDrop, LootTables};
-use crate::player::{self, Input, Player, PlayerMode, RaycastHit};
-use crate::render::{BreakOverlayView, ChestView, FurnaceView};
-use crate::torch::TorchPlacement;
+#[cfg(test)]
+use crate::player;
+use crate::player::{Player, PlayerMode, RaycastHit};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
-pub use container::{ContainerMenu, ContainerTarget, MenuSlot};
-
-/// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
-/// is underwater.
-const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
-
-/// Require the camera eye to sit this far below an open water surface before the
-/// underwater shader/fog kicks in. This keeps shallow flowing films from tinting
-/// the view when the eye is only barely clipping their rendered surface.
-const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
+pub use crate::gui::MenuSlot;
+pub use container::{ContainerMenu, ContainerTarget};
+use drops::DropQueue;
+pub(crate) use environment::GameEnvironment;
+pub(crate) use frame::CameraPose;
+pub use menu::MenuReadModel;
+#[cfg(test)]
+use placement::facing_from_forward;
+pub use tick::{GameEvents, GameInput, MovementInput};
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
@@ -44,16 +61,6 @@ const MINING_DUST_INTERVAL: f32 = 0.1;
 /// attack button can't land hits every tick (which would, e.g., instakill an owl).
 /// Counted in ticks now that attacks resolve on the fixed tick — 6 ticks ≈ 0.3 s.
 const ATTACK_COOLDOWN_TICKS: u32 = 6;
-
-/// Fixed simulation timestep: 20 game ticks per second, independent of frame
-/// rate. World simulation (block updates, scheduled ticks, water flow) advances
-/// in whole steps of this size.
-const TICK_DT: f32 = 0.05;
-
-/// Most fixed ticks run in a single frame before the leftover is dropped. Caps
-/// catch-up after a stall so the sim never spirals trying to replay lost time —
-/// it just runs the late tick and reschedules from now (per the design).
-const MAX_TICKS_PER_FRAME: u32 = 4;
 
 /// Chest-lid open/close speed (fraction per second)
 const CHEST_LID_SPEED: f32 = 3.5;
@@ -66,95 +73,6 @@ const DOOR_SWING_SPEED: f32 = 4.5;
 /// frustum — for its animation to force a redraw. Past this it's too small on screen to
 /// read, so it keeps simulating but doesn't hold the frame rate up while the player idles.
 const ENTITY_ACTIVITY_RANGE: f32 = 50.0;
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct MovementInput {
-    pub forward: bool,
-    pub backward: bool,
-    pub left: bool,
-    pub right: bool,
-    pub jump: bool,
-    pub sneak: bool,
-    pub sprint: bool,
-}
-
-#[derive(Copy, Clone, Debug, Default)]
-pub struct GameInput {
-    /// False while an app screen such as inventory owns input focus.
-    pub gameplay_enabled: bool,
-    pub movement: MovementInput,
-    pub look_delta: (f32, f32),
-    /// Whole wheel notches scrolled this frame (signed): negative selects
-    /// previous slots, positive selects next, 0 for none. Wraps within the hotbar.
-    pub hotbar_scroll: i32,
-    /// Level state: primary button held for mining.
-    pub break_held: bool,
-    /// Edge state: primary button *pressed* this frame — one attack swing (damages a
-    /// targeted mob, or punches the air). Distinct from `break_held` (the held state
-    /// that drives mining a block).
-    pub attack_clicked: bool,
-    /// Edge state: secondary button pressed for placement.
-    pub place_clicked: bool,
-}
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct GameEvents {
-    /// The block placed this frame, if any — drives the client's place sound and the
-    /// first-person place jab.
-    pub placed_block: Option<Block>,
-    /// The block broken (player-mined) this frame, if any — drives the client's break
-    /// sound and the first-person break swing.
-    pub broke_block: Option<Block>,
-    /// The hand swung this frame for an attack — a mob hit or a punch at the air.
-    /// Drives a one-shot first-person swing (like `broke_block`).
-    pub swung_hand: bool,
-    /// An item/stack left the hand for the world this frame — a Q drop or an
-    /// inventory drag-out. Drives the same first-person place jab as a placement.
-    pub threw_item: bool,
-    /// At least one dropped item was collected into the inventory this frame — drives
-    /// the global item-pickup sound.
-    pub picked_up_item: bool,
-    /// The player right-clicked a placed crafting table this frame. The app shell
-    /// reacts by opening the 3×3 crafting screen (the game can't own screens).
-    pub open_crafting_table: bool,
-    /// The player right-clicked a placed furnace this frame (its world position).
-    /// The app shell reacts by opening the furnace screen.
-    pub open_furnace: Option<IVec3>,
-    /// The player right-clicked a placed chest this frame (its world position).
-    /// The app shell reacts by opening the chest screen.
-    pub open_chest: Option<IVec3>,
-    /// The player right-clicked a placed furniture workbench this frame (its position).
-    /// The app shell reacts by opening the workbench screen.
-    pub open_furniture_workbench: Option<IVec3>,
-    /// The player right-clicked a door this frame (toggling it open/closed). Drives the
-    /// same soft hand jab as opening an interactable — the toggle itself is applied on
-    /// the tick, this only animates the hand.
-    pub toggled_door: bool,
-}
-
-/// What the world-mutating actions did across the fixed tick(s) that ran this frame,
-/// surfaced back to the per-frame [`GameEvents`] so the presentation layer (hand
-/// animation, sounds) reacts. A frame runs at most a handful of ticks and each action
-/// happens at most once, so a bool — or, where the client needs to know *which* block,
-/// an `Option<Block>` — suffices; the last occurrence in the frame wins.
-#[derive(Copy, Clone, Debug, Default)]
-struct TickEvents {
-    /// The block (player-mined) that finished breaking on a tick, if any.
-    broke_block: Option<Block>,
-    /// The block placed on a tick, if any.
-    placed_block: Option<Block>,
-    /// An attack swing connected on a tick (a mob hit or a punch at the air).
-    swung_hand: bool,
-    /// At least one dropped item was collected into the inventory on a tick.
-    picked_up_item: bool,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct GameEnvironment {
-    pub fog: [f32; 3],
-    pub time: f32,
-    pub underwater: bool,
-}
 
 pub struct Game {
     cam: Camera,
@@ -195,10 +113,10 @@ pub struct Game {
     /// A secondary-button *press* is waiting to be resolved as a place/interact on the
     /// next tick (edge-latched; the tick consumes it).
     pending_place: bool,
-    /// Items dropped this frame (Q-drop, inventory throws, crafting overflow), built
-    /// against the current look but waiting to enter the world on the next tick — a drop
-    /// materialises on the tick, like every other entity. Drained each tick.
-    pending_drops: Vec<DroppedItem>,
+    /// Item-drop intents latched by input/menu cleanup and applied on the next fixed
+    /// tick. Gameplay-visible inventory/cursor mutation and entity spawning happen
+    /// together in [`tick_drops`](Self::tick_drops).
+    drop_queue: DropQueue,
     /// Container-menu clicks (slot, button, shift, the App's double-click `gather`
     /// verdict) latched this frame, applied in order on the next tick so chest / furnace /
     /// inventory edits mutate state on the tick. Real clicks are >1 tick apart, so each is
@@ -207,7 +125,7 @@ pub struct Game {
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
     /// for the rest; client-side animation only, never persisted. The render-side
-    /// scene adapter reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
+    /// presentation snapshot reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
     /// the easing in [`Game::advance_chest_lids`] is the owning sim/animation state.
     chest_lids: HashMap<IVec3, f32>,
     /// Transient per-door swing angle (`0.0` closed .. `1.0` open), keyed by the door's
@@ -221,10 +139,6 @@ pub struct Game {
     tick_accumulator: f32,
     /// Wall-clock seconds since the last background autosave.
     autosave_t: f32,
-    /// Set when the hand expels an item into the world (Q drop or inventory
-    /// drag-out) so the next [`tick`](Self::tick) reports it for the hand's place
-    /// jab. Consumed (reset) each tick.
-    threw_item: bool,
     /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
     /// [`ContainerMenu`]'s craft preview (borrowed in per call) and by the furnace
     /// *smelting* tick (`World::game_tick`), which is why they live here on `Game`
@@ -262,278 +176,6 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(mut cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
-        // Open (or create) the on-disk world. A returning world supplies its own
-        // seed and player; a fresh one uses `new_seed` and a found spawn. Item
-        // entities are no longer global — they load with their chunks.
-        let (save, level) = if world_name.is_empty() {
-            // Empty name = in-memory only (used by tests; never touches disk).
-            (None, None)
-        } else {
-            match crate::save::open(world_name) {
-                Ok(o) => (Some(o.save), o.level),
-                Err(e) => {
-                    log::warn!("save disabled: could not open world '{world_name}': {e}");
-                    (None, None)
-                }
-            }
-        };
-        let seed = level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
-
-        let fallback_world = CascadeWorld::new(seed);
-
-        // Restore the saved player, or spawn on the nearest exposed solid surface
-        // to the origin (drops to the nearest coast if the origin is open ocean).
-        let player = match &level {
-            Some(l) => {
-                let mut p = Player::new(l.player_pos);
-                p.set_mode(l.player_mode);
-                p.vel = l.player_vel; // assign after set_mode, which zeroes vel
-                p.yaw = l.player_yaw;
-                p.pitch = l.player_pitch;
-                p.inventory = l.inventory.clone();
-                p
-            }
-            None => {
-                let surface = crate::worldgen::spawn::find_spawn(&fallback_world, seed);
-                let feet = Vec3::new(
-                    surface.x as f32 + 0.5,
-                    (surface.y + 1) as f32,
-                    surface.z as f32 + 0.5,
-                );
-                Player::new(feet)
-            }
-        };
-        // Centre chunk streaming on the real player position from frame one, and
-        // point the camera the way the player is looking (restored from the save,
-        // or the default forward for a fresh spawn).
-        cam.pos = player.eye();
-        cam.yaw = player.yaw;
-        cam.pitch = player.pitch;
-
-        let mut world = World::new(seed, render_dist);
-        if let Some(s) = save {
-            world.attach_save(s);
-        }
-
-        Self {
-            cam,
-            world,
-            fallback_world,
-            player,
-            look: None,
-            targeted_mob: None,
-            mining: MiningState::new(),
-            dropped_light_revision: 0,
-            particles: ParticleSystem::new(),
-            spawn_counter: 0,
-            mining_dust_t: 0.0,
-            attack_cooldown: 0,
-            intent_break_held: false,
-            intent_sneak: false,
-            intent_gameplay: false,
-            pending_attack: false,
-            pending_place: false,
-            pending_drops: Vec::new(),
-            pending_menu_clicks: Vec::new(),
-            chest_lids: HashMap::new(),
-            door_swings: HashMap::new(),
-            tick_accumulator: 0.0,
-            autosave_t: 0.0,
-            threw_item: false,
-            recipes: load_recipes(),
-            loot: load_loot(),
-            menu: ContainerMenu::new(),
-            request_open_table: false,
-            request_open_furnace: None,
-            request_open_chest: None,
-            request_open_workbench: None,
-            toggled_door: false,
-        }
-    }
-
-    /// Persist everything: flush modified chunks (carrying any resting item
-    /// entities, so their lifetime timers survive) to the save thread, then write
-    /// `level.dat` (seed + player + inventory). A no-op without an attached save.
-    pub fn save_all(&mut self) {
-        self.world.flush_modified_chunks();
-        if let Some(save) = self.world.save() {
-            save.save_level(crate::save::level::encode(self.world.seed, &self.player, 0));
-        }
-    }
-
-    fn maybe_autosave(&mut self, dt: f32) {
-        const AUTOSAVE_SECS: f32 = 30.0;
-        if self.world.save().is_none() {
-            return;
-        }
-        self.autosave_t += dt;
-        if self.autosave_t >= AUTOSAVE_SECS {
-            self.autosave_t = 0.0;
-            self.save_all();
-        }
-    }
-
-    pub fn tick(&mut self, dt: f32, input: &GameInput) -> GameEvents {
-        // --- Per-frame: input → look/camera, player movement, chunk streaming. These
-        // read the world but don't simulate it; the local player moves per-frame so the
-        // controls stay crisp (mouse-look + movement are presentation/input, not ticks). ---
-        self.apply_camera_input(input);
-        self.apply_hotbar_input(input);
-        self.tick_player(dt, input);
-        // Mobs push the player out of an overlap per-frame (not on the tick) so the drift
-        // is perfectly smooth — player movement integrates every frame, and a 20 Hz shove
-        // would pulse. The mobs themselves are shoved on the tick (in `game_tick_step`).
-        self.apply_mob_push(dt);
-        self.tick_world();
-
-        // Block hit (with its distance) and the closest mob in front. A mob nearer than
-        // the block wins the crosshair and nulls the block look, so block selection /
-        // mining / placement are interrupted while looking at a mob. Recomputed per frame
-        // for the crosshair and read by the tick when it resolves an action.
-        let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.world);
-        self.look = block_hit.map(|(h, _)| h);
-        let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
-        self.targeted_mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
-        if self.targeted_mob.is_some() {
-            self.look = None;
-        }
-
-        // Sample this frame's action intent for the fixed tick to consume — world/entity
-        // mutation (mining, placing, attacking, entity physics) all happens on the tick.
-        self.capture_intent(input);
-
-        // --- Fixed tick(s): the authoritative simulation. Returns what its world-mutating
-        // actions did, so the per-frame presentation layer can react. ---
-        let events = self.run_fixed_ticks(dt);
-
-        // --- Per-frame: presentation + infra (particles, chest-lid animation, meshing,
-        // light handoff, autosave). None of this changes world/entity state. ---
-        self.tick_entities(dt);
-        self.advance_chest_lids(dt);
-        self.advance_door_swings(dt);
-        self.tick_mesh_budget();
-        self.refresh_dropped_item_lights_after_world_light_update();
-
-        self.maybe_autosave(dt);
-
-        GameEvents {
-            placed_block: events.placed_block,
-            broke_block: events.broke_block,
-            swung_hand: events.swung_hand,
-            // A dropped item was collected this frame → the global pickup sound.
-            picked_up_item: events.picked_up_item,
-            // Throws happen via input handlers before this tick; report and clear.
-            threw_item: std::mem::take(&mut self.threw_item),
-            // Set on a tick by `tick_place` when a table was right-clicked.
-            open_crafting_table: std::mem::take(&mut self.request_open_table),
-            // Set when a furnace was right-clicked.
-            open_furnace: std::mem::take(&mut self.request_open_furnace),
-            // Set when a chest was right-clicked.
-            open_chest: std::mem::take(&mut self.request_open_chest),
-            // Set when a furniture workbench was right-clicked.
-            open_furniture_workbench: std::mem::take(&mut self.request_open_workbench),
-            // Set when a door was toggled — animates the hand like opening a container.
-            toggled_door: std::mem::take(&mut self.toggled_door),
-        }
-    }
-
-    /// Latch this frame's input into the action-intent fields the fixed tick consumes:
-    /// held states (mine / sneak / gameplay-enabled) are re-sampled every frame, while
-    /// button *presses* (attack / place) are edge-latched so a press is never lost on a
-    /// frame that runs no tick, and is consumed by the next tick that does.
-    fn capture_intent(&mut self, input: &GameInput) {
-        self.intent_gameplay = input.gameplay_enabled;
-        self.intent_sneak = input.movement.sneak;
-        // While a screen (inventory, chest, …) owns input, gameplay actions are off:
-        // don't mine, and drop any latched press so a buffered click can't fire on a
-        // tick that runs behind the open menu.
-        if !input.gameplay_enabled {
-            self.intent_break_held = false;
-            self.pending_attack = false;
-            self.pending_place = false;
-            return;
-        }
-        self.intent_break_held = input.break_held;
-        if input.attack_clicked {
-            self.pending_attack = true;
-        }
-        if input.place_clicked {
-            self.pending_place = true;
-        }
-    }
-
-    /// Advance the simulation in fixed 50 ms steps, decoupled from the frame rate: 0
-    /// steps on a fast frame, several to catch up on a slow one (capped, so a long stall
-    /// runs the late tick and resyncs rather than spiralling). Player movement, camera,
-    /// and rendering stay per-frame above. Returns the merged [`TickEvents`] of the
-    /// world-mutating actions across the tick(s) that ran, for the per-frame presentation.
-    fn run_fixed_ticks(&mut self, dt: f32) -> TickEvents {
-        // Ignore absurd deltas (first frame, tab regaining focus) so a long pause
-        // doesn't dump a burst of ticks; clamp keeps at most one step pending.
-        self.tick_accumulator += dt.clamp(0.0, 1.0);
-        let mut ran = 0;
-        let mut events = TickEvents::default();
-        while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
-            self.game_tick_step(&mut events);
-            self.tick_accumulator -= TICK_DT;
-            ran += 1;
-        }
-        if self.tick_accumulator > TICK_DT {
-            self.tick_accumulator = TICK_DT;
-        }
-        events
-    }
-
-    /// One fixed game tick: every change to the world and the entities in it. Player
-    /// actions (sampled per-frame into intent fields) resolve first so the world reacts to
-    /// them the same tick, then the world simulation runs, then the entities (mobs, items).
-    /// Merges what its actions did into `events` for the per-frame presentation layer.
-    fn game_tick_step(&mut self, events: &mut TickEvents) {
-        // Player → world actions, on the tick.
-        self.tick_mining(events);
-        self.tick_place(events);
-        self.tick_attack(events);
-        self.tick_drops();
-        self.tick_menu();
-
-        // The world owns its per-tick sequence (scheduled ticks, block updates, furnace
-        // smelting). Recipes live in `Game`, so they're passed through. Then item lifetime
-        // + collection (pickup needs `player.inventory`, hence the borrow split here).
-        self.world.game_tick(&self.recipes);
-        // Blocks the world simulation itself destroyed this tick (fragile blocks that
-        // lost their support, or were washed away by water) get a player-style break:
-        // the break-particle burst plus their rolled item drops.
-        self.process_natural_breaks();
-        if self.item_pickup_tick() {
-            events.picked_up_item = true;
-        }
-
-        // Entities. Mobs and dropped items are owned by `World` (they persist with their
-        // chunks); the world drives them via a borrow-split. Soft entity pushing shoves
-        // the MOBS here (mob↔mob, and off the player's body) — the reverse push on the
-        // player is applied per-frame (`apply_mob_push`), since it moves the player and
-        // player movement integrates per-frame for smoothness. A noclip spectator has no
-        // body, so mobs aren't shoved off it.
-        let player_pos = self.player.body_center();
-        let player_body = (!self.player.is_spectator())
-            .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
-        self.world.tick_mobs(TICK_DT, player_pos, player_body);
-        self.world.tick_item_physics(TICK_DT, player_pos);
-        // Natural spawning, one attempt per tick.
-        self.world.spawn_mobs_tick(player_pos);
-    }
-
-    #[inline]
-    pub fn camera(&self) -> &Camera {
-        &self.cam
-    }
-
-    #[inline]
-    pub fn world_mut(&mut self) -> &mut World {
-        &mut self.world
-    }
-
     #[inline]
     pub fn inventory(&self) -> &Inventory {
         &self.player.inventory
@@ -564,308 +206,17 @@ impl Game {
         self.player.inventory.set_active(slot);
     }
 
-    /// Whether the cursor currently holds a stack. Gates the double-click gather,
-    /// which only fires while a stack is being dragged.
-    pub fn cursor_has_stack(&self) -> bool {
-        self.player.inventory.cursor().is_some()
-    }
-
-    /// Double-click gather: top up the cursor-held stack with every matching item
-    /// in the inventory. See [`Inventory::collect_to_cursor`].
-    pub fn collect_to_cursor(&mut self) {
-        self.player.inventory.collect_to_cursor();
-    }
-
-    // --- Container menu (forwarders) --------------------------------------
-    //
-    // The open container GUI's edit target + slot behaviour live on `ContainerMenu`
-    // (`game/container.rs`). These thin forwarders split `Game` into its disjoint
-    // `menu` / `world` / `player.inventory` fields and hand them to the menu (recipes
-    // borrowed from `Game` per call) — the App can't take those disjoint borrows
-    // itself. Per-slot interaction routing funnels through the single
-    // [`menu_click`](Self::menu_click) entry; open/close + view forwarders cover the
-    // menu's lifecycle and what the UI reads.
-
-    /// Read-only handle to the open container menu (its target + craft grid).
     #[inline]
-    pub fn menu(&self) -> &ContainerMenu {
-        &self.menu
-    }
-
-    /// Latch a hit-tested container click — resolved by the App to a [`MenuSlot`], a
-    /// button, and Shift, with the App's double-click `gather` verdict — for the next game
-    /// tick. Container edits mutate world state (chest / furnace contents) and the
-    /// inventory, so they resolve on the tick like every other action — see
-    /// [`tick_menu`](Self::tick_menu). The verdict is captured now, against the live
-    /// cursor; since real clicks are more than a tick apart, each is applied before the
-    /// next one is decided.
-    pub fn menu_click(
-        &mut self,
-        slot: MenuSlot,
-        button: crate::controls::PointerButton,
-        shift: bool,
-        gather: bool,
-    ) {
-        self.pending_menu_clicks.push((slot, button, shift, gather));
-    }
-
-    /// Apply the player actions latched this frame — container edits and item drops — at
-    /// once, standing in for the game tick that resolves them in play. For App-level tests
-    /// that drive the input routing and then assert the resulting inventory / world state
-    /// (between two clicks a real tick interleaves, applying the first before the second is
-    /// decided — call this there too).
-    #[cfg(test)]
-    pub(crate) fn apply_latched_actions_for_test(&mut self) {
-        self.tick_menu();
-        self.tick_drops();
-    }
-
-    /// Apply this frame's latched container-menu clicks, in order, on the tick. Splits the
-    /// disjoint `menu` / `world` / `inventory` borrows the menu needs and lends the
-    /// recipes; the menu decodes each interaction keyed on its target.
-    fn tick_menu(&mut self) {
-        for (slot, button, shift, gather) in std::mem::take(&mut self.pending_menu_clicks) {
-            self.menu.click(
-                &mut self.world,
-                &mut self.player.inventory,
-                &self.recipes,
-                slot,
-                button,
-                shift,
-                gather,
-            );
-        }
-    }
-
-    /// The active crafting grid (for the UI to read cells + result preview).
-    #[inline]
-    pub fn craft_grid(&self) -> &crate::crafting::CraftGrid {
-        self.menu.craft_grid()
-    }
-
-    /// Configure the crafting grid for a screen of `cols×cols` (2 = inventory,
-    /// 3 = table) and clear it. Called when a crafting screen opens.
-    pub fn open_crafting(&mut self, cols: usize) {
-        self.menu.open_crafting(cols, &self.recipes);
-    }
-
-    /// Begin a furnace-screen session at `pos` (the GUI's edit target).
-    pub fn open_furnace_screen(&mut self, pos: IVec3) {
-        self.menu.open_furnace_screen(&mut self.world, pos);
-    }
-
-    /// End the furnace-screen session.
-    pub fn close_furnace(&mut self) {
-        self.menu.close_furnace();
-    }
-
-    /// Close the crafting grid: return every input item to the inventory (any
-    /// overflow is thrown into the world), then clear the result. Overflow is
-    /// gathered first, then thrown after the menu call so `throw_item`'s
-    /// `world`/`cam` borrow doesn't alias the menu's borrow.
-    pub fn close_crafting(&mut self) {
-        let mut overflow = Vec::new();
-        self.menu
-            .close_crafting(&mut self.player.inventory, &self.recipes, |stack| {
-                overflow.push(stack);
-            });
-        for stack in overflow {
-            self.throw_item(stack);
-        }
-    }
-
-    /// The view of the currently-open furnace for the UI, or `None` if no furnace
-    /// screen is up or it has unloaded.
-    pub fn open_furnace_view(&self) -> Option<FurnaceView> {
-        self.menu.open_furnace_view(&self.world)
-    }
-
-    /// Begin a chest-screen session at `pos` (the GUI's edit target).
-    pub fn open_chest_screen(&mut self, pos: IVec3) {
-        self.menu.open_chest_screen(&mut self.world, pos);
-    }
-
-    /// End the chest-screen session.
-    pub fn close_chest(&mut self) {
-        self.menu.close_chest();
-    }
-
-    /// Begin a furniture-workbench session (the input slot starts empty).
-    pub fn open_workbench_screen(&mut self) {
-        self.menu.open_workbench();
-    }
-
-    /// End the workbench session: return the input block to the inventory (overflow
-    /// thrown into the world), like closing the crafting grid.
-    pub fn close_workbench(&mut self) {
-        let mut overflow = Vec::new();
-        self.menu
-            .close_workbench(&mut self.player.inventory, |stack| overflow.push(stack));
-        for stack in overflow {
-            self.throw_item(stack);
-        }
-    }
-
-    /// The view of the currently-open furniture workbench for the UI (its input block +
-    /// the results it offers, each flagged craftable), or `None` if no workbench screen
-    /// is up.
-    pub fn open_workbench_view(&self) -> Option<crate::render::WorkbenchView> {
-        self.menu.open_workbench_view(&self.recipes)
-    }
-
-    /// Close-time cleanup for a cursor-held GUI stack: merge it back into matching
-    /// inventory stacks, then empty slots, and queue only any leftover to drop into
-    /// the world on the next tick.
-    pub fn close_cursor_stack(&mut self) {
-        if let Some(stack) = self.player.inventory.stash_cursor_in_inventory() {
-            self.throw_item(stack);
-        }
-    }
-
-    /// The view of the currently-open chest for the UI, or `None` if no chest screen
-    /// is up or it has unloaded.
-    pub fn open_chest_view(&self) -> Option<ChestView> {
-        self.menu.open_chest_view(&self.world)
-    }
-
-    /// Throw the whole cursor-held stack out into the world (inventory drag-out
-    /// then click outside the panel). No-op when the cursor is empty.
-    pub fn throw_cursor_stack(&mut self) {
-        if let Some(stack) = self.player.inventory.take_cursor() {
-            self.throw_item(stack);
-        }
-    }
-
-    /// Throw a single item off the cursor-held stack (right-click outside the
-    /// panel while dragging). No-op when the cursor is empty.
-    pub fn throw_cursor_one(&mut self) {
-        if let Some(stack) = self.player.inventory.take_cursor_one() {
-            self.throw_item(stack);
-        }
-    }
-
-    /// Drop the player's held (active hotbar) item into the world via the in-game
-    /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
-    /// single item (Q). No-op with an empty hand.
-    pub fn drop_selected_item(&mut self, all: bool) {
-        let stack = if all {
-            self.player.inventory.take_selected_all()
-        } else {
-            self.player.inventory.take_selected_one()
-        };
-        if let Some(stack) = stack {
-            self.throw_item(stack);
-        }
-    }
-
-    /// Queue `stack` to be thrown into the world as a dropped item, flying out along the
-    /// camera's look direction and originating just in front of the eye so it clears the
-    /// player. The drop is built now (per frame, against the current look) but enters the
-    /// world on the next game tick — like every other entity, a drop materialises on the
-    /// tick (see [`tick_drops`](Self::tick_drops)). The item already left the inventory.
-    fn throw_item(&mut self, stack: ItemStack) {
-        let dir = self.cam.forward();
-        let origin = self.cam.pos + dir * 0.3;
-        let mut drop = DroppedItem::thrown(origin, stack, dir);
-        drop.skylight = light6_at_pos(&self.world, origin);
-        self.pending_drops.push(drop);
-        // Flick the hand forward (place jab) on the next rendered frame.
-        self.threw_item = true;
-    }
-
-    #[inline]
-    pub fn selected_item(&self) -> Option<ItemType> {
+    fn selected_item(&self) -> Option<ItemType> {
         self.player.inventory.selected().map(|s| s.item)
     }
 
-    #[inline]
-    pub fn is_mining(&self) -> bool {
-        self.mining.is_mining()
-    }
-
-    /// The block the player is actively mining right now, if any — a presentation
-    /// query the client maps to a mining sound (see [`crate::audio`]). The mining
-    /// itself runs on the tick; this just reports its current target so audio (which
-    /// must stay off the tick) can react per frame.
-    #[inline]
-    pub fn mining_block(&self) -> Option<Block> {
-        if self.mining.is_mining() {
-            self.mining.block()
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub fn selection(&self) -> Option<SelectionShape> {
-        self.look.map(|h| h.outline)
-    }
-
-    #[inline]
-    pub fn break_overlay_view(&self) -> Option<BreakOverlayView> {
-        self.mining.overlay().map(|(block, stage)| {
-            // A bbmodel block cracks over its targeted cell's actual cube surfaces (kind
-            // + that cell's footprint offset); the chest over its inset box; everything
-            // else over the full cell (`None`).
-            let model = match Block::from_id(self.world.chunk_block(block.x, block.y, block.z))
-                .render_shape()
-            {
-                crate::block::RenderShape::Model(kind) => Some((
-                    kind,
-                    self.world.model_offset_at(block.x, block.y, block.z),
-                    self.world.model_facing_at(block.x, block.y, block.z),
-                )),
-                _ => None,
-            };
-            BreakOverlayView {
-                block,
-                visual_box: if model.is_some() {
-                    None
-                } else {
-                    self.world.selection_box_at(block.x, block.y, block.z)
-                },
-                model,
-                stage,
-            }
-        })
-    }
-
-    /// The active dropped item-entities, for the render-side scene adapter to bake
-    /// into `ItemEntityInstance`s. Their cached skylight is kept fresh by the
-    /// per-tick light refresh, so the adapter only reads here.
-    #[inline]
-    pub fn item_entities(&self) -> &[DroppedItem] {
-        self.world.item_entities()
-    }
-
-    /// The placed chests' render data — world position, facing, sampled skylight —
-    /// gathered from the loaded chunks into `out` (cleared first). The render-side
-    /// scene adapter pairs each with its lid angle (via [`chest_lid_angle`]) to bake
-    /// a `ChestInstance`. The lid animation itself stays here on `Game`.
-    ///
-    /// [`chest_lid_angle`]: Self::chest_lid_angle
-    #[inline]
-    pub fn collect_chest_render_data(&self, out: &mut Vec<(IVec3, Facing, u8)>) {
-        self.world.collect_chests(out);
-    }
-
-    /// Gather the doors to draw this frame (lower cell, state, the two halves' tiles,
-    /// skylight). The render-side scene adapter pairs each with its swing angle (via
-    /// [`door_swing_angle`](Self::door_swing_angle)) to bake a `DoorInstance`.
-    #[inline]
-    pub fn collect_door_render_data(
-        &self,
-        out: &mut Vec<(IVec3, crate::door::DoorState, [crate::atlas::Tile; 3], u8)>,
-    ) {
-        self.world.collect_doors(out);
-    }
-
     /// The transient open progress (`0.0` closed .. `1.0` open) of the chest at
-    /// `pos`, or `0.0` if it isn't tracked. The render-side scene adapter reads this
+    /// `pos`, or `0.0` if it isn't tracked. The presentation snapshot reads this
     /// to bake the chest's lid hinge; the easing/animation lives in
     /// [`advance_chest_lids`](Self::advance_chest_lids).
     #[inline]
-    pub fn chest_lid_angle(&self, pos: IVec3) -> f32 {
+    fn chest_lid_angle(&self, pos: IVec3) -> f32 {
         self.chest_lids.get(&pos).copied().unwrap_or(0.0)
     }
 
@@ -897,9 +248,9 @@ impl Game {
     /// cell is `lower`. While a door is mid-swing the eased value is read from
     /// [`door_swings`](Self::door_swings); once it settles the entry is dropped and the
     /// door rests at its logical open state (read straight from the door map). The
-    /// render-side scene adapter calls this per visible door to bake its hinge.
+    /// presentation snapshot calls this per visible door to bake its hinge.
     #[inline]
-    pub fn door_swing_angle(&self, lower: IVec3) -> f32 {
+    fn door_swing_angle(&self, lower: IVec3) -> f32 {
         if let Some(&a) = self.door_swings.get(&lower) {
             return a;
         }
@@ -933,25 +284,12 @@ impl Game {
         });
     }
 
-    /// The live particle system, for the render-side scene adapter to bake into
-    /// `ParticleInstance`s. Read-only; ticking happens in the sim.
-    #[inline]
-    pub fn particles(&self) -> &ParticleSystem {
-        &self.particles
-    }
-
-    /// The live mobs, for the render-side scene adapter to interpolate + bake.
-    #[inline]
-    pub fn mobs(&self) -> &[crate::mob::Instance] {
-        self.world.mobs().instances()
-    }
-
     /// Fraction (`0..1`) into the next fixed tick — the blend factor the scene uses to
     /// interpolate each entity's render pose between its previous and current tick, so the
     /// mobs and dropped items (which simulate at 20 TPS) move smoothly at any frame rate.
     #[inline]
-    pub fn tick_alpha(&self) -> f32 {
-        (self.tick_accumulator / TICK_DT).clamp(0.0, 1.0)
+    fn tick_alpha(&self) -> f32 {
+        (self.tick_accumulator / tick::TICK_DT).clamp(0.0, 1.0)
     }
 
     /// Whether anything on screen is currently moving or pending, so the app shell knows
@@ -963,11 +301,14 @@ impl Game {
     /// player or far off keeps simulating but does NOT hold the frame at full rate.
     ///
     /// [`entity_animating_in_view`]: Self::entity_animating_in_view
-    pub fn is_visually_active(&self) -> bool {
+    fn is_visually_active(&self) -> bool {
         !self.particles.is_empty()
-            || self.is_mining()
+            || self.mining.is_mining()
             || self.world.has_dirty_meshes()
-            || self.chest_lids.values().any(|&lid| lid > f32::EPSILON && lid < 1.0)
+            || self
+                .chest_lids
+                .values()
+                .any(|&lid| lid > f32::EPSILON && lid < 1.0)
             || !self.door_swings.is_empty()
             || self.entity_animating_in_view()
     }
@@ -987,819 +328,26 @@ impl Game {
             (p - eye).length_squared() <= r2
                 && frustum.aabb_visible(p - Vec3::new(0.5, 0.0, 0.5), p + Vec3::new(0.5, 2.0, 0.5))
         };
-        self.mobs().iter().any(|m| visible(m.pos))
-            || self.item_entities().iter().any(|d| visible(d.pos))
-    }
-
-    /// Whether terrain (re)meshing is queued. The app shell samples this *before*
-    /// the tick (which runs the mesh budget and drains the queue into built-but-
-    /// unuploaded meshes) so it forces the draw that uploads them. See
-    /// [`is_visually_active`](Self::is_visually_active).
-    #[inline]
-    pub fn has_dirty_meshes(&self) -> bool {
-        self.world.has_dirty_meshes()
+        self.world.mobs().instances().iter().any(|m| visible(m.pos))
+            || self.world.item_entities().iter().any(|d| visible(d.pos))
     }
 
     /// Combined light + warm-tint amount at the player's eye, for lighting the
     /// first-person hand / held item — it brightens AND warms near torches/furnaces.
-    pub fn held_item_light(&self) -> (u8, u8) {
+    fn held_item_light(&self) -> (u8, u8) {
         let c = voxel_at(self.cam.pos);
         self.world.dynamic_light_at_world(c.x, c.y, c.z)
-    }
-
-    pub fn environment(&self, now: f64) -> GameEnvironment {
-        let eye = self.cam.pos;
-        let underwater = camera_eye_underwater(&self.world, eye);
-
-        let fog = if underwater {
-            UNDERWATER_FOG_COLOR
-        } else {
-            self.blended_sky_fog_color(eye.x, eye.z)
-        };
-
-        GameEnvironment {
-            fog,
-            underwater,
-            time: (now % 3600.0) as f32,
-        }
-    }
-
-    fn apply_camera_input(&mut self, input: &GameInput) {
-        if !input.gameplay_enabled {
-            return;
-        }
-        let (dx, dy) = input.look_delta;
-        if dx == 0.0 && dy == 0.0 {
-            return;
-        }
-        const SENS: f32 = 0.0025;
-        self.player.rotate(-dx * SENS, -dy * SENS);
-        // Mirror the player's look onto the camera now (before this tick's
-        // movement + raycast read `cam.forward()`), the same way `tick_player`
-        // mirrors `player.eye()` onto `cam.pos`.
-        self.cam.yaw = self.player.yaw;
-        self.cam.pitch = self.player.pitch;
-    }
-
-    fn apply_hotbar_input(&mut self, input: &GameInput) {
-        if input.gameplay_enabled && input.hotbar_scroll != 0 {
-            self.player.inventory.scroll_active(input.hotbar_scroll);
-        }
-    }
-
-    fn tick_player(&mut self, dt: f32, input: &GameInput) {
-        let spectator = self.player.is_spectator();
-        let f = self.cam.forward();
-        let fwd = if spectator {
-            f
-        } else {
-            Vec3::new(f.x, 0.0, f.z).normalize_or_zero()
-        };
-        let right = self.cam.right();
-        let mut wishdir = Vec3::ZERO;
-
-        if input.gameplay_enabled {
-            if input.movement.forward {
-                wishdir += fwd;
-            }
-            if input.movement.backward {
-                wishdir -= fwd;
-            }
-            if input.movement.right {
-                wishdir += right;
-            }
-            if input.movement.left {
-                wishdir -= right;
-            }
-            if spectator {
-                if input.movement.jump {
-                    wishdir += Vec3::Y;
-                }
-                if input.movement.sneak {
-                    wishdir -= Vec3::Y;
-                }
-            }
-        }
-
-        let player_input = Input {
-            wishdir: wishdir.normalize_or_zero(),
-            jump: input.gameplay_enabled && input.movement.jump,
-            sprint: input.gameplay_enabled && input.movement.sprint,
-        };
-
-        if spectator || self.player.columns_loaded(&self.world) {
-            let mut remaining = dt.min(0.25);
-            while remaining > 0.0 {
-                let step = remaining.min(player::DT_MAX);
-                self.player.update(step, &self.world, player_input);
-                remaining -= step;
-            }
-        }
-
-        self.cam.pos = self.player.eye();
-    }
-
-    /// Push the player out of any mob it overlaps, per frame. The mobs sit at their
-    /// last-tick positions (fixed between ticks), so as the player moves each frame the
-    /// overlap — and the push — track the player smoothly; applied as a small
-    /// collision-resolved displacement (the push *velocity* over this frame's `dt`), it
-    /// never accumulates or fights the movement controller. A noclip spectator has no body
-    /// to jostle. The mobs' own half of the push runs on the tick (`game_tick_step`).
-    fn apply_mob_push(&mut self, dt: f32) {
-        if self.player.is_spectator() {
-            return;
-        }
-        let body = crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT);
-        let push = self.world.mobs().push_on_player(body);
-        if push != Vec3::ZERO {
-            self.player.shove(push * dt, &self.world);
-        }
-        self.cam.pos = self.player.eye();
-    }
-
-    fn tick_world(&mut self) {
-        let cam_cx = (self.cam.pos.x as i32) >> 4;
-        let cam_cz = (self.cam.pos.z as i32) >> 4;
-        self.world.update_load(cam_cx, cam_cz);
-        let _ = self.world.poll();
     }
 
     fn tick_mesh_budget(&mut self) {
         const MESH_BUDGET: usize = 32;
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
-
-    /// Mining, on the tick: advance the break timer against the block under the crosshair
-    /// (sampled per frame into `look`) by [`TICK_DT`], and when a block finishes breaking,
-    /// clear it, scatter any block-entity contents + harvested drops, and spawn the break
-    /// burst. Frame-rate independent. Gated off (progress reset) while a screen owns input
-    /// (`intent_gameplay` false) — that's `inventory_open` to the mining controller.
-    fn tick_mining(&mut self, events: &mut TickEvents) {
-        // The held tool (None = bare hand) gates mining speed + whether drops fall.
-        let tool = self.player.inventory.selected().and_then(|s| s.item.tool());
-        if let Some(event) = self.mining.update(
-            TICK_DT,
-            self.look.as_ref(),
-            self.intent_break_held,
-            !self.intent_gameplay,
-            &self.world,
-            tool,
-        ) {
-            events.broke_block = Some(event.block);
-            let hit_normal = self
-                .look
-                .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
-                .map(|h| h.normal);
-            let (light, warm) = break_light(&self.world, event.pos, hit_normal);
-            // A bbmodel block breaks as a whole: removing any cell clears every footprint
-            // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
-            if matches!(event.block.render_shape(), RenderShape::Model(_)) {
-                self.world.remove_model_block(event.pos);
-            } else if event.block.render_shape() == RenderShape::Door {
-                // A door breaks as a whole: removing either cell clears both halves and
-                // drops one door item (the `spawn_drops` below). Forget any swing too.
-                if let Some(lower) =
-                    self.world.door_lower_cell(event.pos.x, event.pos.y, event.pos.z)
-                {
-                    self.door_swings.remove(&lower);
-                }
-                self.world.remove_door(event.pos);
-            } else {
-                self.world
-                    .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
-            }
-            // A broken furnace scatters whatever it held, regardless of tool (the
-            // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
-            if event.block == Block::Furnace {
-                if let Some(f) = self.world.take_furnace(event.pos) {
-                    for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
-                        self.spawn_item_stack(event.pos, stack, light);
-                    }
-                }
-            } else if event.block == Block::Chest {
-                // A broken chest scatters its whole contents, regardless of tool.
-                if let Some(chest) = self.world.take_chest(event.pos) {
-                    for stack in chest.slots.into_iter().flatten() {
-                        self.spawn_item_stack(event.pos, stack, light);
-                    }
-                }
-            } else if event.block == Block::Torch {
-                // A torch has no contents — just forget its recorded orientation so
-                // the freed cell carries no stale block-entity state.
-                self.world.take_torch(event.pos);
-            }
-            // A bbmodel block has no block-atlas tile, so its burst samples its own
-            // texture (the model atlas); every other block uses its face tiles.
-            match event.block.render_shape() {
-                RenderShape::Model(kind) => self
-                    .particles
-                    .spawn_break_burst_model(event.pos, kind, light, warm),
-                _ => self
-                    .particles
-                    .spawn_break_burst_lit(event.pos, event.block, light, warm),
-            }
-            if event.harvested {
-                self.spawn_drops(event.pos, event.block, light);
-            }
-        }
-
-        // A small dust fleck every MINING_DUST_INTERVAL while actively breaking.
-        if self.mining.is_mining() {
-            if let Some(h) = self.look {
-                self.mining_dust_t += TICK_DT;
-                if self.mining_dust_t >= MINING_DUST_INTERVAL {
-                    self.mining_dust_t = 0.0;
-                    let block =
-                        Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-                    let cell = h.block + h.normal;
-                    let (light, warm) = self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-                    match block.render_shape() {
-                        RenderShape::Model(kind) => self
-                            .particles
-                            .spawn_mining_model(h.block, h.normal, kind, light, warm),
-                        _ => self
-                            .particles
-                            .spawn_mining_lit(h.block, h.normal, block, light, warm),
-                    }
-                }
-            }
-        } else {
-            self.mining_dust_t = 0.0;
-        }
-    }
-
-    /// Placement / interaction, on the tick: consume a buffered secondary-button press
-    /// once. Right-clicking a placed interactable block (crafting table, furnace, chest)
-    /// opens its screen rather than placing into the cell — unless sneaking, which falls
-    /// through so the player can still build against it.
-    fn tick_place(&mut self, events: &mut TickEvents) {
-        if !std::mem::take(&mut self.pending_place) {
-            return;
-        }
-        let interacted = !self.intent_sneak && self.try_open_interactable();
-        if !interacted {
-            // Capture the held block before `try_place` consumes it: on success that is
-            // exactly the block placed, which the client maps to a place sound.
-            let held = self.player.inventory.selected().and_then(|s| s.item.as_block());
-            if self.try_place() {
-                events.placed_block = held;
-            }
-        }
-    }
-
-    /// Spawn the items dropped this frame into the world — on the tick, so a drop enters
-    /// the world deterministically like every other entity (the item already left the
-    /// inventory per frame; it materialises here). Spawned before the tick's item physics
-    /// so a fresh drop gets its first physics step this tick.
-    fn tick_drops(&mut self) {
-        for drop in std::mem::take(&mut self.pending_drops) {
-            self.world.spawn_item(drop);
-        }
-    }
-
-    /// If the look target is an interactable block, request its screen and return
-    /// `true` (consuming the right-click). A crafting table opens the 3×3 grid; a
-    /// furnace opens the furnace screen at that position.
-    fn try_open_interactable(&mut self) -> bool {
-        let Some(h) = self.look else { return false };
-        let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        match block {
-            Block::CraftingTable => {
-                self.request_open_table = true;
-                true
-            }
-            Block::Furnace => {
-                self.request_open_furnace = Some(h.block);
-                true
-            }
-            Block::Chest => {
-                self.request_open_chest = Some(h.block);
-                true
-            }
-            Block::FurnitureWorkbench => {
-                self.request_open_workbench = Some(h.block);
-                true
-            }
-            // Right-clicking a door toggles it: the open/closed bit flips on this tick
-            // (so collision updates at once and the player can step through), and the
-            // visual swing is eased from the door's current angle. Seed the swing entry
-            // BEFORE the toggle so it starts from the old pose, then eases to the new one.
-            _ if block.render_shape() == RenderShape::Door => {
-                if let Some(lower) =
-                    self.world.door_lower_cell(h.block.x, h.block.y, h.block.z)
-                {
-                    let start = self.door_swing_angle(lower);
-                    self.door_swings.entry(lower).or_insert(start);
-                    self.world.toggle_door(h.block);
-                    // Flick the hand for the interaction (same jab as opening a chest).
-                    self.toggled_door = true;
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn try_place(&mut self) -> bool {
-        let Some(h) = self.look else { return false };
-        if h.normal == IVec3::ZERO {
-            return false;
-        }
-
-        let block = match self.player.inventory.selected() {
-            Some(stack) => match stack.item.as_block() {
-                Some(b) if b != Block::Air => b,
-                _ => return false,
-            },
-            None => return false,
-        };
-
-        // Right-clicking a replaceable block (short grass, a fern…) while holding a block
-        // places straight INTO its cell, overwriting it with no drop — the block just
-        // disappears, as if the cell were empty. Otherwise the placement builds against
-        // the clicked face. Air is replaceable too (a placement may overwrite it) but is
-        // never itself a raycast hit, so exclude it. `p` then feeds the torch support
-        // gate, the model footprint, and the final replaceable check uniformly.
-        let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        let replacing_in_place = looked_at.is_replaceable() && looked_at != Block::Air;
-        let p = if replacing_in_place {
-            h.block
-        } else {
-            h.block + h.normal
-        };
-
-        // A torch only mounts on a floor or wall (never a ceiling) and needs a full solid
-        // face to attach to. Resolve that up front so an invalid spot is a no-op (the
-        // click neither places nor consumes the torch) rather than leaving a floating one.
-        // When REPLACING a plant the torch always drops to the FLOOR of that cell — so
-        // right-clicking grass from any angle, even its side, stands a floor torch where
-        // the grass was instead of failing on the side face's would-be wall mount.
-        let torch_placement = if block == Block::Torch {
-            let tp = if replacing_in_place {
-                TorchPlacement::Floor
-            } else {
-                match TorchPlacement::from_place_normal(h.normal) {
-                    Some(tp) => tp,
-                    None => return false,
-                }
-            };
-            let s = tp.support_cell(p);
-            if !Block::from_id(self.world.chunk_block(s.x, s.y, s.z)).is_opaque() {
-                return false;
-            }
-            Some(tp)
-        } else {
-            None
-        };
-
-        // A bbmodel block places its WHOLE footprint (the workbench is 2×2×1): every
-        // occupied cell must be loaded + replaceable AND clear of the player/mobs, or the
-        // placement fails as a unit (nothing placed, the held item kept). Multi-cell
-        // models, and models marked directionalView, are oriented from the player's
-        // facing; `p` is the front-left bottom anchor from the player's view.
-        if let RenderShape::Model(kind) = block.render_shape() {
-            let player_facing = facing_from_forward(self.cam.forward());
-            let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
-            let facing = if block.directional_view() || multi_cell {
-                player_facing
-            } else {
-                crate::block_model::DEFAULT_MODEL_FACING
-            };
-            let base = if block.directional_view() || multi_cell {
-                crate::block_model::base_from_front_left_anchor(p, kind, facing)
-            } else {
-                p
-            };
-            if !self.world.model_footprint_clear_facing(base, kind, facing) {
-                return false;
-            }
-            let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
-                .into_iter()
-                .any(|(c, off)| {
-                    self.player.intersects_block(c)
-                        || self.world.mobs().any_overlapping_boxes(
-                            c,
-                            crate::block_model::collision_boxes_oriented(kind, off, facing),
-                        )
-                });
-            if !blocked && self.world.place_model_block_facing(base, block, facing) {
-                self.player.inventory.decrement_selected();
-                return true;
-            }
-            return false;
-        }
-
-        // A door is a 2-tall thin block: its lower cell is `p`, the upper is the cell
-        // above. Both must be loaded + replaceable AND give it a floor to stand on
-        // (`door_footprint_clear`), and the closed slab must not trap the player or a
-        // mob. It sits on the edge nearest the placer (the player's facing). Placement
-        // + the paired door state live in `World::place_door`.
-        if block.render_shape() == RenderShape::Door {
-            let facing = facing_from_forward(self.cam.forward());
-            let upper = p + IVec3::new(0, 1, 0);
-            if !self.world.door_footprint_clear(p) {
-                return false;
-            }
-            let closed = |top: bool| {
-                crate::door::collision_boxes(crate::door::DoorState {
-                    facing,
-                    open: false,
-                    top,
-                })
-            };
-            let blocked = [(p, false), (upper, true)].into_iter().any(|(c, top)| {
-                self.player.intersects_block(c)
-                    || self.world.mobs().any_overlapping_boxes(c, closed(top))
-            });
-            if !blocked && self.world.place_door(p, block, facing) {
-                self.player.inventory.decrement_selected();
-                return true;
-            }
-            return false;
-        }
-
-        // Substrate gate: a block that roots in a particular ground — a flower in soil, a
-        // cactus in sand, a mushroom on soil or stone — places only when the cell directly
-        // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost
-        // all of them) accept anything; a torch is gated by its own opaque-face check
-        // above. Staying put once placed is the separate job of the FRAGILE behaviour.
-        let below = Block::from_id(self.world.chunk_block(p.x, p.y - 1, p.z));
-        if !block.can_root_on(below) {
-            return false;
-        }
-
-        let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
-        // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
-        // may be placed inside an entity; a block that WOULD collide can't be placed where
-        // it overlaps the player or a mob — the placement simply fails (the click does
-        // nothing and the held item isn't consumed).
-        let collides = block.blocks_movement();
-        let clear_of_player = !collides || !self.player.intersects_block(p);
-        let clear_of_mobs = !collides || !self.world.mobs().any_overlapping_placement(p, block);
-        if target.is_replaceable()
-            && clear_of_player
-            && clear_of_mobs
-            && self.world.set_block_world(p.x, p.y, p.z, block)
-        {
-            // A placed furnace/chest gets an empty block-entity from the moment it
-            // exists. Blocks marked directionalView have their front oriented to face
-            // the player; a torch records how it is mounted (floor vs which wall) for
-            // the mesher + outline.
-            let placed_facing = if block.directional_view() {
-                facing_from_forward(self.cam.forward())
-            } else {
-                crate::block_model::DEFAULT_MODEL_FACING
-            };
-            if block == Block::Furnace {
-                self.world.insert_furnace(p, placed_facing);
-            } else if block == Block::Chest {
-                self.world.insert_chest(p, placed_facing);
-            } else if let Some(tp) = torch_placement {
-                self.world.insert_torch(p, tp);
-            }
-            self.player.inventory.decrement_selected();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Drain the blocks the world simulation destroyed this tick (fragile blocks that
-    /// lost support or were washed away by water) and give each the same break a player
-    /// would — the break-particle burst plus its rolled item drops. Particles are purely
-    /// visual (Game-owned), so they're spawned here rather than inside the world tick; the
-    /// drops materialise on this tick like every other entity. The block is already gone
-    /// (the world cleared the cell), so light is sampled from the now-empty cell — which is
-    /// what the burst should glow with.
-    fn process_natural_breaks(&mut self) {
-        for (pos, block) in self.world.take_natural_breaks() {
-            let (light, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
-            match block.render_shape() {
-                RenderShape::Model(kind) => {
-                    self.particles.spawn_break_burst_model(pos, kind, light, warm)
-                }
-                _ => self.particles.spawn_break_burst_lit(pos, block, light, warm),
-            }
-            // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
-            // hand-break would (short grass yields nothing, a flower/torch yields itself).
-            self.spawn_drops(pos, block, light);
-        }
-    }
-
-    fn spawn_drops(&mut self, pos: IVec3, block: Block, skylight: u8) {
-        let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
-        for d in block.drop_spec().drops {
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
-            // a guaranteed drop (chance 1.0) always passes. Reuses the same seeded
-            // hash the count roll uses, so the roll stays deterministic on the tick.
-            if d.chance < 1.0 && crate::entity::hash01(self.spawn_counter as u64) >= d.chance {
-                continue;
-            }
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            // Roll a count in [min, max] (a fixed amount when min == max, e.g. the
-            // 2–4 raw copper from copper ore).
-            let count = if d.min >= d.max {
-                d.min
-            } else {
-                let r = crate::entity::hash01(self.spawn_counter as u64);
-                let span = (d.max - d.min + 1) as f32;
-                (d.min + (r * span) as u8).min(d.max)
-            };
-            if count == 0 {
-                continue;
-            }
-            let stack = ItemStack::new(d.item, count);
-            let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-            drop.skylight = skylight;
-            self.world.spawn_item(drop);
-        }
-    }
-
-    /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
-    /// furnace scattering its contents). No-op for an empty stack.
-    fn spawn_item_stack(&mut self, pos: IVec3, stack: ItemStack, skylight: u8) {
-        if stack.is_empty() {
-            return;
-        }
-        let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-        drop.skylight = skylight;
-        self.world.spawn_item(drop);
-    }
-
-    /// The closest mob in front of the eye whose AABB the ray enters within `max_dist`
-    /// (and within reach), skipping dead corpses. `max_dist` is the block hit distance,
-    /// so a mob *behind* the block isn't targeted (the block occludes it).
-    fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<usize> {
-        let limit = max_dist.min(player::REACH);
-        let mut best: Option<(usize, f32)> = None;
-        for (i, m) in self.world.mobs().instances().iter().enumerate() {
-            if m.is_dead() {
-                continue; // a corpse can't be targeted
-            }
-            let (min, max) = m.aabb();
-            if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
-                if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
-                    best = Some((i, t));
-                }
-            }
-        }
-        best.map(|(i, _)| i)
-    }
-
-    /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
-    /// press never lands more than one hit). The damage lands the tick *after* the click —
-    /// `pending_attack` is latched per frame and consumed here. Rate-limited by
-    /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and an attack
-    /// is refused (no swing, no damage) while it's running, so mashing the button can't
-    /// land a hit every tick — only one swing per cooldown connects, so an owl can't be
-    /// spam-clicked to death. A swing that connects (a mob hit or a punch at the air) arms
-    /// the cooldown and reports `swung_hand`; a click on a block (mining) does neither.
-    fn tick_attack(&mut self, events: &mut TickEvents) {
-        self.attack_cooldown = self.attack_cooldown.saturating_sub(1);
-        // Consume the press whether or not it lands (no queuing past one tick); it only
-        // resolves once the cooldown has elapsed.
-        if !std::mem::take(&mut self.pending_attack) || self.attack_cooldown != 0 {
-            return;
-        }
-        if self.resolve_attack() {
-            self.attack_cooldown = ATTACK_COOLDOWN_TICKS;
-            events.swung_hand = true;
-        }
-    }
-
-    /// Apply one attack swing: damage the targeted mob (rolling the held weapon's damage
-    /// and spawning loot if the hit kills it), or — looking at nothing — punch the air.
-    /// Returns whether the hand swung (a mob hit or an air punch); a click on a block
-    /// doesn't swing (mining is the held action). Reads the `targeted_mob` / `look`
-    /// sampled this frame, before any mob tick has shifted indices.
-    fn resolve_attack(&mut self) -> bool {
-        if let Some(idx) = self.targeted_mob {
-            let (lo, hi) = crate::item::attack_damage(self.selected_item());
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            let damage = lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo);
-            let from = self.player.body_center();
-            if let Some(death) = self.world.mobs_mut().hurt_mob(idx, damage, from) {
-                self.spawn_mob_loot(death);
-            }
-            true
-        } else {
-            // No mob: a punch swing only when looking at nothing.
-            self.look.is_none()
-        }
-    }
-
-    /// Roll a dead mob's loot table and scatter the drops at its body. Called the
-    /// instant a mob dies (from the attack that killed it), so loot appears "when
-    /// killed" while the corpse ragdolls. No-op for a species with no table.
-    fn spawn_mob_loot(&mut self, death: DeathDrop) {
-        let Some(table) = self.loot.get(crate::mob::def(death.kind).key) else {
-            return;
-        };
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let stacks = table.roll(self.spawn_counter as u64);
-        // Pop from roughly the mob's body centre so drops don't clip into the floor.
-        let centre = death.pos + Vec3::new(0.0, 0.3, 0.0);
-        for stack in stacks {
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-            drop.skylight = death.skylight;
-            self.world.spawn_item(drop);
-        }
-    }
-
-    /// Per-frame presentation update: only particles, which are a purely visual effect
-    /// (they don't touch the world). Everything that simulates the world or its entities —
-    /// mob AI/physics AND dropped-item physics — runs on the fixed game tick (see
-    /// [`game_tick_step`](Self::game_tick_step)); the renderer interpolates between ticks.
-    fn tick_entities(&mut self, dt: f32) {
-        self.particles.tick(dt, &self.world);
-    }
-
-    /// Per game-tick (20 TPS) item maintenance: advance every drop's lifetime
-    /// timer (despawning those past their 5-minute limit) and pull any eligible
-    /// drop within the player's pickup radius into the inventory. Driven from the
-    /// fixed-tick loop, so both are paced by the simulation clock. Returns whether at
-    /// least one item was collected this tick, so the client can play the pickup sound.
-    fn item_pickup_tick(&mut self) -> bool {
-        self.world.tick_item_lifetime();
-        let player_pos = self.player.body_center();
-        // Plan first against a cloned inventory, reserving capacity without
-        // mutating the real slots. Only requested drops are allowed to magnet.
-        let mut planned = self.player.inventory.clone();
-        self.world
-            .dropped_items_mut()
-            .request_pickups(player_pos, |stack| {
-                let count = planned.fits_count(stack);
-                if count > 0 {
-                    let leftover = planned.add(ItemStack::new(stack.item, count));
-                    debug_assert!(
-                        leftover.is_none(),
-                        "fits_count overestimated pickup capacity"
-                    );
-                }
-                count
-            });
-
-        // Borrow-split: `dropped_items_mut()` borrows the drops, `self.player`
-        // owns the inventory — disjoint `Game` fields, so this type-checks without
-        // aliasing. Actual inventory mutation only happens after a requested drop
-        // reaches the absorb radius.
-        let inventory = &mut self.player.inventory;
-        let mut collected = false;
-        self.world
-            .dropped_items_mut()
-            .collect_requested_pickups(player_pos, |stack| {
-                collected = true;
-                inventory.add(stack)
-            });
-        collected
-    }
-
-    fn refresh_dropped_item_lights_after_world_light_update(&mut self) {
-        let revision = self.world.lighting_revision();
-        if self.dropped_light_revision == revision {
-            return;
-        }
-        self.world.refresh_item_lights();
-        self.dropped_light_revision = revision;
-    }
-
-    fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
-        use crate::biome::{blended_fog_color, Biome};
-
-        blended_fog_color(x, z, |wx, wz| {
-            if let Some(id) = self.world.column_biome(wx, wz) {
-                return Biome::from_id(id);
-            }
-
-            self.fallback_world.biome_at(wx, wz)
-        })
-    }
-}
-
-/// The furnace facing for a block placed while looking along `forward`: the front
-/// (mouth) points back toward the player — opposite the camera's horizontal look
-/// direction — snapped to the nearest cardinal.
-fn facing_from_forward(forward: Vec3) -> Facing {
-    let (fx, fz) = (-forward.x, -forward.z);
-    if fx.abs() >= fz.abs() {
-        if fx >= 0.0 {
-            Facing::East
-        } else {
-            Facing::West
-        }
-    } else if fz >= 0.0 {
-        Facing::South
-    } else {
-        Facing::North
-    }
-}
-
-/// The 6-bit light level for dynamic geometry at a world position — the brighter of
-/// skylight and torch block-light, so the held item, particles, and dropped items
-/// are lit by torches just like the static blocks around them.
-fn light6_at_pos(world: &World, pos: Vec3) -> u8 {
-    light6_at_block(world, voxel_at(pos))
-}
-
-fn light6_at_block(world: &World, pos: IVec3) -> u8 {
-    world.combined_light6_at_world(pos.x, pos.y, pos.z)
-}
-
-fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {
-    let cell = voxel_at(eye);
-    if Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)) != Block::Water {
-        return false;
-    }
-
-    // Water above means this is an interior water volume, not the open surface.
-    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)) == Block::Water {
-        return true;
-    }
-
-    let surface_y = water_surface_y_at(world, cell, eye.x, eye.z);
-    eye.y < surface_y - UNDERWATER_SURFACE_MARGIN
-}
-
-fn water_surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32) -> f32 {
-    if water_fills_cell_at(world, cell.x, cell.y, cell.z) {
-        return cell.y as f32 + 1.0;
-    }
-
-    let mut h = [[1.0f32; 2]; 2];
-
-    // Match the water mesher's corner-height rule: each top vertex averages the
-    // water cells meeting that corner, so flowing water forms one sloped sheet.
-    for cx in 0..2i32 {
-        for cz in 0..2i32 {
-            let mut sum = 0.0;
-            let mut cnt = 0;
-            for ox in (cx - 1)..=cx {
-                for oz in (cz - 1)..=cz {
-                    if let Some(height) = fluid_height_at(world, cell.x + ox, cell.y, cell.z + oz) {
-                        sum += height;
-                        cnt += 1;
-                    }
-                }
-            }
-            h[cx as usize][cz as usize] = if cnt == 0 { 1.0 } else { sum / cnt as f32 };
-        }
-    }
-
-    let fx = (eye_x - cell.x as f32).clamp(0.0, 1.0);
-    let fz = (eye_z - cell.z as f32).clamp(0.0, 1.0);
-    let z0 = lerp(h[0][0], h[1][0], fx);
-    let z1 = lerp(h[0][1], h[1][1], fx);
-    cell.y as f32 + lerp(z0, z1, fz)
-}
-
-fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
-    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
-        return None;
-    }
-    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
-    Some(crate::world::water::fluid_height(
-        world.water_meta_world(wx, wy, wz),
-        water_above,
-    ))
-}
-
-fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
-    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
-        return false;
-    }
-    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
-    crate::world::water::fills_cell(world.water_meta_world(wx, wy, wz), water_above)
-}
-
-/// Combined light + warm at the lit face of a just-broken block, for its break
-/// particles: the mined face's `(combined, warm)`, or the brightest neighbour when
-/// the face is unknown.
-fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8) {
-    let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
-    if let Some(n) = normal {
-        return at(pos + n);
-    }
-
-    [
-        IVec3::X,
-        -IVec3::X,
-        IVec3::Y,
-        -IVec3::Y,
-        IVec3::Z,
-        -IVec3::Z,
-    ]
-    .into_iter()
-    .map(|n| at(pos + n))
-    .max_by_key(|(combined, _)| *combined)
-    .unwrap_or((63, 0))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::tick::{TickEvents, TICK_DT};
     use super::*;
     use crate::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
@@ -1813,6 +361,12 @@ mod tests {
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(ItemType::Dirt, 64));
         inv
+    }
+
+    fn apply_drop_actions(game: &mut Game) -> TickEvents {
+        let mut events = TickEvents::default();
+        game.tick_drops(&mut events);
+        events
     }
 
     fn hit(pos: IVec3, normal: IVec3) -> RaycastHit {
@@ -2006,90 +560,6 @@ mod tests {
             .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
     }
 
-    fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
-        let chunk = game
-            .world
-            .chunk_mut_for_test(crate::chunk::ChunkPos::new(pos.x >> 4, pos.z >> 4))
-            .expect("test chunk must be installed");
-        chunk.set_water(
-            (pos.x & 0x0F) as usize,
-            pos.y as usize,
-            (pos.z & 0x0F) as usize,
-            Block::Water,
-            meta,
-        );
-    }
-
-    #[test]
-    fn underwater_shader_uses_flowing_water_surface_height() {
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let p = IVec3::new(4, 64, 4);
-        set_test_water(&mut game, p, 1); // flowing edge: the thinnest water film
-
-        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
-        assert!(!game.environment(0.0).underwater);
-
-        let surface = p.y as f32 + crate::world::water::fluid_height(1, false);
-        game.cam.pos = Vec3::new(
-            p.x as f32 + 0.5,
-            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
-            p.z as f32 + 0.5,
-        );
-        assert!(game.environment(0.0).underwater);
-    }
-
-    #[test]
-    fn underwater_shader_waits_until_confidently_below_source_surface() {
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let p = IVec3::new(5, 64, 5);
-        set_test_water(&mut game, p, 0);
-
-        let surface = p.y as f32 + crate::world::water::fluid_height(0, false);
-        game.cam.pos = Vec3::new(p.x as f32 + 0.5, surface + 0.01, p.z as f32 + 0.5);
-        assert!(!game.environment(0.0).underwater);
-
-        game.cam.pos = Vec3::new(
-            p.x as f32 + 0.5,
-            surface - UNDERWATER_SURFACE_MARGIN * 0.5,
-            p.z as f32 + 0.5,
-        );
-        assert!(!game.environment(0.0).underwater);
-
-        game.cam.pos = Vec3::new(
-            p.x as f32 + 0.5,
-            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
-            p.z as f32 + 0.5,
-        );
-        assert!(game.environment(0.0).underwater);
-    }
-
-    #[test]
-    fn capped_water_cell_is_underwater_even_near_its_top() {
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let p = IVec3::new(6, 64, 6);
-        set_test_water(&mut game, p, 0);
-        set_test_water(&mut game, p + IVec3::Y, 0);
-
-        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.99, p.z as f32 + 0.5);
-        assert!(game.environment(0.0).underwater);
-    }
-
-    #[test]
-    fn underwater_shader_treats_falling_water_as_full_height() {
-        const FALLING_META: u8 = 0x80;
-
-        let mut game = game();
-        install_empty_chunk(&mut game);
-        let p = IVec3::new(7, 64, 7);
-        set_test_water(&mut game, p, FALLING_META);
-
-        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
-        assert!(game.environment(0.0).underwater);
-    }
-
     #[test]
     fn spawn_drops_dirt_yields_one_drop() {
         let mut game = game();
@@ -2257,20 +727,25 @@ mod tests {
         game.player.inventory.set_active(0);
         let before = count_item(&game.player.inventory, ItemType::Dirt);
 
-        // Q-drop: the item leaves the inventory now, but isn't a world entity yet.
+        // Q-drop queues intent only; inventory and world stay unchanged until the tick.
         game.drop_selected_item(false);
         assert_eq!(
             count_item(&game.player.inventory, ItemType::Dirt),
-            before - 1,
-            "left the inventory this frame"
+            before,
+            "inventory mutation waits for the tick"
         );
         assert!(
             game.world.item_entities().is_empty(),
             "the drop hasn't entered the world until a tick runs"
         );
 
-        // The tick materialises the queued drop as a world entity.
-        game.tick_drops();
+        // The tick removes the item and materialises the drop as a world entity.
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
+        assert_eq!(
+            count_item(&game.player.inventory, ItemType::Dirt),
+            before - 1
+        );
         assert_eq!(
             game.world.item_entities().len(),
             1,
@@ -2396,8 +871,13 @@ mod tests {
             .count;
         assert!(game.world.item_entities().is_empty());
         game.throw_cursor_stack();
+        assert!(
+            game.player.inventory.cursor().is_some(),
+            "cursor is not mutated until the tick"
+        );
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
         assert!(game.player.inventory.cursor().is_none(), "cursor emptied");
-        game.tick_drops(); // the queued drop materialises in the world on the tick
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, held);
         assert_eq!(
@@ -2408,16 +888,90 @@ mod tests {
     }
 
     #[test]
+    fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
+        let mut game = game();
+        game.player.inventory = Inventory::from_parts(
+            [None; crate::inventory::TOTAL_SLOTS],
+            Some(ItemStack::new(ItemType::Dirt, 12)),
+            0,
+        );
+
+        game.throw_cursor_stack();
+        assert!(
+            game.player.inventory.cursor().is_some(),
+            "throwing does not mutate the cursor until another tick/close action"
+        );
+        game.close_cursor_stack();
+
+        assert!(
+            game.player.inventory.cursor().is_none(),
+            "the committed cursor throw is not stashed on close"
+        );
+        assert_eq!(count_item(&game.player.inventory, ItemType::Dirt), 0);
+        assert!(
+            game.world.item_entities().is_empty(),
+            "entity spawn still waits for the tick"
+        );
+
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack,
+            ItemStack::new(ItemType::Dirt, 12)
+        );
+    }
+
+    #[test]
     fn throwing_one_from_cursor_drops_a_single_item() {
         let mut game = game();
         game.player.inventory = filled_inventory();
         game.player.inventory.click_slot(0);
         let held = game.player.inventory.cursor().unwrap().count;
         game.throw_cursor_one();
-        game.tick_drops(); // the queued drop materialises in the world on the tick
+        assert_eq!(
+            game.player.inventory.cursor().unwrap().count,
+            held,
+            "cursor count is unchanged until the tick"
+        );
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, 1);
         assert_eq!(game.player.inventory.cursor().unwrap().count, held - 1);
+    }
+
+    #[test]
+    fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
+        let mut game = game();
+        game.player.inventory = Inventory::from_parts(
+            [None; crate::inventory::TOTAL_SLOTS],
+            Some(ItemStack::new(ItemType::Dirt, 12)),
+            0,
+        );
+
+        game.throw_cursor_one();
+        assert_eq!(
+            game.player.inventory.cursor().unwrap().count,
+            12,
+            "throwing one does not mutate the cursor immediately"
+        );
+        game.close_cursor_stack();
+
+        assert!(game.player.inventory.cursor().is_none());
+        assert_eq!(
+            count_item(&game.player.inventory, ItemType::Dirt),
+            11,
+            "close stashes only the part not committed to the throw"
+        );
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack,
+            ItemStack::new(ItemType::Dirt, 1)
+        );
+        assert_eq!(count_item(&game.player.inventory, ItemType::Dirt), 11);
     }
 
     #[test]
@@ -2444,7 +998,7 @@ mod tests {
             game.player.inventory.slot(4),
             Some(&ItemStack::new(ItemType::Dirt, 12))
         );
-        game.tick_drops();
+        apply_drop_actions(&mut game);
         assert!(
             game.world.item_entities().is_empty(),
             "stashed cursor stack should not drop"
@@ -2465,7 +1019,7 @@ mod tests {
             game.world.item_entities().is_empty(),
             "drop waits for the next tick"
         );
-        game.tick_drops();
+        apply_drop_actions(&mut game);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(
             game.world.item_entities()[0].stack,
@@ -2497,7 +1051,7 @@ mod tests {
             game.world.item_entities().is_empty(),
             "leftover drop waits for the next tick"
         );
-        game.tick_drops();
+        apply_drop_actions(&mut game);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(
             game.world.item_entities()[0].stack,
@@ -2547,7 +1101,13 @@ mod tests {
         game.player.inventory.set_active(0);
         let before = game.player.inventory.selected().unwrap().count;
         game.drop_selected_item(false);
-        game.tick_drops(); // the queued drop materialises in the world on the tick
+        assert_eq!(
+            game.player.inventory.selected().unwrap().count,
+            before,
+            "selected stack is not mutated until the tick"
+        );
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, 1);
         assert_eq!(
@@ -2559,13 +1119,48 @@ mod tests {
     }
 
     #[test]
+    fn queued_q_drop_uses_the_action_time_hotbar_slot() {
+        let mut game = game();
+        let mut slots = [None; crate::inventory::TOTAL_SLOTS];
+        slots[0] = Some(ItemStack::new(ItemType::Dirt, 5));
+        slots[1] = Some(ItemStack::new(ItemType::Stone, 7));
+        game.player.inventory = Inventory::from_parts(slots, None, 0);
+
+        game.drop_selected_item(false);
+        game.player.inventory.set_active(1);
+
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
+        assert_eq!(
+            game.player.inventory.slot(0),
+            Some(&ItemStack::new(ItemType::Dirt, 4))
+        );
+        assert_eq!(
+            game.player.inventory.slot(1),
+            Some(&ItemStack::new(ItemType::Stone, 7)),
+            "changing selection before the tick must not redirect the drop"
+        );
+        assert_eq!(game.world.item_entities().len(), 1);
+        assert_eq!(
+            game.world.item_entities()[0].stack,
+            ItemStack::new(ItemType::Dirt, 1)
+        );
+    }
+
+    #[test]
     fn drop_selected_all_throws_the_whole_held_stack() {
         let mut game = game();
         game.player.inventory = filled_inventory();
         game.player.inventory.set_active(0);
         let before = game.player.inventory.selected().unwrap().count;
         game.drop_selected_item(true);
-        game.tick_drops(); // the queued drop materialises in the world on the tick
+        assert_eq!(
+            game.player.inventory.selected().unwrap().count,
+            before,
+            "selected stack is not mutated until the tick"
+        );
+        let events = apply_drop_actions(&mut game);
+        assert!(events.threw_item);
         assert_eq!(game.world.item_entities().len(), 1);
         assert_eq!(game.world.item_entities()[0].stack.count, before);
         assert!(
@@ -2586,15 +1181,15 @@ mod tests {
     }
 
     #[test]
-    fn throwing_an_item_arms_the_hand_place_jab() {
+    fn applying_a_real_throw_arms_the_hand_place_jab() {
         // The Q drop throws from the active hotbar slot.
         {
             let mut game = game();
             game.player.inventory = filled_inventory();
             game.player.inventory.set_active(0);
-            assert!(!game.threw_item);
             game.drop_selected_item(false);
-            assert!(game.threw_item, "Q drop should flick the hand forward");
+            let events = apply_drop_actions(&mut game);
+            assert!(events.threw_item, "Q drop should flick the hand forward");
         }
         // Both inventory drag-outs throw from the cursor-held stack.
         for throw in [
@@ -2604,10 +1199,10 @@ mod tests {
             let mut game = game();
             game.player.inventory = filled_inventory();
             game.player.inventory.click_slot(0); // pick the stack onto the cursor
-            assert!(!game.threw_item);
             throw(&mut game);
+            let events = apply_drop_actions(&mut game);
             assert!(
-                game.threw_item,
+                events.threw_item,
                 "inventory drag-out should flick the hand forward"
             );
         }
@@ -2624,19 +1219,33 @@ mod tests {
         game.drop_selected_item(false);
         game.throw_cursor_stack();
         game.throw_cursor_one();
-        assert!(!game.threw_item, "an empty throw must not animate the hand");
+        let events = apply_drop_actions(&mut game);
+        assert!(
+            !events.threw_item,
+            "an empty throw must not animate the hand"
+        );
     }
 
     #[test]
-    fn tick_reports_then_clears_the_throw_event() {
+    fn tick_reports_throw_event_only_when_the_drop_is_applied() {
         let mut game = game();
         game.player.inventory = filled_inventory();
         game.player.inventory.set_active(0);
         game.drop_selected_item(false);
 
         let events = game.tick(1.0 / 60.0, &GameInput::default());
-        assert!(events.threw_item, "the frame after a throw reports it");
-        let next = game.tick(1.0 / 60.0, &GameInput::default());
+        assert!(
+            !events.threw_item,
+            "a frame with no fixed tick must not report a queued throw"
+        );
+        assert!(
+            game.player.inventory.selected().is_some(),
+            "a frame with no fixed tick must not mutate the inventory"
+        );
+
+        let applied = game.tick(TICK_DT, &GameInput::default());
+        assert!(applied.threw_item, "the applying tick reports the throw");
+        let next = game.tick(TICK_DT, &GameInput::default());
         assert!(!next.threw_item, "the throw event is one-shot");
     }
 
@@ -2647,6 +1256,91 @@ mod tests {
         assert!(game.player.inventory.selected().is_none());
         game.look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
         assert!(!game.try_place());
+    }
+
+    #[test]
+    fn right_clicking_interactable_blocks_requests_their_screen() {
+        enum ExpectedOpen {
+            CraftingTable,
+            Furnace,
+            Chest,
+            FurnitureWorkbench,
+        }
+
+        for (block, expected) in [
+            (Block::CraftingTable, ExpectedOpen::CraftingTable),
+            (Block::Furnace, ExpectedOpen::Furnace),
+            (Block::Chest, ExpectedOpen::Chest),
+            (Block::FurnitureWorkbench, ExpectedOpen::FurnitureWorkbench),
+        ] {
+            let mut game = game();
+            install_empty_chunk(&mut game);
+            let pos = IVec3::new(4, 64, 4);
+            game.world.set_block_world(pos.x, pos.y, pos.z, block);
+            game.look = Some(hit(pos, IVec3::Y));
+            game.pending_place = true;
+
+            let mut events = TickEvents::default();
+            game.tick_place(&mut events);
+
+            assert!(
+                events.placed_block.is_none(),
+                "{block:?} should interact, not place"
+            );
+            match expected {
+                ExpectedOpen::CraftingTable => {
+                    assert!(game.request_open_table, "{block:?} should open crafting");
+                }
+                ExpectedOpen::Furnace => {
+                    assert_eq!(game.request_open_furnace, Some(pos), "{block:?}");
+                }
+                ExpectedOpen::Chest => {
+                    assert_eq!(game.request_open_chest, Some(pos), "{block:?}");
+                }
+                ExpectedOpen::FurnitureWorkbench => {
+                    assert_eq!(game.request_open_workbench, Some(pos), "{block:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn right_clicking_a_door_toggles_it_through_block_interaction() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let floor = IVec3::new(5, 63, 5);
+        let lower = floor + IVec3::Y;
+        game.world
+            .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
+        assert!(game.world.place_door(lower, Block::OakDoor, Facing::South));
+        assert!(
+            !game
+                .world
+                .door_state_at(lower.x, lower.y, lower.z)
+                .unwrap()
+                .open
+        );
+
+        game.look = Some(hit(lower, IVec3::Y));
+        game.pending_place = true;
+        let mut events = TickEvents::default();
+        game.tick_place(&mut events);
+
+        assert!(events.placed_block.is_none(), "door click should not place");
+        assert!(game.toggled_door, "door click should report a toggle event");
+        assert!(
+            game.world
+                .door_state_at(lower.x, lower.y, lower.z)
+                .unwrap()
+                .open
+        );
+        let upper = lower + IVec3::Y;
+        assert!(
+            game.world
+                .door_state_at(upper.x, upper.y, upper.z)
+                .unwrap()
+                .open
+        );
     }
 
     #[test]
@@ -2709,7 +1403,7 @@ mod tests {
             "one block was consumed"
         );
         assert!(
-            game.item_entities().is_empty(),
+            game.world.item_entities().is_empty(),
             "the overwritten grass dropped nothing"
         );
     }
@@ -2743,22 +1437,58 @@ mod tests {
         game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
 
         // A flower (Dandelion) roots in soil only.
-        assert!(!place_on(&mut game, Block::Stone, ItemType::Dandelion, 2), "no flower on stone");
-        assert!(place_on(&mut game, Block::Grass, ItemType::Dandelion, 4), "flower on grass");
-        assert!(place_on(&mut game, Block::Dirt, ItemType::Dandelion, 6), "flower on dirt");
-        assert!(!place_on(&mut game, Block::Sand, ItemType::Dandelion, 8), "no flower on sand");
+        assert!(
+            !place_on(&mut game, Block::Stone, ItemType::Dandelion, 2),
+            "no flower on stone"
+        );
+        assert!(
+            place_on(&mut game, Block::Grass, ItemType::Dandelion, 4),
+            "flower on grass"
+        );
+        assert!(
+            place_on(&mut game, Block::Dirt, ItemType::Dandelion, 6),
+            "flower on dirt"
+        );
+        assert!(
+            !place_on(&mut game, Block::Sand, ItemType::Dandelion, 8),
+            "no flower on sand"
+        );
 
         // A cactus roots in sand only.
-        assert!(!place_on(&mut game, Block::Grass, ItemType::Cactus, 10), "no cactus on grass");
-        assert!(place_on(&mut game, Block::Sand, ItemType::Cactus, 12), "cactus on sand");
-        assert!(place_on(&mut game, Block::RedSand, ItemType::Cactus, 14), "cactus on red sand");
+        assert!(
+            !place_on(&mut game, Block::Grass, ItemType::Cactus, 10),
+            "no cactus on grass"
+        );
+        assert!(
+            place_on(&mut game, Block::Sand, ItemType::Cactus, 12),
+            "cactus on sand"
+        );
+        assert!(
+            place_on(&mut game, Block::RedSand, ItemType::Cactus, 14),
+            "cactus on red sand"
+        );
 
         // A mushroom roots in soil OR any stone (its two RootsIn* tags combine).
-        assert!(place_on(&mut game, Block::Grass, ItemType::BrownMushroom, 1), "mushroom on grass");
-        assert!(place_on(&mut game, Block::Stone, ItemType::BrownMushroom, 3), "mushroom on stone");
-        assert!(place_on(&mut game, Block::Cobblestone, ItemType::BrownMushroom, 5), "mushroom on cobblestone");
-        assert!(!place_on(&mut game, Block::Sand, ItemType::BrownMushroom, 7), "no mushroom on sand");
-        assert!(!place_on(&mut game, Block::OakPlanks, ItemType::BrownMushroom, 9), "no mushroom on wood");
+        assert!(
+            place_on(&mut game, Block::Grass, ItemType::BrownMushroom, 1),
+            "mushroom on grass"
+        );
+        assert!(
+            place_on(&mut game, Block::Stone, ItemType::BrownMushroom, 3),
+            "mushroom on stone"
+        );
+        assert!(
+            place_on(&mut game, Block::Cobblestone, ItemType::BrownMushroom, 5),
+            "mushroom on cobblestone"
+        );
+        assert!(
+            !place_on(&mut game, Block::Sand, ItemType::BrownMushroom, 7),
+            "no mushroom on sand"
+        );
+        assert!(
+            !place_on(&mut game, Block::OakPlanks, ItemType::BrownMushroom, 9),
+            "no mushroom on wood"
+        );
     }
 
     #[test]

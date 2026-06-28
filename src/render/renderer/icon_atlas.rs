@@ -34,9 +34,9 @@
 
 use wgpu::util::DeviceExt;
 
+use crate::gui::SlotRect;
 use crate::item::{ItemRenderKind, ItemType};
 use crate::render::ui::icon::{flat_icon_mvp, iso_icon_mvp, model_icon_mvp};
-use crate::render::ui::SlotRect;
 
 use super::super::block_model::{push_billboard_quad, push_block_item_cube};
 use super::super::chest_model::push_chest_item_full;
@@ -211,7 +211,8 @@ pub(super) fn bake(
     let mut cube_verts: Vec<Vertex> = Vec::new();
     let mut cube_indices: Vec<u32> = Vec::new();
     let mut cube_icons: Vec<CubeIcon> = Vec::new();
-    let mut cube_mvps: Vec<u8> = Vec::new(); // packed 256-aligned mat4 slots
+    // Packed 256-aligned mat4 slots.
+    let mut cube_mvps: Vec<u8> = Vec::new();
     // Model icons (model atlas, model_icon pipe): one shared vbuf/ibuf, MVP baked in.
     let mut model_verts: Vec<ItemVertex> = Vec::new();
     let mut model_indices: Vec<u32> = Vec::new();
@@ -367,7 +368,11 @@ pub(super) fn bake(
             for icon in &cube_icons {
                 set_cell(&mut pass, icon.col, icon.row);
                 pass.set_bind_group(0, &mvp_bind, &[icon.mvp_offset]);
-                pass.draw_indexed(icon.index_start..icon.index_start + icon.index_count, 0, 0..1);
+                pass.draw_indexed(
+                    icon.index_start..icon.index_start + icon.index_count,
+                    0,
+                    0..1,
+                );
             }
         }
     }
@@ -403,7 +408,11 @@ pub(super) fn bake(
             pass.set_index_buffer(model_ibuf.slice(..), wgpu::IndexFormat::Uint32);
             for icon in &model_icons {
                 set_cell(&mut pass, icon.col, icon.row);
-                pass.draw_indexed(icon.index_start..icon.index_start + icon.index_count, 0, 0..1);
+                pass.draw_indexed(
+                    icon.index_start..icon.index_start + icon.index_count,
+                    0,
+                    0..1,
+                );
             }
         }
     }

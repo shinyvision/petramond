@@ -13,8 +13,8 @@ mod definition;
 mod sounds;
 
 pub use behavior::BlockBehavior;
-pub use sounds::BlockSoundAction;
 pub(crate) use definition::BlockMaterial;
+pub use sounds::BlockSoundAction;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -137,6 +137,19 @@ pub enum Block {
     DarkOakDoor,
     CherryDoor,
     MangroveDoor,
+}
+
+/// Secondary-use capability declared by a block's data row. This answers only
+/// "what use action is available"; the tick-side gameplay code still applies the
+/// concrete world mutation or menu request.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BlockInteraction {
+    None,
+    OpenCraftingTable,
+    OpenFurnace,
+    OpenChest,
+    OpenFurnitureWorkbench,
+    ToggleDoor,
 }
 
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
@@ -374,6 +387,14 @@ impl Block {
         self.def().behavior
     }
 
+    /// What secondary-use does for this block, if anything. Interactability lives
+    /// on the block row so gameplay code does not need to know which concrete block
+    /// ids open menus or toggle doors.
+    #[inline]
+    pub fn interaction(self) -> BlockInteraction {
+        self.def().interaction
+    }
+
     /// Whether this block receives random ticks — a shortcut for
     /// `self.behavior().has_random_tick()`, read by the per-chunk random-tick gate
     /// and the dispatch in `world::tick`.
@@ -576,7 +597,7 @@ pub(crate) fn assert_registry_ordered() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, BlockMaterial};
+    use super::{Block, BlockInteraction, BlockMaterial, RenderShape};
     use crate::atlas::Tile;
     use crate::item::ItemType;
 
@@ -744,6 +765,23 @@ mod tests {
                 "{block:?} has no authored front view"
             );
         }
+    }
+
+    #[test]
+    fn door_shaped_blocks_advertise_toggle_interaction() {
+        let mut checked_any = false;
+        for &block in Block::ALL {
+            if block.render_shape() != RenderShape::Door {
+                continue;
+            }
+            checked_any = true;
+            assert_eq!(
+                block.interaction(),
+                BlockInteraction::ToggleDoor,
+                "{block:?}"
+            );
+        }
+        assert!(checked_any, "expected at least one door block");
     }
 
     #[test]

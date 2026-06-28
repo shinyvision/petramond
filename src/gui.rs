@@ -1,0 +1,175 @@
+//! Neutral GUI/container value types and baked layout contracts shared by app,
+//! render, and deterministic container mutation.
+//!
+//! These types name logical GUI identities, hit-tested slots, and immutable view
+//! snapshots. They do not own renderer resources or container mutation; baked
+//! layout code maps pixels to these slot identities, and the game menu applies
+//! them on the tick.
+
+mod layout;
+
+use crate::inventory::HOTBAR_LEN;
+use crate::item::{ItemStack, ItemType};
+use serde::Deserialize;
+
+pub(crate) use layout::{
+    baked_hovers, baked_overlays, baked_panels, def, hit, panel_contains, GuiDef, OverlayTag,
+};
+
+/// Which container a baked GUI is for. Matches the gui-builder's `type` field.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuiKind {
+    Chest,
+    Inventory,
+    CraftingTable,
+    Furnace,
+    Hotbar,
+    FurnitureWorkbench,
+    #[serde(other)]
+    Other,
+}
+
+/// A hit-tested crafting slot: an input cell index (`0..cols*cols`, row-major) or
+/// the single output result slot.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CraftHit {
+    Input(usize),
+    Result,
+}
+
+/// A hit-tested furnace role: the smeltable input, the fuel, or the take-only
+/// output. One slot each, so these are identified by role, never by position.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FurnaceHit {
+    Input,
+    Fuel,
+    Output,
+}
+
+/// A hit-tested furniture-workbench slot: the single input block, or one of the
+/// take-only result cells (`0..` row-major, indexing the recipes the placed block
+/// offers).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WorkbenchHit {
+    Input,
+    Result(usize),
+}
+
+/// A click hit-tested to a concrete logical slot identity, the unit the App routes
+/// through the deterministic container menu on the next tick.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MenuSlot {
+    /// A main inventory/hotbar slot (the 36-slot grid drawn under every panel).
+    Inventory(usize),
+    /// A crafting input cell or the result slot of the open craft grid.
+    Craft(CraftHit),
+    /// A furnace role slot (smeltable input, fuel, or take-only output).
+    Furnace(FurnaceHit),
+    /// A chest storage slot index.
+    Chest(usize),
+    /// A furniture-workbench slot: the input block, or a take-only result cell.
+    Workbench(WorkbenchHit),
+}
+
+/// A manifest slot role. Each role maps to a logical [`MenuSlot`] by in-role
+/// index; decorative roles own no menu slot.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Role {
+    Generic,
+    Storage,
+    PlayerInv,
+    Hotbar,
+    CraftInput,
+    CraftResult,
+    FurnaceInput,
+    FurnaceFuel,
+    FurnaceOutput,
+    WorkbenchInput,
+    WorkbenchResult,
+    #[serde(other)]
+    Other,
+}
+
+impl Role {
+    /// Map this role + its in-role index to the logical slot a click resolves to.
+    /// `None` for decorative roles, so stray decorative manifest slots can never
+    /// route a click.
+    pub(crate) fn menu_slot(self, i: usize) -> Option<MenuSlot> {
+        Some(match self {
+            Role::Storage => MenuSlot::Chest(i),
+            Role::Hotbar => MenuSlot::Inventory(i),
+            Role::PlayerInv => MenuSlot::Inventory(HOTBAR_LEN + i),
+            Role::CraftInput => MenuSlot::Craft(CraftHit::Input(i)),
+            Role::CraftResult => MenuSlot::Craft(CraftHit::Result),
+            Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
+            Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
+            Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
+            Role::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
+            Role::WorkbenchResult => MenuSlot::Workbench(WorkbenchHit::Result(i)),
+            Role::Generic | Role::Other => return None,
+        })
+    }
+}
+
+/// One slot's pixel rectangle (interior, where the icon + digits go). All in
+/// physical pixels, top-left origin, y down. Shared by GUI drawing and hit testing.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SlotRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl SlotRect {
+    /// Whether physical-pixel point `(px, py)` lies within this slot's interior
+    /// (half-open: includes the top-left edge, excludes the bottom-right).
+    #[inline]
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
+/// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
+/// step per ~240 logical px of height (and ~320 of width), clamped to `1..=4`.
+pub fn gui_scale(screen: (u32, u32)) -> f32 {
+    let (w, h) = screen;
+    let by_h = (h / 240).max(1);
+    let by_w = (w / 320).max(1);
+    by_h.min(by_w).clamp(1, 4) as f32
+}
+
+/// A furnace's view for the open furnace screen: its three slots plus the two
+/// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so render can
+/// snapshot it by value with no borrow.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct FurnaceView {
+    pub input: Option<ItemStack>,
+    pub fuel: Option<ItemStack>,
+    pub output: Option<ItemStack>,
+    /// Smelt progress (drives the arrow): 0 at the start of an item, 1 when done.
+    pub cook01: f32,
+    /// Remaining fuel of the current burn (drives the flame): 1 full -> 0 spent.
+    pub burn01: f32,
+}
+
+/// A chest's view for the open chest screen: its 27 storage slots, row-major.
+/// `Copy` (`ItemStack` is `Copy`), so render can snapshot it by value with no
+/// borrow.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ChestView {
+    pub slots: [Option<ItemStack>; crate::chest::CHEST_SLOTS],
+}
+
+/// A furniture workbench's view for its open screen: the placed input block and
+/// the list of results it offers, each flagged craftable (enough input) or not
+/// (shown greyed). The result list is row-major, mapping to the manifest's result
+/// slots.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkbenchView {
+    pub input: Option<ItemStack>,
+    /// `(result item, craftable now)` per offered recipe, row-major.
+    pub results: Vec<(ItemType, bool)>,
+}

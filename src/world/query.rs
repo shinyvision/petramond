@@ -10,32 +10,12 @@ impl World {
         self.meshes.iter().map(|(p, m)| (*p, m))
     }
 
-    /// Iterate loaded chunk meshes mutably — the renderer's GPU-upload path,
-    /// which clears each mesh's `mesh_dirty` flag as it uploads. Hands out
-    /// `&mut ChunkMesh` per loaded chunk without exposing the backing map.
-    pub fn iter_meshes_mut(&mut self) -> impl Iterator<Item = (ChunkPos, &mut ChunkMesh)> {
-        self.meshes.iter_mut().map(|(p, m)| (*p, m))
-    }
-
-    /// Is a built mesh present for this chunk? Lets the renderer drop GPU
-    /// meshes whose CPU mesh is gone without iterating the map.
-    pub fn has_mesh(&self, pos: ChunkPos) -> bool {
-        self.meshes.contains_key(&pos)
-    }
-
     /// Are any chunks still queued for a (re)mesh? Drives the app shell's
     /// redraw-on-demand: while terrain meshing is pending, the visible world is
     /// about to change, so a frame must be drawn (the mesh budget builds these in
     /// `tick_mesh_budget` and the renderer uploads them in `sync_meshes`).
     pub fn has_dirty_meshes(&self) -> bool {
         !self.dirty_meshes.is_empty()
-    }
-
-    /// Monotonic counter bumped whenever section visibility changes; the
-    /// renderer's section-cull cache keys on it to know when to recompute.
-    #[inline]
-    pub fn visibility_revision(&self) -> u64 {
-        self.visibility_revision
     }
 
     /// Raw block id at a world voxel. Out of range (above/below the column) or in

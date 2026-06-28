@@ -23,6 +23,7 @@ pub mod door;
 pub mod entity;
 pub mod furnace;
 pub mod game;
+pub mod gui;
 pub mod inventory;
 pub mod item;
 pub mod mathh;

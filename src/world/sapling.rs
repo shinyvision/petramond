@@ -232,8 +232,7 @@ mod tests {
     /// Is there any leaf in a generous box around the trunk (covers a small OR a
     /// giant oak's canopy, so the test doesn't care which the RNG picked).
     fn has_canopy(w: &World) -> bool {
-        (64..=90)
-            .any(|y| (3..=13).any(|x| (3..=13).any(|z| block(w, x, y, z).is_leaves())))
+        (64..=90).any(|y| (3..=13).any(|x| (3..=13).any(|z| block(w, x, y, z).is_leaves())))
     }
 
     #[test]
@@ -245,7 +244,10 @@ mod tests {
 
         // The trunk roots where the sapling stood, with a canopy above — the sapling
         // is consumed and its (now meaningless) growth stage cleared.
-        assert!(block(&w, 8, 64, 8).is_log(), "trunk roots where the sapling stood");
+        assert!(
+            block(&w, 8, 64, 8).is_log(),
+            "trunk roots where the sapling stood"
+        );
         assert!(has_canopy(&w), "a grown tree has a leaf canopy");
         assert_eq!(w.sapling_stage_world(pos), 0);
     }
@@ -260,8 +262,16 @@ mod tests {
         let mut rng = FeatureRng::from_state(0x1234_5678);
         w.grow_sapling(pos, Block::OakSapling, &mut rng);
 
-        assert_eq!(block(&w, 8, 64, 8), Block::OakSapling, "the blocked sapling stays");
-        assert_eq!(block(&w, 8, 65, 8), Block::Stone, "the obstruction is untouched");
+        assert_eq!(
+            block(&w, 8, 64, 8),
+            Block::OakSapling,
+            "the blocked sapling stays"
+        );
+        assert_eq!(
+            block(&w, 8, 65, 8),
+            Block::Stone,
+            "the obstruction is untouched"
+        );
         assert!(!has_canopy(&w), "nothing of the tree was placed");
     }
 
@@ -275,8 +285,15 @@ mod tests {
         let mut rng = FeatureRng::from_state(0x1234_5678);
         w.grow_sapling(pos, Block::OakSapling, &mut rng);
 
-        assert!(block(&w, 8, 64, 8).is_log(), "the sapling grew past the log");
-        assert_eq!(block(&w, 8, 65, 8), Block::OakLog, "the pre-existing log remains");
+        assert!(
+            block(&w, 8, 64, 8).is_log(),
+            "the sapling grew past the log"
+        );
+        assert_eq!(
+            block(&w, 8, 65, 8),
+            Block::OakLog,
+            "the pre-existing log remains"
+        );
         assert!(has_canopy(&w), "the tree still grew its canopy");
     }
 
@@ -292,7 +309,10 @@ mod tests {
         let mut rng = FeatureRng::from_state(0x1234_5678);
         w.grow_sapling(pos, Block::OakSapling, &mut rng);
 
-        assert!(block(&w, 8, 64, 8).is_log(), "the sapling grew past the leaves");
+        assert!(
+            block(&w, 8, 64, 8).is_log(),
+            "the sapling grew past the leaves"
+        );
         assert!(has_canopy(&w), "the tree grew its canopy");
     }
 

@@ -150,7 +150,11 @@ mod tests {
     fn one_door_bakes_two_boxes() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_doors(std::slice::from_ref(&inst(Facing::South, 0.0)), &mut v, &mut i);
+        let n = build_doors(
+            std::slice::from_ref(&inst(Facing::South, 0.0)),
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 48, "lower + upper half = 2 boxes × 24 verts");
         assert_eq!(n, 72, "2 boxes × 36 indices");
     }
@@ -167,7 +171,11 @@ mod tests {
     fn a_closed_door_spans_two_cells_tall_within_its_footprint() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        build_doors(std::slice::from_ref(&inst(Facing::South, 0.0)), &mut v, &mut i);
+        build_doors(
+            std::slice::from_ref(&inst(Facing::South, 0.0)),
+            &mut v,
+            &mut i,
+        );
         let (mut ymin, mut ymax) = (f32::MAX, f32::MIN);
         for vert in &v {
             ymin = ymin.min(vert.pos[1]);
@@ -186,7 +194,11 @@ mod tests {
         // plank side isn't a whole tile squished flat; the wide front/back art is full.
         let mut v = Vec::new();
         let mut i = Vec::new();
-        build_doors(std::slice::from_ref(&inst(Facing::South, 0.0)), &mut v, &mut i);
+        build_doors(
+            std::slice::from_ref(&inst(Facing::South, 0.0)),
+            &mut v,
+            &mut i,
+        );
         // Faces are emitted per box in ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ],
         // 4 verts each; read the first vert of each face in the lower box.
         let slice = |face_idx: usize| (v[face_idx * 4].packed >> 29) & 0x3;
@@ -204,9 +216,17 @@ mod tests {
         // open it has swung onto a perpendicular edge, so its z-extent shrinks toward an
         // edge while its x-extent collapses to the thin slab.
         let mut closed = (Vec::new(), Vec::new());
-        build_doors(std::slice::from_ref(&inst(Facing::South, 0.0)), &mut closed.0, &mut closed.1);
+        build_doors(
+            std::slice::from_ref(&inst(Facing::South, 0.0)),
+            &mut closed.0,
+            &mut closed.1,
+        );
         let mut open = (Vec::new(), Vec::new());
-        build_doors(std::slice::from_ref(&inst(Facing::South, 1.0)), &mut open.0, &mut open.1);
+        build_doors(
+            std::slice::from_ref(&inst(Facing::South, 1.0)),
+            &mut open.0,
+            &mut open.1,
+        );
         let span = |v: &[Vertex], axis: usize| {
             let (mut lo, mut hi) = (f32::MAX, f32::MIN);
             for vert in v {

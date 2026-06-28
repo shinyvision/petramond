@@ -219,10 +219,9 @@ impl Default for Audio {
 /// a future per-category (block / mob / ambient / UI) volume control.
 fn category_gain(category: SoundCategory) -> f32 {
     match category {
-        SoundCategory::Block
-        | SoundCategory::Mob
-        | SoundCategory::Ambient
-        | SoundCategory::Ui => 1.0,
+        SoundCategory::Block | SoundCategory::Mob | SoundCategory::Ambient | SoundCategory::Ui => {
+            1.0
+        }
     }
 }
 

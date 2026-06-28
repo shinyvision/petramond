@@ -934,7 +934,9 @@ mod tests {
         // ...and it was recorded as a hand-style break (drop + particle burst).
         let breaks = w.take_natural_breaks();
         assert!(
-            breaks.iter().any(|&(p, b)| p == flower && b == Block::Poppy),
+            breaks
+                .iter()
+                .any(|&(p, b)| p == flower && b == Block::Poppy),
             "the washed-away flower was recorded for its drop + burst"
         );
     }
@@ -980,7 +982,11 @@ mod tests {
         w.set_block_world(9, 65, 8, Block::Water);
         run_ticks(&mut w, 60);
 
-        assert_eq!(block(&w, 8, 65, 8), Block::Water, "the gap filled with water");
+        assert_eq!(
+            block(&w, 8, 65, 8),
+            Block::Water,
+            "the gap filled with water"
+        );
         assert!(
             is_source(w.water_meta_world(8, 65, 8)),
             "a one-deep flow flanked by two sources must become a source"

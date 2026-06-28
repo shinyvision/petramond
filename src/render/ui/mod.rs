@@ -3,10 +3,10 @@
 //! table / furnace / chest panel.
 //!
 //! Every screen is DATA-DRIVEN: its panel art, slot positions, hover highlight and
-//! dynamic overlays come from a baked manifest ([`super::gui_def`]). There are no
+//! dynamic overlays come from a baked manifest ([`crate::gui`]). There are no
 //! per-screen layout modules — [`build_ui`] is generic over [`GuiKind`], reading
 //! the open kind's [`GuiDef`] and the matching slice of game state from the
-//! snapshot. The SAME def backs the App's click hit-test ([`gui_def::hit`]), so
+//! snapshot. The SAME def backs the App's click hit-test (`crate::gui::hit`), so
 //! what's drawn and what's clicked can never diverge.
 //!
 //! All layout math is in **physical pixels** (origin top-left, y down) and
@@ -27,8 +27,8 @@
 // the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
 pub(crate) mod icon;
 
-use super::gui_def::{self, GuiKind, OverlayTag, Role};
 use super::renderer::UiSnapshot;
+use crate::gui::{self as gui_layout, gui_scale, GuiKind, OverlayTag, Role, SlotRect};
 use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;
 
@@ -51,26 +51,6 @@ const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 /// Slot interior side (logical px) — the textured icon area. The drag cursor
 /// sizes the held item to this; slot rects themselves come from the manifest.
 pub(super) const SLOT_PX: f32 = 16.0;
-
-/// One slot's pixel rectangle (interior, where the icon + digits go). All in
-/// physical pixels, top-left origin, y down. The single source of truth shared
-/// between drawing and hit-testing.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SlotRect {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl SlotRect {
-    /// Whether physical-pixel point `(px, py)` lies within this slot's interior
-    /// (half-open: includes the top-left edge, excludes the bottom-right).
-    #[inline]
-    pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
-    }
-}
 
 /// One dynamic-overlay quad's place in [`UiBuild::overlays`]: which texture binds
 /// it ([`OverlayTag`]) and how many vertices it spans (always 6 for one quad).
@@ -128,15 +108,6 @@ impl UiBuild {
     }
 }
 
-/// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
-/// step per ~240 logical px of height (and ~320 of width), clamped to `1..=4`.
-pub fn gui_scale(screen: (u32, u32)) -> f32 {
-    let (w, h) = screen;
-    let by_h = (h / 240).max(1);
-    let by_w = (w / 320).max(1);
-    by_h.min(by_w).clamp(1, 4) as f32
-}
-
 /// Convert a physical-pixel point (top-left origin, y down) to NDC (y up).
 #[inline]
 pub(super) fn pixel_to_ndc(screen: (u32, u32), x: f32, y: f32) -> [f32; 2] {
@@ -145,7 +116,15 @@ pub(super) fn pixel_to_ndc(screen: (u32, u32), x: f32, y: f32) -> [f32; 2] {
 }
 
 /// Push a solid-color quad covering pixel rect `(x,y,w,h)`.
-pub(super) fn push_solid(out: &mut Vec<UiVertex>, screen: (u32, u32), x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+pub(super) fn push_solid(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: [f32; 4],
+) {
     push_quad_uv(out, screen, x, y, w, h, SOLID_UV, SOLID_UV, color);
 }
 
@@ -184,10 +163,28 @@ pub(super) fn push_quad_uv(
 fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
     let stack = |s: crate::item::ItemStack| (s.item, s.count as u32);
     match role {
-        Role::Storage => ui.chest.and_then(|c| c.slots.get(i).copied().flatten()).map(stack),
-        Role::Hotbar => ui.slots.get(i).copied().flatten().map(|(it, c)| (it, c as u32)),
-        Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten().map(|(it, c)| (it, c as u32)),
-        Role::CraftInput => ui.craft.get(i).copied().flatten().map(|(it, c)| (it, c as u32)),
+        Role::Storage => ui
+            .chest
+            .and_then(|c| c.slots.get(i).copied().flatten())
+            .map(stack),
+        Role::Hotbar => ui
+            .slots
+            .get(i)
+            .copied()
+            .flatten()
+            .map(|(it, c)| (it, c as u32)),
+        Role::PlayerInv => ui
+            .slots
+            .get(HOTBAR_LEN + i)
+            .copied()
+            .flatten()
+            .map(|(it, c)| (it, c as u32)),
+        Role::CraftInput => ui
+            .craft
+            .get(i)
+            .copied()
+            .flatten()
+            .map(|(it, c)| (it, c as u32)),
         Role::CraftResult => ui.result.map(|(it, c)| (it, c as u32)),
         Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
         Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
@@ -205,21 +202,49 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
 /// The fill direction is the overlay's defining behaviour: the smelt arrow grows
 /// left→right with cook progress; the burn flame depletes top→down (the bottom
 /// `frac` stays lit) as fuel runs out.
-fn push_overlay(build: &mut UiBuild, def: &gui_def::GuiDef, screen: (u32, u32), tag: OverlayTag, frac: f32) {
+fn push_overlay(
+    build: &mut UiBuild,
+    def: &gui_layout::GuiDef,
+    screen: (u32, u32),
+    tag: OverlayTag,
+    frac: f32,
+) {
     let frac = frac.clamp(0.0, 1.0);
     if frac <= 0.0 {
         return;
     }
-    let Some(r) = def.overlay_rect(tag, screen) else { return };
+    let Some(r) = def.overlay_rect(tag, screen) else {
+        return;
+    };
     let start = build.overlays.len();
     match tag {
         OverlayTag::FurnaceArrow => {
-            push_quad_uv(&mut build.overlays, screen, r.x, r.y, r.w * frac, r.h, [0.0, 0.0], [frac, 1.0], WHITE);
+            push_quad_uv(
+                &mut build.overlays,
+                screen,
+                r.x,
+                r.y,
+                r.w * frac,
+                r.h,
+                [0.0, 0.0],
+                [frac, 1.0],
+                WHITE,
+            );
         }
         OverlayTag::FurnaceFlame => {
             let lit_h = r.h * frac;
             let top = r.h - lit_h;
-            push_quad_uv(&mut build.overlays, screen, r.x, r.y + top, r.w, lit_h, [0.0, 1.0 - frac], [1.0, 1.0], WHITE);
+            push_quad_uv(
+                &mut build.overlays,
+                screen,
+                r.x,
+                r.y + top,
+                r.w,
+                lit_h,
+                [0.0, 1.0 - frac],
+                [1.0, 1.0],
+                WHITE,
+            );
         }
         OverlayTag::Other => return,
     }
@@ -238,19 +263,37 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     }
     let scale = gui_scale(screen);
     let kind = ui.kind;
-    let Some(def) = gui_def::def(kind) else {
+    let Some(def) = gui_layout::def(kind) else {
         return; // No baked manifest for this screen => nothing to draw.
     };
     build.kind = Some(kind);
 
     // Dim the screen behind an open menu (the HUD hotbar has no backdrop).
     if ui.open {
-        push_solid(&mut build.dim, screen, 0.0, 0.0, screen.0 as f32, screen.1 as f32, [0.0, 0.0, 0.0, 0.6]);
+        push_solid(
+            &mut build.dim,
+            screen,
+            0.0,
+            0.0,
+            screen.0 as f32,
+            screen.1 as f32,
+            [0.0, 0.0, 0.0, 0.6],
+        );
     }
 
     // Panel art.
     let pr = def.panel_rect(screen);
-    push_quad_uv(&mut build.panel, screen, pr.x, pr.y, pr.w, pr.h, [0.0, 0.0], [1.0, 1.0], WHITE);
+    push_quad_uv(
+        &mut build.panel,
+        screen,
+        pr.x,
+        pr.y,
+        pr.w,
+        pr.h,
+        [0.0, 0.0],
+        [1.0, 1.0],
+        WHITE,
+    );
 
     // Dynamic overlays (the furnace's smelt arrow + burn flame).
     if let Some(f) = ui.furnace {
@@ -298,7 +341,9 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
             }
             return;
         }
-        let Some((item, count)) = slot_item(ui, role, i) else { return };
+        let Some((item, count)) = slot_item(ui, role, i) else {
+            return;
+        };
         if item == ItemType::Air || count == 0 {
             return;
         }
@@ -314,7 +359,12 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
             if item != ItemType::Air && count > 0 {
                 let s = SLOT_PX * scale;
                 let (cx, cy) = ui.cursor_px;
-                let r = SlotRect { x: cx - s * 0.5, y: cy - s * 0.5, w: s, h: s };
+                let r = SlotRect {
+                    x: cx - s * 0.5,
+                    y: cy - s * 0.5,
+                    w: s,
+                    h: s,
+                };
                 build.drag_icon_quads.push((item, r));
                 if count > 1 {
                     icon::push_count(&mut build.drag_counts, screen, count as u32, r, scale);
@@ -329,7 +379,14 @@ mod tests {
     use super::*;
 
     fn snap(kind: GuiKind, open: bool) -> UiSnapshot {
-        let mut s = UiSnapshot { kind, open, screen: (1280, 720), cursor_px: (640.0, 360.0), active: 2, ..Default::default() };
+        let mut s = UiSnapshot {
+            kind,
+            open,
+            screen: (1280, 720),
+            cursor_px: (640.0, 360.0),
+            active: 2,
+            ..Default::default()
+        };
         s.slots[0] = Some((ItemType::Stone, 64));
         s
     }
@@ -345,7 +402,10 @@ mod tests {
     #[test]
     fn zero_screen_builds_nothing() {
         let mut b = UiBuild::default();
-        let s = UiSnapshot { screen: (0, 0), ..snap(GuiKind::Hotbar, false) };
+        let s = UiSnapshot {
+            screen: (0, 0),
+            ..snap(GuiKind::Hotbar, false)
+        };
         build_ui(&s, &mut b);
         assert!(b.panel.is_empty() && b.icon_quads.is_empty() && b.kind.is_none());
     }

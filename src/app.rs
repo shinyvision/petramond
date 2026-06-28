@@ -5,23 +5,32 @@
 //! `game`, and first-person hand animation lives in the renderer presentation
 //! layer.
 
+mod gui_router;
 mod input;
+mod menu_lifecycle;
+mod pointer;
+mod presentation_events;
 mod screen;
+mod ui_snapshot;
 
 pub use screen::{AppScreen, CursorPolicy};
 
+use crate::app::gui_router::GuiRouter;
 use crate::app::input::{ControlEvent, InputController};
-use crate::audio::{Audio, Sound};
-use crate::block::BlockSoundAction;
+use crate::app::pointer::PointerState;
+use crate::audio::Audio;
 use crate::camera::Camera;
-use crate::controls::{Control, Modifiers, PointerButton};
-use crate::game::{Game, GameInput, MenuSlot};
-use crate::render::{HeldItemFrame, Renderer, Scene, UiFrame};
+use crate::controls::{Control, Modifiers};
+use crate::game::presentation::GamePresentationScratch;
+use crate::game::{CameraPose, Game};
+use crate::render::{HeldItemFrame, Renderer, Scene};
 
 pub struct App {
     game: Game,
-    /// Render-side translation of the sim's per-frame world data (dropped items,
-    /// particles, chests, held-item light) into the renderer's wire structs.
+    /// Reusable builder for neutral per-frame presentation data read from the game.
+    presentation: GamePresentationScratch,
+    /// Render-side translation of neutral per-frame presentation data into the
+    /// renderer's wire structs.
     scene: Scene,
     /// Client-side sound engine. Drains the sim's per-tick [`crate::audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
@@ -29,26 +38,24 @@ pub struct App {
     last: f64,
     input: InputController,
     pointer: PointerState,
+    gui_router: GuiRouter,
     screen: AppScreen,
     /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
     /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
     /// drop whole stack, Shift = inventory quick-move).
     modifiers: Modifiers,
-    /// Set when the inventory opens so the UI cursor is centred on the next tick,
-    /// where the renderer surface size is known.
-    recenter_cursor: bool,
     /// Set whenever input or a state change means the next frame would differ from
     /// the last drawn one. Drives redraw-on-demand: the host draws only when this (or
-    /// camera motion / [`Game::is_visually_active`]) holds, instead of every frame.
+    /// camera motion / client-frame activity) holds, instead of every frame.
     /// Consumed (peeked-and-cleared) by [`update`](Self::update).
     dirty: bool,
     /// `now_seconds` of the last [`render`](Self::render). Render runs on demand, not
     /// once per update, so the held-item animation advances by its own delta.
     last_render: f64,
-    /// Camera pose `[x, y, z, yaw, pitch]` at the last render, to detect a moved view
-    /// (the dominant redraw trigger) without redrawing an unchanged one. Standing still
-    /// reproduces bit-identical values, so equality means "view unchanged".
-    last_pose: Option<[f32; 5]>,
+    /// Camera pose at the last render, to detect a moved view (the dominant redraw
+    /// trigger) without redrawing an unchanged one. Standing still reproduces
+    /// bit-identical values, so equality means "view unchanged".
+    last_pose: Option<CameraPose>,
     /// First-person hand-animation triggers latched since the last render, so a
     /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
     hand: HandTriggers,
@@ -64,35 +71,19 @@ struct HandTriggers {
     swung: bool,
 }
 
-#[derive(Default, Copy, Clone, Debug)]
-struct PointerState {
-    dx: f32,
-    dy: f32,
-    grabbing: bool,
-    left_click: bool,
-    right_click: bool,
-    left_held: bool,
-    scroll_delta: f32,
-    cursor_x: f32,
-    cursor_y: f32,
-    /// Inventory slot of the last left-click and when it happened, for
-    /// double-click detection. `None` means no streak is in progress.
-    last_click_slot: Option<usize>,
-    last_click_time: f64,
-}
-
 impl App {
     pub fn new(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
         Self {
             game: Game::new(cam, world_name, seed, render_dist),
+            presentation: GamePresentationScratch::new(),
             scene: Scene::new(),
             audio: Audio::new(),
             last: now_seconds(),
             input: InputController::default(),
             pointer: PointerState::default(),
+            gui_router: GuiRouter::default(),
             screen: AppScreen::Game,
             modifiers: Modifiers::default(),
-            recenter_cursor: false,
             // Draw the first frame unconditionally (also forced by `last_pose: None`).
             dirty: true,
             last_render: now_seconds(),
@@ -164,47 +155,6 @@ impl App {
         }
     }
 
-    pub fn set_pointer_grabbed(&mut self, grabbed: bool) {
-        self.pointer.grabbing = grabbed;
-    }
-
-    pub fn add_pointer_motion(&mut self, dx: f32, dy: f32) {
-        self.pointer.dx += dx;
-        self.pointer.dy += dy;
-        self.pointer.grabbing = true;
-        self.dirty = true;
-    }
-
-    pub fn set_cursor_position(&mut self, x: f32, y: f32) {
-        self.pointer.cursor_x = x;
-        self.pointer.cursor_y = y;
-        self.dirty = true;
-    }
-
-    pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
-        self.dirty = true;
-        match (button, down) {
-            (PointerButton::Primary, true) => {
-                self.pointer.left_click = true;
-                self.pointer.left_held = true;
-                self.pointer.grabbing = true;
-            }
-            (PointerButton::Primary, false) => {
-                self.pointer.left_held = false;
-            }
-            (PointerButton::Secondary, true) => {
-                self.pointer.right_click = true;
-                self.pointer.grabbing = true;
-            }
-            (PointerButton::Secondary, false) => {}
-        }
-    }
-
-    pub fn add_scroll_delta(&mut self, delta: f32) {
-        self.pointer.scroll_delta += delta;
-        self.dirty = true;
-    }
-
     /// Update the tracked physical keyboard modifiers (Ctrl / Shift) from the
     /// platform's modifier-changed event. Independent of the rebindable
     /// Sprint/Sneak controls.
@@ -219,7 +169,7 @@ impl App {
     /// [`Game::tick`]'s fixed-step accumulator holds the world at 20 TPS regardless of
     /// frame rate. A redraw is needed when input changed something ([`dirty`]), the
     /// view moved, a hand action fired or is still animating, terrain is (re)meshing,
-    /// or anything on screen is animating ([`Game::is_visually_active`]). Slow sky
+    /// or anything on screen is animating (from the game client-frame read model). Slow sky
     /// drift is left to the host's keep-alive redraw.
     ///
     /// [`dirty`]: Self::dirty
@@ -229,107 +179,44 @@ impl App {
         self.last = now;
 
         let screen_size = renderer.screen_size();
-        if self.recenter_cursor {
-            self.pointer.cursor_x = screen_size.0 as f32 * 0.5;
-            self.pointer.cursor_y = screen_size.1 as f32 * 0.5;
-            self.recenter_cursor = false;
-            self.dirty = true;
-        }
+        self.recenter_pointer_if_pending(screen_size);
 
         // Route inventory clicks before reading game input, so a right-click
         // consumed by the open inventory never also fires block placement.
-        if self.pointer.left_click && self.route_screen_click(screen_size, now) {
-            self.pointer.left_click = false;
+        if self.pointer.left_clicked() && self.route_screen_click(screen_size, now) {
+            self.pointer.clear_left_click();
         }
-        if self.pointer.right_click && self.route_screen_right_click(screen_size, now) {
-            self.pointer.right_click = false;
+        if self.pointer.right_clicked() && self.route_screen_right_click(screen_size, now) {
+            self.pointer.clear_right_click();
         }
 
         // Sampled BEFORE the tick: `game.tick` runs the mesh budget, which drains the
         // dirty-mesh queue into built-but-unuploaded meshes that `render` uploads. Reading
         // it here keeps build + upload in the same frame, so a changed chunk can never
         // settle without being drawn.
-        let mesh_pending = self.game.has_dirty_meshes();
+        let frame_before_tick = self.game.client_frame_before_tick();
 
         let game_input = self.take_game_input();
         let events = self.game.tick(dt, &game_input);
-        // Drive the mining loop sound from the client, never the game tick (audio is
-        // presentation): play the dig sound for whatever block is being mined,
-        // repeating at the clip's own length. The sim only reports *which block* is
-        // under the player's mining; the engine handles timing + per-hit pitch.
-        let mining_sound = self
-            .game
-            .mining_block()
-            .and_then(|b| b.sound(BlockSoundAction::Dig));
-        self.audio.set_loop(mining_sound, now);
-        // A block placed this frame plays its one-shot place sound — also client-side
-        // and data-driven (wood today; silent for materials without a place asset yet).
-        if let Some(b) = events.placed_block {
-            if let Some(s) = b.sound(BlockSoundAction::Place) {
-                self.audio.play(s);
-            }
-        }
-        // ...and a block broken (player-mined) this frame plays its one-shot break sound.
-        if let Some(b) = events.broke_block {
-            if let Some(s) = b.sound(BlockSoundAction::Break) {
-                self.audio.play(s);
-            }
-        }
-        // Collecting a dropped item plays the global pickup sound (not a block sound).
-        if events.picked_up_item {
-            self.audio.play(Sound::ItemPickup);
-        }
-        // Right-clicking a placed crafting table opens its 3×3 screen.
-        if events.open_crafting_table && self.screen.gameplay_enabled() {
-            self.open_crafting_table();
-        }
-        // Right-clicking a placed furnace opens its screen at that position.
-        if let Some(pos) = events.open_furnace {
-            if self.screen.gameplay_enabled() {
-                self.open_furnace(pos);
-            }
-        }
-        // Right-clicking a placed chest opens its screen at that position.
-        if let Some(pos) = events.open_chest {
-            if self.screen.gameplay_enabled() {
-                self.open_chest(pos);
-            }
-        }
-        // Right-clicking a placed furniture workbench opens its screen.
-        if events.open_furniture_workbench.is_some() && self.screen.gameplay_enabled() {
-            self.open_furniture_workbench();
-        }
+        self.handle_open_screen_events(&events);
+        let (mining_block, camera_pose, visually_active) = {
+            let frame = self.game.client_frame(now);
+            (
+                frame.held_item.mining_block,
+                frame.camera_pose,
+                frame.activity.visually_active,
+            )
+        };
+        self.play_game_event_sounds(&events, mining_block, now);
         self.pointer.clear_edges();
-
-        // Right-clicking a placed crafting table / furnace / chest / workbench opens its
-        // screen instead of placing, and right-clicking a door toggles it — flick the
-        // hand for any of these interactions too.
-        let opened_interactable = events.open_crafting_table
-            || events.open_furnace.is_some()
-            || events.open_chest.is_some()
-            || events.open_furniture_workbench.is_some()
-            || events.toggled_door;
-        // Latch the hand-animation triggers so the next `render` plays them even if a
-        // draw is skipped between now and then (OR-merged, never dropped).
-        self.hand.broke |= events.broke_block.is_some();
-        // Placing a block, throwing/dropping an item, and opening an interactable block
-        // all flick the hand with the same soft right-click jab.
-        self.hand.placed |= events.placed_block.is_some() || events.threw_item || opened_interactable;
-        // An attack swing (mob hit or punch at the air) flicks the hand once.
-        self.hand.swung |= events.swung_hand;
-
-        let acted = events.broke_block.is_some()
-            || events.placed_block.is_some()
-            || events.threw_item
-            || events.swung_hand
-            || opened_interactable;
+        let event_presentation = self.latch_game_event_hand_triggers(&events);
         // `dirty` is peeked-and-cleared here: a redraw consumes the pending-input flag.
         std::mem::take(&mut self.dirty)
-            || acted
+            || event_presentation.acted
             || renderer.hand_animation_active()
-            || mesh_pending
-            || self.camera_moved()
-            || self.game.is_visually_active()
+            || frame_before_tick.mesh_pending
+            || self.camera_moved(camera_pose)
+            || visually_active
     }
 
     /// Draw the current frame. The host calls this only when [`update`](Self::update)
@@ -343,57 +230,57 @@ impl App {
         self.last_render = now;
         let screen_size = renderer.screen_size();
 
-        let environment = self.game.environment(now);
-        renderer.update_uniforms(
-            self.game.camera(),
-            environment.fog,
-            environment.time,
-            environment.underwater,
-        );
-        renderer.set_selection(self.game.selection());
-        renderer.set_break_overlay(self.game.break_overlay_view());
-        let hand = std::mem::take(&mut self.hand);
-        renderer.set_held_item(HeldItemFrame {
-            item: self.game.selected_item(),
-            mining: self.game.is_mining(),
-            broke_block: hand.broke,
-            placed: hand.placed,
-            swung: hand.swung,
-            dt,
-        });
-        // Bake the sim's per-frame world-render data (dropped items, particles,
-        // chests, held-item light) into the render-side scene, then hand it off.
-        self.scene.bake(&self.game);
+        let last_pose = {
+            let frame = self.game.client_frame(now);
+            renderer.update_uniforms(
+                frame.camera,
+                frame.environment.fog,
+                frame.environment.time,
+                frame.environment.underwater,
+            );
+            renderer.set_selection(frame.selection);
+            let hand = std::mem::take(&mut self.hand);
+            renderer.set_held_item(HeldItemFrame {
+                item: frame.held_item.item,
+                mining: frame.held_item.mining,
+                broke_block: hand.broke,
+                placed: hand.placed,
+                swung: hand.swung,
+                dt,
+            });
+            frame.camera_pose
+        };
+        // Build the neutral read snapshot, then bake it into render wire structs.
+        {
+            let presentation = self.presentation.snapshot(&self.game);
+            renderer.set_break_overlay(presentation.break_overlay);
+            self.scene.bake(&presentation);
+        }
         self.scene.upload(renderer);
-        renderer.set_ui(UiFrame {
-            open: self.screen.ui_open(),
-            kind: self.screen.gui_kind(),
-            inv: self.game.inventory(),
-            craft: self.game.craft_grid().cells(),
-            craft_result: self.game.craft_grid().result().copied(),
-            furnace: self.game.open_furnace_view(),
-            chest: self.game.open_chest_view(),
-            workbench: self.game.open_workbench_view(),
-            screen: screen_size,
-            cursor_px: (self.pointer.cursor_x, self.pointer.cursor_y),
-        });
+        renderer.set_ui(ui_snapshot::build(
+            &self.game,
+            self.screen,
+            screen_size,
+            self.pointer.cursor(),
+        ));
 
-        renderer.sync_meshes(self.game.world_mut());
-        renderer.update_section_visibility(self.game.world_mut());
+        {
+            let mut terrain = self.game.terrain_render_handoff();
+            renderer.sync_meshes(&mut terrain);
+            renderer.update_section_visibility(&mut terrain);
+        }
         renderer.render();
 
         // Remember the drawn view so the next `update` can tell a still camera (idle)
         // from a moved one and redraw only on change.
-        let c = self.game.camera();
-        self.last_pose = Some([c.pos.x, c.pos.y, c.pos.z, c.yaw, c.pitch]);
+        self.last_pose = Some(last_pose);
     }
 
     /// Whether the camera pose changed since the last [`render`](Self::render). At rest
     /// on the ground the pose is reproduced bit-for-bit, so this is `false` when idle;
     /// `None` (before the first draw) counts as moved so the opening frame is drawn.
-    fn camera_moved(&self) -> bool {
-        let c = self.game.camera();
-        self.last_pose != Some([c.pos.x, c.pos.y, c.pos.z, c.yaw, c.pitch])
+    fn camera_moved(&self, pose: CameraPose) -> bool {
+        self.last_pose != Some(pose)
     }
 
     /// Does pending input want a frame? Peeked (not cleared) by the host between updates
@@ -401,258 +288,6 @@ impl App {
     #[inline]
     pub fn wants_redraw(&self) -> bool {
         self.dirty
-    }
-
-    fn take_game_input(&mut self) -> GameInput {
-        let gameplay_enabled = self.screen.gameplay_enabled();
-        let look_delta = if gameplay_enabled && self.pointer.grabbing {
-            (self.pointer.dx, self.pointer.dy)
-        } else {
-            (0.0, 0.0)
-        };
-        self.pointer.dx = 0.0;
-        self.pointer.dy = 0.0;
-
-        let hotbar_scroll = if gameplay_enabled {
-            self.pointer.take_scroll_step()
-        } else {
-            self.pointer.scroll_delta = 0.0;
-            0
-        };
-
-        GameInput {
-            gameplay_enabled,
-            movement: self.input.movement(),
-            look_delta,
-            hotbar_scroll,
-            break_held: self.pointer.left_held,
-            // The primary-button edge (a menu click already consumed it above). Drives
-            // a one-shot attack/punch, distinct from the held mining state.
-            attack_clicked: self.pointer.left_click,
-            place_clicked: self.pointer.right_click,
-        }
-    }
-
-    fn toggle_inventory(&mut self) {
-        if self.screen.ui_open() {
-            self.close_menu();
-        } else {
-            self.open_inventory();
-        }
-    }
-
-    fn open_inventory(&mut self) {
-        self.enter_menu(AppScreen::Inventory);
-        self.game.open_crafting(2);
-    }
-
-    /// Open the 3×3 crafting-table screen (after right-clicking a placed table).
-    fn open_crafting_table(&mut self) {
-        self.enter_menu(AppScreen::CraftingTable);
-        self.game.open_crafting(3);
-    }
-
-    /// Open the furnace screen for the furnace at `pos` (after right-clicking it).
-    fn open_furnace(&mut self, pos: crate::mathh::IVec3) {
-        self.enter_menu(AppScreen::Furnace);
-        self.game.open_furnace_screen(pos);
-    }
-
-    /// Open the chest screen for the chest at `pos` (after right-clicking it).
-    fn open_chest(&mut self, pos: crate::mathh::IVec3) {
-        self.enter_menu(AppScreen::Chest);
-        self.game.open_chest_screen(pos);
-    }
-
-    /// Open the furniture-workbench screen (after right-clicking a placed workbench).
-    fn open_furniture_workbench(&mut self) {
-        self.enter_menu(AppScreen::FurnitureWorkbench);
-        self.game.open_workbench_screen();
-    }
-
-    /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
-    /// cursor next tick, and clear any stale click streak so the first click
-    /// can't register a phantom double.
-    fn enter_menu(&mut self, screen: AppScreen) {
-        self.screen = screen;
-        self.pointer.grabbing = false;
-        self.recenter_cursor = true;
-        self.pointer.reset_click_streak();
-    }
-
-    /// Close any open menu: return crafting-grid items to the inventory, drop back
-    /// to gameplay, and re-grab the pointer.
-    fn close_menu(&mut self) {
-        // Prioritize the stack the user is actively dragging: closing a GUI merges it
-        // back into inventory capacity, then queues only any leftover to drop.
-        self.game.close_cursor_stack();
-        // All three are safe to call regardless of which menu was open: a furnace /
-        // chest screen leaves the craft grid empty, and the inventory/table leaves no
-        // open furnace or chest.
-        self.game.close_crafting();
-        self.game.close_furnace();
-        self.game.close_chest();
-        self.game.close_workbench();
-        self.screen = AppScreen::Game;
-        self.pointer.grabbing = true;
-    }
-
-    fn close_screen(&mut self) -> bool {
-        if self.screen.ui_open() {
-            self.close_menu();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Route a left-click to the open inventory. Returns whether it was consumed
-    /// (i.e. the inventory was open). No-op when closed. `now` timestamps the click
-    /// for double-click detection.
-    fn route_screen_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        if !self.screen.ui_open() {
-            return false;
-        }
-        self.route_inventory_click(screen, PointerButton::Primary, now);
-        true
-    }
-
-    /// Route a right-click to the open inventory. Returns whether it was consumed
-    /// (i.e. the inventory was open) — so a closed-inventory right-click falls
-    /// through to block placement. No-op when closed.
-    fn route_screen_right_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        if !self.screen.ui_open() {
-            return false;
-        }
-        self.route_inventory_click(screen, PointerButton::Secondary, now);
-        true
-    }
-
-    /// Apply an inventory click (caller guarantees a menu is open). Hit-test the
-    /// pixel to a game slot via the open GUI's baked def ([`render::gui_hit`]) — ONE
-    /// scan over every slot of every role that returns the `MenuSlot` directly — then
-    /// route it through the menu's single [`Game::menu_click`] entry. The manifest's
-    /// role→slot map (storage→chest, player_inv/hotbar→inventory, craft/furnace→
-    /// their roles) replaces App's old per-container hit-test ladder.
-    ///
-    /// On a slot: shift transfers (furnace tag-routes #fuel / #smeltable, chest
-    /// dumps in, otherwise hotbar↔grid); right splits / drips one; left does
-    /// whole-stack pick/drop/swap — except a fast second left click on the same slot
-    /// while dragging a stack gathers matching items onto the cursor (the
-    /// double-click `gather` verdict App owns; see [`left_click_gather`]). Off any
-    /// slot but confidently OUTSIDE the panel: throw the held stack (left = all,
-    /// right = one). A click on the panel art but not a slot does nothing.
-    fn route_inventory_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) {
-        let cursor = (self.pointer.cursor_x, self.pointer.cursor_y);
-        let shift = self.modifiers.shift;
-        let kind = self.screen.gui_kind();
-        match crate::render::gui_hit(kind, screen, cursor) {
-            Some(slot) => {
-                let gather = self.left_click_gather(slot, button, shift, now);
-                self.game.menu_click(slot, button, shift, gather);
-            }
-            None if !crate::render::gui_panel_contains(kind, screen, cursor) => {
-                self.pointer.reset_click_streak();
-                match button {
-                    PointerButton::Primary => self.game.throw_cursor_stack(),
-                    PointerButton::Secondary => self.game.throw_cursor_one(),
-                }
-            }
-            None => {}
-        }
-    }
-
-    /// Resolve a click into the double-click `gather` verdict and keep the App's
-    /// click-streak in step. A streak-advancing click is a plain left-click on a
-    /// gatherable slot (an inventory or chest storage slot — the only slots whose
-    /// fast re-click gathers); that case registers against the streak and reports a
-    /// gather when it completes a double AND the cursor holds a stack. Every other
-    /// interaction (shift / right, or a furnace/craft slot) ends the streak and never
-    /// gathers, so the next left-click is a fresh single click. Chest slot indices
-    /// are namespaced past the inventory's (see [`CHEST_SLOT_STREAK_BASE`]) so a chest
-    /// slot and an inventory slot with the same number aren't conflated.
-    fn left_click_gather(
-        &mut self,
-        slot: MenuSlot,
-        button: PointerButton,
-        shift: bool,
-        now: f64,
-    ) -> bool {
-        let streak_key = match slot {
-            _ if shift || button != PointerButton::Primary => None,
-            MenuSlot::Inventory(i) => Some(i),
-            MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
-            // Craft / furnace / workbench slots don't gather on a double-click (their
-            // results are take-only and the inputs are single slots).
-            MenuSlot::Craft(_) | MenuSlot::Furnace(_) | MenuSlot::Workbench(_) => None,
-        };
-        match streak_key {
-            Some(key) => self.pointer.register_left_click(key, now) && self.game.cursor_has_stack(),
-            None => {
-                self.pointer.reset_click_streak();
-                false
-            }
-        }
-    }
-}
-
-/// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
-/// (Windows' `WHEEL_DELTA` / 120, as winit normalizes it), so a notched wheel
-/// still advances exactly one slot per click. Hi-res / free-spin mice (the MX
-/// Master) emit fractions of a notch many times a frame; requiring a whole
-/// notch per slot — and carrying the sub-slot remainder forward — couples
-/// selection to how far the wheel actually turned instead of lurching a slot on
-/// every micro-event.
-const SCROLL_NOTCHES_PER_SLOT: f32 = 1.0;
-
-/// A second left-click on the same inventory slot within this window counts as a
-/// double-click, which gathers matching items onto the cursor instead of dropping
-/// the held stack back. Matches the classic ~250 ms double-click timeout.
-const DOUBLE_CLICK_SECS: f64 = 0.25;
-
-/// Offset added to a chest storage-slot index when feeding the double-click streak,
-/// so a chest slot and an inventory slot with the same number can't be conflated
-/// into a phantom double-click. Larger than any inventory slot index.
-const CHEST_SLOT_STREAK_BASE: usize = 1000;
-
-impl PointerState {
-    /// Register a left-click on inventory `slot` at time `now`, returning whether
-    /// it completes a double-click: a second click on the SAME slot within
-    /// [`DOUBLE_CLICK_SECS`] of the first. A completed double-click consumes the
-    /// streak, so a third quick click starts a fresh single click.
-    fn register_left_click(&mut self, slot: usize, now: f64) -> bool {
-        let is_double =
-            self.last_click_slot == Some(slot) && now - self.last_click_time < DOUBLE_CLICK_SECS;
-        if is_double {
-            self.last_click_slot = None;
-        } else {
-            self.last_click_slot = Some(slot);
-            self.last_click_time = now;
-        }
-        is_double
-    }
-
-    /// Forget any in-progress click streak (after a non-pickup interaction such as
-    /// a shift-move, right-click, or throw-out), so the next left-click is a fresh
-    /// single click rather than a stray double.
-    fn reset_click_streak(&mut self) {
-        self.last_click_slot = None;
-    }
-
-    /// Whole hotbar slots to move this frame, draining the accumulator by the
-    /// notches consumed and keeping the sub-slot remainder for next frame. The
-    /// result is frame-rate independent: a slow, deliberate roll yields one slot
-    /// per notch; a hard flick yields several; a jittery nudge under a notch
-    /// yields none.
-    fn take_scroll_step(&mut self) -> i32 {
-        let steps = (self.scroll_delta / SCROLL_NOTCHES_PER_SLOT).trunc();
-        self.scroll_delta -= steps * SCROLL_NOTCHES_PER_SLOT;
-        steps as i32
-    }
-
-    fn clear_edges(&mut self) {
-        self.left_click = false;
-        self.right_click = false;
     }
 }
 
@@ -688,6 +323,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::controls::Control;
+    use crate::gui::MenuSlot;
     use crate::item::{ItemStack, ItemType};
     use crate::mathh::Vec3;
     use crate::player::PlayerMode;
@@ -749,7 +385,7 @@ mod tests {
         app.set_pointer_grabbed(true);
         app.handle_control(Control::ToggleInventory, true);
         assert!(app.inventory_open());
-        assert!(!app.pointer.grabbing);
+        assert!(!app.pointer.is_grabbing());
     }
 
     #[test]
@@ -757,11 +393,11 @@ mod tests {
         let mut app = app();
         app.handle_control(Control::ToggleInventory, true);
         assert!(app.inventory_open());
-        assert!(!app.pointer.grabbing);
+        assert!(!app.pointer.is_grabbing());
 
         assert!(app.handle_control(Control::CloseScreen, true));
         assert!(!app.inventory_open());
-        assert!(app.pointer.grabbing);
+        assert!(app.pointer.is_grabbing());
     }
 
     #[test]
@@ -793,57 +429,17 @@ mod tests {
         assert_eq!(app.game.inventory().active_slot(), 2);
     }
 
-    #[test]
-    fn scroll_step_needs_a_full_notch() {
-        // Sub-notch travel accumulates without moving the selection...
-        let mut p = PointerState {
-            scroll_delta: 0.4,
-            ..Default::default()
-        };
-        assert_eq!(p.take_scroll_step(), 0);
-        p.scroll_delta += 0.4;
-        assert_eq!(p.take_scroll_step(), 0);
-        // ...until a whole notch is reached: one step, remainder carried.
-        p.scroll_delta += 0.4;
-        assert_eq!(p.take_scroll_step(), 1);
-        assert!((p.scroll_delta - 0.2).abs() < 1e-4);
-    }
-
-    #[test]
-    fn scroll_step_is_proportional_and_signed() {
-        let mut p = PointerState {
-            scroll_delta: 3.0,
-            ..Default::default()
-        };
-        assert_eq!(p.take_scroll_step(), 3);
-        assert_eq!(p.scroll_delta, 0.0);
-
-        p.scroll_delta = -2.5;
-        assert_eq!(p.take_scroll_step(), -2);
-        assert!((p.scroll_delta + 0.5).abs() < 1e-4);
-    }
-
-    #[test]
-    fn scroll_step_carries_remainder_across_frames() {
-        // A free-spin wheel emits a stream of tiny deltas; the slot must advance
-        // once per accumulated notch, not once per micro-event.
-        let mut p = PointerState::default();
-        let mut steps = 0;
-        for _ in 0..25 {
-            p.scroll_delta += 0.1;
-            steps += p.take_scroll_step();
-        }
-        assert_eq!(steps, 2); // 25 * 0.1 = 2.5 notches -> 2 whole slots
-        assert!((p.scroll_delta - 0.5).abs() < 1e-4);
-    }
-
     /// Brute-force a cursor pixel that the open GUI's hit-test resolves to `want`,
     /// using the REAL baked geometry so tests never pin manifest pixel positions.
-    fn cursor_over_menu(screen: (u32, u32), kind: crate::render::GuiKind, want: MenuSlot) -> (f32, f32) {
+    fn cursor_over_menu(
+        screen: (u32, u32),
+        kind: crate::gui::GuiKind,
+        want: MenuSlot,
+    ) -> (f32, f32) {
         for y in 0..screen.1 {
             for x in 0..screen.0 {
                 let c = (x as f32 + 0.5, y as f32 + 0.5);
-                if crate::render::gui_hit(kind, screen, c) == Some(want) {
+                if crate::gui::hit(kind, screen, c) == Some(want) {
                     return c;
                 }
             }
@@ -852,20 +448,24 @@ mod tests {
     }
 
     fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {
-        cursor_over_menu(screen, crate::render::GuiKind::Inventory, MenuSlot::Inventory(slot))
+        cursor_over_menu(
+            screen,
+            crate::gui::GuiKind::Inventory,
+            MenuSlot::Inventory(slot),
+        )
     }
 
     fn cursor_over_craft(
         screen: (u32, u32),
-        kind: crate::render::GuiKind,
-        hit: crate::render::CraftHit,
+        kind: crate::gui::GuiKind,
+        hit: crate::gui::CraftHit,
     ) -> (f32, f32) {
         cursor_over_menu(screen, kind, MenuSlot::Craft(hit))
     }
 
     #[test]
     fn craft_slot_clicks_route_through_to_crafting() {
-        use crate::render::{CraftHit, GuiKind};
+        use crate::gui::{CraftHit, GuiKind};
         let mut app = app();
         // Give the player one oak log and open the inventory (2×2 crafting).
         app.game
@@ -888,7 +488,7 @@ mod tests {
             "log placed into the craft cell"
         );
         assert_eq!(
-            app.game.craft_grid().result().map(|s| s.item),
+            app.game.menu_read_model().craft.result().map(|s| s.item),
             Some(ItemType::OakPlanks)
         );
 
@@ -900,7 +500,7 @@ mod tests {
             app.game.inventory().cursor().map(|s| (s.item, s.count)),
             Some((ItemType::OakPlanks, 4))
         );
-        assert!(app.game.craft_grid().result().is_none());
+        assert!(app.game.menu_read_model().craft.result().is_none());
     }
 
     #[test]
@@ -916,8 +516,8 @@ mod tests {
         app.click_screen_for_test(screen, 0.0);
         let cc = cursor_over_craft(
             screen,
-            crate::render::GuiKind::Inventory,
-            crate::render::CraftHit::Input(0),
+            crate::gui::GuiKind::Inventory,
+            crate::gui::CraftHit::Input(0),
         );
         app.set_cursor_position(cc.0, cc.1);
         app.click_screen_for_test(screen, 0.1);
@@ -1053,6 +653,12 @@ mod tests {
         let mut app = app_with_grass();
         let before = app.game.inventory().selected().unwrap().count;
         app.handle_control(Control::DropItem, true);
+        assert_eq!(
+            app.game.inventory().selected().unwrap().count,
+            before,
+            "drop is latched until the fixed tick applies it"
+        );
+        app.game.apply_latched_actions_for_test();
         assert_eq!(app.game.inventory().selected().unwrap().count, before - 1);
     }
 
@@ -1067,6 +673,11 @@ mod tests {
         });
         app.handle_control(Control::DropItem, true);
         assert!(
+            app.game.inventory().selected().is_some(),
+            "drop-all is latched until the fixed tick applies it"
+        );
+        app.game.apply_latched_actions_for_test();
+        assert!(
             app.game.inventory().selected().is_none(),
             "whole stack dropped"
         );
@@ -1080,6 +691,12 @@ mod tests {
         app.handle_control(Control::Sprint, true); // sprint action held
         let before = app.game.inventory().selected().unwrap().count;
         app.handle_control(Control::DropItem, true);
+        assert_eq!(
+            app.game.inventory().selected().unwrap().count,
+            before,
+            "drop is latched until the fixed tick applies it"
+        );
+        app.game.apply_latched_actions_for_test();
         assert_eq!(
             app.game.inventory().selected().unwrap().count,
             before - 1,
@@ -1187,12 +804,12 @@ mod tests {
 
     /// A point inside the panel rectangle that is NOT over any slot.
     fn panel_gap_point(screen: (u32, u32)) -> (f32, f32) {
-        let kind = crate::render::GuiKind::Inventory;
+        let kind = crate::gui::GuiKind::Inventory;
         for y in 0..screen.1 {
             for x in 0..screen.0 {
                 let c = (x as f32 + 0.5, y as f32 + 0.5);
-                if crate::render::gui_panel_contains(kind, screen, c)
-                    && crate::render::gui_hit(kind, screen, c).is_none()
+                if crate::gui::panel_contains(kind, screen, c)
+                    && crate::gui::hit(kind, screen, c).is_none()
                 {
                     return c;
                 }

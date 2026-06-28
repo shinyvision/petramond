@@ -19,22 +19,18 @@ mod resources;
 mod scene;
 mod section_cull;
 mod selection;
-mod gui_def;
-mod gui_types;
 mod ui;
 mod ui_text;
 mod uniforms;
 
+pub use crate::game::presentation::BreakOverlayView;
 pub use renderer::{
     instance_descriptor, new_renderer, new_renderer_from_target, new_renderer_with_instance,
     Renderer, UiSnapshot,
 };
 pub use resources::GpuMesh;
 
-/// The render-side scene adapter: bakes the sim's per-frame world-render data
-/// (dropped items, particles, chests, held-item light) into the renderer's wire
-/// structs. The App owns one and drives it each frame.
-pub use scene::Scene;
+pub(crate) use scene::Scene;
 pub use uniforms::{
     Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START, UV_RECTS_LEN,
 };
@@ -43,44 +39,15 @@ pub use block_model::{
     billboard_quad, cube_solid, cube_textured, BillboardBasis, SOLID_COLOR_FLAG,
 };
 
-/// Slot-identity enums shared with the App's click routing and the game container
-/// menu (a craft input/result cell, a furnace role). See [`gui_types`].
-pub use gui_types::{CraftHit, FurnaceHit, WorkbenchHit};
+/// Neutral GUI identities and view snapshots shared with the App's click routing,
+/// renderer UI drawing, and game container menu.
+pub use crate::gui::{
+    ChestView, CraftHit, FurnaceHit, FurnaceView, GuiKind, WorkbenchHit, WorkbenchView,
+};
 
-/// Data-driven GUI layout + hit-tests (baked PNG + JSON manifest). Every screen
-/// reads its baked [`GuiKind`] def — the renderer draws it and the App routes a
-/// click through [`gui_hit`] (which slot the cursor is over, as a game `MenuSlot`)
-/// and [`gui_panel_contains`] (is the cursor over the panel). `GuiKind` lets the
-/// App name the open screen's kind for both.
-pub use gui_def::GuiKind;
-pub(crate) use gui_def::{hit as gui_hit, panel_contains as gui_panel_contains};
-
-use crate::item::{ItemStack, ItemType};
-use glam::{IVec3, Quat, Vec3};
+use crate::item::ItemType;
+use glam::{Quat, Vec3};
 use std::sync::Arc;
-
-/// The block-break overlay to draw this frame: a cracked-texture quad over
-/// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
-/// `None` (cleared via [`Renderer::set_break_overlay`]) draws nothing.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct BreakOverlayView {
-    pub block: IVec3,
-    /// The cell-local visual box the crack hugs (a non-full-cube block — e.g. the chest —
-    /// cracks over its inset box, not the whole cell). `None` = an ordinary full cube.
-    /// Resolved position-aware by the game.
-    pub visual_box: Option<([f32; 3], [f32; 3])>,
-    /// A bbmodel block cracks over its CELL'S ACTUAL CUBE SURFACES (kind + the targeted
-    /// cell's authored footprint offset + placed facing), so the crack lands on the
-    /// rotated model — each leg / the top — instead of one coarse box floating in the
-    /// cell's air. `None` for a non-model block.
-    pub model: Option<(
-        crate::block_model::BlockModelKind,
-        [u8; 3],
-        crate::furnace::Facing,
-    )>,
-    /// 0..=9 crack stage (maps to `Tile::DestroyStage0..9`).
-    pub stage: u8,
-}
 
 /// The first-person held item to draw this frame. `item == None` draws the bare
 /// skin hand. `swing` (0..1) drives the punch animation (mining and placing
@@ -183,15 +150,15 @@ pub struct MobRenderInstance {
 /// loaded chunks' chest block-entities; the renderer frustum-culls + bakes them with
 /// [`chest_model::build_chests`].
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ChestInstance {
+struct ChestInstance {
     /// World position of the block's min corner (block coords as f32).
-    pub pos: Vec3,
+    pos: Vec3,
     /// Placement orientation (which way the front + latch face).
-    pub facing: crate::furnace::Facing,
+    facing: crate::furnace::Facing,
     /// Lid open fraction: `0.0` closed, `1.0` fully open.
-    pub lid01: f32,
+    lid01: f32,
     /// 6-bit skylight sampled from the world at the chest's cell.
-    pub skylight: u8,
+    skylight: u8,
 }
 
 /// A placed door to draw in the world this frame: a 2-tall thin slab on the `facing`
@@ -201,22 +168,22 @@ pub struct ChestInstance {
 /// [`door_model::build_doors`]. The two halves carry different art (`bottom_tile` /
 /// `top_tile`).
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DoorInstance {
+struct DoorInstance {
     /// World position of the lower cell's min corner (block coords as f32).
-    pub pos: Vec3,
+    pos: Vec3,
     /// The edge the CLOSED door rests on (its outward normal); see [`crate::door`].
-    pub facing: crate::furnace::Facing,
+    facing: crate::furnace::Facing,
     /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
-    pub open01: f32,
+    open01: f32,
     /// Atlas tile for the lower half's front/back (door art).
-    pub bottom_tile: crate::atlas::Tile,
+    bottom_tile: crate::atlas::Tile,
     /// Atlas tile for the upper half's front/back (door art).
-    pub top_tile: crate::atlas::Tile,
+    top_tile: crate::atlas::Tile,
     /// Atlas tile for the four thin EDGE faces (the door's side — distinct from the
     /// front art, e.g. a plank strip).
-    pub side_tile: crate::atlas::Tile,
+    side_tile: crate::atlas::Tile,
     /// 6-bit skylight sampled from the world at the door's lower cell.
-    pub skylight: u8,
+    skylight: u8,
 }
 
 /// A single particle billboard to draw this frame. `uv_min` / `uv_size` are
@@ -238,67 +205,4 @@ pub struct ParticleInstance {
     pub size: f32,
     /// 6-bit skylight sampled from the world at the particle position.
     pub skylight: u8,
-}
-
-/// A furnace's view for the open furnace screen: its three slots plus the two
-/// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so the renderer
-/// snapshots it by value with no borrow.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct FurnaceView {
-    pub input: Option<ItemStack>,
-    pub fuel: Option<ItemStack>,
-    pub output: Option<ItemStack>,
-    /// Smelt progress (drives the arrow): 0 at the start of an item, 1 when done.
-    pub cook01: f32,
-    /// Remaining fuel of the current burn (drives the flame): 1 full → 0 spent.
-    pub burn01: f32,
-}
-
-/// A chest's view for the open chest screen: its 27 storage slots, row-major.
-/// `Copy` (`ItemStack` is `Copy`), so the renderer snapshots it by value with no
-/// borrow — exactly like [`FurnaceView`].
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ChestView {
-    pub slots: [Option<ItemStack>; crate::chest::CHEST_SLOTS],
-}
-
-/// A furniture workbench's view for its open screen: the placed input block and the
-/// list of results it offers, each flagged craftable (enough input) or not (shown
-/// greyed). Computed from the input + the furniture recipes (see
-/// [`crate::crafting::Recipes::furniture_for`]); the result list is row-major, mapping
-/// to the manifest's result slots. Not `Copy` (the `Vec`); snapshotted by move per
-/// frame, like a small render-side scratch.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WorkbenchView {
-    pub input: Option<ItemStack>,
-    /// `(result item, craftable now)` per offered recipe, row-major.
-    pub results: Vec<(crate::item::ItemType, bool)>,
-}
-
-/// Per-frame UI state handed to the renderer. Borrows the `Inventory` for the
-/// duration of the [`Renderer::set_ui`] call only; the renderer snapshots the
-/// small bits it needs into owned state so it never holds a borrow across frames.
-pub struct UiFrame<'a> {
-    pub open: bool,
-    /// Which baked GUI to draw — the open menu's kind, or `Hotbar` for the HUD.
-    pub kind: GuiKind,
-    pub inv: &'a crate::inventory::Inventory,
-    /// The active crafting input cells (`len == panel.cols()²`).
-    pub craft: &'a [Option<ItemStack>],
-    /// The crafting result preview for the result slot.
-    pub craft_result: Option<ItemStack>,
-    /// The open furnace's slots + gauges, or `None` when the open panel is not a
-    /// furnace. When `Some`, the furnace panel replaces the crafting grid.
-    pub furnace: Option<FurnaceView>,
-    /// The open chest's 27 storage slots, or `None` when the open panel is not a
-    /// chest. When `Some`, the chest panel + storage grid replace the crafting grid.
-    pub chest: Option<ChestView>,
-    /// The open furniture workbench's input + offered results, or `None` when the open
-    /// panel is not a workbench. When `Some`, the workbench panel replaces the grid.
-    pub workbench: Option<WorkbenchView>,
-    /// Screen size in physical pixels `(width, height)`.
-    pub screen: (u32, u32),
-    /// Cursor position in physical pixels `(x, y)` (for the open-inventory cursor
-    /// stack + drag/drop hit-testing).
-    pub cursor_px: (f32, f32),
 }

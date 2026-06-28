@@ -100,6 +100,9 @@ mod tests {
             any_nonzero |= s != 0.0;
         }
         // The whole point: a non-zero signal, so the device never sees silence.
-        assert!(any_nonzero, "must emit non-zero samples to keep the device awake");
+        assert!(
+            any_nonzero,
+            "must emit non-zero samples to keep the device awake"
+        );
     }
 }

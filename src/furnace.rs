@@ -12,9 +12,9 @@
 //! what smelts into what is supplied by the caller as a closure, since the recipe
 //! set lives in `crafting` and the storage layer must not depend on it.
 
+use crate::gui::FurnaceView;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemTag, ItemType};
-use crate::render::FurnaceView;
 
 /// Game ticks to smelt one item (30 s at 20 TPS), matching Minecraft.
 pub const COOK_TICKS: u16 = 600;

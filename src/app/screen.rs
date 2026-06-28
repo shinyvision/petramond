@@ -35,8 +35,8 @@ impl AppScreen {
     /// HUD (gameplay). The single source of "which screen" for the data-driven GUI —
     /// it selects both the rendered panel and the click hit-test's layout.
     #[inline]
-    pub fn gui_kind(self) -> crate::render::GuiKind {
-        use crate::render::GuiKind;
+    pub fn gui_kind(self) -> crate::gui::GuiKind {
+        use crate::gui::GuiKind;
         match self {
             AppScreen::Game => GuiKind::Hotbar,
             AppScreen::Inventory => GuiKind::Inventory,

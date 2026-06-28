@@ -2,7 +2,7 @@ use crate::atlas::Tile;
 use crate::item::DropSpec;
 
 use super::behavior::BlockBehavior;
-use super::{Aabb, Block, BlockTag, RenderShape};
+use super::{Aabb, Block, BlockInteraction, BlockTag, RenderShape};
 
 // No `Debug`/`PartialEq`: the `behavior` trait object is neither, and nothing
 // compares or formats a whole `BlockDef` (callers read individual fields).
@@ -17,6 +17,8 @@ pub(super) struct BlockDef {
     /// World-reactive behaviour (see [`BlockBehavior`]) — what this block *does*.
     /// Most rows are [`behavior::INERT`](super::behavior::INERT).
     pub behavior: &'static dyn BlockBehavior,
+    /// What secondary-use does when the player right-clicks this placed block.
+    pub interaction: BlockInteraction,
     /// How this block is meshed — cube / cross-plant / torch. See
     /// [`Block::render_shape`](super::Block::render_shape).
     pub shape: RenderShape,

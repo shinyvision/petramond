@@ -235,7 +235,10 @@ mod tests {
             }
             // And the swung slab stays within the unit cell (no poke into a neighbour).
             assert!(
-                rmin[0] >= -1e-5 && rmax[0] <= 1.0 + 1e-5 && rmin[1] >= -1e-5 && rmax[1] <= 1.0 + 1e-5,
+                rmin[0] >= -1e-5
+                    && rmax[0] <= 1.0 + 1e-5
+                    && rmin[1] >= -1e-5
+                    && rmax[1] <= 1.0 + 1e-5,
                 "{facing:?}: open slab {rmin:?}..{rmax:?} escaped the cell"
             );
         }

@@ -241,11 +241,11 @@ impl World {
         self.bump_visibility_revision();
     }
 
-    pub(crate) fn has_section_visibility(&self, pos: ChunkPos) -> bool {
+    pub(super) fn has_section_visibility(&self, pos: ChunkPos) -> bool {
         self.section_visibility.contains_key(&pos)
     }
 
-    pub(crate) fn ensure_section_visibility(&mut self, pos: ChunkPos) -> bool {
+    pub(super) fn ensure_section_visibility(&mut self, pos: ChunkPos) -> bool {
         if self.has_section_visibility(pos) {
             return true;
         }
@@ -257,7 +257,7 @@ impl World {
         self.visibility_revision = self.visibility_revision.wrapping_add(1);
     }
 
-    pub fn section_connectivity(&self, pos: SectionPos) -> Option<SectionConnectivity> {
+    pub(super) fn section_connectivity(&self, pos: SectionPos) -> Option<SectionConnectivity> {
         if pos.sy < 0 || pos.sy >= SECTION_COUNT as i32 {
             return None;
         }
@@ -266,7 +266,12 @@ impl World {
             .map(|sections| sections[pos.sy as usize])
     }
 
-    pub fn camera_section_exits(&self, wx: i32, wy: i32, wz: i32) -> Option<(SectionPos, u8)> {
+    pub(super) fn camera_section_exits(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> Option<(SectionPos, u8)> {
         if self.can_see_sky_from(wx, wy, wz) {
             return None;
         }
