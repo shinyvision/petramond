@@ -1,6 +1,6 @@
 //! Game-side menu/session facade.
 //!
-//! `ContainerMenu` owns low-level slot behavior in `game/container.rs`. This module
+//! `ContainerMenu` owns low-level slot behavior in `game/container`. This module
 //! owns the `Game` boundary around that menu: opening edit targets, buffering menu
 //! clicks for fixed ticks, close-session cleanup, and read models for the app UI.
 

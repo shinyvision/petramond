@@ -11,8 +11,9 @@ use crate::save::{LevelData, WorldSave};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
+use super::container::ContainerMenu;
 use super::drops::DropQueue;
-use super::{ContainerMenu, Game};
+use super::Game;
 
 struct OpenedSession {
     save: Option<WorldSave>,

@@ -10,8 +10,10 @@ mod input;
 mod menu_lifecycle;
 mod pointer;
 mod presentation_events;
+mod render;
 mod screen;
 mod ui_snapshot;
+mod update;
 
 pub use screen::{AppScreen, CursorPolicy};
 
@@ -23,7 +25,7 @@ use crate::camera::Camera;
 use crate::controls::{Control, Modifiers};
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::{CameraPose, Game};
-use crate::render::{HeldItemFrame, Renderer, Scene};
+use crate::render::Scene;
 
 pub struct App {
     game: Game,
@@ -161,126 +163,6 @@ impl App {
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
         self.dirty = true;
-    }
-
-    /// Advance input and the simulation for this wake, and report whether the frame
-    /// must be redrawn. The sim is decoupled from drawing: the host calls this every
-    /// wake (at least at the tick rate) whether or not it then draws, so
-    /// [`Game::tick`]'s fixed-step accumulator holds the world at 20 TPS regardless of
-    /// frame rate. A redraw is needed when input changed something ([`dirty`]), the
-    /// view moved, a hand action fired or is still animating, terrain is (re)meshing,
-    /// or anything on screen is animating (from the game client-frame read model). Slow sky
-    /// drift is left to the host's keep-alive redraw.
-    ///
-    /// [`dirty`]: Self::dirty
-    pub fn update(&mut self, renderer: &Renderer) -> bool {
-        let now = now_seconds();
-        let dt = (now - self.last) as f32;
-        self.last = now;
-
-        let screen_size = renderer.screen_size();
-        self.recenter_pointer_if_pending(screen_size);
-
-        // Route inventory clicks before reading game input, so a right-click
-        // consumed by the open inventory never also fires block placement.
-        if self.pointer.left_clicked() && self.route_screen_click(screen_size, now) {
-            self.pointer.clear_left_click();
-        }
-        if self.pointer.right_clicked() && self.route_screen_right_click(screen_size, now) {
-            self.pointer.clear_right_click();
-        }
-
-        // Sampled BEFORE the tick: `game.tick` runs the mesh budget, which drains the
-        // dirty-mesh queue into built-but-unuploaded meshes that `render` uploads. Reading
-        // it here keeps build + upload in the same frame, so a changed chunk can never
-        // settle without being drawn.
-        let frame_before_tick = self.game.client_frame_before_tick();
-
-        let game_input = self.take_game_input();
-        let events = self.game.tick(dt, &game_input);
-        self.handle_open_screen_events(&events);
-        let (mining_block, camera_pose, visually_active) = {
-            let frame = self.game.client_frame(now);
-            (
-                frame.held_item.mining_block,
-                frame.camera_pose,
-                frame.activity.visually_active,
-            )
-        };
-        self.play_game_event_sounds(&events, mining_block, now);
-        self.pointer.clear_edges();
-        let event_presentation = self.latch_game_event_hand_triggers(&events);
-        // `dirty` is peeked-and-cleared here: a redraw consumes the pending-input flag.
-        std::mem::take(&mut self.dirty)
-            || event_presentation.acted
-            || renderer.hand_animation_active()
-            || frame_before_tick.mesh_pending
-            || self.camera_moved(camera_pose)
-            || visually_active
-    }
-
-    /// Draw the current frame. The host calls this only when [`update`](Self::update)
-    /// (or its periodic keep-alive) decided the frame would differ from the last one,
-    /// so drawing is fully decoupled from the simulation tick.
-    pub fn render(&mut self, renderer: &mut Renderer) {
-        let now = now_seconds();
-        // The hand animation advances by render time (not sim time); clamp so a long
-        // idle gap before the first active frame can't jump a swing mid-flight.
-        let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
-        self.last_render = now;
-        let screen_size = renderer.screen_size();
-
-        let last_pose = {
-            let frame = self.game.client_frame(now);
-            renderer.update_uniforms(
-                frame.camera,
-                frame.environment.fog,
-                frame.environment.time,
-                frame.environment.underwater,
-            );
-            renderer.set_selection(frame.selection);
-            let hand = std::mem::take(&mut self.hand);
-            renderer.set_held_item(HeldItemFrame {
-                item: frame.held_item.item,
-                mining: frame.held_item.mining,
-                broke_block: hand.broke,
-                placed: hand.placed,
-                swung: hand.swung,
-                dt,
-            });
-            frame.camera_pose
-        };
-        // Build the neutral read snapshot, then bake it into render wire structs.
-        {
-            let presentation = self.presentation.snapshot(&self.game);
-            renderer.set_break_overlay(presentation.break_overlay);
-            self.scene.bake(&presentation);
-        }
-        self.scene.upload(renderer);
-        renderer.set_ui(ui_snapshot::build(
-            &self.game,
-            self.screen,
-            screen_size,
-            self.pointer.cursor(),
-        ));
-
-        {
-            let mut terrain = self.game.terrain_render_handoff();
-            renderer.sync_meshes(&mut terrain);
-            renderer.update_section_visibility(&mut terrain);
-        }
-        renderer.render();
-
-        // Remember the drawn view so the next `update` can tell a still camera (idle)
-        // from a moved one and redraw only on change.
-        self.last_pose = Some(last_pose);
-    }
-
-    /// Whether the camera pose changed since the last [`render`](Self::render). At rest
-    /// on the ground the pose is reproduced bit-for-bit, so this is `false` when idle;
-    /// `None` (before the first draw) counts as moved so the opening frame is drawn.
-    fn camera_moved(&self, pose: CameraPose) -> bool {
-        self.last_pose != Some(pose)
     }
 
     /// Does pending input want a frame? Peeked (not cleared) by the host between updates

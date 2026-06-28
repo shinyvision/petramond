@@ -1,0 +1,426 @@
+//! The open container menu: the craft grid plus the block-entity the GUI is
+//! currently editing.
+//!
+//! `App::AppScreen` remains the single authority for *which* screen is open;
+//! `ContainerMenu` owns only the persistent *edit target* — the block-entity (or
+//! the inventory-side craft grid) the open GUI mutates — and the slot-interaction
+//! behaviour for it. The one-shot *open request* is a `GameEvents` field consumed
+//! by the app shell, never persisted here.
+
+mod chest;
+mod crafting;
+mod dispatch;
+mod furnace;
+mod state;
+mod target;
+mod workbench;
+
+use crate::chest::Chest;
+use crate::furnace::Furnace;
+use crate::mathh::IVec3;
+use crate::world::World;
+
+pub(super) use state::ContainerMenu;
+pub(super) use target::ContainerTarget;
+
+/// A block-entity container the open GUI can edit in place: the one accessor that
+/// the byte-identical `edit_open_furnace` / `edit_open_chest` helpers differed on.
+/// [`with_open_container`] pairs it with the (type-independent) chunk-modified mark
+/// so an otherwise-idle container — which no tick would re-flag — persists its edit.
+trait BlockEntityContainer: Sized {
+    /// Mutable handle to this container at `pos`, or `None` if it has unloaded.
+    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self>;
+}
+
+impl BlockEntityContainer for Furnace {
+    #[inline]
+    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self> {
+        world.furnace_at_mut(pos)
+    }
+}
+
+impl BlockEntityContainer for Chest {
+    #[inline]
+    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self> {
+        world.chest_at_mut(pos)
+    }
+}
+
+/// Run `edit` on the block-entity container `C` at `pos`, then mark its chunk
+/// modified so an otherwise-idle container persists the edit. No-op (but still
+/// marks, matching the prior behaviour) when the container has unloaded.
+///
+/// This is the single helper that replaced the byte-identical `edit_open_furnace`
+/// / `edit_open_chest` twins — they differed only in which `at_mut` accessor they
+/// called, now selected by the `C: BlockEntityContainer` bound.
+fn with_open_container<C: BlockEntityContainer>(
+    world: &mut World,
+    pos: IVec3,
+    edit: impl FnOnce(&mut C),
+) {
+    if let Some(container) = C::at_mut(world, pos) {
+        edit(container);
+    }
+    world.mark_chunk_modified(pos);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::Block;
+    use crate::controls::PointerButton;
+    use crate::crafting::Recipes;
+    use crate::furnace::Facing;
+    use crate::gui::{MenuSlot, WorkbenchHit};
+    use crate::inventory::{Inventory, SlotGrid};
+    use crate::item::{ItemStack, ItemType};
+    use crate::world::World;
+
+    /// A bare in-memory world with an empty chunk at (0,0) installed, so a
+    /// block-entity can be placed and edited without touching disk or worldgen.
+    fn world_with_empty_chunk() -> World {
+        let mut world = World::new(1, 1);
+        let pos = crate::chunk::ChunkPos::new(0, 0);
+        world.clear_world();
+        world.insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
+        world
+    }
+
+    fn recipes() -> Recipes {
+        crate::crafting::load_recipes()
+    }
+
+    fn count_item(inv: &Inventory, item: ItemType) -> u32 {
+        (0..crate::inventory::TOTAL_SLOTS)
+            .filter_map(|i| inv.slot(i))
+            .filter(|s| s.item == item)
+            .map(|s| s.count as u32)
+            .sum()
+    }
+
+    /// Put `stack` into the first craft cell by routing it through the cursor
+    /// (inventory slot 0 → cursor → craft cell), as the UI clicks would.
+    fn place_in_craft_cell(
+        menu: &mut ContainerMenu,
+        inv: &mut Inventory,
+        recipes: &Recipes,
+        cell: usize,
+        stack: ItemStack,
+    ) {
+        inv.add(stack);
+        inv.click_slot(0); // pick the stack onto the cursor
+        menu.craft_click_slot(inv, recipes, cell); // drop it into the craft cell
+    }
+
+    #[test]
+    fn crafting_planks_from_log_via_result_slot() {
+        let recipes = recipes();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(2, &recipes);
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            0,
+            ItemStack::new(ItemType::OakLog, 1),
+        );
+        assert_eq!(
+            menu.craft_grid().result().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
+        // Take the result: 4 planks onto the cursor, the log consumed, no result.
+        menu.craft_take_result(&mut inv, &recipes);
+        assert_eq!(
+            inv.cursor().map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 4))
+        );
+        assert!(menu.craft_grid().result().is_none());
+        assert!(menu.craft_grid().is_empty());
+    }
+
+    #[test]
+    fn shift_crafting_consumes_every_log_in_the_cell() {
+        let recipes = recipes();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(2, &recipes);
+        // A cell holding 3 logs shift-crafts three times (one log per craft).
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            0,
+            ItemStack::new(ItemType::OakLog, 3),
+        );
+        menu.craft_shift_result(&mut inv, &recipes);
+        assert!(menu.craft_grid().is_empty(), "all logs consumed");
+        assert_eq!(count_item(&inv, ItemType::OakPlanks), 12);
+    }
+
+    #[test]
+    fn closing_crafting_returns_grid_items_to_inventory() {
+        let recipes = recipes();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(3, &recipes);
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            4,
+            ItemStack::new(ItemType::OakLog, 5),
+        );
+        assert!(inv.cursor().is_none());
+        menu.close_crafting(&mut inv, &recipes, |_| panic!("nothing should overflow"));
+        assert_eq!(count_item(&inv, ItemType::OakLog), 5);
+        assert!(menu.craft_grid().cell(4).is_none());
+    }
+
+    #[test]
+    fn furnace_shift_routes_fuel_and_smeltable_to_their_slots() {
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let pos = IVec3::new(2, 64, 2);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        world.insert_furnace(pos, Facing::North);
+        menu.open_furnace_screen(&mut world, pos);
+
+        // Hotbar: coal (slot 0), raw iron (slot 1), oak planks (slot 2 — neither tag).
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Coal, 5));
+        inv.add(ItemStack::new(ItemType::RawIron, 3));
+        inv.add(ItemStack::new(ItemType::OakPlanks, 4));
+
+        // Coal -> fuel slot.
+        menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
+        assert!(inv.slot(0).is_none(), "coal left the inventory");
+        assert_eq!(
+            world.furnace_at(pos).unwrap().fuel,
+            Some(ItemStack::new(ItemType::Coal, 5)),
+            "coal went to the fuel slot"
+        );
+
+        // Raw iron -> input slot.
+        menu.furnace_shift_from_inventory(&mut world, &mut inv, 1);
+        assert!(inv.slot(1).is_none(), "raw iron left the inventory");
+        assert_eq!(
+            world.furnace_at(pos).unwrap().input,
+            Some(ItemStack::new(ItemType::RawIron, 3)),
+            "raw iron went to the input slot"
+        );
+
+        // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
+        // back to the ordinary hotbar->main-grid shuffle.
+        menu.furnace_shift_from_inventory(&mut world, &mut inv, 2);
+        assert!(inv.slot(2).is_none(), "plank moved out of the hotbar slot");
+        let f = world.furnace_at(pos).unwrap();
+        assert_ne!(f.input.map(|s| s.item), Some(ItemType::OakPlanks));
+        assert_ne!(f.fuel.map(|s| s.item), Some(ItemType::OakPlanks));
+        // It landed in the main grid (first slot of the 27-slot region).
+        assert_eq!(
+            inv.slot(crate::inventory::HOTBAR_LEN).map(|s| s.item),
+            Some(ItemType::OakPlanks),
+        );
+    }
+
+    #[test]
+    fn furnace_shift_merges_into_a_partly_filled_slot() {
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let pos = IVec3::new(3, 64, 3);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        world.insert_furnace(pos, Facing::North);
+        // Seed the fuel slot with some coal already.
+        world.furnace_at_mut(pos).unwrap().fuel = Some(ItemStack::new(ItemType::Coal, 60));
+        menu.open_furnace_screen(&mut world, pos);
+
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Coal, 10));
+        menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
+
+        // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
+        assert_eq!(world.furnace_at(pos).unwrap().fuel.unwrap().count, 64);
+        assert_eq!(inv.slot(0).map(|s| s.count), Some(6));
+    }
+
+    /// Place a block in the workbench input by routing it through the cursor (inventory
+    /// slot 0 → cursor → input), as the UI clicks would. The click path needs a world,
+    /// though the workbench slots don't touch it.
+    fn place_in_workbench_input(
+        menu: &mut ContainerMenu,
+        world: &mut World,
+        inv: &mut Inventory,
+        recipes: &Recipes,
+        stack: ItemStack,
+    ) {
+        inv.add(stack);
+        inv.click_slot(0); // pick onto cursor
+        menu.click(
+            world,
+            inv,
+            recipes,
+            MenuSlot::Workbench(WorkbenchHit::Input),
+            PointerButton::Primary,
+            false,
+            false,
+        );
+    }
+
+    #[test]
+    fn workbench_offers_a_door_for_planks_and_crafting_consumes_input() {
+        let recipes = recipes(); // the shipped recipes incl. plank → door
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_workbench();
+        // Empty input offers nothing.
+        assert!(menu
+            .open_workbench_view(&recipes)
+            .unwrap()
+            .results
+            .is_empty());
+
+        // Three oak planks in → oak door offered and craftable (cost 1).
+        place_in_workbench_input(
+            &mut menu,
+            &mut world,
+            &mut inv,
+            &recipes,
+            ItemStack::new(ItemType::OakPlanks, 3),
+        );
+        let view = menu.open_workbench_view(&recipes).unwrap();
+        assert_eq!(view.input.map(|s| s.count), Some(3));
+        assert!(
+            view.results
+                .iter()
+                .any(|&(it, ok)| it == ItemType::OakDoor && ok),
+            "oak door offered + craftable"
+        );
+
+        // Craft the first result: a door onto the cursor, one plank consumed.
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes,
+            MenuSlot::Workbench(WorkbenchHit::Result(0)),
+            PointerButton::Primary,
+            false,
+            false,
+        );
+        assert_eq!(
+            inv.cursor().map(|s| (s.item, s.count)),
+            Some((ItemType::OakDoor, 1))
+        );
+        assert_eq!(
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .unwrap()
+                .count,
+            2
+        );
+    }
+
+    #[test]
+    fn shift_clicking_inventory_planks_fills_the_workbench_input() {
+        let recipes = recipes();
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_workbench();
+        inv.add(ItemStack::new(ItemType::OakPlanks, 5));
+
+        // Shift-click the inventory slot: the planks (a furniture input) jump to the input.
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes,
+            MenuSlot::Inventory(0),
+            PointerButton::Primary,
+            true,
+            false,
+        );
+        assert_eq!(
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .map(|s| (s.item, s.count)),
+            Some((ItemType::OakPlanks, 5)),
+            "the whole plank stack moved into the input",
+        );
+        assert!(inv.slot(0).is_none(), "the inventory slot emptied");
+    }
+
+    #[test]
+    fn shift_clicking_a_non_input_item_does_not_fill_the_workbench() {
+        // A stick has no furniture recipe, so shift-click must NOT dump it in the input —
+        // it falls back to the ordinary hotbar↔grid move instead.
+        let recipes = recipes();
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_workbench();
+        inv.add(ItemStack::new(ItemType::Stick, 4));
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes,
+            MenuSlot::Inventory(0),
+            PointerButton::Primary,
+            true,
+            false,
+        );
+        assert!(
+            menu.open_workbench_view(&recipes).unwrap().input.is_none(),
+            "a non-input item never lands in the workbench input",
+        );
+    }
+
+    #[test]
+    fn workbench_greys_out_and_refuses_a_result_below_its_cost() {
+        // A recipe that needs 6 planks: with fewer it shows greyed and won't craft.
+        let recipes = Recipes::new(
+            Vec::new(),
+            Vec::new(),
+            vec![crate::crafting::FurnitureRecipe {
+                input: ItemType::OakPlanks,
+                result: ItemStack::new(ItemType::OakDoor, 1),
+                cost: 6,
+            }],
+        );
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_workbench();
+        place_in_workbench_input(
+            &mut menu,
+            &mut world,
+            &mut inv,
+            &recipes,
+            ItemStack::new(ItemType::OakPlanks, 3),
+        );
+        // Offered but greyed (3 < 6).
+        let view = menu.open_workbench_view(&recipes).unwrap();
+        assert_eq!(view.results, vec![(ItemType::OakDoor, false)]);
+        // Clicking a greyed result does nothing: no door, input untouched.
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes,
+            MenuSlot::Workbench(WorkbenchHit::Result(0)),
+            PointerButton::Primary,
+            false,
+            false,
+        );
+        assert!(inv.cursor().is_none(), "no craft below cost");
+        assert_eq!(
+            menu.open_workbench_view(&recipes)
+                .unwrap()
+                .input
+                .unwrap()
+                .count,
+            3
+        );
+    }
+}
