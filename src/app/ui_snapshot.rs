@@ -1,7 +1,7 @@
 use crate::app::AppScreen;
 use crate::game::Game;
+use crate::gui::UiSnapshot;
 use crate::item::{ItemStack, ItemType};
-use crate::render::UiSnapshot;
 
 pub(super) fn build(
     game: &Game,

@@ -58,7 +58,6 @@ static OAK_SMALL_F: TreeFeature = TreeFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 6),
-    footprint: 3, // min trunk height 5
 };
 static OAK_SWAMP_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -66,22 +65,12 @@ static OAK_SWAMP_F: TreeFeature = TreeFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (5, 7),
-    footprint: 3,
 };
-static OAK_SAVANNA_F: TreeFeature = TreeFeature {
-    trunk: &STRAIGHT,
-    foliage: &FLAT,
-    log: Block::OakLog,
-    leaf: Block::OakLeaves,
-    height: (5, 7),
-    footprint: 3,
-};
-// Big single-trunk fancy oak; limbs+crown reach ~5, footprint declared honestly.
+// Big single-trunk fancy oak; limbs+crown reach ~5.
 static OAK_BIG_F: GiantOakFeature = GiantOakFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
     height: (9, 14),
-    footprint: 5, // floor(9*0.618)=5 -> bare trunk >= 5 too
 };
 
 // --- Species trees: same composition, different materials + silhouette. ---
@@ -91,7 +80,6 @@ static SPRUCE_F: TreeFeature = TreeFeature {
     log: Block::SpruceLog,
     leaf: Block::SpruceLeaves,
     height: (6, 10),
-    footprint: 3,
 };
 static SPRUCE_TALL_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -99,7 +87,6 @@ static SPRUCE_TALL_F: TreeFeature = TreeFeature {
     log: Block::SpruceLog,
     leaf: Block::SpruceLeaves,
     height: (9, 13),
-    footprint: 4,
 };
 static BIRCH_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -107,7 +94,6 @@ static BIRCH_F: TreeFeature = TreeFeature {
     log: Block::BirchLog,
     leaf: Block::BirchLeaves,
     height: (6, 8),
-    footprint: 3,
 };
 static JUNGLE_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -115,7 +101,6 @@ static JUNGLE_F: TreeFeature = TreeFeature {
     log: Block::JungleLog,
     leaf: Block::JungleLeaves,
     height: (7, 11),
-    footprint: 4,
 };
 static ACACIA_F: TreeFeature = TreeFeature {
     trunk: &LEANING,
@@ -123,7 +108,6 @@ static ACACIA_F: TreeFeature = TreeFeature {
     log: Block::AcaciaLog,
     leaf: Block::AcaciaLeaves,
     height: (5, 8),
-    footprint: 4,
 };
 static DARK_OAK_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -131,7 +115,6 @@ static DARK_OAK_F: TreeFeature = TreeFeature {
     log: Block::DarkOakLog,
     leaf: Block::DarkOakLeaves,
     height: (6, 8),
-    footprint: 4,
 };
 static CHERRY_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -139,7 +122,6 @@ static CHERRY_F: TreeFeature = TreeFeature {
     log: Block::CherryLog,
     leaf: Block::CherryLeaves,
     height: (6, 9),
-    footprint: 4,
 };
 
 pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
@@ -147,9 +129,6 @@ pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
 };
 pub static OAK_SWAMP: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_SWAMP_F,
-};
-pub static OAK_SAVANNA: ConfiguredFeature = ConfiguredFeature {
-    feature: &OAK_SAVANNA_F,
 };
 pub static OAK_BIG: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_BIG_F,

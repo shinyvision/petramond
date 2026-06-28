@@ -68,27 +68,6 @@ pub fn main_branch(seed: i64) -> Box<dyn Layer> {
     Box::new(Smooth::new(seed, 1000, l))
 }
 
-fn river_branch(seed: i64) -> Box<dyn Layer> {
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, river_init(seed)));
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1000, false, l));
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1001, false, l));
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1002, false, l));
-    let l: Box<dyn Layer> = Box::new(Zoom::new(seed, 1003, false, l));
-    let l: Box<dyn Layer> = Box::new(River::new(seed, 1, l));
-    Box::new(Smooth::new(seed, 1000, l))
-}
-
-/// River-mix (scale 4) — the biome grid the terrain generator samples.
-pub fn river_mix(seed: i64) -> Box<dyn Layer> {
-    Box::new(RiverMix::new(
-        seed,
-        100,
-        main_branch(seed),
-        river_branch(seed),
-    ))
-}
-
 /// Land-only biome grid (scale 4), before the classic river overlay.
 pub fn land_mix(seed: i64) -> Box<dyn Layer> {
     main_branch(seed)
@@ -97,9 +76,4 @@ pub fn land_mix(seed: i64) -> Box<dyn Layer> {
 /// Land-only per-block biome grid (scale 1), before river carving.
 pub fn land_voronoi(seed: i64) -> Box<dyn Layer> {
     Box::new(Voronoi::new(seed, 10, land_mix(seed)))
-}
-
-/// Classic river-overlay Voronoi (scale 1), kept for diagnostics/reference.
-pub fn voronoi(seed: i64) -> Box<dyn Layer> {
-    Box::new(Voronoi::new(seed, 10, river_mix(seed)))
 }

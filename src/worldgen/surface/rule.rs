@@ -1,12 +1,11 @@
 //! Declarative surface rules — `condition -> block`, replacing the hardcoded
 //! `surface_block`/`subsurface_block` match arms.
 //!
-//! A rule resolves top-down; the first branch that yields `Some` wins. Strata P2
-//! uses only `AboveY` + `Block` + `Sequence` to mirror the original surface
-//! material exactly (the mountain `>95/>78` colour bands). The remaining
-//! conditions exist for the richer layered stacks introduced in P4.
+//! A rule resolves top-down; the first branch that yields `Some` wins. The live
+//! biome surface stacks compose `Block` + `Sequence` + `Condition` over the
+//! surface / depth / Y-band conditions below (e.g. the mountain colour bands key
+//! off `SurfaceAboveY`).
 
-use crate::biome::Biome;
 use crate::block::Block;
 
 pub enum SurfaceRule {
@@ -22,10 +21,6 @@ pub enum SurfaceRule {
 }
 
 pub enum SurfaceCond {
-    /// The evaluated voxel's world Y is strictly above this.
-    AboveY(i32),
-    /// Strictly below this world Y.
-    BelowY(i32),
     /// The COLUMN's heightfield surface is strictly above this world Y. Use this
     /// for altitude bands (snow caps / bare rock) so the whole column is treated
     /// uniformly by its height — not per-voxel, which would paint overhang
@@ -45,7 +40,6 @@ pub struct SurfaceCtx {
     pub y: i32,
     pub surf_y: i32,
     pub depth_from_top: u32,
-    pub biome: Biome,
     pub river: f32,
     pub water_y: i32,
     pub river_bed: Block,
@@ -57,8 +51,6 @@ impl SurfaceCond {
     #[inline]
     fn test(&self, c: &SurfaceCtx) -> bool {
         match self {
-            SurfaceCond::AboveY(n) => c.y > *n,
-            SurfaceCond::BelowY(n) => c.y < *n,
             SurfaceCond::SurfaceAboveY(n) => c.surf_y > *n,
             SurfaceCond::DepthFromTop(n) => c.depth_from_top <= *n,
             SurfaceCond::YBand(lo, hi) => c.y >= *lo && c.y < *hi,

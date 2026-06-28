@@ -286,25 +286,18 @@ pub enum BlockModelKind {
 /// Every bbmodel block kind in id order — the precache + registry-order oracle.
 pub const ALL: &[BlockModelKind] = &[BlockModelKind::FurnitureWorkbench];
 
-/// How a bbmodel block's player collision is derived — block data, overridable per the
-/// goal ("a custom collision box, or no collision box at all"). Resolved PER CELL: a
-/// multi-block intersects the chosen shape with each occupied cell.
+/// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
+/// intersects the chosen shape with each occupied cell.
 #[derive(Copy, Clone)]
 pub enum CollisionSpec {
     /// Auto: the model's footprint bounds, split per cell (the default).
     FromModel,
-    /// No collision at all — walk-through, yet still selectable/breakable (the SOLID
-    /// flag, not collision, governs selection — like the torch).
-    None,
-    /// Explicit FOOTPRINT-space boxes set in block data (split per cell at bake).
-    Custom(&'static [Aabb]),
 }
 
 /// The data row for one bbmodel block: its cache key, embedded source, cell footprint,
 /// and collision policy. The geometry/texture come from `model_src`; this row carries
 /// only what the source can't express.
 pub struct BlockModelDef {
-    pub kind: BlockModelKind,
     pub key: &'static str,
     pub model_src: &'static str,
     /// The block's footprint in CELLS `(sx, sy, sz)` — the model is fitted into this
@@ -315,7 +308,6 @@ pub struct BlockModelDef {
 
 /// The id-ordered registry (one row per [`BlockModelKind`], indexed by `kind as u8`).
 pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[BlockModelDef {
-    kind: BlockModelKind::FurnitureWorkbench,
     key: "furniture_workbench",
     model_src: include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -655,12 +647,10 @@ impl ModelInstance {
             })
             .collect();
 
-        // --- The collision SHAPE (footprint space), per the data row's policy: the
-        // model's baked per-cube boxes, an explicit override, or none. Multiple boxes —
-        // a cube spanning two cells (the full-width table top) is split into both. ---
+        // --- The collision SHAPE (footprint space): the model's baked per-cube boxes,
+        // split per cell. A cube spanning two cells (the full-width table top) is split
+        // into both. ---
         let footprint_collision: Vec<Aabb> = match d.collision {
-            CollisionSpec::None => Vec::new(),
-            CollisionSpec::Custom(boxes) => boxes.to_vec(),
             CollisionSpec::FromModel => m.collision.iter().map(&to_fp_box).collect(),
         };
         // Per-cube footprint AABBs (posed), for the per-cell targeting boxes.
@@ -1460,7 +1450,6 @@ mod tests {
     fn registry_is_id_ordered() {
         for (i, &k) in ALL.iter().enumerate() {
             assert_eq!(k as usize, i, "ALL must be id-ordered");
-            assert_eq!(def(k).kind, k, "DEFS row {i} mismatches its kind");
         }
     }
 

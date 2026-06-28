@@ -1,27 +1,17 @@
 //! Deterministic feature RNG.
 //!
 //! The xorshift64 *stream stepper* (`next_*`) is unchanged across all phases.
-//! Two seedings exist: `new` keys the stream to a chunk (used through P3 for
-//! byte-parity); `positional` keys it to a world cell via a splitmix64
-//! finalizer (P4), so a feature draws an identical stream regardless of which
-//! chunk/worker/order generates it — the precondition for cross-chunk replay.
-//! Only the seed derivation differs; `next_*` semantics are identical.
+//! `positional` keys the stream to a world cell via a splitmix64 finalizer, so a
+//! feature draws an identical stream regardless of which chunk/worker/order
+//! generates it — the precondition for cross-chunk replay. `from_state` resumes a
+//! stream from a raw state; only the seed derivation differs, `next_*` semantics
+//! are identical.
 
 /// xorshift64 RNG seeded deterministically from world seed + chunk pos.
 pub struct FeatureRng {
     state: u64,
 }
 impl FeatureRng {
-    pub fn new(seed: u32, cx: i32, cz: i32) -> Self {
-        let mut s = seed as u64
-            ^ ((cx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-            ^ ((cz as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
-        if s == 0 {
-            s = 0xDEAD_BEEF;
-        }
-        Self { state: s }
-    }
-
     /// Construct directly from a stream state (zero-guarded).
     #[inline]
     pub fn from_state(state: u64) -> Self {

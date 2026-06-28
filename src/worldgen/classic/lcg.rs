@@ -33,24 +33,12 @@ impl LcgRandom {
         }
     }
 
-    /// Re-seed in place, same scramble as the constructor.
-    #[inline]
-    pub fn set_seed(&mut self, seed: i64) {
-        self.seed = (seed as u64 ^ MULTIPLIER) & MASK;
-    }
-
     /// Advance the LCG and return the top `bits` bits (`bits <= 32`) as a signed
     /// 32-bit int. The `as i32` truncation reinterprets the low 32 bits as signed.
     #[inline]
     pub fn next(&mut self, bits: u32) -> i32 {
         self.seed = self.seed.wrapping_mul(MULTIPLIER).wrapping_add(ADDEND) & MASK;
         (self.seed >> (48 - bits)) as i32
-    }
-
-    /// A full signed 32-bit int.
-    #[inline]
-    pub fn next_int(&mut self) -> i32 {
-        self.next(32)
     }
 
     /// Uniform in `[0, bound)`. Powers of two use the high-bits fast path;
@@ -72,31 +60,12 @@ impl LcgRandom {
         }
     }
 
-    /// A signed 64-bit int: `(next(32) << 32) + next(32)`, high word first.
-    #[inline]
-    pub fn next_long(&mut self) -> i64 {
-        let hi = (self.next(32) as i64) << 32;
-        hi.wrapping_add(self.next(32) as i64)
-    }
-
-    /// A float in `[0, 1)`: `next(24) / 2^24`.
-    #[inline]
-    pub fn next_float(&mut self) -> f32 {
-        self.next(24) as f32 / (1u32 << 24) as f32
-    }
-
     /// A double in `[0, 1)`: `((next(26) << 27) + next(27)) * 2^-53`.
     #[inline]
     pub fn next_double(&mut self) -> f64 {
         let hi = (self.next(26) as i64) << 27;
         let lo = self.next(27) as i64;
         hi.wrapping_add(lo) as f64 * (1.0 / (1u64 << 53) as f64)
-    }
-
-    /// A boolean: `next(1) != 0`.
-    #[inline]
-    pub fn next_boolean(&mut self) -> bool {
-        self.next(1) != 0
     }
 }
 
@@ -109,35 +78,9 @@ mod tests {
     // behaviour — the verification anchor every higher layer builds on.
 
     #[test]
-    fn next_int_sequence_for_seed_zero() {
-        let mut r = LcgRandom::new(0);
-        assert_eq!(r.next_int(), -1_155_484_576);
-        assert_eq!(r.next_int(), -723_955_400);
-        assert_eq!(r.next_int(), 1_033_096_058);
-    }
-
-    #[test]
-    fn next_long_for_seed_zero() {
-        let mut r = LcgRandom::new(0);
-        assert_eq!(r.next_long(), -4_962_768_465_676_381_896);
-    }
-
-    #[test]
     fn next_double_for_seed_zero() {
         let mut r = LcgRandom::new(0);
         assert!((r.next_double() - 0.730_967_787_376_657).abs() < 1e-15);
-    }
-
-    #[test]
-    fn next_float_for_seed_zero() {
-        let mut r = LcgRandom::new(0);
-        assert!((r.next_float() - 0.730_967_77).abs() < 1e-6);
-    }
-
-    #[test]
-    fn next_boolean_for_seed_zero() {
-        let mut r = LcgRandom::new(0);
-        assert!(r.next_boolean());
     }
 
     #[test]
@@ -162,16 +105,6 @@ mod tests {
                 let v = r.next_int_bound(bound);
                 assert!((0..bound).contains(&v), "out of range for bound {bound}");
             }
-        }
-    }
-
-    #[test]
-    fn set_seed_matches_constructor() {
-        let mut a = LcgRandom::new(0xCAFE_BABE);
-        let mut b = LcgRandom::new(0);
-        b.set_seed(0xCAFE_BABE);
-        for _ in 0..50 {
-            assert_eq!(a.next_int(), b.next_int());
         }
     }
 }

@@ -205,23 +205,40 @@ fn bake_particles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::entity::{DroppedItem, ParticleSystem};
-    use crate::item::{ItemStack, ItemType};
+    use crate::item::ItemType;
+
+    /// A settled drop with `prev_pos == pos`, so it bakes to `pos` at any alpha.
+    fn fresh_drop(pos: Vec3, item: ItemType) -> DroppedItemPresentation {
+        DroppedItemPresentation {
+            prev_pos: pos,
+            pos,
+            item,
+            count: 1,
+            prev_spin: 0.0,
+            spin: 0.0,
+            skylight: 0,
+        }
+    }
+
+    fn particle_row(atlas: ParticleAtlas) -> ParticlePresentation {
+        ParticlePresentation {
+            atlas,
+            pos: Vec3::new(0.0, 64.0, 0.0),
+            uv_min: [0.0, 0.0],
+            uv_size: 0.0625,
+            tint: [1.0, 1.0, 1.0],
+            warm: 0,
+            alpha: 1.0,
+            size: 0.1,
+            skylight: 0,
+        }
+    }
 
     #[test]
     fn bake_item_entities_one_instance_per_drop() {
         let drops = vec![
-            DroppedItem::new(
-                Vec3::new(1.0, 2.0, 3.0),
-                ItemStack::new(ItemType::Dirt, 1),
-                1,
-            ),
-            DroppedItem::new(
-                Vec3::new(4.0, 5.0, 6.0),
-                ItemStack::new(ItemType::Stone, 1),
-                2,
-            ),
+            fresh_drop(Vec3::new(1.0, 2.0, 3.0), ItemType::Dirt),
+            fresh_drop(Vec3::new(4.0, 5.0, 6.0), ItemType::Stone),
         ];
         let mut out = Vec::new();
         bake_item_entities(&drops, 1.0, &mut out);
@@ -229,7 +246,6 @@ mod tests {
         // A fresh drop has prev_pos == pos, so any alpha bakes its live position.
         assert_eq!(out[0].pos, drops[0].pos);
         assert_eq!(out[0].item, ItemType::Dirt);
-        assert_eq!(out[0].spin, drops[0].spin);
         assert_eq!(out[1].item, ItemType::Stone);
     }
 
@@ -237,13 +253,11 @@ mod tests {
     fn bake_item_entities_interpolates_between_ticks() {
         // A drop that moved last tick (prev_pos != pos) bakes at the blended position,
         // so it renders smoothly between the 20 TPS physics ticks.
-        let mut drop = DroppedItem::new(
-            Vec3::new(0.0, 64.0, 0.0),
-            ItemStack::new(ItemType::Dirt, 1),
-            1,
-        );
-        drop.prev_pos = Vec3::new(0.0, 64.0, 0.0);
-        drop.pos = Vec3::new(2.0, 64.0, 0.0);
+        let drop = DroppedItemPresentation {
+            prev_pos: Vec3::new(0.0, 64.0, 0.0),
+            pos: Vec3::new(2.0, 64.0, 0.0),
+            ..fresh_drop(Vec3::ZERO, ItemType::Dirt)
+        };
         let mut out = Vec::new();
         bake_item_entities(std::slice::from_ref(&drop), 0.5, &mut out);
         assert_eq!(
@@ -256,7 +270,7 @@ mod tests {
     #[test]
     fn bake_item_entities_reuses_the_vec_without_growth() {
         let drops: Vec<_> = (0..8)
-            .map(|i| DroppedItem::new(Vec3::splat(i as f32), ItemStack::new(ItemType::Dirt, 1), i))
+            .map(|i| fresh_drop(Vec3::splat(i as f32), ItemType::Dirt))
             .collect();
         let mut out = Vec::new();
         bake_item_entities(&drops, 1.0, &mut out);
@@ -269,48 +283,19 @@ mod tests {
     }
 
     #[test]
-    fn bake_particles_one_instance_per_alive_particle() {
-        let mut particles = ParticleSystem::new();
-        particles.spawn_break_burst(IVec3::new(0, 64, 0), Block::Dirt);
-        let alive = particles.particles().len();
-        assert!(alive > 0);
-        let mut out = Vec::new();
+    fn bake_particles_splits_rows_by_atlas() {
+        // Each row routes by its atlas tag: BLOCK rows into the block list, MODEL rows
+        // into the model list, with no cross-contamination. The block-vs-model decision
+        // lives upstream in presentation::collect_particles; the bake only routes.
+        let particles = vec![
+            particle_row(ParticleAtlas::Block),
+            particle_row(ParticleAtlas::Model),
+            particle_row(ParticleAtlas::Block),
+        ];
+        let mut block_out = Vec::new();
         let mut model_out = Vec::new();
-        bake_particles(&particles, &mut out, &mut model_out);
-        // Dirt is a block-atlas block, so every fleck lands in the block list.
-        assert_eq!(out.len(), alive);
-        assert!(
-            model_out.is_empty(),
-            "dirt flecks are block-atlas, not model-atlas"
-        );
-        let (uv_min, uv_size) = particles.particles()[0].atlas_uv();
-        assert_eq!(out[0].uv_min, uv_min);
-        assert_eq!(out[0].uv_size, uv_size);
-        assert_eq!(out[0].size, particles.particles()[0].size);
-    }
-
-    #[test]
-    fn bbmodel_block_flecks_route_to_the_model_atlas_list() {
-        // A bbmodel block's break flecks must bake into the MODEL list (drawn with the
-        // model atlas bound), never the block list — otherwise they'd sample the wrong
-        // texture (the crafting-table placeholder bug).
-        let mut particles = ParticleSystem::new();
-        particles.spawn_break_burst_model(
-            IVec3::new(0, 64, 0),
-            crate::block_model::BlockModelKind::FurnitureWorkbench,
-            crate::render::lighting::FULL_SKYLIGHT,
-            0,
-        );
-        let alive = particles.particles().len();
-        assert!(alive > 0);
-        let mut out = Vec::new();
-        let mut model_out = Vec::new();
-        bake_particles(&particles, &mut out, &mut model_out);
-        assert_eq!(
-            model_out.len(),
-            alive,
-            "every model fleck routes to the model list"
-        );
-        assert!(out.is_empty(), "no model fleck leaks into the block list");
+        bake_particles(&particles, &mut block_out, &mut model_out);
+        assert_eq!(block_out.len(), 2, "block rows route to the block list");
+        assert_eq!(model_out.len(), 1, "model rows route to the model list");
     }
 }

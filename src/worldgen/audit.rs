@@ -12,8 +12,8 @@
 //!
 //! Terrain-solidity is defined once via [`Block::is_terrain_solid`] (the
 //! `Stone|Dirt|Grass|Sand|Snow` bare-ground set) so logs/leaves never swamp the
-//! real terrain-overhang signal, and the connected-component / flood scans share
-//! the generic [`largest_component`] and [`flood_reachable`] helpers.
+//! real terrain-overhang signal, and the flood scan shares the generic
+//! [`flood_reachable`] helper.
 
 use crate::biome::Biome;
 use crate::block::Block;
@@ -45,52 +45,6 @@ fn is_terrain(b: u8) -> bool {
 // ---------------------------------------------------------------------------
 // Shared graph helpers
 // ---------------------------------------------------------------------------
-
-/// Largest 4-connected component of cells equal to `target` in a row-major
-/// `w × h` grid. Generic over the cell type so it serves both the biome-id grid
-/// and any other equality-keyed field. Iterative flood (explicit stack) so deep
-/// regions never blow the call stack.
-pub fn largest_component<T: Eq>(grid: &[T], w: usize, h: usize, target: &T) -> usize {
-    debug_assert_eq!(grid.len(), w * h);
-    let mut seen = vec![false; grid.len()];
-    let mut best = 0usize;
-    let mut stack: Vec<usize> = Vec::new();
-
-    for i in 0..grid.len() {
-        if seen[i] || grid[i] != *target {
-            continue;
-        }
-        seen[i] = true;
-        stack.push(i);
-        let mut size = 0usize;
-        while let Some(cur) = stack.pop() {
-            size += 1;
-            let x = cur % w;
-            let z = cur / w;
-            let mut push = |nx: usize, nz: usize| {
-                let ni = nz * w + nx;
-                if !seen[ni] && grid[ni] == *target {
-                    seen[ni] = true;
-                    stack.push(ni);
-                }
-            };
-            if x > 0 {
-                push(x - 1, z);
-            }
-            if x + 1 < w {
-                push(x + 1, z);
-            }
-            if z > 0 {
-                push(x, z - 1);
-            }
-            if z + 1 < h {
-                push(x, z + 1);
-            }
-        }
-        best = best.max(size);
-    }
-    best
-}
 
 /// 6-connected flood through a `w × h × depth` occupancy grid (index
 /// `(y*w + z)*w + x`), seeded from every occupied cell in the bottom (`y == 0`)
@@ -690,24 +644,6 @@ mod tests {
     use super::*;
 
     const SEED: u32 = 0x1234_5678;
-
-    #[test]
-    fn largest_component_finds_biggest_4connected_blob() {
-        // 4x4 grid; two disjoint blobs of `1` (sizes 3 and 4) plus background 0.
-        //   1 1 0 0
-        //   1 0 0 1
-        //   0 0 1 1
-        //   0 0 1 0
-        let grid = [
-            1u8, 1, 0, 0, //
-            1, 0, 0, 1, //
-            0, 0, 1, 1, //
-            0, 0, 1, 0,
-        ];
-        assert_eq!(largest_component(&grid, 4, 4, &1u8), 4);
-        assert_eq!(largest_component(&grid, 4, 4, &0u8), 8);
-        assert_eq!(largest_component(&grid, 4, 4, &9u8), 0);
-    }
 
     #[test]
     fn flood_reachable_marks_only_floor_connected_solids() {

@@ -174,6 +174,7 @@ impl ParticleSystem {
     }
 
     /// Number of currently-alive particles.
+    #[cfg(test)]
     #[inline]
     pub fn len(&self) -> usize {
         self.particles.len()
@@ -282,6 +283,13 @@ impl ParticleSystem {
 
     /// Mining face dust: 2–4 flecks spat off the mined face, drifting outward
     /// along the hit normal and falling under gravity. Lifetime 0.5–1.5 s.
+    ///
+    /// Test-only full-bright shorthand; live code calls [`spawn_mining_lit`] /
+    /// [`spawn_mining_model`] with sampled render light.
+    ///
+    /// [`spawn_mining_lit`]: Self::spawn_mining_lit
+    /// [`spawn_mining_model`]: Self::spawn_mining_model
+    #[cfg(test)]
     pub fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
         self.spawn_mining_lit(block_pos, face_normal, block, 63, 0);
     }
@@ -342,6 +350,13 @@ impl ParticleSystem {
 
     /// Break burst: 16–32 flecks erupting from the block centre in all
     /// directions. Lifetime 1–3 s. Mixes side/top tiles for visual variety.
+    ///
+    /// Test-only full-bright shorthand; live code calls [`spawn_break_burst_lit`] /
+    /// [`spawn_break_burst_model`] with sampled render light.
+    ///
+    /// [`spawn_break_burst_lit`]: Self::spawn_break_burst_lit
+    /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
+    #[cfg(test)]
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
         self.spawn_break_burst_lit(block_pos, block, 63, 0);
     }

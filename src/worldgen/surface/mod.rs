@@ -58,12 +58,11 @@ mod tests {
     use crate::biome::Biome;
     use crate::worldgen::data::biomes::def;
 
-    fn ctx(y: i32, depth_from_top: u32, biome: Biome) -> SurfaceCtx {
+    fn ctx(y: i32, depth_from_top: u32, _biome: Biome) -> SurfaceCtx {
         SurfaceCtx {
             y,
             surf_y: y,
             depth_from_top,
-            biome,
             river: 0.0,
             water_y: SEA_LEVEL,
             river_bed: Block::Dirt,
@@ -83,7 +82,6 @@ mod tests {
             y,
             surf_y: y,
             depth_from_top: 0,
-            biome: Biome::Plains,
             river: influence,
             water_y: SEA_LEVEL,
             river_bed: bed,

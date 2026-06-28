@@ -23,6 +23,3 @@ pub mod lcg;
 pub mod noise;
 pub mod terrain;
 pub mod world;
-
-pub use layer_rng::LayerRng;
-pub use lcg::LcgRandom;

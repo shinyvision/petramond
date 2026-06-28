@@ -24,26 +24,13 @@ mod ui_text;
 mod uniforms;
 
 pub use crate::game::presentation::BreakOverlayView;
-pub use renderer::{
-    instance_descriptor, new_renderer, new_renderer_from_target, new_renderer_with_instance,
-    Renderer, UiSnapshot,
-};
-pub use resources::GpuMesh;
+pub(crate) use renderer::new_renderer_from_target;
+pub use renderer::Renderer;
 
 pub(crate) use scene::Scene;
-pub use uniforms::{
-    Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START, UV_RECTS_LEN,
-};
 
-pub use block_model::{
-    billboard_quad, cube_solid, cube_textured, BillboardBasis, SOLID_COLOR_FLAG,
-};
-
-/// Neutral GUI identities and view snapshots shared with the App's click routing,
-/// renderer UI drawing, and game container menu.
-pub use crate::gui::{
-    ChestView, CraftHit, FurnaceHit, FurnaceView, GuiKind, WorkbenchHit, WorkbenchView,
-};
+#[cfg(test)]
+pub use block_model::SOLID_COLOR_FLAG;
 
 use crate::item::ItemType;
 use glam::{Quat, Vec3};

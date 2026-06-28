@@ -216,12 +216,10 @@ impl Default for Audio {
 }
 
 /// Per-category gain multiplier. Full volume for every category today; the hook for
-/// a future per-category (block / mob / ambient / UI) volume control.
+/// a future per-category (block / UI) volume control.
 fn category_gain(category: SoundCategory) -> f32 {
     match category {
-        SoundCategory::Block | SoundCategory::Mob | SoundCategory::Ambient | SoundCategory::Ui => {
-            1.0
-        }
+        SoundCategory::Block | SoundCategory::Ui => 1.0,
     }
 }
 

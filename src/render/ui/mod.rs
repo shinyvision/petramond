@@ -27,7 +27,7 @@
 // the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
 pub(crate) mod icon;
 
-use super::renderer::UiSnapshot;
+use crate::gui::UiSnapshot;
 use crate::gui::{self as gui_layout, gui_scale, GuiKind, OverlayTag, Role, SlotRect};
 use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;

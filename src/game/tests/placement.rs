@@ -110,8 +110,13 @@ fn place_into_loaded_air_decrements_selected() {
     let mut game = game();
     game.player.inventory = filled_inventory();
     game.world.update_load(0, 0);
+    // Real async generation runs on the shared worldgen pool; under a saturated pool
+    // (the full `worldgen-tests` suite on a many-core box) this chunk's job can queue
+    // for a while, so wait on a generous wall-clock deadline rather than a fixed poll
+    // count to stay robust under load. The common case still returns in well under 1s.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut loaded = false;
-    for _ in 0..500 {
+    while std::time::Instant::now() < deadline {
         game.world.poll();
         if game.world.chunk_loaded(0, 0) {
             loaded = true;
@@ -119,7 +124,7 @@ fn place_into_loaded_air_decrements_selected() {
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    assert!(loaded);
+    assert!(loaded, "chunk (0,0) failed to load within 30s");
 
     let p = IVec3::new(0, 200, 0);
     assert!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)).is_replaceable());

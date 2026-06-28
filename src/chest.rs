@@ -48,10 +48,10 @@ impl Chest {
     }
 }
 
-/// A chest is a uniform 27-slot grid, so it gets the shared `is_empty` (used when
-/// breaking the block — nothing to spill — and to prune chests that no longer need
-/// saving) and first-fit `insert` (shift-clicking a stack in from the inventory).
+/// A chest is a uniform 27-slot grid, so it gets the shared first-fit `insert`
+/// (shift-clicking a stack in from the inventory) plus the test-only `is_empty`.
 impl SlotGrid for Chest {
+    #[cfg(test)]
     #[inline]
     fn slots(&self) -> &[Option<ItemStack>] {
         &self.slots

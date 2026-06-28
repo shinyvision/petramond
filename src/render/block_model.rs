@@ -315,10 +315,12 @@ pub(super) fn push_block_item_cube_lit(
 }
 
 /// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles
-/// `[top, bottom, side]` (matching `Block::tiles()`). Used by the held block and
-/// the isometric slot icon. 24 verts / 36 indices, back-face culled (CCW front
-/// faces). For hot paths that bake many cubes per frame prefer the append-style
-/// [`push_cube_textured`] which reuses caller buffers.
+/// `[top, bottom, side]` (matching `Block::tiles()`). 24 verts / 36 indices, back-face
+/// culled (CCW front faces).
+///
+/// Test-only convenience: live render bakes into caller buffers via the append-style
+/// [`push_cube_textured`] / [`push_cube_textured_lit`].
+#[cfg(test)]
 pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
@@ -329,7 +331,9 @@ pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>,
 /// Append a full-bright solid-color cuboid spanning `[origin, origin + size]` with
 /// RGB `tint` into the caller-owned `verts`/`indices` (capacity reused). The
 /// model3d fragment shader reads [`SOLID_COLOR_FLAG`] and outputs `tint` directly.
-/// 24 verts / 36 indices.
+/// 24 verts / 36 indices. Test-only; live render passes explicit light via
+/// [`push_cube_solid_lit`].
+#[cfg(test)]
 pub fn push_cube_solid(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -361,8 +365,10 @@ pub(super) fn push_cube_solid_lit(
 }
 
 /// A full-bright solid-color cuboid spanning `[origin, origin + size]` with RGB
-/// `tint`. The skin hand uses this. 24 verts / 36 indices. Prefer
-/// [`push_cube_solid`] in hot paths.
+/// `tint`. 24 verts / 36 indices.
+///
+/// Test-only convenience; live render uses [`push_cube_solid_lit`].
+#[cfg(test)]
 pub fn cube_solid(tint: [f32; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
@@ -457,9 +463,12 @@ pub fn push_billboard_quad(
 }
 
 /// A flat, upright, double-sided billboard quad of one `tile`, centered on
-/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright.
-/// Used for sprite-kind (cross-plant) item icons and the held flat item. 8 verts
-/// / 12 indices. Prefer [`push_billboard_quad`] in hot paths.
+/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright. 8 verts
+/// / 12 indices.
+///
+/// Test-only convenience: live render bakes into caller buffers via
+/// [`push_billboard_quad`].
+#[cfg(test)]
 pub fn billboard_quad(tile: Tile, center: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::with_capacity(8);
     let mut indices = Vec::with_capacity(12);

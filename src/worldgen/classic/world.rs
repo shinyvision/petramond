@@ -15,8 +15,6 @@ use super::biome::layers::Layer;
 use super::biome::stack::{land_mix, land_voronoi};
 use super::terrain::{NoiseCache, TerrainGen};
 
-const CHUNK: usize = 16;
-
 /// Biomes whose water is intended (ocean, deep ocean, river, frozen ocean/river,
 /// mushroom shore, beach, snowy beach) and so whose sub-sea surface is genuine
 /// water, not land that happened to fall below the waterline. Mutated `+128`
@@ -30,13 +28,6 @@ pub fn keep_wet(biome_id: i32) -> bool {
         biome_id
     };
     matches!(base, 0 | 6 | 7 | 10 | 11 | 15 | 16 | 24 | 26)
-}
-
-/// One chunk's biome-driven terrain: top-solid surface height and per-block MC
-/// biome id, both row-major `x + z*16`.
-pub struct ChunkCells {
-    pub surf: [i32; 256],
-    pub biome_ids: [i32; 256],
 }
 
 /// Owns the per-seed cascade layers + terrain noise (built once, reused per chunk).
@@ -60,16 +51,6 @@ impl CascadeWorld {
             land_voronoi: land_voronoi(s),
             land_mix: land_mix(s),
         }
-    }
-
-    /// One chunk's biomes + biome-driven height (see [`Self::region`]).
-    pub fn chunk(&self, cx: i32, cz: i32) -> ChunkCells {
-        let r = self.region(cx * 16, cz * 16, CHUNK, CHUNK);
-        let mut surf = [0i32; 256];
-        let mut biome_ids = [0i32; 256];
-        surf.copy_from_slice(&r.surf);
-        biome_ids.copy_from_slice(&r.biome_ids);
-        ChunkCells { surf, biome_ids }
     }
 
     /// Cheap land-biome lookup for non-authoritative fallbacks such as fog before
@@ -189,7 +170,6 @@ pub fn map_biome(id: i32) -> Biome {
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
-    use crate::worldgen::classic::biome::stack::voronoi;
 
     /// Biome-province invariants on the SHIPPING terrain path. Samples the live
     /// `CascadeWorld` region (the same provider the chunk generator reads) on a
@@ -342,7 +322,7 @@ mod tests {
     #[ignore = "diagnostic: prints the cascade biome histogram near origin"]
     fn biome_histogram() {
         for seed in [42u32, 7, 1] {
-            let ids = voronoi(seed as i64).gen(-256, -256, 512, 512);
+            let ids = land_voronoi(seed as i64).gen(-256, -256, 512, 512);
             let mut counts = std::collections::BTreeMap::<i32, usize>::new();
             for &id in &ids {
                 *counts.entry(id).or_default() += 1;

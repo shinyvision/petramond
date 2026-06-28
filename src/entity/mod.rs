@@ -12,8 +12,10 @@
 mod dropped_item;
 mod particle;
 
-pub use dropped_item::{DroppedItem, ABSORB_RADIUS, ATTRACT_RADIUS, GRAVITY};
-pub use particle::{Particle, ParticleSystem, PARTICLE_CAPACITY};
+pub use dropped_item::DroppedItem;
+#[cfg(test)]
+pub use dropped_item::ATTRACT_RADIUS;
+pub use particle::{ParticleSystem, PARTICLE_CAPACITY};
 
 /// A tiny deterministic hash → `f32` in `[0, 1)`. Replaces an RNG so spawns are
 /// reproducible and we never pull in the `rand` crate (banned in workflow

@@ -70,10 +70,6 @@ impl Sound {
 pub enum SoundCategory {
     /// Block interaction — mining, breaking, placing, footsteps.
     Block,
-    /// Mob vocalisations and movement.
-    Mob,
-    /// Ambient / environmental.
-    Ambient,
     /// UI / interface & player feedback — menu clicks, item pickup, etc.
     Ui,
 }

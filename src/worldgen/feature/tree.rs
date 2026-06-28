@@ -26,16 +26,12 @@ pub struct TreeFeature {
     pub log: Block,
     pub leaf: Block,
     pub height: (i32, i32),
-    pub footprint: i32,
 }
 
 impl Feature for TreeFeature {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
         let attach = self.trunk.place(ctx, origin, self.height, self.log, rng);
         self.foliage.place(ctx, &attach, self.leaf, rng);
-    }
-    fn max_footprint(&self) -> i32 {
-        self.footprint
     }
 }
 
@@ -47,7 +43,6 @@ pub struct GiantOakFeature {
     pub leaf: Block,
     /// {min,max} of the nominal total height H; bare trunk = floor(H·0.618).
     pub height: (i32, i32),
-    pub footprint: i32,
 }
 
 /// Draw a straight 3-D line of branch logs from `a` to `b` (== fancy-oak limbs).
@@ -105,9 +100,5 @@ impl Feature for GiantOakFeature {
         for (k, r) in [(0, 2.0f32), (1, 3.0), (2, 3.0), (3, 2.0), (4, 1.0)] {
             shapes::leaf_disc(ctx, IVec3::new(x, crown_base + k, z), r, self.leaf);
         }
-    }
-
-    fn max_footprint(&self) -> i32 {
-        self.footprint
     }
 }

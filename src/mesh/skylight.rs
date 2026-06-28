@@ -71,6 +71,10 @@ const M_OPAQUE: u8 = 3; // full cube: blocks light, breaks sky shafts
 /// the flat band buffer (x2 light, indexed like blocks with Y offset by `ylo`)
 /// plus the band `[ylo, yhi]`. Pure integer flood-fill, order-independent ->
 /// deterministic. Reuses per-thread scratch.
+///
+/// Test-only: live meshing uses [`compute_chunk_skylight_with_neighbors`]; this
+/// neighbour-free variant only sets up skylight in unit tests of other code.
+#[cfg(test)]
 pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     compute_chunk_skylight_inner(chunk, 0, |_, _| None)
 }

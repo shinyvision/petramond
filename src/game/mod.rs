@@ -43,7 +43,6 @@ use container::ContainerMenu;
 use drops::DropQueue;
 pub(crate) use environment::GameEnvironment;
 pub(crate) use frame::CameraPose;
-pub use menu::MenuReadModel;
 pub use tick::{GameEvents, GameInput, MovementInput};
 
 /// Mining-dust emission interval, seconds.

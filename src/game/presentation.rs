@@ -149,17 +149,20 @@ impl GamePresentationScratch {
     fn collect_item_entities(&mut self, game: &Game) {
         self.item_entities.clear();
         self.item_entities
-            .extend(game.world.item_entities().iter().map(|item| {
-                DroppedItemPresentation {
-                    prev_pos: item.prev_pos,
-                    pos: item.pos,
-                    item: item.stack.item,
-                    count: item.stack.count,
-                    prev_spin: item.prev_spin,
-                    spin: item.spin,
-                    skylight: item.skylight,
-                }
-            }));
+            .extend(
+                game.world
+                    .item_entities()
+                    .iter()
+                    .map(|item| DroppedItemPresentation {
+                        prev_pos: item.prev_pos,
+                        pos: item.pos,
+                        item: item.stack.item,
+                        count: item.stack.count,
+                        prev_spin: item.prev_spin,
+                        spin: item.spin,
+                        skylight: item.skylight,
+                    }),
+            );
     }
 
     fn collect_particles(&mut self, game: &Game) {
@@ -214,15 +217,18 @@ impl GamePresentationScratch {
                         tiles,
                         swing_progress: game.door_swing_angle(pos),
                         skylight,
-                }),
+                    }),
             );
     }
 
     fn collect_mobs(&mut self, game: &Game, tick_alpha: f32) {
         self.mobs.clear();
-        self.mobs
-            .extend(game.world.mobs().instances().iter().map(|mob| {
-                MobPresentation {
+        self.mobs.extend(
+            game.world
+                .mobs()
+                .instances()
+                .iter()
+                .map(|mob| MobPresentation {
                     kind: mob.kind,
                     prev_pos: mob.prev_pos,
                     pos: mob.pos,
@@ -239,8 +245,8 @@ impl GamePresentationScratch {
                     skylight: mob.skylight,
                     hurt_flash: mob.hurt_flash(tick_alpha),
                     ragdoll_pose: mob.ragdoll_pose(tick_alpha).map(Into::into),
-                }
-            }));
+                }),
+        );
     }
 }
 

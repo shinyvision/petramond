@@ -1,6 +1,6 @@
 //! Misc math helpers not covered by glam.
 
-pub use glam::{IVec2, IVec3, Mat4, Quat, Vec2, Vec3, Vec4};
+pub use glam::{IVec3, Mat4, Vec3, Vec4};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionShape {

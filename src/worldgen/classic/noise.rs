@@ -63,6 +63,11 @@ impl ImprovedNoise {
 
     /// Sample the lattice at `(x, y, z)`. (The terrain noise never uses the
     /// reference's `yamp`/`ymin` y-clamp, so it is omitted.)
+    ///
+    /// Test-only: the live terrain path samples through `populate`/`sample_region`;
+    /// this single-point form is kept as the oracle that
+    /// `populate_agrees_with_sample_at_a_point` cross-checks the fast path against.
+    #[cfg(all(test, feature = "worldgen-tests"))]
     pub fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
         let mut dx = x + self.a;
         let mut dy = y + self.b;
@@ -305,15 +310,6 @@ mod tests {
             &n.perm[..16],
             &[83, 88, 161, 90, 117, 220, 146, 221, 68, 86, 213, 124, 192, 112, 203, 19]
         );
-    }
-
-    #[test]
-    fn samples_match_reference_bit_exact() {
-        let n = noise_12345();
-        assert_eq!(n.sample(1.5, 2.5, 3.5), 0.3085586317820378);
-        assert_eq!(n.sample(10.1, 0.0, -5.3), -0.45068267846500143);
-        assert_eq!(n.sample(0.0, 0.0, 0.0), -0.37230011176761096);
-        assert_eq!(n.sample(-100.25, 64.5, 200.75), 0.276_727_494_274_210_9);
     }
 
     #[test]

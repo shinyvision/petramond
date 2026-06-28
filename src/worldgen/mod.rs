@@ -10,7 +10,6 @@
 
 pub(crate) mod audit;
 pub(crate) mod classic;
-mod climate;
 mod ctx;
 pub(crate) mod data;
 pub(crate) mod driver;

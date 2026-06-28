@@ -3,17 +3,14 @@
 //! A feature is split into reusable, data-driven pieces:
 //!   - `Feature`        — the imperative voxel-writing shape (e.g. `TreeFeature`)
 //!   - `TrunkPlacer` / `FoliagePlacer` — reusable sub-shapes a tree composes
-//!   - `ConfiguredFeature` — a feature + baked params (the five oaks are rows)
-//!   - `PlacedFeature`  — configured + where/how-often/when (`PlacementModifier`s)
+//!   - `ConfiguredFeature` — a feature + baked params (the oaks are rows)
 //!
 //! Strata P3: the abstraction is established and the oaks become data, but the
 //! per-column placement loop reproduces the god file's exact two-roll
 //! (`tree_probability` chance → `pick_oak_variant` `next_i32(0,99)`) and every
 //! placer mirrors its original RNG draw order and block-write order, so output
-//! is byte-parity under the unchanged per-chunk xorshift64 stream. P4 switches
-//! to the generalized `PlacementModifier`/`DecoStep` walk + positional RNG.
+//! is byte-parity under the unchanged per-chunk xorshift64 stream.
 
-pub mod placement;
 pub mod placers;
 pub mod scatter;
 pub mod tree;
@@ -41,47 +38,14 @@ pub fn feature_region(world: &CascadeWorld, ox: i32, oz: i32) -> RegionCells {
     world.region(ox - pad, oz - pad, w, w)
 }
 
-/// Decoration step ordering. Features declare which step they run in so the
-/// driver can place all of step N before step N+1. P4 iterates these; P3
-/// places trees in a single implicit `VegetationTall` pass.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum DecoStep {
-    RawGeneration,
-    Lakes,
-    Ores,
-    VegetationGround,
-    VegetationTall,
-    Scatter,
-}
-
-impl DecoStep {
-    pub const ALL: [DecoStep; 6] = [
-        DecoStep::RawGeneration,
-        DecoStep::Lakes,
-        DecoStep::Ores,
-        DecoStep::VegetationGround,
-        DecoStep::VegetationTall,
-        DecoStep::Scatter,
-    ];
-}
-
 /// A worldgen feature: imperatively writes voxels around a world origin.
 pub trait Feature: Send + Sync {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng);
-    /// Worst-case horizontal reach from origin (validated against MARGIN at P4).
-    fn max_footprint(&self) -> i32;
 }
 
 /// A feature plus its baked parameters.
 pub struct ConfiguredFeature {
     pub feature: &'static dyn Feature,
-}
-
-/// A configured feature plus placement (where / how often / when).
-pub struct PlacedFeature {
-    pub configured: &'static ConfiguredFeature,
-    pub step: DecoStep,
-    pub placement: &'static [placement::PlacementModifier],
 }
 
 /// A destination a feature paints voxels into. Abstracting WHERE the writes land

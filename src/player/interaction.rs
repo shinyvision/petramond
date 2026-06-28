@@ -21,16 +21,11 @@ pub struct RaycastHit {
 }
 
 impl Player {
-    /// Cast a ray from `eye` along (assumed-normalised) `dir`, returning the
-    /// first selectable block within `REACH`. Voxel DDA (Amanatides & Woo), with
+    /// Cast a ray from `eye` along (assumed-normalised) `dir` for the first
+    /// selectable block within `REACH`, also returning the distance from `eye` to the
+    /// hit (used to compare a block hit against a mob hit — the nearer wins, so looking
+    /// at a mob interrupts block selection). Voxel DDA (Amanatides & Woo), with
     /// cross-model plants tested against their alpha-cutout billboards.
-    pub fn raycast(eye: Vec3, dir: Vec3, world: &World) -> Option<RaycastHit> {
-        Self::raycast_with_dist(eye, dir, world).map(|(hit, _)| hit)
-    }
-
-    /// As [`raycast`](Self::raycast), but also returns the distance from `eye` to the
-    /// hit. Used to compare a block hit against a mob hit (the nearer wins, so looking
-    /// at a mob interrupts block selection).
     pub(crate) fn raycast_with_dist(
         eye: Vec3,
         dir: Vec3,

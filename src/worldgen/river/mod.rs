@@ -135,6 +135,10 @@ pub struct RiverColumn {
 }
 
 impl RiverColumn {
+    /// Under measurable river influence. Used only by the river invariant / seam
+    /// determinism tests to classify sampled columns, so it is gated to those
+    /// test builds rather than shipped on the live carve path.
+    #[cfg(all(test, feature = "worldgen-tests"))]
     #[inline]
     pub fn active(self) -> bool {
         self.influence > 0.01

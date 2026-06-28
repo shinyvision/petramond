@@ -8,7 +8,7 @@
 
 mod layout;
 
-use crate::inventory::HOTBAR_LEN;
+use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemStack, ItemType};
 use serde::Deserialize;
 
@@ -172,4 +172,55 @@ pub struct WorkbenchView {
     pub input: Option<ItemStack>,
     /// `(result item, craftable now)` per offered recipe, row-major.
     pub results: Vec<(ItemType, bool)>,
+}
+
+/// An owned, neutral UI read model of the flat UI data needed to draw the hotbar
+/// or open menu. Built by the app presentation boundary and consumed by the
+/// renderer.
+#[derive(Clone, Debug)]
+pub struct UiSnapshot {
+    pub open: bool,
+    /// Which baked GUI this frame draws — the open menu's kind, or `Hotbar` for the
+    /// HUD. Selects the panel/hover/overlay textures and the slot layout.
+    pub kind: GuiKind,
+    pub screen: (u32, u32),
+    pub cursor_px: (f32, f32),
+    pub active: u8,
+    /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid):
+    /// `(item, count)`, or `None` for an empty slot.
+    pub slots: [Option<(ItemType, u8)>; TOTAL_SLOTS],
+    /// The crafting input cells (only the first `panel.cols()²` are drawn).
+    pub craft: [Option<(ItemType, u8)>; crate::crafting::MAX_CELLS],
+    /// The crafting result preview, drawn in the result slot.
+    pub result: Option<(ItemType, u8)>,
+    /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
+    pub cursor: Option<(ItemType, u8)>,
+    /// The open furnace's slots + progress gauges, or `None` when the open panel is
+    /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
+    pub furnace: Option<FurnaceView>,
+    /// The open chest's 27 storage slots, or `None`. When `Some`, the chest panel +
+    /// storage grid are drawn instead of the crafting grid.
+    pub chest: Option<ChestView>,
+    /// The open furniture workbench's input + offered results, or `None`. When `Some`,
+    /// the workbench panel is drawn with the result grid (greyed where not craftable).
+    pub workbench: Option<WorkbenchView>,
+}
+
+impl Default for UiSnapshot {
+    fn default() -> Self {
+        UiSnapshot {
+            open: false,
+            kind: GuiKind::Hotbar,
+            screen: (0, 0),
+            cursor_px: (0.0, 0.0),
+            active: 0,
+            slots: [None; TOTAL_SLOTS],
+            craft: [None; crate::crafting::MAX_CELLS],
+            result: None,
+            cursor: None,
+            furnace: None,
+            chest: None,
+            workbench: None,
+        }
+    }
 }

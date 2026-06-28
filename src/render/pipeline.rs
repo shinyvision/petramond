@@ -1322,7 +1322,7 @@ pub(super) fn create_pipeline_resources(
 #[cfg(test)]
 mod gpu_validation {
     use super::*;
-    use crate::render::instance_descriptor;
+    use crate::render::renderer::instance_descriptor;
 
     /// Headless validation that the REAL pipeline factory produces internally
     /// consistent pipelines: WGSL parses + passes naga validation, each pass's

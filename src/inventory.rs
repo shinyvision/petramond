@@ -16,19 +16,24 @@ use crate::item::ItemStack;
 /// emptiness rules. Implemented by every container that is a uniform grid of stacks
 /// (the inventory, a chest, and a craft grid's read view).
 ///
-/// Implementors only supply the storage (`slots`/`slots_mut`); the merge-then-fill
-/// [`insert`](SlotGrid::insert) and [`is_empty`](SlotGrid::is_empty) come for free.
+/// Implementors only supply the storage (`slots_mut`); the merge-then-fill
+/// [`insert`](SlotGrid::insert) comes for free. (`slots` and `is_empty` are test-only
+/// helpers, gated behind `cfg(test)`.)
 ///
 /// Note: a [`CraftGrid`](crate::crafting::CraftGrid) implements this for read/index
 /// access only — it is filled by cursor clicks, never by first-fit loot insert, so
 /// nothing should call `insert` on one.
 pub trait SlotGrid {
-    /// The cells as a slice (`None` = empty), in fill order.
+    /// The cells as a slice (`None` = empty), in fill order. Test-only: the only caller
+    /// is the (also test-only) `is_empty`; live code uses `slots_mut` / `insert`.
+    #[cfg(test)]
     fn slots(&self) -> &[Option<ItemStack>];
     /// The cells as a mutable slice, in fill order.
     fn slots_mut(&mut self) -> &mut [Option<ItemStack>];
 
-    /// `true` if every cell is empty.
+    /// `true` if every cell is empty. Test-only emptiness check (chest / craft-grid
+    /// tests); no live caller remains.
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         self.slots().iter().all(Option::is_none)
     }
@@ -558,6 +563,7 @@ impl Inventory {
 }
 
 impl SlotGrid for Inventory {
+    #[cfg(test)]
     #[inline]
     fn slots(&self) -> &[Option<ItemStack>] {
         &self.slots

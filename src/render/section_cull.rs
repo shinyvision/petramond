@@ -165,16 +165,6 @@ impl SectionVisibilityCache {
             .then(|| self.chunk_masks.get(&pos).copied())
             .flatten()
     }
-
-    pub(super) fn visible_section_count(&self) -> u32 {
-        if !self.active {
-            return 0;
-        }
-        self.chunk_masks
-            .values()
-            .map(|mask| mask.count_ones())
-            .sum()
-    }
 }
 
 fn compute_visible_sections(

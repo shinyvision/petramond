@@ -164,7 +164,8 @@ impl MiningState {
         self.target.is_some() && self.elapsed > 0.0
     }
 
-    /// The cell currently being mined, if any. Useful for spawning mining dust.
+    /// The cell currently being mined, if any. Test-only readout of the mined target.
+    #[cfg(test)]
     #[inline]
     pub fn target(&self) -> Option<IVec3> {
         self.target

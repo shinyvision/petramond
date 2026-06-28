@@ -23,10 +23,6 @@ struct TileAlphaData {
 
 static TILE_ALPHA: OnceLock<TileAlphaData> = OnceLock::new();
 
-pub fn atlas_png_path() -> &'static str {
-    env!("LLAMACRAFT_ATLAS_PNG")
-}
-
 /// Decode embedded atlas PNG into RGBA bytes (atlas_w*atlas_h*4).
 pub fn decode_atlas() -> (Vec<u8>, u32, u32) {
     let bytes = std::include_bytes!(concat!(env!("OUT_DIR"), "/atlas.png"));

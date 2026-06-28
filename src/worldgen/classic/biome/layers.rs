@@ -727,41 +727,6 @@ impl Layer for Smooth {
     }
 }
 
-#[inline]
-fn reduce_id(id: i32) -> i32 {
-    if id >= 2 {
-        2 + (id & 1)
-    } else {
-        id
-    }
-}
-
-// River: where the reduced biome class differs from any orthogonal neighbour, a
-// river runs (7); otherwise a no-river sentinel (-1). No RNG (1.7+).
-salted_layer!(River);
-impl Layer for River {
-    fn gen(&self, x: i64, z: i64, w: usize, h: usize) -> Vec<i32> {
-        let _ = (self.start_salt, self.start_seed);
-        let (p, pw) = bordered_parent(&*self.parent, x, z, w, h);
-        let mut out = vec![0i32; w * h];
-        for j in 0..h {
-            for i in 0..w {
-                let c = reduce_id(p[(i + 1) + (j + 1) * pw]);
-                let west = reduce_id(p[i + (j + 1) * pw]);
-                let east = reduce_id(p[(i + 2) + (j + 1) * pw]);
-                let north = reduce_id(p[(i + 1) + j * pw]);
-                let south = reduce_id(p[(i + 1) + (j + 2) * pw]);
-                out[i + j * w] = if c == west && c == north && c == south && c == east {
-                    -1
-                } else {
-                    RIVER
-                };
-            }
-        }
-        out
-    }
-}
-
 /// A two-parent layer (start salt/seed + biome and river parents).
 macro_rules! two_parent_layer {
     ($name:ident) => {
@@ -957,28 +922,6 @@ impl Layer for Shore {
     }
 }
 
-two_parent_layer!(RiverMix);
-impl Layer for RiverMix {
-    fn gen(&self, x: i64, z: i64, w: usize, h: usize) -> Vec<i32> {
-        let _ = (self.start_salt, self.start_seed);
-        let mut out = self.biome.gen(x, z, w, h);
-        let riv = self.river.gen(x, z, w, h);
-        for idx in 0..w * h {
-            let v = out[idx];
-            if riv[idx] == RIVER && v != OCEAN && !is_oceanic(v) {
-                out[idx] = if v == SNOWY_TUNDRA {
-                    FROZEN_RIVER
-                } else if v == MUSHROOM_FIELDS || v == MUSHROOM_FIELD_SHORE {
-                    MUSHROOM_FIELD_SHORE
-                } else {
-                    RIVER
-                };
-            }
-        }
-        out
-    }
-}
-
 /// Voronoi: the final per-block jitter from the 1:4 grid to 1:1 resolution. A 2-D
 /// jitter (one offset pair per parent corner, from the cell seed) picks the
 /// nearest of the four corners for each block.
@@ -1077,7 +1020,7 @@ impl Layer for Voronoi {
 
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
-    use super::super::stack::{biome_256, biome_edge_64, voronoi};
+    use super::super::stack::{biome_256, biome_edge_64};
     use super::*;
 
     #[test]
@@ -1205,49 +1148,6 @@ mod tests {
                 12, 12, 12, 30, 30, 30, 30, 12, 12, 12, 12, 12, 30, 30, 30, 12, 12, 12, 12, 12, 30,
                 30, 12, 12, 12, 12, 12, 12, 30, 12, 12, 12
             ]
-        );
-    }
-
-    // --- Full stack: the complete 1.8 biome cascade (incl. rivers + voronoi). ---
-    // The cascade wiring lives once in `stack.rs` (the shipping definition); these
-    // known-answer tests drive that wiring directly via `stack::voronoi` (WP-H3).
-
-    fn fnv(ids: &[i32]) -> u64 {
-        let mut h: u64 = 1469598103934665603;
-        for &id in ids {
-            h = h.wrapping_mul(1099511628211).wrapping_add(id as i64 as u64);
-        }
-        h
-    }
-
-    #[test]
-    fn full_biomes_match_reference() {
-        // Final per-block biome (river-mix + voronoi) over (0,0,128,128), hashed
-        // and compared to the reference's per-block biome over the same region.
-        // This region contains plains/forest/beach/ocean and ~415 river cells.
-        // Drives the SHIPPING `stack::voronoi` wiring directly (WP-H3).
-        for &(seed, want) in &[
-            (0i64, 18095362520938780919u64),
-            (1, 16764737903282282348),
-            (42, 859484148017061748),
-            (7, 10509617721058722691),
-        ] {
-            assert_eq!(
-                fnv(&voronoi(seed).gen(0, 0, 128, 128)),
-                want,
-                "final biome mismatch for seed {seed}"
-            );
-        }
-    }
-
-    #[test]
-    fn full_biomes_match_reference_far_negative_offset() {
-        // A region far from origin with negative coordinates — catches offset and
-        // sign bugs that an at-origin test would miss. Drives `stack::voronoi`.
-        assert_eq!(
-            fnv(&voronoi(12345).gen(-500, 300, 64, 64)),
-            16344384467930091955,
-            "final biome mismatch at far negative offset"
         );
     }
 }

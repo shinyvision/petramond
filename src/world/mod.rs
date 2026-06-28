@@ -23,7 +23,8 @@ mod torch;
 mod visibility;
 pub(crate) mod water;
 
-pub use entities::{DroppedItems, ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+#[cfg(test)]
+pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 pub(crate) use render_handoff::{
     TerrainMeshUploadSource, TerrainRenderHandoff, TerrainVisibilitySource,

@@ -85,13 +85,13 @@ pub fn first_is_zero(s: i64, n: i32) -> bool {
     first_int(s, n) == 0
 }
 
-/// Convenience driver: holds a layer's start salt + start seed and a current cell
-/// seed. `next_int` advances the cell seed with the **start salt** (not the bound).
+/// Convenience holder for a layer's derived **start salt** + **start seed** — the
+/// two quantities the cascade layers read via [`Self::start_salt`] /
+/// [`Self::start_seed`] to drive the free `cell_seed`/`first_int`/`step` draws.
 #[derive(Clone, Debug)]
 pub struct LayerRng {
     start_salt: i64,
     start_seed: i64,
-    cell_seed: i64,
 }
 
 impl LayerRng {
@@ -109,7 +109,6 @@ impl LayerRng {
         Self {
             start_salt,
             start_seed,
-            cell_seed: 0,
         }
     }
 
@@ -121,25 +120,6 @@ impl LayerRng {
     #[inline]
     pub fn start_seed(&self) -> i64 {
         self.start_seed
-    }
-
-    #[inline]
-    pub fn cell_seed(&self) -> i64 {
-        self.cell_seed
-    }
-
-    /// Seed the current cell.
-    #[inline]
-    pub fn set_cell(&mut self, x: i64, z: i64) {
-        self.cell_seed = cell_seed(self.start_seed, x, z);
-    }
-
-    /// Advancing bounded draw in `[0, n)`.
-    #[inline]
-    pub fn next_int(&mut self, n: i32) -> i32 {
-        let i = first_int(self.cell_seed, n);
-        self.cell_seed = step(self.cell_seed, self.start_salt);
-        i
     }
 }
 
@@ -174,38 +154,5 @@ mod tests {
         let cs = cell_seed(seed, 10, -7);
         assert_eq!(cs, -1_234_243_271_805_336_287);
         assert_eq!(first_int(cs, 10), 7);
-    }
-
-    #[test]
-    fn advancing_draw_sequence_matches_reference() {
-        let mut r = LayerRng::new(12345, 1);
-        r.set_cell(10, -7);
-        assert_eq!(r.next_int(6), 5);
-        assert_eq!(r.next_int(4), 2);
-    }
-
-    #[test]
-    fn next_int_is_always_in_range() {
-        let mut r = LayerRng::new(0xABCD_1234, 2000);
-        for x in -50..50 {
-            r.set_cell(x, x * 7 - 3);
-            for n in [2, 3, 4, 5, 6, 10, 13, 100, 256, 1024] {
-                let v = r.next_int(n);
-                assert!((0..n).contains(&v), "out of range n={n} v={v}");
-            }
-        }
-    }
-
-    #[test]
-    fn determinism_same_inputs_same_outputs() {
-        let mut a = LayerRng::new(777, 3);
-        let mut b = LayerRng::new(777, 3);
-        for (x, z) in [(0, 0), (13, -7), (-100, 250)] {
-            a.set_cell(x, z);
-            b.set_cell(x, z);
-            for _ in 0..20 {
-                assert_eq!(a.next_int(7), b.next_int(7));
-            }
-        }
     }
 }

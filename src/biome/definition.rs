@@ -11,9 +11,3 @@ pub(super) struct BiomeDef {
     pub foliage_color: Color,
     pub water_color: Color,
 }
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(super) struct HumidityBand {
-    pub max_humidity: f32,
-    pub biome: Biome,
-}

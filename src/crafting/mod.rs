@@ -10,7 +10,9 @@ mod load;
 mod recipe;
 
 pub use load::load_recipes;
-pub use recipe::{FurnitureRecipe, Ingredient, Recipe, Recipes, SmeltingRecipe};
+pub use recipe::Recipes;
+#[cfg(test)]
+pub use recipe::{FurnitureRecipe, SmeltingRecipe};
 
 use crate::inventory::SlotGrid;
 use crate::item::ItemStack;
@@ -48,19 +50,14 @@ impl CraftGrid {
         }
     }
 
-    /// Grid side length (2 or 3).
-    #[inline]
-    pub fn cols(&self) -> usize {
-        self.cols
-    }
-
     /// Number of live input cells (`cols * cols`).
     #[inline]
     pub fn capacity(&self) -> usize {
         self.cols * self.cols
     }
 
-    /// Input cell `i` (`0..capacity`), or `None`.
+    /// Input cell `i` (`0..capacity`), or `None`. Test-only grid accessor.
+    #[cfg(test)]
     #[inline]
     pub fn cell(&self, i: usize) -> Option<&ItemStack> {
         if i < self.capacity() {
@@ -151,10 +148,12 @@ impl CraftGrid {
     }
 }
 
-/// Read/index access to the live input cells (and the shared `is_empty`). A craft
-/// grid is filled by cursor clicks, never by first-fit loot insert, so the trait's
-/// `insert` must NOT be called on one — no loot/shift path wires into a `CraftGrid`.
+/// Implements [`SlotGrid`] so a craft grid gets the shared (test-only) `is_empty`. A
+/// craft grid is filled by cursor clicks, never by first-fit loot insert, so the
+/// trait's `insert` must NOT be called on one — no loot/shift path wires into a
+/// `CraftGrid`.
 impl SlotGrid for CraftGrid {
+    #[cfg(test)]
     #[inline]
     fn slots(&self) -> &[Option<ItemStack>] {
         let cap = self.capacity();

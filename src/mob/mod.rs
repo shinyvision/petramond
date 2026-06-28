@@ -28,7 +28,7 @@ mod spawn;
 
 pub use brain::Brain;
 pub use instance::Instance;
-pub use loot::{load_loot, LootTable, LootTables};
+pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, Mobs};
 pub use push::Body;
 
@@ -48,26 +48,16 @@ pub enum Mob {
     Owl,
 }
 
-/// How far (blocks) a [`Hostile`](MobCategory::Hostile) mob may stray from the nearest
-/// player before it is culled from the live world. Matches Minecraft's hard despawn
-/// distance: a hostile mob this far out for [`HOSTILE_DESPAWN_TICKS`] simply vanishes.
-const HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
-
 /// The population group a species belongs to. Natural spawning caps each group
 /// independently across the loaded area (so the world can't fill with one kind),
-/// alongside the per-species [`MobDef::cap`]. The two groups differ in how they leave
-/// the live set when far from the player: a [`Passive`] mob persists (it is saved into
-/// its chunk on unload, like a dropped item), while a [`Hostile`] mob distance-despawns
-/// (it is culled outright once no player is near — see [`despawn_radius`]). No species
-/// is hostile yet, but the simulation already honours the distinction.
+/// alongside the per-species [`MobDef::cap`]. A [`Passive`] mob persists when far from
+/// the player — it leaves the live set only by being saved into its unloading chunk,
+/// rather than distance-despawning.
 ///
 /// [`Passive`]: MobCategory::Passive
-/// [`Hostile`]: MobCategory::Hostile
-/// [`despawn_radius`]: MobCategory::despawn_radius
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MobCategory {
     Passive,
-    Hostile,
 }
 
 impl MobCategory {
@@ -76,20 +66,16 @@ impl MobCategory {
     pub fn cap(self) -> u32 {
         match self {
             MobCategory::Passive => 25,
-            MobCategory::Hostile => 70,
         }
     }
 
     /// The distance (blocks) past which this category's mobs are culled from the live
-    /// world when no player is near, or `None` for categories that persist while
-    /// loaded. Passive mobs always persist (they only leave the live set by being saved
-    /// into an unloading chunk); hostile mobs distance-despawn — once the nearest player
-    /// has stayed at least this far for a sustained run of game ticks the mob is removed
-    /// (and so never saved). The per-mob timer that applies this lives on [`Instance`].
+    /// world when no player is near, or `None` for categories that persist while loaded.
+    /// Passive mobs always persist — they leave the live set only by being saved into an
+    /// unloading chunk. The per-mob despawn timer this would gate lives on [`Instance`].
     pub fn despawn_radius(self) -> Option<f32> {
         match self {
             MobCategory::Passive => None,
-            MobCategory::Hostile => Some(HOSTILE_DESPAWN_RADIUS),
         }
     }
 }
@@ -383,21 +369,5 @@ mod tests {
         assert_eq!(def(Mob::Owl).mob, Mob::Owl);
         assert_eq!(from_id(Mob::Owl as u8), Mob::Owl);
         assert_eq!(from_id(u8::MAX), Mob::Owl, "out-of-range falls back to Owl");
-    }
-
-    #[test]
-    fn only_hostile_mobs_distance_despawn() {
-        // The conceptual distinction persistence hangs on: a passive mob persists (no
-        // despawn radius — it leaves the live set only by being saved into its chunk),
-        // while a hostile mob is culled when no player is near. The exact radius is a
-        // tunable, so this pins the distinction, not the number.
-        assert!(
-            MobCategory::Passive.despawn_radius().is_none(),
-            "passive mobs persist, never distance-despawn"
-        );
-        assert!(
-            MobCategory::Hostile.despawn_radius().is_some(),
-            "hostile mobs distance-despawn when no player is near"
-        );
     }
 }

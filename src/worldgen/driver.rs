@@ -57,11 +57,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// The biome-driven world provider (cascade biomes + biome-shaped terrain).
-    pub fn world(&self) -> &CascadeWorld {
-        &self.world
-    }
-
     /// Compute the region for one chunk PLUS the feature margin in a single pass.
     /// Shared by terrain fill and feature placement, so terrain height, biomes,
     /// and explicit river metadata are generated exactly once.
@@ -151,7 +146,6 @@ impl ChunkGenerator {
                         y,
                         surf_y: surf,
                         depth_from_top: depth,
-                        biome,
                         river: river.influence,
                         water_y: river.water_y,
                         river_bed: river.bed_block,

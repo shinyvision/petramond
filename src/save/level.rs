@@ -22,6 +22,9 @@ pub struct LevelData {
     pub player_pitch: f32,
     pub player_mode: PlayerMode,
     pub inventory: Inventory,
+    /// Reserved/vestigial save-format field: `encode` writes it and `decode` reads the
+    /// bytes, so dropping it would change the on-disk save codec.
+    #[allow(dead_code)]
     pub tick: u64,
 }
 
