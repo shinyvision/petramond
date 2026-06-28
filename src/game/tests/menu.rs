@@ -130,11 +130,12 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
     game.collect_to_cursor();
 
     // 5 + 20 + 30 = 55 onto the cursor, both dirt sources emptied.
-    assert_eq!(game.inventory().cursor().unwrap().count, 55);
-    assert!(game.inventory().slot(2).is_none());
+    assert_eq!(game.player.inventory.cursor().unwrap().count, 55);
+    assert!(game.player.inventory.slot(2).is_none());
     assert!(game
-        .inventory()
+        .player
+        .inventory
         .slot(crate::inventory::HOTBAR_LEN)
         .is_none());
-    assert_eq!(game.inventory().slot(5).unwrap().item, ItemType::Stone);
+    assert_eq!(game.player.inventory.slot(5).unwrap().item, ItemType::Stone);
 }

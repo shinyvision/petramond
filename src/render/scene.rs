@@ -11,14 +11,15 @@
 //! The buffers are cleared + refilled (capacity reused) so a bounded per-frame count
 //! never reallocs.
 
-#[cfg(test)]
-use glam::IVec3;
 use glam::Vec3;
 
 use super::{
     ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer,
 };
-use crate::game::presentation::{ChestPresentation, DoorPresentation, GamePresentation};
+use crate::game::presentation::{
+    ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
+    MobPresentation, ParticleAtlas, ParticlePresentation,
+};
 
 /// Per-frame presentation translation state, owned by the App. Holds the renderer's
 /// flat instance buffers reused across frames, plus the held-item skylight sampled
@@ -121,12 +122,11 @@ impl Scene {
     }
 }
 
-/// Map each live mob to one interpolated [`MobRenderInstance`] (cleared + refilled,
-/// capacity reused). The simulation advances mobs on the fixed game tick; `alpha`
-/// (`0..1`, the fraction into the next tick) blends the previous and current tick
-/// poses so motion stays smooth at any frame rate. Reads only the mob's render
-/// fields, exactly as the dropped-item bake reads a `DroppedItem`.
-fn bake_mobs(mobs: &[crate::mob::Instance], alpha: f32, out: &mut Vec<MobRenderInstance>) {
+/// Map each mob presentation row to one interpolated [`MobRenderInstance`] (cleared +
+/// refilled, capacity reused). The simulation advances mobs on the fixed game tick;
+/// `alpha` (`0..1`, the fraction into the next tick) blends the previous and current
+/// tick poses so motion stays smooth at any frame rate.
+fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstance>) {
     out.clear();
     out.extend(mobs.iter().map(|m| MobRenderInstance {
         kind: m.kind,
@@ -138,10 +138,8 @@ fn bake_mobs(mobs: &[crate::mob::Instance], alpha: f32, out: &mut Vec<MobRenderI
         head_yaw: lerp_angle(m.prev_head_yaw, m.head_yaw, alpha),
         head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
         skylight: m.skylight,
-        // Red-flash intensity (0 when dead) and, while dying, the interpolated per-bone
-        // physics ragdoll pose used in place of the animation pose.
-        hurt: m.hurt_flash(alpha),
-        ragdoll: m.ragdoll_pose(alpha).map(Into::into),
+        hurt: m.hurt_flash,
+        ragdoll: m.ragdoll_pose.clone(),
     }));
 }
 
@@ -157,54 +155,49 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + d * t
 }
 
-/// Map each dropped item to one [`ItemEntityInstance`] (cleared + refilled, capacity
-/// reused). `alpha` (`0..1`, the fraction into the next tick) blends the previous and
-/// current tick pose so a falling/drifting drop moves smoothly, exactly like a mob. The
-/// skylight rides through from the item's cached value.
+/// Map each dropped-item row to one [`ItemEntityInstance`] (cleared + refilled,
+/// capacity reused). `alpha` (`0..1`, the fraction into the next tick) blends the
+/// previous and current tick pose so a falling/drifting drop moves smoothly, exactly
+/// like a mob. The skylight rides through from the row's cached value.
 fn bake_item_entities(
-    items: &[crate::entity::DroppedItem],
+    items: &[DroppedItemPresentation],
     alpha: f32,
     out: &mut Vec<ItemEntityInstance>,
 ) {
     out.clear();
     out.extend(items.iter().map(|d| ItemEntityInstance {
         pos: d.prev_pos.lerp(d.pos, alpha),
-        item: d.stack.item,
-        count: d.stack.count,
+        item: d.item,
+        count: d.count,
         spin: lerp_angle(d.prev_spin, d.spin, alpha),
         skylight: d.skylight,
     }));
 }
 
-/// Map each alive particle to one [`ParticleInstance`], split by atlas: BLOCK-atlas
-/// flecks into `block_out`, bbmodel-block (MODEL-atlas) flecks into `model_out` (both
-/// cleared + refilled, capacity reused). The two are drawn in one pass with the matching
-/// texture bound, so a broken workbench's flecks sample its own texture.
+/// Map each particle row to one [`ParticleInstance`], split by atlas: BLOCK-atlas
+/// flecks into `block_out`, bbmodel-block (MODEL-atlas) flecks into `model_out`
+/// (both cleared + refilled, capacity reused). The two are drawn in one pass with the
+/// matching texture bound, so a broken workbench's flecks sample its own texture.
 fn bake_particles(
-    particles: &crate::entity::ParticleSystem,
+    particles: &[ParticlePresentation],
     block_out: &mut Vec<ParticleInstance>,
     model_out: &mut Vec<ParticleInstance>,
 ) {
     block_out.clear();
     model_out.clear();
-    for p in particles.particles() {
-        let (uv_min, uv_size) = p.atlas_uv();
+    for p in particles {
         let inst = ParticleInstance {
             pos: p.pos,
-            uv_min,
-            uv_size,
-            // Warm the fleck's tint by the block-light it sits in (the particle
-            // shader multiplies tint into the atlas colour) so flecks near a
-            // torch/furnace glow warm, not just brighter.
+            uv_min: p.uv_min,
+            uv_size: p.uv_size,
             tint: crate::torch::warm_tint(p.tint, p.warm as f32 / 255.0),
-            alpha: p.alpha(),
-            size: p.render_size(),
+            alpha: p.alpha,
+            size: p.size,
             skylight: p.skylight,
         };
-        if p.model.is_some() {
-            model_out.push(inst);
-        } else {
-            block_out.push(inst);
+        match p.atlas {
+            ParticleAtlas::Block => block_out.push(inst),
+            ParticleAtlas::Model => model_out.push(inst),
         }
     }
 }

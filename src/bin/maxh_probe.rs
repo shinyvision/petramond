@@ -1,6 +1,6 @@
 // probe: distribution of max heightmap over a chunk grid
-use llamacraft::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use llamacraft::worldgen::generate_chunk;
+use llamacraft::tooling::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use llamacraft::tooling::worldgen::generate_chunk;
 
 fn main() {
     let r: i32 = 8;

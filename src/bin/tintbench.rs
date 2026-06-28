@@ -1,7 +1,7 @@
 // Standalone microbench of the tint precompute vs full mesh, to estimate the share.
-use llamacraft::biome::Biome;
-use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use llamacraft::worldgen::generate_chunk;
+use llamacraft::tooling::biome::Biome;
+use llamacraft::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use llamacraft::tooling::worldgen::generate_chunk;
 use std::collections::HashMap;
 use std::time::Instant;
 

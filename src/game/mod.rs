@@ -24,12 +24,17 @@ use std::collections::HashMap;
 use crate::camera::Camera;
 use crate::crafting::Recipes;
 use crate::entity::ParticleSystem;
+#[cfg(test)]
 use crate::inventory::Inventory;
-use crate::item::{ItemStack, ItemType};
+#[cfg(test)]
+use crate::item::ItemStack;
+use crate::item::ItemType;
 use crate::mathh::IVec3;
 use crate::mining::MiningState;
 use crate::mob::LootTables;
-use crate::player::{Player, PlayerMode, RaycastHit};
+#[cfg(test)]
+use crate::player::PlayerMode;
+use crate::player::{Player, RaycastHit};
 use crate::world::World;
 use crate::worldgen::classic::world::CascadeWorld;
 
@@ -152,16 +157,14 @@ pub struct Game {
 }
 
 impl Game {
+    #[cfg(test)]
     #[inline]
-    pub fn inventory(&self) -> &Inventory {
+    pub(crate) fn inventory(&self) -> &Inventory {
         &self.player.inventory
     }
 
-    /// Add a stack to the player inventory, returning any leftover that didn't
-    /// fit (merging into matching stacks first, then empty slots). The world
-    /// pickup path inlines this with a borrow split; exposed here for giving the
-    /// player items directly.
-    pub fn add_to_inventory(&mut self, stack: ItemStack) -> Option<ItemStack> {
+    #[cfg(test)]
+    pub(crate) fn add_to_inventory(&mut self, stack: ItemStack) -> Option<ItemStack> {
         self.player.inventory.add(stack)
     }
 
@@ -173,8 +176,9 @@ impl Game {
         self.player.toggle_mode();
     }
 
+    #[cfg(test)]
     #[inline]
-    pub fn player_mode(&self) -> PlayerMode {
+    pub(crate) fn player_mode(&self) -> PlayerMode {
         self.player.mode()
     }
 

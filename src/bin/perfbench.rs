@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use llamacraft::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
-use llamacraft::mesh::{build_mesh, compute_chunk_skylight_with_neighbors};
-use llamacraft::worldgen::generate_chunk;
+use llamacraft::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
+use llamacraft::tooling::mesh::{build_mesh, compute_chunk_skylight_with_neighbors};
+use llamacraft::tooling::worldgen::generate_chunk;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -54,7 +54,7 @@ fn main() {
     // ---- worldgen with a single reused generator (output-identical: generate()
     // is a method on the immutable, Send+Sync generator) ----
     {
-        use llamacraft::worldgen::driver::ChunkGenerator;
+        use llamacraft::tooling::worldgen::ChunkGenerator;
         let mut reuse_ns = u128::MAX;
         for _ in 0..iters {
             let t = Instant::now();
@@ -175,12 +175,12 @@ fn main() {
     // terrain. A Y-band is filled with workbench cells, cycling the model's authored cell
     // offsets so every cell's template is exercised, then meshed many times. ----
     {
-        use llamacraft::block::Block;
-        use llamacraft::block_model::{instance, BlockModelKind};
-        use llamacraft::furnace::Facing;
+        use llamacraft::tooling::block::Block;
+        use llamacraft::tooling::block_model::{cell_offsets, BlockModelKind};
+        use llamacraft::tooling::furnace::Facing;
 
         let kind = BlockModelKind::FurnitureWorkbench;
-        let offsets: Vec<[u8; 3]> = instance(kind).cells.iter().map(|c| c.offset).collect();
+        let offsets: Vec<[u8; 3]> = cell_offsets(kind).collect();
         let band = 64usize; // Y layers packed solid with model cells
         let mut mc = Chunk::new(0, 0);
         let mut n_cells = 0usize;

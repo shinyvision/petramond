@@ -24,10 +24,6 @@ pub(super) struct PointerState {
 }
 
 impl PointerState {
-    fn set_grabbed(&mut self, grabbed: bool) {
-        self.grabbing = grabbed;
-    }
-
     fn add_motion(&mut self, dx: f32, dy: f32) {
         self.dx += dx;
         self.dy += dy;
@@ -148,10 +144,6 @@ impl PointerState {
 }
 
 impl App {
-    pub fn set_pointer_grabbed(&mut self, grabbed: bool) {
-        self.pointer.set_grabbed(grabbed);
-    }
-
     pub fn add_pointer_motion(&mut self, dx: f32, dy: f32) {
         self.pointer.add_motion(dx, dy);
         self.dirty = true;

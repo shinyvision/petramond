@@ -8,19 +8,19 @@
 //! explicit river path system carves channels and water levels, followed by
 //! surface skinning, underground scatter, ground vegetation, and tree features.
 
-pub mod audit;
-pub mod classic;
-pub mod climate;
-pub mod ctx;
-pub mod data;
-pub mod driver;
-pub mod feature;
-pub mod noise;
-pub mod proto;
-pub mod river;
-pub mod rng;
-pub mod spawn;
-pub mod surface;
+pub(crate) mod audit;
+pub(crate) mod classic;
+mod climate;
+mod ctx;
+pub(crate) mod data;
+pub(crate) mod driver;
+pub(crate) mod feature;
+mod noise;
+mod proto;
+mod river;
+pub(crate) mod rng;
+pub(crate) mod spawn;
+mod surface;
 
 use crate::chunk::Chunk;
 

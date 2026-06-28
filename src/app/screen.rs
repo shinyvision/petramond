@@ -1,5 +1,5 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum AppScreen {
+pub(super) enum AppScreen {
     Game,
     Inventory,
     /// The 3×3 crafting-table screen, opened by right-clicking a placed table.
@@ -15,19 +15,20 @@ pub enum AppScreen {
 
 impl AppScreen {
     #[inline]
-    pub fn gameplay_enabled(self) -> bool {
+    pub(super) fn gameplay_enabled(self) -> bool {
         matches!(self, AppScreen::Game)
     }
 
     #[inline]
-    pub fn inventory_open(self) -> bool {
+    #[cfg(test)]
+    pub(super) fn inventory_open(self) -> bool {
         matches!(self, AppScreen::Inventory)
     }
 
     /// Any slot-based menu (inventory or crafting table) is open — drives click
     /// routing and whether the panel UI is drawn.
     #[inline]
-    pub fn ui_open(self) -> bool {
+    pub(super) fn ui_open(self) -> bool {
         !matches!(self, AppScreen::Game)
     }
 
@@ -35,7 +36,7 @@ impl AppScreen {
     /// HUD (gameplay). The single source of "which screen" for the data-driven GUI —
     /// it selects both the rendered panel and the click hit-test's layout.
     #[inline]
-    pub fn gui_kind(self) -> crate::gui::GuiKind {
+    pub(super) fn gui_kind(self) -> crate::gui::GuiKind {
         use crate::gui::GuiKind;
         match self {
             AppScreen::Game => GuiKind::Hotbar,
@@ -47,17 +48,10 @@ impl AppScreen {
         }
     }
 
-    /// Whether the open menu is the furnace screen — drives furnace-specific click
-    /// routing and the furnace panel/slots/gauges in place of the crafting grid.
-    #[inline]
-    pub fn is_furnace(self) -> bool {
-        matches!(self, AppScreen::Furnace)
-    }
-
     /// Whether the open menu is the chest screen — drives chest-specific click
     /// routing and the chest panel + storage grid in place of the crafting grid.
     #[inline]
-    pub fn is_chest(self) -> bool {
+    pub(super) fn is_chest(self) -> bool {
         matches!(self, AppScreen::Chest)
     }
 }
@@ -69,7 +63,7 @@ pub struct CursorPolicy {
 }
 
 impl CursorPolicy {
-    pub fn for_screen(screen: AppScreen) -> Self {
+    pub(super) fn for_screen(screen: AppScreen) -> Self {
         let grabbed = screen.gameplay_enabled();
         Self {
             grabbed,
