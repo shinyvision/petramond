@@ -65,3 +65,13 @@ pub static WOOD: BlockSoundSet = BlockSoundSet {
     place: Some(Sound::WoodPlace),
     step: None,
 };
+
+/// Stone: stone, cobblestone, granite, ore, and every other `BlockMaterial::Stone`
+/// or `BlockMaterial::Ore` block. Mining loops the stone "punch"; break and place use
+/// the stone break/place sounds; the step slot awaits its asset.
+pub static STONE: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::StonePunch),
+    break_: Some(Sound::StoneBreak),
+    place: Some(Sound::StonePlace),
+    step: None,
+};

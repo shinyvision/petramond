@@ -62,7 +62,7 @@ impl Game {
             request_open_furnace: None,
             request_open_chest: None,
             request_open_workbench: None,
-            toggled_door: false,
+            toggled_door: None,
         }
     }
 

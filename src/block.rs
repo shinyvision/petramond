@@ -578,6 +578,7 @@ impl Block {
     fn sound_set(self) -> &'static sounds::BlockSoundSet {
         match self.material() {
             BlockMaterial::Wood => &sounds::WOOD,
+            BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
             _ => &sounds::SILENT,
         }
     }

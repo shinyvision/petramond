@@ -59,8 +59,15 @@ impl Game {
                     let start = self.door_swing_angle(lower);
                     self.door_swings.entry(lower).or_insert(start);
                     self.world.toggle_door(h.block);
-                    // Flick the hand for the interaction (same jab as opening a chest).
-                    self.toggled_door = true;
+                    // The new open state after the toggle — drives open vs close sound.
+                    let now_open = self
+                        .world
+                        .door_state_at(lower.x, lower.y, lower.z)
+                        .map(|s| s.open)
+                        .unwrap_or(true);
+                    // Flick the hand for the interaction (same jab as opening a chest),
+                    // and surface the new state so the presentation picks the sound.
+                    self.toggled_door = Some(now_open);
                 }
                 true
             }

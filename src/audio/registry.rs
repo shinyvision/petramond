@@ -22,6 +22,21 @@ pub enum Sound {
     /// Picking a dropped item up into the inventory — a global gameplay sound, not a
     /// block sound.
     ItemPickup,
+    /// A door swung open (its `open` bit just flipped to true).
+    DoorOpen,
+    /// A door swung shut (its `open` bit just flipped to false).
+    DoorClose,
+    /// A chest's lid is swinging open (its GUI was just opened).
+    ChestOpen,
+    /// A chest's lid is dropping shut (its GUI was just closed).
+    ChestClose,
+    /// The stone "punch" — re-triggered while mining stone (and ore, which shares
+    /// the stone set). See [`crate::block::sounds::STONE`].
+    StonePunch,
+    /// A stone block finished breaking / was destroyed.
+    StoneBreak,
+    /// A stone block was placed into the world.
+    StonePlace,
 }
 
 impl Sound {
@@ -32,6 +47,13 @@ impl Sound {
         Sound::WoodPlace,
         Sound::WoodBreak,
         Sound::ItemPickup,
+        Sound::DoorOpen,
+        Sound::DoorClose,
+        Sound::ChestOpen,
+        Sound::ChestClose,
+        Sound::StonePunch,
+        Sound::StoneBreak,
+        Sound::StonePlace,
     ];
 
     /// This sound's static definition row.
@@ -128,6 +150,86 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Ui,
+    },
+    SoundDef {
+        sound: Sound::DoorOpen,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/door_open.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.08,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::DoorClose,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/door_close.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.08,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::ChestOpen,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/chest_open.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.08,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::ChestClose,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/chest_close.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.08,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::StonePunch,
+        variants: &[
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/stone_punch_1.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/stone_punch_2.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/stone_punch_3.ogg"
+            )),
+        ],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::StoneBreak,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/stone_break.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::StonePlace,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/stone_place.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
     },
 ];
 

@@ -60,8 +60,10 @@ pub struct GameEvents {
     pub open_chest: Option<IVec3>,
     /// The player right-clicked a placed furniture workbench this frame.
     pub open_furniture_workbench: Option<IVec3>,
-    /// The player right-clicked a door this frame.
-    pub toggled_door: bool,
+    /// The player right-clicked a door this frame. Carries the door's NEW open
+    /// state (after the toggle applied), so the presentation picks the open vs
+    /// close sound. `None` = no door toggle this frame.
+    pub toggled_door: Option<bool>,
 }
 
 /// What the world-mutating actions did across the fixed tick(s) that ran this frame.
@@ -106,7 +108,7 @@ impl Game {
             open_furnace: std::mem::take(&mut self.request_open_furnace),
             open_chest: std::mem::take(&mut self.request_open_chest),
             open_furniture_workbench: std::mem::take(&mut self.request_open_workbench),
-            toggled_door: std::mem::take(&mut self.toggled_door),
+            toggled_door: self.toggled_door.take(),
         }
     }
 

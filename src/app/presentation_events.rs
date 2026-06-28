@@ -32,6 +32,18 @@ impl App {
         if events.picked_up_item {
             self.audio.play(Sound::ItemPickup);
         }
+
+        if let Some(now_open) = events.toggled_door {
+            self.audio.play(if now_open {
+                Sound::DoorOpen
+            } else {
+                Sound::DoorClose
+            });
+        }
+
+        if events.open_chest.is_some() {
+            self.audio.play(Sound::ChestOpen);
+        }
     }
 
     pub(super) fn latch_game_event_hand_triggers(
@@ -60,5 +72,5 @@ fn opened_interactable(events: &GameEvents) -> bool {
         || events.open_furnace.is_some()
         || events.open_chest.is_some()
         || events.open_furniture_workbench.is_some()
-        || events.toggled_door
+        || events.toggled_door.is_some()
 }

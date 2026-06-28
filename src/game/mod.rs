@@ -170,9 +170,10 @@ pub struct Game {
     /// [`tick`](Self::tick) asks the app shell to open the workbench screen. One-shot
     /// open request (consumed via [`GameEvents`]).
     request_open_workbench: Option<IVec3>,
-    /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can flick
-    /// the hand (the toggle itself already applied). One-shot (consumed via `GameEvents`).
-    toggled_door: bool,
+    /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can
+    /// flick the hand (the toggle itself already applied) and play the open/close
+    /// sound. Carries the door's NEW open state. One-shot (consumed via `GameEvents`).
+    toggled_door: Option<bool>,
 }
 
 impl Game {
@@ -1327,7 +1328,7 @@ mod tests {
         game.tick_place(&mut events);
 
         assert!(events.placed_block.is_none(), "door click should not place");
-        assert!(game.toggled_door, "door click should report a toggle event");
+        assert!(game.toggled_door.is_some(), "door click should report a toggle event");
         assert!(
             game.world
                 .door_state_at(lower.x, lower.y, lower.z)

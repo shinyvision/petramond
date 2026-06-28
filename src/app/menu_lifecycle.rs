@@ -1,4 +1,5 @@
 use super::{App, AppScreen};
+use crate::audio::Sound;
 use crate::game::GameEvents;
 use crate::mathh::IVec3;
 
@@ -73,11 +74,16 @@ impl App {
     }
 
     /// Close any open menu: return crafting-grid items to the inventory, drop back
-    /// to gameplay, and re-grab the pointer.
+    /// to gameplay, and re-grab the pointer. Plays the chest-close sound when the
+    /// open menu was a chest screen.
     fn close_menu(&mut self) {
+        let was_chest = self.screen.is_chest();
         self.game.close_open_menu();
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
+        if was_chest {
+            self.audio.play(Sound::ChestClose);
+        }
     }
 
     pub(super) fn close_screen(&mut self) -> bool {
