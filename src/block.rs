@@ -579,6 +579,7 @@ impl Block {
         match self.material() {
             BlockMaterial::Wood => &sounds::WOOD,
             BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
+            BlockMaterial::Dirt => &sounds::DIRT,
             _ => &sounds::SILENT,
         }
     }

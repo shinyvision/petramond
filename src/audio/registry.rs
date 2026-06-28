@@ -37,6 +37,13 @@ pub enum Sound {
     StoneBreak,
     /// A stone block was placed into the world.
     StonePlace,
+    /// The dirt "punch" — re-triggered while mining dirt, grass, gravel, and other
+    /// dirt-likes. See [`crate::block::sounds::DIRT`].
+    DirtPunch,
+    /// A dirt block finished breaking / was destroyed.
+    DirtBreak,
+    /// A dirt block was placed into the world.
+    DirtPlace,
 }
 
 impl Sound {
@@ -54,6 +61,9 @@ impl Sound {
         Sound::StonePunch,
         Sound::StoneBreak,
         Sound::StonePlace,
+        Sound::DirtPunch,
+        Sound::DirtBreak,
+        Sound::DirtPlace,
     ];
 
     /// This sound's static definition row.
@@ -222,6 +232,46 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
         variants: &[include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/sounds/stone_place.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::DirtPunch,
+        variants: &[
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/dirt_punch_1.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/dirt_punch_2.ogg"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/sounds/dirt_punch_3.ogg"
+            )),
+        ],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::DirtBreak,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/dirt_break.ogg"
+        ))],
+        gain: 1.0,
+        pitch_variation: 0.12,
+        category: SoundCategory::Block,
+    },
+    SoundDef {
+        sound: Sound::DirtPlace,
+        variants: &[include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/sounds/dirt_place.ogg"
         ))],
         gain: 1.0,
         pitch_variation: 0.12,

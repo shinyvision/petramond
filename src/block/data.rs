@@ -810,7 +810,7 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         interaction: BlockInteraction::None,
         flags: FULL_CUBE_FLAGS,
         tiles: [Tile::Gravel, Tile::Gravel, Tile::Gravel],
-        material: BlockMaterial::Sand,
+        material: BlockMaterial::Dirt,
         harvest_tier: 0,
         hardness: 0.5,
         drop: drops_self!(Gravel),

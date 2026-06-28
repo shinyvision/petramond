@@ -75,3 +75,14 @@ pub static STONE: BlockSoundSet = BlockSoundSet {
     place: Some(Sound::StonePlace),
     step: None,
 };
+
+/// Dirt: dirt, grass (a smotherable dirt), gravel, and every other
+/// `BlockMaterial::Dirt` block. Mining loops the dirt "punch"; break and place use
+/// the dirt break/place sounds; the step slot awaits its asset. Sand is a separate
+/// material and stays silent until it gets its own set.
+pub static DIRT: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::DirtPunch),
+    break_: Some(Sound::DirtBreak),
+    place: Some(Sound::DirtPlace),
+    step: None,
+};
