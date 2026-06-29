@@ -61,14 +61,6 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         water_color: [0.10, 0.42, 0.82],
     },
     BiomeDef {
-        biome: Biome::BirchForest,
-        name: "birch_forest",
-        fog_color: [0.52, 0.78, 1.00],
-        grass_color: [0.12, 0.58, 0.02],
-        foliage_color: [0.24, 0.72, 0.18],
-        water_color: [0.12, 0.46, 0.82],
-    },
-    BiomeDef {
         biome: Biome::Swamp,
         name: "swamp",
         fog_color: [0.54, 0.66, 0.70],
@@ -141,28 +133,12 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         water_color: [0.14, 0.42, 0.58],
     },
     BiomeDef {
-        biome: Biome::Jungle,
-        name: "jungle",
-        fog_color: [0.46, 0.74, 0.62],
-        grass_color: [0.22, 0.74, 0.10],
-        foliage_color: [0.18, 0.66, 0.06],
-        water_color: [0.14, 0.52, 0.74],
-    },
-    BiomeDef {
-        biome: Biome::Badlands,
-        name: "badlands",
-        fog_color: [0.86, 0.66, 0.45],
-        grass_color: [0.62, 0.50, 0.18],
-        foliage_color: [0.58, 0.46, 0.16],
-        water_color: [0.14, 0.46, 0.74],
-    },
-    BiomeDef {
-        biome: Biome::DarkForest,
-        name: "dark_forest",
-        fog_color: [0.42, 0.58, 0.62],
-        grass_color: [0.10, 0.50, 0.12],
-        foliage_color: [0.24, 0.72, 0.18],
-        water_color: [0.10, 0.40, 0.66],
+        biome: Biome::RedwoodForest,
+        name: "redwood_forest",
+        fog_color: [0.44, 0.62, 0.58],
+        grass_color: [0.30, 0.54, 0.26],
+        foliage_color: [0.24, 0.50, 0.22],
+        water_color: [0.12, 0.40, 0.62],
     },
     BiomeDef {
         biome: Biome::OldGrowthTaiga,
@@ -205,22 +181,6 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         water_color: [0.18, 0.50, 0.82],
     },
     BiomeDef {
-        biome: Biome::IceSpikes,
-        name: "ice_spikes",
-        fog_color: [0.80, 0.88, 0.94],
-        grass_color: [0.70, 0.82, 0.82],
-        foliage_color: [0.64, 0.80, 0.80],
-        water_color: [0.22, 0.56, 0.86],
-    },
-    BiomeDef {
-        biome: Biome::MushroomFields,
-        name: "mushroom_fields",
-        fog_color: [0.66, 0.58, 0.66],
-        grass_color: [0.56, 0.42, 0.54],
-        foliage_color: [0.50, 0.38, 0.50],
-        water_color: [0.14, 0.46, 0.74],
-    },
-    BiomeDef {
         biome: Biome::WindsweptHills,
         name: "windswept_hills",
         fog_color: [0.64, 0.74, 0.82],
@@ -236,9 +196,38 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         foliage_color: [0.50, 0.58, 0.50],
         water_color: [0.16, 0.50, 0.82],
     },
+    BiomeDef {
+        biome: Biome::WoodedHills,
+        name: "wooded_hills",
+        fog_color: [0.50, 0.74, 0.90],
+        grass_color: [0.22, 0.60, 0.16],
+        foliage_color: [0.24, 0.62, 0.16],
+        water_color: [0.12, 0.44, 0.80],
+    },
+    BiomeDef {
+        biome: Biome::MountainEdge,
+        name: "mountain_edge",
+        fog_color: [0.62, 0.76, 0.90],
+        grass_color: [0.50, 0.72, 0.38],
+        foliage_color: [0.44, 0.68, 0.34],
+        water_color: [0.12, 0.46, 0.82],
+    },
+    BiomeDef {
+        biome: Biome::DesertLakes,
+        name: "desert_lakes",
+        fog_color: [0.98, 0.86, 0.62],
+        grass_color: [0.82, 0.74, 0.30],
+        foliage_color: [0.76, 0.68, 0.26],
+        water_color: [0.16, 0.52, 0.84],
+    },
 ];
 
 impl RegistryKey for Biome {
+    #[inline]
+    fn first_id() -> u8 {
+        1
+    }
+
     #[inline]
     fn to_id(self) -> u8 {
         self.id()

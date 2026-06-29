@@ -144,7 +144,7 @@ impl FoliagePlacer for DroopyFoliage {
 /// Conifer canopy (spruce / pine): a deterministic pointed top — a single-leaf
 /// tip, a '+'-crown hugging the top log, and a second '+' on the third block
 /// down (all four faces always filled) — over widening ragged "skirts" that give
-/// the classic drooping evergreen silhouette. `radius` controls how wide/tall the
+/// the canonical drooping evergreen silhouette. `radius` controls how wide/tall the
 /// skirts grow (clamped to ≥2 so the pointed top stays intact); `skirt_ragged`
 /// is the outer-ring trim chance per skirt.
 pub struct ConiferFoliage {
@@ -193,20 +193,28 @@ impl FoliagePlacer for FlatSparseFoliage {
     fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
         let a = attach[0];
         let (cx, cz, ct) = (a.x, a.z, a.y);
-        // Upper disc: sparse diamond.
+        // Upper umbrella: a SOLID diamond, ragged only on its outermost ring. A
+        // thin disc with random interior holes leaves leaves attached to the trunk
+        // only DIAGONALLY, and the leaf-decay flood travels face-steps only, so
+        // those leaves read as cut off and rot. Keeping the interior solid
+        // guarantees every leaf has an orthogonal path inward to the centre cell,
+        // which sits directly above the top log — the whole canopy stays supported.
         let ur = self.upper_radius;
         for lx in -ur..=ur {
             for lz in -ur..=ur {
-                if lx.abs() + lz.abs() > ur {
+                let d = lx.abs() + lz.abs();
+                if d > ur {
                     continue;
                 }
-                if rng.chance(self.upper_skip) {
-                    continue;
+                if d == ur && rng.chance(self.upper_skip) {
+                    continue; // ragged edge only
                 }
                 ctx.set_leaf(IVec3::new(cx + lx, ct + 1, cz + lz), leaf);
             }
         }
-        // Lower ring: sparser diamond.
+        // Lower skirt one block down: still sparse for the airy savanna read, but
+        // every cell sits directly beneath the solid disc above, so even a holey
+        // skirt stays orthogonally connected upward to it.
         let lr = self.lower_radius;
         for lx in -lr..=lr {
             for lz in -lr..=lr {

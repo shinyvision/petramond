@@ -37,6 +37,11 @@ path = "src/bin/genparity.rs"
 name = "genmap"
 path = "src/bin/genmap.rs"
 
+# Headless individual feature previewer (dev tool).
+[[bin]]
+name = "genfeature"
+path = "src/bin/genfeature.rs"
+
 # Throwaway perf harness: times worldgen + meshing over a chunk grid.
 [[bin]]
 name = "perfbench"

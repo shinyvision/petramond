@@ -80,6 +80,7 @@ pub fn face_material(tile: Tile) -> FaceMaterial {
         | Tile::JungleLeaves
         | Tile::MangroveLeaves
         | Tile::SpruceLeaves
+        | Tile::RedwoodLeaves
         | Tile::CherryLeaves
         | Tile::AzaleaLeaves => FaceMaterial {
             base_tile: tile,

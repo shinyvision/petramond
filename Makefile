@@ -12,7 +12,7 @@
 #   NV_OFFLOAD= make run        -- run on the Intel iGPU instead of the NVIDIA dGPU
 
 CARGO ?= cargo
-SEED  ?= 0x2
+SEED  ?= 0x18181
 RD    ?= 16
 
 # Run on the discrete NVIDIA GPU via PRIME render offload. The game renders through

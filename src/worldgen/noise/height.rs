@@ -1,9 +1,7 @@
-//! Cave field — the only live consumer of the legacy `noise` samplers.
+//! Cave field.
 //!
-//! The legacy `HeightField`/`WorldNoise` terrain generator was excised; active
-//! terrain is produced by `classic::terrain`/`CascadeWorld`. What survives is the
-//! 3-D cave carve, kept as a plain typed function of world position so caves are
-//! identical from every chunk that touches them — seamless tunnels with no
+//! The 3-D cave carve is a plain typed function of world position, so caves are
+//! identical from every chunk that touches them: seamless tunnels with no
 //! inter-chunk state.
 
 use super::settings::*;

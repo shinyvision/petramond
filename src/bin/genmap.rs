@@ -39,6 +39,7 @@ fn block_color(block: u8) -> [u8; 3] {
         Block::AcaciaLeaves => [104, 130, 40],
         Block::DarkOakLeaves => [36, 84, 30],
         Block::MangroveLeaves => [60, 124, 44],
+        Block::RedwoodLeaves => [38, 86, 46],
         Block::CherryLeaves => [236, 170, 206],
         Block::AzaleaLeaves => [88, 124, 56],
         Block::OakLog | Block::DarkOakLog => [104, 74, 40],
@@ -47,6 +48,7 @@ fn block_color(block: u8) -> [u8; 3] {
         Block::JungleLog | Block::AcaciaLog => [120, 90, 54],
         Block::CherryLog => [76, 50, 60],
         Block::MangroveLog => [92, 44, 40],
+        Block::RedwoodLog => [127, 60, 51],
         Block::Grass => [86, 140, 60],
         Block::Sand => [216, 204, 152],
         Block::RedSand => [190, 110, 56],
@@ -110,7 +112,7 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::Plains => [126, 198, 78], // bright green
         Biome::Savanna => [188, 186, 86], // olive
         Biome::Forest => [46, 128, 48],  // dark green
-        Biome::BirchForest => [120, 176, 96],
+        Biome::RedwoodForest => [30, 90, 36], // deep dark green — tall redwood groves
         Biome::Wetland => [92, 144, 96],
         Biome::Swamp => [58, 92, 64],
         Biome::Taiga => [58, 116, 92],
@@ -119,18 +121,16 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::SnowyTundra => [210, 224, 228],
         Biome::SnowyTaiga => [168, 198, 198],
         Biome::SnowyPeaks => [238, 242, 250],
-        Biome::Jungle => [40, 150, 30],
-        Biome::Badlands => [184, 100, 48],
-        Biome::DarkForest => [34, 72, 30],
-        Biome::OldGrowthTaiga => [44, 96, 64],
-        Biome::CherryGrove => [228, 150, 196],
-        Biome::Meadow => [120, 200, 90],
-        Biome::Grove => [184, 208, 208],
-        Biome::SnowySlopes => [220, 230, 238],
-        Biome::IceSpikes => [196, 224, 238],
-        Biome::MushroomFields => [150, 110, 150],
-        Biome::WindsweptHills => [130, 150, 120],
-        Biome::StonyPeaks => [170, 168, 164],
+        Biome::OldGrowthTaiga => [48, 96, 70],
+        Biome::CherryGrove => [220, 146, 176],
+        Biome::Meadow => [150, 210, 104],
+        Biome::Grove => [150, 180, 172],
+        Biome::SnowySlopes => [224, 232, 238],
+        Biome::WindsweptHills => [126, 138, 126],
+        Biome::StonyPeaks => [166, 166, 160],
+        Biome::WoodedHills => [64, 132, 56],
+        Biome::MountainEdge => [148, 158, 132],
+        Biome::DesertLakes => [214, 178, 92],
     }
 }
 
@@ -291,122 +291,6 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, side z={slice_z} zoom={zoom} cx={center_x})");
 }
 
-/// River diagnostic: top-down terrain with the active explicit river metadata
-/// overlaid. Wet channel columns are blue, bank influence is amber, and any wet
-/// channel column whose top block is not water is red for easy artifact spotting.
-fn render_river(seed: u32, out: &str) {
-    use llamacraft::tooling::worldgen::{generate_chunk_with, ChunkGenerator};
-    let generator = ChunkGenerator::new(seed);
-    let r: i32 = 12;
-    let n = (r * 2) as usize;
-    let w = n * CHUNK_SX;
-    let h = n * CHUNK_SZ;
-    let mut buf = vec![0u8; w * h * 3];
-    // Per-pixel masks for the island audit (built during the scan, used after).
-    let mut water = vec![false; w * h];
-    let mut bandmask = vec![false; w * h];
-    let (mut band, mut channel, mut channel_water, mut centerline) = (0u64, 0u64, 0u64, 0u64);
-    let mut total = 0u64;
-    let mut dry_channel = 0u64;
-    for cz in 0..n {
-        for cx in 0..n {
-            let gcx = cx as i32 - r;
-            let gcz = cz as i32 - r;
-            let region = generator.region(gcx, gcz);
-            let chunk = generate_chunk_with(&generator, gcx, gcz);
-            for z in 0..CHUNK_SZ {
-                for x in 0..CHUNK_SX {
-                    let wx = gcx * CHUNK_SX as i32 + x as i32;
-                    let wz = gcz * CHUNK_SZ as i32 + z as i32;
-                    let (b, _) = top_block(&chunk, x, z);
-                    let river = region.river_at(wx, wz);
-                    total += 1;
-                    let carved = river.influence > 0.05;
-                    let mut col = block_color(b);
-                    if carved {
-                        band += 1;
-                        let is_water = Block::from_id(b) == Block::Water;
-                        if river.distance < 0.75 {
-                            centerline += 1;
-                            col = [245, 248, 255];
-                        } else if river.wet() {
-                            channel += 1;
-                            if is_water {
-                                channel_water += 1;
-                            }
-                            let t = river.channel.clamp(0.0, 1.0);
-                            col = [
-                                (40.0 * (1.0 - t)) as u8,
-                                (90.0 * (1.0 - t) + 90.0 * t) as u8,
-                                (160.0 * (1.0 - t) + 255.0 * t) as u8,
-                            ];
-                            if !is_water {
-                                dry_channel += 1;
-                                col = [255, 24, 18];
-                            }
-                        } else {
-                            let t = river.influence.clamp(0.0, 1.0);
-                            col[0] = (col[0] as f32 * (1.0 - t) + 212.0 * t) as u8;
-                            col[1] = (col[1] as f32 * (1.0 - t) + 156.0 * t) as u8;
-                            col[2] = (col[2] as f32 * (1.0 - t) + 74.0 * t) as u8;
-                        }
-                    }
-                    let px = (cz * CHUNK_SZ + z) * w + (cx * CHUNK_SX + x);
-                    water[px] = Block::from_id(b) == Block::Water;
-                    bandmask[px] = river.wet();
-                    buf[px * 3..px * 3 + 3].copy_from_slice(&col);
-                }
-            }
-        }
-    }
-    // Island audit: a wet-channel column that is LAND but has water within two
-    // blocks on both opposite sides.
-    let mut islands = 0u64;
-    let near = |arr: &[bool], x: usize, y: usize, dx: i32, dy: i32| -> bool {
-        for d in 1..=2 {
-            let nx = x as i32 + dx * d;
-            let ny = y as i32 + dy * d;
-            if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
-                return false;
-            }
-            if arr[ny as usize * w + nx as usize] {
-                return true;
-            }
-        }
-        false
-    };
-    for y in 0..h {
-        for x in 0..w {
-            let px = y * w + x;
-            if !bandmask[px] || water[px] {
-                continue;
-            }
-            let enclosed_x = near(&water, x, y, 1, 0) && near(&water, x, y, -1, 0);
-            let enclosed_z = near(&water, x, y, 0, 1) && near(&water, x, y, 0, -1);
-            if enclosed_x || enclosed_z {
-                islands += 1;
-            }
-        }
-    }
-    save(out, &buf, w, h);
-    let p = |v: u64, d: u64| {
-        if d > 0 {
-            100.0 * v as f64 / d as f64
-        } else {
-            0.0
-        }
-    };
-    println!("wrote {out} ({w}x{h}, seed {seed:#x}, mode river)");
-    println!(
-        "  river banks: {:.3}% of world | wet channel {:.3}% | top-is-water {:.1}% of channel",
-        p(band, total),
-        p(channel, total),
-        p(channel_water, channel)
-    );
-    println!("  centerline pixels: {centerline} | dry wet-channel cols: {dry_channel}");
-    println!("  island audit: mid-channel land cols enclosed by water: {islands}");
-}
-
 /// Audit overhangs + floating debris across a region (computed by
 /// `worldgen::audit::audit`); prints its [`DebrisAudit`] in the previewer format.
 fn audit(seed: u32) {
@@ -453,17 +337,11 @@ fn flood_audit(seed: u32) {
 fn relief_audit(seed: u32) {
     use llamacraft::tooling::worldgen::audit::{self, RELIEF_HIST_LABELS};
     let r = audit::relief_audit(seed);
-    if let Some(raw) = &r.raw {
-        println!(
-            "seed {seed:#x} RAW (natural target, no lift): land cols {}  p10 {} p50 {} p90 {}  mean {:.2}  STDEV {:.3}  below-64 {:.1}%",
-            raw.count, raw.p10, raw.p50, raw.p90, raw.mean, raw.stdev, r.raw_below64_pct
-        );
-    }
-    if r.lifted.count == 0 {
+    if r.land.count == 0 {
         println!("seed {seed:#x}: no land-biome columns in window");
         return;
     }
-    let l = &r.lifted;
+    let l = &r.land;
     println!(
         "seed {seed:#x}: land-biome relief over {} cols ({}x{} blocks)",
         l.count, r.window_blocks, r.window_blocks
@@ -473,12 +351,12 @@ fn relief_audit(seed: u32) {
         l.min, l.p10, l.p50, l.p90, l.max, l.mean, l.stdev
     );
     println!(
-        "  at-exactly-y64: {:.2}% ({}/{})   <- dead-flat-plateau signature",
-        r.at_y64_pct, r.at_y64, l.count
+        "  at-waterline: {:.2}% ({}/{})   <- dry land at sea level",
+        r.at_waterline_pct, r.at_waterline, l.count
     );
     println!(
-        "  flooded-land: NON-river {:.3}% ({}), river {:.3}% ({})   <- pond-maze metric = NON-river",
-        r.flooded_nonriver_pct, r.flooded_nonriver, r.flooded_river_pct, r.flooded_river
+        "  flooded-land: {:.3}% ({})   <- pond-maze metric (surf < sea level)",
+        r.flooded_pct, r.flooded
     );
     let bars: Vec<String> = RELIEF_HIST_LABELS
         .iter()
@@ -486,12 +364,6 @@ fn relief_audit(seed: u32) {
         .map(|(label, &c)| format!("{label}:{c:.1}%"))
         .collect();
     println!("  hist  {}", bars.join("  "));
-    if let Some(b) = &r.sub_sea {
-        println!(
-            "  SUB-SEA band ({} cols, raw<64): raw STDEV {:.3} -> lifted STDEV {:.3}  (hard-clamp would be 0.000)  puddles {:.2}%",
-            b.cols, b.raw_stdev, b.lifted_stdev, b.puddles_pct
-        );
-    }
 }
 
 /// Hillshaded top-down relief: colour each column by its top block, then light it
@@ -571,7 +443,7 @@ fn render_shaded(
 fn roughness(seed: u32) {
     use llamacraft::tooling::worldgen::audit;
     let Some(s) = audit::roughness(seed) else {
-        println!("seed {seed:#x}: no mountain columns (>y90) in region");
+        println!("seed {seed:#x}: no mountain-like biome columns in region");
         return;
     };
     println!(
@@ -703,7 +575,6 @@ fn main() {
         ),
         "flood" => flood_audit(seed),
         "relief" => relief_audit(seed),
-        "river" => render_river(seed, &out),
         "bench" => bench(seed, arg.unwrap_or(24)),
         _ => render_topdown(seed, &out, false),
     }
@@ -723,13 +594,12 @@ fn bench(seed: u32, radius: i32) {
     let n = (2 * radius + 1) * (2 * radius + 1);
     let t0 = std::time::Instant::now();
     let mut acc = 0u64;
-    let (mut t_gen, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0);
+    let (mut t_surface, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0);
     for cz in -radius..=radius {
         for cx in -radius..=radius {
-            let region = generator.region(cx, cz);
             let s = std::time::Instant::now();
-            let mut chunk = generator.generate(&region, cx, cz);
-            t_gen += s.elapsed().as_secs_f64();
+            let mut chunk = generator.generate_surface(cx, cz);
+            t_surface += s.elapsed().as_secs_f64();
             let s = std::time::Instant::now();
             generator.place_underground(&mut chunk);
             t_ug += s.elapsed().as_secs_f64();
@@ -737,7 +607,7 @@ fn bench(seed: u32, radius: i32) {
             generator.place_vegetation(&mut chunk);
             t_veg += s.elapsed().as_secs_f64();
             let s = std::time::Instant::now();
-            generator.place_features(&mut chunk, &region);
+            generator.place_features_runtime(&mut chunk);
             t_feat += s.elapsed().as_secs_f64();
             acc = acc.wrapping_add(chunk.blocks_slice()[0] as u64);
         }
@@ -752,11 +622,10 @@ fn bench(seed: u32, radius: i32) {
         n as f64 / dt.as_secs_f64()
     );
     println!(
-        "  generate {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
-        ms(t_gen),
+        "  surface {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
+        ms(t_surface),
         ms(t_ug),
         ms(t_veg),
         ms(t_feat)
     );
-    let _ = generate_chunk_with;
 }

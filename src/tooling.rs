@@ -35,10 +35,134 @@ pub mod mesh {
 }
 
 pub mod worldgen {
+    use std::collections::HashMap;
+
+    use crate::block::Block;
     use crate::chunk::Chunk;
+    use crate::mathh::IVec3;
+    use crate::worldgen::feature::{FeatureCtx, VoxelSink};
+    use crate::worldgen::rng::FeatureRng;
+
+    const FEATURE_PREVIEW_SALT: u64 = 0x0000_FE47_0000_0001;
 
     pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
         crate::worldgen::generate_chunk(seed, cx, cz)
+    }
+
+    pub fn feature_preview_names() -> &'static [&'static str] {
+        &[
+            "redwood",
+            "oak_small",
+            "oak_swamp",
+            "oak_big",
+            "spruce",
+            "birch",
+            "jungle",
+            "acacia",
+            "dark_oak",
+            "cherry",
+        ]
+    }
+
+    pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
+        let cf = configured_feature(name)?;
+        let mut sink = PreviewSink::default();
+        let mut ctx = FeatureCtx::new(&mut sink);
+        let mut rng = FeatureRng::positional(seed, FEATURE_PREVIEW_SALT, 0, 0, 0);
+        cf.feature.generate(&mut ctx, IVec3::new(0, 0, 0), &mut rng);
+
+        let mut bounds = FeatureBounds::empty();
+        let mut voxels: Vec<FeatureVoxel> = sink
+            .voxels
+            .into_iter()
+            .map(|(pos, block)| {
+                bounds.include(pos);
+                FeatureVoxel {
+                    pos: [pos.x, pos.y, pos.z],
+                    block,
+                }
+            })
+            .collect();
+        voxels.sort_by_key(|v| (v.pos[1], v.pos[2], v.pos[0], v.block.id()));
+        Some(FeaturePreview { voxels, bounds })
+    }
+
+    fn configured_feature(
+        name: &str,
+    ) -> Option<&'static crate::worldgen::feature::ConfiguredFeature> {
+        let key = name.trim().to_ascii_lowercase().replace('-', "_");
+        Some(match key.as_str() {
+            "redwood" => &crate::worldgen::data::features::REDWOOD,
+            "oak_small" | "oak" => &crate::worldgen::data::features::OAK_SMALL,
+            "oak_swamp" | "swamp_oak" => &crate::worldgen::data::features::OAK_SWAMP,
+            "oak_big" | "giant_oak" | "fancy_oak" => &crate::worldgen::data::features::OAK_BIG,
+            "spruce" => &crate::worldgen::data::features::SPRUCE,
+            "birch" => &crate::worldgen::data::features::BIRCH,
+            "jungle" => &crate::worldgen::data::features::JUNGLE,
+            "acacia" => &crate::worldgen::data::features::ACACIA,
+            "dark_oak" => &crate::worldgen::data::features::DARK_OAK,
+            "cherry" => &crate::worldgen::data::features::CHERRY,
+            _ => return None,
+        })
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct FeaturePreview {
+        pub voxels: Vec<FeatureVoxel>,
+        pub bounds: FeatureBounds,
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub struct FeatureVoxel {
+        pub pos: [i32; 3],
+        pub block: Block,
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub struct FeatureBounds {
+        pub min: [i32; 3],
+        pub max: [i32; 3],
+        pub empty: bool,
+    }
+
+    impl FeatureBounds {
+        fn empty() -> Self {
+            Self {
+                min: [0; 3],
+                max: [0; 3],
+                empty: true,
+            }
+        }
+
+        fn include(&mut self, p: IVec3) {
+            if self.empty {
+                self.min = [p.x, p.y, p.z];
+                self.max = [p.x, p.y, p.z];
+                self.empty = false;
+                return;
+            }
+            self.min[0] = self.min[0].min(p.x);
+            self.min[1] = self.min[1].min(p.y);
+            self.min[2] = self.min[2].min(p.z);
+            self.max[0] = self.max[0].max(p.x);
+            self.max[1] = self.max[1].max(p.y);
+            self.max[2] = self.max[2].max(p.z);
+        }
+    }
+
+    #[derive(Default)]
+    struct PreviewSink {
+        voxels: HashMap<IVec3, Block>,
+    }
+
+    impl VoxelSink for PreviewSink {
+        fn get(&self, p: IVec3) -> Block {
+            self.voxels.get(&p).copied().unwrap_or(Block::Air)
+        }
+
+        fn set(&mut self, p: IVec3, b: Block) {
+            self.voxels.insert(p, b);
+        }
     }
 
     pub fn generate_chunk_with(generator: &ChunkGenerator, cx: i32, cz: i32) -> Chunk {
@@ -66,6 +190,10 @@ pub mod worldgen {
             self.inner.generate(&region.inner, cx, cz)
         }
 
+        pub fn generate_surface(&self, cx: i32, cz: i32) -> Chunk {
+            self.inner.generate_surface(cx, cz)
+        }
+
         pub fn place_underground(&self, chunk: &mut Chunk) {
             self.inner.place_underground(chunk);
         }
@@ -77,42 +205,20 @@ pub mod worldgen {
         pub fn place_features(&self, chunk: &mut Chunk, region: &Region) {
             self.inner.place_features(chunk, &region.inner);
         }
+
+        pub fn place_features_runtime(&self, chunk: &mut Chunk) {
+            self.inner.place_features_runtime(chunk);
+        }
     }
 
     pub struct Region {
-        inner: crate::worldgen::classic::world::RegionCells,
-    }
-
-    impl Region {
-        pub fn river_at(&self, wx: i32, wz: i32) -> RiverColumn {
-            let river = self.inner.river_at(wx, wz);
-            RiverColumn {
-                influence: river.influence,
-                channel: river.channel,
-                distance: river.distance,
-                wet: river.wet(),
-            }
-        }
-    }
-
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    pub struct RiverColumn {
-        pub influence: f32,
-        pub channel: f32,
-        pub distance: f32,
-        wet: bool,
-    }
-
-    impl RiverColumn {
-        pub fn wet(self) -> bool {
-            self.wet
-        }
+        inner: crate::worldgen::region::RegionCells,
     }
 
     pub mod audit {
         pub use crate::worldgen::audit::{
             audit, flood_audit, relief_audit, roughness, BiomeShare, DebrisAudit, FloodAudit,
-            HeightStats, ReliefStats, RoughnessStats, SubSeaBand, RELIEF_HIST_LABELS,
+            HeightStats, ReliefStats, RoughnessStats, RELIEF_HIST_LABELS,
         };
     }
 }

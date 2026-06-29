@@ -6,14 +6,13 @@ mod definition;
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Biome {
-    Ocean,
+    Ocean = 1,
     Beach,
     River,
     Desert,
     Plains,
     Savanna,
     Forest,
-    BirchForest,
     Swamp,
     Taiga,
     SnowyTundra,
@@ -23,21 +22,22 @@ pub enum Biome {
     DeepOcean,
     Foothills,
     Wetland,
-    // --- appended (ids 17+): keep append-only; never reorder (biome ids are
+    // --- appended (ids 16+): keep append-only; never reorder (biome ids are
     // serialized into chunk bytes). ---
-    Jungle,
-    Badlands,
-    DarkForest,
+    RedwoodForest,
     OldGrowthTaiga,
     CherryGrove,
     Meadow,
     Grove,
     SnowySlopes,
-    IceSpikes,
-    MushroomFields,
     WindsweptHills,
     StonyPeaks,
+    WoodedHills,
+    MountainEdge,
+    DesertLakes,
 }
+
+pub const BIOME_COUNT: usize = data::BIOME_DEFS.len();
 
 /// Radius, in blocks, used when blending the above-water sky/fog colour across
 /// neighbouring biome columns.
@@ -144,7 +144,7 @@ impl Biome {
 /// and registry-ordering tests. (Biome exposes no public `ALL` const; this is
 /// test-only.)
 #[cfg(test)]
-const ALL_BIOMES: [Biome; 29] = [
+const ALL_BIOMES: [Biome; BIOME_COUNT] = [
     Biome::Ocean,
     Biome::Beach,
     Biome::River,
@@ -152,7 +152,6 @@ const ALL_BIOMES: [Biome; 29] = [
     Biome::Plains,
     Biome::Savanna,
     Biome::Forest,
-    Biome::BirchForest,
     Biome::Swamp,
     Biome::Taiga,
     Biome::SnowyTundra,
@@ -162,18 +161,17 @@ const ALL_BIOMES: [Biome; 29] = [
     Biome::DeepOcean,
     Biome::Foothills,
     Biome::Wetland,
-    Biome::Jungle,
-    Biome::Badlands,
-    Biome::DarkForest,
+    Biome::RedwoodForest,
     Biome::OldGrowthTaiga,
     Biome::CherryGrove,
     Biome::Meadow,
     Biome::Grove,
     Biome::SnowySlopes,
-    Biome::IceSpikes,
-    Biome::MushroomFields,
     Biome::WindsweptHills,
     Biome::StonyPeaks,
+    Biome::WoodedHills,
+    Biome::MountainEdge,
+    Biome::DesertLakes,
 ];
 
 /// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
@@ -201,9 +199,11 @@ mod tests {
     #[test]
     fn ids_are_stable_and_append_only() {
         for (id, biome) in ALL_BIOMES.into_iter().enumerate() {
-            assert_eq!(biome.id(), id as u8);
-            assert_eq!(Biome::from_id(id as u8), biome);
+            let id = id as u8 + 1;
+            assert_eq!(biome.id(), id);
+            assert_eq!(Biome::from_id(id), biome);
         }
+        assert_eq!(Biome::from_id(0), Biome::Ocean);
         assert_eq!(Biome::from_id(u8::MAX), Biome::Ocean);
     }
 

@@ -137,6 +137,12 @@ pub enum Block {
     DarkOakDoor,
     CherryDoor,
     MangroveDoor,
+    // --- Redwood update (ids 141..): the giant-redwood wood set — log, leaves,
+    // planks, and door. Appended at the end so every id above stays frozen. ---
+    RedwoodLog,
+    RedwoodLeaves,
+    RedwoodPlanks,
+    RedwoodDoor,
 }
 
 /// Secondary-use capability declared by a block's data row. This answers only
@@ -707,6 +713,10 @@ mod tests {
             Block::DarkOakDoor,
             Block::CherryDoor,
             Block::MangroveDoor,
+            Block::RedwoodLog,
+            Block::RedwoodLeaves,
+            Block::RedwoodPlanks,
+            Block::RedwoodDoor,
         ];
 
         assert_eq!(Block::ALL, expected);

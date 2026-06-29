@@ -175,6 +175,13 @@ pub enum ItemType {
     DarkOakDoor,
     CherryDoor,
     MangroveDoor,
+    // --- Redwood update: block-items for the redwood wood set. Appended at the END
+    // (ids NOT equal to their block ids) and mapped explicitly in `from_block` /
+    // `as_block`, like the other late block-items. ---
+    RedwoodLog,
+    RedwoodLeaves,
+    RedwoodPlanks,
+    RedwoodDoor,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -407,6 +414,10 @@ impl ItemType {
             Block::DarkOakDoor => ItemType::DarkOakDoor,
             Block::CherryDoor => ItemType::CherryDoor,
             Block::MangroveDoor => ItemType::MangroveDoor,
+            Block::RedwoodLog => ItemType::RedwoodLog,
+            Block::RedwoodLeaves => ItemType::RedwoodLeaves,
+            Block::RedwoodPlanks => ItemType::RedwoodPlanks,
+            Block::RedwoodDoor => ItemType::RedwoodDoor,
             _ => Self::from_id(b.id()),
         }
     }
@@ -437,6 +448,10 @@ impl ItemType {
             ItemType::DarkOakDoor => Some(Block::DarkOakDoor),
             ItemType::CherryDoor => Some(Block::CherryDoor),
             ItemType::MangroveDoor => Some(Block::MangroveDoor),
+            ItemType::RedwoodLog => Some(Block::RedwoodLog),
+            ItemType::RedwoodLeaves => Some(Block::RedwoodLeaves),
+            ItemType::RedwoodPlanks => Some(Block::RedwoodPlanks),
+            ItemType::RedwoodDoor => Some(Block::RedwoodDoor),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }
@@ -578,6 +593,7 @@ impl ItemType {
             DarkOakDoor => Tile::DarkOakDoorItem,
             CherryDoor => Tile::CherryDoorItem,
             MangroveDoor => Tile::MangroveDoorItem,
+            RedwoodDoor => Tile::RedwoodDoorItem,
             Stick => Tile::Stick,
             WoodenPickaxe => Tile::WoodenPickaxe,
             StonePickaxe => Tile::StonePickaxe,
@@ -812,6 +828,10 @@ mod tests {
             ItemType::DarkOakDoor,
             ItemType::CherryDoor,
             ItemType::MangroveDoor,
+            ItemType::RedwoodLog,
+            ItemType::RedwoodLeaves,
+            ItemType::RedwoodPlanks,
+            ItemType::RedwoodDoor,
         ];
 
         assert_eq!(ItemType::ALL, expected);

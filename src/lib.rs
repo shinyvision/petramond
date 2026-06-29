@@ -1,4 +1,4 @@
-//! Llamacraft: noise-driven voxel world with biomes, trees, rivers.
+//! Llamacraft: noise-driven voxel world with biomes and trees.
 //!
 //! Native desktop target. Worldgen runs off the render thread via an OS thread
 //! pool (rayon).

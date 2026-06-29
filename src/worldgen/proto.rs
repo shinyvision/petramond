@@ -1,8 +1,8 @@
 //! `ProtoChunk` — the scratch buffer worldgen stages write into.
 //!
-//! Strata P2: `MARGIN = 0`, so a ProtoChunk is byte-for-byte the same column as
-//! a `Chunk` and `into_chunk` is a move. P4 widens it to `16 + 2*MARGIN` so
-//! features can write into a neighbour border that is cropped on `into_chunk`.
+//! It owns the in-chunk scratch `Chunk` used by generation. Terrain fill may
+//! write block bytes directly; `into_chunk` rebuilds derived indexes before
+//! feature/runtime setters continue on the finished chunk.
 
 use crate::chunk::Chunk;
 
@@ -14,9 +14,9 @@ use crate::chunk::Chunk;
 /// no wider buffer is needed: an in-chunk write only ever reads in-chunk cells,
 /// and a feature whose footprint <= MARGIN is materialised identically by every
 /// chunk that owns part of it (seam-consistent, no double-placement). MARGIN is
-/// sized to the widest feature (the fancy oak, footprint ~5) so every tree —
-/// including big oaks rooted in a neighbour — replays seamlessly across chunks.
-pub const MARGIN: i32 = 5;
+/// sized to the widest feature (redwood branch reach + leaf blob, footprint ~9)
+/// so every tree rooted in a neighbour replays seamlessly across chunks.
+pub const MARGIN: i32 = 9;
 
 pub struct ProtoChunk {
     chunk: Chunk,
@@ -30,18 +30,27 @@ impl ProtoChunk {
     }
 
     #[inline]
+    pub fn cx(&self) -> i32 {
+        self.chunk.cx
+    }
+
+    #[inline]
+    pub fn cz(&self) -> i32 {
+        self.chunk.cz
+    }
+
+    #[inline]
     pub fn chunk_origin_world(&self) -> (i32, i32) {
         self.chunk.chunk_origin_world()
     }
 
+    /// Raw terrain buffer for the initial density fill only.
+    ///
+    /// Writes through this slice intentionally skip runtime setter bookkeeping;
+    /// `into_chunk` rebuilds the derived indexes before runtime feature edits run.
     #[inline]
-    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
-        self.chunk.set_block_raw(x, y, z, id);
-    }
-
-    #[inline]
-    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.chunk.block_raw(x, y, z)
+    pub(crate) fn terrain_blocks_mut(&mut self) -> &mut [u8] {
+        self.chunk.blocks_slice_mut()
     }
 
     #[inline]
@@ -49,8 +58,31 @@ impl ProtoChunk {
         self.chunk.set_biome(x, z, id);
     }
 
-    /// Crop the margin (a no-op at MARGIN = 0) and emit the finished chunk.
-    pub fn into_chunk(self) -> Chunk {
+    /// Finalize derived indexes and emit the finished chunk.
+    pub fn into_chunk(mut self) -> Chunk {
+        self.chunk.recompute_heightmap();
+        self.chunk.recompute_random_tick_count();
         self.chunk
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::Block;
+    use crate::chunk::idx;
+
+    #[test]
+    fn into_chunk_rebuilds_indexes_after_raw_terrain_writes() {
+        let mut proto = ProtoChunk::new(0, 0);
+        proto.terrain_blocks_mut()[idx(3, 17, 5)] = Block::Grass.id();
+
+        let chunk = proto.into_chunk();
+
+        assert_eq!(chunk.block(3, 17, 5), Block::Grass);
+        assert_eq!(chunk.surface_y(3, 5), 17);
+        assert!(chunk.has_random_tickable());
+        assert!(chunk.dirty);
+        assert!(chunk.light_dirty);
     }
 }

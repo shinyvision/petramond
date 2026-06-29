@@ -4,7 +4,7 @@
 //! and drains results: `submit` requests, `try_recv` drains.
 
 use crate::chunk::Chunk;
-use crate::worldgen::{classic::terrain::NoiseCache, driver::ChunkGenerator, generate_chunk_with};
+use crate::worldgen::{driver::ChunkGenerator, generate_chunk_with};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -46,17 +46,12 @@ impl WorkerPool {
             .saturating_sub(2)
             .max(2);
         let rx_req = Arc::new(Mutex::new(rx_req));
-        // One cache shared by every worker: the disc-fill burst submits many
-        // adjacent chunks whose 32×32 regions overlap, so pooling the per-column
-        // noise across threads samples each lattice column ~once, not ~5×.
-        let shared_cache = Arc::new(NoiseCache::new());
         let mut handles = Vec::with_capacity(n);
         for _ in 0..n {
             let rx_req = rx_req.clone();
             let tx_res = tx_res.clone();
-            let cache = shared_cache.clone();
             let mut generator_seed = seed;
-            let mut generator = ChunkGenerator::with_cache(generator_seed, cache.clone());
+            let mut generator = ChunkGenerator::new(generator_seed);
             let h = thread::spawn(move || loop {
                 let req = {
                     let g = rx_req.lock().unwrap();
@@ -66,7 +61,7 @@ impl WorkerPool {
                     Ok(r) => {
                         if r.seed != generator_seed {
                             generator_seed = r.seed;
-                            generator = ChunkGenerator::with_cache(generator_seed, cache.clone());
+                            generator = ChunkGenerator::new(generator_seed);
                         }
                         let chunk = generate_chunk_with(&generator, r.cx, r.cz);
                         if tx_res

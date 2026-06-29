@@ -48,10 +48,6 @@ pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-pub fn smoothstep01(x: f32) -> f32 {
-    smoothstep(0.0, 1.0, x)
-}
-
 /// The integer voxel coordinate containing a world-space position.
 ///
 /// Uses `floor`, not a bare `as i32` cast: truncation rounds toward zero, which

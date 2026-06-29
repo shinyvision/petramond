@@ -1,10 +1,6 @@
-//! Worldgen content tables — the single authoring surface.
+//! Shared non-biome worldgen content.
 //!
-//! Strata P2: `biomes` holds one `BiomeDef` per biome (surface composition).
-//! P3 adds `features` (configured/placed feature rows); P4 folds tints and
-//! climate-placement points in here too, so a biome is defined in exactly one
-//! place.
+//! Biome-owned terrain, surfaces, placement, vegetation, and trees live under
+//! `worldgen::biome`.
 
-pub mod biomes;
 pub mod features;
-pub mod rivers;

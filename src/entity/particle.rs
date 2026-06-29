@@ -43,6 +43,7 @@ fn tile_tint(tile: Tile) -> [f32; 3] {
         | Tile::JungleLeaves
         | Tile::MangroveLeaves
         | Tile::SpruceLeaves
+        | Tile::RedwoodLeaves
         | Tile::CherryLeaves
         | Tile::AzaleaLeaves => Biome::Plains.foliage_color(),
         _ => NO_TINT,

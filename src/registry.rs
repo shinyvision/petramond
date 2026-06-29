@@ -14,6 +14,10 @@
 /// A `#[repr(u8)]` registry key: its stable numeric id (`enum as u8`). The id is
 /// the table index, so a table is "id-ordered" iff `DEFS[k.to_id()].key() == k`.
 pub(crate) trait RegistryKey: Copy + PartialEq {
+    fn first_id() -> u8 {
+        0
+    }
+
     fn to_id(self) -> u8;
 }
 
@@ -28,14 +32,18 @@ pub(crate) trait TableEntry {
 /// `from_id` (e.g. `Block::from_id(u8::MAX) == Block::Air`).
 #[inline]
 pub(crate) fn from_id<E: TableEntry>(defs: &'static [E], id: u8, fallback: E::Key) -> E::Key {
-    defs.get(id as usize).map_or(fallback, |d| d.key())
+    let first = E::Key::first_id();
+    let Some(index) = id.checked_sub(first) else {
+        return fallback;
+    };
+    defs.get(index as usize).map_or(fallback, |d| d.key())
 }
 
 /// The `'static` row for `key`. Indexes by `key.to_id()`, guarded by the
 /// ordering `debug_assert` that every module previously inlined.
 #[inline]
 pub(crate) fn def<E: TableEntry>(defs: &'static [E], key: E::Key) -> &'static E {
-    let index = key.to_id() as usize;
+    let index = (key.to_id() - E::Key::first_id()) as usize;
     debug_assert!(
         index < defs.len() && defs[index].key() == key,
         "registry table must be ordered by key id()"
@@ -59,11 +67,16 @@ where
         "table length must equal key count"
     );
     for (id, &key) in expected.iter().enumerate() {
-        assert_eq!(key.to_id() as usize, id, "{key:?} out of id order");
+        let expected_id = id + E::Key::first_id() as usize;
+        assert_eq!(key.to_id() as usize, expected_id, "{key:?} out of id order");
         let row = &defs[id];
         assert_eq!(row.key(), key, "row {id} describes the wrong key");
         // The arbitrary fallback never masks an in-range key.
-        assert_eq!(from_id(defs, id as u8, key), key, "from_id({id}) mismatch");
+        assert_eq!(
+            from_id(defs, expected_id as u8, key),
+            key,
+            "from_id({expected_id}) mismatch"
+        );
     }
 }
 

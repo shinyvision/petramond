@@ -36,7 +36,7 @@ use crate::mob::LootTables;
 use crate::player::PlayerMode;
 use crate::player::{Player, RaycastHit};
 use crate::world::World;
-use crate::worldgen::classic::world::CascadeWorld;
+use crate::worldgen::density::surface::SurfaceDensitySystem;
 
 pub use crate::gui::MenuSlot;
 use container::ContainerMenu;
@@ -56,7 +56,7 @@ const ATTACK_COOLDOWN_TICKS: u32 = 6;
 pub struct Game {
     cam: Camera,
     world: World,
-    fallback_world: CascadeWorld,
+    fallback_world: SurfaceDensitySystem,
     player: Player,
     /// Block currently under the crosshair, refreshed each tick. Set to `None` when a
     /// mob is the closer target (so looking at a mob interrupts block selection/mining).

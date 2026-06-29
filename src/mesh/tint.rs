@@ -35,6 +35,7 @@ pub(super) fn tile_tint(tile: Tile) -> Option<TintKind> {
         Tile::JungleLeaves => Some(TintKind::Foliage),
         Tile::MangroveLeaves => Some(TintKind::Foliage),
         Tile::SpruceLeaves => Some(TintKind::Foliage),
+        Tile::RedwoodLeaves => Some(TintKind::Foliage),
         _ => None,
     }
 }

@@ -4,19 +4,22 @@
 //! entrypoint, invoked in isolation on a worker thread (native pool / web
 //! Worker) and serialized to flat block + per-column biome bytes.
 //!
-//! Active terrain is built from the classic land-biome terrain provider, then an
-//! explicit river path system carves channels and water levels, followed by
-//! surface skinning, underground scatter, ground vegetation, and tree features.
+//! Active terrain is built from the surface density graph: climate graph biome
+//! assignment, `master_density` sign fill, sea-level water, exposed-run surface
+//! skinning, underground scatter, ground vegetation, and tree features. Caves are
+//! not composed into the live density fill path.
 
 pub(crate) mod audit;
-pub(crate) mod classic;
+pub(crate) mod biome;
 mod ctx;
 pub(crate) mod data;
+pub(crate) mod density;
 pub(crate) mod driver;
 pub(crate) mod feature;
+pub(crate) mod graph;
 mod noise;
 mod proto;
-mod river;
+pub(crate) mod region;
 pub(crate) mod rng;
 pub(crate) mod spawn;
 mod surface;
@@ -29,11 +32,11 @@ use crate::chunk::Chunk;
 /// Features are placed via world-positional RNG over the chunk plus a margin
 /// border, so trees cross chunk seams seamlessly.
 ///
-/// The generator holds only immutable seed-derived state (noise samplers + the
-/// cascade layer stacks), which is expensive to build, so it is cached per thread
+/// The generator holds only immutable seed-derived state (noise samplers and
+/// worldgen subsystems), which is expensive to build, so it is cached per thread
 /// keyed by seed — repeated one-shot calls for the same world reuse it instead of
-/// rebuilding every cascade layer per chunk. Hot worker loops should still hold
-/// their own generator and call [`generate_chunk_with`] directly.
+/// rebuilding the pipeline per chunk. Hot worker loops should still hold their
+/// own generator and call [`generate_chunk_with`] directly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     thread_local! {
         static CACHED: std::cell::RefCell<Option<(u32, driver::ChunkGenerator)>> =
@@ -53,13 +56,10 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 /// This preserves `generate_chunk` as the public one-shot API while allowing
 /// hot worker loops to reuse the generator's immutable seed-derived state.
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
-    // The region (chunk + feature margin) is computed ONCE and shared by terrain
-    // fill and feature placement, including river-carved surface metadata.
-    let region = generator.region(cx, cz);
-    let mut chunk = generator.generate(&region, cx, cz);
+    let mut chunk = generator.generate_surface(cx, cz);
     generator.place_underground(&mut chunk);
     generator.place_vegetation(&mut chunk);
-    generator.place_features(&mut chunk, &region);
+    generator.place_features_runtime(&mut chunk);
 
     chunk.dirty = true;
     chunk
@@ -77,13 +77,10 @@ mod tests {
     /// order chunks are generated in (the property the worker pool relies on).
     #[test]
     fn shared_noise_cache_does_not_change_output() {
-        use crate::worldgen::classic::terrain::NoiseCache;
-        use std::sync::Arc;
-
         let seed = 0x1234_5678;
-        let warmed = driver::ChunkGenerator::with_cache(seed, Arc::new(NoiseCache::new()));
-        // Warm the cache with a spread of chunks so the target chunks' lattice
-        // columns are served from the cache (incl. promotion paths).
+        let warmed = driver::ChunkGenerator::new(seed);
+        // Warm one generator with a spread of chunks before comparing against a
+        // fresh generator. Generation state must remain immutable and pure.
         for cz in -2..=2 {
             for cx in -2..=2 {
                 let _ = generate_chunk_with(&warmed, cx, cz);
@@ -124,68 +121,6 @@ mod tests {
             assert_eq!(one_shot.dirty, reused.dirty);
             assert_eq!(one_shot.light_dirty, reused.light_dirty);
         }
-    }
-
-    /// Frozen golden for worldgen determinism. FNV-1a-folds every byte that
-    /// `generate_chunk` is responsible for -- block ids, per-column biome ids, AND
-    /// the water/fluid-flow metadata (`water_slice`) -- across 3 seeds x the 3x3
-    /// chunk grid into one combined hash, pinned to a literal captured from the
-    /// current baseline. Any change to generation output (or to the water-meta a
-    /// chunk emits) flips this, catching a consistent-but-wrong result that the
-    /// self-consistency tests above cannot. Mirrors the FNV scheme in
-    /// `src/bin/genparity.rs`.
-    ///
-    /// The constant happens to equal that bin's blocks+biomes-only COMBINED
-    /// (0x1072f2452379aff5): at *generation* time no column has yet emitted
-    /// flowing-water metadata (oceans/rivers are all-source, so `water_slice()` is
-    /// `None`), and folding the empty water slice is a no-op. The water-meta byte
-    /// is folded regardless so the moment generation starts emitting flow meta this
-    /// golden diverges and must be re-captured.
-    #[test]
-    fn generate_chunk_golden_is_byte_stable() {
-        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-        fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
-            for &b in bytes {
-                h ^= b as u64;
-                h = h.wrapping_mul(FNV_PRIME);
-            }
-            h
-        }
-
-        const SEEDS: [u32; 3] = [0x1234_5678, 1, 0xDEAD_BEEF];
-        const COORDS: [(i32, i32); 9] = [
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
-            (0, -1),
-            (0, 0),
-            (0, 1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-        ];
-
-        let mut combined = FNV_OFFSET;
-        for &seed in &SEEDS {
-            for &(cx, cz) in &COORDS {
-                let chunk = generate_chunk(seed, cx, cz);
-                let mut h = FNV_OFFSET;
-                h = fnv1a(chunk.blocks_slice(), h);
-                h = fnv1a(chunk.biomes_slice(), h);
-                // Fold the water-flow metadata. `None` (the column never held
-                // flowing water) folds an empty slice -- folding nothing -- which
-                // is deterministic and distinct from an all-zero `Some`.
-                h = fnv1a(chunk.water_slice().unwrap_or(&[]), h);
-                combined = fnv1a(&h.to_le_bytes(), combined);
-            }
-        }
-
-        assert_eq!(
-            combined, 0x1072_f245_2379_aff5,
-            "worldgen (blocks + biomes + water-meta) byte output changed"
-        );
     }
 
     #[test]

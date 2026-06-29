@@ -8,6 +8,7 @@
     { "type": "shapeless", "ingredients": ["dark_oak_log"], "result": "dark_oak_planks", "count": 4 },
     { "type": "shapeless", "ingredients": ["cherry_log"], "result": "cherry_planks", "count": 4 },
     { "type": "shapeless", "ingredients": ["mangrove_log"], "result": "mangrove_planks", "count": 4 },
+    { "type": "shapeless", "ingredients": ["redwood_log"], "result": "redwood_planks", "count": 4 },
 
     { "type": "shaped", "pattern": ["#", "#"], "key": { "#": "#planks" }, "result": "stick", "count": 4 },
     { "type": "shaped", "pattern": ["##", "##"], "key": { "#": "#planks" }, "result": "crafting_table", "count": 1 },
@@ -50,6 +51,7 @@
     { "type": "furniture", "input": "acacia_planks", "result": "acacia_door", "cost": 1 },
     { "type": "furniture", "input": "dark_oak_planks", "result": "dark_oak_door", "cost": 1 },
     { "type": "furniture", "input": "cherry_planks", "result": "cherry_door", "cost": 1 },
-    { "type": "furniture", "input": "mangrove_planks", "result": "mangrove_door", "cost": 1 }
+    { "type": "furniture", "input": "mangrove_planks", "result": "mangrove_door", "cost": 1 },
+    { "type": "furniture", "input": "redwood_planks", "result": "redwood_door", "cost": 1 }
   ]
 }

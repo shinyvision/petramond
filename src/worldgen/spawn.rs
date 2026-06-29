@@ -14,14 +14,10 @@
 //! reproducible; [`find_spawn`] feeds it real entropy.
 //!
 //! **The dry-land predicate.** A column's `surf` is its top *solid* surface
-//! height; the chunk filler floods every empty cell with `y > surf && y <=
-//! SEA_LEVEL` to water. River carving only ever *lowers* `surf` toward the
-//! channel bed (water still fills up to `SEA_LEVEL`), and ocean/lake floors are
-//! generated below sea level to begin with. So after river carving, the single
-//! test `surf >= SEA_LEVEL` means "the top solid block has no water above it" —
-//! it cleanly excludes oceans, lakes, and river channels while accepting beaches
-//! (`surf == SEA_LEVEL`), plains, and mountains. That is exactly "a solid block
-//! on the surface".
+//! height from the live surface-density region. The chunk filler floods every
+//! density-air cell at or below `SEA_LEVEL` to water, so `surf >= SEA_LEVEL`
+//! means the top solid block has no sea water above it. This excludes oceans and
+//! lakes while accepting beaches (`surf == SEA_LEVEL`), plains, and mountains.
 //!
 //! **Choosing the centre.** We first find the nearest dry-land column to the
 //! origin (an outward chunk-ring walk). If it lies within [`SEARCH_RADIUS`] the
@@ -35,8 +31,8 @@
 use crate::chunk::SEA_LEVEL;
 use crate::mathh::IVec3;
 
-use super::classic::world::CascadeWorld;
-use super::river::RiverSystem;
+use super::density::surface::SurfaceDensitySystem;
+use super::region::RegionCells;
 
 /// Radius (blocks) of the disk a spawn is drawn from, around the origin (or the
 /// nearest coast when the origin is open ocean).
@@ -59,19 +55,17 @@ const CHUNK: i32 = 16;
 /// at `surf_y + 1`. See the module docs for centre selection and the ocean
 /// fallback.
 ///
-/// `world` is borrowed so the caller can share its existing [`CascadeWorld`];
-/// `seed` is needed to build the matching river overlay.
-pub fn find_spawn(world: &CascadeWorld, seed: u32) -> IVec3 {
-    find_spawn_rng(world, seed, os_random_u64())
+pub fn find_spawn(seed: u32) -> IVec3 {
+    let world = SpawnWorld::new(seed);
+    find_spawn_rng(&world, os_random_u64())
 }
 
 /// [`find_spawn`] with an explicit random seed instead of OS entropy: the result
 /// is a pure function of `(seed, rng_seed)`, so tests are reproducible.
-fn find_spawn_rng(world: &CascadeWorld, seed: u32, rng_seed: u64) -> IVec3 {
-    let rivers = RiverSystem::new(seed);
+fn find_spawn_rng(world: &SpawnWorld, rng_seed: u64) -> IVec3 {
     let mut rng = Rng::new(rng_seed);
 
-    let nearest = match nearest_dry_land(world, &rivers) {
+    let nearest = match nearest_dry_land(world) {
         // Degenerate: no land within MAX_COAST_RADIUS. Stand at the origin water
         // surface rather than hang or panic.
         None => return IVec3::new(0, SEA_LEVEL, 0),
@@ -88,17 +82,28 @@ fn find_spawn_rng(world: &CascadeWorld, seed: u32, rng_seed: u64) -> IVec3 {
         (nearest.x, nearest.z)
     };
 
-    sample_dry_land(world, &rivers, centre, &mut rng).unwrap_or(nearest)
+    sample_dry_land(world, centre, &mut rng).unwrap_or(nearest)
+}
+
+struct SpawnWorld {
+    surface: SurfaceDensitySystem,
+}
+
+impl SpawnWorld {
+    fn new(seed: u32) -> Self {
+        Self {
+            surface: SurfaceDensitySystem::new(seed),
+        }
+    }
+
+    fn region(&self, x0: i32, z0: i32, w: usize, h: usize) -> RegionCells {
+        self.surface.region(x0, z0, w, h)
+    }
 }
 
 /// Try up to [`MAX_ATTEMPTS`] uniformly random columns inside the disk of radius
 /// [`SEARCH_RADIUS`] around `centre`, returning the first that is dry land.
-fn sample_dry_land(
-    world: &CascadeWorld,
-    rivers: &RiverSystem,
-    (cx, cz): (i32, i32),
-    rng: &mut Rng,
-) -> Option<IVec3> {
+fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> Option<IVec3> {
     let r = SEARCH_RADIUS as f32;
     let r_sq = (SEARCH_RADIUS as i64) * (SEARCH_RADIUS as i64);
     for _ in 0..MAX_ATTEMPTS {
@@ -112,7 +117,7 @@ fn sample_dry_land(
         if dx * dx + dz * dz > r_sq {
             continue; // rounding nudged it just outside the radius — retry.
         }
-        let surf = column_surface(world, rivers, wx, wz);
+        let surf = column_surface(world, wx, wz);
         if surf >= SEA_LEVEL {
             return Some(IVec3::new(wx, surf, wz));
         }
@@ -129,13 +134,13 @@ fn sample_dry_land(
 /// negative-side chunk), so the closest any *unscanned* ring (`>= r+1`) can hold
 /// is `16r + 1`. Once the best is at least that close we stop — exact nearest,
 /// terminating within ~one extra ring of finding land.
-fn nearest_dry_land(world: &CascadeWorld, rivers: &RiverSystem) -> Option<IVec3> {
+fn nearest_dry_land(world: &SpawnWorld) -> Option<IVec3> {
     let max_ring = MAX_COAST_RADIUS / CHUNK + 2;
     let mut best: Option<(i64, IVec3)> = None;
     let mut r = 0;
     loop {
         for (cx, cz) in ring_chunks(r) {
-            scan_chunk(world, rivers, cx, cz, &mut best);
+            scan_chunk(world, cx, cz, &mut best);
         }
         if let Some((best_sq, _)) = best {
             let next_min = (CHUNK as i64) * (r as i64) + 1;
@@ -154,23 +159,11 @@ fn nearest_dry_land(world: &CascadeWorld, rivers: &RiverSystem) -> Option<IVec3>
 /// Scan one chunk's 16x16 columns, updating `best` with any dry-land column
 /// closer to the origin than the current best.
 ///
-/// River carving only ever lowers `surf`, so a column can only end up dry land
-/// if its *base* surface is already at/above sea level. We therefore generate
-/// the cheap base region first and only pay for `rivers.apply` on chunks that
-/// actually contain land — pure-ocean chunks (the bulk of a large ocean) skip it
-/// — while the carved surface still decides which coastal columns are dry.
-fn scan_chunk(
-    world: &CascadeWorld,
-    rivers: &RiverSystem,
-    cx: i32,
-    cz: i32,
-    best: &mut Option<(i64, IVec3)>,
-) {
-    let mut region = world.region(cx * CHUNK, cz * CHUNK, 16, 16);
+fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec3)>) {
+    let region = world.region(cx * CHUNK, cz * CHUNK, 16, 16);
     if !region.surf.iter().any(|&s| s >= SEA_LEVEL) {
-        return; // all ocean floor — no possible dry-land column here.
+        return; // all ocean/lake floor, or no solid column.
     }
-    rivers.apply(&mut region);
     for z in 0..16i32 {
         for x in 0..16i32 {
             let surf = region.surf[(z * 16 + x) as usize];
@@ -187,19 +180,11 @@ fn scan_chunk(
     }
 }
 
-/// River-carved top-solid surface height for a single world column. Matches the
-/// per-chunk batch [`scan_chunk`] reads: river carving is a pure per-column
-/// function of the seed, so the covering region's size and origin do not change
-/// the result. Skips river carving on ocean-floor columns (rivers only lower
-/// `surf`, so a sub-sea-level base can never become dry land).
-fn column_surface(world: &CascadeWorld, rivers: &RiverSystem, wx: i32, wz: i32) -> i32 {
-    let x0 = wx.div_euclid(4) * 4;
-    let z0 = wz.div_euclid(4) * 4;
-    let mut region = world.region(x0, z0, 4, 4);
-    if region.at(wx, wz).0 < SEA_LEVEL {
-        return region.at(wx, wz).0;
-    }
-    rivers.apply(&mut region);
+/// Density top-solid surface height for a single world column. Matches the
+/// per-chunk batch [`scan_chunk`] reads because density lattice sampling is
+/// world-anchored.
+fn column_surface(world: &SpawnWorld, wx: i32, wz: i32) -> i32 {
+    let region = world.region(wx, wz, 1, 1);
     region.at(wx, wz).0
 }
 
@@ -266,11 +251,11 @@ mod tests {
     #[test]
     fn find_spawn_rng_is_deterministic() {
         for &seed in &SEEDS {
-            let world = CascadeWorld::new(seed);
+            let world = SpawnWorld::new(seed);
             for rng_seed in [0u64, 1, 99, 1_000_000] {
                 assert_eq!(
-                    find_spawn_rng(&world, seed, rng_seed),
-                    find_spawn_rng(&world, seed, rng_seed),
+                    find_spawn_rng(&world, rng_seed),
+                    find_spawn_rng(&world, rng_seed),
                     "seed {seed:#x} rng {rng_seed}"
                 );
             }
@@ -281,14 +266,13 @@ mod tests {
     #[ignore = "diagnostic: prints spawn placement, distance and timing per seed"]
     fn diag_spawn_report() {
         for seed in 0u32..16 {
-            let world = CascadeWorld::new(seed);
-            let rivers = RiverSystem::new(seed);
-            let origin = column_surface(&world, &rivers, 0, 0);
+            let world = SpawnWorld::new(seed);
+            let origin = column_surface(&world, 0, 0);
             let t0 = std::time::Instant::now();
-            let p = find_spawn_rng(&world, seed, 0xC0FFEE);
+            let p = find_spawn_rng(&world, 0xC0FFEE);
             let dt = t0.elapsed();
             let dist = (dist_sq(p) as f64).sqrt();
-            let surf = column_surface(&world, &rivers, p.x, p.z);
+            let surf = column_surface(&world, p.x, p.z);
             eprintln!(
                 "seed {seed:>2}: origin_surf {origin:>3} ({}) -> spawn ({:>5},{:>3},{:>5}) surf {surf:>3} dist {dist:>7.1}  in {:?}",
                 if origin >= SEA_LEVEL { "LAND " } else { "OCEAN" },

@@ -13,6 +13,7 @@ use crate::biome::Biome;
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::mathh::smoothstep;
+use crate::worldgen::biome::{spec, CoverCluster};
 
 use super::super::rng::FeatureRng;
 
@@ -68,22 +69,13 @@ fn pick_plant(
     wz: i32,
     rng: &mut FeatureRng,
 ) -> Option<Block> {
-    use Biome::*;
     use Block::*;
+    let vegetation = spec(biome).vegetation;
 
-    // Dry sand surfaces: sparse desert / badlands dead bushes + the occasional
-    // cactus. Dead bushes are deliberately rare so deserts read as open sand.
     if matches!(surf, Sand | RedSand) {
-        if !matches!(biome, Desert | Badlands | Beach) || !rng.chance(0.007) {
-            return None;
-        }
-        return Some(if rng.next_i32(0, 99) < 45 {
-            DeadBush
-        } else {
-            Cactus
-        });
+        return vegetation.sand_cover.and_then(|picker| picker(rng));
     }
-    // Mushroom-island mycelium: dense mushrooms.
+
     if surf == Mycelium {
         if !rng.chance(0.10) {
             return None;
@@ -94,55 +86,57 @@ fn pick_plant(
             BrownMushroom
         });
     }
-    // Podzol (old-growth taiga / grove): ferns + mushrooms.
+
     if surf == Podzol {
-        if !rng.chance(0.10) {
+        if !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
             return None;
         }
-        let r = rng.next_i32(0, 99);
-        return Some(if r < 58 {
-            Fern
-        } else if r < 80 {
-            ShortGrass
-        } else if r < 90 {
-            RedMushroom
-        } else {
-            BrownMushroom
-        });
+        return vegetation.podzol_cover.and_then(|picker| picker(rng));
     }
-    // Everything else only vegetates on grass.
+
     if surf != Grass {
         return None;
     }
 
-    // (1) Flower patch — checked first, then grass, so the draw order is fixed.
-    let palette = flower_palette(biome);
+    let palette = vegetation.flower_palette;
     if !palette.is_empty() {
-        let (coverage, in_patch_density) = flower_params(biome);
-        // Inside a flower patch when the presence field is in the top `coverage`.
-        let presence = patch_field(seed, PATCH_PRESENCE_SALT, wx, wz);
-        if presence > 1.0 - coverage && rng.chance(in_patch_density) {
-            let kind = patch_field(seed, PATCH_TYPE_SALT, wx, wz);
+        let presence = patch_field(seed, PATCH_PRESENCE_SALT, wx, wz, PATCH_PERIOD);
+        if presence > 1.0 - vegetation.flower_coverage && rng.chance(vegetation.flower_density) {
+            let kind = patch_field(seed, PATCH_TYPE_SALT, wx, wz, PATCH_PERIOD);
             let idx = ((kind * palette.len() as f32) as usize).min(palette.len() - 1);
             return Some(palette[idx]);
         }
     }
 
-    // (2) Grass-tuft / fern scatter — the common ground cover everywhere.
-    let (tuft, density) = grass_cover(biome);
-    if rng.chance(density) {
-        return Some(tuft);
+    if let Some(picker) = vegetation.grass_cover {
+        if !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
+            return None;
+        }
+        return picker(rng);
+    }
+    if rng.chance(vegetation.grass_density) {
+        return Some(vegetation.grass_tuft);
     }
     None
+}
+
+/// Whether ground cover is allowed at this column under the biome's optional
+/// cluster mask: with no mask, always; otherwise only inside a low-frequency
+/// patch (so ferns/tufts form clumps with bare ground between).
+fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i32) -> bool {
+    match cluster {
+        None => true,
+        Some(c) => patch_field(seed, c.salt, wx, wz, c.period) < c.coverage,
+    }
 }
 
 /// Smooth low-frequency value field in `[0,1)` at world `(wx,wz)`: hashed lattice
 /// corners with a smoothstep bilinear blend, so flower patches are organic blobs
 /// rather than a hard grid. Pure function of `(seed, salt, wx, wz)` — seamless
 /// across chunk borders.
-fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32) -> f32 {
-    let fx = wx as f32 / PATCH_PERIOD;
-    let fz = wz as f32 / PATCH_PERIOD;
+pub(crate) fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32, period: f32) -> f32 {
+    let fx = wx as f32 / period;
+    let fz = wz as f32 / period;
     let x0 = fx.floor() as i32;
     let z0 = fz.floor() as i32;
     let tx = smoothstep(0.0, 1.0, fx - x0 as f32);
@@ -155,52 +149,4 @@ fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32) -> f32 {
     let a = c00 + (c10 - c00) * tx;
     let b = c01 + (c11 - c01) * tx;
     a + (b - a) * tz
-}
-
-/// A biome's flower species palette. A patch is made of exactly ONE entry, chosen
-/// by the species field. Empty = no flowers (grass/fern only).
-fn flower_palette(biome: Biome) -> &'static [Block] {
-    use Biome::*;
-    use Block::*;
-    match biome {
-        Meadow => &[Dandelion, Poppy, OxeyeDaisy, Cornflower, Allium, AzureBluet],
-        Plains => &[Dandelion, Poppy, OxeyeDaisy, Cornflower, AzureBluet],
-        CherryGrove => &[Allium, OxeyeDaisy, Poppy],
-        Forest => &[Poppy, Dandelion, OxeyeDaisy],
-        BirchForest => &[OxeyeDaisy, Cornflower, Dandelion],
-        _ => &[],
-    }
-}
-
-/// `(patch coverage, within-patch density)` per biome. Coverage is the fraction of
-/// the biome inside flower patches; density is how thickly flowers stand within a
-/// patch. Tuned so flower biomes are lush and everything else only has occasional
-/// patches.
-fn flower_params(biome: Biome) -> (f32, f32) {
-    use Biome::*;
-    match biome {
-        Meadow => (0.60, 0.45),
-        CherryGrove => (0.45, 0.40),
-        Plains => (0.28, 0.30),
-        Forest => (0.16, 0.22),
-        BirchForest => (0.16, 0.22),
-        _ => (0.0, 0.0),
-    }
-}
-
-/// The common ground-cover tuft for a biome and how often it stands. Conifer/cold
-/// biomes get ferns; everywhere else short grass.
-fn grass_cover(biome: Biome) -> (Block, f32) {
-    use Biome::*;
-    use Block::*;
-    match biome {
-        Taiga | SnowyTaiga | Grove | OldGrowthTaiga => (Fern, 0.12),
-        Jungle => (Fern, 0.20),
-        Meadow => (ShortGrass, 0.16),
-        Plains | Savanna => (ShortGrass, 0.14),
-        Forest | BirchForest | DarkForest | CherryGrove => (ShortGrass, 0.11),
-        Swamp | Wetland => (ShortGrass, 0.10),
-        WindsweptHills | Foothills => (ShortGrass, 0.06),
-        _ => (ShortGrass, 0.05),
-    }
 }

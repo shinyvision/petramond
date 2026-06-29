@@ -15,7 +15,9 @@ pub const CHUNK_SY: usize = 256;
 pub const SECTION_SIZE: usize = 16;
 pub const SECTION_COUNT: usize = CHUNK_SY / SECTION_SIZE;
 
-pub const SEA_LEVEL: i32 = 64;
+// Matches the reference overworld sea level so the land/water line aligns with the
+// reference terrain (offset-0 land sits at ≈63.5, just above the waterline).
+pub const SEA_LEVEL: i32 = 63;
 
 pub const VOLUME: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ;
 

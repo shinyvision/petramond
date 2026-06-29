@@ -2,7 +2,6 @@ use super::face::{should_flip, vertex_ao, FACES};
 use super::*;
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
-use crate::worldgen::generate_chunk;
 
 /// The packed shade index must decode (via SHADES) to the same float the old
 /// per-vertex `Face::shade()` produced -- and SHADES must match the literal
@@ -67,37 +66,18 @@ fn cross_plant_emits_double_sided_billboards() {
 /// (only water feeds it now) and a non-empty opaque buffer.
 #[test]
 fn leaves_go_to_opaque_pass() {
-    let seed = 0x1234_5678u32;
-    for cz in 0..16 {
-        for cx in 0..16 {
-            let mut c = generate_chunk(seed, cx, cz);
-            let (mut leaf, mut water) = (false, false);
-            for y in 0..CHUNK_SY {
-                for z in 0..CHUNK_SZ {
-                    for x in 0..CHUNK_SX {
-                        match Block::from_id(c.block_raw(x, y, z)) {
-                            Block::OakLeaves => leaf = true,
-                            Block::Water => water = true,
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            if leaf && !water {
-                let mesh = mesh_solo(&mut c);
-                assert!(
-                    mesh.transparent_idx.is_empty(),
-                    "leaves+no-water chunk should have an empty transparent buffer"
-                );
-                assert!(
-                    !mesh.opaque_idx.is_empty(),
-                    "leaves should fill the opaque buffer"
-                );
-                return;
-            }
-        }
-    }
-    panic!("no leaf-bearing, water-free chunk found to test");
+    let mut c = Chunk::new(0, 0);
+    c.set_block_raw(8, 64, 8, Block::OakLeaves.id());
+
+    let mesh = mesh_solo(&mut c);
+    assert!(
+        mesh.transparent_idx.is_empty(),
+        "leaves+no-water chunk should have an empty transparent buffer"
+    );
+    assert!(
+        !mesh.opaque_idx.is_empty(),
+        "leaves should fill the opaque buffer"
+    );
 }
 
 fn edge_water_mesh(east_chunk_loaded: bool) -> ChunkMesh {

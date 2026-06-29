@@ -223,22 +223,21 @@ pub static MOB_DEFS: &[MobDef] = &[MobDef {
     cap: 8,
     spawn: SpawnRule {
         // Owls settle in wooded country, perched on the canopy or down on grass.
-        biomes: &[Biome::Forest, Biome::BirchForest],
+        biomes: &[Biome::Forest, Biome::RedwoodForest],
         ground: &[Block::OakLeaves, Block::BirchLeaves, Block::Grass],
     },
     habitat: Habitat {
         // Open / arid / watery country an owl won't wander into.
         avoid: &[
             Biome::Savanna,
-            Biome::Badlands,
             Biome::Ocean,
             Biome::DeepOcean,
             Biome::Beach,
             Biome::Plains,
             Biome::Desert,
         ],
-        // Drawn back to forest — birch included, so a strayed owl drifts home.
-        prefer: &[Biome::Forest, Biome::BirchForest],
+        // Drawn back to forest, so a strayed owl drifts home.
+        prefer: &[Biome::Forest, Biome::RedwoodForest],
     },
     avoid_water: true,
     make_brain: behavior::owl_brain,

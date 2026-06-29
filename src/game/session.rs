@@ -9,7 +9,7 @@ use crate::mob::load_loot;
 use crate::player::Player;
 use crate::save::{LevelData, WorldSave};
 use crate::world::World;
-use crate::worldgen::classic::world::CascadeWorld;
+use crate::worldgen::density::surface::SurfaceDensitySystem;
 
 use super::container::ContainerMenu;
 use super::drops::DropQueue;
@@ -24,8 +24,8 @@ impl Game {
     pub fn new(mut cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
         let opened = open_session(world_name);
         let seed = opened.level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
-        let fallback_world = CascadeWorld::new(seed);
-        let player = player_for_session(opened.level.as_ref(), &fallback_world, seed);
+        let fallback_world = SurfaceDensitySystem::new(seed);
+        let player = player_for_session(opened.level.as_ref(), seed);
 
         sync_camera_to_player(&mut cam, &player);
 
@@ -112,14 +112,10 @@ fn open_session(world_name: &str) -> OpenedSession {
     }
 }
 
-fn player_for_session(
-    level: Option<&LevelData>,
-    fallback_world: &CascadeWorld,
-    seed: u32,
-) -> Player {
+fn player_for_session(level: Option<&LevelData>, seed: u32) -> Player {
     match level {
         Some(level) => restore_player(level),
-        None => spawn_player(fallback_world, seed),
+        None => spawn_player(seed),
     }
 }
 
@@ -134,8 +130,8 @@ fn restore_player(level: &LevelData) -> Player {
     player
 }
 
-fn spawn_player(fallback_world: &CascadeWorld, seed: u32) -> Player {
-    let surface = crate::worldgen::spawn::find_spawn(fallback_world, seed);
+fn spawn_player(seed: u32) -> Player {
+    let surface = crate::worldgen::spawn::find_spawn(seed);
     let feet = Vec3::new(
         surface.x as f32 + 0.5,
         (surface.y + 1) as f32,

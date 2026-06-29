@@ -7,14 +7,12 @@
 
 use crate::biome::Biome;
 use crate::chunk::{CHUNK_SX, CHUNK_SZ};
-use crate::worldgen::river::RiverColumn;
 
 const N: usize = CHUNK_SX * CHUNK_SZ;
 
 pub struct ColumnGrid {
     pub surf: [i32; N],
     pub biome: [Biome; N],
-    pub river: [RiverColumn; N],
 }
 
 impl Default for ColumnGrid {
@@ -22,7 +20,6 @@ impl Default for ColumnGrid {
         Self {
             surf: [0; N],
             biome: [Biome::Ocean; N],
-            river: [RiverColumn::default(); N],
         }
     }
 }
