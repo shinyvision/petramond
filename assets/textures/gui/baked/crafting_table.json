@@ -331,7 +331,7 @@
     }
   ],
   "hover": {
-    "image": "crafting_table_hover.png",
+    "image": "chest_hover.png",
     "margin": 4,
     "fit": {
       "mode": "stretch"

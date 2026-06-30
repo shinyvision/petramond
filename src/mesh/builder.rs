@@ -3,7 +3,9 @@ use glam::{IVec3, Vec3};
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
 use crate::block_model::{self, BlockModelKind};
-use crate::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE, SKY_FULL};
+#[cfg(test)]
+use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
 use crate::section::Section;
 use crate::torch::{warm_amount, warm_tint};
@@ -46,20 +48,14 @@ impl MeshOptions {
     };
 }
 
-/// The two cross-chunk lookups that `build_mesh_with_context` needs beyond the
-/// block/biome/light triple, bundled so the "no neighbours" defaults live in one
-/// place instead of being re-spelled as stub closures at each entry point.
+#[cfg(test)]
 struct MeshContext {
-    /// Flowing-water metadata at a world voxel (0 = source/none).
     neighbour_water: fn(i32, i32, i32) -> u8,
-    /// Whether the chunk owning a world column is loaded (gates water edge culling).
     neighbour_chunk_loaded: fn(i32, i32) -> bool,
 }
 
+#[cfg(test)]
 impl MeshContext {
-    /// Defaults for meshing a chunk in isolation: no flowing-water metadata across
-    /// borders (everything reads as a source), and every neighbour treated as
-    /// loaded. Used by `build_mesh` (and the test-only entry points).
     fn standalone() -> Self {
         Self {
             neighbour_water: |_, _, _| 0,
@@ -68,12 +64,7 @@ impl MeshContext {
     }
 }
 
-/// Build the mesh for one chunk. Neighbour chunk block lookups are needed for
-/// cross-chunk face culling: pass them via `neighbour_block`.
-/// `neighbour_biome(wx, wz)` returns biome id at world column; used for
-/// biome-blend tints (grass top / water / leaves). `neighbour_light(wx, wy, wz)`
-/// returns the cached skylight (x2 scale) at a world voxel -- routed to the owning
-/// chunk's stored band -- so meshing just SAMPLES light, never recomputes it.
+#[cfg(test)]
 pub fn build_mesh(
     chunk: &Chunk,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
@@ -93,10 +84,7 @@ pub fn build_mesh(
     )
 }
 
-/// `neighbour_water(wx, wy, wz)` returns the flowing-water metadata byte at a
-/// world voxel (0 = source/none), routed to the owning chunk just like
-/// `neighbour_block`, so water surface heights and flow direction read correctly
-/// across chunk borders.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn build_mesh_lods_with_loaded_neighbors(
     chunk: &Chunk,
@@ -139,9 +127,6 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     mesh
 }
 
-/// Standalone mesh with explicit [`MeshOptions`] (e.g. the far-leaf LOD), for the
-/// LOD/leaf tests. Production reaches the options via
-/// [`build_mesh_lods_with_loaded_neighbors`].
 #[cfg(test)]
 pub fn build_mesh_with_options(
     chunk: &Chunk,
@@ -281,7 +266,7 @@ fn section_geometry(
                 let wx = ox + lx as i32;
                 let wy = oy + ly as i32;
                 let wz = oz + lz as i32;
-                let ci = lz * CHUNK_SX + lx;
+                let ci = lz * SECTION_SIZE + lx;
 
                 if block.render_shape() == RenderShape::Cross {
                     let tile = block.tiles()[0];
@@ -492,6 +477,7 @@ fn section_geometry(
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn build_mesh_with_context(
     chunk: &Chunk,
@@ -517,6 +503,7 @@ fn build_mesh_with_context(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn chunk_geometry(
     chunk: &Chunk,

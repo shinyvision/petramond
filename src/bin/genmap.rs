@@ -575,61 +575,6 @@ fn main() {
         ),
         "flood" => flood_audit(seed),
         "relief" => relief_audit(seed),
-        "bench" => bench(seed, arg.unwrap_or(24)),
         _ => render_topdown(seed, &out, false),
     }
-}
-
-/// Time the game per-chunk generation path (one reused generator, like the
-/// worker), reporting chunks/sec over a `radius`-chunk square.
-fn bench(seed: u32, radius: i32) {
-    use llamacraft::tooling::worldgen::{generate_chunk_with, ChunkGenerator};
-    let generator = ChunkGenerator::new(seed);
-    // Warm up (touch a few chunks) so allocation/codepaths are hot.
-    for cz in -1..=1 {
-        for cx in -1..=1 {
-            let _ = generate_chunk_with(&generator, cx, cz);
-        }
-    }
-    let n = (2 * radius + 1) * (2 * radius + 1);
-    let t0 = std::time::Instant::now();
-    let mut acc = 0u64;
-    let (mut t_surface, mut t_cave, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0, 0.0);
-    for cz in -radius..=radius {
-        for cx in -radius..=radius {
-            let s = std::time::Instant::now();
-            let mut chunk = generator.generate_surface(cx, cz);
-            t_surface += s.elapsed().as_secs_f64();
-            let s = std::time::Instant::now();
-            generator.carve_caves(&mut chunk);
-            t_cave += s.elapsed().as_secs_f64();
-            let s = std::time::Instant::now();
-            generator.place_underground(&mut chunk);
-            t_ug += s.elapsed().as_secs_f64();
-            let s = std::time::Instant::now();
-            generator.place_vegetation(&mut chunk);
-            t_veg += s.elapsed().as_secs_f64();
-            let s = std::time::Instant::now();
-            generator.place_features_runtime(&mut chunk);
-            t_feat += s.elapsed().as_secs_f64();
-            acc = acc.wrapping_add(chunk.blocks_slice()[0] as u64);
-        }
-    }
-    let dt = t0.elapsed();
-    let per = dt.as_secs_f64() * 1000.0 / n as f64;
-    let ms = |t: f64| t * 1000.0 / n as f64;
-    println!(
-        "bench: {n} chunks {:.3}s = {:.3} ms/chunk ({:.0}/s) [acc {acc}]",
-        dt.as_secs_f64(),
-        per,
-        n as f64 / dt.as_secs_f64()
-    );
-    println!(
-        "  surface {:.3}  caves {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
-        ms(t_surface),
-        ms(t_cave),
-        ms(t_ug),
-        ms(t_veg),
-        ms(t_feat)
-    );
 }

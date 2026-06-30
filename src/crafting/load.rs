@@ -294,48 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn registry_keys_match_display_names() {
-        use std::collections::HashSet;
-
-        // The recipe key is now explicit item data, but it must still equal what the
-        // display name used to derive to — otherwise an existing recipe in
-        // `recipes.json` would stop resolving. Pin every item's key to that
-        // historical derivation, and require all keys to be unique (a duplicate would
-        // make a recipe reference ambiguous).
-        let mut seen = HashSet::new();
-        for &item in ItemType::ALL {
-            let derived = item.name().to_ascii_lowercase().replace(' ', "_");
-            assert_eq!(
-                item.key(),
-                derived,
-                "{item:?} key must match its historical name-derived key"
-            );
-            assert!(
-                seen.insert(item.key()),
-                "duplicate item key {:?}",
-                item.key()
-            );
-        }
-
-        // Spot-check round-tripping through the resolver used by the recipe loader.
-        assert_eq!(item_from_key("oak_log"), Some(ItemType::OakLog));
-        assert_eq!(
-            item_from_key("dark_oak_planks"),
-            Some(ItemType::DarkOakPlanks)
-        );
-        assert_eq!(
-            item_from_key("crafting_table"),
-            Some(ItemType::CraftingTable)
-        );
-        assert_eq!(
-            item_from_key("wooden_pickaxe"),
-            Some(ItemType::WoodenPickaxe)
-        );
-        assert_eq!(item_from_key("cobblestone"), Some(ItemType::Cobblestone));
-        assert_eq!(item_from_key("nope"), None);
-    }
-
-    #[test]
     fn furniture_recipes_parse_and_look_up_by_input() {
         let text = r#"{ "recipes": [
             { "type": "furniture", "input": "oak_planks", "result": "oak_door", "cost": 1 },

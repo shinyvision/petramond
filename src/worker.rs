@@ -112,18 +112,14 @@ impl WorkerPool {
                 // shrink the pool until generation stalls. The generator is only borrowed,
                 // not mutated, so it stays valid after a caught unwind.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
-                    GenJob::Column { pos, .. } => {
-                        let t = std::time::Instant::now();
-                        let col = Arc::new(generator.generate_column_gen(pos.cx, pos.cz));
-                        crate::perf::GEN_COLUMN.record(t.elapsed().as_nanos() as u64);
-                        GenOutput::Column { pos, col }
-                    }
-                    GenJob::Section { sp, col, .. } => {
-                        let t = std::time::Instant::now();
-                        let section = generator.generate_section(sp, &col);
-                        crate::perf::GEN_SECTION.record(t.elapsed().as_nanos() as u64);
-                        GenOutput::Section { sp, section }
-                    }
+                    GenJob::Column { pos, .. } => GenOutput::Column {
+                        pos,
+                        col: Arc::new(generator.generate_column_gen(pos.cx, pos.cz)),
+                    },
+                    GenJob::Section { sp, col, .. } => GenOutput::Section {
+                        sp,
+                        section: generator.generate_section(sp, &col),
+                    },
                 }));
                 let out = match result {
                     Ok(out) => out,

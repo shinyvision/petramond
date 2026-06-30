@@ -17,7 +17,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::chunk::{SectionPos, SECTION_MIN_CY};
-use crate::save::codec::{Reader, Writer};
+use crate::save::codec::{put_u16, put_u32, Reader};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
 pub const REGION_SHIFT: i32 = 5;
@@ -99,15 +99,15 @@ pub fn write_region(path: &Path, records: &HashMap<u16, Vec<u8>>) -> io::Result<
         };
     }
     let mut buf = Vec::new();
-    buf.put_u32(MAGIC);
-    buf.put_u16(VERSION);
-    buf.put_u16(records.len() as u16);
+    put_u32(&mut buf, MAGIC);
+    put_u16(&mut buf, VERSION);
+    put_u16(&mut buf, records.len() as u16);
     // Stable order → reproducible files (nicer for diffing and tests).
     let mut entries: Vec<(&u16, &Vec<u8>)> = records.iter().collect();
     entries.sort_by_key(|(k, _)| **k);
     for (lidx, blob) in entries {
-        buf.put_u16(*lidx);
-        buf.put_u32(blob.len() as u32);
+        put_u16(&mut buf, *lidx);
+        put_u32(&mut buf, blob.len() as u32);
         buf.extend_from_slice(blob);
     }
     let tmp = path.with_extension("tmp");

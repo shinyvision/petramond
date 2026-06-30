@@ -181,7 +181,7 @@ const TILES: &[(&str, &str)] = &[
     ("chest_front", "chest_front.png"),
     ("chest_side", "chest_side.png"),
     ("chest_lid_front", "chest_lid_front.png"),
-    ("chest_lid_side", "chest_lid_side.png"),
+    ("chest_lid_side", "chest_lid_front.png"),
     ("chest_inside", "chest_inside.png"),
     ("chest_latch", "chest_latch.png"),
     // Torch update (Survival 0.1): the full torch sprite (item icon + held), plus

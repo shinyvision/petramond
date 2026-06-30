@@ -2,7 +2,6 @@ use crate::block::Block;
 use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use crate::column::NO_SURFACE;
 use crate::section::SectionSummary;
-use std::sync::Arc;
 
 use super::store::World;
 
@@ -26,7 +25,7 @@ impl World {
             }
         }
         {
-            let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) else {
+            let Some(s) = self.section_mut(pos) else {
                 return false;
             };
             s.set_block(lx, ly, lz, b);

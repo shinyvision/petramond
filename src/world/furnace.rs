@@ -30,7 +30,7 @@ impl World {
         }
 
         for (cpos, pos) in relit {
-            self.mark_dirty_pos(cpos);
+            self.queue_dirty_mesh(cpos);
             // A furnace's lit-state flip changes its block-light emission. The
             // announce re-floods the 3x3 light neighbourhood, and that relight then
             // re-meshes every chunk the glow reaches (same path a torch placement

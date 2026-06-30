@@ -21,7 +21,7 @@ use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
 use super::path::is_foothold;
-use super::{def, Instance, Mob, MobRng, ALL_MOBS};
+use super::{def, Instance, Mob, MobRng, MOB_DEFS};
 
 /// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
 const MIN_PLAYER_DIST: f32 = 50.0;
@@ -135,7 +135,7 @@ fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32
 fn choose_kind(rng: &mut MobRng, has_room: &impl Fn(Mob) -> bool) -> Option<Mob> {
     let mut chosen = None;
     let mut seen = 0i32;
-    for &m in ALL_MOBS {
+    for m in MOB_DEFS.iter().map(|d| d.mob) {
         if !has_room(m) {
             continue;
         }

@@ -87,7 +87,7 @@ async fn new_renderer_inner(
     let sample_count = 1u32;
     surface.configure(&device, &config);
 
-    let (atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
+    let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniforms"),
         contents: bytemuck::cast_slice(&[Uniforms {
@@ -124,15 +124,15 @@ async fn new_renderer_inner(
     // dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
     // `mob::MOB_DEFS` — no renderer edit. A model parse failure degrades to an empty
     // model (that species just doesn't draw) rather than crashing the renderer.
-    let mob_gpu: Vec<MobGpu> = crate::mob::ALL_MOBS
+    let mob_gpu: Vec<MobGpu> = crate::mob::MOB_DEFS
         .iter()
-        .map(|&kind| {
-            let d = crate::mob::def(kind);
+        .map(|d| {
+            let kind = d.mob;
             // Borrow this species' precached model (compiled once on startup, shared with
             // the simulation — see `crate::mob::model`). The renderer never reads a
             // `.bbmodel`: at runtime the `.llmob` + this in-memory `Model` are golden.
             let model = crate::mob::model(kind);
-            let (texture, view, sampler) = create_model_texture(
+            let (_texture, view, sampler) = create_model_texture(
                 &device,
                 &queue,
                 &model.texture_rgba,
@@ -169,9 +169,6 @@ async fn new_renderer_inner(
             MobGpu {
                 model,
                 scale: d.scale,
-                texture,
-                view,
-                sampler,
                 bind,
                 draw: DynamicDraw::new(
                     pipelines.mob_pipe.clone(),
@@ -195,7 +192,7 @@ async fn new_renderer_inner(
     // this pass just draws it with full-block lighting already baked in.
     let model_atlas = crate::block_model::atlas();
     let (matlas_rgba, matlas_w, matlas_h) = model_atlas.texture();
-    let (model_atlas_texture, model_atlas_view, model_atlas_sampler) =
+    let (_model_atlas_texture, model_atlas_view, model_atlas_sampler) =
         create_model_texture(&device, &queue, matlas_rgba, matlas_w, matlas_h);
     let model_atlas_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("model atlas bg"),
@@ -310,9 +307,6 @@ async fn new_renderer_inner(
         device,
         queue,
         config,
-        atlas_texture,
-        atlas_view,
-        atlas_sampler,
         sky_pipe: pipelines.sky_pipe,
         sky_bind: pipelines.sky_bind,
         opaque_pipe: pipelines.opaque_pipe,
@@ -374,9 +368,6 @@ async fn new_renderer_inner(
         ),
         mob_gpu,
         model_pipe: model_pipe.clone(),
-        model_atlas_texture,
-        model_atlas_view,
-        model_atlas_sampler,
         model_atlas_bind,
         item_model_entity_draw: DynamicDraw::new(
             model_pipe,

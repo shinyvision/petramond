@@ -3,8 +3,6 @@
 //! This module classifies a sampled climate vector from the density graph into
 //! a final game-facing [`Biome`] without shaping terrain or placing blocks.
 
-#![allow(dead_code)] // Depth-aware hooks remain reserved for later stages.
-
 use crate::biome::Biome;
 use crate::worldgen::density::terrain::channels;
 use crate::worldgen::graph::{SamplePoint, ScalarGraph};
@@ -18,31 +16,29 @@ pub(crate) const CLIMATE_SAMPLE_CELL_Z: i32 = 4;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ClimateAxis {
+    #[cfg(test)]
     Temperature,
+    #[cfg(test)]
     Humidity,
     Continentality,
+    #[cfg(test)]
     Erosion,
+    #[cfg(test)]
     Variance,
-    Depth,
 }
 
 impl ClimateAxis {
-    const SURFACE: [Self; SURFACE_AXIS_COUNT] = [
-        Self::Temperature,
-        Self::Humidity,
-        Self::Continentality,
-        Self::Erosion,
-        Self::Variance,
-    ];
-
-    const fn surface_index(self) -> Option<usize> {
+    const fn index(self) -> usize {
         match self {
-            Self::Temperature => Some(0),
-            Self::Humidity => Some(1),
-            Self::Continentality => Some(2),
-            Self::Erosion => Some(3),
-            Self::Variance => Some(4),
-            Self::Depth => None,
+            #[cfg(test)]
+            Self::Temperature => 0,
+            #[cfg(test)]
+            Self::Humidity => 1,
+            Self::Continentality => 2,
+            #[cfg(test)]
+            Self::Erosion => 3,
+            #[cfg(test)]
+            Self::Variance => 4,
         }
     }
 }
@@ -54,11 +50,6 @@ pub(crate) struct AxisRange {
 }
 
 impl AxisRange {
-    pub(crate) const ANY_SURFACE: Self = Self {
-        min: -1.0,
-        max: 1.0,
-    };
-
     pub(crate) const fn new(min: f32, max: f32) -> Self {
         Self { min, max }
     }
@@ -123,10 +114,7 @@ impl SurfaceClimate {
     }
 
     pub(crate) const fn get(self, axis: ClimateAxis) -> Option<f32> {
-        match axis.surface_index() {
-            Some(index) => Some(self.axes[index]),
-            None => None,
-        }
+        Some(self.axes[axis.index()])
     }
 
     const fn axes(self) -> [f32; SURFACE_AXIS_COUNT] {
@@ -135,39 +123,8 @@ impl SurfaceClimate {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct ClimateVector {
-    surface: SurfaceClimate,
-    depth: Option<f32>,
-}
-
-impl ClimateVector {
-    pub(crate) const fn surface(surface: SurfaceClimate) -> Self {
-        Self {
-            surface,
-            depth: None,
-        }
-    }
-
-    pub(crate) const fn with_depth(surface: SurfaceClimate, depth: f32) -> Self {
-        Self {
-            surface,
-            depth: Some(depth),
-        }
-    }
-
-    pub(crate) const fn surface_climate(self) -> SurfaceClimate {
-        self.surface
-    }
-
-    pub(crate) const fn depth(self) -> Option<f32> {
-        self.depth
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClimateRect {
     axes: [AxisRange; SURFACE_AXIS_COUNT],
-    depth: Option<AxisRange>,
     /// A flat additive fitness penalty (added as `offset²`) used to bias ties
     /// toward the intended biome. Defaults to 0; rarely nonzero.
     offset: f32,
@@ -183,46 +140,31 @@ impl ClimateRect {
     ) -> Self {
         Self {
             axes: [temperature, humidity, continentality, erosion, variance],
-            depth: None,
             offset: 0.0,
         }
     }
 
-    pub(crate) const fn with_depth(mut self, depth: AxisRange) -> Self {
-        self.depth = Some(depth);
-        self
-    }
-
+    #[cfg(test)]
     pub(crate) const fn with_offset(mut self, offset: f32) -> Self {
         self.offset = offset;
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn axis_range(self, axis: ClimateAxis) -> Option<AxisRange> {
-        match axis.surface_index() {
-            Some(index) => Some(self.axes[index]),
-            None => self.depth,
-        }
+        Some(self.axes[axis.index()])
     }
 
-    pub(crate) fn distance_squared_to_surface(self, climate: SurfaceClimate) -> f64 {
-        self.distance_squared_to_vector(ClimateVector::surface(climate))
-    }
-
-    pub(crate) fn distance_squared_to_vector(self, climate: ClimateVector) -> f64 {
-        let values = climate.surface.axes();
+    pub(crate) fn distance_squared(self, climate: SurfaceClimate) -> f64 {
+        let values = climate.axes();
         let surface_distance = self
             .axes
             .into_iter()
             .zip(values)
             .map(|(range, value)| range.distance_squared(value))
             .sum::<f64>();
-        let depth_distance = match (self.depth, climate.depth) {
-            (Some(range), Some(depth)) => range.distance_squared(depth),
-            _ => 0.0,
-        };
         let offset_distance = f64::from(self.offset) * f64::from(self.offset);
-        surface_distance + depth_distance + offset_distance
+        surface_distance + offset_distance
     }
 
     fn center_on_axis(self, axis: usize) -> f32 {
@@ -231,6 +173,7 @@ impl ClimateRect {
 }
 
 #[derive(Copy, Clone, Debug)]
+#[cfg(test)]
 pub(crate) struct BiomeClimateEntry<'a> {
     pub biome: Biome,
     pub rectangles: &'a [ClimateRect],
@@ -238,11 +181,13 @@ pub(crate) struct BiomeClimateEntry<'a> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct BiomeClimateIndex {
+    #[cfg(test)]
     rects: Vec<IndexedRect>,
     root: Option<IndexNode>,
 }
 
 impl BiomeClimateIndex {
+    #[cfg(test)]
     pub(crate) fn new(entries: &[BiomeClimateEntry<'_>]) -> Self {
         let rects = entries
             .iter()
@@ -284,36 +229,34 @@ impl BiomeClimateIndex {
 
     fn from_indexed(rects: Vec<IndexedRect>) -> Self {
         let root = (!rects.is_empty()).then(|| IndexNode::build(rects.clone(), 0));
-        Self { rects, root }
+        Self {
+            #[cfg(test)]
+            rects,
+            root,
+        }
     }
 
     pub(crate) fn default_surface() -> Self {
         Self::from_rects(&super::surface_table::surface_biome_table())
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.rects.is_empty()
     }
 
     pub(crate) fn classify_surface(&self, climate: SurfaceClimate) -> Option<Biome> {
-        self.classify_vector(ClimateVector::surface(climate))
-    }
-
-    pub(crate) fn classify_vector(&self, climate: ClimateVector) -> Option<Biome> {
         let root = self.root.as_ref()?;
         let mut best = Candidate::none();
         root.search(climate, &mut best);
         best.biome
     }
 
+    #[cfg(test)]
     pub(crate) fn classify_surface_bruteforce(&self, climate: SurfaceClimate) -> Option<Biome> {
-        self.classify_vector_bruteforce(ClimateVector::surface(climate))
-    }
-
-    pub(crate) fn classify_vector_bruteforce(&self, climate: ClimateVector) -> Option<Biome> {
         let mut best = Candidate::none();
         for rect in &self.rects {
-            best.consider(rect, rect.rect.distance_squared_to_vector(climate));
+            best.consider(rect, rect.rect.distance_squared(climate));
         }
         best.biome
     }
@@ -371,20 +314,20 @@ impl IndexNode {
         }
     }
 
-    fn search(&self, climate: ClimateVector, best: &mut Candidate) {
-        if self.bounds.distance_squared_to_vector(climate) > best.distance {
+    fn search(&self, climate: SurfaceClimate, best: &mut Candidate) {
+        if self.bounds.distance_squared(climate) > best.distance {
             return;
         }
 
         match &self.kind {
             IndexNodeKind::Leaf(rects) => {
                 for rect in rects {
-                    best.consider(rect, rect.rect.distance_squared_to_vector(climate));
+                    best.consider(rect, rect.rect.distance_squared(climate));
                 }
             }
             IndexNodeKind::Branch { left, right } => {
-                let left_distance = left.bounds.distance_squared_to_vector(climate);
-                let right_distance = right.bounds.distance_squared_to_vector(climate);
+                let left_distance = left.bounds.distance_squared(climate);
+                let right_distance = right.bounds.distance_squared(climate);
                 if left_distance <= right_distance {
                     left.search(climate, best);
                     right.search(climate, best);
@@ -400,45 +343,29 @@ impl IndexNode {
 #[derive(Copy, Clone, Debug)]
 struct ClimateBounds {
     axes: [AxisRange; SURFACE_AXIS_COUNT],
-    depth: Option<AxisRange>,
 }
 
 impl ClimateBounds {
     fn from_rects(rects: &[IndexedRect]) -> Self {
         debug_assert!(!rects.is_empty());
         let mut axes = rects[0].rect.axes;
-        let mut depth = rects[0].rect.depth;
-        let mut all_rects_have_depth = depth.is_some();
 
         for rect in &rects[1..] {
             for (bounds, range) in axes.iter_mut().zip(rect.rect.axes) {
                 *bounds = union_range(*bounds, range);
             }
-            match (depth, rect.rect.depth) {
-                (Some(current), Some(next)) => depth = Some(union_range(current, next)),
-                _ => all_rects_have_depth = false,
-            }
-        }
-        if !all_rects_have_depth {
-            depth = None;
         }
 
-        Self { axes, depth }
+        Self { axes }
     }
 
-    fn distance_squared_to_vector(self, climate: ClimateVector) -> f64 {
-        let values = climate.surface.axes();
-        let surface_distance = self
-            .axes
+    fn distance_squared(self, climate: SurfaceClimate) -> f64 {
+        let values = climate.axes();
+        self.axes
             .into_iter()
             .zip(values)
             .map(|(range, value)| range.distance_squared(value))
-            .sum::<f64>();
-        let depth_distance = match (self.depth, climate.depth) {
-            (Some(range), Some(depth)) => range.distance_squared(depth),
-            _ => 0.0,
-        };
-        surface_distance + depth_distance
+            .sum::<f64>()
     }
 
     fn widest_surface_axis(self) -> Option<usize> {
@@ -492,14 +419,6 @@ pub(crate) struct ClimateSampleCell {
 }
 
 impl ClimateSampleCell {
-    pub(crate) fn containing(wx: i32, wy: i32, wz: i32) -> Self {
-        Self {
-            x: wx.div_euclid(CLIMATE_SAMPLE_CELL_X),
-            y: wy.div_euclid(CLIMATE_SAMPLE_CELL_Y),
-            z: wz.div_euclid(CLIMATE_SAMPLE_CELL_Z),
-        }
-    }
-
     pub(crate) fn surface(wx: i32, wz: i32) -> Self {
         Self {
             x: wx.div_euclid(CLIMATE_SAMPLE_CELL_X),
@@ -544,39 +463,10 @@ impl<'a> ClimateSampler<'a> {
         Self { graph }
     }
 
-    pub(crate) fn sample_surface_at(self, wx: i32, wz: i32) -> Option<ClimateSample> {
-        let cell = ClimateSampleCell::surface(wx, wz);
-        let point = SamplePoint::new(f64::from(wx), 0.0, f64::from(wz));
-        let climate = SurfaceClimate::from_graph(self.graph, point)?;
-        Some(ClimateSample { cell, climate })
-    }
-
     pub(crate) fn sample_surface_cell(self, cell: ClimateSampleCell) -> Option<ClimateSample> {
         let climate = SurfaceClimate::from_graph(self.graph, cell.sample_point())?;
         Some(ClimateSample { cell, climate })
     }
-}
-
-pub(crate) const fn signed_range(min: f32, max: f32) -> AxisRange {
-    AxisRange::new(min, max)
-}
-
-pub(crate) const fn unit_range(min: f32, max: f32) -> AxisRange {
-    AxisRange::new(unit_value(min), unit_value(max))
-}
-
-pub(crate) const fn unit_value(value: f32) -> f32 {
-    (value * 2.0) - 1.0
-}
-
-pub(crate) const fn surface_rect(
-    temperature: AxisRange,
-    humidity: AxisRange,
-    continentality: AxisRange,
-    erosion: AxisRange,
-    variance: AxisRange,
-) -> ClimateRect {
-    ClimateRect::surface(temperature, humidity, continentality, erosion, variance)
 }
 
 fn union_range(a: AxisRange, b: AxisRange) -> AxisRange {
@@ -595,6 +485,8 @@ fn squared(value: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::worldgen::graph::{Axis, Channel};
+
+    const ANY: AxisRange = AxisRange::new(-1.0, 1.0);
 
     const fn test_rect(min: f32, max: f32) -> ClimateRect {
         ClimateRect::surface(
@@ -618,14 +510,6 @@ mod tests {
     }
 
     #[test]
-    fn unit_range_maps_old_unit_axes_to_graph_domain() {
-        assert_eq!(unit_value(0.0), -1.0);
-        assert_eq!(unit_value(0.5), 0.0);
-        assert_eq!(unit_value(1.0), 1.0);
-        assert_eq!(unit_range(0.25, 0.75), AxisRange::new(-0.5, 0.5));
-    }
-
-    #[test]
     fn rectangle_distance_is_zero_when_all_surface_axes_are_inside() {
         let rect = ClimateRect::surface(
             AxisRange::new(0.0, 0.4),
@@ -636,24 +520,24 @@ mod tests {
         );
         let climate = SurfaceClimate::new(0.2, 0.3, 0.4, 0.5, 0.6);
 
-        assert_eq!(rect.distance_squared_to_surface(climate), 0.0);
+        assert_eq!(rect.distance_squared(climate), 0.0);
     }
 
     #[test]
     fn nearest_rectangle_uses_squared_distance_to_closest_bounds() {
         static COLD: &[ClimateRect] = &[ClimateRect::surface(
             AxisRange::new(0.0, 0.2),
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
+            ANY,
+            ANY,
         )];
         static WARM: &[ClimateRect] = &[ClimateRect::surface(
             AxisRange::new(0.6, 0.8),
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
+            ANY,
+            ANY,
         )];
         let index = BiomeClimateIndex::new(&[
             BiomeClimateEntry {
@@ -730,14 +614,8 @@ mod tests {
 
     #[test]
     fn offset_penalty_breaks_ties_toward_the_unpenalized_biome() {
-        const BROAD: &[ClimateRect] = &[ClimateRect::surface(
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-        )
-        .with_offset(0.2)];
+        const BROAD: &[ClimateRect] =
+            &[ClimateRect::surface(ANY, ANY, ANY, ANY, ANY).with_offset(0.2)];
         const SPECIFIC: &[ClimateRect] = &[ClimateRect::surface(
             AxisRange::new(-0.20, 0.20),
             AxisRange::new(-0.20, 0.20),
@@ -788,37 +666,6 @@ mod tests {
         assert_eq!(climate.get(ClimateAxis::Continentality), Some(-0.75));
         assert_eq!(climate.get(ClimateAxis::Erosion), Some(0.75));
         assert_eq!(climate.get(ClimateAxis::Variance), Some(0.5));
-        assert_eq!(climate.get(ClimateAxis::Depth), None);
-    }
-
-    #[test]
-    fn depth_is_reserved_but_ignored_by_surface_classification() {
-        const SURFACE_ONLY: &[ClimateRect] = &[test_rect(0.0, 0.4)];
-        const SHALLOW: &[ClimateRect] = &[test_rect(0.0, 1.0).with_depth(AxisRange::new(0.0, 0.2))];
-        let index = BiomeClimateIndex::new(&[
-            BiomeClimateEntry {
-                biome: Biome::Plains,
-                rectangles: SURFACE_ONLY,
-            },
-            BiomeClimateEntry {
-                biome: Biome::Desert,
-                rectangles: SHALLOW,
-            },
-        ]);
-        let surface = SurfaceClimate::new(0.5, 0.5, 0.5, 0.5, 0.5);
-
-        assert_eq!(index.classify_surface(surface), Some(Biome::Desert));
-        assert_eq!(
-            index.classify_vector(ClimateVector::with_depth(surface, 1.0)),
-            index.classify_vector_bruteforce(ClimateVector::with_depth(surface, 1.0))
-        );
-        assert_eq!(
-            SHALLOW[0].distance_squared_to_vector(ClimateVector::surface(surface)),
-            0.0
-        );
-        assert!(
-            SHALLOW[0].distance_squared_to_vector(ClimateVector::with_depth(surface, 1.0)) > 0.0
-        );
     }
 
     #[test]
@@ -838,10 +685,6 @@ mod tests {
         let cell = ClimateSampleCell::surface(-1, -5);
         assert_eq!(cell.origin(), (-4, 0, -8));
         assert_eq!(ClimateSampleCell::surface(0, 3).origin(), (0, 0, 0));
-        assert_eq!(
-            ClimateSampleCell::containing(-1, -1, -1).origin(),
-            (-4, -4, -4)
-        );
 
         let sample = ClimateSampler::new(&graph)
             .sample_surface_cell(cell)
@@ -851,25 +694,5 @@ mod tests {
         assert_eq!(sample.climate.get(ClimateAxis::Humidity), Some(-8.0));
         assert_eq!(sample.climate.get(ClimateAxis::Continentality), Some(0.0));
         assert_eq!(sample.climate.get(ClimateAxis::Variance), Some(0.25));
-    }
-
-    #[test]
-    fn surface_sampling_uses_exact_world_column_inside_sample_cells() {
-        let mut graph = ScalarGraph::new();
-        let x = graph.axis(Axis::X);
-        let z = graph.axis(Axis::Z);
-        let zero = graph.constant(0.0);
-        graph.set_channel(Channel::new(channels::TEMPERATURE), x);
-        graph.set_channel(Channel::new(channels::HUMIDITY), z);
-        graph.set_channel(Channel::new(channels::CONTINENTALITY), zero);
-        graph.set_channel(Channel::new(channels::EROSION), zero);
-        graph.set_channel(Channel::new(channels::VARIANCE), zero);
-
-        let left = ClimateSampler::new(&graph).sample_surface_at(0, 0).unwrap();
-        let right = ClimateSampler::new(&graph).sample_surface_at(1, 0).unwrap();
-
-        assert_eq!(left.cell, right.cell);
-        assert_eq!(left.climate.get(ClimateAxis::Temperature), Some(0.0));
-        assert_eq!(right.climate.get(ClimateAxis::Temperature), Some(1.0));
     }
 }

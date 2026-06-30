@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-use std::sync::Arc;
-
 use crate::chunk::{self, ChunkPos, SectionPos};
 
 use super::store::{LoadTarget, World};
@@ -189,7 +187,7 @@ impl World {
         }
         self.dirty_meshes.remove(pos);
         self.light_blocked_meshes.remove(&pos);
-        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+        if let Some(s) = self.section_mut(pos) {
             s.dirty = false;
             // A mesh job may already have snapshotted this section while one of its
             // now-solid neighbours was still missing. Invalidate that exposed-border
@@ -246,7 +244,7 @@ impl World {
             let mut mesh = done.mesh;
             mesh.mesh_dirty = true; // needs a GPU upload on the next sync
             self.install_mesh(done.pos, mesh);
-            if let Some(s) = self.sections.get_mut(&done.pos).map(Arc::make_mut) {
+            if let Some(s) = self.section_mut(done.pos) {
                 s.dirty = false;
             }
         }
@@ -339,7 +337,7 @@ impl World {
             if !fresh {
                 continue;
             }
-            if let Some(s) = self.sections.get_mut(&res.pos).map(Arc::make_mut) {
+            if let Some(s) = self.section_mut(res.pos) {
                 s.set_skylight(res.skylight);
                 s.set_blocklight(res.blocklight);
                 s.dirty = true;

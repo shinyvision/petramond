@@ -512,11 +512,6 @@ fn redwood_trunk_is_supported(
 /// deterministic configured spacing rule. Features write in world coords and
 /// are clipped to this chunk, so seams are continuous with no double-placement
 /// and the old chunk-edge skip is gone.
-pub fn place_features(chunk: &mut Chunk, field: &RegionCells, seed: u32) {
-    let mut field = field;
-    place_features_with_field(chunk, &mut field, seed);
-}
-
 pub(crate) fn place_features_with_field(
     chunk: &mut Chunk,
     field: &mut impl FeatureField,
@@ -583,8 +578,8 @@ fn place_feature_origins(
 mod tests {
     use super::super::proto::MARGIN;
     use super::{
-        feature_region_bounds, place_features, place_features_with_field, tree_candidate_at,
-        tree_spacing_allows, RuntimeFeatureField,
+        feature_region_bounds, place_features_with_field, tree_candidate_at, tree_spacing_allows,
+        RuntimeFeatureField,
     };
     use crate::biome::Biome;
     use crate::block::Block;
@@ -612,7 +607,7 @@ mod tests {
     /// silently rot after generation.
     #[test]
     fn configured_trees_place_only_orthogonally_supported_leaves() {
-        use super::{ChunkSink, Feature, FeatureCtx};
+        use super::{ChunkSink, FeatureCtx};
         use crate::mathh::IVec3;
         use crate::worldgen::data::features::{ACACIA, OAK_BIG, OAK_SMALL, REDWOOD, SPRUCE};
         use crate::worldgen::rng::FeatureRng;
@@ -776,9 +771,10 @@ mod tests {
             let oz = cz * CHUNK_SZ as i32;
             let (x0, z0, w, h) = feature_region_bounds(ox, oz);
             let full_region = surface.region(x0, z0, w, h);
+            let mut full_field = &full_region;
 
             let mut full_chunk = Chunk::new(cx, cz);
-            place_features(&mut full_chunk, &full_region, seed);
+            place_features_with_field(&mut full_chunk, &mut full_field, seed);
 
             let mut runtime_chunk = Chunk::new(cx, cz);
             let mut field = RuntimeFeatureField::new(&surface, ox, oz);
@@ -818,7 +814,8 @@ mod tests {
             let mut c = Chunk::new(0, 0);
             let (x0, z0, w, h) = feature_region_bounds(0, 0);
             let field = synthetic_tree_region(x0, z0, w, h);
-            place_features(&mut c, &field, seed);
+            let mut field = &field;
+            place_features_with_field(&mut c, &mut field, seed);
 
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {

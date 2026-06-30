@@ -12,6 +12,8 @@
 //! block behaviors — they are owned per mob (`Box<dyn AiBehavior>`), built by the
 //! species' `make_brain` fn.
 
+use std::cmp::Reverse;
+
 use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
@@ -24,13 +26,6 @@ pub const PRIORITY_WANDER: u8 = 0;
 /// don't contend with `goal`, so their exact priority rarely matters — but giving
 /// them a slot keeps the ordering explicit.
 pub const PRIORITY_EXPRESSION: u8 = 10;
-/// Reserved for planned locomotion behaviors, fixing their order now: attacking
-/// overrides wandering; fleeing the player overrides everything.
-#[allow(dead_code)]
-pub const PRIORITY_ATTACK: u8 = 100;
-#[allow(dead_code)]
-pub const PRIORITY_FLEE: u8 = 200;
-
 /// A desired head orientation **relative to the body** (radians): `yaw` swivels the
 /// head left/right, `pitch` tilts it up/down. The renderer applies it to the model's
 /// `head` bone (when the active animation isn't already moving the head).
@@ -114,7 +109,7 @@ impl Brain {
             behavior: Box::new(behavior),
         });
         // Highest priority first; stable so equal-priority behaviors keep insert order.
-        self.entries.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.entries.sort_by_key(|entry| Reverse(entry.priority));
         self
     }
 
@@ -195,7 +190,7 @@ mod tests {
         let mut brain = Brain::new()
             .with(PRIORITY_WANDER, Goal(IVec3::new(1, 0, 0)))
             .with(PRIORITY_EXPRESSION, Look(look))
-            .with(PRIORITY_ATTACK, Goal(IVec3::new(9, 0, 0)));
+            .with(100, Goal(IVec3::new(9, 0, 0)));
         let d = brain.decide(&mut ctx(&world, &mut rng));
         assert_eq!(
             d.goal,
@@ -226,7 +221,7 @@ mod tests {
         let mut brain = Brain::new()
             .with(PRIORITY_WANDER, Goal(IVec3::new(2, 0, 0)))
             .with(
-                PRIORITY_ATTACK,
+                100,
                 Look(HeadLook {
                     yaw: 0.0,
                     pitch: 0.0,

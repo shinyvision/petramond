@@ -1,13 +1,3 @@
-//! Id-ordered `ItemDef` table.
-//!
-//! Mirrors `block/data.rs` exactly: one row per `ItemType` variant in `id()`
-//! order (which is identical to `Block` order — both start at `Air = 0`), so
-//! `ItemType::from_block(b) == from_id(b.id())` and `as_block` is the inverse.
-//! Append-only: never reorder or remove rows (item ids are persisted-adjacent
-//! to block ids and are covered by a stability test).
-
-use crate::registry::{self, RegistryKey, TableEntry};
-
 use super::definition::ItemDef;
 use super::{HeldPose, ItemTag, ItemType};
 
@@ -1190,27 +1180,12 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
     },
 ];
 
-impl RegistryKey for ItemType {
-    #[inline]
-    fn to_id(self) -> u8 {
-        self.id()
-    }
-}
-
-impl TableEntry for ItemDef {
-    type Key = ItemType;
-    #[inline]
-    fn key(&self) -> ItemType {
-        self.item
-    }
-}
-
 #[inline]
 pub(super) fn from_id(id: u8) -> ItemType {
-    registry::from_id(ITEM_DEFS, id, ItemType::Air)
+    ITEM_DEFS.get(id as usize).map_or(ItemType::Air, |d| d.item)
 }
 
 #[inline]
 pub(super) fn def(item: ItemType) -> &'static ItemDef {
-    registry::def(ITEM_DEFS, item)
+    &ITEM_DEFS[item.id() as usize]
 }

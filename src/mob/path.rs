@@ -93,7 +93,7 @@ pub fn standing_cell(
             }
             let (dx, dz) = (c.x as f32 + 0.5 - pos.x, c.z as f32 + 0.5 - pos.z);
             let dist = dx * dx + dz * dz;
-            if best.map_or(true, |(_, bd)| dist < bd) {
+            if best.is_none_or(|(_, bd)| dist < bd) {
                 best = Some((c, dist));
             }
         }

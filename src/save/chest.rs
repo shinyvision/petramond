@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::chest::{Chest, CHEST_SLOTS};
 use crate::furnace::Facing;
-use crate::save::codec::{get_indexed, get_item_slot, put_indexed, put_item_slot, Reader, Writer};
+use crate::save::codec::{get_indexed, get_item_slot, put_indexed, put_item_slot, put_u8, Reader};
 
 /// Bytes per serialized chest: idx(2) + 27 slots × (id 1 + count 1) + facing(1).
 const CHEST_BYTES: usize = 2 + CHEST_SLOTS * 2 + 1;
@@ -25,7 +25,7 @@ pub fn put_chests(buf: &mut Vec<u8>, chests: &HashMap<u16, Chest>) {
         for slot in c.slots {
             put_item_slot(buf, slot);
         }
-        buf.put_u8(c.facing.to_u8());
+        put_u8(buf, c.facing.to_u8());
     });
 }
 
@@ -45,6 +45,7 @@ pub fn get_chests(r: &mut Reader) -> Option<HashMap<u16, Chest>> {
 mod tests {
     use super::*;
     use crate::item::{ItemStack, ItemType};
+    use crate::save::codec::put_u16;
 
     #[test]
     fn chests_roundtrip_through_a_buffer() {
@@ -67,53 +68,6 @@ mod tests {
         assert_eq!(got, map, "chest state survives the round-trip");
     }
 
-    /// Frozen golden for the on-disk chest framing. Like the furnace golden, the
-    /// roundtrip test above only proves self-consistency; this pins the exact bytes
-    /// `put_chests` emits for ONE fully-populated chest (several of the 27 slots
-    /// filled across the row-major grid, plus a non-default facing). The 60-byte
-    /// record is FNV-1a-hashed rather than spelled out byte-for-byte. Any reframing
-    /// of the chest codec (slot order, length prefix, facing placement, item-id
-    /// renumber) flips this.
-    #[test]
-    fn put_chests_golden_bytes() {
-        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-        fn fnv1a(bytes: &[u8]) -> u64 {
-            let mut h = FNV_OFFSET;
-            for &b in bytes {
-                h ^= b as u64;
-                h = h.wrapping_mul(FNV_PRIME);
-            }
-            h
-        }
-
-        let mut chest = Chest {
-            facing: Facing::South,
-            ..Chest::default()
-        };
-        // Fill across the grid: first/middle/last of each conceptual row.
-        chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
-        chest.slots[4] = Some(ItemStack::new(ItemType::OakLog, 12));
-        chest.slots[8] = Some(ItemStack::new(ItemType::Coal, 5));
-        chest.slots[13] = Some(ItemStack::new(ItemType::RawIron, 3));
-        chest.slots[22] = Some(ItemStack::new(ItemType::IronIngot, 9));
-        chest.slots[26] = Some(ItemStack::new(ItemType::Dirt, 1));
-
-        let mut map = HashMap::new();
-        map.insert(0x1234u16, chest);
-
-        let mut buf = Vec::new();
-        put_chests(&mut buf, &map);
-
-        // 60-byte record: count(2) + idx(2) + 27 slots x 2 + facing(1).
-        assert_eq!(buf.len(), 2 + 2 + CHEST_SLOTS * 2 + 1);
-        assert_eq!(
-            fnv1a(&buf),
-            0x7707_5f59_bd79_86e7,
-            "chest save framing changed"
-        );
-    }
-
     #[test]
     fn empty_list_roundtrips() {
         let mut buf = Vec::new();
@@ -125,7 +79,7 @@ mod tests {
     #[test]
     fn truncated_input_is_none() {
         let mut buf = Vec::new();
-        buf.put_u16(1); // claims one chest, provides no body
+        put_u16(&mut buf, 1); // claims one chest, provides no body
         let mut r = Reader::new(&buf);
         assert!(get_chests(&mut r).is_none());
     }

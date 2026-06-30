@@ -1,60 +1,8 @@
-//! Player inventory: a fixed 36-slot store with a 9-slot hotbar, a 27-slot
-//! main grid, a single cursor-held stack (for drag/drop UI), and an active
-//! hotbar selection.
-//!
-//! Layout matches the classic survival layout: slots `[0, 9)` are the hotbar
-//! (the bottom row in the open inventory) and `[9, 36)` are the 3×9 main grid.
-//! The active slot is always a hotbar index (`0..9`) and drives what the player
-//! holds / places.
-//!
-//! Storage is a fixed `[Option<ItemStack>; 36]` array — no heap allocation per
-//! call. `ItemStack` is `Copy`, so all moves are cheap value moves.
-
 use crate::item::ItemStack;
-
-/// A fixed set of `Option<ItemStack>` cells with the shared "first-fit insert" and
-/// emptiness rules. Implemented by every container that is a uniform grid of stacks
-/// (the inventory, a chest, and a craft grid's read view).
-///
-/// Implementors only supply the storage (`slots_mut`); the merge-then-fill
-/// [`insert`](SlotGrid::insert) comes for free. (`slots` and `is_empty` are test-only
-/// helpers, gated behind `cfg(test)`.)
-///
-/// Note: a [`CraftGrid`](crate::crafting::CraftGrid) implements this for read/index
-/// access only — it is filled by cursor clicks, never by first-fit loot insert, so
-/// nothing should call `insert` on one.
-pub trait SlotGrid {
-    /// The cells as a slice (`None` = empty), in fill order. Test-only: the only caller
-    /// is the (also test-only) `is_empty`; live code uses `slots_mut` / `insert`.
-    #[cfg(test)]
-    fn slots(&self) -> &[Option<ItemStack>];
-    /// The cells as a mutable slice, in fill order.
-    fn slots_mut(&mut self) -> &mut [Option<ItemStack>];
-
-    /// `true` if every cell is empty. Test-only emptiness check (chest / craft-grid
-    /// tests); no live caller remains.
-    #[cfg(test)]
-    fn is_empty(&self) -> bool {
-        self.slots().iter().all(Option::is_none)
-    }
-
-    /// Insert `stack`, merging into existing non-full matching cells first (in fill
-    /// order), then spilling the remainder into empty cells (each capped at the
-    /// item's `max_stack_size`). Returns the leftover, or `None` if fully absorbed.
-    /// An empty input stack is a no-op returning `None`.
-    fn insert(&mut self, stack: ItemStack) -> Option<ItemStack> {
-        insert_into_slots(self.slots_mut(), stack)
-    }
-}
-
-/// The canonical merge-then-fill insert over a slice of slots: Pass 1 tops up
-/// existing matching, non-full stacks in order; Pass 2 spills the remainder into
-/// empty slots, one capped stack at a time. Returns the leftover, or `None` if fully
-/// absorbed. Empty input is a no-op returning `None`.
-///
-/// Shared by [`SlotGrid::insert`] (whole slice) and [`Inventory::add_to_range`] (one
-/// sub-range at a time).
-fn insert_into_slots(slots: &mut [Option<ItemStack>], mut stack: ItemStack) -> Option<ItemStack> {
+pub(crate) fn insert_into_slots(
+    slots: &mut [Option<ItemStack>],
+    mut stack: ItemStack,
+) -> Option<ItemStack> {
     if stack.is_empty() {
         return None;
     }
@@ -88,19 +36,9 @@ fn insert_into_slots(slots: &mut [Option<ItemStack>], mut stack: ItemStack) -> O
 
     Some(stack)
 }
-
-/// Number of hotbar slots (the always-visible bottom row).
 pub const HOTBAR_LEN: usize = 9;
-/// Number of main-grid slots (the 3×9 grid shown when the inventory is open).
 pub const MAIN_LEN: usize = 27;
-/// Total slot count: hotbar `[0, 9)` + main grid `[9, 36)`.
 pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN; // 36
-
-/// A 36-slot inventory with a cursor-held stack and an active hotbar slot.
-///
-/// `slots` is a fixed array: `[0, HOTBAR_LEN)` is the hotbar, the rest is the
-/// main grid. `cursor` is the stack currently "picked up" by drag/drop UI.
-/// `active` is the selected hotbar index (`0..HOTBAR_LEN`).
 #[derive(Clone, Debug)]
 pub struct Inventory {
     slots: [Option<ItemStack>; TOTAL_SLOTS],
@@ -110,36 +48,26 @@ pub struct Inventory {
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Inventory {
-    /// A fresh, empty inventory: every slot empty, no cursor stack, active slot
-    /// `0`. The player collects items by breaking blocks in the world.
-    pub fn new() -> Self {
-        Inventory {
+        Self {
             slots: [None; TOTAL_SLOTS],
             cursor: None,
             active: 0,
         }
     }
+}
 
-    /// The stack in slot `i` (`0..TOTAL_SLOTS`), or `None` if empty / out of range.
+impl Inventory {
+    pub fn new() -> Self {
+        Self::default()
+    }
     #[inline]
     pub fn slot(&self, i: usize) -> Option<&ItemStack> {
         self.slots.get(i).and_then(Option::as_ref)
     }
-
-    /// Mutable handle to slot `i`'s cell (`None` if out of range), for moving a
-    /// stack directly between the inventory and an external slot such as a furnace
-    /// slot. The cursor is not involved.
     #[inline]
     pub fn slot_mut(&mut self, i: usize) -> Option<&mut Option<ItemStack>> {
         self.slots.get_mut(i)
     }
-
-    /// The stack in hotbar slot `i` (`0..HOTBAR_LEN`). Identical to `slot(i)`.
     #[inline]
     pub fn hotbar(&self, i: usize) -> Option<&ItemStack> {
         if i < HOTBAR_LEN {
@@ -148,71 +76,36 @@ impl Inventory {
             None
         }
     }
-
-    /// The active (selected) hotbar slot index, always in `0..HOTBAR_LEN`.
     #[inline]
     pub fn active_slot(&self) -> u8 {
         self.active
     }
-
-    /// Set the active hotbar slot, clamped to `0..HOTBAR_LEN`.
     #[inline]
     pub fn set_active(&mut self, i: u8) {
         self.active = i.min(HOTBAR_LEN as u8 - 1);
     }
-
-    /// Move the active hotbar slot by `delta`, wrapping within `0..HOTBAR_LEN`.
-    ///
-    /// Positive `delta` moves right; negative moves left. Any magnitude is
-    /// reduced modulo `HOTBAR_LEN`.
     pub fn scroll_active(&mut self, delta: i32) {
         let len = HOTBAR_LEN as i32;
         // rem_euclid keeps the result in 0..len for any sign / magnitude.
         let next = (self.active as i32 + delta).rem_euclid(len);
         self.active = next as u8;
     }
-
-    /// The stack in the active hotbar slot (what the player currently holds).
     #[inline]
     pub fn selected(&self) -> Option<&ItemStack> {
         self.slot(self.active as usize)
     }
-
-    /// Insert `stack`, merging into existing non-full matching stacks first
-    /// (hotbar then main grid, in slot order) and then into the first empty
-    /// slot, respecting each item's `max_stack_size`.
-    ///
-    /// Returns the leftover (`Some` only if every matching/empty slot filled up
-    /// before `stack` was exhausted), or `None` if it was fully absorbed. An
-    /// empty input stack is a no-op returning `None`.
     pub fn add(&mut self, stack: ItemStack) -> Option<ItemStack> {
         // The whole inventory in slot order: hotbar `[0, 9)` then main `[9, 36)`.
         self.add_to_range(stack, 0, TOTAL_SLOTS)
     }
-
-    /// Like [`add`](Self::add) but restricted to slots `[start, end)`: merge into
-    /// matching non-full stacks first, then the first empty slot, both in
-    /// ascending slot order (left-to-right, top-to-bottom). Returns the leftover,
-    /// or `None` if fully absorbed. Empty input is a no-op returning `None`.
-    /// Used by [`add`](Self::add) (whole range) and shift-click transfer (one
-    /// region at a time).
     fn add_to_range(&mut self, stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
         insert_into_slots(&mut self.slots[start..end], stack)
     }
-
-    /// Absorb an external slot's whole stack into the inventory (first-fit over all
-    /// slots), leaving any part that didn't fit behind in `slot`. Used by
-    /// shift-clicking a stack out of a furnace or chest slot into the inventory.
-    /// No-op on an empty slot.
     pub fn pull_from(&mut self, slot: &mut Option<ItemStack>) {
         if let Some(stack) = slot.take() {
             *slot = self.add(stack);
         }
     }
-
-    /// Take a single item off the active hotbar slot (for the in-game drop key),
-    /// shrinking it by one and clearing the slot when it empties. Returns a
-    /// 1-count stack of the held item, or `None` if the slot is empty.
     pub fn take_selected_one(&mut self) -> Option<ItemStack> {
         let i = self.active as usize;
         let stack = self.slots[i].as_mut()?;
@@ -223,15 +116,9 @@ impl Inventory {
         }
         Some(ItemStack::new(item, 1))
     }
-
-    /// Take the entire active hotbar slot stack out (for the Ctrl+drop key),
-    /// clearing the slot. Returns `None` if the slot is empty.
     pub fn take_selected_all(&mut self) -> Option<ItemStack> {
         self.slots[self.active as usize].take()
     }
-
-    /// Remove one item from the active hotbar slot (e.g. after placing a block).
-    /// Clears the slot when it reaches zero. No-op if the slot is empty.
     pub fn decrement_selected(&mut self) {
         let i = self.active as usize;
         if let Some(stack) = self.slots[i].as_mut() {
@@ -241,31 +128,17 @@ impl Inventory {
             }
         }
     }
-
-    /// The cursor-held stack (the stack currently being dragged in the UI).
     #[inline]
     pub fn cursor(&self) -> Option<&ItemStack> {
         self.cursor.as_ref()
     }
-
-    /// Mutable handle to the cursor-held cell, so an external slot owner (a crafting
-    /// result slot) can deposit a taken stack straight onto the cursor. Mirrors
-    /// [`slot_mut`](Self::slot_mut) for the cursor.
     #[inline]
     pub fn cursor_mut(&mut self) -> &mut Option<ItemStack> {
         &mut self.cursor
     }
-
-    /// Take the whole cursor-held stack out, clearing the cursor. Returns `None`
-    /// if the cursor was empty. Used to throw the held stack into the world.
     pub fn take_cursor(&mut self) -> Option<ItemStack> {
         self.cursor.take()
     }
-
-    /// Take a single item off the cursor-held stack, shrinking it by one (and
-    /// clearing the cursor when the last item leaves). Returns a 1-count stack of
-    /// the held item, or `None` if the cursor was empty. Used to throw one item
-    /// out at a time.
     pub fn take_cursor_one(&mut self) -> Option<ItemStack> {
         let cur = self.cursor.as_mut()?;
         let item = cur.item;
@@ -275,10 +148,6 @@ impl Inventory {
         }
         Some(ItemStack::new(item, 1))
     }
-
-    /// Move the cursor-held stack back into the inventory, clearing the cursor.
-    /// Matching partial stacks are topped up first, then empty slots are filled.
-    /// Returns only the leftover that could not fit, so the caller can drop it.
     pub fn stash_cursor_in_inventory(&mut self) -> Option<ItemStack> {
         let stack = self.cursor.take()?;
         if stack.is_empty() {
@@ -286,31 +155,15 @@ impl Inventory {
         }
         self.add(stack)
     }
-
-    /// Left-click drag/drop interaction on slot `i` (whole-stack semantics):
-    ///  - cursor empty, slot full  → pick the whole slot up into the cursor
-    ///  - cursor full,  slot empty → drop the cursor stack into the slot
-    ///  - both full, same item     → merge cursor into slot up to max; any
-    ///    remainder stays on the cursor
-    ///  - both full, different item / slot already at max → swap cursor ↔ slot
-    ///
-    /// Out-of-range `i` and the both-empty case are no-ops.
     pub fn click_slot(&mut self, i: usize) {
         if i >= TOTAL_SLOTS {
             return;
         }
         Self::apply_left_click(&mut self.cursor, &mut self.slots[i]);
     }
-
-    /// Left-click drag/drop against an EXTERNAL slot (a crafting input cell that
-    /// lives outside the inventory array). Same pick/drop/merge/swap semantics as
-    /// [`click_slot`](Self::click_slot), but the slot is borrowed in.
     pub fn click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
         Self::apply_left_click(&mut self.cursor, slot);
     }
-
-    /// The shared left-click rule between the cursor and a single slot: pick a
-    /// slot up, drop into an empty slot, merge same items, else swap.
     fn apply_left_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
         match (cursor.take(), slot.take()) {
             (None, None) => {}
@@ -330,18 +183,6 @@ impl Inventory {
             }
         }
     }
-
-    /// Double-click "collect all": with a stack held on the cursor, pull matching
-    /// items out of every slot into the cursor until it reaches the item's max
-    /// stack size. Loose items are consolidated first — pass 1 drains only partial
-    /// (non-full) stacks, and only if the cursor still has room does pass 2 break
-    /// into full stacks. Within each pass slots are visited in order (hotbar
-    /// `[0, 9)` then main grid `[9, 36)`); emptied slots are cleared. No-op when
-    /// the cursor is empty or already full.
-    ///
-    /// This is the fast-double-click gather: the first click picks a stack up onto
-    /// the cursor (see [`click_slot`](Self::click_slot)), and a quick second click
-    /// on the same slot calls this instead of dropping the stack back down.
     pub fn collect_to_cursor(&mut self) {
         let Some(mut cursor) = self.cursor.take() else {
             return;
@@ -354,13 +195,6 @@ impl Inventory {
         }
         self.cursor = Some(cursor);
     }
-
-    /// Like [`collect_to_cursor`](Self::collect_to_cursor) but also pulls from
-    /// `extra` — an open container's slots (a chest) — so a double-click in the
-    /// chest screen tops the cursor up from BOTH the chest and the inventory.
-    /// Partials are drained everywhere before any full stack is split: each pass
-    /// visits `extra` first (the open container the player clicked in) then the
-    /// inventory. No-op when the cursor is empty.
     pub fn collect_to_cursor_including(&mut self, extra: &mut [Option<ItemStack>]) {
         let Some(mut cursor) = self.cursor.take() else {
             return;
@@ -371,11 +205,6 @@ impl Inventory {
         }
         self.cursor = Some(cursor);
     }
-
-    /// One gather pass for the double-click collect: pull matching items from
-    /// `slots` into `cursor` in slot order, clearing emptied slots and stopping once
-    /// the cursor is full. When `take_full` is false, only partial (non-max) stacks
-    /// are drained, so loose items consolidate before any full stack is split.
     fn drain_into(cursor: &mut ItemStack, slots: &mut [Option<ItemStack>], take_full: bool) {
         for slot in slots.iter_mut() {
             let space = cursor.space_left();
@@ -399,31 +228,15 @@ impl Inventory {
             }
         }
     }
-
-    /// Right-click drag/drop interaction on slot `i`:
-    ///  - cursor empty, slot has a stack → split it: the larger half (`ceil`)
-    ///    goes onto the cursor, the rest stays (a 5-stack leaves 2, drags 3)
-    ///  - cursor full, slot empty → drop ONE item into the slot
-    ///  - cursor full, slot same item with room → add ONE to the slot
-    ///  - cursor full, slot different item / already at max → no-op
-    ///
-    /// Out-of-range `i` and the both-empty case are no-ops.
     pub fn right_click_slot(&mut self, i: usize) {
         if i >= TOTAL_SLOTS {
             return;
         }
         Self::apply_right_click(&mut self.cursor, &mut self.slots[i]);
     }
-
-    /// Right-click drag/drop against an EXTERNAL slot (a crafting input cell).
-    /// Same split / place-one / drip-one semantics as
-    /// [`right_click_slot`](Self::right_click_slot).
     pub fn right_click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
         Self::apply_right_click(&mut self.cursor, slot);
     }
-
-    /// The shared right-click rule: split a slot in half onto the cursor, place
-    /// one held item into an empty/matching slot, else no-op.
     fn apply_right_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
         match (cursor.take(), slot.take()) {
             (None, None) => {}
@@ -453,10 +266,6 @@ impl Inventory {
             }
         }
     }
-
-    /// Whether `stack` would fit ENTIRELY into the inventory (matching partial
-    /// stacks first, then empty slots). Used by shift-crafting to refuse a craft
-    /// that wouldn't fully fit. An empty stack always "fits".
     pub fn can_add(&self, stack: ItemStack) -> bool {
         if stack.is_empty() {
             return true;
@@ -473,11 +282,6 @@ impl Inventory {
         let empties = self.slots.iter().filter(|s| s.is_none()).count() as u32;
         need <= empties * stack.item.max_stack_size() as u32
     }
-
-    /// How many of `stack` would actually be absorbed if added now — summing the
-    /// space in matching partial stacks and empty slots, capped at `stack.count`.
-    /// `0` means none fit, `stack.count` means the whole stack fits. Used by the
-    /// pickup path to peel off exactly the portion that fits a near-full inventory.
     pub fn fits_count(&self, stack: ItemStack) -> u8 {
         if stack.is_empty() {
             return 0;
@@ -497,10 +301,6 @@ impl Inventory {
         }
         room.min(want) as u8
     }
-
-    /// Place a crafted `stack` onto the cursor: succeeds when the cursor is empty
-    /// (it becomes `stack`) or holds the same item with room for the WHOLE stack.
-    /// Returns whether it was placed — i.e. whether the craft may proceed.
     pub fn try_stack_onto_cursor(&mut self, stack: ItemStack) -> bool {
         match &mut self.cursor {
             None => {
@@ -514,13 +314,6 @@ impl Inventory {
             _ => false,
         }
     }
-
-    /// Shift-click transfer: move the whole stack in slot `i` to the OTHER region
-    /// — a hotbar stack goes to the main grid and a main-grid stack to the hotbar
-    /// — merging into matching stacks first then the first empty slot, filling in
-    /// ascending slot order (left-to-right, top-to-bottom). Any part that doesn't
-    /// fit stays behind; if nothing fits the click is effectively ignored. No-op
-    /// on an empty or out-of-range slot. The cursor is not involved.
     pub fn shift_move_slot(&mut self, i: usize) {
         if i >= TOTAL_SLOTS {
             return;
@@ -537,18 +330,12 @@ impl Inventory {
         // Whatever doesn't fit in the destination region stays in the source slot.
         self.slots[i] = self.add_to_range(stack, start, end);
     }
-
-    /// `true` if every slot and the cursor are empty.
     pub fn is_empty(&self) -> bool {
         self.cursor.is_none() && self.slots.iter().all(Option::is_none)
     }
-
-    /// All slots in order (`[0,9)` hotbar, `[9,36)` main grid). For saving.
     pub fn raw_slots(&self) -> &[Option<ItemStack>; TOTAL_SLOTS] {
         &self.slots
     }
-
-    /// Reconstruct an inventory from saved parts (`active` clamped to the hotbar).
     pub fn from_parts(
         slots: [Option<ItemStack>; TOTAL_SLOTS],
         cursor: Option<ItemStack>,
@@ -560,23 +347,6 @@ impl Inventory {
             active: active.min(HOTBAR_LEN as u8 - 1),
         }
     }
-}
-
-impl SlotGrid for Inventory {
-    #[cfg(test)]
-    #[inline]
-    fn slots(&self) -> &[Option<ItemStack>] {
-        &self.slots
-    }
-
-    #[inline]
-    fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
-        &mut self.slots
-    }
-
-    // NB: `Inventory` keeps its own inherent `is_empty` (which also checks the
-    // cursor); the inherent method wins on direct calls, and `insert` is inherited
-    // from the trait for the first-fit add.
 }
 
 #[cfg(test)]

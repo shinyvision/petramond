@@ -1,8 +1,7 @@
 //! Mobs: a data-driven creature registry plus the live entity manager + AI.
 //!
-//! Mirrors the block system's shape (see [`crate::registry`] / `block::data`): each
-//! species is a `#[repr(u8)]` [`Mob`] key indexing an id-ordered [`MOB_DEFS`] table
-//! of [`MobDef`] rows. A row carries the species' model asset, render scale, body
+//! Each species is a `#[repr(u8)]` [`Mob`] key indexing a [`MOB_DEFS`] row. A row
+//! carries the species' model asset, render scale, body
 //! size, movement stats, and a `make_brain` constructor for its composable AI. So
 //! **adding an animal is: add a `Mob` variant, add a `MobDef` row, write its
 //! behavior** — no edits to the game loop, the scene, or the renderer (which both
@@ -38,7 +37,6 @@ use crate::bbmodel::Model;
 use crate::biome::Biome;
 use crate::block::Block;
 use crate::mathh::Vec3;
-use crate::registry::{self, RegistryKey, TableEntry};
 
 /// A mob species — the stable key into [`MOB_DEFS`] (like `Block` into the block
 /// table). `#[repr(u8)]`; the discriminant is the table index.
@@ -197,10 +195,6 @@ pub struct MobDef {
     pub make_brain: fn(&'static MobDef) -> Brain,
 }
 
-/// Every mob species in id order — the registry-ordering oracle and the render
-/// init's iteration source.
-pub const ALL_MOBS: &[Mob] = &[Mob::Owl];
-
 /// The id-ordered registry table (one row per [`Mob`], indexed by `Mob as u8`).
 pub static MOB_DEFS: &[MobDef] = &[MobDef {
     mob: Mob::Owl,
@@ -243,31 +237,14 @@ pub static MOB_DEFS: &[MobDef] = &[MobDef {
     make_brain: behavior::owl_brain,
 }];
 
-impl RegistryKey for Mob {
-    #[inline]
-    fn to_id(self) -> u8 {
-        self as u8
-    }
-}
-
-impl TableEntry for MobDef {
-    type Key = Mob;
-    #[inline]
-    fn key(&self) -> Mob {
-        self.mob
-    }
-}
-
-/// The mob for `id`, or [`Mob::Owl`] if out of range.
 #[inline]
 pub fn from_id(id: u8) -> Mob {
-    registry::from_id(MOB_DEFS, id, Mob::Owl)
+    MOB_DEFS.get(id as usize).map_or(Mob::Owl, |d| d.mob)
 }
 
-/// The registry row for `mob`.
 #[inline]
 pub fn def(mob: Mob) -> &'static MobDef {
-    registry::def(MOB_DEFS, mob)
+    &MOB_DEFS[mob as usize]
 }
 
 /// Every species' compiled [`Model`](crate::bbmodel::Model), indexed by `Mob as usize` —
@@ -275,10 +252,10 @@ pub fn def(mob: Mob) -> &'static MobDef {
 /// `.llmob` on a cache miss, else fast-loading the `.llmob`) and shared by the renderer and
 /// the simulation. After this builds, nothing in the running engine reads a `.bbmodel`.
 static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
-    ALL_MOBS
+    MOB_DEFS
         .iter()
-        .map(|&m| {
-            let d = def(m);
+        .map(|d| {
+            let m = d.mob;
             crate::asset_cache::load_or_compile::<Model>(d.key, d.model_src.as_bytes())
                 .unwrap_or_else(|e| {
                     log::error!("mob model precache failed for {m:?}: {e}");
@@ -343,11 +320,6 @@ impl MobRng {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn registry_is_id_ordered() {
-        registry::assert_id_ordered(MOB_DEFS, ALL_MOBS);
-    }
 
     #[test]
     fn rng_is_deterministic_and_in_range() {

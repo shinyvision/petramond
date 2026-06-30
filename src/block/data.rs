@@ -1,7 +1,6 @@
 use crate::atlas::Tile;
 use crate::block_model::BlockModelKind;
 use crate::item::{Drop, DropSpec, ItemType};
-use crate::registry::{self, RegistryKey, TableEntry};
 
 use super::definition::{drops_sapling, drops_self, BlockDef, BlockFlags, BlockMaterial};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
@@ -2044,27 +2043,12 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     },
 ];
 
-impl RegistryKey for Block {
-    #[inline]
-    fn to_id(self) -> u8 {
-        self.id()
-    }
-}
-
-impl TableEntry for BlockDef {
-    type Key = Block;
-    #[inline]
-    fn key(&self) -> Block {
-        self.block
-    }
-}
-
 #[inline]
 pub(super) fn from_id(id: u8) -> Block {
-    registry::from_id(BLOCK_DEFS, id, Block::Air)
+    BLOCK_DEFS.get(id as usize).map_or(Block::Air, |d| d.block)
 }
 
 #[inline]
 pub(super) fn def(block: Block) -> &'static BlockDef {
-    registry::def(BLOCK_DEFS, block)
+    &BLOCK_DEFS[block.id() as usize]
 }

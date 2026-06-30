@@ -142,31 +142,24 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Little-endian append helpers over `Vec<u8>`.
-pub trait Writer {
-    fn put_u8(&mut self, v: u8);
-    fn put_u16(&mut self, v: u16);
-    fn put_u32(&mut self, v: u32);
-    fn put_u64(&mut self, v: u64);
-    fn put_f32(&mut self, v: f32);
+pub(crate) fn put_u8(buf: &mut Vec<u8>, v: u8) {
+    buf.push(v);
 }
 
-impl Writer for Vec<u8> {
-    fn put_u8(&mut self, v: u8) {
-        self.push(v);
-    }
-    fn put_u16(&mut self, v: u16) {
-        self.extend_from_slice(&v.to_le_bytes());
-    }
-    fn put_u32(&mut self, v: u32) {
-        self.extend_from_slice(&v.to_le_bytes());
-    }
-    fn put_u64(&mut self, v: u64) {
-        self.extend_from_slice(&v.to_le_bytes());
-    }
-    fn put_f32(&mut self, v: f32) {
-        self.extend_from_slice(&v.to_le_bytes());
-    }
+pub(crate) fn put_u16(buf: &mut Vec<u8>, v: u16) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+pub(crate) fn put_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+pub(crate) fn put_u64(buf: &mut Vec<u8>, v: u64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+pub(crate) fn put_f32(buf: &mut Vec<u8>, v: f32) {
+    buf.extend_from_slice(&v.to_le_bytes());
 }
 
 /// Encode one inventory/container slot as `[item id, count]`, with `[0, 0]` for an
@@ -175,12 +168,12 @@ impl Writer for Vec<u8> {
 pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
     match slot {
         Some(s) if !s.is_empty() => {
-            buf.put_u8(s.item.id());
-            buf.put_u8(s.count);
+            put_u8(buf, s.item.id());
+            put_u8(buf, s.count);
         }
         _ => {
-            buf.put_u8(0);
-            buf.put_u8(0);
+            put_u8(buf, 0);
+            put_u8(buf, 0);
         }
     }
 }
@@ -211,11 +204,11 @@ pub(crate) fn put_indexed<T>(
 ) {
     let n = map.len().min(u16::MAX as usize);
     buf.reserve(2 + n * rec_bytes);
-    buf.put_u16(n as u16);
+    put_u16(buf, n as u16);
     let mut entries: Vec<(&u16, &T)> = map.iter().take(n).collect();
     entries.sort_by_key(|(idx, _)| **idx);
     for (idx, rec) in entries {
-        buf.put_u16(*idx);
+        put_u16(buf, *idx);
         body(buf, rec);
     }
 }
@@ -257,7 +250,7 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
 pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(3 + s.blocks.len() + extra);
-    payload.put_u8(SECTION_REC_VERSION);
+    put_u8(&mut payload, SECTION_REC_VERSION);
     let mut flags = 0u8;
     if s.water.is_some() {
         flags |= FLAG_HAS_WATER;
@@ -290,8 +283,8 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.doors.is_empty() {
         flags2 |= FLAG2_HAS_DOORS;
     }
-    payload.put_u8(flags);
-    payload.put_u8(flags2);
+    put_u8(&mut payload, flags);
+    put_u8(&mut payload, flags2);
     payload.extend_from_slice(&s.blocks);
     if let Some(w) = &s.water {
         payload.extend_from_slice(w);
@@ -314,26 +307,26 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.model_cells.is_empty() {
         // Each record is the cell's 3-byte footprint offset (idx written by put_indexed).
         put_indexed(&mut payload, &s.model_cells, 3, |buf, off| {
-            buf.put_u8(off[0]);
-            buf.put_u8(off[1]);
-            buf.put_u8(off[2]);
+            put_u8(buf, off[0]);
+            put_u8(buf, off[1]);
+            put_u8(buf, off[2]);
         });
     }
     if !s.model_facings.is_empty() {
         put_indexed(&mut payload, &s.model_facings, 1, |buf, facing| {
-            buf.put_u8(facing.to_u8());
+            put_u8(buf, facing.to_u8());
         });
     }
     if !s.sapling_stages.is_empty() {
         // Each record is the cell's 1-byte growth stage (idx written by put_indexed).
         put_indexed(&mut payload, &s.sapling_stages, 1, |buf, stage| {
-            buf.put_u8(*stage);
+            put_u8(buf, *stage);
         });
     }
     if !s.doors.is_empty() {
         // Each record is the cell's 1-byte packed door state (idx written by put_indexed).
         put_indexed(&mut payload, &s.doors, 1, |buf, state| {
-            buf.put_u8(state.encode());
+            put_u8(buf, state.encode());
         });
     }
     deflate(&payload)

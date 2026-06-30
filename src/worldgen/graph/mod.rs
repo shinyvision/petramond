@@ -1,7 +1,5 @@
 //! Pure scalar graph primitives for staged worldgen fields.
 
-#![allow(dead_code)] // Stage-2 foundation is wired before live terrain consumes it.
-
 pub(crate) mod spline;
 
 use self::spline::{CubicSpline, SplineAxis};
@@ -22,14 +20,6 @@ pub(crate) struct SamplePoint {
 impl SamplePoint {
     pub(crate) const fn new(x: f64, y: f64, z: f64) -> Self {
         Self { x, y, z }
-    }
-
-    pub(crate) fn offset(self, dx: f64, dy: f64, dz: f64) -> Self {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-            z: self.z + dz,
-        }
     }
 }
 
@@ -91,6 +81,7 @@ impl NodeId {
     }
 }
 
+#[cfg(test)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Axis {
     X,
@@ -109,24 +100,31 @@ pub(crate) trait SampledScalarField: Debug + Send + Sync {
 #[derive(Clone, Debug)]
 enum Node {
     Constant(f64),
+    #[cfg(test)]
     Axis(Axis),
     SampledField(Arc<dyn SampledScalarField>),
     Add(NodeId, NodeId),
     Multiply(NodeId, NodeId),
+    #[cfg(test)]
     Min(NodeId, NodeId),
+    #[cfg(test)]
     Max(NodeId, NodeId),
+    #[cfg(test)]
     Abs(NodeId),
     RidgeFold(NodeId),
+    #[cfg(test)]
     Clamp {
         input: NodeId,
         min: f64,
         max: f64,
     },
+    #[cfg(test)]
     Lerp {
         a: NodeId,
         b: NodeId,
         t: NodeId,
     },
+    #[cfg(test)]
     VerticalRamp {
         y_min: f64,
         y_max: f64,
@@ -140,6 +138,7 @@ enum Node {
         fade_height: f64,
         solid_density: f64,
     },
+    #[cfg(test)]
     RangeSelect {
         selector: NodeId,
         min: f64,
@@ -157,24 +156,31 @@ impl Node {
     fn with_graph(self, graph_id: GraphId) -> Self {
         match self {
             Self::Constant(value) => Self::Constant(value),
+            #[cfg(test)]
             Self::Axis(axis) => Self::Axis(axis),
             Self::SampledField(field) => Self::SampledField(field),
             Self::Add(a, b) => Self::Add(a.with_graph(graph_id), b.with_graph(graph_id)),
             Self::Multiply(a, b) => Self::Multiply(a.with_graph(graph_id), b.with_graph(graph_id)),
+            #[cfg(test)]
             Self::Min(a, b) => Self::Min(a.with_graph(graph_id), b.with_graph(graph_id)),
+            #[cfg(test)]
             Self::Max(a, b) => Self::Max(a.with_graph(graph_id), b.with_graph(graph_id)),
+            #[cfg(test)]
             Self::Abs(input) => Self::Abs(input.with_graph(graph_id)),
             Self::RidgeFold(input) => Self::RidgeFold(input.with_graph(graph_id)),
+            #[cfg(test)]
             Self::Clamp { input, min, max } => Self::Clamp {
                 input: input.with_graph(graph_id),
                 min,
                 max,
             },
+            #[cfg(test)]
             Self::Lerp { a, b, t } => Self::Lerp {
                 a: a.with_graph(graph_id),
                 b: b.with_graph(graph_id),
                 t: t.with_graph(graph_id),
             },
+            #[cfg(test)]
             Self::VerticalRamp { y_min, y_max } => Self::VerticalRamp { y_min, y_max },
             Self::VerticalBias { base_height } => Self::VerticalBias {
                 base_height: base_height.with_graph(graph_id),
@@ -190,6 +196,7 @@ impl Node {
                 fade_height,
                 solid_density,
             },
+            #[cfg(test)]
             Self::RangeSelect {
                 selector,
                 min,
@@ -340,6 +347,7 @@ impl ScalarGraph {
         self.push(Node::Constant(value))
     }
 
+    #[cfg(test)]
     pub(crate) fn axis(&mut self, axis: Axis) -> NodeId {
         self.push(Node::Axis(axis))
     }
@@ -360,18 +368,21 @@ impl ScalarGraph {
         self.push(Node::Multiply(a, b))
     }
 
+    #[cfg(test)]
     pub(crate) fn min(&mut self, a: NodeId, b: NodeId) -> NodeId {
         self.assert_existing_node(a, "min left input");
         self.assert_existing_node(b, "min right input");
         self.push(Node::Min(a, b))
     }
 
+    #[cfg(test)]
     pub(crate) fn max(&mut self, a: NodeId, b: NodeId) -> NodeId {
         self.assert_existing_node(a, "max left input");
         self.assert_existing_node(b, "max right input");
         self.push(Node::Max(a, b))
     }
 
+    #[cfg(test)]
     pub(crate) fn abs(&mut self, input: NodeId) -> NodeId {
         self.assert_existing_node(input, "abs input");
         self.push(Node::Abs(input))
@@ -382,11 +393,13 @@ impl ScalarGraph {
         self.push(Node::RidgeFold(input))
     }
 
+    #[cfg(test)]
     pub(crate) fn clamp(&mut self, input: NodeId, min: f64, max: f64) -> NodeId {
         self.assert_existing_node(input, "clamp input");
         self.push(Node::Clamp { input, min, max })
     }
 
+    #[cfg(test)]
     pub(crate) fn lerp(&mut self, a: NodeId, b: NodeId, t: NodeId) -> NodeId {
         self.assert_existing_node(a, "lerp first input");
         self.assert_existing_node(b, "lerp second input");
@@ -394,6 +407,7 @@ impl ScalarGraph {
         self.push(Node::Lerp { a, b, t })
     }
 
+    #[cfg(test)]
     pub(crate) fn vertical_ramp(&mut self, y_min: f64, y_max: f64) -> NodeId {
         self.push(Node::VerticalRamp { y_min, y_max })
     }
@@ -419,6 +433,7 @@ impl ScalarGraph {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn range_select(
         &mut self,
         selector: NodeId,
@@ -466,10 +481,12 @@ impl ScalarGraph {
         self.outputs.insert(channel.0, node);
     }
 
+    #[cfg(test)]
     pub(crate) fn has_channel(&self, channel: impl AsRef<str>) -> bool {
         self.outputs.contains_key(channel.as_ref())
     }
 
+    #[cfg(test)]
     pub(crate) fn channel_names(&self) -> impl Iterator<Item = &str> {
         self.outputs.keys().map(String::as_str)
     }
@@ -483,6 +500,7 @@ impl ScalarGraph {
         self.y_dependencies[node.index]
     }
 
+    #[cfg(test)]
     pub(crate) fn channel_depends_on_y(&self, channel: impl AsRef<str>) -> Option<bool> {
         self.channel_node(channel)
             .map(|node| self.node_depends_on_y(node))
@@ -520,8 +538,11 @@ impl ScalarGraph {
     fn evaluate_node_uncached(&self, node: NodeId, point: SamplePoint) -> f64 {
         match &self.nodes[node.index] {
             Node::Constant(value) => *value,
+            #[cfg(test)]
             Node::Axis(Axis::X) => point.x,
+            #[cfg(test)]
             Node::Axis(Axis::Y) => point.y,
+            #[cfg(test)]
             Node::Axis(Axis::Z) => point.z,
             Node::SampledField(field) => field.sample(point),
             Node::Add(a, b) => {
@@ -530,24 +551,30 @@ impl ScalarGraph {
             Node::Multiply(a, b) => {
                 self.evaluate_node_uncached(*a, point) * self.evaluate_node_uncached(*b, point)
             }
+            #[cfg(test)]
             Node::Min(a, b) => self
                 .evaluate_node_uncached(*a, point)
                 .min(self.evaluate_node_uncached(*b, point)),
+            #[cfg(test)]
             Node::Max(a, b) => self
                 .evaluate_node_uncached(*a, point)
                 .max(self.evaluate_node_uncached(*b, point)),
+            #[cfg(test)]
             Node::Abs(input) => self.evaluate_node_uncached(*input, point).abs(),
             Node::RidgeFold(input) => ridge_fold_value(self.evaluate_node_uncached(*input, point)),
+            #[cfg(test)]
             Node::Clamp { input, min, max } => {
                 let lo = (*min).min(*max);
                 let hi = (*min).max(*max);
                 self.evaluate_node_uncached(*input, point).clamp(lo, hi)
             }
+            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 let a = self.evaluate_node_uncached(*a, point);
                 let b = self.evaluate_node_uncached(*b, point);
                 a + (b - a) * self.evaluate_node_uncached(*t, point)
             }
+            #[cfg(test)]
             Node::VerticalRamp { y_min, y_max } => vertical_ramp(point.y, *y_min, *y_max),
             Node::VerticalBias { base_height } => {
                 self.evaluate_node_uncached(*base_height, point) - point.y
@@ -564,6 +591,7 @@ impl ScalarGraph {
                 *fade_height,
                 *solid_density,
             ),
+            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 min,
@@ -610,8 +638,11 @@ impl ScalarGraph {
 
         let value = match &self.nodes[node.index] {
             Node::Constant(value) => *value,
+            #[cfg(test)]
             Node::Axis(Axis::X) => point.x,
+            #[cfg(test)]
             Node::Axis(Axis::Y) => point.y,
+            #[cfg(test)]
             Node::Axis(Axis::Z) => point.z,
             Node::SampledField(field) => field.sample(point),
             Node::Add(a, b) => {
@@ -622,27 +653,33 @@ impl ScalarGraph {
                 self.evaluate_node_cached_inner(*a, point, cache)
                     * self.evaluate_node_cached_inner(*b, point, cache)
             }
+            #[cfg(test)]
             Node::Min(a, b) => self
                 .evaluate_node_cached_inner(*a, point, cache)
                 .min(self.evaluate_node_cached_inner(*b, point, cache)),
+            #[cfg(test)]
             Node::Max(a, b) => self
                 .evaluate_node_cached_inner(*a, point, cache)
                 .max(self.evaluate_node_cached_inner(*b, point, cache)),
+            #[cfg(test)]
             Node::Abs(input) => self.evaluate_node_cached_inner(*input, point, cache).abs(),
             Node::RidgeFold(input) => {
                 ridge_fold_value(self.evaluate_node_cached_inner(*input, point, cache))
             }
+            #[cfg(test)]
             Node::Clamp { input, min, max } => {
                 let lo = (*min).min(*max);
                 let hi = (*min).max(*max);
                 self.evaluate_node_cached_inner(*input, point, cache)
                     .clamp(lo, hi)
             }
+            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 let a = self.evaluate_node_cached_inner(*a, point, cache);
                 let b = self.evaluate_node_cached_inner(*b, point, cache);
                 a + (b - a) * self.evaluate_node_cached_inner(*t, point, cache)
             }
+            #[cfg(test)]
             Node::VerticalRamp { y_min, y_max } => vertical_ramp(point.y, *y_min, *y_max),
             Node::VerticalBias { base_height } => {
                 self.evaluate_node_cached_inner(*base_height, point, cache) - point.y
@@ -659,6 +696,7 @@ impl ScalarGraph {
                 *fade_height,
                 *solid_density,
             ),
+            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 min,
@@ -704,20 +742,30 @@ impl ScalarGraph {
     fn node_definition_depends_on_y(&self, node: &Node) -> bool {
         match node {
             Node::Constant(_) => false,
+            #[cfg(test)]
             Node::Axis(axis) => *axis == Axis::Y,
             Node::SampledField(field) => field.depends_on_y(),
-            Node::Add(a, b) | Node::Multiply(a, b) | Node::Min(a, b) | Node::Max(a, b) => {
+            Node::Add(a, b) | Node::Multiply(a, b) => {
                 self.node_depends_on_y(*a) || self.node_depends_on_y(*b)
             }
-            Node::Abs(input) | Node::RidgeFold(input) | Node::Clamp { input, .. } => {
-                self.node_depends_on_y(*input)
+            #[cfg(test)]
+            Node::Min(a, b) | Node::Max(a, b) => {
+                self.node_depends_on_y(*a) || self.node_depends_on_y(*b)
             }
+            Node::RidgeFold(input) => self.node_depends_on_y(*input),
+            #[cfg(test)]
+            Node::Abs(input) | Node::Clamp { input, .. } => self.node_depends_on_y(*input),
+            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 self.node_depends_on_y(*a)
                     || self.node_depends_on_y(*b)
                     || self.node_depends_on_y(*t)
             }
+            #[cfg(test)]
             Node::VerticalRamp { .. } | Node::VerticalBias { .. } | Node::FloorClamp { .. } => true,
+            #[cfg(not(test))]
+            Node::VerticalBias { .. } | Node::FloorClamp { .. } => true,
+            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 inside,
@@ -755,6 +803,7 @@ fn advance_generation(generation: &mut u32, stamps: &mut [u32]) {
     }
 }
 
+#[cfg(test)]
 fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
     if (y_max - y_min).abs() <= f64::EPSILON {
         if y >= y_max {

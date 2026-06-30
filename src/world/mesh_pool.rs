@@ -121,9 +121,7 @@ impl MeshPool {
                     };
                     match job {
                         Ok(job) => {
-                            let t = std::time::Instant::now();
                             let done = build(job);
-                            crate::perf::MESH.record(t.elapsed().as_nanos() as u64);
                             if tx_done.send(done).is_err() {
                                 break;
                             }

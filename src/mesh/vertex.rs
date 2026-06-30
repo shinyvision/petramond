@@ -1,6 +1,4 @@
-/// Per-face directional shade factors, indexed by `Face::shade_idx`. The vertex
-/// shader (`block.wgsl`) holds a byte-identical copy; `tests::shade_table_*`
-/// locks the two in sync. Top brightest, bottom darkest.
+/// Per-face directional shade factors, mirrored in `block.wgsl`.
 pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 
 /// GPU vertex: 28 bytes. `pos` and `tint` stay full `f32` (pos keeps the water
@@ -28,9 +26,7 @@ pub struct Vertex {
 /// field meanings) routes through here, so the layout is defined in exactly one
 /// place.
 ///
-/// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`'s
-/// decode — those WGSL shaders MUST be kept in sync if this ever changes, and the
-/// frozen golden `mesh::tests::mesh_bytes_golden_is_byte_stable` pins it):
+/// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`):
 ///   0..8 tile id | 8..10 corner (0..3) | 10..12 shade index (into `SHADES`)
 ///   12..20 overlay tile | 20 has-overlay flag | 21..23 AO (0 dark..3 bright)
 ///   23..29 skylight (0 dark..63 full sky)

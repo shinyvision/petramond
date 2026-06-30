@@ -166,14 +166,6 @@ impl ChunkGenerator {
         self.surface_density.biome_at(wx, wz)
     }
 
-    /// Run terrain generation (everything except features) for one chunk, reading
-    /// the precomputed region. Kept for staged tooling and diagnostics.
-    pub fn generate(&self, region: &RegionCells, cx: i32, cz: i32) -> Chunk {
-        let mut proto = ProtoChunk::new(cx, cz);
-        self.surface_density.fill_chunk(&mut proto, region);
-        proto.into_chunk()
-    }
-
     /// Run hot-path terrain generation for one chunk without materializing a
     /// padded feature region.
     pub fn generate_surface(&self, cx: i32, cz: i32) -> Chunk {
@@ -205,13 +197,6 @@ impl ChunkGenerator {
     /// underground pass and BEFORE trees so it reads bare ground.
     pub fn place_vegetation(&self, chunk: &mut Chunk) {
         super::feature::vegetation::place_vegetation(chunk, self.seed);
-    }
-
-    /// Feature placement stage. Reads biome + biome-driven surface from the shared
-    /// region (incl. the cross-chunk margin) so trees land in the right biome at the
-    /// right height. Kept for staged tooling and diagnostics.
-    pub fn place_features(&self, chunk: &mut Chunk, region: &RegionCells) {
-        super::feature::place_features(chunk, region, self.seed);
     }
 
     /// Hot-path feature placement. Builds only the feature candidate/support

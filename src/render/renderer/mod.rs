@@ -1,7 +1,7 @@
 use crate::camera::{Camera, Frustum};
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::SelectionShape;
-use crate::world::TerrainMeshUploadSource;
+use crate::world::TerrainRenderHandoff;
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
@@ -120,13 +120,6 @@ pub(in crate::render) struct VisibleSection {
 struct MobGpu {
     model: &'static Model,
     scale: f32,
-    // Kept alive alongside the bind group that references them.
-    #[allow(dead_code)]
-    texture: wgpu::Texture,
-    #[allow(dead_code)]
-    view: wgpu::TextureView,
-    #[allow(dead_code)]
-    sampler: wgpu::Sampler,
     bind: wgpu::BindGroup,
     draw: DynamicDraw,
     /// Frustum-visible subset of this species' instances this frame.
@@ -141,14 +134,6 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    // Held to keep the GPU atlas texture/view/sampler alive for `atlas_bind`'s lifetime;
-    // dropping them could free resources the draw-time bind group still references.
-    #[allow(dead_code)]
-    atlas_texture: wgpu::Texture,
-    #[allow(dead_code)]
-    atlas_view: wgpu::TextureView,
-    #[allow(dead_code)]
-    atlas_sampler: wgpu::Sampler,
     sky_pipe: wgpu::RenderPipeline,
     sky_bind: wgpu::BindGroup,
     opaque_pipe: wgpu::RenderPipeline,
@@ -226,12 +211,6 @@ pub struct Renderer {
     /// in packed terrain columns as per-section model ranges, so there's no per-frame
     /// model bake — the model pass just draws the visible sections' model streams.
     model_pipe: wgpu::RenderPipeline,
-    #[allow(dead_code)]
-    model_atlas_texture: wgpu::Texture,
-    #[allow(dead_code)]
-    model_atlas_view: wgpu::TextureView,
-    #[allow(dead_code)]
-    model_atlas_sampler: wgpu::Sampler,
     model_atlas_bind: wgpu::BindGroup,
     /// Dropped bbmodel item-entities (world-space ItemVertex, model atlas), drawn by the
     /// model pipeline in the model pass — the explicit-UV counterpart of `item_entity_draw`.

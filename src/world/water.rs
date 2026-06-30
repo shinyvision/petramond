@@ -23,7 +23,6 @@
 //! one ring per flow delay and naturally crosses chunk borders.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 
 use crate::block::{Block, BlockBehavior};
 use crate::mathh::{IVec3, Vec3};
@@ -250,7 +249,7 @@ impl World {
             }
         }
         {
-            let Some(s) = self.sections.get_mut(&cpos).map(Arc::make_mut) else {
+            let Some(s) = self.section_mut(cpos) else {
                 return false;
             };
             s.set_water(lx, ly, lz, block, meta);

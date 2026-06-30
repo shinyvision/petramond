@@ -547,9 +547,7 @@ impl Backend {
                     };
                     match job {
                         Ok(job) => {
-                            let t = std::time::Instant::now();
                             let res = run_light_bake(job);
-                            crate::perf::LIGHT.record(t.elapsed().as_nanos() as u64);
                             if tx_res.send(res).is_err() {
                                 break;
                             }

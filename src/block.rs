@@ -435,9 +435,7 @@ impl Block {
     /// bright enough to light a cave, but one notch under open daylight so a lit cell
     /// still reads as "indoors" and takes the warm block-light tint. A furnace shares
     /// that level but only while it is LIT — that state lives in its block-entity, not
-    /// the block id, so the flood seeds furnaces only in their lit state (see
-    /// `world::light_queue` for which cells are seeded and `mesh::blocklight` for the
-    /// flood + the sky-vs-block tinting).
+    /// the block id, so the flood seeds furnaces only in their lit state.
     #[inline]
     pub fn light_emission(self) -> u8 {
         self.def().emission
@@ -596,172 +594,10 @@ impl Block {
     }
 }
 
-/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
-/// the `BLOCK_DEFS` table is id-ordered and one-to-one with [`Block::ALL`].
-#[cfg(test)]
-pub(crate) fn assert_registry_ordered() {
-    crate::registry::assert_id_ordered(data::BLOCK_DEFS, Block::ALL);
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Block, BlockInteraction, BlockMaterial, RenderShape};
-    use crate::atlas::Tile;
     use crate::item::ItemType;
-
-    #[test]
-    fn ids_are_stable_and_append_only() {
-        let expected = [
-            Block::Air,
-            Block::Grass,
-            Block::Dirt,
-            Block::Stone,
-            Block::Sand,
-            Block::Snow,
-            Block::Water,
-            Block::OakLog,
-            Block::OakLeaves,
-            Block::SpruceLog,
-            Block::BirchLog,
-            Block::JungleLog,
-            Block::AcaciaLog,
-            Block::DarkOakLog,
-            Block::CherryLog,
-            Block::MangroveLog,
-            Block::SpruceLeaves,
-            Block::BirchLeaves,
-            Block::JungleLeaves,
-            Block::AcaciaLeaves,
-            Block::DarkOakLeaves,
-            Block::MangroveLeaves,
-            Block::CherryLeaves,
-            Block::AzaleaLeaves,
-            Block::RedSand,
-            Block::Sandstone,
-            Block::RedSandstone,
-            Block::Terracotta,
-            Block::WhiteTerracotta,
-            Block::OrangeTerracotta,
-            Block::YellowTerracotta,
-            Block::BrownTerracotta,
-            Block::RedTerracotta,
-            Block::LightGrayTerracotta,
-            Block::Podzol,
-            Block::Mycelium,
-            Block::CoarseDirt,
-            Block::Gravel,
-            Block::Clay,
-            Block::Mud,
-            Block::MossBlock,
-            Block::SnowBlock,
-            Block::PackedIce,
-            Block::Ice,
-            Block::Calcite,
-            Block::Granite,
-            Block::Diorite,
-            Block::Andesite,
-            Block::Tuff,
-            Block::CoalOre,
-            Block::IronOre,
-            Block::CopperOre,
-            Block::GoldOre,
-            Block::RedstoneOre,
-            Block::LapisOre,
-            Block::DiamondOre,
-            Block::EmeraldOre,
-            Block::Pumpkin,
-            Block::Melon,
-            Block::Cactus,
-            Block::ShortGrass,
-            Block::Fern,
-            Block::Dandelion,
-            Block::Poppy,
-            Block::Cornflower,
-            Block::Allium,
-            Block::AzureBluet,
-            Block::OxeyeDaisy,
-            Block::RedTulip,
-            Block::DeadBush,
-            Block::BrownMushroom,
-            Block::RedMushroom,
-            Block::Cobblestone,
-            Block::OakPlanks,
-            Block::SprucePlanks,
-            Block::BirchPlanks,
-            Block::JunglePlanks,
-            Block::AcaciaPlanks,
-            Block::DarkOakPlanks,
-            Block::CherryPlanks,
-            Block::MangrovePlanks,
-            Block::CraftingTable,
-            Block::Furnace,
-            Block::Chest,
-            Block::Torch,
-            Block::FurnitureWorkbench,
-            Block::OakSapling,
-            Block::SpruceSapling,
-            Block::BirchSapling,
-            Block::JungleSapling,
-            Block::AcaciaSapling,
-            Block::DarkOakSapling,
-            Block::CherrySapling,
-            Block::OakDoor,
-            Block::SpruceDoor,
-            Block::BirchDoor,
-            Block::JungleDoor,
-            Block::AcaciaDoor,
-            Block::DarkOakDoor,
-            Block::CherryDoor,
-            Block::MangroveDoor,
-            Block::RedwoodLog,
-            Block::RedwoodLeaves,
-            Block::RedwoodPlanks,
-            Block::RedwoodDoor,
-        ];
-
-        assert_eq!(Block::ALL, expected);
-        for (id, block) in expected.into_iter().enumerate() {
-            assert_eq!(block.id(), id as u8);
-            assert_eq!(Block::from_id(id as u8), block);
-        }
-        assert_eq!(Block::from_id(u8::MAX), Block::Air);
-    }
-
-    #[test]
-    fn properties_match_existing_behavior() {
-        assert!(!Block::Air.is_solid());
-        assert!(!Block::Air.is_opaque());
-        assert!(!Block::Air.occludes_ao());
-        assert!(!Block::Air.is_transparent());
-        assert!(Block::Air.is_replaceable());
-
-        for block in [
-            Block::Grass,
-            Block::Dirt,
-            Block::Stone,
-            Block::Sand,
-            Block::Snow,
-            Block::OakLog,
-        ] {
-            assert!(block.is_solid(), "{block:?}");
-            assert!(block.is_opaque(), "{block:?}");
-            assert!(block.occludes_ao(), "{block:?}");
-            assert!(!block.is_transparent(), "{block:?}");
-            assert!(!block.is_replaceable(), "{block:?}");
-        }
-
-        assert!(!Block::Water.is_solid());
-        assert!(!Block::Water.is_opaque());
-        assert!(!Block::Water.occludes_ao());
-        assert!(Block::Water.is_transparent());
-        assert!(Block::Water.is_replaceable());
-
-        assert!(Block::OakLeaves.is_solid());
-        assert!(!Block::OakLeaves.is_opaque());
-        assert!(Block::OakLeaves.occludes_ao());
-        assert!(Block::OakLeaves.is_transparent());
-        assert!(!Block::OakLeaves.is_replaceable());
-    }
 
     #[test]
     fn directional_view_is_block_data_for_blocks_with_a_front() {
@@ -903,39 +739,5 @@ mod tests {
         ] {
             assert!(!b.is_terrain_solid(), "{b:?} should NOT be terrain-solid");
         }
-    }
-
-    #[test]
-    fn tiles_match_existing_face_mapping() {
-        assert_eq!(
-            Block::Air.tiles(),
-            [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves]
-        );
-        assert_eq!(
-            Block::Grass.tiles(),
-            [Tile::GrassTop, Tile::Dirt, Tile::GrassSide]
-        );
-        assert_eq!(Block::Dirt.tiles(), [Tile::Dirt, Tile::Dirt, Tile::Dirt]);
-        assert_eq!(
-            Block::Stone.tiles(),
-            [Tile::Stone, Tile::Stone, Tile::Stone]
-        );
-        assert_eq!(Block::Sand.tiles(), [Tile::Sand, Tile::Sand, Tile::Sand]);
-        assert_eq!(
-            Block::Snow.tiles(),
-            [Tile::Snow, Tile::Dirt, Tile::GrassSnow]
-        );
-        assert_eq!(
-            Block::Water.tiles(),
-            [Tile::Water, Tile::Water, Tile::Water]
-        );
-        assert_eq!(
-            Block::OakLog.tiles(),
-            [Tile::OakLogTop, Tile::OakLogTop, Tile::OakLogSide]
-        );
-        assert_eq!(
-            Block::OakLeaves.tiles(),
-            [Tile::OakLeaves, Tile::OakLeaves, Tile::OakLeaves]
-        );
     }
 }

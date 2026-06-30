@@ -341,7 +341,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos};
+    use crate::chunk::ChunkPos;
     use crate::crafting::Recipes;
 
     use super::super::store::LoadTarget;

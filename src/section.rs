@@ -467,9 +467,7 @@ impl Section {
         ) || block.has_tag(BlockTag::Leaves)
     }
 
-    /// The exact random-tickable cell count (tests assert it stays in step with the
-    /// blocks after a bulk fill + incremental setter edits).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "worldgen-tests"))]
     pub(crate) fn random_tick_count(&self) -> u32 {
         self.random_tick_count
     }

@@ -148,7 +148,7 @@ impl Renderer {
     }
 
     /// Synchronize GPU meshes with the terrain CPU meshes.
-    pub(crate) fn sync_meshes(&mut self, terrain: &mut impl TerrainMeshUploadSource) {
+    pub(crate) fn sync_meshes(&mut self, terrain: &mut TerrainRenderHandoff<'_>) {
         // Drop packed GPU columns whose CPU meshes are gone.
         self.terrain_columns
             .retain(|p, _| terrain.has_column_mesh(*p));

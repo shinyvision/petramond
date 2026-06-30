@@ -11,7 +11,6 @@
 
 pub(crate) mod audit;
 pub(crate) mod biome;
-mod ctx;
 pub(crate) mod data;
 pub(crate) mod density;
 pub(crate) mod driver;
@@ -131,7 +130,7 @@ mod tests {
     /// clip per-section without drift across the (now 3D) seams.
     #[test]
     fn per_section_generation_matches_whole_column_above_ground() {
-        use crate::chunk::{SectionPos, SECTION_COUNT, SECTION_SIZE};
+        use crate::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
 
         let seed = 0x1234_5678;
         let generator = driver::ChunkGenerator::new(seed);
@@ -149,7 +148,7 @@ mod tests {
                 }
             }
 
-            for cy in 0..SECTION_COUNT as i32 {
+            for cy in 0..(CHUNK_SY / SECTION_SIZE) as i32 {
                 let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
                 for ly in 0..SECTION_SIZE {
                     let wy = cy as usize * SECTION_SIZE + ly;
@@ -206,14 +205,14 @@ mod tests {
     #[test]
     fn per_section_generation_keeps_random_tick_count_exact() {
         use crate::block::Block;
-        use crate::chunk::{SectionPos, SECTION_COUNT};
+        use crate::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
 
         for &seed in &[1u32, 7, 42, 0x1234_5678] {
             let generator = driver::ChunkGenerator::new(seed);
             for cz in -3..=3 {
                 for cx in -3..=3 {
                     let col = generator.generate_column_gen(cx, cz);
-                    for cy in 0..SECTION_COUNT as i32 {
+                    for cy in 0..(CHUNK_SY / SECTION_SIZE) as i32 {
                         let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
                         let expected = section
                             .blocks_slice()

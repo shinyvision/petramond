@@ -1,12 +1,3 @@
-//! The open container menu: the craft grid plus the block-entity the GUI is
-//! currently editing.
-//!
-//! `App::AppScreen` remains the single authority for *which* screen is open;
-//! `ContainerMenu` owns only the persistent *edit target* — the block-entity (or
-//! the inventory-side craft grid) the open GUI mutates — and the slot-interaction
-//! behaviour for it. The one-shot *open request* is a `GameEvents` field consumed
-//! by the app shell, never persisted here.
-
 mod chest;
 mod crafting;
 mod dispatch;
@@ -15,54 +6,8 @@ mod state;
 mod target;
 mod workbench;
 
-use crate::chest::Chest;
-use crate::furnace::Furnace;
-use crate::mathh::IVec3;
-use crate::world::World;
-
 pub(super) use state::ContainerMenu;
 pub(super) use target::ContainerTarget;
-
-/// A block-entity container the open GUI can edit in place: the one accessor that
-/// the byte-identical `edit_open_furnace` / `edit_open_chest` helpers differed on.
-/// [`with_open_container`] pairs it with the (type-independent) chunk-modified mark
-/// so an otherwise-idle container — which no tick would re-flag — persists its edit.
-trait BlockEntityContainer: Sized {
-    /// Mutable handle to this container at `pos`, or `None` if it has unloaded.
-    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self>;
-}
-
-impl BlockEntityContainer for Furnace {
-    #[inline]
-    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self> {
-        world.furnace_at_mut(pos)
-    }
-}
-
-impl BlockEntityContainer for Chest {
-    #[inline]
-    fn at_mut(world: &mut World, pos: IVec3) -> Option<&mut Self> {
-        world.chest_at_mut(pos)
-    }
-}
-
-/// Run `edit` on the block-entity container `C` at `pos`, then mark its chunk
-/// modified so an otherwise-idle container persists the edit. No-op (but still
-/// marks, matching the prior behaviour) when the container has unloaded.
-///
-/// This is the single helper that replaced the byte-identical `edit_open_furnace`
-/// / `edit_open_chest` twins — they differed only in which `at_mut` accessor they
-/// called, now selected by the `C: BlockEntityContainer` bound.
-fn with_open_container<C: BlockEntityContainer>(
-    world: &mut World,
-    pos: IVec3,
-    edit: impl FnOnce(&mut C),
-) {
-    if let Some(container) = C::at_mut(world, pos) {
-        edit(container);
-    }
-    world.mark_chunk_modified(pos);
-}
 
 #[cfg(test)]
 mod tests {
@@ -72,12 +17,10 @@ mod tests {
     use crate::crafting::Recipes;
     use crate::furnace::Facing;
     use crate::gui::{MenuSlot, WorkbenchHit};
-    use crate::inventory::{Inventory, SlotGrid};
+    use crate::inventory::Inventory;
     use crate::item::{ItemStack, ItemType};
+    use crate::mathh::IVec3;
     use crate::world::World;
-
-    /// A bare in-memory world with an empty chunk at (0,0) installed, so a
-    /// block-entity can be placed and edited without touching disk or worldgen.
     fn world_with_empty_chunk() -> World {
         let mut world = World::new(1, 1);
         let pos = crate::chunk::ChunkPos::new(0, 0);
@@ -97,9 +40,6 @@ mod tests {
             .map(|s| s.count as u32)
             .sum()
     }
-
-    /// Put `stack` into the first craft cell by routing it through the cursor
-    /// (inventory slot 0 → cursor → craft cell), as the UI clicks would.
     fn place_in_craft_cell(
         menu: &mut ContainerMenu,
         inv: &mut Inventory,
@@ -136,7 +76,7 @@ mod tests {
             Some((ItemType::OakPlanks, 4))
         );
         assert!(menu.craft_grid().result().is_none());
-        assert!(menu.craft_grid().is_empty());
+        assert!(menu.craft_grid().cells().iter().all(Option::is_none));
     }
 
     #[test]
@@ -154,7 +94,10 @@ mod tests {
             ItemStack::new(ItemType::OakLog, 3),
         );
         menu.craft_shift_result(&mut inv, &recipes);
-        assert!(menu.craft_grid().is_empty(), "all logs consumed");
+        assert!(
+            menu.craft_grid().cells().iter().all(Option::is_none),
+            "all logs consumed"
+        );
         assert_eq!(count_item(&inv, ItemType::OakPlanks), 12);
     }
 
@@ -243,10 +186,6 @@ mod tests {
         assert_eq!(world.furnace_at(pos).unwrap().fuel.unwrap().count, 64);
         assert_eq!(inv.slot(0).map(|s| s.count), Some(6));
     }
-
-    /// Place a block in the workbench input by routing it through the cursor (inventory
-    /// slot 0 → cursor → input), as the UI clicks would. The click path needs a world,
-    /// though the workbench slots don't touch it.
     fn place_in_workbench_input(
         menu: &mut ContainerMenu,
         world: &mut World,

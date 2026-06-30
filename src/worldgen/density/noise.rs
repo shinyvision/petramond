@@ -3,8 +3,6 @@
 //! This module intentionally does not use the cave-oriented `worldgen::noise`
 //! samplers. Every field is a pure function of `(world_seed, field id, point)`.
 
-#![allow(dead_code)] // Stage-2 foundation is wired before live terrain consumes it.
-
 use super::super::graph::{SamplePoint, SampledScalarField};
 
 /// The 16 axis-aligned edge gradients (each pointing to an edge midpoint of the

@@ -13,9 +13,6 @@ pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
 pub const CHUNK_SY: usize = 256;
 pub const SECTION_SIZE: usize = 16;
-#[allow(dead_code)] // Used by test fixtures that assemble legacy 0..256 columns.
-pub const SECTION_COUNT: usize = CHUNK_SY / SECTION_SIZE;
-
 /// Voxels in one cubic section (16×16×16). The unit of the cubic-chunks refactor.
 pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
 
@@ -25,12 +22,10 @@ pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
 // have somewhere to carve. These are the tunable extents of the section grid.
 pub const WORLD_MIN_Y: i32 = -64;
 pub const WORLD_MAX_Y: i32 = 256;
-pub const WORLD_HEIGHT: usize = (WORLD_MAX_Y - WORLD_MIN_Y) as usize;
-/// Lowest / highest section coordinate `cy` (inclusive), and the section count in
-/// a full column. `cy` is `wy.div_euclid(16)`, so it is negative below y=0.
+/// Lowest / highest section coordinate `cy` (inclusive). `cy` is
+/// `wy.div_euclid(16)`, so it is negative below y=0.
 pub const SECTION_MIN_CY: i32 = WORLD_MIN_Y / SECTION_SIZE as i32;
 pub const SECTION_MAX_CY: i32 = WORLD_MAX_Y / SECTION_SIZE as i32 - 1;
-pub const SECTIONS_PER_COLUMN: usize = WORLD_HEIGHT / SECTION_SIZE;
 
 // Matches the reference overworld sea level so the land/water line aligns with the
 // reference terrain (offset-0 land sits at ≈63.5, just above the waterline).
@@ -65,15 +60,6 @@ pub fn idx(x: usize, y: usize, z: usize) -> usize {
 pub fn section_idx(x: usize, y: usize, z: usize) -> usize {
     debug_assert!(x < SECTION_SIZE && y < SECTION_SIZE && z < SECTION_SIZE);
     (y * SECTION_SIZE * SECTION_SIZE) + (z * SECTION_SIZE) + x
-}
-
-/// Split a world Y into `(section cy, local y in 0..16)`, correct for negative Y.
-#[inline]
-pub fn split_y(wy: i32) -> (i32, usize) {
-    (
-        wy.div_euclid(SECTION_SIZE as i32),
-        wy.rem_euclid(SECTION_SIZE as i32) as usize,
-    )
 }
 
 /// A voxel column. Blocks stored as `Box<[u8; VOLUME]>` (256 KiB / chunk).
@@ -871,7 +857,7 @@ impl SectionPos {
     /// world vertical range `WORLD_MIN_Y..WORLD_MAX_Y`.
     #[inline]
     pub fn from_world(wx: i32, wy: i32, wz: i32) -> Option<Self> {
-        if wy < WORLD_MIN_Y || wy >= WORLD_MAX_Y {
+        if !(WORLD_MIN_Y..WORLD_MAX_Y).contains(&wy) {
             return None;
         }
         Some(Self {

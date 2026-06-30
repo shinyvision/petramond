@@ -17,7 +17,7 @@ use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, ALL_MOBS};
+use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, MOB_DEFS};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -50,11 +50,11 @@ struct MobMeta {
 /// usize`. It's identical for every world, so computing it once keeps each `World::new` (of
 /// which the tests make dozens) from re-deriving it — and nothing here re-reads a `.bbmodel`.
 static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
-    ALL_MOBS
+    MOB_DEFS
         .iter()
-        .map(|&m| MobMeta {
-            idle_anims: model_meta::idle_anims(model(m)),
-            skeleton: model_meta::skeleton(model(m)),
+        .map(|d| MobMeta {
+            idle_anims: model_meta::idle_anims(model(d.mob)),
+            skeleton: model_meta::skeleton(model(d.mob)),
         })
         .collect()
 });

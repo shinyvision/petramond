@@ -16,10 +16,7 @@ mod block_model;
 mod camera;
 mod chest;
 mod chunk;
-// Cubic-chunks refactor (in progress): `Section`/`Column` are built additively and
-// wired into `World` in a later stage; allow dead code until the flip.
 mod collision;
-#[allow(dead_code)]
 mod column;
 mod controls;
 mod crafting;
@@ -34,13 +31,10 @@ mod mathh;
 mod mesh;
 mod mining;
 mod mob;
-pub mod perf;
 pub mod platform;
 mod player;
-mod registry;
 mod render;
 mod save;
-#[allow(dead_code)]
 mod section;
 mod texture_mips;
 pub mod tooling;

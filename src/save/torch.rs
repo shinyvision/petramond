@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::save::codec::{get_indexed, put_indexed, Reader, Writer};
+use crate::save::codec::{get_indexed, put_indexed, put_u8, Reader};
 use crate::torch::TorchPlacement;
 
 /// Bytes per serialized torch: idx(2) + placement(1).
@@ -19,7 +19,7 @@ const TORCH_BYTES: usize = 2 + 1;
 /// owns only the one-byte placement body.
 pub fn put_torches(buf: &mut Vec<u8>, torches: &HashMap<u16, TorchPlacement>) {
     put_indexed(buf, torches, TORCH_BYTES, |buf, p| {
-        buf.put_u8(p.to_u8());
+        put_u8(buf, p.to_u8());
     });
 }
 
@@ -31,6 +31,7 @@ pub fn get_torches(r: &mut Reader) -> Option<HashMap<u16, TorchPlacement>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::save::codec::put_u16;
 
     #[test]
     fn torches_roundtrip_through_a_buffer() {
@@ -57,7 +58,7 @@ mod tests {
     #[test]
     fn truncated_input_is_none() {
         let mut buf = Vec::new();
-        buf.put_u16(1); // claims one torch, provides no body
+        put_u16(&mut buf, 1); // claims one torch, provides no body
         let mut r = Reader::new(&buf);
         assert!(get_torches(&mut r).is_none());
     }

@@ -246,17 +246,15 @@ fn add(
 
 fn add_off_coast(rows: &mut Vec<Row>) {
     add(rows, FULL, FULL, MUSHROOM, FULL, FULL, Plains);
-    for i in 0..5 {
-        add(rows, T[i], FULL, DEEP_OCEAN_C, FULL, FULL, OCEANS[0][i]);
-        add(rows, T[i], FULL, OCEAN_C, FULL, FULL, OCEANS[1][i]);
+    for (i, &t) in T.iter().enumerate() {
+        add(rows, t, FULL, DEEP_OCEAN_C, FULL, FULL, OCEANS[0][i]);
+        add(rows, t, FULL, OCEAN_C, FULL, FULL, OCEANS[1][i]);
     }
 }
 
 fn add_peaks(rows: &mut Vec<Row>, v: AxisRange) {
-    for i in 0..5 {
-        let t = T[i];
-        for j in 0..5 {
-            let h = H[j];
+    for (i, &t) in T.iter().enumerate() {
+        for (j, &h) in H.iter().enumerate() {
             let core = pick_core(i, j, v);
             let core_arid = pick_core_or_arid_if_hot(i, j, v);
             let core_arid_slope = pick_core_or_arid_if_hot_or_slope_if_cold(i, j, v);
@@ -296,10 +294,8 @@ fn add_peaks(rows: &mut Vec<Row>, v: AxisRange) {
 }
 
 fn add_high_slice(rows: &mut Vec<Row>, v: AxisRange) {
-    for i in 0..5 {
-        let t = T[i];
-        for j in 0..5 {
-            let h = H[j];
+    for (i, &t) in T.iter().enumerate() {
+        for (j, &h) in H.iter().enumerate() {
             let core = pick_core(i, j, v);
             let core_arid = pick_core_or_arid_if_hot(i, j, v);
             let core_arid_slope = pick_core_or_arid_if_hot_or_slope_if_cold(i, j, v);
@@ -345,10 +341,8 @@ fn add_mid_slice(rows: &mut Vec<Row>, v: AxisRange) {
         Swamp,
     );
 
-    for i in 0..5 {
-        let t = T[i];
-        for j in 0..5 {
-            let h = H[j];
+    for (i, &t) in T.iter().enumerate() {
+        for (j, &h) in H.iter().enumerate() {
             let core = pick_core(i, j, v);
             let core_arid = pick_core_or_arid_if_hot(i, j, v);
             let core_arid_slope = pick_core_or_arid_if_hot_or_slope_if_cold(i, j, v);
@@ -415,10 +409,8 @@ fn add_low_slice(rows: &mut Vec<Row>, v: AxisRange) {
         Swamp,
     );
 
-    for i in 0..5 {
-        let t = T[i];
-        for j in 0..5 {
-            let h = H[j];
+    for (i, &t) in T.iter().enumerate() {
+        for (j, &h) in H.iter().enumerate() {
             let core = pick_core(i, j, v);
             let core_arid = pick_core_or_arid_if_hot(i, j, v);
             let core_arid_slope = pick_core_or_arid_if_hot_or_slope_if_cold(i, j, v);
@@ -501,10 +493,8 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         Swamp,
     );
     // Driest mid/far-inland erosion keeps the ordinary middle biome.
-    for i in 0..5 {
-        let t = T[i];
-        for j in 0..5 {
-            let h = H[j];
+    for (i, &t) in T.iter().enumerate() {
+        for (j, &h) in H.iter().enumerate() {
             let mid = pick_core_or_arid_if_hot(i, j, v);
             add(
                 rows,

@@ -296,7 +296,7 @@
     }
   ],
   "hover": {
-    "image": "inventory_hover.png",
+    "image": "chest_hover.png",
     "margin": 4,
     "fit": {
       "mode": "stretch"

@@ -31,6 +31,7 @@ impl DensityLatticeCellSize {
         z: DEFAULT_LATTICE_CELL_XZ,
     };
 
+    #[cfg(test)]
     pub(crate) fn new(x: usize, y: usize, z: usize) -> Self {
         assert!(x > 0, "density lattice X cell size must be positive");
         assert!(y > 0, "density lattice Y cell size must be positive");
@@ -38,14 +39,17 @@ impl DensityLatticeCellSize {
         Self { x, y, z }
     }
 
+    #[cfg(test)]
     pub(crate) const fn x(self) -> usize {
         self.x
     }
 
+    #[cfg(test)]
     pub(crate) const fn y(self) -> usize {
         self.y
     }
 
+    #[cfg(test)]
     pub(crate) const fn z(self) -> usize {
         self.z
     }
@@ -110,14 +114,7 @@ impl DensityLatticeBounds {
         )
     }
 
-    pub(crate) const fn origin(self) -> (i32, i32, i32) {
-        (self.origin_x, self.origin_y, self.origin_z)
-    }
-
-    pub(crate) const fn size(self) -> (usize, usize, usize) {
-        (self.size_x, self.size_y, self.size_z)
-    }
-
+    #[cfg(test)]
     pub(crate) fn voxel_count(self) -> usize {
         self.size_x * self.size_y * self.size_z
     }
@@ -150,6 +147,7 @@ impl DensityLatticeBounds {
         axis_coord(self.origin_z, local_z, "density lattice local Z")
     }
 
+    #[cfg(test)]
     pub(crate) fn local_index(self, x: usize, y: usize, z: usize) -> usize {
         assert!(
             x < self.size_x && y < self.size_y && z < self.size_z,
@@ -166,6 +164,7 @@ impl DensityLatticeBounds {
         z * self.size_x + x
     }
 
+    #[cfg(test)]
     fn contains_world(self, wx: i32, wy: i32, wz: i32) -> bool {
         axis_contains(self.origin_x, self.size_x, wx)
             && axis_contains(self.origin_y, self.size_y, wy)
@@ -222,6 +221,7 @@ impl DensityLattice {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn sample_chunk(
         graph: &ScalarGraph,
         channel: impl AsRef<str>,
@@ -236,14 +236,17 @@ impl DensityLattice {
         )
     }
 
+    #[cfg(test)]
     pub(crate) const fn bounds(&self) -> DensityLatticeBounds {
         self.bounds
     }
 
+    #[cfg(test)]
     pub(crate) const fn cell_size(&self) -> DensityLatticeCellSize {
         self.cell
     }
 
+    #[cfg(test)]
     pub(crate) fn sample_counts(&self) -> (usize, usize, usize) {
         (
             self.sample_x.count,
@@ -252,6 +255,7 @@ impl DensityLattice {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn sample_world_origin(&self) -> (i32, i32, i32) {
         (
             self.sample_x.origin,
@@ -260,6 +264,7 @@ impl DensityLattice {
         )
     }
 
+    #[cfg(test)]
     /// Last sampled lattice corner. Full-height chunk lattices end at Y 256,
     /// while voxel density queries remain bounded to world Y 0..255.
     pub(crate) fn sample_world_max(&self) -> (i32, i32, i32) {
@@ -277,6 +282,7 @@ impl DensityLattice {
         self.interpolate_at_world(wx, wy, wz)
     }
 
+    #[cfg(test)]
     pub(crate) fn density_at_world(&self, wx: i32, wy: i32, wz: i32) -> f64 {
         assert!(
             self.bounds.contains_world(wx, wy, wz),
@@ -289,10 +295,7 @@ impl DensityLattice {
         density_is_solid(self.density_at_local(x, y, z))
     }
 
-    pub(crate) fn solid_at_world(&self, wx: i32, wy: i32, wz: i32) -> bool {
-        density_is_solid(self.density_at_world(wx, wy, wz))
-    }
-
+    #[cfg(test)]
     pub(crate) fn for_each_solid(&self, mut visit: impl FnMut(usize, usize, usize, bool)) {
         for y in 0..self.bounds.size_y {
             for z in 0..self.bounds.size_z {
@@ -303,6 +306,7 @@ impl DensityLattice {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn solid_mask(&self) -> Vec<bool> {
         let bounds = self.bounds;
         let mut mask = vec![false; bounds.voxel_count()];
@@ -547,6 +551,7 @@ impl SampleAxis {
         )
     }
 
+    #[cfg(test)]
     fn last_coord(self) -> i32 {
         self.sample_coord(self.count - 1)
     }
@@ -562,6 +567,7 @@ impl SampleAxis {
     }
 }
 
+#[cfg(test)]
 fn axis_contains(origin: i32, size: usize, coord: i32) -> bool {
     let coord = i64::from(coord);
     let start = i64::from(origin);

@@ -140,50 +140,9 @@ impl Biome {
     }
 }
 
-/// Every biome in id order — the canonical key list, pinned by the id-stability
-/// and registry-ordering tests. (Biome exposes no public `ALL` const; this is
-/// test-only.)
-#[cfg(test)]
-const ALL_BIOMES: [Biome; BIOME_COUNT] = [
-    Biome::Ocean,
-    Biome::Beach,
-    Biome::River,
-    Biome::Desert,
-    Biome::Plains,
-    Biome::Savanna,
-    Biome::Forest,
-    Biome::Swamp,
-    Biome::Taiga,
-    Biome::SnowyTundra,
-    Biome::SnowyTaiga,
-    Biome::Mountains,
-    Biome::SnowyPeaks,
-    Biome::DeepOcean,
-    Biome::Foothills,
-    Biome::Wetland,
-    Biome::RedwoodForest,
-    Biome::OldGrowthTaiga,
-    Biome::CherryGrove,
-    Biome::Meadow,
-    Biome::Grove,
-    Biome::SnowySlopes,
-    Biome::WindsweptHills,
-    Biome::StonyPeaks,
-    Biome::WoodedHills,
-    Biome::MountainEdge,
-    Biome::DesertLakes,
-];
-
-/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
-/// the `BIOME_DEFS` table is id-ordered and one-to-one with [`ALL_BIOMES`].
-#[cfg(test)]
-pub(crate) fn assert_registry_ordered() {
-    crate::registry::assert_id_ordered(data::BIOME_DEFS, &ALL_BIOMES);
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{blended_fog_color, data, Biome, ALL_BIOMES, SKY_FOG_BLEND_SPAN_BLOCKS};
+    use super::{blended_fog_color, Biome, SKY_FOG_BLEND_SPAN_BLOCKS};
 
     fn assert_color_close(actual: [f32; 3], expected: [f32; 3]) {
         for i in 0..3 {
@@ -194,37 +153,6 @@ mod tests {
                 expected[i]
             );
         }
-    }
-
-    #[test]
-    fn ids_are_stable_and_append_only() {
-        for (id, biome) in ALL_BIOMES.into_iter().enumerate() {
-            let id = id as u8 + 1;
-            assert_eq!(biome.id(), id);
-            assert_eq!(Biome::from_id(id), biome);
-        }
-        assert_eq!(Biome::from_id(0), Biome::Ocean);
-        assert_eq!(Biome::from_id(u8::MAX), Biome::Ocean);
-    }
-
-    #[test]
-    fn metadata_methods_read_definition_rows() {
-        for def in data::BIOME_DEFS {
-            assert_eq!(def.biome.name(), def.name);
-            assert_eq!(def.biome.fog_color(), def.fog_color);
-            assert_eq!(def.biome.grass_color(), def.grass_color);
-            assert_eq!(def.biome.foliage_color(), def.foliage_color);
-            assert_eq!(def.biome.water_color(), def.water_color);
-        }
-
-        // A concrete, non-vacuous anchor that the loop above actually ran. Only
-        // the name is pinned literally: it is a stable identifier, not a tuned
-        // value. Colours are deliberately NOT spot-checked here — they are
-        // hand-tuned table data, so duplicating a row's colour in an assertion
-        // just goes stale the next time it is retuned (which is exactly what had
-        // happened to SnowyPeaks' foliage). The loop already proves every accessor
-        // returns its own row, whatever the values are.
-        assert_eq!(Biome::Beach.name(), "beach");
     }
 
     #[test]

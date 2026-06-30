@@ -1,7 +1,5 @@
 //! Data-declared cubic splines for pure scalar graph evaluation.
 
-#![allow(dead_code)] // Stage-3 infrastructure is wired into live terrain later.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 const INLINE_SPLINE_POINTS: usize = 8;
@@ -82,16 +80,9 @@ impl CubicSpline {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn constant(axis: impl Into<SplineAxis>, value: f64) -> Self {
         Self::new(axis, [SplinePoint::constant(0.0, value)])
-    }
-
-    pub(crate) fn axis(&self) -> &SplineAxis {
-        &self.axis
-    }
-
-    pub(crate) fn points(&self) -> &[SplinePoint] {
-        &self.points
     }
 
     pub(crate) fn required_axes(&self) -> BTreeSet<SplineAxis> {
@@ -138,6 +129,7 @@ pub(crate) struct SplinePoint {
 }
 
 impl SplinePoint {
+    #[cfg(test)]
     pub(crate) fn new(location: f64, value: SplineValue) -> Self {
         Self::with_optional_derivative(location, value, None)
     }
@@ -158,10 +150,12 @@ impl SplinePoint {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn constant(location: f64, value: f64) -> Self {
         Self::new(location, SplineValue::Constant(value))
     }
 
+    #[cfg(test)]
     pub(crate) fn nested(location: f64, spline: CubicSpline) -> Self {
         Self::new(location, SplineValue::Spline(Box::new(spline)))
     }
@@ -180,14 +174,6 @@ impl SplinePoint {
             SplineValue::Spline(Box::new(spline)),
             Some(derivative),
         )
-    }
-
-    pub(crate) fn location(&self) -> f64 {
-        self.location
-    }
-
-    pub(crate) fn value(&self) -> &SplineValue {
-        &self.value
     }
 }
 
@@ -294,12 +280,12 @@ fn fill_monotone_slopes(points: &[SplinePoint], values: &[f64], slopes: &mut [f6
         secant(points, values, n - 2),
         secant(points, values, n - 3),
     );
-    for i in 1..n - 1 {
+    for (i, slope) in slopes.iter_mut().enumerate().take(n - 1).skip(1) {
         let h_prev = span(points, i - 1);
         let h_next = span(points, i);
         let d_prev = secant(points, values, i - 1);
         let d_next = secant(points, values, i);
-        slopes[i] = if d_prev * d_next <= 0.0 {
+        *slope = if d_prev * d_next <= 0.0 {
             0.0
         } else {
             let w1 = 2.0 * h_next + h_prev;

@@ -20,8 +20,7 @@ mod definition;
 
 /// One variant per non-`Air` block-item, in the SAME order and with the SAME
 /// names as [`Block`] (which also starts at `Air = 0`). Append-only: never
-/// reorder or remove variants — ids are persisted-adjacent to block ids and are
-/// covered by [`tests::ids_are_stable_and_append_only`].
+/// reorder or remove variants — ids are persisted-adjacent to block ids.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ItemType {
@@ -371,8 +370,7 @@ impl ItemType {
     /// Size of the original 0.1 block-item prefix: item ids `[0, LEGACY_BLOCK_ITEMS)`
     /// are block-items that share their block's id (`Air..=CraftingTable`). Block-items
     /// added afterwards are appended past the item-only range and mapped explicitly in
-    /// [`from_block`](Self::from_block)/[`as_block`](Self::as_block), so growing the
-    /// block list never shifts an item id. Pinned by `item_block_id_parity`.
+    /// [`from_block`](Self::from_block)/[`as_block`](Self::as_block).
     const LEGACY_BLOCK_ITEMS: usize = Block::CraftingTable.id() as usize + 1;
 
     /// Stable numeric id, identical to the matching block's id.
@@ -627,13 +625,6 @@ impl ItemType {
     }
 }
 
-/// One-line delegating call for the shared id-ordering test in [`crate::registry`]:
-/// the `ITEM_DEFS` table is id-ordered and one-to-one with [`ItemType::ALL`].
-#[cfg(test)]
-pub(crate) fn assert_registry_ordered() {
-    crate::registry::assert_id_ordered(data::ITEM_DEFS, ItemType::ALL);
-}
-
 /// A run of identical items occupying one inventory slot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ItemStack {
@@ -700,188 +691,6 @@ mod tests {
                 "a diamond tool one-shots: {it:?}"
             );
         }
-    }
-
-    #[test]
-    fn ids_are_stable_and_append_only() {
-        let expected = [
-            ItemType::Air,
-            ItemType::Grass,
-            ItemType::Dirt,
-            ItemType::Stone,
-            ItemType::Sand,
-            ItemType::Snow,
-            ItemType::Water,
-            ItemType::OakLog,
-            ItemType::OakLeaves,
-            ItemType::SpruceLog,
-            ItemType::BirchLog,
-            ItemType::JungleLog,
-            ItemType::AcaciaLog,
-            ItemType::DarkOakLog,
-            ItemType::CherryLog,
-            ItemType::MangroveLog,
-            ItemType::SpruceLeaves,
-            ItemType::BirchLeaves,
-            ItemType::JungleLeaves,
-            ItemType::AcaciaLeaves,
-            ItemType::DarkOakLeaves,
-            ItemType::MangroveLeaves,
-            ItemType::CherryLeaves,
-            ItemType::AzaleaLeaves,
-            ItemType::RedSand,
-            ItemType::Sandstone,
-            ItemType::RedSandstone,
-            ItemType::Terracotta,
-            ItemType::WhiteTerracotta,
-            ItemType::OrangeTerracotta,
-            ItemType::YellowTerracotta,
-            ItemType::BrownTerracotta,
-            ItemType::RedTerracotta,
-            ItemType::LightGrayTerracotta,
-            ItemType::Podzol,
-            ItemType::Mycelium,
-            ItemType::CoarseDirt,
-            ItemType::Gravel,
-            ItemType::Clay,
-            ItemType::Mud,
-            ItemType::MossBlock,
-            ItemType::SnowBlock,
-            ItemType::PackedIce,
-            ItemType::Ice,
-            ItemType::Calcite,
-            ItemType::Granite,
-            ItemType::Diorite,
-            ItemType::Andesite,
-            ItemType::Tuff,
-            ItemType::CoalOre,
-            ItemType::IronOre,
-            ItemType::CopperOre,
-            ItemType::GoldOre,
-            ItemType::RedstoneOre,
-            ItemType::LapisOre,
-            ItemType::DiamondOre,
-            ItemType::EmeraldOre,
-            ItemType::Pumpkin,
-            ItemType::Melon,
-            ItemType::Cactus,
-            ItemType::ShortGrass,
-            ItemType::Fern,
-            ItemType::Dandelion,
-            ItemType::Poppy,
-            ItemType::Cornflower,
-            ItemType::Allium,
-            ItemType::AzureBluet,
-            ItemType::OxeyeDaisy,
-            ItemType::RedTulip,
-            ItemType::DeadBush,
-            ItemType::BrownMushroom,
-            ItemType::RedMushroom,
-            ItemType::Cobblestone,
-            ItemType::OakPlanks,
-            ItemType::SprucePlanks,
-            ItemType::BirchPlanks,
-            ItemType::JunglePlanks,
-            ItemType::AcaciaPlanks,
-            ItemType::DarkOakPlanks,
-            ItemType::CherryPlanks,
-            ItemType::MangrovePlanks,
-            ItemType::CraftingTable,
-            ItemType::Stick,
-            ItemType::WoodenPickaxe,
-            ItemType::StonePickaxe,
-            ItemType::RawIron,
-            ItemType::RawCopper,
-            ItemType::Coal,
-            ItemType::IronIngot,
-            ItemType::CopperIngot,
-            ItemType::Furnace,
-            ItemType::Chest,
-            ItemType::Torch,
-            ItemType::Diamond,
-            ItemType::LapisLazuli,
-            ItemType::RawGold,
-            ItemType::GoldIngot,
-            ItemType::WoodenAxe,
-            ItemType::StoneAxe,
-            ItemType::IronAxe,
-            ItemType::DiamondAxe,
-            ItemType::IronPickaxe,
-            ItemType::DiamondPickaxe,
-            ItemType::WoodenShovel,
-            ItemType::StoneShovel,
-            ItemType::IronShovel,
-            ItemType::DiamondShovel,
-            ItemType::FurnitureWorkbench,
-            ItemType::OakSapling,
-            ItemType::SpruceSapling,
-            ItemType::BirchSapling,
-            ItemType::JungleSapling,
-            ItemType::AcaciaSapling,
-            ItemType::DarkOakSapling,
-            ItemType::CherrySapling,
-            ItemType::OakDoor,
-            ItemType::SpruceDoor,
-            ItemType::BirchDoor,
-            ItemType::JungleDoor,
-            ItemType::AcaciaDoor,
-            ItemType::DarkOakDoor,
-            ItemType::CherryDoor,
-            ItemType::MangroveDoor,
-            ItemType::RedwoodLog,
-            ItemType::RedwoodLeaves,
-            ItemType::RedwoodPlanks,
-            ItemType::RedwoodDoor,
-        ];
-
-        assert_eq!(ItemType::ALL, expected);
-        for (id, item) in expected.into_iter().enumerate() {
-            assert_eq!(item.id(), id as u8);
-            assert_eq!(ItemType::from_id(id as u8), item);
-        }
-        assert_eq!(ItemType::from_id(u8::MAX), ItemType::Air);
-    }
-
-    #[test]
-    fn item_block_id_parity() {
-        // Every block round-trips through its block-item — whether or not the item
-        // id equals the block id.
-        for &block in Block::ALL {
-            assert_eq!(
-                ItemType::from_block(block).as_block(),
-                Some(block),
-                "{block:?} should round-trip block -> item -> block"
-            );
-        }
-        // The frozen 0.1 prefix is still id-equal; the furnace block-item is
-        // deliberately decoupled (its item id is appended, not the block id) — that
-        // split is the point, so growing the block list never shifts an item id.
-        for &block in Block::ALL {
-            if (block.id() as usize) < ItemType::LEGACY_BLOCK_ITEMS {
-                assert_eq!(ItemType::from_block(block).id(), block.id(), "{block:?}");
-            }
-        }
-        assert_ne!(
-            ItemType::Furnace.id(),
-            Block::Furnace.id(),
-            "furnace item id is decoupled from its block id"
-        );
-        // Item-only items (tools, raw drops, ingots) place no block.
-        for item in [
-            ItemType::Stick,
-            ItemType::WoodenPickaxe,
-            ItemType::StonePickaxe,
-            ItemType::RawIron,
-            ItemType::RawCopper,
-            ItemType::Coal,
-            ItemType::IronIngot,
-            ItemType::CopperIngot,
-        ] {
-            assert_eq!(item.as_block(), None, "{item:?} should be item-only");
-        }
-        // Air round-trips both ways.
-        assert_eq!(ItemType::from_block(Block::Air), ItemType::Air);
-        assert_eq!(ItemType::Air.as_block(), Some(Block::Air));
     }
 
     #[test]

@@ -9,11 +9,7 @@ use super::{HeldPose, ItemTag, ItemType};
 pub(super) struct ItemDef {
     pub item: ItemType,
     /// Stable snake_case identity a recipe references (e.g. `oak_planks`). This is
-    /// the item's real id — independent of [`name`](Self::name), so renaming the
-    /// display string never breaks a recipe. Historically derived from `name`
-    /// (`name.to_ascii_lowercase().replace(' ', "_")`); now explicit, with a test
-    /// (`crafting::load::tests::registry_keys_match_display_names`) pinning every
-    /// key to that historical derivation so existing recipes keep resolving.
+    /// the item's real id, independent of [`name`](Self::name).
     pub key: &'static str,
     /// Human-readable display name (UI only — not the recipe identity; see
     /// [`key`](Self::key)).

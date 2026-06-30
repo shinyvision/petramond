@@ -119,7 +119,7 @@ fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::camera::Camera;
-    use crate::chunk::{Chunk, ChunkPos};
+    use crate::chunk::ChunkPos;
     use crate::game::Game;
     use crate::mathh::{IVec3, Vec3};
 

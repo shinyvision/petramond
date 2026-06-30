@@ -1,11 +1,3 @@
-//! Crafting: recipe matching over an N×N grid, plus the grid state owned by the
-//! crafting screens.
-//!
-//! Recipes are authored in `assets/recipes.json` and loaded at world load (see
-//! [`load_recipes`]). The player always has a 2×2 grid in the inventory; a placed
-//! crafting table opens a 3×3 grid. Taking the result consumes one item from
-//! every occupied input cell, as in Minecraft.
-
 mod load;
 mod recipe;
 
@@ -14,20 +6,9 @@ pub use recipe::Recipes;
 #[cfg(test)]
 pub use recipe::{FurnitureRecipe, SmeltingRecipe};
 
-use crate::inventory::SlotGrid;
 use crate::item::ItemStack;
-
-/// Largest crafting grid side (3×3 at a table; 2×2 in the inventory).
 pub const MAX_GRID: usize = 3;
-/// Largest crafting grid cell count.
 pub const MAX_CELLS: usize = MAX_GRID * MAX_GRID;
-
-/// The crafting input grid + its cached result preview.
-///
-/// A square `cols×cols` grid (2 in the inventory, 3 at a table) stored in a fixed
-/// `MAX_CELLS` array; only the first `cols*cols` cells are live. `result` is
-/// recomputed from the recipe set whenever the grid changes and drives both the
-/// UI preview and the take/​shift-craft actions.
 #[derive(Clone, Debug)]
 pub struct CraftGrid {
     cells: [Option<ItemStack>; MAX_CELLS],
@@ -49,14 +30,10 @@ impl CraftGrid {
             result: None,
         }
     }
-
-    /// Number of live input cells (`cols * cols`).
     #[inline]
     pub fn capacity(&self) -> usize {
         self.cols * self.cols
     }
-
-    /// Input cell `i` (`0..capacity`), or `None`. Test-only grid accessor.
     #[cfg(test)]
     #[inline]
     pub fn cell(&self, i: usize) -> Option<&ItemStack> {
@@ -66,46 +43,30 @@ impl CraftGrid {
             None
         }
     }
-
-    /// The live input cells as a slice (`len == capacity`).
     #[inline]
     pub fn cells(&self) -> &[Option<ItemStack>] {
         &self.cells[..self.capacity()]
     }
-
-    /// Mutable handle to input cell `i` (`0..capacity`), for the cursor click
-    /// logic. Panics if `i >= MAX_CELLS`; callers stay within `capacity`.
     #[inline]
     pub fn cell_mut(&mut self, i: usize) -> &mut Option<ItemStack> {
         &mut self.cells[i]
     }
-
-    /// Take input cell `i` out, leaving it empty.
     #[inline]
     pub fn take_cell(&mut self, i: usize) -> Option<ItemStack> {
         self.cells.get_mut(i).and_then(Option::take)
     }
-
-    /// The current result preview (what taking the result yields), or `None`.
     #[inline]
     pub fn result(&self) -> Option<&ItemStack> {
         self.result.as_ref()
     }
-
-    /// Switch the grid to `cols×cols` and clear it. Called when a screen opens.
     pub fn reset(&mut self, cols: usize) {
         self.cols = cols.clamp(2, MAX_GRID);
         self.cells = [None; MAX_CELLS];
         self.result = None;
     }
-
-    /// Recompute the cached result from `recipes` against the current grid.
     pub fn recompute(&mut self, recipes: &Recipes) {
         self.result = recipes.find(self.cells(), self.cols);
     }
-
-    /// Consume one item from every occupied input cell (a single craft), clearing
-    /// emptied cells. The caller recomputes the result afterward.
     pub fn consume_one(&mut self) {
         for cell in self.cells[..self.cols * self.cols].iter_mut() {
             if let Some(stack) = cell {
@@ -116,16 +77,6 @@ impl CraftGrid {
             }
         }
     }
-
-    /// Take one craft from the result onto `cursor`: place the current result on the
-    /// cursor (only if the whole stack fits — cursor empty, or the same item with
-    /// room), then consume one item from every occupied input cell and recompute the
-    /// result against `recipes`. No-op when there is no result or the cursor can't
-    /// accept the whole result.
-    ///
-    /// The recompute needs the recipe set, which lives outside the grid, so it is
-    /// passed in. The result slot is take-only: a craft only ever moves *out* onto
-    /// the cursor, never accepts a deposit.
     pub fn take_result(&mut self, recipes: &Recipes, cursor: &mut Option<ItemStack>) {
         let Some(result) = self.result else {
             return;
@@ -145,25 +96,6 @@ impl CraftGrid {
             self.consume_one();
             self.recompute(recipes);
         }
-    }
-}
-
-/// Implements [`SlotGrid`] so a craft grid gets the shared (test-only) `is_empty`. A
-/// craft grid is filled by cursor clicks, never by first-fit loot insert, so the
-/// trait's `insert` must NOT be called on one — no loot/shift path wires into a
-/// `CraftGrid`.
-impl SlotGrid for CraftGrid {
-    #[cfg(test)]
-    #[inline]
-    fn slots(&self) -> &[Option<ItemStack>] {
-        let cap = self.capacity();
-        &self.cells[..cap]
-    }
-
-    #[inline]
-    fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
-        let cap = self.capacity();
-        &mut self.cells[..cap]
     }
 }
 
@@ -199,7 +131,7 @@ mod tests {
 
         // Consuming one craft empties each occupied cell by one (all were 1).
         grid.consume_one();
-        assert!(grid.is_empty());
+        assert!(grid.cells().iter().all(Option::is_none));
         grid.recompute(&recipes);
         assert!(grid.result().is_none());
     }
@@ -227,6 +159,6 @@ mod tests {
         *grid.cell_mut(8) = Some(ItemStack::new(ItemType::Stone, 1));
         grid.reset(2);
         assert_eq!(grid.capacity(), 4);
-        assert!(grid.is_empty());
+        assert!(grid.cells().iter().all(Option::is_none));
     }
 }

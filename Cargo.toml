@@ -27,11 +27,6 @@ worldgen-tests = []
 name = "llamacraft_native"
 path = "src/bin/native.rs"
 
-# Throwaway worldgen byte-parity gate used during the Strata refactor.
-[[bin]]
-name = "genparity"
-path = "src/bin/genparity.rs"
-
 # Headless top-down worldgen previewer (dev tool).
 [[bin]]
 name = "genmap"
@@ -41,11 +36,6 @@ path = "src/bin/genmap.rs"
 [[bin]]
 name = "genfeature"
 path = "src/bin/genfeature.rs"
-
-# Throwaway perf harness: times worldgen + meshing over a chunk grid.
-[[bin]]
-name = "perfbench"
-path = "src/bin/perfbench.rs"
 
 [dependencies]
 wgpu = "27"

@@ -86,6 +86,7 @@ impl SurfaceDensitySystem {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn fill_chunk(&self, proto: &mut ProtoChunk, region: &RegionCells) {
         let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
         let lattice = self.master_density_lattice(bounds);
@@ -480,13 +481,8 @@ mod tests {
     }
 
     fn plains_index() -> BiomeClimateIndex {
-        static PLAINS: &[ClimateRect] = &[ClimateRect::surface(
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
-        )];
+        const ANY: AxisRange = AxisRange::new(-1.0, 1.0);
+        static PLAINS: &[ClimateRect] = &[ClimateRect::surface(ANY, ANY, ANY, ANY, ANY)];
         BiomeClimateIndex::new(&[BiomeClimateEntry {
             biome: Biome::Plains,
             rectangles: PLAINS,
@@ -494,19 +490,20 @@ mod tests {
     }
 
     fn coast_index() -> BiomeClimateIndex {
+        const ANY: AxisRange = AxisRange::new(-1.0, 1.0);
         static OCEAN: &[ClimateRect] = &[ClimateRect::surface(
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
             AxisRange::new(-1.0, -0.2),
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
         )];
         static PLAINS: &[ClimateRect] = &[ClimateRect::surface(
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
             AxisRange::new(0.0, 1.0),
-            AxisRange::ANY_SURFACE,
-            AxisRange::ANY_SURFACE,
+            ANY,
+            ANY,
         )];
         BiomeClimateIndex::new(&[
             BiomeClimateEntry {

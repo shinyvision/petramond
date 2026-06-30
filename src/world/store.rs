@@ -301,7 +301,7 @@ impl World {
         }
         // Post-action: a persisted section is now in sync with disk.
         for pos in persisted {
-            if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+            if let Some(s) = self.section_mut(pos) {
                 s.modified = false;
             }
         }
@@ -344,12 +344,10 @@ impl World {
                 }
             }
         }
-        // Floor the scan at the column's generated heightmap surface (from its shared gen
-        // data), so a partially-loaded column — vertical windowing may leave its surface
-        // sections unstreamed — still reports its true surface for skylight/spawn, while
-        // trees and built-up structures above ground still raise it.
+        // Floor the scan at the generated surface only while that surface section is
+        // absent. Once loaded, its blocks are authoritative; otherwise a streaming
+        // recompute can "restore" ground over a player-dug sky shaft.
         let bare = self.column_gen.get(&cpos).cloned();
-        let col = self.ensure_column(cpos);
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
                 let i = lz * SECTION_SIZE + lx;
@@ -358,12 +356,26 @@ impl World {
                     .map(|c| c.heightmap_surface_y(lx, lz))
                     .unwrap_or(NO_SURFACE);
                 let scanned = surf[i];
-                let h = if scanned == NO_SURFACE {
+                let ground_loaded = SectionPos::from_world(
+                    cpos.cx * SECTION_SIZE as i32 + lx as i32,
+                    ground,
+                    cpos.cz * SECTION_SIZE as i32 + lz as i32,
+                )
+                .is_some_and(|sp| self.sections.contains_key(&sp));
+                let h = if ground_loaded || ground == NO_SURFACE {
+                    scanned
+                } else if scanned == NO_SURFACE {
                     ground
                 } else {
                     scanned.max(ground)
                 };
-                col.set_surface_y(lx, lz, h);
+                surf[i] = h;
+            }
+        }
+        let col = self.ensure_column(cpos);
+        for lz in 0..SECTION_SIZE {
+            for lx in 0..SECTION_SIZE {
+                col.set_surface_y(lx, lz, surf[lz * SECTION_SIZE + lx]);
             }
         }
         // (No whole-column relight here: it queued all 20 sections — including deep,
@@ -431,23 +443,14 @@ impl World {
         self.lighting_revision = self.lighting_revision.wrapping_add(1);
     }
 
-    pub(super) fn mark_dirty_pos(&mut self, pos: SectionPos) {
-        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
-            s.dirty = true;
-            s.mesh_revision = s.mesh_revision.wrapping_add(1);
-            self.light_blocked_meshes.remove(&pos);
-            self.dirty_meshes.push(pos);
-        }
-    }
-
     pub(super) fn mark_light_dirty_pos(&mut self, pos: SectionPos) {
-        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+        if let Some(s) = self.section_mut(pos) {
             s.mark_light_dirty();
         }
     }
 
     pub(super) fn queue_dirty_mesh(&mut self, pos: SectionPos) {
-        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+        if let Some(s) = self.section_mut(pos) {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
             self.light_blocked_meshes.remove(&pos);
@@ -456,13 +459,8 @@ impl World {
     }
 
     pub(super) fn mark_light_and_mesh_dirty_pos(&mut self, pos: SectionPos) {
-        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
-            s.mark_light_dirty();
-            s.dirty = true;
-            s.mesh_revision = s.mesh_revision.wrapping_add(1);
-            self.light_blocked_meshes.remove(&pos);
-            self.dirty_meshes.push(pos);
-        }
+        self.mark_light_dirty_pos(pos);
+        self.queue_dirty_mesh(pos);
     }
 
     /// A column heightmap cell moved, changing which cells are considered open sky
@@ -525,9 +523,7 @@ impl World {
     /// Ensure the per-column data for `(cx,cz)` exists, building it cheaply if not.
     /// Worldgen fills biome + heightmap; an empty column is the pre-gen placeholder.
     pub(super) fn ensure_column(&mut self, pos: ChunkPos) -> &mut Column {
-        self.columns
-            .entry(pos)
-            .or_insert_with(|| Column::new(pos.cx, pos.cz))
+        self.columns.entry(pos).or_insert_with(Column::new)
     }
 
     #[inline]
@@ -586,8 +582,13 @@ impl World {
         wz: i32,
     ) -> Option<(&mut Section, usize, usize, usize)> {
         let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
-        let s = Arc::make_mut(self.sections.get_mut(&pos)?);
+        let s = self.section_mut(pos)?;
         Some((s, lx, ly, lz))
+    }
+
+    #[inline]
+    pub(super) fn section_mut(&mut self, pos: SectionPos) -> Option<&mut Section> {
+        self.sections.get_mut(&pos).map(Arc::make_mut)
     }
 
     /// Whether the section owning world `(wx,wy,wz)` is loaded.
@@ -639,12 +640,6 @@ impl World {
         self.physics_block(wx, wy, wz) == Block::Water
     }
 
-    /// Whether any section of column `(cx,cz)` is loaded.
-    #[inline]
-    pub(super) fn column_has_sections(&self, pos: ChunkPos) -> bool {
-        self.columns.contains_key(&pos)
-    }
-
     #[inline]
     pub(super) fn column_has_mesh(&self, pos: ChunkPos) -> bool {
         self.mesh_columns.contains(&pos)
@@ -693,7 +688,7 @@ impl World {
                     if !include_center && dx == 0 && dy == 0 && dz == 0 {
                         continue;
                     }
-                    self.mark_dirty_pos(SectionPos::new(
+                    self.queue_dirty_mesh(SectionPos::new(
                         center.cx + dx,
                         center.cy + dy,
                         center.cz + dz,
@@ -784,12 +779,6 @@ impl World {
         self.queue_dirty_mesh(pos);
     }
 
-    /// Mutable access to an installed section for a test that pokes voxel state.
-    #[cfg(test)]
-    pub(crate) fn section_mut_for_test(&mut self, pos: SectionPos) -> Option<&mut Section> {
-        self.sections.get_mut(&pos).map(Arc::make_mut)
-    }
-
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
     /// data exactly as the streamer does for a generated column. Lets the many column-era
     /// fixtures (which build a 256-tall `Chunk` and hand it over) keep working against the
@@ -844,7 +833,7 @@ impl World {
         wz: i32,
     ) -> Option<&mut Section> {
         let pos = SectionPos::from_world(wx, wy, wz)?;
-        self.sections.get_mut(&pos).map(Arc::make_mut)
+        self.section_mut(pos)
     }
 }
 
@@ -956,6 +945,75 @@ mod tests {
             world.columns.get(&cp).unwrap().surface_y(x, z),
             cave_top,
             "heightmap refresh must not restore original pre-cave surface {original}"
+        );
+    }
+
+    #[test]
+    fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
+        let seed = 0x51EED;
+        let generator = ChunkGenerator::new(seed);
+        let mut found = None;
+
+        'search: for cz in -8..=8 {
+            for cx in -8..=8 {
+                let col = Arc::new(generator.generate_column_gen(cx, cz));
+                for z in 0..SECTION_SIZE {
+                    for x in 0..SECTION_SIZE {
+                        let ground = col.heightmap_surface_y(x, z);
+                        let lower = ground - SECTION_SIZE as i32 - 1;
+                        let wx = cx * SECTION_SIZE as i32 + x as i32;
+                        let wz = cz * SECTION_SIZE as i32 + z as i32;
+                        if SectionPos::from_world(wx, ground, wz).is_some()
+                            && SectionPos::from_world(wx, lower, wz).is_some()
+                        {
+                            found = Some((ChunkPos::new(cx, cz), col, x, z, ground, lower));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some((cp, col, x, z, ground, lower)) = found else {
+            panic!("test seed/search window must contain a diggable surface column");
+        };
+
+        let mut world = World::new(seed, 0);
+        world.ensure_column(cp).set_surface_y(x, z, ground);
+        world.column_gen.insert(cp, col);
+
+        let ground_sp = SectionPos::from_world(
+            cp.cx * SECTION_SIZE as i32 + x as i32,
+            ground,
+            cp.cz * SECTION_SIZE as i32 + z as i32,
+        )
+        .unwrap();
+        world.sections.insert(
+            ground_sp,
+            Arc::new(Section::new(cp.cx, ground_sp.cy, cp.cz)),
+        );
+
+        let lower_sp = SectionPos::from_world(
+            cp.cx * SECTION_SIZE as i32 + x as i32,
+            lower,
+            cp.cz * SECTION_SIZE as i32 + z as i32,
+        )
+        .unwrap();
+        let mut lower_section = Section::new(cp.cx, lower_sp.cy, cp.cz);
+        lower_section.set_block(
+            x,
+            lower.rem_euclid(SECTION_SIZE as i32) as usize,
+            z,
+            Block::Stone,
+        );
+        world.sections.insert(lower_sp, Arc::new(lower_section));
+
+        world.recompute_column_heightmap(cp);
+
+        assert_eq!(
+            world.columns.get(&cp).unwrap().surface_y(x, z),
+            lower,
+            "a loaded dug shaft must not be covered again by the generated fallback"
         );
     }
 

@@ -35,19 +35,6 @@ impl Face {
         }
     }
 
-    /// Per-face directional shading factor (top brightest, bottom darkest).
-    /// Now a test-only oracle: production reads `SHADES[shade_idx]` (and the
-    /// shader mirrors it); `tests::shade_table_matches_face_shade` checks they agree.
-    #[cfg(test)]
-    pub(super) fn shade(self) -> f32 {
-        match self {
-            Face::PosY => 1.00,
-            Face::PosX | Face::NegX => 0.75,
-            Face::PosZ | Face::NegZ => 0.85,
-            Face::NegY => 0.55,
-        }
-    }
-
     /// Index into `SHADES` (and the shader's mirror) for this face -- packed into
     /// the vertex instead of the raw float.
     pub(crate) fn shade_idx(self) -> u32 {

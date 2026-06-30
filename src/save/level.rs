@@ -6,7 +6,7 @@ use crate::inventory::{Inventory, TOTAL_SLOTS};
 use crate::item::ItemStack;
 use crate::mathh::Vec3;
 use crate::player::{Player, PlayerMode};
-use crate::save::codec::{get_item_slot, put_item_slot, Reader, Writer};
+use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u64, put_u8, Reader};
 
 /// Bumped to 2 when the player's look direction (yaw/pitch) was added. `decode`
 /// still accepts v1 (a save written before the look was stored).
@@ -30,24 +30,27 @@ pub struct LevelData {
 
 pub fn encode(seed: u32, player: &Player, tick: u64) -> Vec<u8> {
     let mut b = Vec::new();
-    b.put_u32(VERSION);
-    b.put_u32(seed);
+    put_u32(&mut b, VERSION);
+    put_u32(&mut b, seed);
     put_vec3(&mut b, player.pos);
     put_vec3(&mut b, player.vel);
-    b.put_u8(match player.mode() {
-        PlayerMode::Survival => 0,
-        PlayerMode::Spectator => 1,
-    });
-    b.put_u64(tick);
+    put_u8(
+        &mut b,
+        match player.mode() {
+            PlayerMode::Survival => 0,
+            PlayerMode::Spectator => 1,
+        },
+    );
+    put_u64(&mut b, tick);
     for slot in player.inventory.raw_slots() {
         put_item_slot(&mut b, *slot);
     }
     put_item_slot(&mut b, player.inventory.cursor().copied());
-    b.put_u8(player.inventory.active_slot());
+    put_u8(&mut b, player.inventory.active_slot());
     // v2: the player's look direction, appended after the inventory so a v1 save
     // still decodes (its facing defaults on load — see `decode`).
-    b.put_f32(player.yaw);
-    b.put_f32(player.pitch);
+    put_f32(&mut b, player.yaw);
+    put_f32(&mut b, player.pitch);
     b
 }
 
@@ -95,9 +98,9 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
 }
 
 fn put_vec3(b: &mut Vec<u8>, v: Vec3) {
-    b.put_f32(v.x);
-    b.put_f32(v.y);
-    b.put_f32(v.z);
+    put_f32(b, v.x);
+    put_f32(b, v.y);
+    put_f32(b, v.z);
 }
 
 fn get_vec3(r: &mut Reader) -> Option<Vec3> {

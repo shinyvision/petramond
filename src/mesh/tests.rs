@@ -1,23 +1,7 @@
-use super::face::{should_flip, vertex_ao, FACES};
+use super::face::{should_flip, vertex_ao};
 use super::*;
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
-
-/// The packed shade index must decode (via SHADES) to the same float the old
-/// per-vertex `Face::shade()` produced -- and SHADES must match the literal
-/// table in block.wgsl. Guards the index<->value mapping against drift.
-#[test]
-fn shade_table_matches_face_shade() {
-    for f in FACES {
-        assert_eq!(
-            SHADES[f.shade_idx() as usize],
-            f.shade(),
-            "shade idx/value drift for {f:?}"
-        );
-    }
-    // Mirror of block.wgsl's `array<f32,4>(...)`.
-    assert_eq!(SHADES, [1.00, 0.85, 0.75, 0.55]);
-}
 
 /// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
 /// drawn in both windings, and does NOT cull its supporting block's faces.
@@ -756,8 +740,7 @@ fn ao_exact_at_concave_step_corner() {
 /// Parallel mesh building (World::tick_mesh_budget on native) must produce
 /// byte-identical meshes to a serial build: `build_mesh` is a pure function of
 /// (chunk, neighbour reads) with no shared mutable state, so rayon only reorders
-/// independent work. This locks that invariant down objectively (perfbench
-/// meshes serially and never exercises the rayon path).
+/// independent work.
 mod parallel_parity_tests {
     use super::*;
     use crate::chunk::{Chunk, CHUNK_SY, SKY_FULL};

@@ -10,7 +10,7 @@
 use crate::entity::DroppedItem;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
-use crate::save::codec::{Reader, Writer};
+use crate::save::codec::{put_f32, put_u16, put_u32, put_u8, Reader};
 
 /// Bytes per serialized entity: pos(12) + vel(12) + item(1) + count(1) +
 /// ticks_lived(4) + spin(4).
@@ -21,18 +21,18 @@ const ENTITY_BYTES: usize = 34;
 pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem]) {
     let n = items.len().min(u16::MAX as usize);
     buf.reserve(2 + n * ENTITY_BYTES);
-    buf.put_u16(n as u16);
+    put_u16(buf, n as u16);
     for it in &items[..n] {
-        buf.put_f32(it.pos.x);
-        buf.put_f32(it.pos.y);
-        buf.put_f32(it.pos.z);
-        buf.put_f32(it.vel.x);
-        buf.put_f32(it.vel.y);
-        buf.put_f32(it.vel.z);
-        buf.put_u8(it.stack.item.id());
-        buf.put_u8(it.stack.count);
-        buf.put_u32(it.ticks_lived);
-        buf.put_f32(it.spin);
+        put_f32(buf, it.pos.x);
+        put_f32(buf, it.pos.y);
+        put_f32(buf, it.pos.z);
+        put_f32(buf, it.vel.x);
+        put_f32(buf, it.vel.y);
+        put_f32(buf, it.vel.z);
+        put_u8(buf, it.stack.item.id());
+        put_u8(buf, it.stack.count);
+        put_u32(buf, it.ticks_lived);
+        put_f32(buf, it.spin);
     }
 }
 
@@ -112,7 +112,7 @@ mod tests {
     fn truncated_input_is_none() {
         // Claims one entity but provides no body.
         let mut buf = Vec::new();
-        buf.put_u16(1);
+        put_u16(&mut buf, 1);
         let mut r = Reader::new(&buf);
         assert!(get_entities(&mut r).is_none());
     }

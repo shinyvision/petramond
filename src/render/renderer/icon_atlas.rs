@@ -57,12 +57,6 @@ const MVP_SLOT_SIZE: u64 = 256;
 /// pass via [`Self::bind`], plus the cell-UV lookup. Built once in the renderer
 /// constructor; immutable thereafter.
 pub(super) struct IconAtlas {
-    #[allow(dead_code)]
-    texture: wgpu::Texture,
-    #[allow(dead_code)]
-    view: wgpu::TextureView,
-    #[allow(dead_code)]
-    sampler: wgpu::Sampler,
     /// group(0) bind for the UI pass, built against the gui-atlas layout (`ui_bgl` /
     /// `atlas_bgl`: `{texture: Float filterable D2, sampler: Filtering}`) so it binds
     /// to `ui_pipe` exactly where the gui atlas does.
@@ -419,9 +413,6 @@ pub(super) fn bake(
     queue.submit(std::iter::once(enc.finish()));
 
     IconAtlas {
-        texture,
-        view,
-        sampler,
         bind,
         width: aw as f32,
         height: ah as f32,

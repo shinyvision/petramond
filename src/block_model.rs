@@ -370,8 +370,7 @@ impl ModelAtlas {
             // Blit this model's texture into the sheet at (0, y_off).
             for row in 0..m.tex_h {
                 let src = (row * m.tex_w * 4) as usize;
-                let dst = ((y_off + row) * w + 0) * 4;
-                let dst = dst as usize;
+                let dst = ((y_off + row) * w * 4) as usize;
                 let n = (m.tex_w * 4) as usize;
                 if src + n <= m.texture_rgba.len() && dst + n <= rgba.len() {
                     rgba[dst..dst + n].copy_from_slice(&m.texture_rgba[src..src + n]);
@@ -782,10 +781,8 @@ fn bake_cell_template(
     ModelCellTemplate { verts, indices }
 }
 
-/// Append one textured cube face (4 verts / 6 indices) to a cell template, transformed by
-/// `m`. The pre-light counterpart of the mesher's old `push_model_face`: identical winding
-/// + UV-corner assignment, but it stores the directional `shade` un-lit and no tint (the
-/// mesher folds cell light × warm tint per placement). Skips zero-area faces.
+/// Append one textured cube face to a cell template. Cell light and warm tint are
+/// applied later by the mesher.
 #[allow(clippy::too_many_arguments)]
 fn push_template_face(
     verts: &mut Vec<ModelTemplateVertex>,
@@ -1447,13 +1444,6 @@ mod tests {
     const WB: BlockModelKind = BlockModelKind::FurnitureWorkbench;
 
     #[test]
-    fn registry_is_id_ordered() {
-        for (i, &k) in ALL.iter().enumerate() {
-            assert_eq!(k as usize, i, "ALL must be id-ordered");
-        }
-    }
-
-    #[test]
     fn workbench_compiles_with_geometry_and_texture() {
         let m = BlockModel::compile(def(WB).model_src.as_bytes()).expect("compiles");
         assert!(!m.cubes.is_empty());
@@ -1568,7 +1558,7 @@ mod tests {
 
         for face in Face::ALL {
             assert_eq!(
-                render_face_bias(&cube, &[cube.clone()], face),
+                render_face_bias(&cube, std::slice::from_ref(&cube), face),
                 Some(Vec3::ZERO)
             );
         }

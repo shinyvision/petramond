@@ -1,12 +1,7 @@
 //! The sound-asset table: a stable [`Sound`] id per sound effect, mapped to its
 //! embedded source bytes and default playback parameters.
 //!
-//! This mirrors the id-ordered registry the `block`/`item`/`biome` modules use
-//! (see [`crate::registry`]): a `#[repr(u8)]` key enum indexes an id-ordered
-//! `&'static [Def]` table. Introducing a new sound is a data change — add a
-//! [`Sound`] variant, a [`SOUND_DEFS`] row, and the asset file; no other code.
-
-use crate::registry::{self, RegistryKey, TableEntry};
+//! Add a sound by adding a [`Sound`] variant, a [`SOUND_DEFS`] row, and the asset file.
 
 /// A sound effect the game can play, identified by a stable id (its `#[repr(u8)]`
 /// value, which is the row's index in [`SOUND_DEFS`]).
@@ -47,29 +42,10 @@ pub enum Sound {
 }
 
 impl Sound {
-    /// Every sound in id order — the table's key list (drives the ordering test).
-    #[cfg(test)]
-    pub(crate) const ALL: &'static [Sound] = &[
-        Sound::WoodPunch,
-        Sound::WoodPlace,
-        Sound::WoodBreak,
-        Sound::ItemPickup,
-        Sound::DoorOpen,
-        Sound::DoorClose,
-        Sound::ChestOpen,
-        Sound::ChestClose,
-        Sound::StonePunch,
-        Sound::StoneBreak,
-        Sound::StonePlace,
-        Sound::DirtPunch,
-        Sound::DirtBreak,
-        Sound::DirtPlace,
-    ];
-
     /// This sound's static definition row.
     #[inline]
     pub(crate) fn def(self) -> &'static SoundDef {
-        registry::def(SOUND_DEFS, self)
+        &SOUND_DEFS[self as usize]
     }
 }
 
@@ -278,28 +254,3 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
         category: SoundCategory::Block,
     },
 ];
-
-impl RegistryKey for Sound {
-    #[inline]
-    fn to_id(self) -> u8 {
-        self as u8
-    }
-}
-
-impl TableEntry for SoundDef {
-    type Key = Sound;
-    #[inline]
-    fn key(&self) -> Sound {
-        self.sound
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    /// The sound table is id-ordered and one-to-one with [`super::Sound`] — the
-    /// same guarantee the block/item/biome tables carry, via the shared helper.
-    #[test]
-    fn sounds_are_id_ordered() {
-        crate::registry::assert_id_ordered(super::SOUND_DEFS, super::Sound::ALL);
-    }
-}

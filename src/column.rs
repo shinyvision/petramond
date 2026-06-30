@@ -17,8 +17,6 @@ pub const NO_SURFACE: i32 = WORLD_MIN_Y - 1;
 /// The 2D per-column data: surface heightmap + biome id, each a `16×16` grid
 /// indexed `z * CHUNK_SX + x`.
 pub struct Column {
-    pub cx: i32,
-    pub cz: i32,
     /// Highest non-air world Y per `(x,z)` column, or [`NO_SURFACE`] if none. World
     /// Y (so it may be negative), hence `i32` rather than the old `u16`.
     heightmap: Box<[i32; CHUNK_SX * CHUNK_SZ]>,
@@ -27,18 +25,11 @@ pub struct Column {
 }
 
 impl Column {
-    pub fn new(cx: i32, cz: i32) -> Self {
+    pub fn new() -> Self {
         Self {
-            cx,
-            cz,
             heightmap: Box::new([NO_SURFACE; CHUNK_SX * CHUNK_SZ]),
             biomes: Box::new([0u8; CHUNK_SX * CHUNK_SZ]),
         }
-    }
-
-    #[inline]
-    pub fn origin_world(&self) -> (i32, i32) {
-        (self.cx * CHUNK_SX as i32, self.cz * CHUNK_SZ as i32)
     }
 
     // --- Biome ------------------------------------------------------------------
@@ -51,13 +42,6 @@ impl Column {
     #[inline]
     pub fn set_biome(&mut self, x: usize, z: usize, b: u8) {
         self.biomes[z * CHUNK_SX + x] = b;
-    }
-
-    pub fn biomes_slice(&self) -> &[u8] {
-        &self.biomes[..]
-    }
-    pub fn biomes_slice_mut(&mut self) -> &mut [u8] {
-        &mut self.biomes[..]
     }
 
     // --- Surface heightmap ------------------------------------------------------

@@ -1,5 +1,3 @@
-use crate::registry::{self, RegistryKey, TableEntry};
-
 use super::definition::BiomeDef;
 use super::Biome;
 
@@ -222,32 +220,14 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
     },
 ];
 
-impl RegistryKey for Biome {
-    #[inline]
-    fn first_id() -> u8 {
-        1
-    }
-
-    #[inline]
-    fn to_id(self) -> u8 {
-        self.id()
-    }
-}
-
-impl TableEntry for BiomeDef {
-    type Key = Biome;
-    #[inline]
-    fn key(&self) -> Biome {
-        self.biome
-    }
-}
-
 #[inline]
 pub(super) fn from_id(id: u8) -> Biome {
-    registry::from_id(BIOME_DEFS, id, Biome::Ocean)
+    BIOME_DEFS
+        .get(id.saturating_sub(1) as usize)
+        .map_or(Biome::Ocean, |d| d.biome)
 }
 
 #[inline]
 pub(super) fn def(biome: Biome) -> &'static BiomeDef {
-    registry::def(BIOME_DEFS, biome)
+    &BIOME_DEFS[(biome.id() - 1) as usize]
 }

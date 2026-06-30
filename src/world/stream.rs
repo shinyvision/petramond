@@ -654,7 +654,7 @@ impl World {
 pub(super) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
     let cx = chunk.cx;
     let cz = chunk.cz;
-    let mut column = Column::new(cx, cz);
+    let mut column = Column::new();
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             column.set_biome(x, z, chunk.biome_at(x, z));

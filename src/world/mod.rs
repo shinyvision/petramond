@@ -26,5 +26,5 @@ pub(crate) mod water;
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
-pub(crate) use render_handoff::{TerrainMeshUploadSource, TerrainRenderHandoff};
+pub(crate) use render_handoff::TerrainRenderHandoff;
 pub use store::{World, RENDER_DIST};

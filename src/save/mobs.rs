@@ -11,7 +11,7 @@
 
 use crate::mathh::Vec3;
 use crate::mob::{self, SavedMob};
-use crate::save::codec::{Reader, Writer};
+use crate::save::codec::{put_f32, put_u16, put_u8, Reader};
 
 /// Bytes per serialized mob: kind(1) + pos(12) + yaw(4).
 const MOB_BYTES: usize = 17;
@@ -21,13 +21,13 @@ const MOB_BYTES: usize = 17;
 pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
     let n = mobs.len().min(u16::MAX as usize);
     buf.reserve(2 + n * MOB_BYTES);
-    buf.put_u16(n as u16);
+    put_u16(buf, n as u16);
     for m in &mobs[..n] {
-        buf.put_u8(m.kind as u8);
-        buf.put_f32(m.pos.x);
-        buf.put_f32(m.pos.y);
-        buf.put_f32(m.pos.z);
-        buf.put_f32(m.yaw);
+        put_u8(buf, m.kind as u8);
+        put_f32(buf, m.pos.x);
+        put_f32(buf, m.pos.y);
+        put_f32(buf, m.pos.z);
+        put_f32(buf, m.yaw);
     }
 }
 
@@ -88,7 +88,7 @@ mod tests {
     fn truncated_input_is_none() {
         // Claims one mob but provides no body.
         let mut buf = Vec::new();
-        buf.put_u16(1);
+        put_u16(&mut buf, 1);
         let mut r = Reader::new(&buf);
         assert!(get_mobs(&mut r).is_none());
     }

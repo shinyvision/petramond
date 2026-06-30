@@ -14,8 +14,6 @@
 //! factor and peak jaggedness shape the full density function (caves, overhangs),
 //! which the surface-height model does not use, so they are not built here.
 
-#![allow(dead_code)] // Shaping splines are wired into the live terrain recipe.
-
 use crate::worldgen::graph::spline::{CubicSpline, SplinePoint};
 
 /// Spline coordinate names. These must match the axis nodes that `terrain.rs`
