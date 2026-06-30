@@ -728,11 +728,17 @@ mod tests {
         // Cell corners (world XZ multiples of 4, world Y multiples of 8)
         // reconstruct the channel exactly: smoothstep fixes the endpoints.
         for (x, y, z) in [(3, 0, 3), (7, 8, 7), (11, 16, 3)] {
-            assert_close(lattice.density_at_local(x, y, z), field.value(point(x, y, z)));
+            assert_close(
+                lattice.density_at_local(x, y, z),
+                field.value(point(x, y, z)),
+            );
         }
 
         // Y interpolation stays linear: at an XZ corner any Y is exact.
-        assert_close(lattice.density_at_local(3, 4, 3), field.value(point(3, 4, 3)));
+        assert_close(
+            lattice.density_at_local(3, 4, 3),
+            field.value(point(3, 4, 3)),
+        );
 
         // XZ interpolation is smoothstep, not linear: at a quarter into the cell
         // the X blend is smooth(0.25)=0.15625, landing short of the linear point.

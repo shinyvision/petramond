@@ -10,7 +10,6 @@
 
 use std::f32::consts::{PI, TAU};
 
-use crate::block::Block;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
@@ -322,11 +321,11 @@ impl Instance {
             self.despawn_timer = next_despawn_timer(self.despawn_timer, far);
         }
 
-        let solid = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
+        let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
         // The model-aware box source for body collision (legs/top of a bbmodel block); the
         // cell-based `solid` above still drives navigation (foothold/pathfinding/ledge).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let water = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).is_water();
+        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
         // The foothold cell the mob is standing in — robust to standing at a block
         // edge, where the cell under its centre overhangs into air. Without this the
         // start wouldn't be a foothold and pathfinding would bail, freezing the mob.
@@ -374,8 +373,7 @@ impl Instance {
             .as_mut()
             .expect("tick_ragdoll only runs when dead");
         if rag.is_initialized() {
-            let solid =
-                |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
+            let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
             rag.step(dt, d.scale, pos, yaw, &solid);
         } else {
             rag.init(skeleton, d.scale, vel, yaw);
@@ -676,6 +674,7 @@ fn boxes_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
 
     fn floor_at_zero(p: IVec3) -> bool {
         p.y < 0

@@ -8,6 +8,7 @@ struct Uniforms {
     fog:       vec4<f32>, // (start, end, time, underwater)
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    render_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;

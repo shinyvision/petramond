@@ -213,7 +213,7 @@ mod tests {
                 w.insert_chunk_for_test(ChunkPos::new(cx, cz), Chunk::new(cx, cz));
             }
         }
-        w.last_load_target = Some(LoadTarget::new(0, 0, 4));
+        w.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
         w
     }
 

@@ -171,6 +171,11 @@ impl Renderer {
     /// door, mob, break, particle) for this frame, in the order that reuses the
     /// shared item-entity scratch. Extracted verbatim from `render`.
     pub(super) fn bake_world_instances(&mut self) {
+        let render_origin = self.render_origin;
+        let visible_world_aabb = |min: glam::Vec3, max: glam::Vec3| {
+            self.frustum
+                .aabb_visible(min - render_origin, max - render_origin)
+        };
         // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
         // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
         // `item_entity_indices`) in this exact order — `bake` (clear count → build
@@ -187,7 +192,7 @@ impl Renderer {
             let c = inst.pos;
             let min = c - glam::Vec3::splat(0.5);
             let max = c + glam::Vec3::new(0.5, 1.0, 0.5);
-            if self.frustum.aabb_visible(min, max) {
+            if visible_world_aabb(min, max) {
                 self.item_entity_visible.push(*inst);
             }
         }
@@ -217,7 +222,7 @@ impl Renderer {
             // Cull box: the block cell, expanded upward to include the open lid.
             let min = inst.pos;
             let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
-            if self.frustum.aabb_visible(min, max) {
+            if visible_world_aabb(min, max) {
                 self.chest_visible.push(*inst);
             }
         }
@@ -236,7 +241,7 @@ impl Renderer {
             // Cull box: the door's two-cell column (its swung slab stays within it).
             let min = inst.pos;
             let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
-            if self.frustum.aabb_visible(min, max) {
+            if visible_world_aabb(min, max) {
                 self.door_visible.push(*inst);
             }
         }
@@ -267,7 +272,7 @@ impl Renderer {
             };
             let min = inst.pos - pad;
             let max = inst.pos + pad;
-            if self.frustum.aabb_visible(min, max) {
+            if visible_world_aabb(min, max) {
                 self.mob_gpu[inst.kind as usize].visible.push(inst.clone());
             }
         }

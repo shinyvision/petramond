@@ -12,8 +12,8 @@
 #   NV_OFFLOAD= make run        -- run on the Intel iGPU instead of the NVIDIA dGPU
 
 CARGO ?= cargo
-SEED  ?= 0x18181
-RD    ?= 16
+SEED  ?= 0x312
+RD    ?= 32
 
 # Run on the discrete NVIDIA GPU via PRIME render offload. The game renders through
 # Vulkan, so __VK_LAYER_NV_optimus=NVIDIA_only (which hides the Intel iGPU from the

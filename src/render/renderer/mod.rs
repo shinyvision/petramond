@@ -1,7 +1,7 @@
 use crate::camera::{Camera, Frustum};
-use crate::chunk::{ChunkPos, CHUNK_SY};
+use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::SelectionShape;
-use crate::world::{TerrainMeshUploadSource, TerrainVisibilitySource};
+use crate::world::TerrainMeshUploadSource;
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
@@ -35,9 +35,9 @@ use super::mob_model::build_mob_instances;
 use super::particles::build_particles_split;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
-    create_atlas, create_depth, create_gui_panel, create_model_texture, upload_mesh, GpuMesh,
+    create_atlas, create_depth, create_gui_panel, create_model_texture, upload_column_mesh,
+    ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
 };
-use super::section_cull::{section_draw_ranges, SectionVisibilityCache};
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
@@ -47,6 +47,34 @@ use super::{
 };
 use crate::bbmodel::Model;
 use crate::gui::{GuiKind, OverlayTag, UiSnapshot};
+
+const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
+
+#[inline]
+fn aabb_distance_sq(p: glam::Vec3, min: glam::Vec3, max: glam::Vec3) -> f32 {
+    let dx = if p.x < min.x {
+        min.x - p.x
+    } else if p.x > max.x {
+        p.x - max.x
+    } else {
+        0.0
+    };
+    let dy = if p.y < min.y {
+        min.y - p.y
+    } else if p.y > max.y {
+        p.y - max.y
+    } else {
+        0.0
+    };
+    let dz = if p.z < min.z {
+        min.z - p.z
+    } else if p.z > max.z {
+        p.z - max.z
+    } else {
+        0.0
+    };
+    dx * dx + dy * dy + dz * dz
+}
 
 /// Key into the renderer's data-driven GUI texture map: every baked PNG a GUI can
 /// draw — its panel, its hover/selection highlight, and each dynamic overlay — has
@@ -65,7 +93,23 @@ pub(in crate::render) struct RenderStats {
     pub transparent_draws: u32,
     pub opaque_indices: u64,
     pub transparent_indices: u64,
-    pub section_culled_indices: u64,
+}
+
+#[derive(Copy, Clone)]
+pub(in crate::render) struct VisibleSection {
+    dist_sq: f32,
+    column_pos: ChunkPos,
+    opaque_batched: bool,
+    model_batched: bool,
+    use_far_leaf_lod: bool,
+    opaque_index_start: u32,
+    opaque_idx_count: u32,
+    far_opaque_index_start: u32,
+    far_opaque_idx_count: u32,
+    transparent_index_start: u32,
+    transparent_idx_count: u32,
+    model_index_start: u32,
+    model_idx_count: u32,
 }
 
 /// Per-species GPU resources for the mob pipeline, built once at renderer init by
@@ -179,8 +223,8 @@ pub struct Renderer {
     mob_gpu: Vec<MobGpu>,
     /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
     /// pass plus the combined model atlas bound at group(1). The geometry itself lives
-    /// in each chunk's `GpuMesh::model_*` (baked by the mesher), so there's no per-frame
-    /// model bake — the model pass just draws the chunks' model streams.
+    /// in packed terrain columns as per-section model ranges, so there's no per-frame
+    /// model bake — the model pass just draws the visible sections' model streams.
     model_pipe: wgpu::RenderPipeline,
     #[allow(dead_code)]
     model_atlas_texture: wgpu::Texture,
@@ -198,18 +242,34 @@ pub struct Renderer {
     /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
     particle_draw: DynamicVertexDraw,
     depth: wgpu::TextureView,
-    chunk_meshes: HashMap<ChunkPos, GpuMesh>,
-    /// Reusable per-frame draw order: `(dist_sq, ChunkPos)` for the visible chunks,
-    /// sorted near→far. Cleared + refilled each `render` (capacity retained) so the
-    /// frame never heap-allocates the sort list; the passes look meshes up by key.
-    draw_order: Vec<(f32, ChunkPos)>,
+    terrain_columns: HashMap<ChunkPos, GpuColumnMesh>,
+    /// Reusable sorted upload worklist for dirty terrain columns. Filled from the
+    /// world's dirty-column set each sync without allocating a fresh vector.
+    terrain_upload_order: Vec<(bool, f32, ChunkPos)>,
+    /// Reusable CPU staging for packing section meshes into a GPU column upload.
+    terrain_upload_scratch: ColumnUploadScratch,
+    /// Reusable per-frame section draw order, sorted near→far. Transparent terrain
+    /// stays section-granular; opaque/model passes can mark sections covered by a single
+    /// packed column draw.
+    draw_order: Vec<VisibleSection>,
+    /// Reusable near→far list of packed columns that can draw their whole opaque index
+    /// stream in one call this frame.
+    opaque_column_order: Vec<(f32, ChunkPos)>,
+    /// Reusable near→far list of packed columns that can draw their whole model index
+    /// stream in one call this frame.
+    model_column_order: Vec<(f32, ChunkPos)>,
     /// Camera frustum for viewspace culling, refreshed each frame in
     /// `update_uniforms`; chunk meshes outside it are skipped in `render`.
     frustum: Frustum,
     /// Camera world position, refreshed in `update_uniforms`; used to sort
     /// chunk draws front-to-back (opaque) / back-to-front (transparent).
     cam_pos: glam::Vec3,
-    section_visibility: SectionVisibilityCache,
+    /// Snapped world-space origin subtracted by world shaders before applying the
+    /// camera matrix, keeping GPU transform math camera-local far from spawn.
+    render_origin: glam::Vec3,
+    /// Sections currently drawing the far leaf mesh. Stored only for active far-LOD
+    /// sections so the transition has hysteresis instead of flipping at one threshold.
+    far_leaf_lod_state: HashMap<SectionPos, bool>,
     /// Background clear colour, kept in sync with the fog colour each frame (sky/
     /// biome fog above water, deep blue when submerged) so the horizon matches the
     /// fog the terrain fades into.
@@ -322,12 +382,26 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
-        // Reusable draw order taken out so `plan_draw_order` can fill it while
+        // Reusable draw orders taken out so `plan_draw_order` can fill them while
         // `self` is read; restored after encoding (capacity retained next frame).
         let mut order = std::mem::take(&mut self.draw_order);
-        let (mut stats, any_model_visible) = self.plan_draw_order(&mut order);
-        self.encode_passes(&mut enc, &view, &order, &mut stats, any_model_visible);
+        let mut opaque_columns = std::mem::take(&mut self.opaque_column_order);
+        let mut model_columns = std::mem::take(&mut self.model_column_order);
+        let (mut stats, any_model_visible, any_transparent_visible) =
+            self.plan_draw_order(&mut order, &mut opaque_columns, &mut model_columns);
+        self.encode_passes(
+            &mut enc,
+            &view,
+            &order,
+            &opaque_columns,
+            &model_columns,
+            &mut stats,
+            any_model_visible,
+            any_transparent_visible,
+        );
         self.draw_order = order;
+        self.opaque_column_order = opaque_columns;
+        self.model_column_order = model_columns;
         self.queue.submit(std::iter::once(enc.finish()));
         self.last_stats = stats;
         frame.present();

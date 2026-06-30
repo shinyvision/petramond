@@ -1,11 +1,11 @@
 //! Native world saving: a per-world directory under the OS data dir holding a
-//! `level.dat` (seed, player, inventory, tick), `entities.dat` (dropped items),
-//! and `region/` files packing the chunks the player has modified. Everything
-//! else regenerates from the seed, so a save stays small.
+//! `level.dat` (seed, player, inventory, tick) and `region/` files packing the
+//! 16³ sections the player has modified. Everything else regenerates from the
+//! seed, so a save stays small.
 //!
 //! Disk I/O (compression + file reads/writes) runs on a dedicated thread so the
 //! 20 TPS game loop never blocks. The game thread sends snapshots / requests and
-//! drains loaded chunks via [`WorldSave::poll_loaded`], mirroring the chunk-gen
+//! drains loaded sections via [`WorldSave::poll_loaded`], mirroring the section-gen
 //! worker pool.
 
 mod chest;
@@ -17,7 +17,7 @@ pub mod mobs;
 mod region;
 mod torch;
 
-pub use codec::ChunkSnapshot;
+pub use codec::SectionSnapshot;
 pub use level::LevelData;
 
 use std::collections::HashSet;
@@ -25,24 +25,25 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
-use crate::chunk::{Chunk, ChunkPos};
+use crate::chunk::{ChunkPos, SectionPos};
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
+use crate::section::Section;
 
 /// Messages from the game thread to the I/O thread.
 enum IoMsg {
-    SaveChunks(Vec<ChunkSnapshot>),
+    SaveSections(Vec<SectionSnapshot>),
     SaveLevel(Vec<u8>),
-    Load(ChunkPos),
+    Load(SectionPos),
     Shutdown,
 }
 
-/// A chunk read back from disk (`chunk` is `None` if absent / corrupt) plus any
+/// A section read back from disk (`section` is `None` if absent / corrupt) plus any
 /// item entities and mobs stored in its record (empty if absent / corrupt / none
 /// saved).
-pub struct LoadedChunk {
-    pub pos: ChunkPos,
-    pub chunk: Option<Chunk>,
+pub struct LoadedSection {
+    pub pos: SectionPos,
+    pub section: Option<Section>,
     pub entities: Vec<DroppedItem>,
     pub mobs: Vec<SavedMob>,
 }
@@ -50,20 +51,20 @@ pub struct LoadedChunk {
 /// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
     tx: Sender<IoMsg>,
-    load_rx: Receiver<LoadedChunk>,
+    load_rx: Receiver<LoadedSection>,
     handle: Option<JoinHandle<()>>,
-    /// Chunk coords present on disk: seeded at open from region headers, grown
-    /// as we save. The load path consults it to choose load-from-disk vs
+    /// Section coords present on disk: seeded at open from region headers, grown
+    /// as we save. The load path consults it to choose overlay-from-disk vs
     /// regenerate.
-    manifest: HashSet<ChunkPos>,
-    /// Chunk coords whose written record currently carries live entities — dropped
-    /// items OR mobs. A chunk leaves the set when re-saved with neither. The persist
-    /// decision consults it so a chunk whose drops were picked up / despawned (or whose
+    manifest: HashSet<SectionPos>,
+    /// Section coords whose written record currently carries live entities — dropped
+    /// items OR mobs. A section leaves the set when re-saved with neither. The persist
+    /// decision consults it so a section whose drops were picked up / despawned (or whose
     /// mobs wandered off, died, or distance-despawned) is rewritten to clear its
     /// now-stale record, instead of leaving the disk copy to resurrect them on the next
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
-    entities_on_disk: HashSet<ChunkPos>,
+    entities_on_disk: HashSet<SectionPos>,
 }
 
 /// The result of opening (or creating) a world.
@@ -75,27 +76,37 @@ pub struct OpenedWorld {
 
 impl WorldSave {
     /// `true` if `pos` has a saved record on disk (or saved this session).
-    pub fn manifest_contains(&self, pos: ChunkPos) -> bool {
+    pub fn manifest_contains(&self, pos: SectionPos) -> bool {
         self.manifest.contains(&pos)
     }
 
+    pub fn manifest_sections_in_column(
+        &self,
+        pos: ChunkPos,
+    ) -> impl Iterator<Item = SectionPos> + '_ {
+        self.manifest
+            .iter()
+            .copied()
+            .filter(move |sp| sp.cx == pos.cx && sp.cz == pos.cz)
+    }
+
     /// `true` if `pos`'s written record currently carries live entities (dropped items
-    /// or mobs) — so a save that now finds the chunk free of both must rewrite it, or
+    /// or mobs) — so a save that now finds the section free of both must rewrite it, or
     /// the stale record resurrects them on the next load.
-    pub fn record_holds_entities(&self, pos: ChunkPos) -> bool {
+    pub fn record_holds_entities(&self, pos: SectionPos) -> bool {
         self.entities_on_disk.contains(&pos)
     }
 
     /// Note that `pos`'s on-disk record carries live entities (drops or mobs), learned
-    /// by reading it back. Mirrors what [`save_chunks`](Self::save_chunks) records when
-    /// it writes them, so a record saved in a *previous* session is still rewritten once
-    /// its entities are gone.
-    pub fn note_record_holds_entities(&mut self, pos: ChunkPos) {
+    /// by reading it back. Mirrors what [`save_sections`](Self::save_sections) records
+    /// when it writes them, so a record saved in a *previous* session is still rewritten
+    /// once its entities are gone.
+    pub fn note_record_holds_entities(&mut self, pos: SectionPos) {
         self.entities_on_disk.insert(pos);
     }
 
-    /// Queue modified chunks for compression + region write (non-blocking).
-    pub fn save_chunks(&mut self, snaps: Vec<ChunkSnapshot>) {
+    /// Queue modified sections for compression + region write (non-blocking).
+    pub fn save_sections(&mut self, snaps: Vec<SectionSnapshot>) {
         if snaps.is_empty() {
             return;
         }
@@ -103,7 +114,7 @@ impl WorldSave {
             self.manifest.insert(s.pos);
             // Track whether the record we're about to write carries any live entities —
             // drops or mobs (matching `encode_snapshot`'s FLAG_HAS_ENTITIES /
-            // FLAG_HAS_MOBS). A chunk that loses them all is then re-saved once to clear
+            // FLAG_HAS_MOBS). A section that loses them all is then re-saved once to clear
             // the record (see the persist decisions in `world::stream`/`world::store`).
             if s.entities.is_empty() && s.mobs.is_empty() {
                 self.entities_on_disk.remove(&s.pos);
@@ -111,7 +122,7 @@ impl WorldSave {
                 self.entities_on_disk.insert(s.pos);
             }
         }
-        let _ = self.tx.send(IoMsg::SaveChunks(snaps));
+        let _ = self.tx.send(IoMsg::SaveSections(snaps));
     }
 
     pub fn save_level(&self, bytes: Vec<u8>) {
@@ -121,11 +132,11 @@ impl WorldSave {
     /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
     ///
     /// [`poll_loaded`]: Self::poll_loaded
-    pub fn request_load(&self, pos: ChunkPos) {
+    pub fn request_load(&self, pos: SectionPos) {
         let _ = self.tx.send(IoMsg::Load(pos));
     }
 
-    pub fn poll_loaded(&self) -> Option<LoadedChunk> {
+    pub fn poll_loaded(&self) -> Option<LoadedSection> {
         self.load_rx.try_recv().ok()
     }
 
@@ -202,7 +213,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             if let Some((rx, rz)) = region::parse_region_name(&path) {
                 if let Ok(indices) = region::read_region_indices(&path) {
                     for lidx in indices {
-                        manifest.insert(region::chunk_pos(rx, rz, lidx));
+                        manifest.insert(region::section_pos(rx, rz, lidx));
                     }
                 }
             }
@@ -210,7 +221,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     }
 
     let (tx, rx) = std::sync::mpsc::channel::<IoMsg>();
-    let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedChunk>();
+    let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
     let handle = std::thread::Builder::new()
         .name("llamacraft-save".to_string())
         .spawn(move || io_thread(dir, rx, load_tx))
@@ -230,19 +241,19 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
 /// The I/O thread loop: process requests in order, doing compression + file I/O
 /// off the game loop. Returns (and so the join completes) on `Shutdown`.
-fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedChunk>) {
+fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedSection>) {
     let region_dir = dir.join("region");
     while let Ok(msg) = rx.recv() {
         match msg {
-            IoMsg::SaveChunks(snaps) => write_chunks(&region_dir, snaps),
+            IoMsg::SaveSections(snaps) => write_sections(&region_dir, snaps),
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
             }
             IoMsg::Load(pos) => {
-                let (chunk, entities, mobs) = load_chunk(&region_dir, pos);
-                let _ = load_tx.send(LoadedChunk {
+                let (section, entities, mobs) = load_section(&region_dir, pos);
+                let _ = load_tx.send(LoadedSection {
                     pos,
-                    chunk,
+                    section,
                     entities,
                     mobs,
                 });
@@ -253,9 +264,9 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedChunk>) {
 }
 
 /// Merge snapshots into their region files (read-modify-write per region).
-fn write_chunks(region_dir: &Path, snaps: Vec<ChunkSnapshot>) {
+fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) {
     use std::collections::HashMap;
-    let mut by_region: HashMap<(i32, i32), Vec<ChunkSnapshot>> = HashMap::new();
+    let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
     for s in snaps {
         by_region
             .entry(region::region_of(s.pos))
@@ -274,19 +285,19 @@ fn write_chunks(region_dir: &Path, snaps: Vec<ChunkSnapshot>) {
     }
 }
 
-fn load_chunk(
+fn load_section(
     region_dir: &Path,
-    pos: ChunkPos,
-) -> (Option<Chunk>, Vec<DroppedItem>, Vec<SavedMob>) {
+    pos: SectionPos,
+) -> (Option<Section>, Vec<DroppedItem>, Vec<SavedMob>) {
     let decoded = (|| {
         let (rx, rz) = region::region_of(pos);
         let path = region::region_path(region_dir, rx, rz);
         let records = region::read_region(&path).ok()?;
         let blob = records.get(&region::local_index(pos))?;
-        codec::decode_chunk(pos.cx, pos.cz, blob)
+        codec::decode_section(pos, blob)
     })();
     match decoded {
-        Some((chunk, entities, mobs)) => (Some(chunk), entities, mobs),
+        Some((section, entities, mobs)) => (Some(section), entities, mobs),
         None => (None, Vec::new(), Vec::new()),
     }
 }
@@ -313,7 +324,7 @@ mod tests {
         dir
     }
 
-    fn load_blocking(save: &WorldSave, pos: ChunkPos) -> Option<LoadedChunk> {
+    fn load_blocking(save: &WorldSave, pos: SectionPos) -> Option<LoadedSection> {
         save.request_load(pos);
         for _ in 0..500 {
             if let Some(l) = save.poll_loaded() {
@@ -324,24 +335,24 @@ mod tests {
         None
     }
 
-    /// Full disk round-trip through the I/O thread: write a modified chunk (with a
+    /// Full disk round-trip through the I/O thread: write a modified section (with a
     /// resting item entity carrying a partly-elapsed lifetime) + level in one
-    /// session, reopen in another, and read it all back. Item entities now ride in
-    /// the chunk record, so the drop returns when its chunk loads.
+    /// session, reopen in another, and read it all back. Item entities ride in the
+    /// section record, so the drop returns when its section loads.
     #[test]
-    fn save_reopen_roundtrips_chunk_level_entities() {
+    fn save_reopen_roundtrips_section_level_entities() {
         let dir = temp_world_dir("roundtrip");
-        let pos = ChunkPos::new(5, -9);
+        let pos = SectionPos::new(5, -3, -9); // negative cy: below the old datum
 
         {
             let mut opened = open_at(dir.clone()).expect("open fresh");
             assert!(opened.level.is_none(), "fresh world has no level.dat");
             assert!(!opened.save.manifest_contains(pos));
 
-            let mut chunk = Chunk::new(pos.cx, pos.cz);
-            chunk.set_block(3, 64, 7, Block::Stone);
-            chunk.set_water(3, 65, 7, Block::Water, 0x12);
-            let mut snap = ChunkSnapshot::from_chunk(&chunk);
+            let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+            section.set_block(3, 0, 7, Block::Stone);
+            section.set_water(3, 1, 7, Block::Water, 0x12);
+            let mut snap = SectionSnapshot::from_section(&section);
             let mut drop = DroppedItem::new(
                 Vec3::new(80.5, 70.0, -39.5),
                 ItemStack::new(ItemType::Dirt, 9),
@@ -349,7 +360,7 @@ mod tests {
             );
             drop.ticks_lived = 2500;
             snap.entities.push(drop);
-            opened.save.save_chunks(vec![snap]);
+            opened.save.save_sections(vec![snap]);
 
             let mut player = Player::new(Vec3::new(80.0, 70.0, -40.0));
             player.inventory.set_active(4);
@@ -368,16 +379,16 @@ mod tests {
 
             assert!(
                 opened.save.manifest_contains(pos),
-                "manifest sees saved chunk"
+                "manifest sees saved section"
             );
 
-            let loaded = load_blocking(&opened.save, pos).expect("chunk loads from disk");
-            let chunk = loaded.chunk.expect("chunk record decodes");
-            assert_eq!(chunk.block_raw(3, 64, 7), Block::Stone.id());
-            assert_eq!(chunk.block_raw(3, 65, 7), Block::Water.id());
-            assert_eq!(chunk.water_meta(3, 65, 7), 0x12);
+            let loaded = load_blocking(&opened.save, pos).expect("section loads from disk");
+            let section = loaded.section.expect("section record decodes");
+            assert_eq!(section.block_raw(3, 0, 7), Block::Stone.id());
+            assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
+            assert_eq!(section.water_meta(3, 1, 7), 0x12);
 
-            // The item entity comes back with its chunk, lifetime intact.
+            // The item entity comes back with its section, lifetime intact.
             assert_eq!(loaded.entities.len(), 1);
             assert_eq!(loaded.entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
             assert_eq!(
@@ -389,26 +400,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The unload/reload dupe, at the save layer: a chunk record written with a
+    /// The unload/reload dupe, at the save layer: a section record written with a
     /// drop, then re-saved drop-free (the drop was picked up), must not bring the
     /// drop back on reload — and `record_holds_entities` must track the transition.
     #[test]
-    fn re_saving_a_drop_free_chunk_clears_its_stale_record() {
+    fn re_saving_a_drop_free_section_clears_its_stale_record() {
         let dir = temp_world_dir("clear-stale-drops");
-        let pos = ChunkPos::new(2, -4);
+        let pos = SectionPos::new(2, 4, -4);
 
         let mut opened = open_at(dir.clone()).expect("open fresh");
 
         // Unload-with-item: the record is written carrying one drop.
-        let mut chunk = Chunk::new(pos.cx, pos.cz);
-        chunk.set_block(1, 64, 1, Block::Stone);
-        let mut snap = ChunkSnapshot::from_chunk(&chunk);
+        let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+        section.set_block(1, 0, 1, Block::Stone);
+        let mut snap = SectionSnapshot::from_section(&section);
         snap.entities.push(DroppedItem::new(
             Vec3::new(33.0, 65.0, -63.0),
             ItemStack::new(ItemType::Dirt, 3),
             1,
         ));
-        opened.save.save_chunks(vec![snap]);
+        opened.save.save_sections(vec![snap]);
         assert!(
             opened.save.record_holds_entities(pos),
             "record now carries a drop"
@@ -417,10 +428,10 @@ mod tests {
         let with_item = load_blocking(&opened.save, pos).expect("loads with item");
         assert_eq!(with_item.entities.len(), 1, "drop is present before pickup");
 
-        // Pickup-then-unload: the chunk is re-saved with no drops. The channel is
+        // Pickup-then-unload: the section is re-saved with no drops. The channel is
         // ordered, so this write lands before the load below reads it back.
-        let empty = ChunkSnapshot::from_chunk(&chunk); // entities default to empty
-        opened.save.save_chunks(vec![empty]);
+        let empty = SectionSnapshot::from_section(&section); // entities default to empty
+        opened.save.save_sections(vec![empty]);
         assert!(
             !opened.save.record_holds_entities(pos),
             "rewrite cleared the flag"
@@ -431,9 +442,9 @@ mod tests {
             after.entities.is_empty(),
             "the stale drop must not resurrect"
         );
-        // The chunk's own edits survive the rewrite (only the drop was cleared).
+        // The section's own edits survive the rewrite (only the drop was cleared).
         assert_eq!(
-            after.chunk.expect("chunk decodes").block_raw(1, 64, 1),
+            after.section.expect("section decodes").block_raw(1, 0, 1),
             Block::Stone.id()
         );
 
@@ -441,27 +452,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The same stale-record guard, for mobs: a chunk record written with a mob, then
+    /// The same stale-record guard, for mobs: a section record written with a mob, then
     /// re-saved mob-free (the mob died, wandered off, or distance-despawned), must not
     /// bring the mob back on reload — and `record_holds_entities` must track it. The
     /// guard is one mechanism shared with dropped items, so this pins it for the mob
     /// path too.
     #[test]
-    fn re_saving_a_mob_free_chunk_clears_its_stale_record() {
+    fn re_saving_a_mob_free_section_clears_its_stale_record() {
         let dir = temp_world_dir("clear-stale-mobs");
-        let pos = ChunkPos::new(-7, 3);
+        let pos = SectionPos::new(-7, 4, 3);
 
         let mut opened = open_at(dir.clone()).expect("open fresh");
 
         // Unload-with-mob: the record is written carrying one mob.
-        let chunk = Chunk::new(pos.cx, pos.cz);
-        let mut snap = ChunkSnapshot::from_chunk(&chunk);
+        let section = Section::new(pos.cx, pos.cy, pos.cz);
+        let mut snap = SectionSnapshot::from_section(&section);
         snap.mobs.push(crate::mob::SavedMob {
             kind: crate::mob::Mob::Owl,
             pos: Vec3::new(-100.5, 65.0, 56.5),
             yaw: 0.5,
         });
-        opened.save.save_chunks(vec![snap]);
+        opened.save.save_sections(vec![snap]);
         assert!(
             opened.save.record_holds_entities(pos),
             "record now carries a mob"
@@ -470,10 +481,10 @@ mod tests {
         let with_mob = load_blocking(&opened.save, pos).expect("loads with mob");
         assert_eq!(with_mob.mobs.len(), 1, "mob present before it leaves");
 
-        // The mob is gone: the chunk is re-saved mob-free. The record must be rewritten
+        // The mob is gone: the section is re-saved mob-free. The record must be rewritten
         // so the stale mob can't resurrect on the next load.
-        let empty = ChunkSnapshot::from_chunk(&chunk);
-        opened.save.save_chunks(vec![empty]);
+        let empty = SectionSnapshot::from_section(&section);
+        opened.save.save_sections(vec![empty]);
         assert!(
             !opened.save.record_holds_entities(pos),
             "rewrite cleared the flag"

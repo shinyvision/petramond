@@ -17,6 +17,7 @@ struct Uniforms {
     fog:       vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    render_origin: vec4<f32>,
 };
 
 // Underwater multiply tint — kept in sync with block.wgsl so dust submerged with
@@ -50,13 +51,14 @@ struct VsOut {
 @vertex
 fn vs_particle(in: VsIn) -> VsOut {
     var out: VsOut;
-    out.clip = u.view_proj * vec4<f32>(in.pos, 1.0);
+    let local_pos = in.pos - u.render_origin.xyz;
+    out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.tint = in.tint;
     out.shade = in.shade;
     out.alpha = in.alpha;
     // World-space camera distance, for the fog fade in the fragment stage.
-    out.dist = length(u.cam_pos.xyz - in.pos);
+    out.dist = length(u.cam_pos.xyz - local_pos);
     return out;
 }
 

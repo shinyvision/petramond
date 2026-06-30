@@ -1,7 +1,6 @@
-use crate::chunk::ChunkPos;
+use crate::chunk::{ChunkPos, SectionPos};
 use crate::mesh::ChunkMesh;
 
-use super::visibility::{SectionConnectivity, SectionPos};
 use super::World;
 
 pub(crate) struct TerrainRenderHandoff<'a> {
@@ -9,20 +8,13 @@ pub(crate) struct TerrainRenderHandoff<'a> {
 }
 
 pub(crate) trait TerrainMeshUploadSource {
-    fn has_mesh(&self, pos: ChunkPos) -> bool;
+    fn has_column_mesh(&self, pos: ChunkPos) -> bool;
 
-    fn for_each_mesh_upload<F>(&mut self, visit: F)
-    where
-        F: for<'mesh> FnMut(ChunkPos, &'mesh ChunkMesh, bool) -> bool;
-}
+    fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos));
 
-pub(crate) trait TerrainVisibilitySource {
-    fn visibility_revision(&self) -> u64;
-    fn camera_section_exits(&self, wx: i32, wy: i32, wz: i32) -> Option<(SectionPos, u8)>;
-    fn has_section_visibility(&self, pos: ChunkPos) -> bool;
-    fn chunk_loaded(&self, pos: ChunkPos) -> bool;
-    fn ensure_section_visibility(&mut self, pos: ChunkPos) -> bool;
-    fn section_connectivity(&self, pos: SectionPos) -> Option<SectionConnectivity>;
+    fn column_meshes(&self, pos: ChunkPos) -> Vec<(SectionPos, &ChunkMesh)>;
+
+    fn mark_column_uploaded(&mut self, pos: ChunkPos);
 }
 
 impl World {
@@ -32,45 +24,35 @@ impl World {
 }
 
 impl TerrainMeshUploadSource for TerrainRenderHandoff<'_> {
-    fn has_mesh(&self, pos: ChunkPos) -> bool {
-        self.world.meshes.contains_key(&pos)
+    fn has_column_mesh(&self, pos: ChunkPos) -> bool {
+        self.world.column_has_mesh(pos)
     }
 
-    fn for_each_mesh_upload<F>(&mut self, mut visit: F)
-    where
-        F: for<'mesh> FnMut(ChunkPos, &'mesh ChunkMesh, bool) -> bool,
-    {
-        for (pos, mesh) in self.world.meshes.iter_mut() {
-            let uploaded = visit(*pos, mesh, mesh.mesh_dirty);
-            if uploaded {
+    fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos)) {
+        for &column in &self.world.mesh_upload_dirty_columns {
+            f(column);
+        }
+    }
+
+    fn column_meshes(&self, pos: ChunkPos) -> Vec<(SectionPos, &ChunkMesh)> {
+        World::column_section_range()
+            .filter_map(|cy| {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                self.world.meshes.get(&sp).map(|mesh| (sp, mesh))
+            })
+            .collect()
+    }
+
+    fn mark_column_uploaded(&mut self, pos: ChunkPos) {
+        for cy in World::column_section_range() {
+            if let Some(mesh) = self
+                .world
+                .meshes
+                .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
+            {
                 mesh.mesh_dirty = false;
             }
         }
-    }
-}
-
-impl TerrainVisibilitySource for TerrainRenderHandoff<'_> {
-    fn visibility_revision(&self) -> u64 {
-        self.world.visibility_revision
-    }
-
-    fn camera_section_exits(&self, wx: i32, wy: i32, wz: i32) -> Option<(SectionPos, u8)> {
-        self.world.camera_section_exits(wx, wy, wz)
-    }
-
-    fn has_section_visibility(&self, pos: ChunkPos) -> bool {
-        self.world.has_section_visibility(pos)
-    }
-
-    fn chunk_loaded(&self, pos: ChunkPos) -> bool {
-        self.world.chunk_loaded(pos.cx, pos.cz)
-    }
-
-    fn ensure_section_visibility(&mut self, pos: ChunkPos) -> bool {
-        self.world.ensure_section_visibility(pos)
-    }
-
-    fn section_connectivity(&self, pos: SectionPos) -> Option<SectionConnectivity> {
-        self.world.section_connectivity(pos)
+        self.world.mesh_upload_dirty_columns.remove(&pos);
     }
 }

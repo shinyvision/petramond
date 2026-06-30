@@ -121,20 +121,47 @@ const MD5_OCTAVE: [(u64, u64); 13] = [
 
 /// Lowest-octave frequency by `-omin` (= `2^omin`); doubled per octave.
 const LACUNA_INI: [f64; 13] = [
-    1.0, 0.5, 0.25, 1.0 / 8.0, 1.0 / 16.0, 1.0 / 32.0, 1.0 / 64.0, 1.0 / 128.0,
-    1.0 / 256.0, 1.0 / 512.0, 1.0 / 1024.0, 1.0 / 2048.0, 1.0 / 4096.0,
+    1.0,
+    0.5,
+    0.25,
+    1.0 / 8.0,
+    1.0 / 16.0,
+    1.0 / 32.0,
+    1.0 / 64.0,
+    1.0 / 128.0,
+    1.0 / 256.0,
+    1.0 / 512.0,
+    1.0 / 1024.0,
+    1.0 / 2048.0,
+    1.0 / 4096.0,
 ];
 
 /// Lowest-octave amplitude weight by octave count `len`; halved per octave.
 const PERSIST_INI: [f64; 10] = [
-    0.0, 1.0, 2.0 / 3.0, 4.0 / 7.0, 8.0 / 15.0, 16.0 / 31.0, 32.0 / 63.0,
-    64.0 / 127.0, 128.0 / 255.0, 256.0 / 511.0,
+    0.0,
+    1.0,
+    2.0 / 3.0,
+    4.0 / 7.0,
+    8.0 / 15.0,
+    16.0 / 31.0,
+    32.0 / 63.0,
+    64.0 / 127.0,
+    128.0 / 255.0,
+    256.0 / 511.0,
 ];
 
 /// Double-Perlin value factor by trimmed octave count `len` (= `(5/3)·len/(len+1)`).
 const AMP_INI: [f64; 10] = [
-    0.0, 5.0 / 6.0, 10.0 / 9.0, 15.0 / 12.0, 20.0 / 15.0, 25.0 / 18.0,
-    30.0 / 21.0, 35.0 / 24.0, 40.0 / 27.0, 45.0 / 30.0,
+    0.0,
+    5.0 / 6.0,
+    10.0 / 9.0,
+    15.0 / 12.0,
+    20.0 / 15.0,
+    25.0 / 18.0,
+    30.0 / 21.0,
+    35.0 / 24.0,
+    40.0 / 27.0,
+    45.0 / 30.0,
 ];
 
 /// One Perlin octave: a permutation, a sampling origin `(a, b, c)`, and the
@@ -149,6 +176,13 @@ struct PerlinOctave {
     c: f64,
     amplitude: f64,
     lacunarity: f64,
+    /// The b-axis (Y) lattice cell / fractional / fade precomputed for `y == 0` — every
+    /// climate and surface-density sample passes `y = 0` (all live noise is 2D), so the
+    /// reference `d2 == 0` fast path is hit on every call. Holds exactly what
+    /// `sample` would compute from `y + b` at `y = 0`, so results stay bit-identical.
+    h2_y0: u8,
+    d2_y0: f64,
+    t2_y0: f64,
 }
 
 impl PerlinOctave {
@@ -165,6 +199,8 @@ impl PerlinOctave {
             perm.swap(i as usize, j as usize);
         }
         perm[256] = perm[0];
+        let i2 = b.floor();
+        let d2_y0 = b - i2;
         Self {
             perm,
             a,
@@ -172,6 +208,9 @@ impl PerlinOctave {
             c,
             amplitude: 1.0,
             lacunarity: 1.0,
+            h2_y0: i2 as i64 as u8,
+            d2_y0,
+            t2_y0: fade(d2_y0),
         }
     }
 
@@ -180,20 +219,27 @@ impl PerlinOctave {
     /// identical values, so it is omitted.
     fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
         let mut d1 = x + self.a;
-        let mut d2 = y + self.b;
         let mut d3 = z + self.c;
         let i1 = d1.floor();
-        let i2 = d2.floor();
         let i3 = d3.floor();
         d1 -= i1;
-        d2 -= i2;
         d3 -= i3;
         let h1 = i1 as i64 as u8;
-        let h2 = i2 as i64 as u8;
         let h3 = i3 as i64 as u8;
         let t1 = fade(d1);
-        let t2 = fade(d2);
         let t3 = fade(d3);
+        // The reference `d2 == 0` fast path: at y == 0 the Y-axis cell/frac/fade are the
+        // precomputed b-axis constants (identical to floor/fade of `y + b`), saving a
+        // floor + a fade polynomial on every octave sample. Any non-zero y (none today)
+        // falls back to the exact general computation.
+        let (d2, h2, t2) = if y == 0.0 {
+            (self.d2_y0, self.h2_y0, self.t2_y0)
+        } else {
+            let raw = y + self.b;
+            let i2 = raw.floor();
+            let frac = raw - i2;
+            (frac, i2 as i64 as u8, fade(frac))
+        };
         let idx = &self.perm;
         let a1 = idx[h1 as usize].wrapping_add(h2);
         let b1 = idx[h1 as usize + 1].wrapping_add(h2);

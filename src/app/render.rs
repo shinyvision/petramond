@@ -50,7 +50,6 @@ impl App {
         {
             let mut terrain = self.game.terrain_render_handoff();
             renderer.sync_meshes(&mut terrain);
-            renderer.update_section_visibility(&mut terrain);
         }
         renderer.render();
 

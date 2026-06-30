@@ -1,6 +1,5 @@
 use super::collision::Axis;
 use super::state::{Input, Player, HALF_W};
-use crate::block::Block;
 use crate::mathh::Vec3;
 use crate::world::World;
 
@@ -137,8 +136,7 @@ impl Player {
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
         // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let water =
-            |x: i32, y: i32, z: i32| Block::from_id(world.chunk_block(x, y, z)) == Block::Water;
+        let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
         let water_flow = |x: i32, y: i32, z: i32| world.water_flow_dir_at(x, y, z);
         self.update_core_with_current(dt, &boxes, &water, &water_flow, input);
     }
@@ -156,9 +154,9 @@ impl Player {
         // solid cell is one full cube, an empty cell no box.
         let boxes = |x: i32, y: i32, z: i32| {
             if solid(x, y, z) {
-                Block::Stone
+                crate::block::Block::Stone
             } else {
-                Block::Air
+                crate::block::Block::Air
             }
             .collision_boxes()
         };

@@ -99,8 +99,11 @@ impl Game {
 
     pub(super) fn tick_world(&mut self) {
         let cam_cx = (self.cam.pos.x as i32) >> 4;
+        let cam_cy = (self.cam.pos.y.floor() as i32).div_euclid(16);
         let cam_cz = (self.cam.pos.z as i32) >> 4;
-        self.world.update_load(cam_cx, cam_cz);
+        let forward = self.cam.forward();
+        self.world
+            .update_load_facing(cam_cx, cam_cy, cam_cz, forward.x, forward.z);
         let _ = self.world.poll();
     }
 

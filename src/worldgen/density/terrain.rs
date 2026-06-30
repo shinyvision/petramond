@@ -66,16 +66,26 @@ impl TerrainDensitySpec {
         // shift, forked from the world seed. The game's u32 seed widens to the
         // reference's u64 world seed, so the same seed yields the same fields.
         let world_seed = u64::from(seed);
-        let temperature =
-            graph.sampled_field(ShiftedClimateField::new(world_seed, &climate_fields::TEMPERATURE));
-        let humidity =
-            graph.sampled_field(ShiftedClimateField::new(world_seed, &climate_fields::HUMIDITY));
-        let continentality = graph
-            .sampled_field(ShiftedClimateField::new(world_seed, &climate_fields::CONTINENTALITY));
-        let erosion =
-            graph.sampled_field(ShiftedClimateField::new(world_seed, &climate_fields::EROSION));
-        let variance =
-            graph.sampled_field(ShiftedClimateField::new(world_seed, &climate_fields::WEIRDNESS));
+        let temperature = graph.sampled_field(ShiftedClimateField::new(
+            world_seed,
+            &climate_fields::TEMPERATURE,
+        ));
+        let humidity = graph.sampled_field(ShiftedClimateField::new(
+            world_seed,
+            &climate_fields::HUMIDITY,
+        ));
+        let continentality = graph.sampled_field(ShiftedClimateField::new(
+            world_seed,
+            &climate_fields::CONTINENTALITY,
+        ));
+        let erosion = graph.sampled_field(ShiftedClimateField::new(
+            world_seed,
+            &climate_fields::EROSION,
+        ));
+        let variance = graph.sampled_field(ShiftedClimateField::new(
+            world_seed,
+            &climate_fields::WEIRDNESS,
+        ));
         graph.set_channel(Channel::new(channels::TEMPERATURE), temperature);
         graph.set_channel(Channel::new(channels::HUMIDITY), humidity);
         graph.set_channel(Channel::new(channels::CONTINENTALITY), continentality);

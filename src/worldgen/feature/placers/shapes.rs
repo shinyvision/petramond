@@ -87,7 +87,10 @@ pub fn leaf_blob_rounded(
                 if corner && rng.chance(round) {
                     continue;
                 }
-                ctx.set_leaf(IVec3::new(center.x + lx, center.y + ly, center.z + lz), leaf);
+                ctx.set_leaf(
+                    IVec3::new(center.x + lx, center.y + ly, center.z + lz),
+                    leaf,
+                );
             }
         }
     }

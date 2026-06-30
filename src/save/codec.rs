@@ -1,32 +1,31 @@
-//! Binary codec for save data: little-endian primitives + compressed chunk
+//! Binary codec for save data: little-endian primitives + compressed section
 //! records.
 //!
-//! A chunk record stores only what generation can't reproduce — block ids,
-//! biome ids, and (when present) water-flow metadata — then zlib-compresses the
-//! lot (flate2 / miniz_oxide, pure Rust). Heightmap and skylight are recomputed
-//! on load, so they're never written.
+//! A section record stores only what generation can't reproduce for one 16³ cube —
+//! block ids and (when present) water-flow metadata — then zlib-compresses the lot
+//! (flate2 / miniz_oxide, pure Rust). Biome and surface heightmap are per-column,
+//! cheaply regenerated, and so are never written here; skylight is recomputed on
+//! load.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
 use crate::chest::Chest;
-use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, VOLUME};
+use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::door::DoorState;
 use crate::entity::DroppedItem;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
 use crate::mob::SavedMob;
+use crate::section::Section;
 use crate::torch::TorchPlacement;
 
-const BIOME_BYTES: usize = CHUNK_SX * CHUNK_SZ;
-/// Current chunk-record version. Flag-gated sections are appended at the end, so a
-/// section that fits a free flag bit needs no version bump. Version `3` introduced a
-/// SECOND flags byte (the first eight bits were exhausted) for the sapling-stage
-/// section: a v2 record has no second flags byte and decodes with it treated as `0`,
-/// so existing saves keep loading.
-const CHUNK_REC_VERSION: u8 = 3;
-/// Oldest chunk-record version this build can still read.
-const CHUNK_REC_MIN_VERSION: u8 = 2;
+/// Current section-record version. Flag-gated payloads are appended at the end, so a
+/// new one that fits a free flag bit needs no version bump. The cubic format starts
+/// fresh at `1` (the column-era chunk records are not migrated — saves regenerate).
+const SECTION_REC_VERSION: u8 = 1;
+/// Oldest section-record version this build can still read.
+const SECTION_REC_MIN_VERSION: u8 = 1;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -39,66 +38,65 @@ const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 const FLAG2_HAS_SAPLINGS: u8 = 0x01;
 const FLAG2_HAS_DOORS: u8 = 0x02;
 
-/// Owned, send-able copy of the per-chunk save data. The game thread builds one
+/// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
-/// expensive compression off the game loop.
-pub struct ChunkSnapshot {
-    pub pos: ChunkPos,
+/// expensive compression off the game loop. Biome/heightmap are per-column and
+/// regenerated, so they are not part of a section record.
+pub struct SectionSnapshot {
+    pub pos: SectionPos,
     pub blocks: Box<[u8]>,
-    pub biomes: Box<[u8]>,
     pub water: Option<Box<[u8]>>,
-    /// Item entities resting in this chunk, captured at save time so their
-    /// lifetime timers persist with the chunk. Empty for the common case.
+    /// Item entities resting in this section, captured at save time so their
+    /// lifetime timers persist with it. Empty for the common case.
     pub entities: Vec<DroppedItem>,
-    /// Furnace block-entities in this chunk, keyed by local block index, so their
-    /// contents + smelting progress persist. Empty for the common chunk.
+    /// Furnace block-entities in this section, keyed by section-local block index, so
+    /// their contents + smelting progress persist. Empty for the common section.
     pub furnaces: HashMap<u16, Furnace>,
-    /// Chest block-entities in this chunk, keyed by local block index, so their
-    /// contents persist. Empty for the common chunk.
+    /// Chest block-entities in this section, keyed by section-local block index, so
+    /// their contents persist. Empty for the common section.
     pub chests: HashMap<u16, Chest>,
-    /// Torch orientations in this chunk, keyed by local block index, so a wall vs
-    /// floor torch reloads the way it was placed. Empty for the common chunk.
+    /// Torch orientations in this section, keyed by section-local block index, so a
+    /// wall vs floor torch reloads the way it was placed. Empty for the common section.
     pub torches: HashMap<u16, TorchPlacement>,
     /// Multi-cell bbmodel occupancy: each non-zero authored footprint offset, so a
     /// placed multi-block (the workbench) reloads as one object. Empty for the common
-    /// chunk. See `Chunk::model_cells`.
+    /// section. See `Section::model_cells`.
     pub model_cells: HashMap<u16, [u8; 3]>,
     /// Per-cell facing for oriented bbmodel blocks, keyed like `model_cells`. Empty for
-    /// old/non-directional model placements. See `Chunk::model_facings`.
+    /// old/non-directional model placements. See `Section::model_facings`.
     pub model_facings: HashMap<u16, Facing>,
-    /// Sapling growth stages (`0..=2`) in this chunk, keyed by local block index, so a
-    /// half-grown sapling reloads at the stage it reached. Empty for the common chunk.
-    /// See `Chunk::sapling_stages`.
+    /// Sapling growth stages (`0..=2`) in this section, keyed by section-local index,
+    /// so a half-grown sapling reloads at the stage it reached. Empty for the common
+    /// section. See `Section::sapling_stages`.
     pub sapling_stages: HashMap<u16, u8>,
-    /// Door state (facing + open + which-half), keyed by local block index, so a placed
-    /// door reloads on the same edge and in the same open/closed pose. Empty for the
-    /// common chunk. See `Chunk::doors` / [`crate::door`].
+    /// Door state (facing + open + which-half), keyed by section-local index, so a
+    /// placed door reloads on the same edge and in the same open/closed pose. Empty for
+    /// the common section. See `Section::doors` / [`crate::door`].
     pub doors: HashMap<u16, DoorState>,
-    /// Mobs resting in this chunk, captured at save time so a passive owl reloads
+    /// Mobs resting in this section, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
-    /// `Chunk`, so the world save paths set this from the live mob set. Empty for the
-    /// common chunk.
+    /// `Section`, so the world save paths set this from the live mob set. Empty for the
+    /// common section.
     pub mobs: Vec<SavedMob>,
 }
 
-impl ChunkSnapshot {
-    /// Snapshot a chunk's terrain with no entities or mobs attached. The world save
+impl SectionSnapshot {
+    /// Snapshot a section's terrain with no entities or mobs attached. The world save
     /// paths set [`entities`](Self::entities) / [`mobs`](Self::mobs) afterwards from the
     /// active item and mob sets.
-    pub fn from_chunk(c: &Chunk) -> Self {
+    pub fn from_section(s: &Section) -> Self {
         Self {
-            pos: ChunkPos::new(c.cx, c.cz),
-            blocks: Box::from(c.blocks_slice()),
-            biomes: Box::from(c.biomes_slice()),
-            water: c.water_slice().map(Box::from),
+            pos: SectionPos::new(s.cx, s.cy, s.cz),
+            blocks: Box::from(s.blocks_slice()),
+            water: s.water_slice().map(Box::from),
             entities: Vec::new(),
-            furnaces: c.furnaces().clone(),
-            chests: c.chests().clone(),
-            torches: c.torches().clone(),
-            model_cells: c.model_cells().clone(),
-            model_facings: c.model_facings().clone(),
-            sapling_stages: c.sapling_stages().clone(),
-            doors: c.doors().clone(),
+            furnaces: s.furnaces().clone(),
+            chests: s.chests().clone(),
+            torches: s.torches().clone(),
+            model_cells: s.model_cells().clone(),
+            model_facings: s.model_facings().clone(),
+            sapling_stages: s.sapling_stages().clone(),
+            doors: s.doors().clone(),
             mobs: Vec::new(),
         }
     }
@@ -253,13 +251,13 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Compress a chunk snapshot into a record: `[version, flags, blocks, biomes,
-/// water?, entities?]`, zlib-deflated. The entity list is appended only when the
-/// chunk holds drops (`FLAG_HAS_ENTITIES`), so terrain-only chunks pay nothing.
-pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
+/// Compress a section snapshot into a record: `[version, flags, flags2, blocks,
+/// water?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
+/// when present, so a terrain-only section pays for just its block array.
+pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
-    let mut payload = Vec::with_capacity(2 + s.blocks.len() + s.biomes.len() + extra);
-    payload.put_u8(CHUNK_REC_VERSION);
+    let mut payload = Vec::with_capacity(3 + s.blocks.len() + extra);
+    payload.put_u8(SECTION_REC_VERSION);
     let mut flags = 0u8;
     if s.water.is_some() {
         flags |= FLAG_HAS_WATER;
@@ -295,7 +293,6 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     payload.put_u8(flags);
     payload.put_u8(flags2);
     payload.extend_from_slice(&s.blocks);
-    payload.extend_from_slice(&s.biomes);
     if let Some(w) = &s.water {
         payload.extend_from_slice(w);
     }
@@ -342,27 +339,24 @@ pub fn encode_snapshot(s: &ChunkSnapshot) -> Vec<u8> {
     deflate(&payload)
 }
 
-/// Decode a compressed chunk record into a `Chunk` at `(cx, cz)` plus any item
+/// Decode a compressed section record into a `Section` at `pos` plus any item
 /// entities and mobs stored with it. `None` on corrupt / wrong-version /
 /// wrong-length data.
-pub fn decode_chunk(
-    cx: i32,
-    cz: i32,
+pub fn decode_section(
+    pos: SectionPos,
     blob: &[u8],
-) -> Option<(Chunk, Vec<DroppedItem>, Vec<SavedMob>)> {
+) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
     let version = r.u8()?;
-    if !(CHUNK_REC_MIN_VERSION..=CHUNK_REC_VERSION).contains(&version) {
+    if !(SECTION_REC_MIN_VERSION..=SECTION_REC_VERSION).contains(&version) {
         return None;
     }
     let flags = r.u8()?;
-    // The second flags byte exists only from v3 on; a v2 record has none (read 0).
-    let flags2 = if version >= 3 { r.u8()? } else { 0 };
-    let blocks = r.bytes(VOLUME)?.to_vec().into_boxed_slice();
-    let biomes = r.bytes(BIOME_BYTES)?;
+    let flags2 = r.u8()?;
+    let blocks = r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice();
     let water = if flags & FLAG_HAS_WATER != 0 {
-        Some(r.bytes(VOLUME)?.to_vec().into_boxed_slice())
+        Some(r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice())
     } else {
         None
     };
@@ -412,11 +406,11 @@ pub fn decode_chunk(
         HashMap::new()
     };
     Some((
-        Chunk::from_saved(
-            cx,
-            cz,
+        Section::from_saved(
+            pos.cx,
+            pos.cy,
+            pos.cz,
             blocks,
-            biomes,
             water,
             furnaces,
             chests,
@@ -437,37 +431,38 @@ mod tests {
     use crate::block::Block;
     use crate::mathh::Vec3;
 
+    fn sec(cx: i32, cy: i32, cz: i32) -> Section {
+        Section::new(cx, cy, cz)
+    }
+
     #[test]
-    fn chunk_record_roundtrips() {
-        let mut c = Chunk::new(-3, 7);
-        c.set_block(1, 64, 2, Block::Stone);
-        c.set_block(0, 70, 0, Block::Grass);
-        c.set_water(5, 65, 5, Block::Water, 0x23);
-        c.set_biome(4, 4, 9);
+    fn section_record_roundtrips() {
+        // A section spans world Y [cy*16 .. cy*16+16); negative cy is in range.
+        let mut s = sec(-3, -2, 7);
+        s.set_block(1, 4, 2, Block::Stone);
+        s.set_block(0, 10, 0, Block::Grass);
+        s.set_water(5, 5, 5, Block::Water, 0x23);
 
-        let snap = ChunkSnapshot::from_chunk(&c);
+        let snap = SectionSnapshot::from_section(&s);
         let blob = encode_snapshot(&snap);
-        let (back, entities, mobs) = decode_chunk(-3, 7, &blob).expect("decodes");
+        let (back, entities, mobs) =
+            decode_section(SectionPos::new(-3, -2, 7), &blob).expect("decodes");
 
-        assert_eq!(back.cx, -3);
-        assert_eq!(back.cz, 7);
-        assert_eq!(back.block_raw(1, 64, 2), Block::Stone.id());
-        assert_eq!(back.block_raw(0, 70, 0), Block::Grass.id());
-        assert_eq!(back.block_raw(5, 65, 5), Block::Water.id());
-        assert_eq!(back.water_meta(5, 65, 5), 0x23);
-        assert_eq!(back.biome_at(4, 4), 9);
-        // Heightmap is recomputed, not stored.
-        assert_eq!(back.surface_y(0, 0), 70);
+        assert_eq!((back.cx, back.cy, back.cz), (-3, -2, 7));
+        assert_eq!(back.block_raw(1, 4, 2), Block::Stone.id());
+        assert_eq!(back.block_raw(0, 10, 0), Block::Grass.id());
+        assert_eq!(back.block_raw(5, 5, 5), Block::Water.id());
+        assert_eq!(back.water_meta(5, 5, 5), 0x23);
         assert!(!back.modified);
         assert!(entities.is_empty(), "no entities attached");
         assert!(mobs.is_empty(), "no mobs attached");
     }
 
     #[test]
-    fn chunk_record_roundtrips_entities() {
-        let mut c = Chunk::new(2, 2);
-        c.set_block(8, 64, 8, Block::Dirt);
-        let mut snap = ChunkSnapshot::from_chunk(&c);
+    fn section_record_roundtrips_entities() {
+        let mut s = sec(2, 4, 2);
+        s.set_block(8, 0, 8, Block::Dirt);
+        let mut snap = SectionSnapshot::from_section(&s);
         let mut drop = DroppedItem::new(
             Vec3::new(40.5, 65.0, 40.5),
             ItemStack::new(ItemType::Stone, 7),
@@ -477,7 +472,8 @@ mod tests {
         snap.entities.push(drop);
 
         let blob = encode_snapshot(&snap);
-        let (_back, entities, _mobs) = decode_chunk(2, 2, &blob).expect("decodes");
+        let (_back, entities, _mobs) =
+            decode_section(SectionPos::new(2, 4, 2), &blob).expect("decodes");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].stack, ItemStack::new(ItemType::Stone, 7));
         assert_eq!(
@@ -487,10 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn chunk_record_roundtrips_mobs() {
-        let mut c = Chunk::new(-1, 4);
-        c.set_block(8, 64, 8, Block::Dirt);
-        let mut snap = ChunkSnapshot::from_chunk(&c);
+    fn section_record_roundtrips_mobs() {
+        let mut s = sec(-1, 4, 4);
+        s.set_block(8, 0, 8, Block::Dirt);
+        let mut snap = SectionSnapshot::from_section(&s);
         snap.mobs.push(SavedMob {
             kind: crate::mob::Mob::Owl,
             pos: Vec3::new(-12.5, 65.0, 72.25),
@@ -498,7 +494,8 @@ mod tests {
         });
 
         let blob = encode_snapshot(&snap);
-        let (_back, _entities, mobs) = decode_chunk(-1, 4, &blob).expect("decodes");
+        let (_back, _entities, mobs) =
+            decode_section(SectionPos::new(-1, 4, 4), &blob).expect("decodes");
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0].kind, crate::mob::Mob::Owl);
         assert_eq!(
@@ -510,12 +507,12 @@ mod tests {
     }
 
     #[test]
-    fn chunk_record_roundtrips_furnaces() {
-        let mut c = Chunk::new(1, 1);
-        c.set_block(2, 65, 3, Block::Furnace);
-        c.insert_furnace(
+    fn section_record_roundtrips_furnaces() {
+        let mut s = sec(1, 4, 1);
+        s.set_block(2, 1, 3, Block::Furnace);
+        s.insert_furnace(
             2,
-            65,
+            1,
             3,
             crate::furnace::Furnace {
                 input: Some(ItemStack::new(ItemType::RawCopper, 12)),
@@ -528,11 +525,12 @@ mod tests {
             },
         );
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(1, 1, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(1, 4, 1), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(2, 65, 3), Block::Furnace.id());
-        let f = back.furnace_at(2, 65, 3).expect("furnace restored");
+        assert_eq!(back.block_raw(2, 1, 3), Block::Furnace.id());
+        let f = back.furnace_at(2, 1, 3).expect("furnace restored");
         assert_eq!(f.input, Some(ItemStack::new(ItemType::RawCopper, 12)));
         assert_eq!(f.fuel, Some(ItemStack::new(ItemType::Coal, 1)));
         assert_eq!(f.cook_progress, 200);
@@ -542,22 +540,23 @@ mod tests {
     }
 
     #[test]
-    fn chunk_record_roundtrips_chests() {
-        let mut c = Chunk::new(4, -2);
-        c.set_block(9, 66, 1, Block::Chest);
+    fn section_record_roundtrips_chests() {
+        let mut s = sec(4, 4, -2);
+        s.set_block(9, 2, 1, Block::Chest);
         let mut chest = crate::chest::Chest {
             facing: crate::furnace::Facing::South,
             ..crate::chest::Chest::default()
         };
         chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
         chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
-        c.insert_chest(9, 66, 1, chest);
+        s.insert_chest(9, 2, 1, chest);
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(4, -2, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(4, 4, -2), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(9, 66, 1), Block::Chest.id());
-        let got = back.chest_at(9, 66, 1).expect("chest restored");
+        assert_eq!(back.block_raw(9, 2, 1), Block::Chest.id());
+        let got = back.chest_at(9, 2, 1).expect("chest restored");
         assert_eq!(got.slots[0], Some(ItemStack::new(ItemType::Stone, 64)));
         assert_eq!(got.slots[26], Some(ItemStack::new(ItemType::OakLog, 5)));
         assert_eq!(got.slots[5], None);
@@ -565,25 +564,26 @@ mod tests {
     }
 
     #[test]
-    fn chunk_record_roundtrips_torches() {
+    fn section_record_roundtrips_torches() {
         use crate::torch::TorchPlacement;
-        let mut c = Chunk::new(6, 6);
-        c.set_block(3, 67, 4, Block::Torch);
-        c.insert_torch(3, 67, 4, TorchPlacement::East);
-        c.set_block(3, 68, 4, Block::Torch);
-        c.insert_torch(3, 68, 4, TorchPlacement::Floor);
+        let mut s = sec(6, 4, 6);
+        s.set_block(3, 3, 4, Block::Torch);
+        s.insert_torch(3, 3, 4, TorchPlacement::East);
+        s.set_block(3, 4, 4, Block::Torch);
+        s.insert_torch(3, 4, 4, TorchPlacement::Floor);
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(6, 6, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(6, 4, 6), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(3, 67, 4), Block::Torch.id());
+        assert_eq!(back.block_raw(3, 3, 4), Block::Torch.id());
         assert_eq!(
-            back.torch_placement(3, 67, 4),
+            back.torch_placement(3, 3, 4),
             TorchPlacement::East,
             "wall mount persists"
         );
         assert_eq!(
-            back.torch_placement(3, 68, 4),
+            back.torch_placement(3, 4, 4),
             TorchPlacement::Floor,
             "floor mount persists"
         );
@@ -592,67 +592,69 @@ mod tests {
     }
 
     #[test]
-    fn chunk_record_roundtrips_model_cells() {
+    fn section_record_roundtrips_model_cells() {
         // A placed multi-block records authored footprint offsets and per-cell facing;
         // both must survive a save/load so the block reloads as one object.
-        let mut c = Chunk::new(2, 3);
-        c.set_block(5, 64, 5, Block::FurnitureWorkbench);
-        c.set_block(6, 64, 5, Block::FurnitureWorkbench);
-        c.set_model_offset(6, 64, 5, [1, 0, 0]);
-        c.set_model_facing(6, 64, 5, Facing::East);
-        c.set_block(5, 65, 5, Block::FurnitureWorkbench);
-        c.set_model_offset(5, 65, 5, [0, 1, 0]);
-        c.set_model_facing(5, 65, 5, Facing::East);
-        c.set_model_facing(5, 64, 5, Facing::East);
+        let mut s = sec(2, 4, 3);
+        s.set_block(5, 0, 5, Block::FurnitureWorkbench);
+        s.set_block(6, 0, 5, Block::FurnitureWorkbench);
+        s.set_model_offset(6, 0, 5, [1, 0, 0]);
+        s.set_model_facing(6, 0, 5, Facing::East);
+        s.set_block(5, 1, 5, Block::FurnitureWorkbench);
+        s.set_model_offset(5, 1, 5, [0, 1, 0]);
+        s.set_model_facing(5, 1, 5, Facing::East);
+        s.set_model_facing(5, 0, 5, Facing::East);
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(2, 3, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(2, 4, 3), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(6, 64, 5), Block::FurnitureWorkbench.id());
-        assert_eq!(back.model_offset(6, 64, 5), [1, 0, 0], "x-offset persists");
-        assert_eq!(back.model_offset(5, 65, 5), [0, 1, 0], "y-offset persists");
-        assert_eq!(back.model_facing(6, 64, 5), Facing::East, "facing persists");
-        assert_eq!(back.model_facing(5, 65, 5), Facing::East, "facing persists");
+        assert_eq!(back.block_raw(6, 0, 5), Block::FurnitureWorkbench.id());
+        assert_eq!(back.model_offset(6, 0, 5), [1, 0, 0], "x-offset persists");
+        assert_eq!(back.model_offset(5, 1, 5), [0, 1, 0], "y-offset persists");
+        assert_eq!(back.model_facing(6, 0, 5), Facing::East, "facing persists");
+        assert_eq!(back.model_facing(5, 1, 5), Facing::East, "facing persists");
         assert_eq!(
-            back.model_facing(5, 64, 5),
+            back.model_facing(5, 0, 5),
             Facing::East,
             "origin facing persists"
         );
         // The origin cell stores no offset and reads the [0,0,0] default.
-        assert_eq!(back.model_offset(5, 64, 5), [0, 0, 0]);
+        assert_eq!(back.model_offset(5, 0, 5), [0, 0, 0]);
     }
 
     #[test]
-    fn chunk_record_roundtrips_sapling_stages() {
-        // A half-grown sapling must reload at the stage it reached (chunk-record v3's
-        // second flags byte). The stage is set AFTER the block (set_block clears it).
-        let mut c = Chunk::new(5, -1);
-        c.set_block(2, 64, 3, Block::OakSapling);
-        c.set_sapling_stage(2, 64, 3, 2);
-        c.set_block(7, 70, 1, Block::BirchSapling);
-        c.set_sapling_stage(7, 70, 1, 1);
+    fn section_record_roundtrips_sapling_stages() {
+        // A half-grown sapling must reload at the stage it reached. The stage is set
+        // AFTER the block (set_block clears it).
+        let mut s = sec(5, 4, -1);
+        s.set_block(2, 0, 3, Block::OakSapling);
+        s.set_sapling_stage(2, 0, 3, 2);
+        s.set_block(7, 6, 1, Block::BirchSapling);
+        s.set_sapling_stage(7, 6, 1, 1);
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(5, -1, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(5, 4, -1), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(2, 64, 3), Block::OakSapling.id());
-        assert_eq!(back.sapling_stage(2, 64, 3), 2, "oak stage persists");
-        assert_eq!(back.sapling_stage(7, 70, 1), 1, "birch stage persists");
+        assert_eq!(back.block_raw(2, 0, 3), Block::OakSapling.id());
+        assert_eq!(back.sapling_stage(2, 0, 3), 2, "oak stage persists");
+        assert_eq!(back.sapling_stage(7, 6, 1), 1, "birch stage persists");
         // A cell with no recorded stage reads 0.
         assert_eq!(back.sapling_stage(0, 0, 0), 0);
     }
 
     #[test]
-    fn chunk_record_roundtrips_doors() {
-        // A placed door's facing + open + which-half state must reload exactly (the v3
-        // second flags byte, alongside saplings). State is set AFTER the block.
+    fn section_record_roundtrips_doors() {
+        // A placed door's facing + open + which-half state must reload exactly. State is
+        // set AFTER the block.
         use crate::door::DoorState;
         use crate::furnace::Facing;
-        let mut c = Chunk::new(3, 7);
-        c.set_block(4, 64, 5, Block::OakDoor);
-        c.set_door_state(
+        let mut s = sec(3, 4, 7);
+        s.set_block(4, 0, 5, Block::OakDoor);
+        s.set_door_state(
             4,
-            64,
+            0,
             5,
             DoorState {
                 facing: Facing::East,
@@ -660,10 +662,10 @@ mod tests {
                 top: false,
             },
         );
-        c.set_block(4, 65, 5, Block::OakDoor);
-        c.set_door_state(
+        s.set_block(4, 1, 5, Block::OakDoor);
+        s.set_door_state(
             4,
-            65,
+            1,
             5,
             DoorState {
                 facing: Facing::East,
@@ -672,12 +674,13 @@ mod tests {
             },
         );
 
-        let blob = encode_snapshot(&ChunkSnapshot::from_chunk(&c));
-        let (back, _entities, _mobs) = decode_chunk(3, 7, &blob).expect("decodes");
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(3, 4, 7), &blob).expect("decodes");
 
-        assert_eq!(back.block_raw(4, 64, 5), Block::OakDoor.id());
+        assert_eq!(back.block_raw(4, 0, 5), Block::OakDoor.id());
         assert_eq!(
-            back.door_state(4, 64, 5),
+            back.door_state(4, 0, 5),
             Some(DoorState {
                 facing: Facing::East,
                 open: true,
@@ -685,7 +688,7 @@ mod tests {
             })
         );
         assert_eq!(
-            back.door_state(4, 65, 5).map(|s| s.top),
+            back.door_state(4, 1, 5).map(|s| s.top),
             Some(true),
             "the upper half persists its top bit"
         );
@@ -694,19 +697,20 @@ mod tests {
     }
 
     #[test]
-    fn water_free_chunk_omits_water() {
-        let mut c = Chunk::new(0, 0);
-        c.set_block(8, 64, 8, Block::Dirt);
-        let snap = ChunkSnapshot::from_chunk(&c);
+    fn water_free_section_omits_water() {
+        let mut s = sec(0, 4, 0);
+        s.set_block(8, 0, 8, Block::Dirt);
+        let snap = SectionSnapshot::from_section(&s);
         assert!(snap.water.is_none());
         let blob = encode_snapshot(&snap);
-        let (back, _, _) = decode_chunk(0, 0, &blob).expect("decodes");
-        assert_eq!(back.water_meta(8, 64, 8), 0);
+        let (back, _, _) = decode_section(SectionPos::new(0, 4, 0), &blob).expect("decodes");
+        assert_eq!(back.water_meta(8, 0, 8), 0);
     }
 
     #[test]
     fn corrupt_blob_is_none() {
-        assert!(decode_chunk(0, 0, &[1, 2, 3, 4]).is_none());
-        assert!(decode_chunk(0, 0, &[]).is_none());
+        let p = SectionPos::new(0, 0, 0);
+        assert!(decode_section(p, &[1, 2, 3, 4]).is_none());
+        assert!(decode_section(p, &[]).is_none());
     }
 }

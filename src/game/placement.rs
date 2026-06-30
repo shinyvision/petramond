@@ -119,7 +119,7 @@ impl Game {
                 }
             };
             let s = tp.support_cell(p);
-            if !Block::from_id(self.world.chunk_block(s.x, s.y, s.z)).is_opaque() {
+            if !self.world.physics_block(s.x, s.y, s.z).is_opaque() {
                 return false;
             }
             Some(tp)
@@ -198,7 +198,7 @@ impl Game {
         // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost
         // all of them) accept anything; a torch is gated by its own opaque-face check
         // above. Staying put once placed is the separate job of the FRAGILE behaviour.
-        let below = Block::from_id(self.world.chunk_block(p.x, p.y - 1, p.z));
+        let below = self.world.physics_block(p.x, p.y - 1, p.z);
         if !block.can_root_on(below) {
             return false;
         }

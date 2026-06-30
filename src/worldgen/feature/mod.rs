@@ -18,8 +18,9 @@ pub mod vegetation;
 
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
+use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE};
 use crate::mathh::IVec3;
+use crate::section::Section;
 
 use self::tree::{redwood_base_trunk_contains, REDWOOD_BASE_SUPPORT_REACH};
 use super::biome::{self, spec, TreeSupport};
@@ -29,14 +30,21 @@ use super::rng::FeatureRng;
 
 /// Highest surface a tree will root on — above this (bare snow/stone peaks) the
 /// canopy is left off regardless of biome.
-const TREELINE: i32 = 118;
+pub(crate) const TREELINE: i32 = 118;
+
+/// Worst-case vertical reach of a tree ABOVE its root anchor, used to bound which
+/// cubic sections a column's features can touch. The tallest tree (redwood) has a
+/// height-clearance of 56; the crown / leaf blobs add a few more, so 64 is a safe
+/// over-estimate. Trees never write BELOW their anchor (every trunk placer starts at
+/// the anchor and builds up), so there is no matching downward reach.
+pub(crate) const MAX_TREE_REACH_ABOVE: i32 = 64;
 
 pub(crate) fn feature_region_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
     let pad = super::proto::MARGIN + biome::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
     feature_bounds_with_pad(ox, oz, pad)
 }
 
-fn feature_candidate_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
+pub(crate) fn feature_candidate_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
     let pad = super::proto::MARGIN + biome::MAX_TREE_SPACING_RADIUS;
     feature_bounds_with_pad(ox, oz, pad)
 }
@@ -111,6 +119,62 @@ impl VoxelSink for ChunkSink<'_> {
     fn set(&mut self, p: IVec3, b: Block) {
         if let Some((x, y, z)) = self.local(p) {
             self.chunk.set_block_raw(x, y, z, b.id());
+        }
+    }
+}
+
+/// Worldgen voxel sink for the cubic path: writes into one 16³ [`Section`], in WORLD
+/// coords clipped to the section's `[0,16)³` footprint — the per-section analogue of
+/// [`ChunkSink`]. The clipping is the SAME seam mechanism, now in 3D: every retained
+/// write predicates only on the cell it writes (`set_leaf`/`set_branch` read `get(p)`
+/// at the same `p`), never a neighbour, so a feature rooted anywhere materialises its
+/// in-section voxels identically whether the section is generated alone or as part of
+/// a whole column — across VERTICAL seams as well as horizontal ones.
+pub struct SectionSink<'a> {
+    section: &'a mut Section,
+    ox: i32,
+    oy: i32,
+    oz: i32,
+}
+
+impl<'a> SectionSink<'a> {
+    pub fn new(section: &'a mut Section) -> Self {
+        let (ox, oy, oz) = section.origin_world();
+        Self {
+            section,
+            ox,
+            oy,
+            oz,
+        }
+    }
+
+    /// Map a world position to in-section local indices, or `None` if outside.
+    #[inline]
+    fn local(&self, p: IVec3) -> Option<(usize, usize, usize)> {
+        let lx = p.x - self.ox;
+        let ly = p.y - self.oy;
+        let lz = p.z - self.oz;
+        let n = SECTION_SIZE as i32;
+        if (0..n).contains(&lx) && (0..n).contains(&ly) && (0..n).contains(&lz) {
+            Some((lx as usize, ly as usize, lz as usize))
+        } else {
+            None
+        }
+    }
+}
+
+impl VoxelSink for SectionSink<'_> {
+    #[inline]
+    fn get(&self, p: IVec3) -> Block {
+        match self.local(p) {
+            Some((x, y, z)) => self.section.block(x, y, z),
+            None => Block::Air,
+        }
+    }
+    #[inline]
+    fn set(&mut self, p: IVec3, b: Block) {
+        if let Some((x, y, z)) = self.local(p) {
+            self.section.set_block_raw(x, y, z, b.id());
         }
     }
 }
@@ -246,7 +310,10 @@ impl FeatureField for RuntimeFeatureField<'_> {
     }
 }
 
-struct SurfaceHeights {
+/// A precomputed square surface-height window (the redwood-support halo), shared by
+/// the runtime feature field and the cubic per-section field. World-anchored at
+/// `(x0,z0)`, `w×w`, row-major.
+pub(crate) struct SurfaceHeights {
     x0: i32,
     z0: i32,
     w: usize,
@@ -254,7 +321,12 @@ struct SurfaceHeights {
 }
 
 impl SurfaceHeights {
-    fn at(&self, wx: i32, wz: i32) -> i32 {
+    pub(crate) fn new(x0: i32, z0: i32, w: usize, surf: Vec<i32>) -> Self {
+        debug_assert_eq!(surf.len(), w * w);
+        Self { x0, z0, w, surf }
+    }
+
+    pub(crate) fn at(&self, wx: i32, wz: i32) -> i32 {
         debug_assert!(
             bounds_contains(self.x0, self.z0, self.w, self.w, wx, wz),
             "feature surface support lookup must stay inside the support window"
@@ -262,6 +334,48 @@ impl SurfaceHeights {
         let x = (wx - self.x0) as usize;
         let z = (wz - self.z0) as usize;
         self.surf[z * self.w + x]
+    }
+}
+
+/// Per-section feature field backed by data precomputed ONCE per column (in
+/// [`super::driver::ColumnGen`]) and shared, immutably, by every section job of that
+/// column. Returns values identical to [`RuntimeFeatureField`] — the candidate region
+/// and support surfaces are the same `region`/`surface_heights` queries — but holds no
+/// `SurfaceDensitySystem` and does no lazy work, so it is cheap to clone per section
+/// and `Send + Sync` for parallel section generation.
+pub(crate) struct ColumnFeatureField<'a> {
+    candidates: &'a RegionCells,
+    /// The redwood-support halo, present only when a redwood-supporting biome is in
+    /// range. `surf_at` only reaches outside the candidate window for a redwood support
+    /// check, which can only fire when that biome — and hence this window — is present.
+    support: Option<&'a SurfaceHeights>,
+}
+
+impl<'a> ColumnFeatureField<'a> {
+    pub(crate) fn new(candidates: &'a RegionCells, support: Option<&'a SurfaceHeights>) -> Self {
+        Self {
+            candidates,
+            support,
+        }
+    }
+}
+
+impl FeatureField for ColumnFeatureField<'_> {
+    fn column_at(&mut self, wx: i32, wz: i32) -> (i32, Biome) {
+        debug_assert!(
+            region_contains(self.candidates, wx, wz),
+            "feature candidate lookup must stay inside the spacing candidate window"
+        );
+        self.candidates.at(wx, wz)
+    }
+
+    fn surf_at(&mut self, wx: i32, wz: i32) -> i32 {
+        if region_contains(self.candidates, wx, wz) {
+            return self.candidates.at(wx, wz).0;
+        }
+        self.support
+            .expect("redwood support window is present whenever a redwood support check reaches outside the candidate window")
+            .at(wx, wz)
     }
 }
 
@@ -411,8 +525,38 @@ pub(crate) fn place_features_with_field(
     let (ox, oz) = chunk.chunk_origin_world();
     let mut sink = ChunkSink::new(chunk);
     let mut ctx = FeatureCtx::new(&mut sink);
-    let margin = super::proto::MARGIN;
+    place_feature_origins(&mut ctx, field, seed, ox, oz);
+}
 
+/// Cubic per-section feature placement: run the SAME origin loop into one 16³
+/// [`Section`] through a [`SectionSink`]. Because each feature write predicates only
+/// on its own cell, the section's voxels come out byte-identical to what the
+/// whole-column [`place_features_with_field`] would write there — for the section's
+/// own vertical slab, with no neighbour buffer. `field` covers this section's column
+/// (origin `ox,oz = section column origin`) plus the feature margin.
+pub(crate) fn place_features_section(
+    section: &mut Section,
+    field: &mut impl FeatureField,
+    seed: u32,
+) {
+    let (ox, _oy, oz) = section.origin_world();
+    let mut sink = SectionSink::new(section);
+    let mut ctx = FeatureCtx::new(&mut sink);
+    place_feature_origins(&mut ctx, field, seed, ox, oz);
+}
+
+/// The shared feature origin loop: iterate candidate origins across one column's XZ
+/// footprint plus a `MARGIN` border, thin by the spacing rule, and generate each
+/// accepted tree into `ctx` (whose sink clips to wherever the caller is writing —
+/// a chunk or one section). `ox,oz` is the column's world origin.
+fn place_feature_origins(
+    ctx: &mut FeatureCtx,
+    field: &mut impl FeatureField,
+    seed: u32,
+    ox: i32,
+    oz: i32,
+) {
+    let margin = super::proto::MARGIN;
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
             let Some(candidate) = tree_candidate_at(field, seed, wx, wz) else {
@@ -430,7 +574,7 @@ pub(crate) fn place_features_with_field(
             debug_assert!(_density_hit);
             let cf = (spec(candidate.biome).trees.picker)(&mut rng);
             cf.feature
-                .generate(&mut ctx, IVec3::new(wx, candidate.anchor, wz), &mut rng);
+                .generate(ctx, IVec3::new(wx, candidate.anchor, wz), &mut rng);
         }
     }
 }

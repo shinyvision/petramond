@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::block::Block;
-use crate::chunk::ChunkPos;
+use crate::chunk::SectionPos;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
@@ -243,17 +243,17 @@ impl Mobs {
         }
     }
 
-    /// Drain and return the live mobs resting in chunk `pos`, as [`SavedMob`]s — used to
-    /// bundle them into that chunk's save record as it unloads. A dead/ragdolling corpse
-    /// in the chunk is removed too, but *not* saved: a corpse is ephemeral (its loot
-    /// already dropped when it died), so only living mobs persist.
-    pub fn take_in_chunk(&mut self, pos: ChunkPos) -> Vec<SavedMob> {
+    /// Drain and return the live mobs resting in section `pos`, as [`SavedMob`]s — used
+    /// to bundle them into that section's save record as it unloads. A dead/ragdolling
+    /// corpse in the section is removed too, but *not* saved: a corpse is ephemeral (its
+    /// loot already dropped when it died), so only living mobs persist.
+    pub fn take_in_section(&mut self, pos: SectionPos) -> Vec<SavedMob> {
         let mut taken = Vec::new();
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
             let c = voxel_at(self.list[i].pos);
-            if c.x >> 4 == pos.cx && c.z >> 4 == pos.cz {
+            if SectionPos::from_world(c.x, c.y, c.z) == Some(pos) {
                 let mob = self.list.swap_remove(i);
                 if !mob.is_dead() {
                     taken.push(SavedMob::of(&mob));
@@ -263,27 +263,28 @@ impl Mobs {
         taken
     }
 
-    /// Clone the live mobs grouped by owning chunk (as [`SavedMob`]s), for the periodic
-    /// save flush — the mobs stay active; the clones persist with the chunk records so a
+    /// Clone the live mobs grouped by owning section (as [`SavedMob`]s), for the periodic
+    /// save flush — the mobs stay active; the clones persist with the section records so a
     /// crash can't lose them. Dead corpses are skipped, as in
-    /// [`take_in_chunk`](Self::take_in_chunk).
-    pub fn saved_by_chunk(&self) -> HashMap<ChunkPos, Vec<SavedMob>> {
-        let mut map: HashMap<ChunkPos, Vec<SavedMob>> = HashMap::new();
+    /// [`take_in_section`](Self::take_in_section). A mob outside the world vertical range
+    /// (none in normal play) is skipped.
+    pub fn saved_by_section(&self) -> HashMap<SectionPos, Vec<SavedMob>> {
+        let mut map: HashMap<SectionPos, Vec<SavedMob>> = HashMap::new();
         for m in &self.list {
             if m.is_dead() {
                 continue;
             }
             let c = voxel_at(m.pos);
-            map.entry(ChunkPos::new(c.x >> 4, c.z >> 4))
-                .or_default()
-                .push(SavedMob::of(m));
+            if let Some(pos) = SectionPos::from_world(c.x, c.y, c.z) {
+                map.entry(pos).or_default().push(SavedMob::of(m));
+            }
         }
         map
     }
 
-    /// Re-spawn mobs read back from a chunk's save record now that its chunk has loaded.
-    /// Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and is
-    /// subject to the mob cap like any spawn.
+    /// Re-spawn mobs read back from a section's save record now that its section has
+    /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
+    /// is subject to the mob cap like any spawn.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
             self.spawn(m.kind, m.pos, m.yaw);
@@ -354,29 +355,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn take_in_chunk_harvests_only_that_chunks_mobs() {
+    fn take_in_section_harvests_only_that_sections_mobs() {
         let mut mobs = Mobs::new(0);
-        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5)); // chunk (0, 0)
-        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 1.0)); // chunk (1, 0)
+        // y=64 → cy 4. x 2.5 → cx 0; x 20.5 → cx 1.
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5)); // section (0,4,0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 1.0)); // section (1,4,0)
 
-        let taken = mobs.take_in_chunk(ChunkPos::new(0, 0));
-        assert_eq!(taken.len(), 1, "only the (0,0) owl is harvested");
+        let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
+        assert_eq!(taken.len(), 1, "only the (0,4,0) owl is harvested");
         assert_eq!(taken[0].kind, Mob::Owl);
         assert_eq!(taken[0].pos, Vec3::new(2.5, 64.0, 2.5));
         assert_eq!(taken[0].yaw, 0.5, "facing is captured");
-        assert_eq!(mobs.len(), 1, "the (1,0) owl stays live");
+        assert_eq!(mobs.len(), 1, "the (1,4,0) owl stays live");
     }
 
     #[test]
-    fn saved_by_chunk_groups_live_mobs_without_removing_them() {
+    fn saved_by_section_groups_live_mobs_without_removing_them() {
         let mut mobs = Mobs::new(0);
-        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0)); // (0, 0)
-        assert!(mobs.spawn(Mob::Owl, Vec3::new(5.5, 64.0, 9.5), 0.0)); // (0, 0)
-        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 0.0)); // (1, 0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0)); // (0,4,0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(5.5, 64.0, 9.5), 0.0)); // (0,4,0)
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 0.0)); // (1,4,0)
 
-        let map = mobs.saved_by_chunk();
-        assert_eq!(map[&ChunkPos::new(0, 0)].len(), 2);
-        assert_eq!(map[&ChunkPos::new(1, 0)].len(), 1);
+        let map = mobs.saved_by_section();
+        assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
+        assert_eq!(map[&SectionPos::new(1, 4, 0)].len(), 1);
         assert_eq!(mobs.len(), 3, "the flush clones; the mobs stay live");
     }
 
@@ -521,10 +523,10 @@ mod tests {
     fn a_harvested_corpse_is_dropped_not_saved() {
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0));
-        // Kill it: now a ragdolling corpse. Harvesting its chunk removes it but does not
+        // Kill it: now a ragdolling corpse. Harvesting its section removes it but does not
         // persist it (its loot already fell when it died).
         assert!(mobs.hurt_mob(0, 100.0, Vec3::new(5.0, 64.0, 2.5)).is_some());
-        let taken = mobs.take_in_chunk(ChunkPos::new(0, 0));
+        let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
         assert!(taken.is_empty(), "a corpse is not persisted");
         assert_eq!(mobs.len(), 0, "but it is removed from the live set");
     }

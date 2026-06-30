@@ -239,8 +239,13 @@ fn stationary_dropped_item_resamples_after_chunk_light_bake_installs() {
     game.world.clear_world();
 
     let pos = crate::chunk::ChunkPos::new(0, 0);
+    // Load the column, then put a floor under the item: empty-air and fully-opaque sections
+    // are skipped from light baking (they read as open sky / dark without one), so the test
+    // needs a section that actually bakes — a floor block makes the item's section a real
+    // mixed (solid + air) surface that gets a flood bake, which is what the resample needs.
+    game.world.insert_empty_column_for_test(pos);
     game.world
-        .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
+        .set_block_world(1, 3, 1, crate::block::Block::Stone);
     game.dropped_light_revision = game.world.lighting_revision();
 
     let mut drop = DroppedItem::new(

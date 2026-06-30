@@ -109,7 +109,9 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
 fn place_into_loaded_air_decrements_selected() {
     let mut game = game();
     game.player.inventory = filled_inventory();
-    game.world.update_load(0, 0);
+    // Player at the surface (section cy 4 ≈ y64): the vertical window streams the surface
+    // band, and the y=200 placement below is into open air via materialize-on-write.
+    game.world.update_load(0, 4, 0);
     // Real async generation runs on the shared worldgen pool; under a saturated pool
     // (the full `worldgen-tests` suite on a many-core box) this chunk's job can queue
     // for a while, so wait on a generous wall-clock deadline rather than a fixed poll

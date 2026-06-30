@@ -73,7 +73,7 @@ impl World {
     /// out — or flooding it — is exactly what drops the block.
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
         let s = self.fragile_support_cell(pos, block);
-        Block::from_id(self.chunk_block(s.x, s.y, s.z)).is_opaque()
+        self.physics_block(s.x, s.y, s.z).is_opaque()
     }
 }
 

@@ -70,24 +70,24 @@ impl World {
     /// `Game::door_swing_angle`.
     pub fn collect_doors(&self, out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8)>) {
         out.clear();
-        for chunk in self.chunks.values() {
-            let doors = chunk.doors();
+        for section in self.sections.values() {
+            let doors = section.doors();
             if doors.is_empty() {
                 continue;
             }
-            let (ox, oz) = chunk.chunk_origin_world();
+            let (ox, oy, oz) = section.origin_world();
             for (&key, &state) in doors {
                 if state.top {
                     continue; // emit once per door, from its lower cell
                 }
-                // Invert the local block index (idx = y*256 + z*16 + x).
+                // Invert the section-local block index (idx = y*256 + z*16 + x).
                 let lx = (key & 0x0F) as usize;
                 let lz = ((key >> 4) & 0x0F) as usize;
                 let ly = (key >> 8) as usize;
                 // The door BlockDef row's [top, bottom, side] tiles: front-face art for
                 // each half, plus the distinct edge tile.
-                let [top, bottom, side] = Block::from_id(chunk.block_raw(lx, ly, lz)).tiles();
-                let pos = IVec3::new(ox + lx as i32, ly as i32, oz + lz as i32);
+                let [top, bottom, side] = Block::from_id(section.block_raw(lx, ly, lz)).tiles();
+                let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                 let sky = self.combined_light6_at_world(pos.x, pos.y, pos.z);
                 out.push((pos, state, [bottom, top, side], sky));
             }
@@ -116,12 +116,8 @@ impl World {
     /// (so a door never floats). The caller adds the entity-overlap gate.
     pub fn door_footprint_clear(&self, base: IVec3) -> bool {
         let upper = base + UP;
-        let replaceable = |c: IVec3| {
-            self.chunk_at_world(c.x, c.y, c.z).is_some()
-                && Block::from_id(self.chunk_block(c.x, c.y, c.z)).is_replaceable()
-        };
-        let floor = Block::from_id(self.chunk_block(base.x, base.y - 1, base.z));
-        replaceable(base) && replaceable(upper) && door_support(floor)
+        let floor = self.physics_block(base.x, base.y - 1, base.z);
+        self.placement_cell_open(base) && self.placement_cell_open(upper) && door_support(floor)
     }
 
     /// Whether the door `pos` belongs to still has a valid floor under its LOWER cell
@@ -133,7 +129,7 @@ impl World {
         let Some((lower, _)) = self.door_cells(pos) else {
             return false;
         };
-        let floor = Block::from_id(self.chunk_block(lower.x, lower.y - 1, lower.z));
+        let floor = self.physics_block(lower.x, lower.y - 1, lower.z);
         door_support(floor)
     }
 
@@ -160,9 +156,9 @@ impl World {
             return false;
         }
         let upper = base + UP;
-        if self.chunk_at_world_mut(base.x, base.y, base.z).is_none()
-            || self.chunk_at_world_mut(upper.x, upper.y, upper.z).is_none()
-        {
+        // Materialize the (possibly all-air, hence absent) sections the door occupies so
+        // the writes land; bail only if a cell is outside the world's vertical range.
+        if !self.materialize_section_at(base) || !self.materialize_section_at(upper) {
             return false;
         }
         for (cell, top) in [(base, false), (upper, true)] {

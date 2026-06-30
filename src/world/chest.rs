@@ -53,18 +53,18 @@ impl World {
     /// for the common chest-free world: each chunk early-outs on an empty chest map.
     pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8)>) {
         out.clear();
-        for chunk in self.chunks.values() {
-            let chests = chunk.chests();
+        for section in self.sections.values() {
+            let chests = section.chests();
             if chests.is_empty() {
                 continue;
             }
-            let (ox, oz) = chunk.chunk_origin_world();
+            let (ox, oy, oz) = section.origin_world();
             for (&key, chest) in chests {
-                // Invert the local block index (idx = y*256 + z*16 + x).
+                // Invert the section-local block index (idx = y*256 + z*16 + x).
                 let lx = (key & 0x0F) as i32;
                 let lz = ((key >> 4) & 0x0F) as i32;
                 let ly = (key >> 8) as i32;
-                let pos = IVec3::new(ox + lx, ly, oz + lz);
+                let pos = IVec3::new(ox + lx, oy + ly, oz + lz);
                 let sky = self.combined_light6_at_world(pos.x, pos.y, pos.z);
                 out.push((pos, chest.facing, sky));
             }

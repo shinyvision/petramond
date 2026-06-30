@@ -22,6 +22,10 @@ pub struct Uniforms {
     pub fog: [f32; 4],     // (start, end, time, underwater)
     pub fog_color: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
+    /// World-space origin subtracted by world shaders before applying `view_proj`.
+    /// Keeps GPU transform math camera-local while simulation/render data remains
+    /// in absolute world coordinates.
+    pub render_origin: [f32; 4],
     /// Animated-water flipbook control for the block shader:
     /// `(water_still_base_tile, water_flow_base_tile, frame_count, _)`. The
     /// shader advances `base + floor(time*fps) % frames` over these two tiles.

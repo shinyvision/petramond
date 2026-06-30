@@ -23,9 +23,9 @@
 //! one ring per flow delay and naturally crosses chunk borders.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use crate::block::{Block, BlockBehavior};
-use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 use crate::mathh::{IVec3, Vec3};
 
 use super::store::World;
@@ -190,7 +190,7 @@ const CARDINALS: [IVec3; 4] = [
 /// [`World::set_water_world`] are that whole surface.
 #[inline]
 fn block_at(world: &World, p: IVec3) -> Block {
-    Block::from_id(world.chunk_block(p.x, p.y, p.z))
+    world.physics_block(p.x, p.y, p.z)
 }
 #[inline]
 fn meta_at(world: &World, p: IVec3) -> u8 {
@@ -242,26 +242,24 @@ impl World {
         let Some((cpos, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
+        if !self.sections.contains_key(&cpos) {
+            // Water spilling into open air below/around a cliff materializes the section
+            // it flows into; a dry-up (setting air) into nothing is a no-op.
+            if block == Block::Air || !self.materialize_section(cpos) {
+                return false;
+            }
+        }
         {
-            let Some(c) = self.chunks.get_mut(&cpos) else {
+            let Some(s) = self.sections.get_mut(&cpos).map(Arc::make_mut) else {
                 return false;
             };
-            c.set_water(lx, ly, lz, block, meta);
-            c.modified = true;
+            s.set_water(lx, ly, lz, block, meta);
+            s.modified = true;
         }
-        self.invalidate_section_visibility(cpos);
+        self.update_column_height_after_set(pos.x, pos.y, pos.z, block != Block::Air);
         self.queue_dirty_mesh(cpos);
-        // Only a border cell changes a neighbour chunk's culled faces.
-        if lx == 0 {
-            self.mark_dirty_pos(ChunkPos::new(cpos.cx - 1, cpos.cz));
-        } else if lx == CHUNK_SX - 1 {
-            self.mark_dirty_pos(ChunkPos::new(cpos.cx + 1, cpos.cz));
-        }
-        if lz == 0 {
-            self.mark_dirty_pos(ChunkPos::new(cpos.cx, cpos.cz - 1));
-        } else if lz == CHUNK_SZ - 1 {
-            self.mark_dirty_pos(ChunkPos::new(cpos.cx, cpos.cz + 1));
-        }
+        // A border cell changes neighbour sections' culled faces: re-mesh the 3×3×3.
+        self.mark_dirty_neighborhood(cpos, false);
         self.notify_block_and_neighbors(pos.x, pos.y, pos.z);
         true
     }
@@ -581,7 +579,7 @@ impl FluidSim {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::Chunk;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     /// A world with a 3x3 block of loaded chunks around the origin, a solid stone
     /// floor at y=64, air above. Source/flow tests place water at y>=65.
@@ -595,7 +593,7 @@ mod tests {
                         c.set_block(x, 64, z, Block::Stone);
                     }
                 }
-                w.chunks.insert(ChunkPos::new(cx, cz), c);
+                w.insert_chunk_for_test(ChunkPos::new(cx, cz), c);
             }
         }
         w
@@ -944,22 +942,25 @@ mod tests {
     /// A water write must schedule the matching relight, like every other block
     /// update. The water path used to skip it ("water is transparent"), but water
     /// can move INTO a cell that held a torch (a light emitter) and wash it away —
-    /// and then the torch's glow lingered in the now-stale light band. We settle
-    /// the chunk's light first so a still-dirty band can't mask the regression.
+    /// and then the torch's glow lingered in the now-stale light. We settle the
+    /// owning section's light first so a still-dirty band can't mask the regression.
     #[test]
     fn a_water_write_reschedules_the_light() {
+        use crate::chunk::SECTION_VOLUME;
         let mut w = flat_world();
-        let cell = IVec3::new(10, 65, 8);
+        let cell = IVec3::new(10, 65, 8); // section (0,4,0)
         w.set_block_world(cell.x, cell.y, cell.z, Block::Torch);
 
-        // Bake the chunk's skylight so its `light_dirty` flag is clear — the
-        // baseline a fresh block update has to dirty again.
-        let pos = ChunkPos::new(0, 0);
-        let (band, ylo, yhi) = crate::mesh::compute_chunk_skylight(w.chunks.get(&pos).unwrap());
-        w.chunks.get_mut(&pos).unwrap().set_skylight(band, ylo, yhi);
+        // Install a settled skylight cube so the section's `light_dirty` flag is clear —
+        // the baseline a fresh block update has to dirty again.
+        w.section_at_world_mut_for_test(cell.x, cell.y, cell.z)
+            .unwrap()
+            .set_skylight(vec![0u8; SECTION_VOLUME].into());
         assert!(
-            !w.chunks.get(&pos).unwrap().light_dirty,
-            "baseline: the chunk's light is settled"
+            !w.section_at_world_for_test(cell.x, cell.y, cell.z)
+                .unwrap()
+                .light_dirty,
+            "baseline: the section's light is settled"
         );
 
         // Water moves into the torch's cell; the announce must re-dirty the light
@@ -967,7 +968,9 @@ mod tests {
         assert!(w.set_water_world(cell, Block::Water, FALLING));
         assert_eq!(block(&w, cell.x, cell.y, cell.z), Block::Water);
         assert!(
-            w.chunks.get(&pos).unwrap().light_dirty,
+            w.section_at_world_for_test(cell.x, cell.y, cell.z)
+                .unwrap()
+                .light_dirty,
             "a water write must reschedule the relight"
         );
     }

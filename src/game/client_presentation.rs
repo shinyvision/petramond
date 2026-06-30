@@ -114,7 +114,7 @@ impl Game {
     pub(super) fn is_visually_active(&self) -> bool {
         !self.particles.is_empty()
             || self.mining.is_mining()
-            || self.world.has_dirty_meshes()
+            || self.world.has_terrain_frame_work()
             || self
                 .chest_lids
                 .values()
@@ -150,7 +150,7 @@ impl Game {
     }
 
     pub(super) fn tick_mesh_budget(&mut self) {
-        const MESH_BUDGET: usize = 32;
+        const MESH_BUDGET: usize = 8;
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
 }

@@ -3,8 +3,9 @@ use glam::{IVec3, Vec3};
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
 use crate::block_model::{self, BlockModelKind};
-use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_COUNT, SECTION_SIZE, SKY_FULL};
+use crate::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
+use crate::section::Section;
 use crate::torch::{warm_amount, warm_tint};
 
 use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
@@ -22,7 +23,7 @@ fn facing_face(facing: Facing) -> Face {
         Facing::East => Face::PosX,
     }
 }
-use super::vertex::{pack_vertex, ChunkMesh, MeshIndexSection, Vertex};
+use super::vertex::{pack_vertex, ChunkMesh, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LeafMeshMode {
@@ -106,33 +107,34 @@ pub fn build_mesh_lods_with_loaded_neighbors(
     neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
 ) -> ChunkMesh {
-    let mut mesh = build_mesh_with_context(
+    let (ox, oz) = chunk.chunk_origin_world();
+    let tints = tint::biome_window(ox, oz, &neighbour_biome);
+    let mut mesh = chunk_geometry(
         chunk,
         &neighbour_block,
         &neighbour_water,
-        &neighbour_biome,
         &neighbour_light,
         &neighbour_blocklight,
         &neighbour_chunk_loaded,
+        &tints,
         MeshOptions::DETAILED,
     );
     if !chunk.blocks_slice().contains(&Block::OakLeaves.id()) {
         return mesh;
     }
-    let far = build_mesh_with_context(
+    let far = chunk_geometry(
         chunk,
         &neighbour_block,
         &neighbour_water,
-        &neighbour_biome,
         &neighbour_light,
         &neighbour_blocklight,
         &neighbour_chunk_loaded,
+        &tints,
         MeshOptions::FAR_LEAVES,
     );
     if far.opaque_idx.len() < mesh.opaque_idx.len() {
         mesh.far_opaque = far.opaque;
         mesh.far_opaque_idx = far.opaque_idx;
-        mesh.far_opaque_sections = far.opaque_sections;
     }
     mesh
 }
@@ -161,6 +163,335 @@ pub fn build_mesh_with_options(
     )
 }
 
+/// Build the mesh for one cubic [`Section`]. All neighbour lookups are by WORLD
+/// coordinate and route to the owning section (including this one), so the same
+/// closure handles in-section and cross-section reads; out-of-world / unloaded
+/// reads return air / open-sky as the closures define. Block-entity state (furnace
+/// lit/facing, torch placement, model offset/facing) is read from `section`
+/// directly. The renderer culls the resulting mesh by its [`SectionPos`].
+#[allow(clippy::too_many_arguments)]
+pub fn build_section_mesh(
+    section: &Section,
+    pos: SectionPos,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_water: impl Fn(i32, i32, i32) -> u8,
+    neighbour_biome: impl Fn(i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
+    neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
+) -> ChunkMesh {
+    let tints = section.has_biome_tint_blocks().then(|| {
+        let (ox, _, oz) = pos.origin_world();
+        tint::biome_window(ox, oz, &neighbour_biome)
+    });
+    let mut mesh = section_geometry(
+        section,
+        pos,
+        &neighbour_block,
+        &neighbour_water,
+        &neighbour_light,
+        &neighbour_blocklight,
+        &neighbour_loaded,
+        tints.as_ref(),
+        MeshOptions::DETAILED,
+    );
+    if !section.blocks_slice().contains(&Block::OakLeaves.id()) {
+        return mesh;
+    }
+    let far = section_geometry(
+        section,
+        pos,
+        &neighbour_block,
+        &neighbour_water,
+        &neighbour_light,
+        &neighbour_blocklight,
+        &neighbour_loaded,
+        tints.as_ref(),
+        MeshOptions::FAR_LEAVES,
+    );
+    if far.opaque_idx.len() < mesh.opaque_idx.len() {
+        mesh.far_opaque = far.opaque;
+        mesh.far_opaque_idx = far.opaque_idx;
+    }
+    mesh
+}
+
+#[allow(clippy::too_many_arguments)]
+fn section_geometry(
+    section: &Section,
+    pos: SectionPos,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_water: impl Fn(i32, i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
+    neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
+    tints: Option<&tint::BiomeTints>,
+    options: MeshOptions,
+) -> ChunkMesh {
+    let mut opaque = vec![];
+    let mut opaque_idx = vec![];
+    let mut transparent = vec![];
+    let mut transparent_idx = vec![];
+    let mut model: Vec<ModelVertex> = vec![];
+    let mut model_idx: Vec<u32> = vec![];
+
+    let (ox, oy, oz) = pos.origin_world();
+    let tint_tile = |kind, ci| tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci));
+    let tint_grass = |ci| tints.map_or(tint::NO_TINT, |t| t.grass[ci]);
+    let tint_water = |ci| tints.map_or(tint::NO_TINT, |t| t.water[ci]);
+
+    // Every block read is by world coord through the routing closure (in-section
+    // and cross-section alike); out-of-world / unloaded reads return air.
+    let block_at =
+        |wx: i32, wy: i32, wz: i32| -> Block { Block::from_id(neighbour_block(wx, wy, wz)) };
+    let water_at = |wx: i32, wy: i32, wz: i32| -> u8 { neighbour_water(wx, wy, wz) };
+    let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
+        if block_at(wx, wy, wz) != Block::Water {
+            return None;
+        }
+        let above = block_at(wx, wy + 1, wz) == Block::Water;
+        Some(crate::world::water::fluid_height(
+            water_at(wx, wy, wz),
+            above,
+        ))
+    };
+    let water_fills_cell = |wx: i32, wy: i32, wz: i32| -> bool {
+        if block_at(wx, wy, wz) != Block::Water {
+            return false;
+        }
+        let above = block_at(wx, wy + 1, wz) == Block::Water;
+        crate::world::water::fills_cell(water_at(wx, wy, wz), above)
+    };
+
+    for ly in 0..SECTION_SIZE {
+        for lz in 0..SECTION_SIZE {
+            for lx in 0..SECTION_SIZE {
+                let id = section.block_raw(lx, ly, lz);
+                let block = Block::from_id(id);
+                if block == Block::Air {
+                    continue;
+                }
+                if block == Block::Chest {
+                    continue;
+                }
+                if block.render_shape() == RenderShape::Door {
+                    continue;
+                }
+
+                let wx = ox + lx as i32;
+                let wy = oy + ly as i32;
+                let wz = oz + lz as i32;
+                let ci = lz * CHUNK_SX + lx;
+
+                if block.render_shape() == RenderShape::Cross {
+                    let tile = block.tiles()[0];
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let tint = warm_tint(tint_tile(tile_tint(tile), ci), warm);
+                    emit_cross(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx as f32,
+                        wy as f32,
+                        wz as f32,
+                        tile,
+                        tint,
+                        sky6,
+                    );
+                    continue;
+                }
+
+                if block.render_shape() == RenderShape::Torch {
+                    let [top_tile, _bottom, side_tile] = block.tiles();
+                    let cell_sky = neighbour_light(wx, wy, wz) as u32;
+                    let lit = cell_sky.max(block.light_emission() as u32);
+                    let light6 = ((lit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let placement = section.torch_placement(lx, ly, lz);
+                    super::torch::emit_torch(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx as f32,
+                        wy as f32,
+                        wz as f32,
+                        placement,
+                        side_tile,
+                        top_tile,
+                        [1.0, 1.0, 1.0],
+                        light6,
+                    );
+                    continue;
+                }
+
+                if let RenderShape::Model(kind) = block.render_shape() {
+                    let offset = section.model_offset(lx, ly, lz);
+                    let facing = section.model_facing(lx, ly, lz);
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (light6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    emit_model_block(
+                        &mut model,
+                        &mut model_idx,
+                        kind,
+                        offset,
+                        facing,
+                        wx,
+                        wy,
+                        wz,
+                        light6,
+                        warm,
+                    );
+                    continue;
+                }
+
+                let is_water = block == Block::Water;
+                let [tile_top, tile_bot, tile_side] = block.tiles();
+                let furnace_faces = (block == Block::Furnace).then(|| {
+                    let front = if section.is_furnace_lit(lx, ly, lz) {
+                        Tile::FurnaceFrontOn
+                    } else {
+                        Tile::FurnaceFront
+                    };
+                    (facing_face(section.furnace_facing(lx, ly, lz)), front)
+                });
+                let base_x = wx as f32;
+                let base_z = wz as f32;
+                let base_y = wy as f32;
+
+                let water_surface = is_water.then(|| {
+                    let full = water_fills_cell(wx, wy, wz);
+                    WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at)
+                });
+
+                for face in FACES {
+                    let (dx, dy, dz) = face.dir();
+                    let nwx = wx + dx;
+                    let nwy = wy + dy;
+                    let nwz = wz + dz;
+                    let nb = block_at(nwx, nwy, nwz);
+
+                    let is_water_top = is_water && matches!(face, Face::PosY);
+                    let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
+                    let is_cactus_side = block == Block::Cactus && is_side;
+                    if nb.is_opaque() && !is_water_top && !is_cactus_side {
+                        continue;
+                    }
+                    if is_water && is_side && !neighbour_loaded(nwx, nwy, nwz) {
+                        continue;
+                    }
+                    if options.leaf_mesh_mode == LeafMeshMode::Simplified
+                        && block == Block::OakLeaves
+                        && nb == Block::OakLeaves
+                    {
+                        continue;
+                    }
+                    let mut water_exposed_step = false;
+                    if let Some(ws) = &water_surface {
+                        if nb == Block::Water {
+                            let nb_full = water_fills_cell(nwx, nwy, nwz);
+                            match ws.side_against_water(is_side, nb_full) {
+                                SideVsWater::ExposedStep => water_exposed_step = true,
+                                SideVsWater::Cull => continue,
+                            }
+                        }
+                    }
+
+                    let (base_tile, overlay_tile, tint) = if let Some(ws) = &water_surface {
+                        let t = match face {
+                            Face::PosY => ws.top_tile(),
+                            Face::NegY => Tile::WaterStill,
+                            _ => Tile::WaterFlow,
+                        };
+                        (t, None, tint_water(ci))
+                    } else if block == Block::Grass && is_side {
+                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass(ci))
+                    } else {
+                        let t = match face {
+                            Face::PosY => tile_top,
+                            Face::NegY => tile_bot,
+                            _ => match furnace_faces {
+                                Some((front_face, front_tile)) if face == front_face => front_tile,
+                                Some(_) => Tile::FurnaceSide,
+                                None => tile_side,
+                            },
+                        };
+                        let tint = tint_tile(tile_tint(t), ci);
+                        (t, None, tint)
+                    };
+
+                    let mut corners = if block == Block::Cactus {
+                        cactus_quad(
+                            face,
+                            [base_x, base_y, base_z],
+                            [base_x + 1.0, base_y + 1.0, base_z + 1.0],
+                        )
+                    } else {
+                        quad_for(face, base_x, base_y, base_z)
+                    };
+                    if let Some(ws) = &water_surface {
+                        ws.warp_quad(&mut corners, base_x, base_y, base_z, water_exposed_step);
+                    }
+
+                    let fx = nwx;
+                    let fy = nwy;
+                    let fz = nwz;
+                    let f_l = neighbour_light(fx, fy, fz) as u32;
+                    let f_bl = neighbour_blocklight(fx, fy, fz) as u32;
+
+                    let water_ov: u32 = match &water_surface {
+                        Some(ws) if matches!(face, Face::PosY) => ws.top_angle(),
+                        _ => 0,
+                    };
+                    let (overlay, has_overlay) = match overlay_tile {
+                        Some(o) => (o as u32, true),
+                        None => (water_ov, false),
+                    };
+
+                    let (vbuf, ibuf) = if is_water {
+                        (&mut transparent, &mut transparent_idx)
+                    } else {
+                        (&mut opaque, &mut opaque_idx)
+                    };
+
+                    let tris = emit_cube_face(
+                        vbuf,
+                        ibuf,
+                        corners,
+                        base_tile,
+                        overlay,
+                        has_overlay,
+                        tint,
+                        face,
+                        fx,
+                        fy,
+                        fz,
+                        f_l,
+                        f_bl,
+                        &block_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
+                    );
+                    if is_water && matches!(face, Face::PosY) {
+                        ibuf.extend_from_slice(&water::top_back_winding(tris));
+                    }
+                }
+            }
+        }
+    }
+
+    ChunkMesh {
+        opaque,
+        opaque_idx,
+        transparent,
+        transparent_idx,
+        far_opaque: vec![],
+        far_opaque_idx: vec![],
+        model,
+        model_idx,
+        mesh_dirty: true,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_mesh_with_context(
     chunk: &Chunk,
@@ -172,12 +503,35 @@ fn build_mesh_with_context(
     neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
     options: MeshOptions,
 ) -> ChunkMesh {
+    let (ox, oz) = chunk.chunk_origin_world();
+    let tints = tint::biome_window(ox, oz, &neighbour_biome);
+    chunk_geometry(
+        chunk,
+        neighbour_block,
+        neighbour_water,
+        neighbour_light,
+        neighbour_blocklight,
+        neighbour_chunk_loaded,
+        &tints,
+        options,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn chunk_geometry(
+    chunk: &Chunk,
+    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_water: impl Fn(i32, i32, i32) -> u8,
+    neighbour_light: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
+    neighbour_chunk_loaded: impl Fn(i32, i32) -> bool,
+    tints: &tint::BiomeTints,
+    options: MeshOptions,
+) -> ChunkMesh {
     let mut opaque = vec![];
     let mut opaque_idx = vec![];
-    let mut opaque_sections = [MeshIndexSection::default(); SECTION_COUNT];
     let mut transparent = vec![];
     let mut transparent_idx = vec![];
-    let mut transparent_sections = [MeshIndexSection::default(); SECTION_COUNT];
     // bbmodel-block geometry (explicit-UV, model atlas), drawn in the dedicated model
     // pass. Empty for the common chunk.
     let mut model: Vec<ModelVertex> = vec![];
@@ -239,9 +593,6 @@ fn build_mesh_with_context(
         crate::world::water::fills_cell(water_at(wx, wy, wz), above)
     };
 
-    // Precompute biome-blended tint (5x5 window) per column, per kind.
-    let tints = tint::biome_window(ox, oz, &neighbour_biome);
-
     // Skip the all-air shell above the terrain. `heightmap[i]` is the highest
     // non-air Y in column i (set for every non-air block incl. water; rebuilt by
     // recompute_heightmap when block data arrives raw -- see worker.rs). Bounding
@@ -292,7 +643,6 @@ fn build_mesh_with_context(
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
                     let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tints.tile(tile_tint(tile), ci), warm);
-                    let first_index = opaque_idx.len() as u32;
                     emit_cross(
                         &mut opaque,
                         &mut opaque_idx,
@@ -302,12 +652,6 @@ fn build_mesh_with_context(
                         tile,
                         tint,
                         sky6,
-                    );
-                    extend_section(
-                        &mut opaque_sections,
-                        section_for_y(y),
-                        first_index,
-                        opaque_idx.len() as u32 - first_index,
                     );
                     continue;
                 }
@@ -325,7 +669,6 @@ fn build_mesh_with_context(
                     let lit = cell_sky.max(block.light_emission() as u32);
                     let light6 = ((lit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
                     let placement = chunk.torch_placement(x, y, z);
-                    let first_index = opaque_idx.len() as u32;
                     super::torch::emit_torch(
                         &mut opaque,
                         &mut opaque_idx,
@@ -337,12 +680,6 @@ fn build_mesh_with_context(
                         top_tile,
                         [1.0, 1.0, 1.0],
                         light6,
-                    );
-                    extend_section(
-                        &mut opaque_sections,
-                        section_for_y(y),
-                        first_index,
-                        opaque_idx.len() as u32 - first_index,
                     );
                     continue;
                 }
@@ -563,17 +900,12 @@ fn build_mesh_with_context(
                         None => (water_ov, false),
                     };
 
-                    let (vbuf, ibuf, sections) = if is_water {
-                        (
-                            &mut transparent,
-                            &mut transparent_idx,
-                            &mut transparent_sections,
-                        )
+                    let (vbuf, ibuf) = if is_water {
+                        (&mut transparent, &mut transparent_idx)
                     } else {
-                        (&mut opaque, &mut opaque_idx, &mut opaque_sections)
+                        (&mut opaque, &mut opaque_idx)
                     };
 
-                    let first_index = ibuf.len() as u32;
                     let tris = emit_cube_face(
                         vbuf,
                         ibuf,
@@ -598,12 +930,6 @@ fn build_mesh_with_context(
                     if is_water && matches!(face, Face::PosY) {
                         ibuf.extend_from_slice(&water::top_back_winding(tris));
                     }
-                    extend_section(
-                        sections,
-                        section_for_y(y),
-                        first_index,
-                        ibuf.len() as u32 - first_index,
-                    );
                 }
             }
         }
@@ -612,13 +938,10 @@ fn build_mesh_with_context(
     ChunkMesh {
         opaque,
         opaque_idx,
-        opaque_sections,
         transparent,
         transparent_idx,
-        transparent_sections,
         far_opaque: vec![],
         far_opaque_idx: vec![],
-        far_opaque_sections: [MeshIndexSection::default(); SECTION_COUNT],
         model,
         model_idx,
         mesh_dirty: true,
@@ -675,37 +998,6 @@ fn emit_model_block(
         tint,
     }));
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
-}
-
-#[inline]
-fn section_for_y(y: usize) -> usize {
-    (y / SECTION_SIZE).min(SECTION_COUNT - 1)
-}
-
-fn extend_section(
-    sections: &mut [MeshIndexSection; SECTION_COUNT],
-    section: usize,
-    first_index: u32,
-    index_count: u32,
-) {
-    if index_count == 0 {
-        return;
-    }
-    let existing = &mut sections[section];
-    if existing.index_count == 0 {
-        *existing = MeshIndexSection {
-            first_index,
-            index_count,
-        };
-        return;
-    }
-
-    let first = existing.first_index.min(first_index);
-    let end = (existing.first_index + existing.index_count).max(first_index + index_count);
-    *existing = MeshIndexSection {
-        first_index: first,
-        index_count: end - first,
-    };
 }
 
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into the packed

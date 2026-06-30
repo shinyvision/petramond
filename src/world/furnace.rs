@@ -5,7 +5,7 @@
 //! world↔chunk coordinate wrappers plus the tick driver that supplies the recipe
 //! set the storage layer is kept ignorant of.
 
-use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
+use crate::chunk::{SectionPos, SECTION_SIZE};
 use crate::crafting::Recipes;
 use crate::furnace::{Facing, Furnace};
 use crate::mathh::IVec3;
@@ -22,8 +22,9 @@ impl World {
     /// public entry point.
     pub(super) fn tick_furnaces(&mut self, recipes: &Recipes) {
         let mut relit = Vec::new();
-        for (&cpos, chunk) in self.chunks.iter_mut() {
-            for (lx, ly, lz) in chunk.tick_furnaces(|it| recipes.smelt(it)) {
+        for (&cpos, section) in self.sections.iter_mut() {
+            let section = std::sync::Arc::make_mut(section);
+            for (lx, ly, lz) in section.tick_furnaces(|it| recipes.smelt(it)) {
                 relit.push((cpos, local_to_world(cpos, lx, ly, lz)));
             }
         }
@@ -74,11 +75,11 @@ impl World {
 }
 
 #[inline]
-fn local_to_world(cpos: ChunkPos, lx: usize, ly: usize, lz: usize) -> IVec3 {
+fn local_to_world(cpos: SectionPos, lx: usize, ly: usize, lz: usize) -> IVec3 {
     IVec3::new(
-        cpos.cx * CHUNK_SX as i32 + lx as i32,
-        ly as i32,
-        cpos.cz * CHUNK_SZ as i32 + lz as i32,
+        cpos.cx * SECTION_SIZE as i32 + lx as i32,
+        cpos.cy * SECTION_SIZE as i32 + ly as i32,
+        cpos.cz * SECTION_SIZE as i32 + lz as i32,
     )
 }
 
@@ -88,10 +89,11 @@ mod tests {
 
     use crate::atlas::Tile;
     use crate::block::Block;
-    use crate::chunk::Chunk;
+    use crate::chunk::{SectionPos, SECTION_VOLUME};
     use crate::crafting::SmeltingRecipe;
     use crate::item::{ItemStack, ItemType};
-    use crate::mesh::{compute_chunk_skylight, ChunkMesh};
+    use crate::mesh::ChunkMesh;
+    use crate::section::Section;
 
     fn furnace_recipes() -> Recipes {
         Recipes::new(
@@ -124,56 +126,66 @@ mod tests {
             .count()
     }
 
+    /// Clear a section's `light_dirty` flag by installing a settled (all-zero) skylight
+    /// cube, so `tick_mesh_budget` builds its mesh now instead of deferring behind the
+    /// async light bake. The furnace tile count is what's under test, not the light
+    /// value, so a zero cube is fine.
+    fn settle_section_light(world: &mut World, wx: i32, wy: i32, wz: i32) {
+        world
+            .section_at_world_mut_for_test(wx, wy, wz)
+            .expect("section loaded")
+            .set_skylight(vec![0u8; SECTION_VOLUME].into());
+    }
+
     #[test]
     fn furnace_lit_flip_queues_remesh_for_texture_swap() {
-        let pos = ChunkPos::new(0, 0);
-        let mut chunk = Chunk::new(pos.cx, pos.cz);
-        chunk.set_block(8, 64, 8, Block::Furnace);
-        chunk.insert_furnace(8, 64, 8, fueled_furnace());
-        let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
-        chunk.set_skylight(band, ylo, yhi);
-        chunk.dirty = false;
+        // Build just the furnace's section (0,4,0) — world (8,64,8) → section-local
+        // (8,0,8) — so the mesh budget isn't spent on a column's other sections.
+        let spos = SectionPos::new(0, 4, 0);
+        let mut section = Section::new(spos.cx, spos.cy, spos.cz);
+        section.set_block(8, 0, 8, Block::Furnace);
+        section.insert_furnace(8, 0, 8, fueled_furnace());
+        section.set_skylight(vec![0u8; SECTION_VOLUME].into()); // settle light
 
         let mut world = World::new(0, 0);
-        world.insert_chunk_for_test(pos, chunk);
-        world.tick_mesh_budget(1);
-        let mesh = world.meshes.get(&pos).expect("initial mesh built");
+        world.insert_section_for_test(spos, section);
+        world.mesh_section_blocking_for_test(spos);
+        let mesh = world.meshes.get(&spos).expect("initial mesh built");
         assert_eq!(count_tile(mesh, Tile::FurnaceFront), 4);
         assert_eq!(count_tile(mesh, Tile::FurnaceFrontOn), 0);
 
         world.game_tick(&furnace_recipes());
-        // A lit furnace now emits block light, so the lit-flip re-dirties this chunk's
+        // A lit furnace now emits block light, so the lit-flip re-dirties this section's
         // light (this dirtying IS the new behavior). That would otherwise defer the
-        // texture-swap remesh behind the async block-light bake, so re-settle the
-        // light synchronously here — exactly as the test does before the initial mesh.
-        let (band, ylo, yhi) = compute_chunk_skylight(world.chunks.get(&pos).unwrap());
-        world
-            .chunks
-            .get_mut(&pos)
-            .unwrap()
-            .set_skylight(band, ylo, yhi);
-        world.tick_mesh_budget(1);
+        // texture-swap remesh behind the async light bake, so re-settle the light
+        // synchronously here — exactly as the test does before the initial mesh.
+        settle_section_light(&mut world, 8, 64, 8);
+        world.mesh_section_blocking_for_test(spos);
 
-        let mesh = world.meshes.get(&pos).expect("relit mesh rebuilt");
+        let mesh = world.meshes.get(&spos).expect("relit mesh rebuilt");
         assert_eq!(count_tile(mesh, Tile::FurnaceFront), 0);
         assert_eq!(count_tile(mesh, Tile::FurnaceFrontOn), 4);
     }
 
     #[test]
     fn furnace_lit_flip_emits_neighbor_block_update() {
-        let pos = ChunkPos::new(0, 0);
-        let mut chunk = Chunk::new(pos.cx, pos.cz);
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                chunk.set_block(x, 64, z, Block::Stone);
+        // Build the section directly so the furnace BLOCK-ENTITY is present: a column
+        // `Chunk` fixture carries blocks + water through the split, but not block-entities
+        // (real worldgen produces none), so a pre-placed furnace's fuel would be lost.
+        // Section (0,4,0) → world y 64..79; floor at local y 0 (world 64).
+        let spos = SectionPos::new(0, 4, 0);
+        let mut section = Section::new(spos.cx, spos.cy, spos.cz);
+        for z in 0..16 {
+            for x in 0..16 {
+                section.set_block(x, 0, z, Block::Stone); // floor at world y 64
             }
         }
-        chunk.set_block(8, 65, 8, Block::Water);
-        chunk.set_block(9, 65, 8, Block::Furnace);
-        chunk.insert_furnace(9, 65, 8, fueled_furnace());
+        section.set_block(8, 1, 8, Block::Water); // source water at world (8,65,8)
+        section.set_block(9, 1, 8, Block::Furnace);
+        section.insert_furnace(9, 1, 8, fueled_furnace()); // world (9,65,8)
 
         let mut world = World::new(0, 0);
-        world.insert_chunk_for_test(pos, chunk);
+        world.insert_section_for_test(spos, section);
         let recipes = furnace_recipes();
 
         world.game_tick(&recipes); // the furnace lights and queues block updates

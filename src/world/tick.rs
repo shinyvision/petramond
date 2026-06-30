@@ -31,7 +31,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet, VecDeque};
 
 use crate::block::Block;
-use crate::chunk::{self, ChunkPos, CHUNK_SX, CHUNK_SZ};
+use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::crafting::Recipes;
 use crate::mathh::IVec3;
 
@@ -48,6 +48,10 @@ pub(super) const NEIGHBORS: [IVec3; 6] = [
 ];
 
 const RANDOM_TICK_SPEED: u32 = 48;
+/// Random-tick draws per loaded 16³ section per tick. `RANDOM_TICK_SPEED / 16`
+/// keeps the same per-volume rate the column generator used (≈3 per section, the
+/// reference rate), now that the section is the iteration unit.
+const RANDOM_TICK_PER_SECTION: u32 = RANDOM_TICK_SPEED / 16;
 
 /// Per-world tick/update/schedule bookkeeping.
 #[derive(Default)]
@@ -174,7 +178,9 @@ impl World {
     /// change relights. The 3×3 covers the border flood: a cell's light can spill
     /// one chunk in every direction.
     pub(super) fn notify_block_and_neighbors(&mut self, wx: i32, wy: i32, wz: i32) {
-        self.mark_light_dirty_neighborhood(ChunkPos::new(wx >> 4, wz >> 4), true);
+        if let Some(sp) = SectionPos::from_world(wx, wy, wz) {
+            self.mark_light_dirty_neighborhood(sp, true);
+        }
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);
         for d in NEIGHBORS {
@@ -286,29 +292,32 @@ impl World {
                 if dx * dx + dz * dz > r * r {
                     continue;
                 }
-                let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
-                let Some(chunk) = self.chunks.get(&pos) else {
-                    continue;
-                };
-                if !chunk.has_random_tickable() {
-                    continue;
-                }
-                let (ox, oz) = chunk.chunk_origin_world();
-                let blocks = chunk.blocks_slice();
-                for _ in 0..RANDOM_TICK_SPEED {
-                    let i = (self.sim.next_random() >> 16) as usize % chunk::VOLUME;
-                    let id = blocks[i];
-                    if id == 0 {
-                        continue; // air — nothing ticks; the overwhelming majority
-                    }
-                    if !Block::from_id(id).has_random_tick() {
+                let cx = center.cx + dx;
+                let cz = center.cz + dz;
+                for cy in Self::column_section_range() {
+                    let Some(section) = self.sections.get(&SectionPos::new(cx, cy, cz)) else {
+                        continue;
+                    };
+                    if !section.has_random_tickable() {
                         continue;
                     }
-                    // Decode the flat index back to world coords (only for a hit).
-                    let lx = i & (CHUNK_SX - 1);
-                    let lz = (i >> 4) & (CHUNK_SZ - 1);
-                    let ly = i >> 8;
-                    due.push(IVec3::new(ox + lx as i32, ly as i32, oz + lz as i32));
+                    let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
+                    let blocks = section.blocks_slice();
+                    for _ in 0..RANDOM_TICK_PER_SECTION {
+                        let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
+                        let id = blocks[i];
+                        if id == 0 {
+                            continue; // air — nothing ticks; the overwhelming majority
+                        }
+                        if !Block::from_id(id).has_random_tick() {
+                            continue;
+                        }
+                        // Decode the flat section index back to world coords (only for a hit).
+                        let lx = i & (SECTION_SIZE - 1);
+                        let lz = (i >> 4) & (SECTION_SIZE - 1);
+                        let ly = i >> 8;
+                        due.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
+                    }
                 }
             }
         }
@@ -332,17 +341,17 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::Chunk;
+    use crate::chunk::{Chunk, ChunkPos};
     use crate::crafting::Recipes;
 
     use super::super::store::LoadTarget;
 
-    /// A world with one empty loaded chunk at (0,0) and the player centred on it,
-    /// so its column is eligible for random ticks.
+    /// A world with one empty loaded column at (0,0) (every section present, all air)
+    /// and the player centred on it, so the column is eligible for random ticks.
     fn world_with_centered_chunk() -> World {
         let mut world = World::new(1, 4);
-        world.chunks.insert(ChunkPos::new(0, 0), Chunk::new(0, 0));
-        world.last_load_target = Some(LoadTarget::new(0, 0, 4));
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
         world
     }
 
@@ -399,14 +408,19 @@ mod tests {
     }
 
     #[test]
-    fn chunk_counter_gates_the_column() {
+    fn section_counter_gates_the_section() {
         let mut world = world_with_centered_chunk();
-        let pos = ChunkPos::new(0, 0);
-        assert!(!world.chunks.get(&pos).unwrap().has_random_tickable());
+        // The leaf at (8,70,8) lives in section (0,4,0); the counter gates that section.
+        let tickable = |w: &World| {
+            w.section_at_world_for_test(8, 70, 8)
+                .unwrap()
+                .has_random_tickable()
+        };
+        assert!(!tickable(&world));
         world.set_block_world(8, 70, 8, Block::OakLeaves);
-        assert!(world.chunks.get(&pos).unwrap().has_random_tickable());
+        assert!(tickable(&world));
         world.set_block_world(8, 70, 8, Block::Air);
-        assert!(!world.chunks.get(&pos).unwrap().has_random_tickable());
+        assert!(!tickable(&world));
     }
 
     #[test]

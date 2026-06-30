@@ -7,7 +7,8 @@
 
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::chunk::{idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
+use crate::chunk::{idx, section_idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE};
+use crate::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
 use super::terrain::{channels, TerrainDensityGraph, TerrainDensitySpec};
@@ -22,6 +23,11 @@ use crate::worldgen::proto::ProtoChunk;
 use crate::worldgen::region::RegionCells;
 use crate::worldgen::surface::rule::SurfaceCtx;
 use crate::worldgen::surface::SurfaceSystem;
+
+/// Depth below which every biome surface rule resolves to a single depth-independent
+/// block (the deepest `DepthFromTop` band across all biomes is 4; this leaves margin).
+/// Below this depth `fill_section` fills a whole section-column with one block.
+const MAX_SKIN_BAND_DEPTH: i32 = 8;
 
 const BEACH_MAX_SURFACE_Y: i32 = SEA_LEVEL + 5;
 const BEACH_MAX_CONTINENTALITY: f32 = 0.14;
@@ -110,6 +116,79 @@ impl SurfaceDensitySystem {
                 let biome = self.biome_at_cell(&mut cells, wx, wz, surf_y);
                 proto.set_biome(x, z, biome.id());
                 self.fill_column(proto.terrain_blocks_mut(), &lattice, x, z, wx, wz, biome);
+            }
+        }
+    }
+
+    /// Cubic terrain fill for one 16³ section, driven by the column's precomputed
+    /// biome + density surface (`biomes`/`surf`, the column's 16×16 grids indexed
+    /// `z*16 + x`) instead of a per-section density lattice.
+    ///
+    /// This is byte-identical to [`fill_column`](Self::fill_column) for the section's
+    /// slab. `master_density` is depth-only and exactly linear in Y, so a voxel is
+    /// solid IFF `wy <= surf`, and its surface depth is exactly `surf - wy` — the same
+    /// run-top/`depth_from_top` the lattice walk derives, with no overhangs to track.
+    /// Solid voxels take their skin material, non-solid voxels at or below sea level
+    /// take water, the rest stay air. Works for ANY `cy` (incl. below y=0, where the
+    /// lattice cannot be built): there, every voxel is far below the surface and
+    /// resolves through the deep fast path.
+    pub(crate) fn fill_section(&self, section: &mut Section, biomes: &[u8], surf: &[i32]) {
+        let (ox, oy, oz) = section.origin_world();
+        let section_top = oy + SECTION_SIZE as i32 - 1;
+        let seed = self.seed;
+        let blocks = section.blocks_slice_mut();
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                let i = z * SECTION_SIZE + x;
+                let s = surf[i];
+                let biome = Biome::from_id(biomes[i]);
+                let rule = spec(biome).surface;
+                let wx = ox + x as i32;
+                let wz = oz + z as i32;
+
+                // Deep fast path: the entire section column is solid and below the
+                // deepest depth-gated skin band, so every voxel resolves to the SAME
+                // (depth-independent) block — compute it once and fill the column.
+                if section_top <= s && (s - section_top) > MAX_SKIN_BAND_DEPTH {
+                    let deep = self
+                        .surface
+                        .skin_block(
+                            &SurfaceCtx {
+                                seed,
+                                wx,
+                                wz,
+                                y: oy,
+                                surf_y: s,
+                                depth_from_top: (s - oy) as u32,
+                            },
+                            rule,
+                        )
+                        .id();
+                    for ly in 0..SECTION_SIZE {
+                        blocks[section_idx(x, ly, z)] = deep;
+                    }
+                    continue;
+                }
+
+                for ly in 0..SECTION_SIZE {
+                    let wy = oy + ly as i32;
+                    let id = if wy <= s {
+                        let ctx = SurfaceCtx {
+                            seed,
+                            wx,
+                            wz,
+                            y: wy,
+                            surf_y: s,
+                            depth_from_top: (s - wy) as u32,
+                        };
+                        self.surface.skin_block(&ctx, rule).id()
+                    } else if wy <= SEA_LEVEL {
+                        Block::Water.id()
+                    } else {
+                        continue; // air — section starts zeroed.
+                    };
+                    blocks[section_idx(x, ly, z)] = id;
+                }
             }
         }
     }

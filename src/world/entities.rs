@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use crate::chunk::ChunkPos;
+use crate::chunk::SectionPos;
 use crate::entity::DroppedItem;
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
@@ -244,31 +244,30 @@ impl DroppedItems {
         }
     }
 
-    /// Drain and return the active items resting in chunk `pos` — used to bundle
-    /// them into that chunk's save record as it unloads.
-    pub(super) fn take_items_in_chunk(&mut self, pos: ChunkPos) -> Vec<DroppedItem> {
+    /// Drain and return the active items resting in section `pos` — used to bundle
+    /// them into that section's save record as it unloads.
+    pub(super) fn take_items_in_section(&mut self, pos: SectionPos) -> Vec<DroppedItem> {
         let mut taken = Vec::new();
         let mut i = self.items.len();
         while i > 0 {
             i -= 1;
-            let (cx, cz) = chunk_xz(self.items[i].pos);
-            if cx == pos.cx && cz == pos.cz {
+            if section_of(self.items[i].pos) == Some(pos) {
                 taken.push(self.items.swap_remove(i));
             }
         }
         taken
     }
 
-    /// Clone the active items grouped by owning chunk, for the periodic save
-    /// flush (the items stay active; the clones persist with the chunk records so
-    /// a crash can't lose their lifetimes).
-    pub(super) fn items_by_chunk(&self) -> HashMap<ChunkPos, Vec<DroppedItem>> {
-        let mut map: HashMap<ChunkPos, Vec<DroppedItem>> = HashMap::new();
+    /// Clone the active items grouped by owning section, for the periodic save
+    /// flush (the items stay active; the clones persist with the section records so
+    /// a crash can't lose their lifetimes). Drops outside the world vertical range
+    /// (none in normal play) are dropped from the grouping.
+    pub(super) fn items_by_section(&self) -> HashMap<SectionPos, Vec<DroppedItem>> {
+        let mut map: HashMap<SectionPos, Vec<DroppedItem>> = HashMap::new();
         for it in &self.items {
-            let (cx, cz) = chunk_xz(it.pos);
-            map.entry(ChunkPos::new(cx, cz))
-                .or_default()
-                .push(it.clone());
+            if let Some(pos) = section_of(it.pos) {
+                map.entry(pos).or_default().push(it.clone());
+            }
         }
         map
     }
@@ -344,10 +343,22 @@ impl World {
     }
 }
 
-/// Chunk coordinates owning world position `pos`.
+/// Chunk (column) coordinates owning world position `pos`. Used for the
+/// coarse "is the terrain under this drop loaded?" freeze check.
 #[inline]
 fn chunk_xz(pos: Vec3) -> (i32, i32) {
     ((pos.x.floor() as i32) >> 4, (pos.z.floor() as i32) >> 4)
+}
+
+/// The 16³ section owning world position `pos` (`None` if outside the world's
+/// vertical range — not reachable in normal play).
+#[inline]
+fn section_of(pos: Vec3) -> Option<SectionPos> {
+    SectionPos::from_world(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    )
 }
 
 #[cfg(test)]
@@ -594,28 +605,28 @@ mod tests {
     }
 
     #[test]
-    fn unloading_a_chunk_harvests_only_its_items() {
-        // take_items_in_chunk is what an unload uses to bundle a chunk's drops
-        // into its save record (and so pause their timers).
+    fn unloading_a_section_harvests_only_its_items() {
+        // take_items_in_section is what an unload uses to bundle a section's drops
+        // into its save record (and so pause their timers). drop_at puts y=64 → cy 4.
         let mut w = World::new(0, 0);
-        w.spawn_item(drop_at(2.5, 2.5)); // chunk (0, 0)
-        w.spawn_item(drop_at(20.5, 2.5)); // chunk (1, 0)
+        w.spawn_item(drop_at(2.5, 2.5)); // section (0, 4, 0)
+        w.spawn_item(drop_at(20.5, 2.5)); // section (1, 4, 0)
         let taken = w
             .dropped_items_mut()
-            .take_items_in_chunk(ChunkPos::new(0, 0));
-        assert_eq!(taken.len(), 1, "only the (0,0) drop is harvested");
-        assert_eq!(w.item_entities().len(), 1, "the (1,0) drop stays active");
+            .take_items_in_section(SectionPos::new(0, 4, 0));
+        assert_eq!(taken.len(), 1, "only the (0,4,0) drop is harvested");
+        assert_eq!(w.item_entities().len(), 1, "the (1,4,0) drop stays active");
         assert!(w.item_entities()[0].pos.x > 16.0);
     }
 
     #[test]
-    fn items_group_by_owning_chunk_for_flush() {
+    fn items_group_by_owning_section_for_flush() {
         let mut w = World::new(0, 0);
-        w.spawn_item(drop_at(2.5, 2.5)); // (0, 0)
-        w.spawn_item(drop_at(5.5, 9.5)); // (0, 0)
-        w.spawn_item(drop_at(20.5, 2.5)); // (1, 0)
-        let map = w.dropped_items_mut().items_by_chunk();
-        assert_eq!(map[&ChunkPos::new(0, 0)].len(), 2);
-        assert_eq!(map[&ChunkPos::new(1, 0)].len(), 1);
+        w.spawn_item(drop_at(2.5, 2.5)); // (0, 4, 0)
+        w.spawn_item(drop_at(5.5, 9.5)); // (0, 4, 0)
+        w.spawn_item(drop_at(20.5, 2.5)); // (1, 4, 0)
+        let map = w.dropped_items_mut().items_by_section();
+        assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
+        assert_eq!(map[&SectionPos::new(1, 4, 0)].len(), 1);
     }
 }

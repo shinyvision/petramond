@@ -42,7 +42,7 @@ impl World {
     /// collision that must hug a multi-block correctly.
     #[inline]
     pub fn collision_boxes_at(&self, wx: i32, wy: i32, wz: i32) -> &'static [Aabb] {
-        let block = Block::from_id(self.chunk_block(wx, wy, wz));
+        let block = self.physics_block(wx, wy, wz);
         if let RenderShape::Model(kind) = block.render_shape() {
             return block_model::collision_boxes_oriented(
                 kind,
@@ -150,10 +150,7 @@ impl World {
     ) -> bool {
         Self::model_footprint_cells_facing(base, kind, facing)
             .into_iter()
-            .all(|c| {
-                self.chunk_at_world(c.x, c.y, c.z).is_some()
-                    && Block::from_id(self.chunk_block(c.x, c.y, c.z)).is_replaceable()
-            })
+            .all(|c| self.placement_cell_open(c))
     }
 
     /// Place model `block` with its rotated-footprint base at `base`: write the block id to
@@ -171,6 +168,14 @@ impl World {
             return false;
         };
         let cells = block_model::oriented_footprint_cells(base, kind, facing);
+        // Materialize every footprint cell's section (a multi-block can reach into an
+        // all-air, hence absent, section), bailing if any is outside the vertical range,
+        // so the whole region is writable before the consistent write below.
+        for &(c, _) in &cells {
+            if !self.materialize_section_at(c) {
+                return false;
+            }
+        }
         // Write block + offset for every cell first (no remesh yet), so the region is
         // fully consistent before any mesh is rebuilt.
         for &(c, off) in &cells {
@@ -232,7 +237,6 @@ impl World {
         for &c in cells {
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
                 if seen.insert(pos) {
-                    self.invalidate_section_visibility(pos);
                     self.mark_dirty_neighborhood(pos, true);
                 }
             }

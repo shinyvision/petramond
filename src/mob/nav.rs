@@ -7,7 +7,6 @@
 //! reaches them; if the mob stops making progress (wedged against geometry) the path is
 //! abandoned so the brain can pick a new goal instead of pushing into a wall forever.
 
-use crate::block::Block;
 use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
@@ -117,7 +116,7 @@ impl Navigator {
     /// first step and the repath timer. Shared by a goal change and the periodic refresh.
     fn recompute(&mut self, start: IVec3, goal: IVec3, world: &World) {
         let solid = solid_fn(world);
-        let water = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).is_water();
+        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
         self.path = path::find_path(start, goal, self.params, solid, water);
         // Index 1 = the first cell to walk to (path[0] is the start).
         self.index = if self.path.len() > 1 {
@@ -176,12 +175,13 @@ impl Navigator {
 
 /// `true` if a cell blocks movement (has a collision box), via the world's blocks.
 fn solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
-    move |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement()
+    move |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
 
     #[test]
     fn idle_until_given_a_goal() {

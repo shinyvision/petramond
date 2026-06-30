@@ -68,7 +68,7 @@ pub(super) fn attempt(
     }
     // The ground must have collision AND the body must fit (clearance above the
     // feet) — exactly what a foothold test asserts.
-    let solid = |c: IVec3| Block::from_id(world.chunk_block(c.x, c.y, c.z)).blocks_movement();
+    let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
     if !is_foothold(feet, d.size.head_cells(), &solid) {
         return None;
     }

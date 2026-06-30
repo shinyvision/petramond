@@ -123,6 +123,83 @@ mod tests {
         }
     }
 
+    /// The cubic per-section generator must be byte-identical, above ground, to the
+    /// whole-column generator: assembling `generate_section` over a column's surface
+    /// sections (cy 0..15) reproduces `generate_chunk`'s blocks and biomes exactly.
+    /// This is the S3 correctness gate — terrain, scatter, vegetation, and trees all
+    /// clip per-section without drift across the (now 3D) seams.
+    #[test]
+    fn per_section_generation_matches_whole_column_above_ground() {
+        use crate::chunk::{SectionPos, SECTION_COUNT, SECTION_SIZE};
+
+        let seed = 0x1234_5678;
+        let generator = driver::ChunkGenerator::new(seed);
+        for &(cx, cz) in &[(0, 0), (1, -1), (-3, 5), (12, -7), (4, -3)] {
+            let chunk = generate_chunk(seed, cx, cz);
+            let col = generator.generate_column_gen(cx, cz);
+
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    assert_eq!(
+                        col.biome_at(x, z),
+                        chunk.biome_at(x, z),
+                        "biome mismatch at ({cx},{cz}) col ({x},{z})"
+                    );
+                }
+            }
+
+            for cy in 0..SECTION_COUNT as i32 {
+                let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
+                for ly in 0..SECTION_SIZE {
+                    let wy = cy as usize * SECTION_SIZE + ly;
+                    for z in 0..CHUNK_SZ {
+                        for x in 0..CHUNK_SX {
+                            assert_eq!(
+                                section.block_raw(x, ly, z),
+                                chunk.block_raw(x, wy, z),
+                                "block mismatch at ({cx},{cz}) cy {cy} local ({x},{ly},{z}) world y {wy}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Generating sections across a wide area must not corrupt the random-tick gate.
+    /// `fill_section` writes the block buffer in bulk, then the scatter/vegetation/tree
+    /// stages edit through the setters — so a tree trunk overwriting a random-tickable
+    /// skin block (surface grass) used to underflow the still-zero counter (panic in
+    /// debug, silent wrap in release). After generation the count must equal a
+    /// from-scratch tally of the section's random-tickable blocks.
+    #[test]
+    fn per_section_generation_keeps_random_tick_count_exact() {
+        use crate::block::Block;
+        use crate::chunk::{SectionPos, SECTION_COUNT};
+
+        for &seed in &[1u32, 7, 42, 0x1234_5678] {
+            let generator = driver::ChunkGenerator::new(seed);
+            for cz in -3..=3 {
+                for cx in -3..=3 {
+                    let col = generator.generate_column_gen(cx, cz);
+                    for cy in 0..SECTION_COUNT as i32 {
+                        let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
+                        let expected = section
+                            .blocks_slice()
+                            .iter()
+                            .filter(|&&id| Block::from_id(id).has_random_tick())
+                            .count() as u32;
+                        assert_eq!(
+                            section.random_tick_count(),
+                            expected,
+                            "random-tick count drifted at ({cx},{cy},{cz}) seed {seed:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn generated_underwater_terrain_has_no_grass_blocks() {
         for &seed in &[0x1234_5678u32, 1, 0xDEAD_BEEF, 7] {

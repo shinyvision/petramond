@@ -471,10 +471,26 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
     // split collapses to FULL across these rows.
     add(rows, FULL, FULL, COAST, span(E[0], E[1]), v, River);
     add(rows, FULL, FULL, NEAR_INLAND, span(E[0], E[1]), v, River);
-    add(rows, FULL, FULL, span(COAST, FAR_INLAND), span(E[2], E[5]), v, River);
+    add(
+        rows,
+        FULL,
+        FULL,
+        span(COAST, FAR_INLAND),
+        span(E[2], E[5]),
+        v,
+        River,
+    );
     add(rows, FULL, FULL, COAST, E[6], v, River);
     // Wettest erosion shoulder, inland: frozen → river, otherwise swamp.
-    add(rows, T[0], FULL, span(NEAR_INLAND, FAR_INLAND), E[6], v, River);
+    add(
+        rows,
+        T[0],
+        FULL,
+        span(NEAR_INLAND, FAR_INLAND),
+        E[6],
+        v,
+        River,
+    );
     add(
         rows,
         UNFROZEN,

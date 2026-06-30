@@ -1,21 +1,46 @@
 use crate::block::Block;
-use crate::chunk::{self, ChunkPos, SKY_FULL};
+use crate::chunk::{self, ChunkPos, SectionPos, SKY_FULL, WORLD_MIN_Y};
+use crate::mathh::IVec3;
 use crate::mesh::ChunkMesh;
+use crate::section::SectionSummary;
 
 use super::store::World;
 
 impl World {
-    /// Iterate loaded chunk meshes for rendering (caller culls by camera).
-    pub fn iter_meshes(&self) -> impl Iterator<Item = (ChunkPos, &ChunkMesh)> {
+    /// Iterate loaded section meshes for rendering (caller culls by camera).
+    pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
         self.meshes.iter().map(|(p, m)| (*p, m))
     }
 
-    /// Are any chunks still queued for a (re)mesh? Drives the app shell's
-    /// redraw-on-demand: while terrain meshing is pending, the visible world is
-    /// about to change, so a frame must be drawn (the mesh budget builds these in
-    /// `tick_mesh_budget` and the renderer uploads them in `sync_meshes`).
+    /// Is any terrain CPU light/mesh work still queued or in flight? Tooling uses this
+    /// to detect when the background pipeline has settled; renderer upload dirtiness is
+    /// tracked separately because headless profilers have no renderer to clear it.
     pub fn has_dirty_meshes(&self) -> bool {
         !self.dirty_meshes.is_empty()
+            || !self.light_blocked_meshes.is_empty()
+            || self.light_bakes.has_pending()
+            || self.mesh_jobs_in_flight > 0
+    }
+
+    /// Does terrain work require the app to keep drawing? This includes CPU mesh/light
+    /// work plus finished CPU meshes that still need their render-side GPU upload.
+    pub fn has_terrain_frame_work(&self) -> bool {
+        self.has_dirty_meshes() || !self.mesh_upload_dirty_columns.is_empty()
+    }
+
+    /// Number of loaded sections — a diagnostic for streaming/perf tooling.
+    pub fn loaded_section_count(&self) -> usize {
+        self.sections.len()
+    }
+
+    /// Number of sections queued for (re)mesh — the streaming backlog.
+    pub fn dirty_mesh_count(&self) -> usize {
+        self.dirty_meshes.len() + self.light_blocked_meshes.len()
+    }
+
+    /// Number of loaded columns — a diagnostic for streaming/perf tooling.
+    pub fn loaded_column_count(&self) -> usize {
+        self.columns.len()
     }
 
     /// Raw block id at a world voxel. Out of range (above/below the column) or in
@@ -49,13 +74,13 @@ impl World {
     /// Cached skylight at a world voxel on the x2 scale (`SKY_FULL` = light 15).
     /// Missing chunks read as open sky, matching mesh-border fallback behavior.
     pub fn skylight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
-        // Distinct out-of-range fallbacks: open sky ABOVE the column, dark BELOW
-        // it (the router collapses both to `None`, so split them back out here).
-        if wy < 0 {
+        // Below the world floor is dark; above the world top and unloaded sections
+        // read as open sky (the mesh-border fallback).
+        if wy < WORLD_MIN_Y {
             return 0;
         }
         match self.chunk_at_world(wx, wy, wz) {
-            Some((c, lx, _, lz)) => c.skylight_at(lx, wy, lz),
+            Some((c, lx, ly, lz)) => c.skylight_at(lx, ly, lz),
             None => SKY_FULL,
         }
     }
@@ -71,7 +96,7 @@ impl World {
     /// without a nearby emitter.
     pub fn blocklight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
         match self.chunk_at_world(wx, wy, wz) {
-            Some((c, lx, _, lz)) => c.blocklight_at(lx, wy, lz),
+            Some((c, lx, ly, lz)) => c.blocklight_at(lx, ly, lz),
             None => 0,
         }
     }
@@ -105,14 +130,48 @@ impl World {
     /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its
     /// owning chunk is not currently loaded.
     pub fn column_biome(&self, wx: i32, wz: i32) -> Option<u8> {
-        self.chunks
+        self.columns
             .get(&ChunkPos::new(wx >> 4, wz >> 4))
             .map(|c| c.biome_at(chunk::lx(wx), chunk::lz(wz)))
     }
 
-    /// Is the chunk at chunk-coords `(cx, cz)` loaded?
+    /// Is any section of the column at chunk-coords `(cx, cz)` loaded?
     pub fn chunk_loaded(&self, cx: i32, cz: i32) -> bool {
-        self.chunks.contains_key(&ChunkPos::new(cx, cz))
+        Self::column_section_range()
+            .any(|cy| self.sections.contains_key(&SectionPos::new(cx, cy, cz)))
+    }
+
+    /// Whether a world cell can be built into: its column is loaded, it lies within the
+    /// vertical range, and whatever occupies it is replaceable. The cubic replacement
+    /// for the column era's `chunk_at_world(..).is_some() && replaceable` idiom — an
+    /// all-air section is *absent* (the streamer skips it, and `chunk_block` reads it as
+    /// air), yet a block may still be placed there (a tower, a door, a torch in mid-air).
+    pub fn placement_cell_open(&self, c: IVec3) -> bool {
+        if !self.chunk_loaded(c.x >> 4, c.z >> 4) {
+            return false;
+        }
+        let Some(pos) = SectionPos::from_world(c.x, c.y, c.z) else {
+            return false;
+        };
+        if self.sections.contains_key(&pos) {
+            return Block::from_id(self.chunk_block(c.x, c.y, c.z)).is_replaceable();
+        }
+        match self.section_summary(pos) {
+            SectionSummary::Empty => true,
+            SectionSummary::FullWater => Block::Water.is_replaceable(),
+            SectionSummary::Unknown => self.absent_cell_above_known_surface(c, pos),
+            SectionSummary::FullOpaque | SectionSummary::Mixed => false,
+        }
+    }
+
+    #[inline]
+    fn absent_cell_above_known_surface(&self, c: IVec3, pos: SectionPos) -> bool {
+        if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+            return false;
+        }
+        self.columns
+            .get(&pos.chunk_pos())
+            .is_some_and(|col| c.y > col.surface_y(chunk::lx(c.x), chunk::lz(c.z)))
     }
 
     /// The loaded streaming disc — `(center_chunk_x, center_chunk_z, render_dist)`
@@ -129,10 +188,10 @@ impl World {
     /// cover (tall grass, snow layers, water) is skipped, so the result is real
     /// footing rather than whatever happens to top the column.
     pub fn surface_collision_y(&self, wx: i32, wz: i32) -> Option<i32> {
-        let chunk = self.chunks.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
-        let top = chunk.surface_y(chunk::lx(wx), chunk::lz(wz));
-        (0..=top)
+        let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
+        let top = col.surface_y(chunk::lx(wx), chunk::lz(wz));
+        (WORLD_MIN_Y..=top)
             .rev()
-            .find(|&y| Block::from_id(self.chunk_block(wx, y, wz)).blocks_movement())
+            .find(|&y| self.blocks_movement_at(wx, y, wz))
     }
 }

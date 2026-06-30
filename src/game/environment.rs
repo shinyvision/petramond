@@ -133,17 +133,19 @@ mod tests {
     fn install_empty_chunk(game: &mut Game) {
         let pos = ChunkPos::new(0, 0);
         game.world.clear_world();
-        game.world.insert_chunk_for_test(pos, Chunk::new(0, 0));
+        // A full empty column (every section present) so a water write at any Y lands in
+        // a loaded section — an empty `Chunk` would split to no surface sections.
+        game.world.insert_empty_column_for_test(pos);
     }
 
     fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
-        let chunk = game
+        let section = game
             .world
-            .chunk_mut_for_test(ChunkPos::new(pos.x >> 4, pos.z >> 4))
-            .expect("test chunk must be installed");
-        chunk.set_water(
+            .section_at_world_mut_for_test(pos.x, pos.y, pos.z)
+            .expect("test section must be installed");
+        section.set_water(
             (pos.x & 0x0F) as usize,
-            pos.y as usize,
+            pos.y.rem_euclid(16) as usize,
             (pos.z & 0x0F) as usize,
             Block::Water,
             meta,

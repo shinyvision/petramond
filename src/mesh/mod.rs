@@ -16,14 +16,20 @@ mod torch;
 mod vertex;
 mod water;
 
+// TODO(S5): the column-era block-light flood, kept (and tested) for the cubic
+// cross-section block-light rewrite; not wired into `build_section_mesh` yet.
+#[allow(unused_imports)]
 pub use blocklight::compute_chunk_blocklight_with_neighbors;
+pub use builder::build_section_mesh;
+#[allow(unused_imports)]
+// build_mesh* are now used only by tests during the cubic migration (S10 cleanup)
 pub use builder::{build_mesh, build_mesh_lods_with_loaded_neighbors};
 #[cfg(test)]
 pub use builder::{build_mesh_with_options, MeshOptions};
 #[cfg(test)]
 pub use skylight::compute_chunk_skylight;
 pub use skylight::compute_chunk_skylight_with_neighbors;
-pub use vertex::{ChunkMesh, MeshIndexSection, Vertex, SHADES};
+pub use vertex::{ChunkMesh, ModelVertex, Vertex, SHADES};
 
 #[cfg(test)]
 mod tests;

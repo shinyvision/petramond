@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::App;
+use crate::app::{App, CursorPolicy};
 use crate::camera::Camera;
 use crate::controls::{control_from_key_code, Control, Modifiers, PointerButton};
 use crate::mathh::Vec3;
@@ -19,7 +19,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-const TARGET_FPS: u64 = 60;
+const TARGET_FPS: u64 = 90;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
 /// Idle update cadence. The sim is decoupled from drawing: when nothing is animating
 /// and no input is pending, the host still wakes this often to run `App::update` (so
@@ -71,6 +71,15 @@ struct NativeHost {
     perf_since: Instant,
     perf_updates: u32,
     perf_redraws: u32,
+    perf_renders: u32,
+    perf_update_total: Duration,
+    perf_update_max: Duration,
+    perf_render_total: Duration,
+    perf_render_max: Duration,
+    /// Last cursor grab/visibility state applied to the window. Cursor policy changes
+    /// only when screens open/close; reapplying it every redraw sends compositor work
+    /// through the hot mouse-look path.
+    cursor_policy: Option<CursorPolicy>,
 }
 
 impl NativeHost {
@@ -88,8 +97,32 @@ impl NativeHost {
             perf_since: Instant::now(),
             perf_updates: 0,
             perf_redraws: 0,
+            perf_renders: 0,
+            perf_update_total: Duration::ZERO,
+            perf_update_max: Duration::ZERO,
+            perf_render_total: Duration::ZERO,
+            perf_render_max: Duration::ZERO,
+            cursor_policy: None,
         }
     }
+}
+
+fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, cursor: CursorPolicy) {
+    if *applied == Some(cursor) {
+        return;
+    }
+    if applied.is_none_or(|p| p.grabbed != cursor.grabbed) {
+        let grab = if cursor.grabbed {
+            CursorGrabMode::Confined
+        } else {
+            CursorGrabMode::None
+        };
+        let _ = window.set_cursor_grab(grab);
+    }
+    if applied.is_none_or(|p| p.visible != cursor.visible) {
+        window.set_cursor_visible(cursor.visible);
+    }
+    *applied = Some(cursor);
 }
 
 impl ApplicationHandler for NativeHost {
@@ -111,11 +144,14 @@ impl ApplicationHandler for NativeHost {
         );
         let app = App::new(cam, &self.world_name, self.seed, self.render_dist);
 
-        let _ = window.set_cursor_grab(CursorGrabMode::Confined);
-        window.set_cursor_visible(false);
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.app = Some(app);
+        apply_cursor_policy(
+            self.window.as_ref().unwrap(),
+            &mut self.cursor_policy,
+            self.app.as_ref().unwrap().cursor_policy(),
+        );
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -190,17 +226,17 @@ impl ApplicationHandler for NativeHost {
                 _ => {}
             },
             WindowEvent::RedrawRequested => {
-                let cursor = app.cursor_policy();
-                let grab = if cursor.grabbed {
-                    CursorGrabMode::Confined
-                } else {
-                    CursorGrabMode::None
-                };
-                let _ = window.set_cursor_grab(grab);
-                window.set_cursor_visible(cursor.visible);
+                apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
                 // The host requests this only when `App::update` (or the keep-alive)
                 // asked for it; the simulation itself advances in `about_to_wait`.
+                let render_start = Instant::now();
                 app.render(renderer);
+                if self.perf_log {
+                    let dt = render_start.elapsed();
+                    self.perf_render_total += dt;
+                    self.perf_render_max = self.perf_render_max.max(dt);
+                    self.perf_renders += 1;
+                }
             }
             _ => {}
         }
@@ -238,7 +274,13 @@ impl ApplicationHandler for NativeHost {
         let frame_ready = now.saturating_duration_since(self.last_draw) >= FRAME;
         let due = now >= self.next_update || (app.wants_redraw() && frame_ready);
         if due {
+            let update_start = Instant::now();
             let need_render = app.update(renderer);
+            if self.perf_log {
+                let dt = update_start.elapsed();
+                self.perf_update_total += dt;
+                self.perf_update_max = self.perf_update_max.max(dt);
+            }
             self.perf_updates += 1;
             let keepalive = now.saturating_duration_since(self.last_draw) >= KEEPALIVE;
             if need_render || keepalive {
@@ -254,12 +296,25 @@ impl ApplicationHandler for NativeHost {
             }
         }
         if self.perf_log && now.saturating_duration_since(self.perf_since).as_secs() >= 1 {
+            let avg_update = avg_ms(self.perf_update_total, self.perf_updates);
+            let avg_render = avg_ms(self.perf_render_total, self.perf_renders);
             eprintln!(
-                "perf: {} updates/s, {} redraws/s",
-                self.perf_updates, self.perf_redraws
+                "perf: {} updates/s, {} redraws/s, {} renders/s, update avg/max {:.2}/{:.2} ms, render avg/max {:.2}/{:.2} ms",
+                self.perf_updates,
+                self.perf_redraws,
+                self.perf_renders,
+                avg_update,
+                ms(self.perf_update_max),
+                avg_render,
+                ms(self.perf_render_max),
             );
             self.perf_updates = 0;
             self.perf_redraws = 0;
+            self.perf_renders = 0;
+            self.perf_update_total = Duration::ZERO;
+            self.perf_update_max = Duration::ZERO;
+            self.perf_render_total = Duration::ZERO;
+            self.perf_render_max = Duration::ZERO;
             self.perf_since = now;
         }
         // Wake at the next scheduled update; if input is pending but frame-capped, wake
@@ -303,5 +358,17 @@ fn wheel_notches(delta: MouseScrollDelta) -> f32 {
     match delta {
         MouseScrollDelta::LineDelta(_, y) => y,
         MouseScrollDelta::PixelDelta(p) => p.y as f32 / super::PIXELS_PER_NOTCH,
+    }
+}
+
+fn ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
+
+fn avg_ms(total: Duration, count: u32) -> f64 {
+    if count == 0 {
+        0.0
+    } else {
+        ms(total) / count as f64
     }
 }

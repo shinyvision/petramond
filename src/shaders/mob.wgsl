@@ -14,14 +14,14 @@
 // by terrain. Double-sided (the pipeline disables back-face culling) so the owl's
 // flat 2D sub-cubes — legs, tail — show from both sides.
 
-// Mirror of `render::uniforms::Uniforms` (only `view_proj` is read here; the rest
-// pads the struct to the bound size). Matches block.wgsl's layout.
+// Mirror of `render::uniforms::Uniforms`. Matches block.wgsl's layout.
 struct Uniforms {
     view_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
     fog: vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    render_origin: vec4<f32>,
     water_anim: vec4<u32>,
 };
 
@@ -52,13 +52,14 @@ struct VsOut {
 @vertex
 fn vs_mob(in: VsIn) -> VsOut {
     var out: VsOut;
-    // Positions are already in world space (baked on the CPU with the pose +
-    // model transform), so only the camera matrix is applied here.
-    out.clip = u.view_proj * vec4<f32>(in.pos, 1.0);
+    // Positions are baked in world space on the CPU; subtract the current render
+    // origin so the GPU transform stays camera-local far from spawn.
+    let local_pos = in.pos - u.render_origin.xyz;
+    out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.shade = in.shade;
     out.tint = in.tint;
-    out.dist = length(u.cam_pos.xyz - in.pos);
+    out.dist = length(u.cam_pos.xyz - local_pos);
     return out;
 }
 

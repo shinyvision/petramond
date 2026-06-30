@@ -17,7 +17,6 @@ mod pipeline;
 mod renderer;
 mod resources;
 mod scene;
-mod section_cull;
 mod selection;
 mod ui;
 mod ui_text;

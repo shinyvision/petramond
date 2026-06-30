@@ -9,15 +9,119 @@
 //! mutability). Output is therefore a pure function of `(seed, cx, cz)`,
 //! independent of thread or call order.
 
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE};
+use crate::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
+use super::feature::{
+    feature_candidate_bounds, feature_region_bounds, place_features_section,
+    scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
+    vegetation, ColumnFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE, TREELINE,
+};
 use super::proto::ProtoChunk;
 use super::region::RegionCells;
 
 pub struct ChunkGenerator {
     seed: u32,
     surface_density: SurfaceDensitySystem,
+}
+
+/// Per-column data computed ONCE on the worker, then shared (via `Arc`) by every
+/// per-section job of that column. Holds the column's biome + density surface
+/// (`16×16`), plus the precomputed feature candidate region and redwood-support
+/// surfaces so each section's tree pass does no lattice work. Pure function of
+/// `(seed, cx, cz)`; `Send + Sync` (no interior mutability).
+///
+/// This is the seam between the cheap, inherently-2D part of worldgen (one heavy
+/// job) and the per-16³ terrain/feature fill (many cheap jobs), so generation can
+/// run closest to the player one section at a time — including below y=0 (room for
+/// caves) without ever building a 256-tall column.
+pub struct ColumnGen {
+    pub cx: i32,
+    pub cz: i32,
+    /// Biome id per `(x,z)` in the column's 16×16, indexed `z*16 + x`.
+    biome: Box<[u8]>,
+    /// Density top-solid surface (world Y, or `-1` for a floorless column) per
+    /// `(x,z)`, indexed `z*16 + x`.
+    surf: Box<[i32]>,
+    surf_min: i32,
+    surf_max: i32,
+    /// Surface min/max across the whole candidate window (chunk + spacing margin), so
+    /// tree gating accounts for anchors at margin origins and content reaching in from
+    /// neighbours, not just this 16×16.
+    cand_surf_min: i32,
+    cand_surf_max: i32,
+    /// Highest world Y that can hold any generated block in this column — the candidate
+    /// window's tallest surface plus the maximum tree reach. Sections whose floor is
+    /// above this are provably all-air sky, so the streamer skips generating them.
+    content_top: i32,
+    /// Feature candidate window (chunk + spacing margin): surfaces + biomes for the
+    /// tree density/spacing rolls.
+    candidates: RegionCells,
+    /// Redwood-support surface window (chunk + the larger support margin). `None` unless
+    /// the candidate window actually contains a redwood-supporting biome — the only
+    /// consumer is `redwood_trunk_is_supported`, so most columns never compute this
+    /// (otherwise-eager) larger noise window.
+    support: Option<SurfaceHeights>,
+}
+
+impl ColumnGen {
+    #[inline]
+    pub fn cx(&self) -> i32 {
+        self.cx
+    }
+    #[inline]
+    pub fn cz(&self) -> i32 {
+        self.cz
+    }
+    /// Biome id at column-local `(x,z)`.
+    #[inline]
+    pub fn biome_at(&self, x: usize, z: usize) -> u8 {
+        self.biome[z * SECTION_SIZE + x]
+    }
+    /// Density top-solid surface (world Y, or `-1`) at column-local `(x,z)`.
+    #[inline]
+    pub fn surface_y(&self, x: usize, z: usize) -> i32 {
+        self.surf[z * SECTION_SIZE + x]
+    }
+    /// Lowest / highest density surface across the column (for vertical-window sizing).
+    #[inline]
+    pub fn surf_range(&self) -> (i32, i32) {
+        (self.surf_min, self.surf_max)
+    }
+    /// Highest world Y any generated block in this column can occupy (surface + tree
+    /// reach). Sections whose floor exceeds this are all-air sky.
+    #[inline]
+    pub fn content_top(&self) -> i32 {
+        self.content_top
+    }
+
+    /// Conservative occupancy summary for a generated section that may not be
+    /// materialized yet. This is cheap enough for streaming/meshing decisions and avoids
+    /// generating deep stone just to learn that it is fully solid.
+    #[inline]
+    pub fn section_summary(&self, cy: i32) -> SectionSummary {
+        if !SectionPos::cy_in_range(cy) {
+            return SectionSummary::Unknown;
+        }
+        let y0 = cy * SECTION_SIZE as i32;
+        let y1 = y0 + SECTION_SIZE as i32 - 1;
+        if y0 > self.content_top {
+            return SectionSummary::Empty;
+        }
+        if y1 <= self.surf_min {
+            return SectionSummary::FullOpaque;
+        }
+        if y0 > self.surf_max && y1 <= SEA_LEVEL {
+            return SectionSummary::FullWater;
+        }
+        SectionSummary::Mixed
+    }
+}
+
+#[inline]
+fn ranges_overlap(a_lo: i32, a_hi: i32, b_lo: i32, b_hi: i32) -> bool {
+    a_lo <= b_hi && b_lo <= a_hi
 }
 
 impl ChunkGenerator {
@@ -83,5 +187,126 @@ impl ChunkGenerator {
         let (ox, oz) = chunk.chunk_origin_world();
         let mut field = super::feature::RuntimeFeatureField::new(&self.surface_density, ox, oz);
         super::feature::place_features_with_field(chunk, &mut field, self.seed);
+    }
+
+    // --- Cubic per-section generation -------------------------------------------
+
+    /// Compute the shared per-column data for `(cx,cz)`: biome + density surface, the
+    /// feature candidate region, and the redwood-support surfaces. This is the heavy,
+    /// inherently-2D part of worldgen; it runs once and is shared by all of the
+    /// column's [`generate_section`](Self::generate_section) jobs.
+    pub fn generate_column_gen(&self, cx: i32, cz: i32) -> ColumnGen {
+        let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
+
+        // Candidate window (chunk + spacing margin): full biome + surface. The chunk's
+        // own 16×16 biome/surface is the centre of this region, so no separate query.
+        let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
+        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
+
+        // Candidate-window surface range + whether any cell wants a redwood support
+        // check. Scanned together over the already-computed candidate cells.
+        let (mut cand_surf_min, mut cand_surf_max) = (i32::MAX, i32::MIN);
+        let mut needs_support = false;
+        for (i, &s) in candidates.surf.iter().enumerate() {
+            cand_surf_min = cand_surf_min.min(s);
+            cand_surf_max = cand_surf_max.max(s);
+            if matches!(
+                super::biome::spec(candidates.biomes[i]).trees.support,
+                super::biome::TreeSupport::RedwoodBase
+            ) {
+                needs_support = true;
+            }
+        }
+
+        // Support window (the larger redwood-support halo): surfaces only, and ONLY when
+        // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
+        // is its sole reader, so the common (redwood-free) column skips this big window.
+        let support = needs_support.then(|| {
+            let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
+            debug_assert_eq!(sw, sh);
+            let support_surf = self.surface_density.surface_heights(sx0, sz0, sw, sh);
+            SurfaceHeights::new(sx0, sz0, sw, support_surf)
+        });
+
+        let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
+        let mut surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
+        let (mut surf_min, mut surf_max) = (i32::MAX, i32::MIN);
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                let (s, b) = candidates.at(ox + x as i32, oz + z as i32);
+                let i = z * SECTION_SIZE + x;
+                biome[i] = b.id();
+                surf[i] = s;
+                surf_min = surf_min.min(s);
+                surf_max = surf_max.max(s);
+            }
+        }
+
+        ColumnGen {
+            cx,
+            cz,
+            biome,
+            surf,
+            surf_min,
+            surf_max,
+            cand_surf_min,
+            cand_surf_max,
+            content_top: cand_surf_max + MAX_TREE_REACH_ABOVE,
+            candidates,
+            support,
+        }
+    }
+
+    /// Generate one 16³ [`Section`] from its column's shared [`ColumnGen`]. Runs the
+    /// fixed stage order — terrain → underground scatter → vegetation → trees — but
+    /// each stage clips to this section, and the deep/high stages are skipped when the
+    /// section provably cannot hold their output. Byte-identical, above ground, to the
+    /// same slab of [`generate_chunk_with`]; works for any `cy` (incl. below y=0).
+    pub fn generate_section(&self, sp: SectionPos, col: &ColumnGen) -> Section {
+        debug_assert_eq!((sp.cx, sp.cz), (col.cx, col.cz));
+        let mut section = Section::new(sp.cx, sp.cy, sp.cz);
+        let (_ox, oy, _oz) = sp.origin_world();
+        let sec_lo = oy;
+        let sec_hi = oy + SECTION_SIZE as i32 - 1;
+
+        // 1. Terrain fill (always). It writes the block buffer in bulk (bypassing the
+        //    setter bookkeeping), so recount the random-tick gate NOW — before the stages
+        //    below go through `set_block_raw`, whose incremental adjust would otherwise
+        //    underflow when a feature overwrites a random-tickable skin block (e.g. a tree
+        //    trunk replacing surface grass) while the count still read zero.
+        self.surface_density
+            .fill_section(&mut section, &col.biome, &col.surf);
+        section.recompute_random_tick_count();
+        section.recompute_opaque_count();
+
+        // 2. Underground scatter: needs stone in the section AND overlap with the ore band.
+        let has_stone = sec_lo <= col.surf_max;
+        if has_stone && ranges_overlap(sec_lo, sec_hi, SCATTER_MIN_Y, SCATTER_MAX_Y) {
+            scatter::place_underground_section(&mut section, self.seed);
+        }
+
+        // 3. Ground vegetation: the bare-ground plant cell (anchor+1) can fall here only
+        //    if some land column's surface (≥ sea level) sits within reach of the section.
+        if col.surf_max >= SEA_LEVEL
+            && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
+        {
+            vegetation::place_vegetation_section(&mut section, &col.biome, &col.surf, self.seed);
+        }
+
+        // 4. Trees: a tree roots only where the surface is in (sea level, treeline] and
+        //    reaches up to MAX_TREE_REACH_ABOVE. Anchors can sit at margin origins / in
+        //    neighbours, so gate on the candidate-window surface range. Skip the section
+        //    when no anchor can reach it.
+        let anchor_lo = col.cand_surf_min.max(SEA_LEVEL + 1);
+        let anchor_hi = col.cand_surf_max.min(TREELINE);
+        if anchor_lo <= anchor_hi
+            && ranges_overlap(sec_lo, sec_hi, anchor_lo, anchor_hi + MAX_TREE_REACH_ABOVE)
+        {
+            let mut field = ColumnFeatureField::new(&col.candidates, col.support.as_ref());
+            place_features_section(&mut section, &mut field, self.seed);
+        }
+
+        section.dirty = true;
+        section
     }
 }

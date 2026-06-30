@@ -59,7 +59,7 @@ impl Game {
     /// Frame-cadence state that must be sampled before [`Game::tick`] drains mesh work.
     pub(crate) fn client_frame_before_tick(&self) -> ClientPreTickFrame {
         ClientPreTickFrame {
-            mesh_pending: self.world.has_dirty_meshes(),
+            mesh_pending: self.world.has_terrain_frame_work(),
         }
     }
 

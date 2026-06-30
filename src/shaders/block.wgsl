@@ -6,6 +6,7 @@ struct Uniforms {
     fog:       vec4<f32>, // (start, end, time, underwater)
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    render_origin: vec4<f32>,
     // Animated-water flipbook: (still_base_tile, flow_base_tile, frame_count, _).
     water_anim: vec4<u32>,
 };
@@ -85,7 +86,8 @@ fn corner_local(corner: u32) -> vec2<f32> {
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
-    out.clip = u.view_proj * vec4<f32>(in.pos, 1.0);
+    let local_pos = in.pos - u.render_origin.xyz;
+    out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
 
     let tile = in.packed & 0xFFu;
     let corner = (in.packed >> 8u) & 0x3u;
@@ -168,7 +170,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA));
     out.light = max(FINAL_MIN, shades[shade_idx] * ao_lut[ao] * sky_term);
 
-    out.dist = length(u.cam_pos.xyz - in.pos);
+    out.dist = length(u.cam_pos.xyz - local_pos);
     out.tint = in.tint;
     out.world_pos = in.pos;
     return out;

@@ -1,369 +1,726 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::block::Block;
-use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use crate::chunk::{
+    section_idx, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
+};
+use crate::entity::DroppedItem;
 use crate::mathh::IVec3;
-use crate::worker::GenRequest;
+use crate::mob::SavedMob;
+use crate::section::Section;
+use crate::worker::{GenJob, GenOutput};
+use crate::worldgen::driver::ColumnGen;
 
-use super::store::{LoadTarget, World};
+use super::store::{
+    LoadTarget, World, FORWARD_LOAD_DOT_MIN, OMNI_LOAD_RADIUS, VERTICAL_LOAD_RADIUS,
+};
 
-const CHUNK_LAYER: usize = CHUNK_SX * CHUNK_SZ;
+// Used only by the column-era test/fixture helper `split_generated_column`.
+#[cfg(test)]
+use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+#[cfg(test)]
+use crate::column::Column;
 
-#[inline]
-fn block_index(x: usize, y: usize, z: usize) -> usize {
-    y * CHUNK_LAYER + z * CHUNK_SX + x
-}
+const SURFACE_WINDOW_BELOW: i32 = 2;
+const SURFACE_WINDOW_ABOVE: i32 = 1;
+const HORIZONTAL_KEEP_SLACK: i32 = 2;
+/// Keep worldgen useful under fast flight by not filling the worker channel with far
+/// columns that the player may outrun before they finish.
+const MAX_PENDING_COLUMN_GEN_JOBS: usize = 48;
+const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 16;
+/// Drain enough finished worldgen to keep throughput high, but not so much that one
+/// frame installs a whole flight burst and starves rendering.
+const MAX_GEN_DRAIN_PER_POLL: usize = 128;
+
+/// A saved section read back from disk, awaiting overlay over its generated column:
+/// the decoded `Section` plus the item entities and mobs that rode in its record.
+pub(super) type LoadedOverlay = (Section, Vec<DroppedItem>, Vec<SavedMob>);
 
 impl World {
-    /// Update loaded chunk set around camera (in chunk coords).
-    ///
-    /// Expensive request and unload scans are gated to camera chunk-center (or
-    /// render-distance) changes. Call `poll` every frame to keep ingesting worker
-    /// results.
-    pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_z: i32) {
-        let target = LoadTarget::new(cam_chunk_x, cam_chunk_z, self.render_dist);
-        if self.last_load_target == Some(target) {
-            return;
-        }
-        self.last_load_target = Some(target);
-
-        self.request_missing_chunks(target.center, target.render_dist);
-        self.unload_far_chunks(target.center, target.render_dist);
+    /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
+    /// cam_chunk_z)`. The world streams a flattened cylinder: a Euclidean horizontal disc
+    /// of columns, each loaded only across a vertical window of sections around the player
+    /// (see [`VERTICAL_LOAD_RADIUS`]). Generation is per 16³ section, prioritised by 3D
+    /// distance — "worldgen closest to the player" — so the deep underground / high sky a
+    /// far column doesn't need is never generated until the player approaches it (room for
+    /// caves below y=0). Scans are gated to player-section / render-distance changes; call
+    /// `poll` every frame to keep ingesting worker results.
+    pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_y: i32, cam_chunk_z: i32) {
+        let target = LoadTarget::new(cam_chunk_x, cam_chunk_y, cam_chunk_z, self.render_dist);
+        self.update_load_target(target);
     }
 
-    fn request_missing_chunks(&mut self, center: ChunkPos, r: i32) {
-        // Gather the missing chunks in the radius (Euclidean approximation via
-        // squared), then request them NEAREST-FIRST so terrain around the player
-        // streams in before the edges. The gen/load pools and the light pool all
-        // pull jobs in submission order, so ordering the submissions orders the
-        // whole load pipeline; the mesh queue then drains nearest-first too.
-        let mut missing: Vec<(i32, ChunkPos)> = Vec::new();
-        for dz in -r..=r {
-            for dx in -r..=r {
-                let d2 = dx * dx + dz * dz;
-                if d2 > r * r {
-                    continue;
+    /// Camera-facing streaming: an omnidirectional safety ring around the player plus a
+    /// broad forward outer sector. This is the live game path; the full-disc
+    /// `update_load` remains for tools/tests that need deterministic whole-area loads.
+    pub fn update_load_facing(
+        &mut self,
+        cam_chunk_x: i32,
+        cam_chunk_y: i32,
+        cam_chunk_z: i32,
+        forward_x: f32,
+        forward_z: f32,
+    ) {
+        let target = LoadTarget::new_facing(
+            cam_chunk_x,
+            cam_chunk_y,
+            cam_chunk_z,
+            self.render_dist,
+            forward_x,
+            forward_z,
+        );
+        self.update_load_target(target);
+    }
+
+    fn update_load_target(&mut self, target: LoadTarget) {
+        if self.last_load_target == Some(target) {
+            self.request_missing_columns(target);
+            return;
+        }
+        let prev = self.last_load_target;
+        self.last_load_target = Some(target);
+        let vertical_moved = prev.is_none_or(|p| p.center_cy != target.center_cy);
+        let horizontal_keep_changed =
+            prev.is_none_or(|p| p.center != target.center || p.render_dist != target.render_dist);
+
+        self.prune_stale_column_requests(target);
+        self.request_missing_columns(target);
+        // `request_wanted_sections` re-scans EVERY loaded column's whole vertical window.
+        // That full scan only changes existing wanted columns when the vertical centre
+        // moves. Horizontal/sector changes can still make an already-generated column
+        // newly wanted, so scan only that entering subset instead of every column in
+        // the new cone.
+        if vertical_moved {
+            self.request_wanted_sections(target);
+        }
+        if !vertical_moved {
+            if let Some(prev) = prev {
+                if prev.center != target.center
+                    || prev.render_dist != target.render_dist
+                    || prev.view_sector != target.view_sector
+                {
+                    self.request_newly_wanted_sections(prev, target);
                 }
-                let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
-                if self.chunks.contains_key(&pos) || self.pending.contains_key(&pos) {
-                    continue;
-                }
-                missing.push((d2, pos));
             }
         }
-        missing.sort_by_key(|(d2, _)| *d2);
-        for (_, pos) in missing {
-            // Prefer a saved (player-modified) chunk over regenerating it.
-            if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
-                if let Some(save) = self.save.as_ref() {
-                    save.request_load(pos);
-                }
-            } else {
-                self.worker.submit(GenRequest {
-                    cx: pos.cx,
-                    cz: pos.cz,
-                    seed: self.seed,
-                });
+        if horizontal_keep_changed || vertical_moved {
+            self.unload_far(target, vertical_moved);
+        }
+    }
+
+    /// The vertical section-`cy` window around the player, clamped to the world range.
+    /// `slack` widens it (used by unload for hysteresis so a section doesn't thrash on
+    /// the boundary).
+    fn vertical_window(center_cy: i32, slack: i32) -> std::ops::RangeInclusive<i32> {
+        let center_cy = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
+        let r = VERTICAL_LOAD_RADIUS + slack;
+        (center_cy - r).max(SECTION_MIN_CY)..=(center_cy + r).min(SECTION_MAX_CY)
+    }
+
+    /// A surface/content retention band for a generated column. This is intentionally
+    /// independent from the player's current section: spectator flight far above the
+    /// world should not evict the terrain stack underneath a still-visible column.
+    fn surface_window_for_column(col: &ColumnGen, slack: i32) -> std::ops::RangeInclusive<i32> {
+        let (surf_min, _) = col.surf_range();
+        let bottom_y = surf_min.max(SEA_LEVEL);
+        let top_y = col.content_top().max(SEA_LEVEL);
+        let lo = bottom_y.div_euclid(SECTION_SIZE as i32) - SURFACE_WINDOW_BELOW - slack;
+        let hi = top_y.div_euclid(SECTION_SIZE as i32) + SURFACE_WINDOW_ABOVE + slack;
+        lo.max(SECTION_MIN_CY)..=hi.min(SECTION_MAX_CY)
+    }
+
+    /// Player-centred vertical window plus the column's surface/content band, sorted
+    /// nearest to the player's current section first. Duplicates are removed in-place.
+    fn wanted_section_cys(col: &ColumnGen, center_cy: i32, slack: i32) -> Vec<i32> {
+        let center = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
+        let mut out: Vec<i32> = Self::vertical_window(center_cy, slack).collect();
+        for cy in Self::surface_window_for_column(col, slack) {
+            if !out.contains(&cy) {
+                out.push(cy);
             }
+        }
+        out.sort_unstable_by_key(|&cy| ((cy - center).abs(), cy));
+        out
+    }
+
+    fn wanted_section_cys_for_column(
+        &self,
+        pos: ChunkPos,
+        col: &ColumnGen,
+        center_cy: i32,
+        slack: i32,
+    ) -> Vec<i32> {
+        let center = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
+        let mut out = Self::wanted_section_cys(col, center_cy, slack);
+        if let Some(save) = self.save.as_ref() {
+            for sp in save.manifest_sections_in_column(pos) {
+                if !out.contains(&sp.cy) {
+                    out.push(sp.cy);
+                }
+            }
+        }
+        out.sort_unstable_by_key(|&cy| ((cy - center).abs(), cy));
+        out
+    }
+
+    fn column_shape_key(target: LoadTarget, pos: ChunkPos) -> (i32, i32, i32) {
+        (
+            pos.cx - target.center.cx,
+            pos.cz - target.center.cz,
+            target.render_dist.max(0),
+        )
+    }
+
+    fn column_in_shape(target: LoadTarget, pos: ChunkPos, slack: i32, dot_min: f32) -> bool {
+        let (dx, dz, r) = Self::column_shape_key(target, pos);
+        let r = r + slack;
+        let d2 = dx * dx + dz * dz;
+        if d2 > r * r {
+            return false;
+        }
+        let Some((fx, fz)) = target.view_dir() else {
+            return true;
+        };
+        let omni = (OMNI_LOAD_RADIUS + slack).min(r).max(0);
+        if d2 <= omni * omni {
+            return true;
+        }
+        let dist = (d2 as f32).sqrt();
+        dist > 0.0 && (dx as f32 * fx + dz as f32 * fz) / dist >= dot_min
+    }
+
+    fn column_wanted(target: LoadTarget, pos: ChunkPos) -> bool {
+        Self::column_in_shape(target, pos, 0, FORWARD_LOAD_DOT_MIN)
+    }
+
+    fn column_kept(target: LoadTarget, pos: ChunkPos) -> bool {
+        let (dx, dz, r) = Self::column_shape_key(target, pos);
+        let keep = r + HORIZONTAL_KEEP_SLACK;
+        dx * dx + dz * dz <= keep * keep
+    }
+
+    /// Submit the (heavy, once-per-column) `ColumnGen` job for every in-radius column we
+    /// have neither loaded nor queued, NEAREST-FIRST so the player's surroundings resolve
+    /// first. Each landed column then drives its own per-section jobs (`poll`).
+    fn request_missing_columns(&mut self, target: LoadTarget) {
+        let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
+            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.pending.len()));
+        if submit_limit == 0 {
+            return;
+        }
+        let center = target.center;
+        let r = target.render_dist;
+        let mut missing: Vec<(i64, ChunkPos)> = Vec::new();
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
+                if !Self::column_wanted(target, pos) {
+                    continue;
+                }
+                if self.column_gen.contains_key(&pos) || self.pending.contains_key(&pos) {
+                    continue;
+                }
+                missing.push((target.column_priority_key(pos), pos));
+            }
+        }
+        missing.sort_by_key(|(priority, _)| *priority);
+        for (_, pos) in missing.into_iter().take(submit_limit) {
+            self.worker.submit(GenJob::Column {
+                pos,
+                seed: self.seed,
+            });
             self.pending.insert(pos, ());
         }
     }
 
-    fn unload_far_chunks(&mut self, center: ChunkPos, r: i32) {
-        let keep = r + 2;
-        let to_drop: Vec<ChunkPos> = self
-            .chunks
+    fn prune_stale_column_requests(&mut self, target: LoadTarget) {
+        self.pending
+            .retain(|pos, _| Self::column_wanted(target, *pos));
+    }
+
+    /// Across every loaded column in the horizontal radius, submit per-section gen jobs
+    /// for the wanted-but-absent sections of the vertical window, globally NEAREST-FIRST
+    /// in 3D. Run when the player's section moves (the window shifts); newly-arrived
+    /// columns are handled directly in `poll` via [`request_sections_for_column`].
+    fn request_wanted_sections(&mut self, target: LoadTarget) {
+        self.request_wanted_sections_matching(target, |_| true);
+    }
+
+    fn request_newly_wanted_sections(&mut self, prev: LoadTarget, target: LoadTarget) {
+        self.request_wanted_sections_matching(target, |pos| !Self::column_wanted(prev, pos));
+    }
+
+    fn request_wanted_sections_matching(
+        &mut self,
+        target: LoadTarget,
+        mut include_column: impl FnMut(ChunkPos) -> bool,
+    ) {
+        let center_cy = target.center_cy;
+        let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
+        for (pos, col) in &self.column_gen {
+            if !Self::column_wanted(target, *pos) || !include_column(*pos) {
+                continue;
+            }
+            for cy in self.wanted_section_cys_for_column(*pos, col, center_cy, 0) {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                    continue;
+                }
+                if self.skip_empty_sky_section(sp, col.content_top()) {
+                    continue;
+                }
+                wanted.push((target.section_priority_key(sp), sp, col.clone()));
+            }
+        }
+        wanted.sort_by_key(|(priority, _, _)| *priority);
+        for (_, sp, col) in wanted {
+            self.submit_section_job(sp, col);
+        }
+    }
+
+    /// Submit per-section gen jobs for one freshly-loaded column's vertical window
+    /// (nearest the player's `cy` first), so a column starts filling the moment its
+    /// shared data lands without waiting for the next `update_load`.
+    fn request_sections_for_column(&mut self, pos: ChunkPos, target: LoadTarget) {
+        let Some(col) = self.column_gen.get(&pos).cloned() else {
+            return;
+        };
+        let mut wanted: Vec<(i32, SectionPos)> = Vec::new();
+        let content_top = col.content_top();
+        for cy in self.wanted_section_cys_for_column(pos, &col, target.center_cy, 0) {
+            let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                continue;
+            }
+            if self.skip_empty_sky_section(sp, content_top) {
+                continue;
+            }
+            let dcy = cy - target.center_cy;
+            wanted.push((dcy * dcy, sp));
+        }
+        wanted.sort_by_key(|(d2, _)| *d2);
+        for (_, sp) in wanted {
+            self.submit_section_job(sp, col.clone());
+        }
+    }
+
+    /// Whether `sp` can be left ungenerated: it sits entirely above its column's content
+    /// (provably all-air sky) AND the save holds no player edit there. Absent sky sections
+    /// read as air with full skylight, and building into the sky materializes the section
+    /// on write — so skipping them costs the common case nothing while still streaming any
+    /// sky structure the player saved. Halving the loaded section count this way cuts gen,
+    /// meshing, AND lighting, since each scales with the number of loaded sections.
+    fn skip_empty_sky_section(&self, sp: SectionPos, content_top: i32) -> bool {
+        (sp.cy * SECTION_SIZE as i32) > content_top
+            && !self.save.as_ref().is_some_and(|s| s.manifest_contains(sp))
+    }
+
+    /// Queue one section's gen job and, paired with it, ask the save thread for that
+    /// section's saved (player-modified) record if one exists — so the disk overlay
+    /// lands after the generated base and wins (`apply_pending_overlays`).
+    fn submit_section_job(&mut self, sp: SectionPos, col: Arc<ColumnGen>) {
+        self.worker.submit(GenJob::Section {
+            sp,
+            col,
+            seed: self.seed,
+        });
+        self.pending_sections.insert(sp);
+        if let Some(save) = self.save.as_ref() {
+            if save.manifest_contains(sp) {
+                save.request_load(sp);
+            }
+        }
+    }
+
+    /// Install one column's shared gen data: set the per-column biome + an initial
+    /// bare-ground surface heightmap (the pre-feature top non-air, authoritative for
+    /// skylight/spawn before the surface sections stream in), then keep the `Arc` for
+    /// driving per-section jobs.
+    fn install_column_gen(&mut self, pos: ChunkPos, col: Arc<ColumnGen>) {
+        {
+            let column = self.ensure_column(pos);
+            for z in 0..SECTION_SIZE {
+                for x in 0..SECTION_SIZE {
+                    column.set_biome(x, z, col.biome_at(x, z));
+                    // Land tops out at its solid surface; submerged / floorless columns at
+                    // the waterline (water fills up to sea level).
+                    column.set_surface_y(x, z, col.surface_y(x, z).max(SEA_LEVEL));
+                }
+            }
+        }
+        self.column_gen.insert(pos, col);
+    }
+
+    /// Evict everything no longer wanted: columns that left the horizontal radius (whole
+    /// column), and sections of kept columns that left the vertical window. Modified /
+    /// entity-bearing sections are harvested + persisted first (same gate as autosave).
+    fn unload_far(&mut self, target: LoadTarget, vertical_moved: bool) {
+        let vwindow = Self::vertical_window(target.center_cy, 2);
+
+        let drop_columns: Vec<ChunkPos> = self
+            .columns
             .keys()
-            .filter(|p| (p.cx - center.cx).abs() > keep || (p.cz - center.cz).abs() > keep)
-            .cloned()
+            .filter(|p| !Self::column_kept(target, **p))
+            .copied()
             .collect();
-        // Persist any player-modified chunk, and any chunk holding item entities or
-        // mobs, before it leaves memory. Unload's harvest policy DRAINS the drops and
-        // mobs into the save record: that pauses item lifetime timers (they stop being
-        // simulated) and takes the mobs out of the live set until the chunk loads again.
-        // The gate + snapshot build itself is shared with the autosave flush
-        // (`snapshot_chunk_for_save`).
+        let drop_sections: Vec<SectionPos> = if vertical_moved {
+            self.sections
+                .keys()
+                .filter(|sp| {
+                    let cp = sp.chunk_pos();
+                    let surface_kept = self.column_gen.get(&cp).is_some_and(|col| {
+                        Self::surface_window_for_column(col, 2).contains(&sp.cy)
+                    });
+                    Self::column_kept(target, cp) && !vwindow.contains(&sp.cy) && !surface_kept
+                })
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Persist (harvesting entities into the record) before anything leaves memory.
         if self.save.is_some() {
             let mut snaps = Vec::new();
-            for &pos in &to_drop {
-                let entities = self.dropped_items.take_items_in_chunk(pos);
-                let mobs = self.mobs.take_in_chunk(pos);
-                let record_holds_entities = self
-                    .save
-                    .as_ref()
-                    .is_some_and(|s| s.record_holds_entities(pos));
-                if let Some(snap) =
-                    self.snapshot_chunk_for_save(pos, entities, mobs, record_holds_entities)
-                {
+            for &cpos in &drop_columns {
+                for cy in Self::column_section_range() {
+                    if let Some(snap) =
+                        self.harvest_section_snapshot(SectionPos::new(cpos.cx, cy, cpos.cz))
+                    {
+                        snaps.push(snap);
+                    }
+                }
+            }
+            for &sp in &drop_sections {
+                if let Some(snap) = self.harvest_section_snapshot(sp) {
                     snaps.push(snap);
                 }
             }
             if let Some(save) = self.save.as_mut() {
-                save.save_chunks(snaps);
+                save.save_sections(snaps);
             }
         }
-        // Post-action: evict each chunk now that its state is on the save queue.
-        for pos in to_drop {
-            self.remove_chunk(pos);
+
+        for pos in drop_columns {
+            self.remove_column(pos);
+            self.drop_overlays_for_column(pos);
         }
+        for sp in drop_sections {
+            self.remove_section(sp);
+            self.pending_overlays.remove(&sp);
+            self.pending_sections.remove(&sp);
+        }
+    }
+
+    /// Drop any buffered disk overlays for a column that is no longer wanted, so a
+    /// section whose column was evicted before its overlay could land doesn't linger.
+    fn drop_overlays_for_column(&mut self, pos: ChunkPos) {
+        self.pending_overlays.retain(|sp, _| sp.chunk_pos() != pos);
     }
 
     fn within_current_keep_radius(&self, pos: ChunkPos) -> bool {
         let Some(target) = self.last_load_target else {
             return true;
         };
-        let keep = target.render_dist + 2;
-        (pos.cx - target.center.cx).abs() <= keep && (pos.cz - target.center.cz).abs() <= keep
+        Self::column_kept(target, pos)
     }
 
-    /// Poll worker for finished chunks and ingest.
-    /// Returns number of chunks ingested.
+    /// Poll the worker and the save thread, then ingest: install each landed column's
+    /// shared data (and kick off its per-section jobs), install generated sections,
+    /// overlay any player-modified sections read from disk, and queue the affected
+    /// sections for heightmap refresh + light + mesh. Returns the number of columns whose
+    /// shared data was installed this call.
     pub fn poll(&mut self) -> usize {
-        let mut fresh: Vec<(ChunkPos, Chunk)> = Vec::new();
-        while let Some(res) = self.worker.try_recv() {
-            let pos = ChunkPos::new(res.cx, res.cz);
-            self.pending.remove(&pos);
-            if !self.within_current_keep_radius(pos) {
-                continue;
-            }
-            fresh.push((pos, res.chunk));
-        }
-        // Drain chunks read back from disk. A missing/corrupt record falls back
-        // to generation so the player still sees terrain. Item entities stored in
-        // the record rejoin the active set (their paused timers resume).
-        while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
-            let pos = loaded.pos;
-            self.pending.remove(&pos);
-            if !self.within_current_keep_radius(pos) {
-                continue;
-            }
-            match loaded.chunk {
-                Some(chunk) => {
-                    // The record carried drops or mobs: remember that, so a later
-                    // flush that finds this chunk free of them rewrites the record
-                    // instead of leaving stale entities to resurrect (cross-session
-                    // dupe). Mobs rejoin the live set; drops resume their lifetimes.
-                    if !loaded.entities.is_empty() || !loaded.mobs.is_empty() {
-                        if let Some(save) = self.save.as_mut() {
-                            save.note_record_holds_entities(pos);
-                        }
-                    }
-                    self.dropped_items.extend(loaded.entities);
-                    self.mobs.restore(loaded.mobs);
-                    fresh.push((pos, chunk));
-                }
-                None => {
-                    self.worker.submit(GenRequest {
-                        cx: pos.cx,
-                        cz: pos.cz,
-                        seed: self.seed,
-                    });
-                    self.pending.insert(pos, ());
-                }
-            }
-        }
-        if fresh.is_empty() {
-            return 0;
-        }
+        let target = self
+            .last_load_target
+            .unwrap_or_else(|| LoadTarget::new(0, 0, 0, self.render_dist));
+        let mut new_columns = 0usize;
+        let mut new_column_positions: Vec<ChunkPos> = Vec::new();
+        let mut ingested: Vec<SectionPos> = Vec::new();
 
-        let n = fresh.len();
-        let mut ingested: Vec<ChunkPos> = Vec::with_capacity(n);
-        for (pos, chunk) in fresh {
-            self.chunks.insert(pos, chunk);
-            self.invalidate_section_visibility(pos);
-            self.queue_dirty_mesh(pos);
-            ingested.push(pos);
-        }
-
-        // Mark the surrounding 3x3 dirty so neighbors re-light and re-mesh
-        // against the new terrain and border flood.
-        for pos in &ingested {
-            self.mark_light_dirty_neighborhood(*pos, true);
-            self.mark_dirty_neighborhood(*pos, false);
-        }
-        self.queue_post_generation_block_updates(&ingested);
-        n
-    }
-
-    /// Queue block updates for reactive generated blocks whose final loaded
-    /// neighbourhood already says they need work. This runs after a batch is
-    /// inserted so same-batch chunk borders are visible.
-    ///
-    /// These post the raw [`queue_block_update`](World::queue_block_update) rather
-    /// than [`notify_block_and_neighbors`](World::notify_block_and_neighbors) — they
-    /// only *kick* already-placed generated water into flowing, changing no block,
-    /// and the relight that the announce would carry was already scheduled for the
-    /// whole batch at ingest (the `mark_light_dirty_neighborhood` loop in `poll`).
-    /// So they skip the per-update relight instead of redundantly re-dirtying every
-    /// ingested chunk's 3×3.
-    fn queue_post_generation_block_updates(&mut self, ingested: &[ChunkPos]) -> usize {
-        let mut updates = Vec::new();
-        let fresh: HashSet<ChunkPos> = ingested.iter().copied().collect();
-
-        for &pos in ingested {
-            self.collect_generated_water_updates(pos, &mut updates);
-            self.collect_existing_neighbor_water_updates(pos, &fresh, &mut updates);
-        }
-
-        let mut queued = 0;
-        for pos in updates {
-            if self.queue_block_update(pos) {
-                queued += 1;
-            }
-        }
-        queued
-    }
-
-    /// Generated water starts as still source water. It only needs an initial
-    /// update when the loaded neighbourhood gives it somewhere productive to go:
-    /// down into air, or horizontally into air. Air above is just a normal water
-    /// surface and does not cause flow.
-    fn collect_generated_water_updates(&self, pos: ChunkPos, out: &mut Vec<IVec3>) {
-        let Some(chunk) = self.chunks.get(&pos) else {
-            return;
-        };
-        let blocks = chunk.blocks_slice();
-        let air = Block::Air.id();
-        let water = Block::Water.id();
-        let west = self
-            .chunks
-            .get(&ChunkPos::new(pos.cx - 1, pos.cz))
-            .map(Chunk::blocks_slice);
-        let east = self
-            .chunks
-            .get(&ChunkPos::new(pos.cx + 1, pos.cz))
-            .map(Chunk::blocks_slice);
-        let north = self
-            .chunks
-            .get(&ChunkPos::new(pos.cx, pos.cz - 1))
-            .map(Chunk::blocks_slice);
-        let south = self
-            .chunks
-            .get(&ChunkPos::new(pos.cx, pos.cz + 1))
-            .map(Chunk::blocks_slice);
-        let (ox, oz) = chunk.chunk_origin_world();
-
-        for y in 0..CHUNK_SY {
-            let y_base = y * CHUNK_LAYER;
-            for z in 0..CHUNK_SZ {
-                let row = y_base + z * CHUNK_SX;
-                for x in 0..CHUNK_SX {
-                    let i = row + x;
-                    if blocks[i] != water {
+        // 1. Drain worker outputs: column data, then the sections generated from it.
+        //    Budgeted so a big burst (e.g. a vertical move that re-streams a whole disc
+        //    layer) spreads its main-thread install/mark cost over a few frames instead of
+        //    one giant spike; the rest stays buffered in the channel for next poll.
+        let mut drained = 0usize;
+        while drained < MAX_GEN_DRAIN_PER_POLL {
+            let Some(out) = self.worker.try_recv() else {
+                break;
+            };
+            drained += 1;
+            match out {
+                GenOutput::Column { pos, col } => {
+                    let was_pending = self.pending.remove(&pos).is_some();
+                    if !was_pending {
                         continue;
                     }
+                    if !self.within_current_keep_radius(pos) {
+                        continue;
+                    }
+                    self.install_column_gen(pos, col);
+                    new_columns += 1;
+                    new_column_positions.push(pos);
+                }
+                GenOutput::Section { sp, section } => {
+                    if !self.pending_sections.remove(&sp) {
+                        continue;
+                    }
+                    if !self.within_current_keep_radius(sp.chunk_pos())
+                        || !self.column_gen.contains_key(&sp.chunk_pos())
+                    {
+                        continue;
+                    }
+                    self.sections.insert(sp, Arc::new(section));
+                    ingested.push(sp);
+                }
+            }
+        }
 
-                    let needs_update = (y > 0 && blocks[i - CHUNK_LAYER] == air)
-                        || if x > 0 {
-                            blocks[i - 1] == air
-                        } else {
-                            west.is_some_and(|b| b[block_index(CHUNK_SX - 1, y, z)] == air)
-                        }
-                        || if x + 1 < CHUNK_SX {
-                            blocks[i + 1] == air
-                        } else {
-                            east.is_some_and(|b| b[block_index(0, y, z)] == air)
-                        }
-                        || if z > 0 {
-                            blocks[i - CHUNK_SX] == air
-                        } else {
-                            north.is_some_and(|b| b[block_index(x, y, CHUNK_SZ - 1)] == air)
-                        }
-                        || if z + 1 < CHUNK_SZ {
-                            blocks[i + CHUNK_SX] == air
-                        } else {
-                            south.is_some_and(|b| b[block_index(x, y, 0)] == air)
-                        };
+        // 2. Newly-installed columns: submit their vertical window's section jobs now.
+        for pos in new_column_positions {
+            self.request_sections_for_column(pos, target);
+        }
 
-                    if needs_update {
-                        out.push(IVec3::new(ox + x as i32, y as i32, oz + z as i32));
+        // 3. Saved sections read back from disk. Buffer them until their generated section
+        //    has landed (disk usually beats noise-gen), then overlay below so the saved
+        //    blocks win over the generated base.
+        while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
+            let sp = loaded.pos;
+            if !self.within_current_keep_radius(sp.chunk_pos()) {
+                continue;
+            }
+            let Some(section) = loaded.section else {
+                continue; // missing/corrupt record: generation stands for this section.
+            };
+            self.pending_overlays
+                .insert(sp, (section, loaded.entities, loaded.mobs));
+        }
+
+        // 4. Overlay any buffered saved sections whose generated section is now installed.
+        let overlaid = self.apply_pending_overlays();
+        for sp in &overlaid {
+            if !ingested.contains(sp) {
+                ingested.push(*sp);
+            }
+        }
+
+        if ingested.is_empty() {
+            self.request_missing_columns(target);
+            return new_columns;
+        }
+
+        // 5. Refresh each touched column's heightmap now that more sections exist.
+        let mut touched: Vec<ChunkPos> = Vec::new();
+        for sp in &ingested {
+            let cp = sp.chunk_pos();
+            if !touched.contains(&cp) {
+                touched.push(cp);
+            }
+        }
+        for cp in touched {
+            self.recompute_column_heightmap(cp);
+        }
+
+        // 6. Light + remesh the affected sections and their neighbours. Each ingested
+        //    section dirties its whole 3×3×3 (border face culling + light sampling), but
+        //    those neighbourhoods overlap massively for a contiguous batch — so collect the
+        //    UNIQUE affected set once and mark each section a single time, instead of
+        //    O(54 × ingested) redundant marks.
+        let mut affected: Vec<SectionPos> = Vec::new();
+        let mut seen: HashSet<SectionPos> = HashSet::new();
+        for sp in &ingested {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let p = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
+                        if seen.insert(p) {
+                            affected.push(p);
+                        }
                     }
                 }
             }
+        }
+        for &sp in &affected {
+            // A fully-enclosed opaque section has no visible faces and needs no light, so
+            // settle it immediately instead of queuing work. This also drops a stale border
+            // mesh from when the section was previously at the loaded edge.
+            if self.clear_mesh_if_section_produces_no_mesh(sp) {
+                continue;
+            }
+            self.mark_light_dirty_pos(sp);
+            self.queue_dirty_mesh(sp);
+        }
+
+        // 7. Kick generated/overlaid water that now has somewhere to flow.
+        self.queue_loaded_section_water_updates(&ingested);
+        self.request_missing_columns(target);
+        new_columns
+    }
+
+    /// Overlay every buffered saved section whose generated section is present: replace
+    /// it with the saved blocks and restore its drops/mobs. Heightmap refresh is left to
+    /// the caller (`poll` recomputes every touched column once). Returns the overlaid
+    /// section positions.
+    fn apply_pending_overlays(&mut self) -> Vec<SectionPos> {
+        let ready: Vec<SectionPos> = self
+            .pending_overlays
+            .keys()
+            .copied()
+            .filter(|sp| self.sections.contains_key(sp))
+            .collect();
+        for sp in &ready {
+            let (section, entities, mobs) = self.pending_overlays.remove(sp).unwrap();
+            // The record carried drops or mobs: remember that, so a later flush that finds
+            // the section free of them rewrites the record instead of leaving stale
+            // entities to resurrect (cross-session dupe).
+            if !entities.is_empty() || !mobs.is_empty() {
+                if let Some(save) = self.save.as_mut() {
+                    save.note_record_holds_entities(*sp);
+                }
+            }
+            self.sections.insert(*sp, Arc::new(section));
+            self.dropped_items.extend(entities);
+            self.mobs.restore(mobs);
+        }
+        ready
+    }
+
+    /// Kick generated/overlaid source water into flowing once its loaded neighbourhood
+    /// gives it somewhere to go: down into air, or sideways into air. Reads neighbours by
+    /// world coordinate (so it crosses section and column seams) and only flows into a
+    /// neighbour that is actually loaded, so water never spills into a not-yet-streamed
+    /// void.
+    fn queue_loaded_section_water_updates(&mut self, ingested: &[SectionPos]) {
+        let air = Block::Air.id();
+        let water = Block::Water.id();
+        let mut updates: Vec<IVec3> = Vec::new();
+        for sp in ingested {
+            let Some(section) = self.sections.get(sp) else {
+                continue;
+            };
+            // Streamed water only needs a flow kick where it borders air: a section must
+            // hold BOTH water and air for any cell to flow. This skips the two bulk cases
+            // that made this a multi-ms poll spike over ocean — fully-submerged water
+            // sections (no air) and water-free sections (stone/air/land). Calm open ocean
+            // settles section-aligned at sea level (all-water below, all-air above), so it
+            // is skipped entirely; rivers/shores/waterfalls are mixed and still kicked.
+            if !section.has_water() || !section.has_air() {
+                continue;
+            }
+            let blocks = section.blocks_slice();
+            let (ox, oy, oz) = sp.origin_world();
+            for ly in 0..SECTION_SIZE {
+                for lz in 0..SECTION_SIZE {
+                    for lx in 0..SECTION_SIZE {
+                        if blocks[section_idx(lx, ly, lz)] != water {
+                            continue;
+                        }
+                        let wx = ox + lx as i32;
+                        let wy = oy + ly as i32;
+                        let wz = oz + lz as i32;
+                        // Down + the four horizontals (air above is a normal surface and
+                        // does not start flow).
+                        let neighbors = [
+                            (wx, wy - 1, wz),
+                            (wx - 1, wy, wz),
+                            (wx + 1, wy, wz),
+                            (wx, wy, wz - 1),
+                            (wx, wy, wz + 1),
+                        ];
+                        if neighbors.iter().any(|&(nx, ny, nz)| {
+                            self.section_loaded_at(nx, ny, nz)
+                                && self.chunk_block(nx, ny, nz) == air
+                        }) {
+                            updates.push(IVec3::new(wx, wy, wz));
+                        }
+                    }
+                }
+            }
+        }
+        for pos in updates {
+            self.queue_block_update(pos);
+        }
+    }
+}
+
+/// Split a whole-column [`Chunk`] (a 0..256 `generate_chunk` output, or a hand-built
+/// fixture) into cubic [`Section`]s plus its [`Column`] data, adding solid-stone
+/// sections for the range below y=0. All-air sections are skipped (absent reads as
+/// air). TEST/FIXTURE helper only: the live streamer generates per section
+/// (`ChunkGenerator::generate_section`), never via a 256-tall intermediate. Retained so
+/// the many column-era test fixtures (`insert_chunk_for_test`) keep working.
+#[cfg(test)]
+pub(super) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
+    let cx = chunk.cx;
+    let cz = chunk.cz;
+    let mut column = Column::new(cx, cz);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            column.set_biome(x, z, chunk.biome_at(x, z));
+            column.set_surface_y(x, z, chunk.surface_y(x, z));
         }
     }
 
-    /// A chunk can arrive beside older source water that previously had no loaded
-    /// target to flow into. Scan only the four shared border planes and wake that
-    /// older water when the new chunk exposes air.
-    fn collect_existing_neighbor_water_updates(
-        &self,
-        pos: ChunkPos,
-        fresh: &HashSet<ChunkPos>,
-        out: &mut Vec<IVec3>,
-    ) {
-        let Some(chunk) = self.chunks.get(&pos) else {
-            return;
-        };
-        let blocks = chunk.blocks_slice();
-        let air = Block::Air.id();
-        let water = Block::Water.id();
-        let (ox, oz) = chunk.chunk_origin_world();
+    let mut out: Vec<(i32, Section)> = Vec::new();
 
-        let west_pos = ChunkPos::new(pos.cx - 1, pos.cz);
-        if !fresh.contains(&west_pos) {
-            if let Some(neighbor) = self.chunks.get(&west_pos) {
-                let nblocks = neighbor.blocks_slice();
-                let wx = ox - 1;
-                for y in 0..CHUNK_SY {
-                    for z in 0..CHUNK_SZ {
-                        if blocks[block_index(0, y, z)] == air
-                            && nblocks[block_index(CHUNK_SX - 1, y, z)] == water
-                        {
-                            out.push(IVec3::new(wx, y as i32, oz + z as i32));
-                        }
-                    }
-                }
-            }
-        }
-
-        let east_pos = ChunkPos::new(pos.cx + 1, pos.cz);
-        if !fresh.contains(&east_pos) {
-            if let Some(neighbor) = self.chunks.get(&east_pos) {
-                let nblocks = neighbor.blocks_slice();
-                let wx = ox + CHUNK_SX as i32;
-                for y in 0..CHUNK_SY {
-                    for z in 0..CHUNK_SZ {
-                        if blocks[block_index(CHUNK_SX - 1, y, z)] == air
-                            && nblocks[block_index(0, y, z)] == water
-                        {
-                            out.push(IVec3::new(wx, y as i32, oz + z as i32));
-                        }
-                    }
-                }
-            }
-        }
-
-        let north_pos = ChunkPos::new(pos.cx, pos.cz - 1);
-        if !fresh.contains(&north_pos) {
-            if let Some(neighbor) = self.chunks.get(&north_pos) {
-                let nblocks = neighbor.blocks_slice();
-                let wz = oz - 1;
-                for y in 0..CHUNK_SY {
+    // Surface column: the generator's 0..256 output → sections cy 0..15.
+    let surface_sections = (CHUNK_SY / SECTION_SIZE) as i32;
+    for cy in 0..surface_sections {
+        let mut section = Section::new(cx, cy, cz);
+        let mut any = false;
+        {
+            let dst = section.blocks_slice_mut();
+            for ly in 0..SECTION_SIZE {
+                let wy = cy as usize * SECTION_SIZE + ly;
+                for z in 0..CHUNK_SZ {
                     for x in 0..CHUNK_SX {
-                        if blocks[block_index(x, y, 0)] == air
-                            && nblocks[block_index(x, y, CHUNK_SZ - 1)] == water
-                        {
-                            out.push(IVec3::new(ox + x as i32, y as i32, wz));
+                        let id = chunk.block_raw(x, wy, z);
+                        if id != 0 {
+                            dst[section_idx(x, ly, z)] = id;
+                            any = true;
                         }
                     }
                 }
             }
         }
+        if !any {
+            continue; // all-air section: absent reads as air.
+        }
+        copy_generated_water(chunk, cy, &mut section);
+        section.recompute_random_tick_count();
+        section.recompute_opaque_count();
+        out.push((cy, section));
+    }
 
-        let south_pos = ChunkPos::new(pos.cx, pos.cz + 1);
-        if !fresh.contains(&south_pos) {
-            if let Some(neighbor) = self.chunks.get(&south_pos) {
-                let nblocks = neighbor.blocks_slice();
-                let wz = oz + CHUNK_SZ as i32;
-                for y in 0..CHUNK_SY {
-                    for x in 0..CHUNK_SX {
-                        if blocks[block_index(x, y, CHUNK_SZ - 1)] == air
-                            && nblocks[block_index(x, y, 0)] == water
-                        {
-                            out.push(IVec3::new(ox + x as i32, y as i32, wz));
-                        }
-                    }
+    // Expanded range below y=0: solid stone, so caves have somewhere to carve.
+    for cy in SECTION_MIN_CY..0 {
+        let mut section = Section::new(cx, cy, cz);
+        {
+            let dst = section.blocks_slice_mut();
+            for d in dst.iter_mut() {
+                *d = Block::Stone.id();
+            }
+        }
+        section.recompute_random_tick_count();
+        section.recompute_opaque_count();
+        out.push((cy, section));
+    }
+
+    (column, out)
+}
+
+/// Carry the generated column's water-flow metadata for section `cy` into `section`,
+/// so generated rivers/pools keep their source/falloff state through the split.
+#[cfg(test)]
+fn copy_generated_water(chunk: &Chunk, cy: i32, section: &mut Section) {
+    let water = Block::Water.id();
+    for ly in 0..SECTION_SIZE {
+        let wy = cy as usize * SECTION_SIZE + ly;
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                if chunk.block_raw(x, wy, z) == water {
+                    section.set_water(x, ly, z, Block::Water, chunk.water_meta(x, wy, z));
                 }
             }
         }
@@ -374,258 +731,310 @@ impl World {
 mod tests {
     use super::*;
 
-    fn flat_chunk(cx: i32, cz: i32) -> Chunk {
-        let mut chunk = Chunk::new(cx, cz);
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                chunk.set_block(x, 64, z, Block::Stone);
+    #[test]
+    fn split_keeps_surface_blocks_and_adds_stone_below() {
+        let mut chunk = Chunk::new(0, 0);
+        chunk.set_block(1, 64, 2, Block::Stone);
+        chunk.set_block(3, 70, 4, Block::Grass);
+        let (_column, sections) = split_generated_column(&chunk);
+
+        // Surface block lands in section cy 4 (y 64) at local y 0.
+        let s4 = sections.iter().find(|(cy, _)| *cy == 4).expect("cy 4");
+        assert_eq!(s4.1.block_raw(1, 0, 2), Block::Stone.id());
+        // Below-zero range is solid stone (room for caves).
+        let below = sections.iter().find(|(cy, _)| *cy == -1).expect("cy -1");
+        assert_eq!(below.1.block_raw(0, 0, 0), Block::Stone.id());
+        assert_eq!(below.1.block_raw(8, 8, 8), Block::Stone.id());
+    }
+
+    #[test]
+    fn generated_water_metadata_survives_the_split() {
+        let mut chunk = Chunk::new(0, 0);
+        chunk.set_block(5, 64, 5, Block::Stone);
+        chunk.set_water(5, 65, 5, Block::Water, 0x07);
+        let (_column, sections) = split_generated_column(&chunk);
+        let s4 = sections.iter().find(|(cy, _)| *cy == 4).expect("cy 4");
+        assert_eq!(s4.1.block_raw(5, 1, 5), Block::Water.id());
+        assert_eq!(s4.1.water_meta(5, 1, 5), 0x07, "falloff metadata carried");
+    }
+
+    #[test]
+    fn water_kick_queues_source_water_over_a_drop() {
+        // A source-water cell with air directly below (and that section loaded) must be
+        // kicked into flowing on load. Build the section directly (no set_block_world, so
+        // nothing else queues an update) — local y 1 water over local y 0 air.
+        let mut world = World::new(0, 0);
+        let mut section = Section::new(0, 4, 0);
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                section.set_block(x, 0, z, Block::Stone); // world y 64 floor
             }
         }
-        chunk
+        section.set_block(4, 0, 4, Block::Air); // carve a hole at world (4,64,4)
+        section.set_water(4, 1, 4, Block::Water, 0); // source water at world (4,65,4)
+        world.insert_section_for_test(SectionPos::new(0, 4, 0), section);
+
+        world.queue_loaded_section_water_updates(&[SectionPos::new(0, 4, 0)]);
+        // The water over the carved hole has a loaded air neighbour below, so the kick
+        // queued it: re-queuing the same cell now returns false (already pending).
+        assert!(
+            !world.queue_block_update(IVec3::new(4, 65, 4)),
+            "water over a loaded air drop is kicked into flowing"
+        );
+        // A different, un-queued cell still returns true — the kick wasn't indiscriminate.
+        assert!(world.queue_block_update(IVec3::new(0, 65, 0)));
     }
 
-    fn run_ticks(world: &mut World, n: u32) {
-        // These tests drive block updates / water flow only; no furnaces.
-        let recipes = crate::crafting::Recipes::default();
-        for _ in 0..n {
-            world.game_tick(&recipes);
+    #[test]
+    fn high_flight_still_wants_the_surface_band() {
+        let generator = crate::worldgen::driver::ChunkGenerator::new(0x51EED);
+        let col = generator.generate_column_gen(0, 0);
+        let cys = World::wanted_section_cys(&col, SECTION_MAX_CY + 100, 0);
+        let surface_cy = col
+            .surf_range()
+            .0
+            .max(SEA_LEVEL)
+            .div_euclid(SECTION_SIZE as i32);
+
+        assert!(
+            cys.contains(&SECTION_MAX_CY),
+            "high flight still wants the clamped player/top window"
+        );
+        assert!(
+            cys.contains(&surface_cy),
+            "high flight must retain/generate the visible surface band"
+        );
+    }
+
+    #[test]
+    fn facing_streaming_keeps_a_safety_ring_but_skips_far_behind() {
+        let target = LoadTarget::new_facing(0, 5, 0, 16, 1.0, 0.0);
+
+        assert!(
+            World::column_wanted(target, ChunkPos::new(10, 0)),
+            "columns ahead of the camera are wanted"
+        );
+        assert!(
+            !World::column_wanted(target, ChunkPos::new(-10, 0)),
+            "far columns behind the camera are not requested"
+        );
+        assert!(
+            World::column_wanted(target, ChunkPos::new(-OMNI_LOAD_RADIUS, 0)),
+            "the local safety ring remains omnidirectional"
+        );
+        assert!(
+            !World::column_kept(target, ChunkPos::new(-20, 0)),
+            "columns beyond circular unload hysteresis are evicted"
+        );
+    }
+
+    #[test]
+    fn facing_streaming_priority_is_near_first_with_forward_tiebreak() {
+        let target = LoadTarget::new_facing(0, 5, 0, 16, 1.0, 0.0);
+
+        assert!(
+            target.column_priority_key(ChunkPos::new(0, 2))
+                < target.column_priority_key(ChunkPos::new(16, 0)),
+            "near terrain must not lose to the far edge just because it is ahead"
+        );
+        assert!(
+            target.column_priority_key(ChunkPos::new(6, 0))
+                < target.column_priority_key(ChunkPos::new(0, 6)),
+            "outside the safety ring, same-distance work in the forward cone wins"
+        );
+    }
+
+    #[test]
+    fn stale_pending_columns_are_pruned_to_current_view_shape() {
+        let mut world = World::new(0, 16);
+        let old_front = ChunkPos::new(10, 0);
+        let safety_ring = ChunkPos::new(OMNI_LOAD_RADIUS, 0);
+        world.pending.insert(old_front, ());
+        world.pending.insert(safety_ring, ());
+
+        let target = LoadTarget::new_facing(0, 5, 0, 16, -1.0, 0.0);
+        world.prune_stale_column_requests(target);
+
+        assert!(
+            !world.pending.contains_key(&old_front),
+            "queued work outside the new forward/safety shape should be dropped"
+        );
+        assert!(
+            world.pending.contains_key(&safety_ring),
+            "the omnidirectional safety ring stays queued"
+        );
+    }
+
+    #[test]
+    fn view_turn_requests_sections_for_newly_wanted_loaded_columns() {
+        use std::sync::Arc;
+
+        let mut world = World::new(0x51EED, 8);
+        let old = LoadTarget::new_facing(0, 5, 0, 8, 1.0, 0.0);
+        let newly_front = ChunkPos::new(-8, 0);
+        assert!(
+            !World::column_wanted(old, newly_front),
+            "test setup: column starts outside the old forward sector"
+        );
+
+        let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
+        let col = Arc::new(generator.generate_column_gen(newly_front.cx, newly_front.cz));
+        world.column_gen.insert(newly_front, col);
+        world.last_load_target = Some(old);
+
+        world.update_load_facing(0, 5, 0, -1.0, 0.0);
+
+        assert!(
+            world
+                .pending_sections
+                .iter()
+                .any(|sp| sp.chunk_pos() == newly_front),
+            "a generated column that enters the view cone must request its sections"
+        );
+    }
+
+    /// The whole cubic pipeline in one go (worldgen-tests only — it runs the real gen +
+    /// save threads): a column streams in and meshes, a block edited into the open air
+    /// above the surface materializes its section, and after a flush + evict + reload the
+    /// edit comes back via the disk overlay. Generate → mesh → edit → save → reload.
+    #[cfg(feature = "worldgen-tests")]
+    #[test]
+    fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join(format!("llamacraft-cubic-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let opened = crate::save::open_at(dir.clone()).expect("open save");
+        let mut world = World::new(0x51EED, 2);
+        world.attach_save(opened.save);
+
+        // Stream the origin column: generate (worker) + ingest. The later edit lands well
+        // above the active vertical window; reload coverage comes from the save manifest.
+        world.update_load(0, 8, 0);
+        let mut spun = 0;
+        while !world.chunk_loaded(0, 0) && spun < 3000 {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+            spun += 1;
         }
-    }
+        assert!(world.chunk_loaded(0, 0), "the origin column streamed in");
 
-    fn block(world: &World, x: i32, y: i32, z: i32) -> Block {
-        Block::from_id(world.chunk_block(x, y, z))
-    }
-
-    #[test]
-    fn post_generation_updates_start_generated_water_flow() {
-        let mut world = World::new(0, 0);
-        let pos = ChunkPos::new(0, 0);
-        let mut chunk = flat_chunk(pos.cx, pos.cz);
-        chunk.set_block(8, 65, 8, Block::Water);
-        world.chunks.insert(pos, chunk);
-
-        assert_eq!(world.queue_post_generation_block_updates(&[pos]), 1);
-        run_ticks(&mut world, super::super::water::WATER_FLOW_DELAY as u32 + 2);
-
-        assert_eq!(block(&world, 9, 65, 8), Block::Water);
-    }
-
-    #[test]
-    fn post_generation_updates_existing_neighbor_water_at_new_air_border() {
-        let mut world = World::new(0, 0);
-        let west_pos = ChunkPos::new(0, 0);
-        let east_pos = ChunkPos::new(1, 0);
-        let mut west = flat_chunk(west_pos.cx, west_pos.cz);
-        west.set_block(CHUNK_SX - 1, 65, 8, Block::Water);
-
-        world.chunks.insert(west_pos, west);
-        world
-            .chunks
-            .insert(east_pos, flat_chunk(east_pos.cx, east_pos.cz));
-
-        assert_eq!(world.queue_post_generation_block_updates(&[east_pos]), 1);
-        run_ticks(&mut world, super::super::water::WATER_FLOW_DELAY as u32 + 2);
-
-        assert_eq!(block(&world, 16, 65, 8), Block::Water);
-    }
-
-    #[test]
-    fn post_generation_updates_ignore_water_with_only_air_above() {
-        let mut world = World::new(0, 0);
-        let pos = ChunkPos::new(0, 0);
-        let mut chunk = flat_chunk(pos.cx, pos.cz);
-        let p = (8, 65, 8);
-        chunk.set_block(p.0, p.1, p.2, Block::Water);
-        chunk.set_block(p.0 - 1, p.1, p.2, Block::Stone);
-        chunk.set_block(p.0 + 1, p.1, p.2, Block::Stone);
-        chunk.set_block(p.0, p.1, p.2 - 1, Block::Stone);
-        chunk.set_block(p.0, p.1, p.2 + 1, Block::Stone);
-        world.chunks.insert(pos, chunk);
-
-        assert_eq!(world.queue_post_generation_block_updates(&[pos]), 0);
-    }
-
-    #[test]
-    fn unloading_rewrites_a_chunk_whose_record_holds_a_picked_up_drop() {
-        // The reported repro: a chunk saved with a drop, the drop since picked up,
-        // must be re-saved on the next unload so the stale record can't resurrect
-        // it on reload.
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-streamtest-{}-unload-rewrite",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut opened = crate::save::open_at(dir.clone()).expect("open temp world");
-
-        let pos = ChunkPos::new(0, 0);
-        // The save already holds a drop for this chunk (as a prior unload-with-item
-        // left it); the chunk is back in memory now, drop-free and unmodified.
-        opened.save.note_record_holds_entities(pos); // mirrors the load path
-        let mut world = World::new(0, 1);
-        world.attach_save(opened.save);
-        world.chunks.insert(pos, Chunk::new(pos.cx, pos.cz));
-
-        // Stream far away so the chunk unloads.
-        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
-
-        assert!(
-            !world.save().expect("save").record_holds_entities(pos),
-            "unload must rewrite the chunk and clear its stale drop record"
-        );
-
-        drop(world); // join the save I/O thread before removing the dir
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// End-to-end repro for "chunks loaded from disk don't render geometry":
-    /// modify a chunk, unload it (which saves it), then reload it from disk through
-    /// the streamer's poll path and confirm it both builds a mesh and remeshes on a
-    /// later edit — the block data survives either way (that's why collision works).
-    #[test]
-    fn modified_chunk_reloaded_from_disk_meshes_and_remeshes() {
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-streamtest-{}-reload-mesh",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        let opened = crate::save::open_at(dir.clone()).expect("open temp world");
-        let mut world = World::new(0, 2);
-        world.attach_save(opened.save);
-        let pos = ChunkPos::new(0, 0);
-
-        // Drive the mesh budget + async light bake (+ save I/O) until `cond`.
-        fn settle(world: &mut World, cond: impl Fn(&World) -> bool) -> bool {
-            for _ in 0..1000 {
-                let _ = world.poll();
-                world.tick_mesh_budget(64);
-                if cond(world) {
-                    return true;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            false
-        }
-        let mesh_len = |w: &World, p: ChunkPos| {
-            w.iter_meshes()
-                .find(|(mp, _)| *mp == p)
-                .map(|(_, m)| m.opaque_idx.len())
-        };
-
-        // Install a chunk and edit it, so it is non-empty AND modified (persisted).
-        world.insert_chunk_for_test(pos, flat_chunk(pos.cx, pos.cz));
-        assert!(
-            world.set_block_world(8, 90, 8, Block::Stone),
-            "place marker"
-        );
-        assert!(
-            settle(&mut world, |w| mesh_len(w, pos).is_some_and(|n| n > 0)),
-            "chunk meshes before unload"
-        );
-        let before = mesh_len(&world, pos).unwrap();
-
-        // Unload far away: the modified chunk is saved + evicted.
-        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
-        assert!(
-            !world.chunk_loaded(pos.cx, pos.cz),
-            "chunk evicted on unload"
-        );
-
-        // Reload it from disk through the streamer's poll ingestion path.
-        world.save().expect("save").request_load(pos);
-        assert!(
-            settle(&mut world, |w| w.chunk_loaded(pos.cx, pos.cz)),
-            "chunk reloads from disk"
-        );
-        assert_eq!(
-            world.chunk_block(8, 90, 8),
-            Block::Stone.id(),
-            "block data restored (so collision works)"
-        );
-        assert!(
-            settle(&mut world, |w| mesh_len(w, pos).is_some_and(|n| n > 0)),
-            "REPRO: reloaded chunk must build a non-empty mesh"
-        );
-        assert_eq!(
-            mesh_len(&world, pos).unwrap(),
-            before,
-            "reloaded mesh matches the saved chunk's mesh"
-        );
-
-        // An edit on the reloaded chunk must rebuild its mesh.
-        assert!(
-            world.set_block_world(8, 90, 8, Block::Air),
-            "mine the marker"
-        );
-        assert!(
-            settle(&mut world, |w| w.chunk_block(8, 90, 8) == Block::Air.id()
-                && mesh_len(w, pos).is_some_and(|n| n < before)),
-            "REPRO: edit on the reloaded chunk must remesh (fewer faces after mining)"
-        );
-
-        drop(world);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// End-to-end mob persistence: a mob standing in a chunk is saved into that chunk's
-    /// record when it unloads (leaving the live set), and comes back — same species,
-    /// position and facing — when the chunk reloads from disk.
-    #[test]
-    fn a_mob_is_saved_on_unload_and_restored_on_reload() {
-        use crate::mathh::Vec3;
-        use crate::mob::Mob;
-
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-streamtest-{}-mob-persist",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        let opened = crate::save::open_at(dir.clone()).expect("open temp world");
-        let mut world = World::new(0, 3);
-        world.attach_save(opened.save);
-        let pos = ChunkPos::new(0, 0);
-
-        // A loaded chunk with an owl standing in it, facing a known yaw.
-        world.insert_chunk_for_test(pos, flat_chunk(pos.cx, pos.cz));
-        let feet = Vec3::new(8.5, 65.0, 8.5);
-        assert!(world.mobs_mut().spawn(Mob::Owl, feet, 1.5));
-        assert_eq!(world.mobs().len(), 1);
-
-        // Stream far away: the owl's chunk unloads, harvesting it into the save record.
-        world.unload_far_chunks(ChunkPos::new(1000, 1000), 1);
-        assert!(
-            !world.chunk_loaded(pos.cx, pos.cz),
-            "chunk evicted on unload"
-        );
-        assert_eq!(
-            world.mobs().len(),
-            0,
-            "the owl leaves the live set when its chunk unloads (it is saved, not simulated)"
-        );
-
-        // Reload the chunk from disk through the streamer's poll path: the owl returns.
-        world.save().expect("save").request_load(pos);
-        for _ in 0..1000 {
-            let _ = world.poll();
-            if world.chunk_loaded(pos.cx, pos.cz) {
+        // Mesh the loaded sections. Poll + sleep between budgets so the async light bakes
+        // the mesher waits on can finish, exactly as they do between real frames (a tight
+        // no-delay loop never lets the light pool produce a result).
+        for _ in 0..400 {
+            world.poll();
+            world.tick_mesh_budget(64);
+            if world.iter_meshes().next().is_some() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::sleep(Duration::from_millis(2));
         }
         assert!(
-            world.chunk_loaded(pos.cx, pos.cz),
-            "chunk reloads from disk"
+            world.iter_meshes().next().is_some(),
+            "at least one section meshed"
         );
-        assert_eq!(
-            world.mobs().len(),
-            1,
-            "REPRO: the saved owl returns with its chunk"
-        );
-        let owl = &world.mobs().instances()[0];
-        assert_eq!(owl.kind, Mob::Owl);
-        assert_eq!(owl.pos, feet, "restored in place");
-        assert_eq!(owl.yaw, 1.5, "facing restored");
 
-        drop(world);
+        // Edit a block into the open air well above any terrain (max surface ~171): this
+        // materializes section (0,15,0) on write.
+        let edit = IVec3::new(4, 250, 4);
+        assert!(world.set_block_world(edit.x, edit.y, edit.z, Block::Stone));
+        assert_eq!(world.chunk_block(edit.x, edit.y, edit.z), Block::Stone.id());
+
+        // Flush to disk, then wait for the save thread to drain by reading the section back
+        // through a blocking load (the channel is ordered, so this trails the write).
+        world.flush_modified_chunks();
+        let sp = SectionPos::from_world(edit.x, edit.y, edit.z).unwrap();
+        {
+            let save = world.save().expect("save attached");
+            assert!(
+                save.manifest_contains(sp),
+                "edit's section is in the manifest"
+            );
+            save.request_load(sp);
+            let mut got = None;
+            for _ in 0..1500 {
+                if let Some(l) = save.poll_loaded() {
+                    got = Some(l);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let loaded = got.expect("section read back from disk");
+            let section = loaded.section.expect("section record decodes");
+            assert_eq!(
+                section.block_raw(4, 250usize.rem_euclid(16), 4),
+                Block::Stone.id(),
+                "the edit persisted to disk"
+            );
+        }
+
+        // Evict everything, then re-stream: gen rebuilds the column and the saved section
+        // overlays the edit back on.
+        world.clear_world();
+        world.last_load_target = None;
+        world.update_load(0, 8, 0);
+        let mut spun = 0;
+        while world.chunk_block(edit.x, edit.y, edit.z) != Block::Stone.id() && spun < 3000 {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+            spun += 1;
+        }
+        assert_eq!(
+            world.chunk_block(edit.x, edit.y, edit.z),
+            Block::Stone.id(),
+            "the saved edit overlaid back on after reload"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The defining S3 behaviour: worldgen runs per section, CLOSEST TO THE PLAYER. A
+    /// player at the surface streams the surface band but NOT the deep sections below
+    /// y=0 (the cave space); descending streams those deep sections in. Proves the
+    /// vertical window genuinely bounds generation in 3D rather than batching whole
+    /// 256-tall columns.
+    #[cfg(feature = "worldgen-tests")]
+    #[test]
+    fn vertical_window_generates_near_the_player_not_the_whole_column() {
+        use std::time::{Duration, Instant};
+
+        let mut world = World::new(0xC0FFEE, 1);
+        // y=-60 is deep section cy=-4 (the would-be cave space); y=96 is the surface band.
+        let deep = (0, -60, 0);
+        let surface = (0, 96, 0);
+
+        // Player near the surface (section cy 6): stream until a surface section lands.
+        world.update_load(0, 6, 0);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !world.chunk_loaded(0, 0) && Instant::now() < deadline {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // Drain a few more polls so the whole window has a chance to stream in.
+        for _ in 0..32 {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            world.section_loaded_at(surface.0, surface.1, surface.2),
+            "a surface section streamed in around the player"
+        );
+        assert!(
+            !world.section_loaded_at(deep.0, deep.1, deep.2),
+            "the deep cave-space section is NOT generated while the player is at the surface"
+        );
+
+        // Descend to that deep section (cy -4): now it must stream in.
+        world.update_load(0, -4, 0);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !world.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            world.section_loaded_at(deep.0, deep.1, deep.2),
+            "the deep section streamed in once the player descended to it"
+        );
     }
 }

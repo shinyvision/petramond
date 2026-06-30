@@ -3,7 +3,7 @@
 //! `plan_draw_order` frustum-culls + depth-sorts the visible chunks; `encode_passes`
 //! records every pass in the SAME order with the SAME load/store ops. `render`
 //! stays the thin orchestrator (one encoder, one submit, one present). The pass
-//! helper `color_depth_pass` and the `chunk_visible` test live here too.
+//! helper `color_depth_pass` and visibility tests live here too.
 
 use super::*;
 
@@ -51,45 +51,113 @@ fn color_depth_pass<'a>(
 }
 
 impl Renderer {
-    /// Is this chunk mesh's bounding box inside the current view frustum?
+    /// Is this section mesh's bounding box inside the current view frustum?
     #[inline]
-    fn chunk_visible(&self, gm: &GpuMesh) -> bool {
-        let (ox, oz) = gm.origin;
-        let min = glam::Vec3::new(ox as f32, 0.0, oz as f32);
-        let max = glam::Vec3::new((ox + 16) as f32, CHUNK_SY as f32, (oz + 16) as f32);
-        self.frustum.aabb_visible(min, max)
+    fn section_visible(
+        section: &GpuSectionMesh,
+        frustum: Frustum,
+        render_origin: glam::Vec3,
+        cam_pos: glam::Vec3,
+    ) -> bool {
+        let (ox, oy, oz) = section.origin;
+        let min = glam::Vec3::new(ox as f32, oy as f32, oz as f32);
+        let max = glam::Vec3::new((ox + 16) as f32, (oy + 16) as f32, (oz + 16) as f32);
+        if !frustum.aabb_visible(min - render_origin, max - render_origin) {
+            return false;
+        }
+        let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
+        aabb_distance_sq(cam_pos, min, max) <= fog * fog
     }
 
     /// Frustum-cull + depth-sort the visible chunks into `order`, returning this
-    /// frame's initial [`RenderStats`] and whether any visible chunk has model
-    /// geometry (used to gate the model pass).
-    pub(super) fn plan_draw_order(&self, order: &mut Vec<(f32, ChunkPos)>) -> (RenderStats, bool) {
-        // Frustum-cull + depth-sort the visible chunks once. The opaque pass
-        // draws nearest-first so the GPU's early-Z rejects occluded fragments
-        // before the (texture + tint + fog) fragment shader runs, cutting
-        // overdraw, which is the dominant GPU cost in dense voxel terrain. The
-        // transparent pass draws farthest-first for correct back-to-front alpha.
+    /// frame's initial [`RenderStats`] and terrain-pass gates.
+    pub(super) fn plan_draw_order(
+        &mut self,
+        order: &mut Vec<VisibleSection>,
+        opaque_columns: &mut Vec<(f32, ChunkPos)>,
+        model_columns: &mut Vec<(f32, ChunkPos)>,
+    ) -> (RenderStats, bool, bool) {
+        // Cull + depth-sort the visible sections once. The opaque pass draws nearest-first
+        // so the GPU's early-Z rejects occluded fragments before the fragment shader runs;
+        // the transparent pass draws farthest-first for correct back-to-front alpha.
         let cam = self.cam_pos;
-        let section_culling_active = self.section_visibility.is_active();
+        let frustum = self.frustum;
+        let render_origin = self.render_origin;
+        let terrain_columns = &self.terrain_columns;
+        let far_leaf_lod_state = &mut self.far_leaf_lod_state;
         order.clear();
-        // Whether any VISIBLE chunk carries model geometry — folded into the draw-order
-        // walk so the model pass needs no separate scan over all loaded chunks to decide
-        // whether to run (and never opens an empty pass for off-screen model blocks).
+        opaque_columns.clear();
+        model_columns.clear();
         let mut any_model_visible = false;
-        for gm in self.chunk_meshes.values() {
-            if !self.chunk_visible(gm) {
-                continue;
+        let mut any_transparent_visible = false;
+        for (column_pos, column) in terrain_columns {
+            let first_section = order.len();
+            let mut column_dist_sq = f32::INFINITY;
+            let mut column_has_opaque = false;
+            let mut column_has_model = false;
+            let mut any_far_lod_active = false;
+            for &(sp, ref section) in &column.sections {
+                if !Self::section_visible(section, frustum, render_origin, cam) {
+                    continue;
+                }
+                let (ox, oy, oz) = section.origin;
+                let c = glam::Vec3::new(ox as f32 + 8.0, oy as f32 + 8.0, oz as f32 + 8.0);
+                let dist_sq = (cam - c).length_squared();
+                column_dist_sq = column_dist_sq.min(dist_sq);
+                column_has_opaque |= section.opaque_idx_count > 0;
+                column_has_model |= section.model_idx_count > 0;
+                any_model_visible |= section.model_idx_count > 0;
+                any_transparent_visible |= section.transparent_idx_count > 0;
+                let was_far_lod_active = far_leaf_lod_state.get(&sp).copied().unwrap_or(false);
+                let use_far_leaf_lod = far_leaf_lod_active(
+                    dist_sq,
+                    (section.origin.0, section.origin.2),
+                    section.far_opaque_idx_count > 0,
+                    was_far_lod_active,
+                );
+                if use_far_leaf_lod {
+                    far_leaf_lod_state.insert(sp, true);
+                } else {
+                    far_leaf_lod_state.remove(&sp);
+                }
+                any_far_lod_active |= use_far_leaf_lod;
+                order.push(VisibleSection {
+                    dist_sq,
+                    column_pos: *column_pos,
+                    opaque_batched: false,
+                    model_batched: false,
+                    use_far_leaf_lod,
+                    opaque_index_start: section.opaque_index_start,
+                    opaque_idx_count: section.opaque_idx_count,
+                    far_opaque_index_start: section.far_opaque_index_start,
+                    far_opaque_idx_count: section.far_opaque_idx_count,
+                    transparent_index_start: section.transparent_index_start,
+                    transparent_idx_count: section.transparent_idx_count,
+                    model_index_start: section.model_index_start,
+                    model_idx_count: section.model_idx_count,
+                });
             }
-            if section_culling_active && self.section_visibility.chunk_mask(gm.pos).is_none() {
-                continue;
+            if column_has_opaque && !any_far_lod_active && column.opaque_idx_count > 0 {
+                for item in &mut order[first_section..] {
+                    item.opaque_batched = true;
+                }
+                opaque_columns.push((column_dist_sq, *column_pos));
             }
-            any_model_visible |= gm.model_idx_count > 0;
-            let (ox, oz) = gm.origin;
-            let c = glam::Vec3::new(ox as f32 + 8.0, CHUNK_SY as f32 * 0.5, oz as f32 + 8.0);
-            order.push(((cam - c).length_squared(), gm.pos));
+            if column_has_model && column.model_idx_count > 0 {
+                for item in &mut order[first_section..] {
+                    item.model_batched = true;
+                }
+                model_columns.push((column_dist_sq, *column_pos));
+            }
         }
-        order.sort_by(|a, b| a.0.total_cmp(&b.0));
-        (RenderStats::default(), any_model_visible)
+        order.sort_by(|a, b| a.dist_sq.total_cmp(&b.dist_sq));
+        opaque_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+        model_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+        (
+            RenderStats::default(),
+            any_model_visible,
+            any_transparent_visible,
+        )
     }
 
     /// Encode every GPU render pass for this frame, in order, with byte-for-byte
@@ -99,9 +167,12 @@ impl Renderer {
         &self,
         enc: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        order: &[(f32, ChunkPos)],
+        order: &[VisibleSection],
+        opaque_columns: &[(f32, ChunkPos)],
+        model_columns: &[(f32, ChunkPos)],
         stats: &mut RenderStats,
         any_model_visible: bool,
+        any_transparent_visible: bool,
     ) {
         let cc = self.clear_color;
         // SKY PASS: full-screen background triangle. The ONLY pass that CLEARS
@@ -138,24 +209,42 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
-            for (dist_sq, pos) in order.iter() {
-                let gm = &self.chunk_meshes[pos];
+            for (_, pos) in opaque_columns {
+                let Some(col) = self.terrain_columns.get(pos) else {
+                    continue;
+                };
+                if col.opaque_idx_count == 0 {
+                    continue;
+                }
+                if let (Some(vb), Some(ib)) = (&col.opaque_vbuf, &col.opaque_ibuf) {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    stats.opaque_draws += 1;
+                    stats.opaque_indices += col.opaque_idx_count as u64;
+                    pass.draw_indexed(0..col.opaque_idx_count, 0, 0..1);
+                }
+            }
+            for item in order.iter() {
+                if item.opaque_batched {
+                    continue;
+                }
+                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                    continue;
+                };
                 // near -> far (early-Z)
-                let use_far_leaf_lod =
-                    far_leaf_lod_active(*dist_sq, gm.origin, gm.far_opaque_idx_count > 0);
-                let (vbuf, ibuf, idx_count, sections) = if use_far_leaf_lod {
+                let (vbuf, ibuf, index_start, idx_count) = if item.use_far_leaf_lod {
                     (
-                        &gm.far_opaque_vbuf,
-                        &gm.far_opaque_ibuf,
-                        gm.far_opaque_idx_count,
-                        &gm.far_opaque_sections,
+                        &col.far_opaque_vbuf,
+                        &col.far_opaque_ibuf,
+                        item.far_opaque_index_start,
+                        item.far_opaque_idx_count,
                     )
                 } else {
                     (
-                        &gm.opaque_vbuf,
-                        &gm.opaque_ibuf,
-                        gm.opaque_idx_count,
-                        &gm.opaque_sections,
+                        &col.opaque_vbuf,
+                        &col.opaque_ibuf,
+                        item.opaque_index_start,
+                        item.opaque_idx_count,
                     )
                 };
                 if idx_count == 0 {
@@ -164,23 +253,9 @@ impl Renderer {
                 if let (Some(vb), Some(ib)) = (vbuf, ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    if let Some(mask) = self.section_visibility.chunk_mask(gm.pos) {
-                        let ranges =
-                            section_draw_ranges(self.frustum, gm.origin, idx_count, sections, mask);
-                        if ranges.is_empty() {
-                            continue;
-                        }
-                        for (start, end) in ranges.iter() {
-                            stats.opaque_draws += 1;
-                            pass.draw_indexed(start..end, 0, 0..1);
-                        }
-                        stats.opaque_indices += ranges.submitted as u64;
-                        stats.section_culled_indices += (idx_count - ranges.submitted) as u64;
-                    } else {
-                        stats.opaque_draws += 1;
-                        stats.opaque_indices += idx_count as u64;
-                        pass.draw_indexed(0..idx_count, 0, 0..1);
-                    }
+                    stats.opaque_draws += 1;
+                    stats.opaque_indices += idx_count as u64;
+                    pass.draw_indexed(index_start..index_start + idx_count, 0, 0..1);
                 }
             }
         }
@@ -201,15 +276,34 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
             pass.set_pipeline(&self.model_pipe);
-            for (_, pos) in order.iter() {
-                let gm = &self.chunk_meshes[pos];
-                if gm.model_idx_count == 0 {
+            for (_, pos) in model_columns {
+                let Some(col) = self.terrain_columns.get(pos) else {
+                    continue;
+                };
+                if col.model_idx_count == 0 {
                     continue;
                 }
-                if let (Some(vb), Some(ib)) = (&gm.model_vbuf, &gm.model_ibuf) {
+                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..gm.model_idx_count, 0, 0..1);
+                    pass.draw_indexed(0..col.model_idx_count, 0, 0..1);
+                }
+            }
+            for item in order.iter() {
+                if item.model_batched || item.model_idx_count == 0 {
+                    continue;
+                }
+                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                    continue;
+                };
+                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(
+                        item.model_index_start..item.model_index_start + item.model_idx_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
             // Dropped bbmodel items (world-space, same model atlas + pipeline).
@@ -339,7 +433,7 @@ impl Renderer {
         }
         // TRANSPARENT PASS: water, far→near for correct back-to-front alpha. Loads
         // color + depth; depth test (no write) so it sorts behind solids.
-        {
+        if any_transparent_visible {
             let mut pass = color_depth_pass(
                 enc,
                 view,
@@ -351,38 +445,25 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
             pass.set_pipeline(&self.transparent_pipe);
-            for (_, pos) in order.iter().rev() {
-                let gm = &self.chunk_meshes[pos];
+            for item in order.iter().rev() {
+                if item.transparent_idx_count == 0 {
+                    continue;
+                }
+                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                    continue;
+                };
                 // far -> near (alpha order)
-                if let (Some(vb), Some(ib)) = (&gm.transparent_vbuf, &gm.transparent_ibuf) {
-                    if gm.transparent_idx_count == 0 {
-                        continue;
-                    }
+                if let (Some(vb), Some(ib)) = (&col.transparent_vbuf, &col.transparent_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    if let Some(mask) = self.section_visibility.chunk_mask(gm.pos) {
-                        let ranges = section_draw_ranges(
-                            self.frustum,
-                            gm.origin,
-                            gm.transparent_idx_count,
-                            &gm.transparent_sections,
-                            mask,
-                        );
-                        if ranges.is_empty() {
-                            continue;
-                        }
-                        for (start, end) in ranges.iter() {
-                            stats.transparent_draws += 1;
-                            pass.draw_indexed(start..end, 0, 0..1);
-                        }
-                        stats.transparent_indices += ranges.submitted as u64;
-                        stats.section_culled_indices +=
-                            (gm.transparent_idx_count - ranges.submitted) as u64;
-                    } else {
-                        stats.transparent_draws += 1;
-                        stats.transparent_indices += gm.transparent_idx_count as u64;
-                        pass.draw_indexed(0..gm.transparent_idx_count, 0, 0..1);
-                    }
+                    stats.transparent_draws += 1;
+                    stats.transparent_indices += item.transparent_idx_count as u64;
+                    pass.draw_indexed(
+                        item.transparent_index_start
+                            ..item.transparent_index_start + item.transparent_idx_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
         }

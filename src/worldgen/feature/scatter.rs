@@ -16,9 +16,10 @@
 use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SY};
 use crate::mathh::IVec3;
+use crate::section::Section;
 
 use super::super::rng::FeatureRng;
-use super::{ChunkSink, FeatureCtx};
+use super::{ChunkSink, FeatureCtx, SectionSink};
 
 /// One scatter species: a block that overwrites Stone in `count` veins per chunk,
 /// each ~`size` blocks, within a world-Y band.
@@ -78,6 +79,25 @@ pub fn place_underground(chunk: &mut Chunk, seed: u32) {
     let (ccx, ccz) = (chunk.cx, chunk.cz);
     let mut sink = ChunkSink::new(chunk);
     let mut ctx = FeatureCtx::new(&mut sink);
+    place_underground_into(&mut ctx, ccx, ccz, seed);
+}
+
+/// Cubic per-section scatter: run the SAME 3×3-column vein loop into one 16³
+/// [`Section`] through a [`SectionSink`]. Veins are keyed on the ORIGIN column
+/// (`positional(seed, salt, ncx, vein, ncz)`) exactly as the chunk path, and only
+/// overwrite Stone, so a vein straddling a section seam (horizontal OR vertical) is
+/// materialised identically from every section it touches — byte-parity with the
+/// whole-column pass for this section's slab.
+pub fn place_underground_section(section: &mut Section, seed: u32) {
+    let (ccx, ccz) = (section.cx, section.cz);
+    let mut sink = SectionSink::new(section);
+    let mut ctx = FeatureCtx::new(&mut sink);
+    place_underground_into(&mut ctx, ccx, ccz, seed);
+}
+
+/// The shared vein loop: regenerate every vein of the 3×3 column neighbourhood around
+/// `(ccx,ccz)` into `ctx`, whose sink clips to the caller's target (chunk or section).
+fn place_underground_into(ctx: &mut FeatureCtx, ccx: i32, ccz: i32, seed: u32) {
     // 3x3 neighbourhood so border-straddling veins appear from both sides.
     for dcz in -1..=1 {
         for dcx in -1..=1 {
@@ -89,12 +109,19 @@ pub fn place_underground(chunk: &mut Chunk, seed: u32) {
                     let ox = ncx * 16 + rng.next_i32(0, 15);
                     let oz = ncz * 16 + rng.next_i32(0, 15);
                     let oy = rng.next_i32(cfg.y_min, cfg.y_max);
-                    place_vein(&mut ctx, ox, oy, oz, cfg.size, cfg.block, &mut rng);
+                    place_vein(ctx, ox, oy, oz, cfg.size, cfg.block, &mut rng);
                 }
             }
         }
     }
 }
+
+/// World-Y span the scatter veins can possibly touch (the union of every config's
+/// `[y_min,y_max]` widened by the largest vein radius), so the cubic generator can
+/// skip the deep / high sections a vein can never reach. The widest config is `size`
+/// 48 → radius ≈ 3, so a ±4 pad is safe.
+pub const SCATTER_MIN_Y: i32 = 0;
+pub const SCATTER_MAX_Y: i32 = 184;
 
 /// A roughly-spherical blob of `~size` Stone cells turned into `block`, with a
 /// small per-vein radius jitter so veins read irregular rather than as clean

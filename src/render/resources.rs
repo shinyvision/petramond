@@ -1,9 +1,7 @@
 use crate::atlas::decode_atlas_mips;
-use crate::chunk::{ChunkPos, SECTION_COUNT};
-use crate::mesh::{ChunkMesh, MeshIndexSection};
+use crate::chunk::SectionPos;
+use crate::mesh::{ChunkMesh, ModelVertex, Vertex};
 use crate::texture_mips::build_cutout_mips;
-
-use wgpu::util::DeviceExt;
 
 /// Upload a baked data-driven GUI panel PNG (from the `gui-builder`) as its own
 /// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size — each
@@ -134,26 +132,83 @@ pub(super) fn create_model_texture(
     (texture, view, sampler)
 }
 
-pub struct GpuMesh {
+pub struct GpuSectionMesh {
+    /// World-space minimum corner `(x, y, z)` of this section.
+    pub origin: (i32, i32, i32),
+    pub opaque_index_start: u32,
+    pub opaque_idx_count: u32,
+    pub far_opaque_index_start: u32,
+    pub far_opaque_idx_count: u32,
+    pub transparent_index_start: u32,
+    pub transparent_idx_count: u32,
+    pub model_index_start: u32,
+    pub model_idx_count: u32,
+}
+
+pub struct GpuColumnMesh {
     pub opaque_vbuf: Option<wgpu::Buffer>,
     pub opaque_ibuf: Option<wgpu::Buffer>,
     pub opaque_idx_count: u32,
-    pub opaque_sections: [MeshIndexSection; SECTION_COUNT],
     pub far_opaque_vbuf: Option<wgpu::Buffer>,
     pub far_opaque_ibuf: Option<wgpu::Buffer>,
-    pub far_opaque_idx_count: u32,
-    pub far_opaque_sections: [MeshIndexSection; SECTION_COUNT],
     pub transparent_vbuf: Option<wgpu::Buffer>,
     pub transparent_ibuf: Option<wgpu::Buffer>,
-    pub transparent_idx_count: u32,
-    pub transparent_sections: [MeshIndexSection; SECTION_COUNT],
-    /// bbmodel-block geometry (explicit-UV [`ModelVertex`], sampling the model atlas),
-    /// drawn in the model pass. `None`/`0` for the common chunk.
     pub model_vbuf: Option<wgpu::Buffer>,
     pub model_ibuf: Option<wgpu::Buffer>,
     pub model_idx_count: u32,
-    pub pos: ChunkPos,
-    pub origin: (i32, i32),
+    pub sections: Vec<(SectionPos, GpuSectionMesh)>,
+}
+
+#[derive(Default)]
+pub(super) struct ColumnUploadScratch {
+    opaque: Vec<Vertex>,
+    opaque_idx: Vec<u32>,
+    far_opaque: Vec<Vertex>,
+    far_opaque_idx: Vec<u32>,
+    transparent: Vec<Vertex>,
+    transparent_idx: Vec<u32>,
+    model: Vec<ModelVertex>,
+    model_idx: Vec<u32>,
+}
+
+impl ColumnUploadScratch {
+    fn clear(&mut self) {
+        self.opaque.clear();
+        self.opaque_idx.clear();
+        self.far_opaque.clear();
+        self.far_opaque_idx.clear();
+        self.transparent.clear();
+        self.transparent_idx.clear();
+        self.model.clear();
+        self.model_idx.clear();
+    }
+
+    fn reserve_for(&mut self, meshes: &[(SectionPos, &ChunkMesh)]) {
+        self.opaque
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.opaque.len()).sum());
+        self.opaque_idx
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.opaque_idx.len()).sum());
+        self.far_opaque
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.far_opaque.len()).sum());
+        self.far_opaque_idx.reserve(
+            meshes
+                .iter()
+                .map(|(_, mesh)| mesh.far_opaque_idx.len())
+                .sum(),
+        );
+        self.transparent
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.transparent.len()).sum());
+        self.transparent_idx.reserve(
+            meshes
+                .iter()
+                .map(|(_, mesh)| mesh.transparent_idx.len())
+                .sum(),
+        );
+        self.model
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.model.len()).sum());
+        self.model_idx
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.model_idx.len()).sum());
+    }
 }
 
 pub(super) fn create_atlas(
@@ -231,112 +286,186 @@ pub(super) fn create_depth(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Textu
     tex.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-pub(super) fn upload_mesh(device: &wgpu::Device, mesh: &ChunkMesh, pos: ChunkPos) -> GpuMesh {
-    let opaque_vbuf = if mesh.opaque.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.opaque),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        )
+/// Upload `data` into `prev`, REUSING its GPU allocation when it is large enough
+/// (`queue.write_buffer`), otherwise (re)allocating a rounded-up buffer. Empty data drops
+/// `prev` (frees it) and returns `None`.
+///
+/// Reuse is the point: a section re-meshes constantly while streaming (a freshly loaded
+/// section re-lights its neighbours, each of which remeshes), and allocating fresh GPU
+/// buffers for every one of those re-uploads — then freeing the old ones — churns the
+/// driver allocator on the render thread and stalls the frame. `write_buffer` into an
+/// existing, big-enough buffer avoids the allocation entirely; buffers only ever grow.
+fn upload_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    prev: Option<wgpu::Buffer>,
+    data: &[u8],
+    usage: wgpu::BufferUsages,
+) -> Option<wgpu::Buffer> {
+    if data.is_empty() {
+        return None;
+    }
+    if let Some(buf) = prev {
+        if buf.size() as usize >= data.len() {
+            queue.write_buffer(&buf, 0, data);
+            return Some(buf);
+        }
+    }
+    // Round the capacity up so the next slightly-larger remesh reuses this allocation
+    // rather than churning a new one. `COPY_DST` lets later frames `write_buffer` into it.
+    let cap = (data.len() as u64).next_power_of_two().max(1024);
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: cap,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buf, 0, data);
+    Some(buf)
+}
+
+fn append_indexed_layer<V: Copy>(
+    verts: &mut Vec<V>,
+    indices: &mut Vec<u32>,
+    src_verts: &[V],
+    src_indices: &[u32],
+) -> (u32, u32) {
+    let start = indices.len() as u32;
+    let base = verts.len() as u32;
+    verts.extend_from_slice(src_verts);
+    indices.extend(src_indices.iter().map(|&i| i + base));
+    (start, src_indices.len() as u32)
+}
+
+pub(super) fn upload_column_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    meshes: &[(SectionPos, &ChunkMesh)],
+    prev: Option<GpuColumnMesh>,
+    scratch: &mut ColumnUploadScratch,
+) -> GpuColumnMesh {
+    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_mv, p_mi, mut sections) = match prev {
+        Some(g) => (
+            g.opaque_vbuf,
+            g.opaque_ibuf,
+            g.far_opaque_vbuf,
+            g.far_opaque_ibuf,
+            g.transparent_vbuf,
+            g.transparent_ibuf,
+            g.model_vbuf,
+            g.model_ibuf,
+            g.sections,
+        ),
+        None => (None, None, None, None, None, None, None, None, Vec::new()),
     };
-    let opaque_ibuf = if mesh.opaque_idx.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.opaque_idx),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-        )
-    };
-    let far_opaque_vbuf = if mesh.far_opaque.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.far_opaque),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        )
-    };
-    let far_opaque_ibuf = if mesh.far_opaque_idx.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.far_opaque_idx),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-        )
-    };
-    let transparent_vbuf = if mesh.transparent.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.transparent),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        )
-    };
-    let transparent_ibuf = if mesh.transparent_idx.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.transparent_idx),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-        )
-    };
-    let model_vbuf = if mesh.model.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.model),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-        )
-    };
-    let model_ibuf = if mesh.model_idx.is_empty() {
-        None
-    } else {
-        Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&mesh.model_idx),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-        )
-    };
-    GpuMesh {
-        opaque_vbuf,
-        opaque_ibuf,
-        opaque_idx_count: mesh.opaque_idx.len() as u32,
-        opaque_sections: mesh.opaque_sections,
-        far_opaque_vbuf,
-        far_opaque_ibuf,
-        far_opaque_idx_count: mesh.far_opaque_idx.len() as u32,
-        far_opaque_sections: mesh.far_opaque_sections,
-        transparent_vbuf,
-        transparent_ibuf,
-        transparent_idx_count: mesh.transparent_idx.len() as u32,
-        transparent_sections: mesh.transparent_sections,
-        model_vbuf,
-        model_ibuf,
-        model_idx_count: mesh.model_idx.len() as u32,
-        pos,
-        origin: (pos.cx * 16, pos.cz * 16),
+
+    scratch.clear();
+    scratch.reserve_for(meshes);
+    sections.clear();
+    sections.reserve(meshes.len());
+
+    for &(sp, mesh) in meshes {
+        let (opaque_index_start, opaque_idx_count) = append_indexed_layer(
+            &mut scratch.opaque,
+            &mut scratch.opaque_idx,
+            &mesh.opaque,
+            &mesh.opaque_idx,
+        );
+        let (far_opaque_index_start, far_opaque_idx_count) = append_indexed_layer(
+            &mut scratch.far_opaque,
+            &mut scratch.far_opaque_idx,
+            &mesh.far_opaque,
+            &mesh.far_opaque_idx,
+        );
+        let (transparent_index_start, transparent_idx_count) = append_indexed_layer(
+            &mut scratch.transparent,
+            &mut scratch.transparent_idx,
+            &mesh.transparent,
+            &mesh.transparent_idx,
+        );
+        let (model_index_start, model_idx_count) = append_indexed_layer(
+            &mut scratch.model,
+            &mut scratch.model_idx,
+            &mesh.model,
+            &mesh.model_idx,
+        );
+        sections.push((
+            sp,
+            GpuSectionMesh {
+                origin: (sp.cx * 16, sp.cy * 16, sp.cz * 16),
+                opaque_index_start,
+                opaque_idx_count,
+                far_opaque_index_start,
+                far_opaque_idx_count,
+                transparent_index_start,
+                transparent_idx_count,
+                model_index_start,
+                model_idx_count,
+            },
+        ));
+    }
+
+    let vtx = wgpu::BufferUsages::VERTEX;
+    let idx = wgpu::BufferUsages::INDEX;
+    GpuColumnMesh {
+        opaque_vbuf: upload_layer(
+            device,
+            queue,
+            p_ov,
+            bytemuck::cast_slice(&scratch.opaque),
+            vtx,
+        ),
+        opaque_ibuf: upload_layer(
+            device,
+            queue,
+            p_oi,
+            bytemuck::cast_slice(&scratch.opaque_idx),
+            idx,
+        ),
+        opaque_idx_count: scratch.opaque_idx.len() as u32,
+        far_opaque_vbuf: upload_layer(
+            device,
+            queue,
+            p_fov,
+            bytemuck::cast_slice(&scratch.far_opaque),
+            vtx,
+        ),
+        far_opaque_ibuf: upload_layer(
+            device,
+            queue,
+            p_foi,
+            bytemuck::cast_slice(&scratch.far_opaque_idx),
+            idx,
+        ),
+        transparent_vbuf: upload_layer(
+            device,
+            queue,
+            p_tv,
+            bytemuck::cast_slice(&scratch.transparent),
+            vtx,
+        ),
+        transparent_ibuf: upload_layer(
+            device,
+            queue,
+            p_ti,
+            bytemuck::cast_slice(&scratch.transparent_idx),
+            idx,
+        ),
+        model_vbuf: upload_layer(
+            device,
+            queue,
+            p_mv,
+            bytemuck::cast_slice(&scratch.model),
+            vtx,
+        ),
+        model_ibuf: upload_layer(
+            device,
+            queue,
+            p_mi,
+            bytemuck::cast_slice(&scratch.model_idx),
+            idx,
+        ),
+        model_idx_count: scratch.model_idx.len() as u32,
+        sections,
     }
 }

@@ -13,7 +13,24 @@ pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
 pub const CHUNK_SY: usize = 256;
 pub const SECTION_SIZE: usize = 16;
+#[allow(dead_code)] // Used by test fixtures that assemble legacy 0..256 columns.
 pub const SECTION_COUNT: usize = CHUNK_SY / SECTION_SIZE;
+
+/// Voxels in one cubic section (16×16×16). The unit of the cubic-chunks refactor.
+pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
+
+// --- Cubic-chunk world vertical range ---------------------------------------
+// The cubic world spans `WORLD_MIN_Y..WORLD_MAX_Y`. Sea level and the surface
+// datum are unchanged (see `SEA_LEVEL`); the extra room below 0 exists so caves
+// have somewhere to carve. These are the tunable extents of the section grid.
+pub const WORLD_MIN_Y: i32 = -64;
+pub const WORLD_MAX_Y: i32 = 256;
+pub const WORLD_HEIGHT: usize = (WORLD_MAX_Y - WORLD_MIN_Y) as usize;
+/// Lowest / highest section coordinate `cy` (inclusive), and the section count in
+/// a full column. `cy` is `wy.div_euclid(16)`, so it is negative below y=0.
+pub const SECTION_MIN_CY: i32 = WORLD_MIN_Y / SECTION_SIZE as i32;
+pub const SECTION_MAX_CY: i32 = WORLD_MAX_Y / SECTION_SIZE as i32 - 1;
+pub const SECTIONS_PER_COLUMN: usize = WORLD_HEIGHT / SECTION_SIZE;
 
 // Matches the reference overworld sea level so the land/water line aligns with the
 // reference terrain (offset-0 land sits at ≈63.5, just above the waterline).
@@ -39,6 +56,24 @@ pub fn lz(z: i32) -> usize {
 pub fn idx(x: usize, y: usize, z: usize) -> usize {
     debug_assert!(x < CHUNK_SX && y < CHUNK_SY && z < CHUNK_SZ);
     (y * CHUNK_SX * CHUNK_SZ) + (z * CHUNK_SX) + x
+}
+
+/// Section-local block index for a cubic section: `x,y,z` each in `0..16`. Layout
+/// matches [`idx`] within one section (`y*256 + z*16 + x`), so the same value also
+/// serves as the `u16` block-entity key (max 4095, well inside `u16`).
+#[inline]
+pub fn section_idx(x: usize, y: usize, z: usize) -> usize {
+    debug_assert!(x < SECTION_SIZE && y < SECTION_SIZE && z < SECTION_SIZE);
+    (y * SECTION_SIZE * SECTION_SIZE) + (z * SECTION_SIZE) + x
+}
+
+/// Split a world Y into `(section cy, local y in 0..16)`, correct for negative Y.
+#[inline]
+pub fn split_y(wy: i32) -> (i32, usize) {
+    (
+        wy.div_euclid(SECTION_SIZE as i32),
+        wy.rem_euclid(SECTION_SIZE as i32) as usize,
+    )
 }
 
 /// A voxel column. Blocks stored as `Box<[u8; VOLUME]>` (256 KiB / chunk).
@@ -802,6 +837,9 @@ impl Chunk {
     }
 }
 
+/// 2D column coordinate `(cx, cz)` — the key for per-column [`crate::column::Column`]
+/// data (biome, heightmap) and region-file / entity grouping. One column is a
+/// vertical stack of [`SectionPos`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChunkPos {
     pub cx: i32,
@@ -811,5 +849,56 @@ pub struct ChunkPos {
 impl ChunkPos {
     pub fn new(cx: i32, cz: i32) -> Self {
         Self { cx, cz }
+    }
+}
+
+/// 3D section coordinate `(cx, cy, cz)` — the canonical key of the cubic world.
+/// `cy` may be negative (`cy = wy.div_euclid(16)`), spanning
+/// [`SECTION_MIN_CY`]..=[`SECTION_MAX_CY`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SectionPos {
+    pub cx: i32,
+    pub cy: i32,
+    pub cz: i32,
+}
+
+impl SectionPos {
+    pub const fn new(cx: i32, cy: i32, cz: i32) -> Self {
+        Self { cx, cy, cz }
+    }
+
+    /// The section containing world `(wx,wy,wz)`, or `None` if `wy` is outside the
+    /// world vertical range `WORLD_MIN_Y..WORLD_MAX_Y`.
+    #[inline]
+    pub fn from_world(wx: i32, wy: i32, wz: i32) -> Option<Self> {
+        if wy < WORLD_MIN_Y || wy >= WORLD_MAX_Y {
+            return None;
+        }
+        Some(Self {
+            cx: wx >> 4,
+            cy: wy.div_euclid(SECTION_SIZE as i32),
+            cz: wz >> 4,
+        })
+    }
+
+    #[inline]
+    pub fn chunk_pos(self) -> ChunkPos {
+        ChunkPos::new(self.cx, self.cz)
+    }
+
+    /// World-space minimum corner of this section.
+    #[inline]
+    pub fn origin_world(self) -> (i32, i32, i32) {
+        (
+            self.cx * SECTION_SIZE as i32,
+            self.cy * SECTION_SIZE as i32,
+            self.cz * SECTION_SIZE as i32,
+        )
+    }
+
+    /// Whether `cy` is within the world's vertical section range.
+    #[inline]
+    pub fn cy_in_range(cy: i32) -> bool {
+        (SECTION_MIN_CY..=SECTION_MAX_CY).contains(&cy)
     }
 }

@@ -11,6 +11,7 @@ mod entities;
 pub(crate) mod fragile;
 mod furnace;
 mod light_queue;
+mod mesh_pool;
 mod mesh_queue;
 mod model;
 mod query;
@@ -20,14 +21,10 @@ mod store;
 mod stream;
 mod tick;
 mod torch;
-mod visibility;
 pub(crate) mod water;
 
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
-pub(crate) use render_handoff::{
-    TerrainMeshUploadSource, TerrainRenderHandoff, TerrainVisibilitySource,
-};
+pub(crate) use render_handoff::{TerrainMeshUploadSource, TerrainRenderHandoff};
 pub use store::{World, RENDER_DIST};
-pub use visibility::{SectionConnectivity, SectionFace, SectionPos, SECTION_FACES};

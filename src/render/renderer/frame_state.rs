@@ -2,10 +2,30 @@
 //!
 //! Cheap mutators the app calls each frame to hand the renderer the camera
 //! uniforms, selection/break overlay, held item, world instance lists, UI
-//! snapshot, and the terrain mesh/section-visibility sync. Split out of the
+//! snapshot, and the terrain mesh sync. Split out of the
 //! renderer god-file; behavior is byte-for-byte identical.
 
 use super::*;
+
+/// Max terrain columns uploaded to the GPU per frame. CPU meshes stay section-owned, but
+/// render-side buffers are packed per XZ column, so one upload can refresh many vertical
+/// section ranges. Excess stays dirty and rolls onto later frames.
+const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 6;
+/// Soft render-thread budget for packing/writing terrain columns. One upload is always
+/// allowed so terrain keeps making progress; after that, leave time for the actual frame.
+const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);
+const RENDER_ORIGIN_GRID: f32 = 16.0;
+
+#[inline]
+fn render_origin_for_camera(pos: glam::Vec3) -> glam::Vec3 {
+    (pos / RENDER_ORIGIN_GRID).floor() * RENDER_ORIGIN_GRID
+}
+
+#[inline]
+fn relative_view_proj(cam: &Camera, render_origin: glam::Vec3) -> glam::Mat4 {
+    let local_pos = cam.pos - render_origin;
+    cam.proj() * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), glam::Vec3::Y)
+}
 
 impl Renderer {
     pub fn update_uniforms(
@@ -15,11 +35,14 @@ impl Renderer {
         time: f32,
         underwater: bool,
     ) {
-        let view_proj = cam.view_proj();
+        let render_origin = render_origin_for_camera(cam.pos);
+        let local_cam = cam.pos - render_origin;
+        let view_proj = relative_view_proj(cam, render_origin);
         let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.frustum = Frustum::from_view_proj(view_proj);
         self.cam_pos = cam.pos;
+        self.render_origin = render_origin;
         // Camera right/up axes for world-space billboards (item sprites + dust):
         // a quad spanned by these always faces the viewer.
         self.billboard_basis = BillboardBasis {
@@ -34,11 +57,12 @@ impl Renderer {
         };
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
-            cam_pos: [cam.pos.x, cam.pos.y, cam.pos.z, 0.0],
+            cam_pos: [local_cam.x, local_cam.y, local_cam.z, 0.0],
             // fog.z = animation time (caustics), fog.w = underwater flag.
             fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
             fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
+            render_origin: [render_origin.x, render_origin.y, render_origin.z, 0.0],
             water_anim: crate::atlas::water_anim_uniform(),
         };
         self.queue
@@ -125,25 +149,76 @@ impl Renderer {
 
     /// Synchronize GPU meshes with the terrain CPU meshes.
     pub(crate) fn sync_meshes(&mut self, terrain: &mut impl TerrainMeshUploadSource) {
-        // Drop GPU meshes whose CPU chunk is gone through the terrain handoff so
-        // no per-frame scratch set is allocated.
-        self.chunk_meshes.retain(|p, _| terrain.has_mesh(*p));
-        // Upload only meshes marked dirty by the world (newly built/changed) or
-        // missing on the GPU. The handoff clears the CPU dirty flag only after
-        // this callback reports a completed upload.
-        let device = &self.device;
-        let chunk_meshes = &mut self.chunk_meshes;
-        terrain.for_each_mesh_upload(|pos, mesh, dirty| {
-            let need_upload = !chunk_meshes.contains_key(&pos) || dirty;
-            if need_upload {
-                let gm = upload_mesh(device, mesh, pos);
-                chunk_meshes.insert(pos, gm);
-            }
-            need_upload
-        });
-    }
+        // Drop packed GPU columns whose CPU meshes are gone.
+        self.terrain_columns
+            .retain(|p, _| terrain.has_column_mesh(*p));
 
-    pub(crate) fn update_section_visibility(&mut self, terrain: &mut impl TerrainVisibilitySource) {
-        self.section_visibility.update(terrain, self.cam_pos);
+        let cam = self.cam_pos;
+        let frustum = self.frustum;
+        let render_origin = self.render_origin;
+        let mut dirty_columns = std::mem::take(&mut self.terrain_upload_order);
+        dirty_columns.clear();
+        terrain.for_dirty_columns(&mut |column| {
+            let min = glam::Vec3::new(
+                (column.cx * 16) as f32,
+                crate::chunk::WORLD_MIN_Y as f32,
+                (column.cz * 16) as f32,
+            );
+            let max = glam::Vec3::new(
+                (column.cx * 16 + 16) as f32,
+                crate::chunk::WORLD_MAX_Y as f32,
+                (column.cz * 16 + 16) as f32,
+            );
+            let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
+            let visible_soon = frustum.aabb_visible(min - render_origin, max - render_origin)
+                && aabb_distance_sq(cam, min, max) <= fog * fog;
+            let center = glam::Vec3::new(
+                column.cx as f32 * 16.0 + 8.0,
+                cam.y,
+                column.cz as f32 * 16.0 + 8.0,
+            );
+            dirty_columns.push((!visible_soon, (cam - center).length_squared(), column));
+        });
+        dirty_columns.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+
+        let device = &self.device;
+        let queue = &self.queue;
+        let columns = &mut self.terrain_columns;
+        let upload_scratch = &mut self.terrain_upload_scratch;
+        let start = std::time::Instant::now();
+        let mut uploaded_columns = 0usize;
+        for &(_, _, column) in &dirty_columns {
+            if uploaded_columns >= MESH_COLUMN_UPLOADS_PER_FRAME {
+                break;
+            }
+            let uploaded = {
+                let meshes = terrain.column_meshes(column);
+                if meshes.is_empty() {
+                    columns.remove(&column);
+                    terrain.mark_column_uploaded(column);
+                    false
+                } else {
+                    let prev = columns.remove(&column);
+                    let gpu = upload_column_mesh(device, queue, &meshes, prev, upload_scratch);
+                    columns.insert(column, gpu);
+                    true
+                }
+            };
+            if uploaded {
+                terrain.mark_column_uploaded(column);
+                uploaded_columns += 1;
+                if uploaded_columns > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
+                    break;
+                }
+            }
+        }
+        dirty_columns.clear();
+        self.terrain_upload_order = dirty_columns;
+        let terrain_columns = &self.terrain_columns;
+        self.far_leaf_lod_state.retain(|sp, _| {
+            terrain_columns
+                .get(&sp.chunk_pos())
+                .is_some_and(|column| column.sections.iter().any(|(pos, _)| pos == sp))
+        });
     }
 }

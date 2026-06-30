@@ -1,27 +1,43 @@
 use std::collections::HashSet;
 
-use crate::chunk::{Chunk, ChunkPos, CHUNK_SY, SKY_FULL};
-use crate::mesh::build_mesh_lods_with_loaded_neighbors;
+use std::sync::Arc;
 
-use super::store::World;
+use crate::chunk::{self, ChunkPos, SectionPos};
 
-/// Set of chunks awaiting a remesh. With `World`'s chunk map private, every path
-/// that dirties a chunk pushes here (`mark_dirty_pos`, `queue_dirty_mesh`, the
-/// light-bake drain) and `remove_chunk` pulls it back out — so the set alone says
-/// what needs meshing; there is no chunk-flag scan to reconcile against. Drained
-/// NEAREST-FIRST to the load centre (see [`pop_nearest_batch`](Self::pop_nearest_batch))
-/// so the terrain around the player meshes before the edges.
+use super::store::{LoadTarget, World};
+
+/// Minimum useful mesh submissions per pump. With the game-side budget intentionally set
+/// to 1, a literal one-section budget makes the cubic streamer visibly crawl; this keeps
+/// the tiny budget useful without multiplying larger diagnostic/tooling budgets.
+const MIN_MESH_JOBS_PER_PUMP: usize = 16;
+/// Scan past sections that are stale, no-mesh, or waiting on light so a low budget still
+/// launches useful work whenever any nearby section is ready.
+const CANDIDATE_SCAN_PER_MESH_JOB: usize = 4;
+/// Bound result drains so a burst of finished background work cannot monopolize the frame.
+const MAX_LIGHT_RESULTS_PER_PUMP: usize = 24;
+const MAX_MESH_RESULTS_PER_PUMP: usize = 24;
+/// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
+/// always allowed; after that, the pump yields to rendering once it burns this much CPU.
+const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_000);
+
+/// Set of sections awaiting a remesh. With `World`'s section map private, every
+/// path that dirties a section pushes here and `remove_section` pulls it back out —
+/// so the set alone says what needs meshing. Drained NEAREST-FIRST to the load
+/// centre so the terrain around the player meshes before the edges.
 #[derive(Default)]
 pub(super) struct DirtyMeshQueue {
-    pending: HashSet<ChunkPos>,
+    pending: HashSet<SectionPos>,
+    /// Reused across frames so `pop_nearest_batch` doesn't allocate a fresh `Vec` the
+    /// size of the whole backlog every call.
+    scratch: Vec<SectionPos>,
 }
 
 impl DirtyMeshQueue {
-    pub fn push(&mut self, pos: ChunkPos) {
+    pub fn push(&mut self, pos: SectionPos) {
         self.pending.insert(pos);
     }
 
-    pub fn remove(&mut self, pos: ChunkPos) {
+    pub fn remove(&mut self, pos: SectionPos) {
         self.pending.remove(&pos);
     }
 
@@ -29,339 +45,562 @@ impl DirtyMeshQueue {
         self.pending.is_empty()
     }
 
-    /// Pop up to `max` chunks, those nearest `center` (the player's chunk) first,
-    /// so nearby terrain meshes before distant terrain. Meshing is idempotent (a
-    /// rebuild from current state), so the order is a priority, not a contract — a
-    /// popped chunk still blocked on light is simply re-pushed by the caller.
-    /// `center` is `None` only before the first load target, where any order is fine.
-    fn pop_nearest_batch(&mut self, max: usize, center: Option<ChunkPos>) -> Vec<ChunkPos> {
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Pop up to `max` sections, those nearest the load centre column first.
+    /// Meshing is idempotent, so the order is a priority, not a contract.
+    ///
+    /// The backlog can be thousands while streaming, yet only `max` (≈128) come out, so
+    /// this avoids the old full `O(d log d)` sort: a partial select pulls the nearest
+    /// `max` in `O(d)`, then only those few are sorted for priority order.
+    fn pop_nearest_batch(&mut self, max: usize, target: Option<LoadTarget>) -> Vec<SectionPos> {
         if max == 0 || self.pending.is_empty() {
             return Vec::new();
         }
-        let mut all: Vec<ChunkPos> = self.pending.iter().copied().collect();
-        if let Some(c) = center {
-            all.sort_by_key(|p| {
-                let dx = (p.cx - c.cx) as i64;
-                let dz = (p.cz - c.cz) as i64;
-                dx * dx + dz * dz
-            });
+        self.scratch.clear();
+        self.scratch.extend(self.pending.iter().copied());
+        let n = self.scratch.len();
+        let take = max.min(n);
+        if let Some(t) = target {
+            let key = |p: &SectionPos| -> i64 { t.section_priority_key(*p) };
+            if take < n {
+                self.scratch.select_nth_unstable_by_key(take, key);
+            }
+            self.scratch[..take].sort_unstable_by_key(key);
         }
-        all.truncate(max);
-        for pos in &all {
+        let result: Vec<SectionPos> = self.scratch[..take].to_vec();
+        for pos in &result {
             self.pending.remove(pos);
         }
-        all
+        result
     }
 }
 
 impl World {
-    /// Build meshes for chunks queued dirty, limited by a per-frame budget so we
-    /// do not stall the frame.
+    /// Drain finished meshes and submit newly-dirty sections to the off-thread mesh
+    /// pool, capped per frame. The render thread never builds a mesh here — it only
+    /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
+    /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
+        self.drain_finished_light_bakes(MAX_LIGHT_RESULTS_PER_PUMP);
+        self.drain_finished_meshes(MAX_MESH_RESULTS_PER_PUMP);
         if max_per_frame == 0 {
             return;
         }
 
-        self.drain_finished_light_bakes();
-
-        // Mesh nearest the player first; the load target's centre is the player's
-        // chunk (`None` only before the first stream, where order doesn't matter).
-        let center = self.last_load_target.as_ref().map(|t| t.center);
-        let candidates = self.dirty_meshes.pop_nearest_batch(max_per_frame, center);
-        if candidates.is_empty() {
-            return;
-        }
-
-        // Safety net that makes `light_dirty` the single source of truth for the
-        // skylight cache: never mesh a chunk from stale light, and never sample a
-        // stale neighbor light band while building its border vertices. Dirty
-        // light now bakes off-thread, so blocked mesh candidates are requeued.
-        let mut to_mesh = Vec::with_capacity(candidates.len());
-        for pos in candidates {
-            if self.request_light_dependencies(pos) {
-                self.dirty_meshes.push(pos);
-            } else {
-                to_mesh.push(pos);
+        let target_jobs = max_per_frame.max(MIN_MESH_JOBS_PER_PUMP);
+        let candidate_cap = if max_per_frame < MIN_MESH_JOBS_PER_PUMP {
+            target_jobs.saturating_mul(CANDIDATE_SCAN_PER_MESH_JOB)
+        } else {
+            target_jobs
+        };
+        let target = self.last_load_target;
+        let candidates = self.dirty_meshes.pop_nearest_batch(candidate_cap, target);
+        let mut submitted = 0usize;
+        let start = std::time::Instant::now();
+        for (i, &pos) in candidates.iter().enumerate() {
+            if !self.sections.contains_key(&pos) {
+                continue;
             }
-        }
-        if to_mesh.is_empty() {
-            return;
-        }
-
-        for &pos in &to_mesh {
-            self.invalidate_section_visibility(pos);
-        }
-
-        // Mesh building is a pure function of the chunk plus immutable neighbour
-        // reads. Build in parallel on native, then publish meshes serially.
-        let chunks = &self.chunks;
-        let build_one = move |pos: ChunkPos| -> Option<(ChunkPos, crate::mesh::ChunkMesh)> {
-            let chunk = chunks.get(&pos)?;
-            let neigh: [Option<&Chunk>; 9] = std::array::from_fn(|k| {
-                let dx = (k % 3) as i32 - 1;
-                let dz = (k / 3) as i32 - 1;
-                chunks.get(&ChunkPos::new(pos.cx + dx, pos.cz + dz))
-            });
-            let owner = move |nx: i32, nz: i32| -> Option<&Chunk> {
-                let dcx = nx - pos.cx;
-                let dcz = nz - pos.cz;
-                if (-1..=1).contains(&dcx) && (-1..=1).contains(&dcz) {
-                    neigh[((dcz + 1) * 3 + (dcx + 1)) as usize]
-                } else {
-                    chunks.get(&ChunkPos::new(nx, nz))
-                }
-            };
-            let nb = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 || wy >= CHUNK_SY as i32 {
-                    return 0;
-                }
-                match owner(wx >> 4, wz >> 4) {
-                    Some(c) => c.block_raw((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize),
-                    None => 0,
-                }
-            };
-            let nb_water = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 || wy >= CHUNK_SY as i32 {
-                    return 0;
-                }
-                match owner(wx >> 4, wz >> 4) {
-                    Some(c) => {
-                        c.water_meta((wx & 0x0F) as usize, wy as usize, (wz & 0x0F) as usize)
+            // Deep-stone fast path: a fully-opaque section walled in by fully-opaque
+            // neighbours has no visible faces. Skip meshing, lighting, GPU upload, and
+            // drawing it entirely (drop any stale mesh) — it stays stored so the visible
+            // sections above cull against it and the player can still dig in. Carving air
+            // into it or a neighbour re-dirties it (`set_block_world`'s neighbourhood mark),
+            // bringing it back through here as a real mesh.
+            if self.clear_mesh_if_section_produces_no_mesh(pos) {
+                if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                    for &rest in &candidates[i + 1..] {
+                        self.dirty_meshes.push(rest);
                     }
-                    None => 0,
+                    break;
                 }
-            };
-            let nb_biome = |wx: i32, wz: i32| -> u8 {
-                match owner(wx >> 4, wz >> 4) {
-                    Some(c) => c.biome_at((wx & 0x0F) as usize, (wz & 0x0F) as usize),
-                    None => 0,
+                continue;
+            }
+            // Don't snapshot from stale light: a section whose 3×3×3 light isn't baked
+            // yet parks outside the hot dirty queue, so the snapshot always carries final light.
+            if self.request_light_dependencies(pos) {
+                self.light_blocked_meshes.insert(pos);
+                if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                    for &rest in &candidates[i + 1..] {
+                        self.dirty_meshes.push(rest);
+                    }
+                    break;
                 }
-            };
-            let nb_light = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 {
-                    return 0;
+                continue;
+            }
+            if let Some(job) = self.build_mesh_job(pos) {
+                if self.mesh_pool.submit(job) {
+                    self.mesh_jobs_in_flight += 1;
+                    submitted += 1;
+                    if submitted >= target_jobs
+                        || (submitted > 0 && start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
+                    {
+                        for &rest in &candidates[i + 1..] {
+                            self.dirty_meshes.push(rest);
+                        }
+                        break;
+                    }
+                } else {
+                    self.dirty_meshes.push(pos);
                 }
-                if wy >= CHUNK_SY as i32 {
-                    return SKY_FULL;
-                }
-                match owner(wx >> 4, wz >> 4) {
-                    Some(c) => c.skylight_at((wx & 0x0F) as usize, wy, (wz & 0x0F) as usize),
-                    None => SKY_FULL,
-                }
-            };
-            // Block-light (torches) reads 0 outside any chunk's band and above/below
-            // the world — there is no block light without an emitter.
-            let nb_blocklight = |wx: i32, wy: i32, wz: i32| -> u8 {
-                if wy < 0 || wy >= CHUNK_SY as i32 {
-                    return 0;
-                }
-                match owner(wx >> 4, wz >> 4) {
-                    Some(c) => c.blocklight_at((wx & 0x0F) as usize, wy, (wz & 0x0F) as usize),
-                    None => 0,
-                }
-            };
-            let nb_loaded = |cx: i32, cz: i32| -> bool { owner(cx, cz).is_some() };
-            Some((
-                pos,
-                build_mesh_lods_with_loaded_neighbors(
-                    chunk,
-                    nb,
-                    nb_water,
-                    nb_biome,
-                    nb_light,
-                    nb_blocklight,
-                    nb_loaded,
-                ),
-            ))
-        };
-
-        let built: Vec<(ChunkPos, crate::mesh::ChunkMesh)> = {
-            use rayon::prelude::*;
-            to_mesh.into_par_iter().filter_map(build_one).collect()
-        };
-
-        for (pos, mesh) in built {
-            self.meshes.insert(pos, mesh);
-            if let Some(c) = self.chunks.get_mut(&pos) {
-                c.dirty = false;
             }
         }
     }
 
-    fn drain_finished_light_bakes(&mut self) {
-        while let Some(res) = self.light_bakes.try_recv() {
+    /// Whether `pos` produces no visible geometry, so meshing/lighting/drawing it is pure
+    /// waste: it is either entirely air (emits nothing), or fully opaque AND walled in by
+    /// known fully-opaque neighbours (no exposed faces). Neighbours can be loaded sections
+    /// or generated section summaries; truly unknown neighbours still count as open.
+    pub(super) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
+        let Some(s) = self.sections.get(&pos) else {
+            return false;
+        };
+        if s.is_empty_air() {
+            return true;
+        }
+        if !s.all_opaque() {
+            return false;
+        }
+        const FACES: [(i32, i32, i32); 6] = [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ];
+        FACES.iter().all(|&(dx, dy, dz)| {
+            self.section_summary(SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
+                .is_full_opaque()
+        })
+    }
+
+    /// Clear stale render output for a section that now intentionally emits no mesh.
+    /// Returns true when the section is in that settled no-output state.
+    pub(super) fn clear_mesh_if_section_produces_no_mesh(&mut self, pos: SectionPos) -> bool {
+        if !self.section_produces_no_mesh(pos) {
+            return false;
+        }
+        if self.remove_mesh(pos) {
+            self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+        }
+        self.dirty_meshes.remove(pos);
+        self.light_blocked_meshes.remove(&pos);
+        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+            s.dirty = false;
+            // A mesh job may already have snapshotted this section while one of its
+            // now-solid neighbours was still missing. Invalidate that exposed-border
+            // result so it cannot reinstall geometry after we settle to no output.
+            s.mesh_revision = s.mesh_revision.wrapping_add(1);
+        }
+        true
+    }
+
+    /// Synchronously mesh `pos` for a test: meshing is async now, so pump the budget +
+    /// drain until the section's mesh lands (or time out).
+    #[cfg(test)]
+    pub(crate) fn mesh_section_blocking_for_test(&mut self, pos: SectionPos) {
+        use std::time::{Duration, Instant};
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                self.ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            self.tick_mesh_budget(8);
+            // Up to date once a mesh exists AND the section isn't queued/in-flight for a
+            // fresher one (a re-dirty sets `dirty`, the drained result clears it).
+            let ready =
+                self.meshes.contains_key(&pos) && self.sections.get(&pos).is_none_or(|s| !s.dirty);
+            if ready {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("mesh for {pos:?} did not complete");
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Install meshes the pool finished, dropping any whose section has since changed
+    /// (re-edited or re-lit, so its `mesh_revision` moved) or unloaded.
+    fn drain_finished_meshes(&mut self, max: usize) {
+        let mut drained = 0usize;
+        while drained < max {
+            let Some(done) = self.mesh_pool.try_recv() else {
+                break;
+            };
+            drained += 1;
+            self.mesh_jobs_in_flight = self.mesh_jobs_in_flight.saturating_sub(1);
             let fresh = self
-                .chunks
-                .get(&res.pos)
-                .is_some_and(|c| c.light_dirty && c.light_revision == res.revision);
+                .sections
+                .get(&done.pos)
+                .is_some_and(|s| s.mesh_revision == done.revision);
             if !fresh {
                 continue;
             }
-            if let Some(c) = self.chunks.get_mut(&res.pos) {
-                c.set_skylight(res.band, res.ylo, res.yhi);
-                c.set_blocklight(res.block_band, res.block_ylo, res.block_yhi);
-                c.dirty = true;
+            let mut mesh = done.mesh;
+            mesh.mesh_dirty = true; // needs a GPU upload on the next sync
+            self.install_mesh(done.pos, mesh);
+            if let Some(s) = self.sections.get_mut(&done.pos).map(Arc::make_mut) {
+                s.dirty = false;
+            }
+        }
+    }
+
+    /// Snapshot `pos` and its one-block-padded neighbourhood into an owned [`MeshJob`]
+    /// the mesh pool can build with no access to the live world. Reads match the live
+    /// neighbour accessors exactly (air / open-sky / not-loaded fallbacks), so the
+    /// off-thread mesh is byte-identical to an inline one.
+    fn build_mesh_job(&self, pos: SectionPos) -> Option<super::mesh_pool::MeshJob> {
+        use super::mesh_pool::{
+            biome_pad_idx, empty_biome, nbhd_idx27, MeshJob, NeighborSnap, BIOME_PAD,
+            BIOME_PAD_RADIUS,
+        };
+
+        let center = (**self.sections.get(&pos)?).clone();
+        let revision = center.mesh_revision;
+
+        // Snapshot the 3×3×3 neighbourhood as cheap field-Arc bundles: four refcount bumps
+        // each, no allocation, and no shared `Arc<Section>` — so a streaming edit/relight
+        // never copy-on-write clones a section just because a mesh job is reading it. The
+        // worker assembles the padded mesh buffers from these off-thread.
+        let mut nbhd: [Option<NeighborSnap>; 27] = std::array::from_fn(|_| None);
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    nbhd[nbhd_idx27(dx, dy, dz)] = self
+                        .sections
+                        .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
+                        .map(|s| NeighborSnap {
+                            blocks: s.blocks_arc(),
+                            water: s.water_arc(),
+                            skylight: s.skylight_arc(),
+                            blocklight: s.blocklight_arc(),
+                        });
+                }
+            }
+        }
+
+        // The biome strip is tiny (20²) and lives in the (non-Arc) columns, so build it
+        // here rather than carry column handles to the worker. Tint blending samples a
+        // 5×5 biome window, hence the wider 2-column XZ halo. Missing edge columns fall
+        // back to analytical biome generation so view-biased streaming does not leave the
+        // outer visible ring permanently dirty, but the mesh never bakes biome id 0.
+        let mut biome = empty_biome();
+        let mut fallback_gen = None;
+        let (ox, _, oz) = pos.origin_world();
+        for pz in 0..BIOME_PAD {
+            let wz = oz - BIOME_PAD_RADIUS + pz as i32;
+            for px in 0..BIOME_PAD {
+                let wx = ox - BIOME_PAD_RADIUS + px as i32;
+                let cp = ChunkPos::new(
+                    wx.div_euclid(chunk::SECTION_SIZE as i32),
+                    wz.div_euclid(chunk::SECTION_SIZE as i32),
+                );
+                biome[biome_pad_idx(px, pz)] = self.columns.get(&cp).map_or_else(
+                    || {
+                        fallback_gen
+                            .get_or_insert_with(|| {
+                                crate::worldgen::driver::ChunkGenerator::new(self.seed)
+                            })
+                            .biome_at(wx, wz)
+                            .id()
+                    },
+                    |c| c.biome_at(chunk::lx(wx), chunk::lz(wz)),
+                );
+            }
+        }
+
+        Some(MeshJob {
+            pos,
+            revision,
+            center,
+            nbhd,
+            biome,
+        })
+    }
+
+    fn drain_finished_light_bakes(&mut self, max: usize) {
+        let mut drained = 0usize;
+        while drained < max {
+            let Some(res) = self.light_bakes.try_recv() else {
+                break;
+            };
+            drained += 1;
+            let fresh = self
+                .sections
+                .get(&res.pos)
+                .is_some_and(|s| s.light_dirty && s.light_revision == res.revision);
+            if !fresh {
+                continue;
+            }
+            if let Some(s) = self.sections.get_mut(&res.pos).map(Arc::make_mut) {
+                s.set_skylight(res.skylight);
+                s.set_blocklight(res.blocklight);
+                s.dirty = true;
+                // The cached light changed, so any in-flight mesh built from the old
+                // light is now stale: bump so its result is discarded and re-queue.
+                s.mesh_revision = s.mesh_revision.wrapping_add(1);
             }
             self.bump_lighting_revision();
             self.dirty_meshes.push(res.pos);
         }
+        self.flush_light_blocked_meshes();
     }
 
-    /// Queue every dirty light band a mesh would read from its 3x3 sampling
-    /// neighbourhood. Returns true when the mesh must wait for async light.
-    fn request_light_dependencies(&mut self, pos: ChunkPos) -> bool {
-        let mut light_to_bake = Vec::new();
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let p = ChunkPos::new(pos.cx + dx, pos.cz + dz);
-                if self.chunks.get(&p).is_some_and(|c| c.light_dirty) {
-                    light_to_bake.push(p);
+    /// Queue every dirty light cube a section mesh would read from its 3×3×3
+    /// sampling neighbourhood. Returns true when the mesh must wait for async light.
+    ///
+    /// Fully-opaque neighbours are skipped: their cells are solid, so a meshed neighbour's
+    /// faces are culled against them and never sample their light — baking it would be
+    /// wasted, and waiting on it would stall the mesh. (Carving air in clears `all_opaque`,
+    /// so it rejoins the light path then.)
+    fn request_light_dependencies(&mut self, pos: SectionPos) -> bool {
+        let mut waiting = false;
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
+                    if self
+                        .sections
+                        .get(&p)
+                        .is_some_and(|s| s.light_dirty && !s.all_opaque())
+                    {
+                        self.light_bakes.request(p, &self.sections, &self.columns);
+                        waiting = true;
+                    }
                 }
             }
         }
-        if light_to_bake.is_empty() {
-            return false;
+        waiting
+    }
+
+    fn mesh_light_dependencies_pending(&self, pos: SectionPos) -> bool {
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
+                    if self
+                        .sections
+                        .get(&p)
+                        .is_some_and(|s| s.light_dirty && !s.all_opaque())
+                    {
+                        return true;
+                    }
+                }
+            }
         }
-        light_to_bake.sort_by_key(|p| (p.cz, p.cx));
-        light_to_bake.dedup();
-        for p in light_to_bake {
-            self.light_bakes.request(p, &self.chunks);
+        false
+    }
+
+    fn flush_light_blocked_meshes(&mut self) {
+        if self.light_blocked_meshes.is_empty() {
+            return;
         }
-        true
+        let ready: Vec<SectionPos> = self
+            .light_blocked_meshes
+            .iter()
+            .copied()
+            .filter(|&pos| {
+                !self.sections.contains_key(&pos) || !self.mesh_light_dependencies_pending(pos)
+            })
+            .collect();
+        for pos in ready {
+            self.light_blocked_meshes.remove(&pos);
+            if self.sections.contains_key(&pos) {
+                self.dirty_meshes.push(pos);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
+    use crate::biome::Biome;
     use crate::block::Block;
-    use crate::mesh::compute_chunk_skylight;
+    use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
+    use crate::section::Section;
+    use crate::world::store::LoadTarget;
+    use crate::worldgen::driver::ChunkGenerator;
 
-    /// A settled chunk: skylight baked from its current blocks, flags clear.
-    /// All-air, so it meshes empty until something is placed in it.
-    fn clean_chunk(cx: i32, cz: i32) -> Chunk {
-        let mut chunk = Chunk::new(cx, cz);
-        let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
-        chunk.set_skylight(band, ylo, yhi);
-        chunk.dirty = false;
-        chunk
+    use super::{DirtyMeshQueue, World};
+
+    fn solid_section(pos: SectionPos) -> Section {
+        let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.recompute_random_tick_count();
+        section.recompute_opaque_count();
+        section
     }
 
-    /// A freshly generated chunk as the streamer would hand it over: one solid
-    /// block, light not yet baked (`dirty` + `light_dirty` set).
-    fn fresh_chunk(cx: i32, cz: i32) -> Chunk {
-        let mut chunk = Chunk::new(cx, cz);
-        chunk.set_block(1, 1, 1, Block::Stone);
-        chunk
+    fn insert_solid_section(world: &mut World, pos: SectionPos) {
+        world.ensure_column(pos.chunk_pos());
+        world.sections.insert(pos, Arc::new(solid_section(pos)));
     }
 
-    /// The same blocks as [`fresh_chunk`], but reconstructed through
-    /// [`Chunk::from_saved`] — the path a chunk read back from disk takes. The
-    /// block bytes are taken from a real chunk so the in-array layout is exact.
-    fn disk_chunk(cx: i32, cz: i32) -> Chunk {
-        let template = fresh_chunk(cx, cz);
-        let blocks: Box<[u8]> = Box::from(template.blocks_slice());
-        let biomes: Vec<u8> = template.biomes_slice().to_vec();
-        Chunk::from_saved(
-            cx,
-            cz,
-            blocks,
-            &biomes,
-            None,
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        )
+    fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
+        world.ensure_column(pos);
+        world
+            .column_gen
+            .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
     }
 
-    /// Tick the mesh budget until `pos` settles (mesh + light flags clear),
-    /// driving the async light bake to completion.
-    fn tick_until_settled(world: &mut World, pos: ChunkPos) {
-        for _ in 0..200 {
-            world.tick_mesh_budget(1);
-            if world
-                .chunks
-                .get(&pos)
-                .is_some_and(|c| !c.dirty && !c.light_dirty)
-            {
-                return;
+    #[test]
+    fn mesh_job_fills_missing_biome_tint_halo_from_generator() {
+        let mut world = World::new(0, 0);
+        let pos = SectionPos::new(0, 0, 0);
+        insert_solid_section(&mut world, pos);
+        for z in 0..crate::chunk::CHUNK_SZ {
+            for x in 0..crate::chunk::CHUNK_SX {
+                world.columns.get_mut(&pos.chunk_pos()).unwrap().set_biome(
+                    x,
+                    z,
+                    Biome::Plains.id(),
+                );
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        panic!("chunk did not settle after async light bake");
-    }
 
-    /// The queue is the single source of truth: a freshly installed chunk
-    /// (enqueued the way the streamer does) bakes its light and meshes — no
-    /// chunk-flag scan reconciles it.
-    #[test]
-    fn installed_chunk_is_meshed_via_the_queue() {
-        let pos = ChunkPos::new(0, 0);
-        let mut world = World::new(0, 0);
-        // `insert_chunk_for_test` mirrors the streamer's per-chunk install,
-        // enqueueing the chunk for meshing.
-        world.insert_chunk_for_test(pos, fresh_chunk(pos.cx, pos.cz));
-
-        tick_until_settled(&mut world, pos);
-
-        assert!(!world.meshes.get(&pos).unwrap().is_empty());
-        assert!(world.lighting_revision() > 0);
-    }
-
-    /// Repro probe for "disk-loaded chunks don't render": a chunk reconstructed
-    /// via `Chunk::from_saved` (the codec decode path) and installed the way the
-    /// streamer installs it must mesh identically to the generated chunk it was
-    /// saved from — and remesh on a later edit.
-    #[test]
-    fn disk_loaded_chunk_meshes_like_a_generated_one() {
-        let pos = ChunkPos::new(0, 0);
-
-        let mut generated = World::new(0, 0);
-        generated.insert_chunk_for_test(pos, fresh_chunk(pos.cx, pos.cz));
-        tick_until_settled(&mut generated, pos);
-        let generated_len = generated.meshes.get(&pos).unwrap().opaque_idx.len();
-        assert!(generated_len > 0, "baseline generated chunk meshes");
-
-        let mut disk = World::new(0, 0);
-        disk.insert_chunk_for_test(pos, disk_chunk(pos.cx, pos.cz));
-        tick_until_settled(&mut disk, pos);
-        let disk_len = disk.meshes.get(&pos).unwrap().opaque_idx.len();
-
-        assert_eq!(
-            disk_len, generated_len,
-            "disk-loaded chunk must mesh like the generated chunk it was saved from"
-        );
-
-        // And an edit must remesh it.
-        assert!(disk.set_block_world(1, 2, 1, Block::Stone));
-        tick_until_settled(&mut disk, pos);
+        let job = world
+            .build_mesh_job(pos)
+            .expect("missing edge columns should fall back to generated biome ids");
         assert!(
-            disk.meshes.get(&pos).unwrap().opaque_idx.len() > disk_len,
-            "edit on a disk-loaded chunk must rebuild its mesh"
+            job.biome.iter().all(|&id| id != 0),
+            "mesh jobs must not bake chunk-edge tint from missing-biome id 0"
         );
     }
 
-    /// An edit through the proper API (`set_block_world`) re-dirties and
-    /// remeshes the chunk without any chunk-flag scan to reconcile it.
     #[test]
-    fn set_block_world_edit_remeshes_the_chunk() {
-        let pos = ChunkPos::new(0, 0);
+    fn light_blocked_mesh_leaves_hot_dirty_queue() {
         let mut world = World::new(0, 0);
-        world.insert_chunk_for_test(pos, clean_chunk(pos.cx, pos.cz));
-        tick_until_settled(&mut world, pos);
-        assert!(world.meshes.get(&pos).unwrap().is_empty()); // all air so far
-        let baked_before = world.lighting_revision();
+        let pos = SectionPos::new(0, 0, 0);
+        let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+        section.set_block(0, 0, 0, Block::Dirt);
+        world.insert_section_for_test(pos, section);
 
-        assert!(world.set_block_world(1, 1, 1, Block::Stone));
-        assert!(world.chunks.get(&pos).unwrap().dirty);
+        world.tick_mesh_budget(1);
 
-        tick_until_settled(&mut world, pos);
-        assert!(!world.meshes.get(&pos).unwrap().is_empty());
-        assert!(world.lighting_revision() > baked_before);
+        assert!(
+            world.dirty_meshes.is_empty(),
+            "light-blocked meshes should not churn in the hot dirty queue"
+        );
+        assert!(
+            world.light_blocked_meshes.contains(&pos),
+            "the mesh should be parked until its light dependency finishes"
+        );
+    }
+
+    #[test]
+    fn dirty_mesh_priority_is_near_first_with_forward_tiebreak() {
+        let target = LoadTarget::new_facing(0, 0, 0, 16, 1.0, 0.0);
+        let near = SectionPos::new(0, 0, 2);
+        let far_ahead = SectionPos::new(16, 0, 0);
+        let front = SectionPos::new(6, 0, 0);
+        let side = SectionPos::new(0, 0, 6);
+
+        let mut queue = DirtyMeshQueue::default();
+        queue.push(far_ahead);
+        queue.push(near);
+        assert_eq!(
+            queue.pop_nearest_batch(1, Some(target)),
+            vec![near],
+            "near dirty meshes must beat far-ahead dirty meshes"
+        );
+
+        let mut queue = DirtyMeshQueue::default();
+        queue.push(side);
+        queue.push(front);
+        assert_eq!(
+            queue.pop_nearest_batch(1, Some(target)),
+            vec![front],
+            "same-distance dirty meshes in the forward cone should win"
+        );
+    }
+
+    #[test]
+    fn no_mesh_transition_removes_stale_border_mesh() {
+        let mut world = World::new(0, 0);
+        let center = SectionPos::new(0, 0, 0);
+        insert_solid_section(&mut world, center);
+        world.queue_dirty_mesh(center);
+
+        world.mesh_section_blocking_for_test(center);
+        assert!(
+            world.meshes.get(&center).is_some_and(|m| !m.is_empty()),
+            "a solid section with missing neighbours meshes its exposed border"
+        );
+
+        for (dx, dy, dz) in [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ] {
+            let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
+            insert_solid_section(&mut world, pos);
+        }
+
+        let before_revision = world.sections.get(&center).unwrap().mesh_revision;
+        assert!(
+            world.clear_mesh_if_section_produces_no_mesh(center),
+            "the enclosed section should settle to no render output"
+        );
+        assert!(
+            world
+                .sections
+                .get(&center)
+                .is_some_and(|s| s.mesh_revision > before_revision),
+            "settling to no-mesh must invalidate in-flight exposed-border jobs"
+        );
+        assert!(
+            !world.meshes.contains_key(&center),
+            "stale exposed-border mesh must be removed"
+        );
+        assert!(
+            world
+                .mesh_upload_dirty_columns
+                .contains(&center.chunk_pos()),
+            "the render column must be marked for GPU repack"
+        );
+    }
+
+    #[test]
+    fn generated_full_opaque_summaries_enclose_solid_section_without_loaded_neighbors() {
+        let seed = 0x51EED;
+        let generator = ChunkGenerator::new(seed);
+        let mut world = World::new(seed, 0);
+        let center = SectionPos::new(0, SECTION_MIN_CY + 1, 0);
+        insert_solid_section(&mut world, center);
+
+        for pos in [
+            ChunkPos::new(0, 0),
+            ChunkPos::new(1, 0),
+            ChunkPos::new(-1, 0),
+            ChunkPos::new(0, 1),
+            ChunkPos::new(0, -1),
+        ] {
+            install_column_summary(&mut world, &generator, pos);
+        }
+
+        assert!(
+            world.section_produces_no_mesh(center),
+            "known-solid generated neighbour summaries should suppress loaded-edge deep stone"
+        );
+        assert!(
+            world.clear_mesh_if_section_produces_no_mesh(center),
+            "summary-enclosed deep stone should settle without meshing"
+        );
+        assert!(
+            !world.meshes.contains_key(&center),
+            "summary-enclosed deep stone must not leave render output"
+        );
     }
 }

@@ -14,7 +14,6 @@
 //! toward it after straying.
 
 use crate::biome::Biome;
-use crate::block::Block;
 use crate::mathh::IVec3;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
@@ -95,8 +94,8 @@ fn pick_destination(
     habitat: &Habitat,
     avoid_water: bool,
 ) -> Option<IVec3> {
-    let solid = |c: IVec3| Block::from_id(ctx.world.chunk_block(c.x, c.y, c.z)).blocks_movement();
-    let water = |c: IVec3| Block::from_id(ctx.world.chunk_block(c.x, c.y, c.z)).is_water();
+    let solid = |c: IVec3| ctx.world.blocks_movement_at(c.x, c.y, c.z);
+    let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
     let r2 = radius * radius;
     let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
     for _ in 0..PICK_ATTEMPTS {
