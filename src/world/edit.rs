@@ -1,5 +1,5 @@
 use crate::block::Block;
-use crate::chunk::WORLD_MIN_Y;
+use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use crate::column::NO_SURFACE;
 use crate::section::SectionSummary;
 use std::sync::Arc;
@@ -32,7 +32,9 @@ impl World {
             s.set_block(lx, ly, lz, b);
             s.modified = true;
         }
-        self.update_column_height_after_set(wx, wy, wz, b != Block::Air);
+        if self.update_column_height_after_set(wx, wy, wz, b != Block::Air) {
+            self.mark_heightmap_light_dirty_around(pos.chunk_pos());
+        }
 
         // Re-mesh the 3×3×3 so the border flood, vertex light sampling, and
         // cross-section face culling remain correct.
@@ -53,20 +55,25 @@ impl World {
         wy: i32,
         wz: i32,
         solid: bool,
-    ) {
+    ) -> bool {
         let lx = (wx & 0x0F) as usize;
         let lz = (wz & 0x0F) as usize;
         if solid {
-            self.ensure_column(crate::chunk::ChunkPos::new(wx >> 4, wz >> 4))
-                .raise_surface(lx, lz, wy);
-            return;
+            let cpos = ChunkPos::new(
+                wx.div_euclid(SECTION_SIZE as i32),
+                wz.div_euclid(SECTION_SIZE as i32),
+            );
+            let col = self.ensure_column(cpos);
+            let old = col.surface_y(lx, lz);
+            col.raise_surface(lx, lz, wy);
+            return wy > old;
         }
         let cur = match self.column_at(wx, wz) {
             Some(c) => c.surface_y(lx, lz),
-            None => return,
+            None => return false,
         };
         if wy != cur {
-            return; // removed a block that wasn't the surface — heightmap unchanged.
+            return false; // removed a block that wasn't the surface — heightmap unchanged.
         }
         let mut new_top = NO_SURFACE;
         for y in (WORLD_MIN_Y..wy).rev() {
@@ -78,5 +85,6 @@ impl World {
         if let Some(col) = self.column_at_mut(wx, wz) {
             col.set_surface_y(lx, lz, new_top);
         }
+        new_top != cur
     }
 }

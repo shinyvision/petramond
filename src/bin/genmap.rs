@@ -594,12 +594,15 @@ fn bench(seed: u32, radius: i32) {
     let n = (2 * radius + 1) * (2 * radius + 1);
     let t0 = std::time::Instant::now();
     let mut acc = 0u64;
-    let (mut t_surface, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0);
+    let (mut t_surface, mut t_cave, mut t_ug, mut t_veg, mut t_feat) = (0.0f64, 0.0, 0.0, 0.0, 0.0);
     for cz in -radius..=radius {
         for cx in -radius..=radius {
             let s = std::time::Instant::now();
             let mut chunk = generator.generate_surface(cx, cz);
             t_surface += s.elapsed().as_secs_f64();
+            let s = std::time::Instant::now();
+            generator.carve_caves(&mut chunk);
+            t_cave += s.elapsed().as_secs_f64();
             let s = std::time::Instant::now();
             generator.place_underground(&mut chunk);
             t_ug += s.elapsed().as_secs_f64();
@@ -622,8 +625,9 @@ fn bench(seed: u32, radius: i32) {
         n as f64 / dt.as_secs_f64()
     );
     println!(
-        "  surface {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
+        "  surface {:.3}  caves {:.3}  underground {:.3}  vegetation {:.3}  features {:.3}  ms/chunk",
         ms(t_surface),
+        ms(t_cave),
         ms(t_ug),
         ms(t_veg),
         ms(t_feat)

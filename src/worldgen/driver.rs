@@ -1,7 +1,8 @@
 //! `ChunkGenerator` — owns the worldgen subsystems and runs the fixed stage
 //! order for one chunk.
 //!
-//! Hot stages: Setup → SurfaceDensityFill → Underground → Vegetation → Features.
+//! Hot stages: Setup → SurfaceDensityFill → Caves → Underground → Vegetation →
+//! Features.
 //! The older full surface region path remains available for diagnostics and
 //! tooling that needs a materialized feature/audit window.
 //!
@@ -16,14 +17,17 @@ use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
     feature_candidate_bounds, feature_region_bounds, place_features_section,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
-    vegetation, ColumnFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE, TREELINE,
+    vegetation, ColumnFeatureField, FeatureField, RuntimeFeatureField, SurfaceHeights,
+    MAX_TREE_REACH_ABOVE, TREELINE,
 };
+use super::noise::height::CaveField;
 use super::proto::ProtoChunk;
 use super::region::RegionCells;
 
 pub struct ChunkGenerator {
     seed: u32,
     surface_density: SurfaceDensitySystem,
+    caves: CaveField,
 }
 
 /// Per-column data computed ONCE on the worker, then shared (via `Arc`) by every
@@ -44,6 +48,9 @@ pub struct ColumnGen {
     /// Density top-solid surface (world Y, or `-1` for a floorless column) per
     /// `(x,z)`, indexed `z*16 + x`.
     surf: Box<[i32]>,
+    /// Post-cave bare top non-air surface for the column's local `(x,z)`, before
+    /// vegetation/trees. This is lower than `surf` only at cave entrances.
+    top_surf: Box<[i32]>,
     surf_min: i32,
     surf_max: i32,
     /// Surface min/max across the whole candidate window (chunk + spacing margin), so
@@ -84,6 +91,17 @@ impl ColumnGen {
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
         self.surf[z * SECTION_SIZE + x]
     }
+    /// Generated column heightmap before vegetation/trees: waterline for submerged
+    /// columns, otherwise the post-cave top surface so skylight can enter mouths.
+    #[inline]
+    pub fn heightmap_surface_y(&self, x: usize, z: usize) -> i32 {
+        let i = z * SECTION_SIZE + x;
+        if self.surf[i] < SEA_LEVEL {
+            SEA_LEVEL
+        } else {
+            self.top_surf[i]
+        }
+    }
     /// Lowest / highest density surface across the column (for vertical-window sizing).
     #[inline]
     pub fn surf_range(&self) -> (i32, i32) {
@@ -109,6 +127,9 @@ impl ColumnGen {
         if y0 > self.content_top {
             return SectionSummary::Empty;
         }
+        if CaveField::section_may_carve(cy, self.surf_min, self.surf_max) {
+            return SectionSummary::Mixed;
+        }
         if y1 <= self.surf_min {
             return SectionSummary::FullOpaque;
         }
@@ -129,6 +150,7 @@ impl ChunkGenerator {
         Self {
             seed,
             surface_density: SurfaceDensitySystem::new(seed),
+            caves: CaveField::new(seed),
         }
     }
 
@@ -160,6 +182,17 @@ impl ChunkGenerator {
         proto.into_chunk()
     }
 
+    /// Cave carving stage: removes solid cells from the surface-filled chunk using
+    /// the same original density surfaces the cubic section path receives through
+    /// [`ColumnGen`].
+    pub fn carve_caves(&self, chunk: &mut Chunk) {
+        let (ox, oz) = chunk.chunk_origin_world();
+        let surf = self
+            .surface_density
+            .surface_heights(ox, oz, CHUNK_SX, CHUNK_SZ);
+        self.caves.carve_chunk(chunk, &surf);
+    }
+
     /// Underground scatter stage: ore veins + stone / dirt / gravel blobs that
     /// overwrite Stone below the surface. Runs before features (vegetation) and is
     /// a pure function of `(seed, cx, cz)`.
@@ -185,7 +218,11 @@ impl ChunkGenerator {
     /// windows needed by tree placement instead of a full surf+biome audit region.
     pub fn place_features_runtime(&self, chunk: &mut Chunk) {
         let (ox, oz) = chunk.chunk_origin_world();
-        let mut field = super::feature::RuntimeFeatureField::new(&self.surface_density, ox, oz);
+        let field = RuntimeFeatureField::new(&self.surface_density, ox, oz);
+        let mut field = CaveAdjustedFeatureField {
+            inner: field,
+            caves: &self.caves,
+        };
         super::feature::place_features_with_field(chunk, &mut field, self.seed);
     }
 
@@ -201,35 +238,11 @@ impl ChunkGenerator {
         // Candidate window (chunk + spacing margin): full biome + surface. The chunk's
         // own 16×16 biome/surface is the centre of this region, so no separate query.
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
-
-        // Candidate-window surface range + whether any cell wants a redwood support
-        // check. Scanned together over the already-computed candidate cells.
-        let (mut cand_surf_min, mut cand_surf_max) = (i32::MAX, i32::MIN);
-        let mut needs_support = false;
-        for (i, &s) in candidates.surf.iter().enumerate() {
-            cand_surf_min = cand_surf_min.min(s);
-            cand_surf_max = cand_surf_max.max(s);
-            if matches!(
-                super::biome::spec(candidates.biomes[i]).trees.support,
-                super::biome::TreeSupport::RedwoodBase
-            ) {
-                needs_support = true;
-            }
-        }
-
-        // Support window (the larger redwood-support halo): surfaces only, and ONLY when
-        // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
-        // is its sole reader, so the common (redwood-free) column skips this big window.
-        let support = needs_support.then(|| {
-            let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
-            debug_assert_eq!(sw, sh);
-            let support_surf = self.surface_density.surface_heights(sx0, sz0, sw, sh);
-            SurfaceHeights::new(sx0, sz0, sw, support_surf)
-        });
+        let mut candidates = self.surface_density.region(cx0, cz0, cw, ch);
 
         let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let mut surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
+        let mut top_surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let (mut surf_min, mut surf_max) = (i32::MAX, i32::MIN);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
@@ -242,11 +255,58 @@ impl ChunkGenerator {
             }
         }
 
+        let mut needs_support = false;
+        for (i, s) in candidates.surf.iter_mut().enumerate() {
+            let wx = candidates.x0 + (i % candidates.w) as i32;
+            let wz = candidates.z0 + (i / candidates.w) as i32;
+            *s = self.caves.feature_surface_after_caves(wx, wz, *s);
+            if matches!(
+                super::biome::spec(candidates.biomes[i]).trees.support,
+                super::biome::TreeSupport::RedwoodBase
+            ) {
+                needs_support = true;
+            }
+        }
+
+        // Candidate-window surface range + whether any cell wants a redwood support
+        // check. Feature surfaces are cave-aware, so tree gating does not root on
+        // cave-mouth columns.
+        let (mut cand_surf_min, mut cand_surf_max) = (i32::MAX, i32::MIN);
+        for &s in &candidates.surf {
+            cand_surf_min = cand_surf_min.min(s);
+            cand_surf_max = cand_surf_max.max(s);
+        }
+
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                let i = z * SECTION_SIZE + x;
+                let wx = ox + x as i32;
+                let wz = oz + z as i32;
+                top_surf[i] = self.caves.surface_after_caves(wx, wz, surf[i]);
+            }
+        }
+
+        // Support window (the larger redwood-support halo): surfaces only, and ONLY when
+        // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
+        // is its sole reader, so the common (redwood-free) column skips this big window.
+        let support = needs_support.then(|| {
+            let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
+            debug_assert_eq!(sw, sh);
+            let mut support_surf = self.surface_density.surface_heights(sx0, sz0, sw, sh);
+            for (i, s) in support_surf.iter_mut().enumerate() {
+                let wx = sx0 + (i % sw) as i32;
+                let wz = sz0 + (i / sw) as i32;
+                *s = self.caves.feature_surface_after_caves(wx, wz, *s);
+            }
+            SurfaceHeights::new(sx0, sz0, sw, support_surf)
+        });
+
         ColumnGen {
             cx,
             cz,
             biome,
             surf,
+            top_surf,
             surf_min,
             surf_max,
             cand_surf_min,
@@ -276,6 +336,7 @@ impl ChunkGenerator {
         //    trunk replacing surface grass) while the count still read zero.
         self.surface_density
             .fill_section(&mut section, &col.biome, &col.surf);
+        self.caves.carve_section(&mut section, &col.surf);
         section.recompute_random_tick_count();
         section.recompute_opaque_count();
 
@@ -290,7 +351,13 @@ impl ChunkGenerator {
         if col.surf_max >= SEA_LEVEL
             && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
         {
-            vegetation::place_vegetation_section(&mut section, &col.biome, &col.surf, self.seed);
+            vegetation::place_vegetation_section(
+                &mut section,
+                &col.biome,
+                &col.surf,
+                &col.top_surf,
+                self.seed,
+            );
         }
 
         // 4. Trees: a tree roots only where the surface is in (sea level, treeline] and
@@ -308,5 +375,22 @@ impl ChunkGenerator {
 
         section.dirty = true;
         section
+    }
+}
+
+struct CaveAdjustedFeatureField<'a> {
+    inner: RuntimeFeatureField<'a>,
+    caves: &'a CaveField,
+}
+
+impl FeatureField for CaveAdjustedFeatureField<'_> {
+    fn column_at(&mut self, wx: i32, wz: i32) -> (i32, crate::biome::Biome) {
+        let (surf, biome) = self.inner.column_at(wx, wz);
+        (self.caves.feature_surface_after_caves(wx, wz, surf), biome)
+    }
+
+    fn surf_at(&mut self, wx: i32, wz: i32) -> i32 {
+        let surf = self.inner.surf_at(wx, wz);
+        self.caves.feature_surface_after_caves(wx, wz, surf)
     }
 }

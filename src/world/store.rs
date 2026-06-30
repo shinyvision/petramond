@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use crate::block::Block;
 use crate::chunk::{
-    self, section_idx, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY,
-    SECTION_SIZE,
+    self, section_idx, ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
 use crate::column::{Column, NO_SURFACE};
 use crate::entity::DroppedItem;
@@ -345,10 +344,10 @@ impl World {
                 }
             }
         }
-        // Floor the scan at the column's bare-ground surface (from its shared gen data),
-        // so a partially-loaded column — vertical windowing may leave its surface sections
-        // unstreamed — still reports its true surface for skylight/spawn, while trees and
-        // built-up structures above ground still raise it.
+        // Floor the scan at the column's generated heightmap surface (from its shared gen
+        // data), so a partially-loaded column — vertical windowing may leave its surface
+        // sections unstreamed — still reports its true surface for skylight/spawn, while
+        // trees and built-up structures above ground still raise it.
         let bare = self.column_gen.get(&cpos).cloned();
         let col = self.ensure_column(cpos);
         for lz in 0..SECTION_SIZE {
@@ -356,7 +355,7 @@ impl World {
                 let i = lz * SECTION_SIZE + lx;
                 let ground = bare
                     .as_ref()
-                    .map(|c| c.surface_y(lx, lz).max(SEA_LEVEL))
+                    .map(|c| c.heightmap_surface_y(lx, lz))
                     .unwrap_or(NO_SURFACE);
                 let scanned = surf[i];
                 let h = if scanned == NO_SURFACE {
@@ -453,6 +452,37 @@ impl World {
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
             self.light_blocked_meshes.remove(&pos);
             self.dirty_meshes.push(pos);
+        }
+    }
+
+    pub(super) fn mark_light_and_mesh_dirty_pos(&mut self, pos: SectionPos) {
+        if let Some(s) = self.sections.get_mut(&pos).map(Arc::make_mut) {
+            s.mark_light_dirty();
+            s.dirty = true;
+            s.mesh_revision = s.mesh_revision.wrapping_add(1);
+            self.light_blocked_meshes.remove(&pos);
+            self.dirty_meshes.push(pos);
+        }
+    }
+
+    /// A column heightmap cell moved, changing which cells are considered open sky
+    /// for every skylight bake whose 3×3 XZ seed grid includes this column. Dirty only
+    /// sections already in memory; absent generated/sky sections will bake from the new
+    /// heightmap when they stream in or materialize.
+    pub(super) fn mark_heightmap_light_dirty_around(&mut self, center: ChunkPos) {
+        let mut affected = Vec::new();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                for cy in Self::column_section_range() {
+                    let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
+                    if self.sections.contains_key(&pos) {
+                        affected.push(pos);
+                    }
+                }
+            }
+        }
+        for pos in affected {
+            self.mark_light_and_mesh_dirty_pos(pos);
         }
     }
 
@@ -823,9 +853,10 @@ mod tests {
     use std::sync::Arc;
 
     use crate::block::Block;
-    use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
+    use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME};
     use crate::mathh::IVec3;
     use crate::mesh::ChunkMesh;
+    use crate::section::Section;
     use crate::worldgen::driver::ChunkGenerator;
 
     use super::World;
@@ -863,7 +894,7 @@ mod tests {
         let mut world = World::new(seed, 0);
         install_column_summary(&mut world, &generator, ChunkPos::new(0, 0));
 
-        let y = (SECTION_MIN_CY + 1) * SECTION_SIZE as i32;
+        let y = SECTION_MIN_CY * SECTION_SIZE as i32;
         assert_eq!(
             Block::from_id(world.chunk_block(0, y, 0)),
             Block::Air,
@@ -885,13 +916,107 @@ mod tests {
     }
 
     #[test]
+    fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
+        let seed = 0x1234_5678;
+        let generator = ChunkGenerator::new(seed);
+        let mut found = None;
+
+        'search: for cz in -8..=8 {
+            for cx in -8..=8 {
+                let col = Arc::new(generator.generate_column_gen(cx, cz));
+                for z in 0..SECTION_SIZE {
+                    for x in 0..SECTION_SIZE {
+                        let original = col.surface_y(x, z);
+                        let cave_top = col.heightmap_surface_y(x, z);
+                        if cave_top < original {
+                            found = Some((ChunkPos::new(cx, cz), col, x, z, original, cave_top));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some((cp, col, x, z, original, cave_top)) = found else {
+            panic!("test seed/search window must contain at least one cave-mouth column");
+        };
+
+        let mut world = World::new(seed, 0);
+        world.ensure_column(cp);
+        world.column_gen.insert(cp, Arc::clone(&col));
+
+        let cy = cave_top.div_euclid(SECTION_SIZE as i32);
+        let sp = SectionPos::new(cp.cx, cy, cp.cz);
+        let section = generator.generate_section(sp, &col);
+        world.sections.insert(sp, Arc::new(section));
+
+        world.recompute_column_heightmap(cp);
+
+        assert_eq!(
+            world.columns.get(&cp).unwrap().surface_y(x, z),
+            cave_top,
+            "heightmap refresh must not restore original pre-cave surface {original}"
+        );
+    }
+
+    #[test]
+    fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
+        let mut world = World::new(0, 0);
+        let cp = ChunkPos::new(0, 0);
+        let shaft_x = 8;
+        let shaft_z = 8;
+        let cover_y = 64;
+        let top = SectionPos::new(0, 4, 0);
+        let lower = SectionPos::new(0, 2, 0);
+
+        world
+            .ensure_column(cp)
+            .set_surface_y(shaft_x, shaft_z, cover_y);
+
+        let mut top_section = Section::new(top.cx, top.cy, top.cz);
+        top_section.set_block(shaft_x, 0, shaft_z, Block::Dirt);
+        top_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
+        top_section.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+        top_section.dirty = false;
+
+        let mut lower_section = Section::new(lower.cx, lower.cy, lower.cz);
+        lower_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
+        lower_section.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+        lower_section.dirty = false;
+
+        world.sections.insert(top, Arc::new(top_section));
+        world.sections.insert(lower, Arc::new(lower_section));
+
+        assert!(
+            !world.sections.get(&lower).unwrap().light_dirty,
+            "fixture lower section starts with settled dark skylight"
+        );
+        assert!(
+            !world.sections.get(&lower).unwrap().dirty,
+            "fixture lower section starts with no pending mesh work"
+        );
+
+        assert!(world.set_block_world(shaft_x as i32, cover_y, shaft_z as i32, Block::Air));
+
+        let lower = world.sections.get(&lower).unwrap();
+        assert!(
+            lower.light_dirty,
+            "removing the heightmap cover must invalidate skylight below the edited section"
+        );
+        assert!(
+            lower.dirty,
+            "sections whose cached light can change must be remeshed after the rebake"
+        );
+    }
+
+    #[test]
     fn air_edit_into_absent_full_opaque_section_materializes_generated_base() {
         let seed = 0x51EED;
         let generator = ChunkGenerator::new(seed);
         let mut world = World::new(seed, 0);
         install_column_summary(&mut world, &generator, ChunkPos::new(0, 0));
 
-        let y = (SECTION_MIN_CY + 1) * SECTION_SIZE as i32;
+        let y = SECTION_MIN_CY * SECTION_SIZE as i32;
         let sp = SectionPos::from_world(0, y, 0).unwrap();
         assert!(
             !world.sections.contains_key(&sp),

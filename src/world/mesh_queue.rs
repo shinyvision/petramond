@@ -573,12 +573,14 @@ mod tests {
     }
 
     #[test]
-    fn generated_full_opaque_summaries_enclose_solid_section_without_loaded_neighbors() {
+    fn generated_full_opaque_summaries_enclose_solid_section_with_loaded_vertical_neighbors() {
         let seed = 0x51EED;
         let generator = ChunkGenerator::new(seed);
         let mut world = World::new(seed, 0);
         let center = SectionPos::new(0, SECTION_MIN_CY + 1, 0);
         insert_solid_section(&mut world, center);
+        insert_solid_section(&mut world, SectionPos::new(0, center.cy - 1, 0));
+        insert_solid_section(&mut world, SectionPos::new(0, center.cy + 1, 0));
 
         for pos in [
             ChunkPos::new(0, 0),
@@ -592,7 +594,7 @@ mod tests {
 
         assert!(
             world.section_produces_no_mesh(center),
-            "known-solid generated neighbour summaries should suppress loaded-edge deep stone"
+            "known-solid generated horizontal summaries should suppress loaded-edge deep stone"
         );
         assert!(
             world.clear_mesh_if_section_produces_no_mesh(center),

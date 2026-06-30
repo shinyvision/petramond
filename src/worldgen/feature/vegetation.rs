@@ -56,30 +56,34 @@ pub fn place_vegetation(chunk: &mut Chunk, seed: u32) {
 }
 
 /// Cubic per-section ground vegetation. Places each column's single plant into the
-/// ONE section that contains the cell just above its bare-ground surface, so the
-/// result is byte-identical to the whole-column [`place_vegetation`] for this
-/// section's slab. `biomes`/`surf` are the column's 16×16 grids (biome id + density
-/// surface), indexed `z*16 + x`.
+/// ONE section that contains the cell just above its post-cave bare-ground top, so
+/// the result is byte-identical to the whole-column [`place_vegetation`] for this
+/// section's slab. `biomes`/`surf`/`top` are the column's 16×16 grids (biome id,
+/// original density surface, and post-cave top), indexed `z*16 + x`.
 ///
-/// The bare-ground anchor is `max(surf, SEA_LEVEL)` (the pre-feature top non-air, as
-/// the chunk path reads from its heightmap): a land column tops out at its solid
-/// surface, a submerged column at the waterline — and water never carries a ground
-/// plant, so submerged columns are skipped outright. The surface MATERIAL is
-/// recomputed analytically (`skin_block` at depth 0) because the anchor cell may live
-/// in the section below this one. Must run AFTER terrain + scatter and BEFORE features,
-/// matching the chunk stage order.
-pub fn place_vegetation_section(section: &mut Section, biomes: &[u8], surf: &[i32], seed: u32) {
+/// Submerged columns are skipped outright because their top material is water. The
+/// surface material is recomputed analytically at the post-cave anchor depth
+/// because the anchor cell may live in the section below this one. Must run AFTER
+/// terrain + scatter and BEFORE features, matching the chunk stage order.
+pub fn place_vegetation_section(
+    section: &mut Section,
+    biomes: &[u8],
+    surf: &[i32],
+    top: &[i32],
+    seed: u32,
+) {
     let (ox, oy, oz) = section.origin_world();
     for z in 0..SECTION_SIZE {
         for x in 0..SECTION_SIZE {
-            let column_surf = surf[z * SECTION_SIZE + x];
+            let i = z * SECTION_SIZE + x;
+            let column_surf = surf[i];
             // Submerged (or floorless) columns top out at the waterline: their surface
             // material is water, which carries no ground plant. Skip — matches the chunk
             // path, where `pick_plant(.., Water)` returns None.
             if column_surf < SEA_LEVEL {
                 continue;
             }
-            let anchor = column_surf;
+            let anchor = top[i];
             if anchor < 1 || anchor + 1 >= WORLD_MAX_Y {
                 continue;
             }
@@ -92,17 +96,18 @@ pub fn place_vegetation_section(section: &mut Section, biomes: &[u8], surf: &[i3
             if section.block_raw(lx, ly, lz) != Block::Air.id() {
                 continue; // already occupied (terrain/scatter) — matches the chunk guard.
             }
-            let biome = Biome::from_id(biomes[z * SECTION_SIZE + x]);
+            let biome = Biome::from_id(biomes[i]);
             let wx = ox + x as i32;
             let wz = oz + z as i32;
+            let depth_from_top = (column_surf - anchor).max(0) as u32;
             let surf_block = SurfaceSystem.skin_block(
                 &SurfaceCtx {
                     seed,
                     wx,
                     wz,
                     y: anchor,
-                    surf_y: anchor,
-                    depth_from_top: 0,
+                    surf_y: column_surf,
+                    depth_from_top,
                 },
                 spec(biome).surface,
             );

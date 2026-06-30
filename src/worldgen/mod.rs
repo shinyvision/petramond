@@ -6,8 +6,8 @@
 //!
 //! Active terrain is built from the surface density graph: climate graph biome
 //! assignment, `master_density` sign fill, sea-level water, exposed-run surface
-//! skinning, underground scatter, ground vegetation, and tree features. Caves are
-//! not composed into the live density fill path.
+//! skinning, cave carving, underground scatter, ground vegetation, and tree
+//! features.
 
 pub(crate) mod audit;
 pub(crate) mod biome;
@@ -57,6 +57,7 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 /// hot worker loops to reuse the generator's immutable seed-derived state.
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
     let mut chunk = generator.generate_surface(cx, cz);
+    generator.carve_caves(&mut chunk);
     generator.place_underground(&mut chunk);
     generator.place_vegetation(&mut chunk);
     generator.place_features_runtime(&mut chunk);
@@ -164,6 +165,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cave_capable_section_summaries_are_conservative() {
+        use super::noise::height::CaveField;
+        use crate::section::SectionSummary;
+
+        let seed = 0x1234_5678;
+        let generator = driver::ChunkGenerator::new(seed);
+        let mut checked = 0;
+
+        for &(cx, cz) in &[(0, 0), (1, -1), (-3, 5), (12, -7), (4, -3)] {
+            let col = generator.generate_column_gen(cx, cz);
+            let (surf_min, surf_max) = col.surf_range();
+            for cy in -4..=15 {
+                if CaveField::section_may_carve(cy, surf_min, surf_max) {
+                    checked += 1;
+                    assert_eq!(
+                        col.section_summary(cy),
+                        SectionSummary::Mixed,
+                        "cave-capable generated section must be mixed at ({cx},{cy},{cz})"
+                    );
+                }
+            }
+        }
+
+        assert!(
+            checked > 0,
+            "test must exercise at least one cave-capable section"
+        );
     }
 
     /// Generating sections across a wide area must not corrupt the random-tick gate.

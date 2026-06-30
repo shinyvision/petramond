@@ -21,6 +21,7 @@ fn main() {
     let g = ChunkGenerator::new(seed);
 
     let mut surf_ns = 0u128;
+    let mut cave_ns = 0u128;
     let mut under_ns = 0u128;
     let mut veg_ns = 0u128;
     let mut feat_ns = 0u128;
@@ -31,19 +32,22 @@ fn main() {
         let t0 = Instant::now();
         let mut chunk = g.generate_surface(cx, cz);
         let t1 = Instant::now();
-        g.place_underground(&mut chunk);
+        g.carve_caves(&mut chunk);
         let t2 = Instant::now();
-        g.place_vegetation(&mut chunk);
+        g.place_underground(&mut chunk);
         let t3 = Instant::now();
-        g.place_features_runtime(&mut chunk);
+        g.place_vegetation(&mut chunk);
         let t4 = Instant::now();
+        g.place_features_runtime(&mut chunk);
+        let t5 = Instant::now();
 
         surf_ns += (t1 - t0).as_nanos();
-        under_ns += (t2 - t1).as_nanos();
-        veg_ns += (t3 - t2).as_nanos();
-        feat_ns += (t4 - t3).as_nanos();
+        cave_ns += (t2 - t1).as_nanos();
+        under_ns += (t3 - t2).as_nanos();
+        veg_ns += (t4 - t3).as_nanos();
+        feat_ns += (t5 - t4).as_nanos();
 
-        let total_ms = (t4 - t0).as_nanos() as f64 / 1e6;
+        let total_ms = (t5 - t0).as_nanos() as f64 / 1e6;
         if total_ms > worst.2 {
             worst = (cx, cz, total_ms);
         }
@@ -52,7 +56,7 @@ fn main() {
     std::hint::black_box(sink);
 
     let per = |ns: u128| ns as f64 / 1e6 / n as f64;
-    let total = surf_ns + under_ns + veg_ns + feat_ns;
+    let total = surf_ns + cave_ns + under_ns + veg_ns + feat_ns;
     println!(
         "grid {}x{} = {} chunks, seed={:08x}",
         2 * r + 1,
@@ -64,6 +68,11 @@ fn main() {
         "surface    : {:>8.3} ms/chunk  ({:>5.1}%)",
         per(surf_ns),
         surf_ns as f64 / total as f64 * 100.0
+    );
+    println!(
+        "caves      : {:>8.3} ms/chunk  ({:>5.1}%)",
+        per(cave_ns),
+        cave_ns as f64 / total as f64 * 100.0
     );
     println!(
         "underground: {:>8.3} ms/chunk  ({:>5.1}%)",

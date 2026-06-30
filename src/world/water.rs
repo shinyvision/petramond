@@ -256,7 +256,9 @@ impl World {
             s.set_water(lx, ly, lz, block, meta);
             s.modified = true;
         }
-        self.update_column_height_after_set(pos.x, pos.y, pos.z, block != Block::Air);
+        if self.update_column_height_after_set(pos.x, pos.y, pos.z, block != Block::Air) {
+            self.mark_heightmap_light_dirty_around(cpos.chunk_pos());
+        }
         self.queue_dirty_mesh(cpos);
         // A border cell changes neighbour sections' culled faces: re-mesh the 3×3×3.
         self.mark_dirty_neighborhood(cpos, false);

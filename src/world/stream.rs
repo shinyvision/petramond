@@ -343,9 +343,9 @@ impl World {
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     column.set_biome(x, z, col.biome_at(x, z));
-                    // Land tops out at its solid surface; submerged / floorless columns at
-                    // the waterline (water fills up to sea level).
-                    column.set_surface_y(x, z, col.surface_y(x, z).max(SEA_LEVEL));
+                    // Submerged / floorless columns top out at the waterline; land cave
+                    // mouths use their post-cave top so skylight can enter shafts.
+                    column.set_surface_y(x, z, col.heightmap_surface_y(x, z));
                 }
             }
         }

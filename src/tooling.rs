@@ -194,6 +194,10 @@ pub mod worldgen {
             self.inner.generate_surface(cx, cz)
         }
 
+        pub fn carve_caves(&self, chunk: &mut Chunk) {
+            self.inner.carve_caves(chunk);
+        }
+
         pub fn place_underground(&self, chunk: &mut Chunk) {
             self.inner.place_underground(chunk);
         }

@@ -1,7 +1,8 @@
-//! Legacy cave-oriented noise subsystem over typed `noise`-crate samplers.
+//! Cave-oriented noise subsystem over typed `noise`-crate samplers.
 //!
-//! Stage 6A surface-density fill does not carve caves during terrain fill. These
-//! modules remain for older code/tests until cave density composition is defined.
+//! Caves are an explicit post-surface carve stage, not nodes in the surface
+//! density graph. The samplers stay pure world-position functions so chunk and
+//! section generation remain order-independent.
 
 pub mod height;
 pub mod settings;
