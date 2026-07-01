@@ -93,10 +93,24 @@ pub(super) static DEEP_OCEAN_FLOOR: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Block(Block::Stone),
 ]);
 
+// `Underwater` holds for EVERY voxel of a below-sea-level column, so an
+// underwater floor material must also be depth-gated — an ungated branch would
+// paint the column to bedrock and cave carving would expose it (all-sand caves
+// under swamp lakes).
+static UNDERWATER_DIRT_BAND: SurfaceRule = SurfaceRule::Condition {
+    when: SurfaceCond::DepthFromTop(3),
+    then: &SurfaceRule::Block(Block::Dirt),
+};
+
+static UNDERWATER_SAND_BAND: SurfaceRule = SurfaceRule::Condition {
+    when: SurfaceCond::DepthFromTop(2),
+    then: &SurfaceRule::Block(Block::Sand),
+};
+
 pub(super) static PODZOL_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
         when: SurfaceCond::Underwater,
-        then: &SurfaceRule::Block(Block::Dirt),
+        then: &UNDERWATER_DIRT_BAND,
     },
     SurfaceRule::Condition {
         when: SurfaceCond::DepthFromTop(0),
@@ -128,7 +142,7 @@ pub(super) static STONY_TOP: SurfaceRule = SurfaceRule::Sequence(&[
 pub(super) static WETLAND_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
         when: SurfaceCond::Underwater,
-        then: &SurfaceRule::Block(Block::Sand),
+        then: &UNDERWATER_SAND_BAND,
     },
     SurfaceRule::Condition {
         when: SurfaceCond::DepthFromTop(0),
@@ -159,7 +173,7 @@ static REDWOOD_CAP: SurfaceRule = SurfaceRule::Sequence(&[
 pub(super) static REDWOOD_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
         when: SurfaceCond::Underwater,
-        then: &SurfaceRule::Block(Block::Dirt),
+        then: &UNDERWATER_DIRT_BAND,
     },
     SurfaceRule::Condition {
         when: SurfaceCond::DepthFromTop(0),

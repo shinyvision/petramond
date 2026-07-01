@@ -600,6 +600,46 @@ mod tests {
             .collect()
     }
 
+    /// The deep fast path in `fill_section` requires every biome rule to be
+    /// depth-independent below `MAX_SKIN_BAND_DEPTH`, and `SurfaceCond::Underwater`
+    /// is a whole-column predicate — a depth-ungated underwater branch skins the
+    /// column to bedrock, so cave carving exposes all-sand/all-dirt caves under
+    /// water bodies.
+    #[test]
+    fn deep_skin_is_depth_independent_and_ignores_underwater_status() {
+        let surface = SurfaceSystem;
+        let deep = (MAX_SKIN_BAND_DEPTH + 1) as u32;
+        let ctx = |wx: i32, wz: i32, surf_y: i32, depth: u32| SurfaceCtx {
+            seed: 1,
+            wx,
+            wz,
+            y: surf_y - depth as i32,
+            surf_y,
+            depth_from_top: depth,
+        };
+
+        for spec in crate::worldgen::biome::SPECS.iter() {
+            for (wx, wz) in [(0, 0), (137, -911), (-4096, 512)] {
+                for surf_y in [SEA_LEVEL - 20, SEA_LEVEL + 20, 160] {
+                    assert_eq!(
+                        surface.skin_block(&ctx(wx, wz, surf_y, deep), spec.surface),
+                        surface.skin_block(&ctx(wx, wz, surf_y, deep + 120), spec.surface),
+                        "{:?} skin is depth-dependent below MAX_SKIN_BAND_DEPTH \
+                         at ({wx},{wz}) surf_y={surf_y}",
+                        spec.biome
+                    );
+                }
+                assert_eq!(
+                    surface.skin_block(&ctx(wx, wz, SEA_LEVEL - 20, deep), spec.surface),
+                    surface.skin_block(&ctx(wx, wz, SEA_LEVEL + 20, deep), spec.surface),
+                    "{:?} deep material differs between underwater and dry columns \
+                     at ({wx},{wz})",
+                    spec.biome
+                );
+            }
+        }
+    }
+
     #[test]
     fn density_sign_fill_produces_solid_air_and_sea_water() {
         let system = test_system(PlaneDensity { surface_y: 60.0 });

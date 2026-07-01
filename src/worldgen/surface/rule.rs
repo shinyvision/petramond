@@ -31,7 +31,9 @@ pub enum SurfaceCond {
     SurfaceAboveY(i32),
     /// y is within N blocks below the column's surface top (depth <= N).
     DepthFromTop(u32),
-    /// The column's surface is at or below sea level.
+    /// The column's surface is at or below sea level. This is a COLUMN predicate,
+    /// true for every voxel down to bedrock — pair the branch with a `DepthFromTop`
+    /// gate, or it skins the whole column and cave carving exposes it.
     Underwater,
     /// A SMOOTH low-frequency value-noise draw in `[0,1)` is below the threshold.
     /// Because nearby columns share corner samples, the result is contiguous
