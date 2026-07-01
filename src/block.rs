@@ -383,7 +383,7 @@ impl Block {
 
     #[inline]
     pub fn is_solid(self) -> bool {
-        self.def().flags.is_solid()
+        data::flags(self.id()).is_solid()
     }
 
     /// Whether this block carries `tag` (see [`BlockTag`]) — the one tag query.
@@ -454,7 +454,7 @@ impl Block {
 
     #[inline]
     pub fn is_opaque(self) -> bool {
-        self.def().flags.is_opaque()
+        data::flags(self.id()).is_opaque()
     }
 
     /// Does this block cast ambient occlusion? Full opaque cubes always do, and
@@ -464,12 +464,12 @@ impl Block {
     /// and still pass light through at half attenuation). Water never occludes.
     #[inline]
     pub fn occludes_ao(self) -> bool {
-        self.def().flags.occludes_ao()
+        data::flags(self.id()).occludes_ao()
     }
 
     #[inline]
     pub fn is_transparent(self) -> bool {
-        self.def().flags.is_transparent()
+        data::flags(self.id()).is_transparent()
     }
 
     /// Block-light this block radiates when ACTIVE, on the SAME x2 integer scale the
@@ -532,7 +532,7 @@ impl Block {
     /// facing for their front face.
     #[inline]
     pub fn directional_view(self) -> bool {
-        self.def().flags.is_directional_view()
+        data::flags(self.id()).is_directional_view()
     }
 
     /// Per-face tile: [top, bottom, side].

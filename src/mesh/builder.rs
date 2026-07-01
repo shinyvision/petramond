@@ -1,11 +1,15 @@
+use std::cell::RefCell;
+
 use glam::{IVec3, Vec3};
 
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
 use crate::block_model::{self, BlockModelKind};
+use crate::chunk::{
+    section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y,
+};
 #[cfg(test)]
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::furnace::Facing;
 use crate::section::Section;
 use crate::torch::{warm_amount, warm_tint};
@@ -48,6 +52,230 @@ impl MeshOptions {
     pub const FAR_LEAVES: Self = Self {
         leaf_mesh_mode: LeafMeshMode::Simplified,
     };
+}
+
+const SECTION_PAD: usize = SECTION_SIZE + 2;
+const BIOME_PAD_RADIUS: i32 = 2;
+const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
+
+#[inline]
+fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
+    (y * SECTION_PAD + z) * SECTION_PAD + x
+}
+
+#[inline]
+fn biome_pad_idx(x: usize, z: usize) -> usize {
+    z * BIOME_PAD + x
+}
+
+pub(crate) struct SectionMeshPad<'a> {
+    pub blocks: &'a [u8],
+    pub water: &'a [u8],
+    pub skylight: &'a [u8],
+    pub blocklight: &'a [u8],
+    pub stair_facings: &'a [u8],
+    pub loaded: &'a [bool],
+    pub biome: &'a [u8],
+}
+
+impl SectionMeshPad<'_> {
+    #[inline]
+    fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
+        Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
+    }
+
+    #[inline]
+    fn world_idx(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> Option<usize> {
+        let (px, py, pz) = (wx - (ox - 1), wy - (oy - 1), wz - (oz - 1));
+        let n = SECTION_PAD as i32;
+        if (0..n).contains(&px) && (0..n).contains(&py) && (0..n).contains(&pz) {
+            Some(mesh_pad_idx(px as usize, py as usize, pz as usize))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn block_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(0, |i| self.blocks[i])
+    }
+
+    #[inline]
+    fn stair_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> Facing {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(Facing::North, |i| Facing::from_u8(self.stair_facings[i]))
+    }
+
+    #[inline]
+    fn water_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(0, |i| self.water[i])
+    }
+
+    #[inline]
+    fn skylight_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+        if wy >= WORLD_MAX_Y {
+            return SKY_FULL;
+        }
+        if wy < WORLD_MIN_Y {
+            return 0;
+        }
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(SKY_FULL, |i| self.skylight[i])
+    }
+
+    #[inline]
+    fn blocklight_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(0, |i| self.blocklight[i])
+    }
+
+    #[inline]
+    fn loaded_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> bool {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .is_some_and(|i| self.loaded[i])
+    }
+
+    #[inline]
+    fn biome_world(&self, ox: i32, oz: i32, wx: i32, wz: i32) -> u8 {
+        let (px, pz) = (wx - (ox - BIOME_PAD_RADIUS), wz - (oz - BIOME_PAD_RADIUS));
+        let n = BIOME_PAD as i32;
+        if (0..n).contains(&px) && (0..n).contains(&pz) {
+            self.biome[biome_pad_idx(px as usize, pz as usize)]
+        } else {
+            0
+        }
+    }
+}
+
+const FACE_MASK_WORDS: usize = SECTION_VOLUME / u64::BITS as usize;
+type ExposedMasks = [[u64; FACE_MASK_WORDS]; FACES.len()];
+
+#[inline]
+fn mask_bit(i: usize) -> (usize, u64) {
+    (i / u64::BITS as usize, 1u64 << (i % u64::BITS as usize))
+}
+
+#[inline]
+fn mask_set(masks: &mut ExposedMasks, face: Face, cell: usize) {
+    let (word, bit) = mask_bit(cell);
+    masks[face_index(face)][word] |= bit;
+}
+
+#[inline]
+fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
+    let (word, bit) = mask_bit(cell);
+    masks[face_index(face)][word] & bit != 0
+}
+
+#[inline]
+fn pad_cube_fast_candidate(block: Block) -> bool {
+    block != Block::Water
+        && block != Block::Cactus
+        && block.render_shape() == RenderShape::Cube
+        && block != Block::Chest
+}
+
+fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
+    const CENTER_BITS: u32 = (1u32 << SECTION_SIZE) - 1;
+
+    #[inline]
+    fn row_idx(y: usize, z: usize) -> usize {
+        y * SECTION_PAD + z
+    }
+
+    #[inline]
+    fn set_face_row(masks: &mut ExposedMasks, face: Face, ly: usize, lz: usize, mut bits: u32) {
+        while bits != 0 {
+            let lx = bits.trailing_zeros() as usize;
+            mask_set(masks, face, section_idx(lx, ly, lz));
+            bits &= bits - 1;
+        }
+    }
+
+    let mut masks = [[0u64; FACE_MASK_WORDS]; FACES.len()];
+    let mut opaque_rows = [0u32; SECTION_PAD * SECTION_PAD];
+    for py in 0..SECTION_PAD {
+        for pz in 0..SECTION_PAD {
+            let mut row = 0u32;
+            for px in 0..SECTION_PAD {
+                if pad.block_at_pad(px, py, pz).is_opaque() {
+                    row |= 1u32 << px;
+                }
+            }
+            opaque_rows[row_idx(py, pz)] = row;
+        }
+    }
+
+    let mut candidate_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
+    for ly in 0..SECTION_SIZE {
+        for lz in 0..SECTION_SIZE {
+            let mut row = 0u32;
+            for lx in 0..SECTION_SIZE {
+                let block = pad.block_at_pad(lx + 1, ly + 1, lz + 1);
+                if block == Block::Air || !pad_cube_fast_candidate(block) {
+                    continue;
+                }
+                row |= 1u32 << lx;
+            }
+            candidate_rows[ly * SECTION_SIZE + lz] = row;
+        }
+    }
+
+    for ly in 0..SECTION_SIZE {
+        for lz in 0..SECTION_SIZE {
+            let cand = candidate_rows[ly * SECTION_SIZE + lz];
+            if cand == 0 {
+                continue;
+            }
+            let (py, pz) = (ly + 1, lz + 1);
+            let x_row = opaque_rows[row_idx(py, pz)];
+            set_face_row(
+                &mut masks,
+                Face::PosX,
+                ly,
+                lz,
+                cand & !((x_row >> 2) & CENTER_BITS),
+            );
+            set_face_row(
+                &mut masks,
+                Face::NegX,
+                ly,
+                lz,
+                cand & !(x_row & CENTER_BITS),
+            );
+            set_face_row(
+                &mut masks,
+                Face::PosY,
+                ly,
+                lz,
+                cand & !((opaque_rows[row_idx(py + 1, pz)] >> 1) & CENTER_BITS),
+            );
+            set_face_row(
+                &mut masks,
+                Face::NegY,
+                ly,
+                lz,
+                cand & !((opaque_rows[row_idx(py - 1, pz)] >> 1) & CENTER_BITS),
+            );
+            set_face_row(
+                &mut masks,
+                Face::PosZ,
+                ly,
+                lz,
+                cand & !((opaque_rows[row_idx(py, pz + 1)] >> 1) & CENTER_BITS),
+            );
+            set_face_row(
+                &mut masks,
+                Face::NegZ,
+                ly,
+                lz,
+                cand & !((opaque_rows[row_idx(py, pz - 1)] >> 1) & CENTER_BITS),
+            );
+        }
+    }
+    masks
 }
 
 #[cfg(test)]
@@ -157,6 +385,7 @@ pub fn build_mesh_with_options(
 /// lit/facing, torch placement, model offset/facing) is read from `section`
 /// directly. The renderer culls the resulting mesh by its [`SectionPos`].
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
@@ -183,6 +412,7 @@ pub fn build_section_mesh(
         &neighbour_loaded,
         tints.as_ref(),
         MeshOptions::DETAILED,
+        None,
     );
     if !section.blocks_slice().contains(&Block::OakLeaves.id()) {
         return mesh;
@@ -198,6 +428,59 @@ pub fn build_section_mesh(
         &neighbour_loaded,
         tints.as_ref(),
         MeshOptions::FAR_LEAVES,
+        None,
+    );
+    if far.opaque_idx.len() < mesh.opaque_idx.len() {
+        mesh.far_opaque = far.opaque;
+        mesh.far_opaque_idx = far.opaque_idx;
+    }
+    mesh
+}
+
+pub(crate) fn build_section_mesh_from_pad(
+    section: &Section,
+    pos: SectionPos,
+    pad: SectionMeshPad<'_>,
+) -> ChunkMesh {
+    let (ox, oy, oz) = pos.origin_world();
+    let nb_block = |wx, wy, wz| pad.block_world(ox, oy, oz, wx, wy, wz);
+    let nb_stair_facing = |wx, wy, wz| pad.stair_world(ox, oy, oz, wx, wy, wz);
+    let nb_water = |wx, wy, wz| pad.water_world(ox, oy, oz, wx, wy, wz);
+    let nb_biome = |wx, wz| pad.biome_world(ox, oz, wx, wz);
+    let nb_skylight = |wx, wy, wz| pad.skylight_world(ox, oy, oz, wx, wy, wz);
+    let nb_blocklight = |wx, wy, wz| pad.blocklight_world(ox, oy, oz, wx, wy, wz);
+    let nb_loaded = |wx, wy, wz| pad.loaded_world(ox, oy, oz, wx, wy, wz);
+    let tints = section
+        .has_biome_tint_blocks()
+        .then(|| tint::biome_window(ox, oz, &nb_biome));
+    let mut mesh = section_geometry(
+        section,
+        pos,
+        &nb_block,
+        &nb_stair_facing,
+        &nb_water,
+        &nb_skylight,
+        &nb_blocklight,
+        &nb_loaded,
+        tints.as_ref(),
+        MeshOptions::DETAILED,
+        Some(&pad),
+    );
+    if !section.blocks_slice().contains(&Block::OakLeaves.id()) {
+        return mesh;
+    }
+    let far = section_geometry(
+        section,
+        pos,
+        &nb_block,
+        &nb_stair_facing,
+        &nb_water,
+        &nb_skylight,
+        &nb_blocklight,
+        &nb_loaded,
+        tints.as_ref(),
+        MeshOptions::FAR_LEAVES,
+        None,
     );
     if far.opaque_idx.len() < mesh.opaque_idx.len() {
         mesh.far_opaque = far.opaque;
@@ -218,6 +501,7 @@ fn section_geometry(
     neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
     tints: Option<&tint::BiomeTints>,
     options: MeshOptions,
+    pad: Option<&SectionMeshPad<'_>>,
 ) -> ChunkMesh {
     let mut opaque = vec![];
     let mut opaque_idx = vec![];
@@ -254,6 +538,22 @@ fn section_geometry(
         crate::world::water::fills_cell(water_at(wx, wy, wz), above)
     };
 
+    // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the
+    // cell scan, then merged into tiled quads after it. Taken out + put back so meshing
+    // allocates nothing.
+    let mut greedy = GREEDY.with(|g| {
+        g.replace(GreedyScratch {
+            faces: Vec::new(),
+            merged: Vec::new(),
+            gen: 0,
+            slice_counts: [0; FACES.len() * SECTION_SIZE],
+        })
+    });
+    let greedy_gen = greedy.begin();
+    let exposed_masks = pad
+        .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
+        .map(build_exposed_masks);
+
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
@@ -265,7 +565,10 @@ fn section_geometry(
                 if block == Block::Chest {
                     continue;
                 }
-                if block.render_shape() == RenderShape::Door {
+                // Resolve the render shape once per cell (each call indexes the block
+                // table); the special-shape checks below and the cube fallthrough share it.
+                let shape = block.render_shape();
+                if shape == RenderShape::Door {
                     continue;
                 }
 
@@ -274,7 +577,7 @@ fn section_geometry(
                 let wz = oz + lz as i32;
                 let ci = lz * SECTION_SIZE + lx;
 
-                if block.render_shape() == RenderShape::Cross {
+                if shape == RenderShape::Cross {
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
@@ -293,7 +596,7 @@ fn section_geometry(
                     continue;
                 }
 
-                if block.render_shape() == RenderShape::Torch {
+                if shape == RenderShape::Torch {
                     let [top_tile, _bottom, side_tile] = block.tiles();
                     let cell_sky = neighbour_light(wx, wy, wz) as u32;
                     let lit = cell_sky.max(block.light_emission() as u32);
@@ -314,7 +617,7 @@ fn section_geometry(
                     continue;
                 }
 
-                if let RenderShape::Model(kind) = block.render_shape() {
+                if let RenderShape::Model(kind) = shape {
                     let offset = section.model_offset(lx, ly, lz);
                     let facing = section.model_facing(lx, ly, lz);
                     let l = neighbour_light(wx, wy, wz) as u32;
@@ -335,7 +638,7 @@ fn section_geometry(
                     continue;
                 }
 
-                if block.render_shape() == RenderShape::Stair {
+                if shape == RenderShape::Stair {
                     let [tile_top, tile_bot, tile_side] = block.tiles();
                     let tint_for = |tile| tint_tile(tile_tint(tile), ci);
                     let facing = section.stair_facing(lx, ly, lz);
@@ -377,6 +680,96 @@ fn section_geometry(
                     let full = water_fills_cell(wx, wy, wz);
                     WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at)
                 });
+
+                if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
+                    if pad_cube_fast_candidate(block) {
+                        let cell = section_idx(lx, ly, lz);
+                        for face in FACES {
+                            if !mask_has(exposed, face, cell) {
+                                continue;
+                            }
+                            let is_side =
+                                matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
+                            let (base_tile, overlay_tile, tint) = if block == Block::Grass
+                                && is_side
+                            {
+                                (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass(ci))
+                            } else {
+                                let t = match face {
+                                    Face::PosY => tile_top,
+                                    Face::NegY => tile_bot,
+                                    _ => match furnace_faces {
+                                        Some((front_face, front_tile)) if face == front_face => {
+                                            front_tile
+                                        }
+                                        Some(_) => Tile::FurnaceSide,
+                                        None => tile_side,
+                                    },
+                                };
+                                let tint = tint_tile(tile_tint(t), ci);
+                                (t, None, tint)
+                            };
+                            let corners = quad_for(face, base_x, base_y, base_z);
+                            let (dx, dy, dz) = face.dir();
+                            let (fxp, fyp, fzp) = (
+                                (lx as i32 + 1 + dx) as usize,
+                                (ly as i32 + 1 + dy) as usize,
+                                (lz as i32 + 1 + dz) as usize,
+                            );
+                            let fpi = mesh_pad_idx(fxp, fyp, fzp);
+                            let f_l = pad.skylight[fpi] as u32;
+                            let f_bl = pad.blocklight[fpi] as u32;
+                            let (overlay, has_overlay) = match overlay_tile {
+                                Some(o) => (o as u32, true),
+                                None => (0, false),
+                            };
+                            let (ao, light6, warm) =
+                                cube_face_lighting_pad(pad, face, fxp, fyp, fzp, f_l, f_bl, true);
+                            let flat = ao[0] == ao[1]
+                                && ao[1] == ao[2]
+                                && ao[2] == ao[3]
+                                && light6[0] == light6[1]
+                                && light6[1] == light6[2]
+                                && light6[2] == light6[3]
+                                && warm[0] == warm[1]
+                                && warm[1] == warm[2]
+                                && warm[2] == warm[3];
+                            if overlay_tile.is_none() && block.is_opaque() && flat {
+                                let final_tint = if warm[0] == 0.0 {
+                                    tint
+                                } else {
+                                    warm_tint(tint, warm[0])
+                                };
+                                let fi = face_index(face);
+                                greedy.faces[fi * SECTION_VOLUME + cell] = FlatFace {
+                                    gen: greedy_gen,
+                                    tile: base_tile as u32,
+                                    ao: ao[0],
+                                    light6: light6[0],
+                                    tint: final_tint,
+                                };
+                                let s = [lx, ly, lz][face_axes(face).0];
+                                greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
+                            } else {
+                                push_cube_face(
+                                    &mut opaque,
+                                    &mut opaque_idx,
+                                    corners,
+                                    base_tile,
+                                    overlay,
+                                    has_overlay,
+                                    UV_MODE_NONE,
+                                    tint,
+                                    face,
+                                    ao,
+                                    light6,
+                                    warm,
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                }
 
                 for face in FACES {
                     let (dx, dy, dz) = face.dir();
@@ -462,21 +855,7 @@ fn section_geometry(
                         None => (water_ov, false),
                     };
 
-                    let (vbuf, ibuf) = if is_water {
-                        (&mut transparent, &mut transparent_idx)
-                    } else {
-                        (&mut opaque, &mut opaque_idx)
-                    };
-
-                    let tris = emit_cube_face(
-                        vbuf,
-                        ibuf,
-                        corners,
-                        base_tile,
-                        overlay,
-                        has_overlay,
-                        UV_MODE_NONE,
-                        tint,
+                    let (ao, light6, warm) = cube_face_lighting(
                         face,
                         fx,
                         fy,
@@ -488,13 +867,69 @@ fn section_geometry(
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
-                    if is_water && matches!(face, Face::PosY) {
-                        ibuf.extend_from_slice(&water::top_back_winding(tris));
+                    // Defer PLAIN opaque cube faces that are FLAT (all four corners share
+                    // AO + light + warm) to the greedy merge — a run of them collapses into
+                    // one tiled quad, pixel-identical. Water / grass-side (overlay) / leaves /
+                    // cactus and any gradient (non-flat) face emit per-cell here, unchanged.
+                    let flat = ao[0] == ao[1]
+                        && ao[1] == ao[2]
+                        && ao[2] == ao[3]
+                        && light6[0] == light6[1]
+                        && light6[1] == light6[2]
+                        && light6[2] == light6[3]
+                        && warm[0] == warm[1]
+                        && warm[1] == warm[2]
+                        && warm[2] == warm[3];
+                    if !is_water && overlay_tile.is_none() && block.is_opaque() && flat {
+                        let final_tint = if warm[0] == 0.0 {
+                            tint
+                        } else {
+                            warm_tint(tint, warm[0])
+                        };
+                        let fi = face_index(face);
+                        greedy.faces[fi * SECTION_VOLUME + section_idx(lx, ly, lz)] = FlatFace {
+                            gen: greedy_gen,
+                            tile: base_tile as u32,
+                            ao: ao[0],
+                            light6: light6[0],
+                            tint: final_tint,
+                        };
+                        // Slice index = the cell's coord along this face's normal axis.
+                        let s = [lx, ly, lz][face_axes(face).0];
+                        greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
+                    } else {
+                        let (vbuf, ibuf) = if is_water {
+                            (&mut transparent, &mut transparent_idx)
+                        } else {
+                            (&mut opaque, &mut opaque_idx)
+                        };
+                        let tris = push_cube_face(
+                            vbuf,
+                            ibuf,
+                            corners,
+                            base_tile,
+                            overlay,
+                            has_overlay,
+                            UV_MODE_NONE,
+                            tint,
+                            face,
+                            ao,
+                            light6,
+                            warm,
+                        );
+                        if is_water && matches!(face, Face::PosY) {
+                            ibuf.extend_from_slice(&water::top_back_winding(tris));
+                        }
                     }
                 }
             }
         }
     }
+
+    // Collapse the deferred flat faces into merged tiled quads, then return the scratch to
+    // the thread-local for the next section.
+    emit_greedy_quads(&mut greedy, &mut opaque, &mut opaque_idx, ox, oy, oz);
+    GREEDY.with(|g| *g.borrow_mut() = greedy);
 
     ChunkMesh {
         opaque,
@@ -1198,95 +1633,55 @@ fn face_on_cell_boundary(face: Face, min: [f32; 3], max: [f32; 3]) -> bool {
 #[inline]
 fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
     let light6 = ((sum_sky.max(sum_block) * 63 + denom / 2) / denom).min(63);
-    let warm = warm_amount(
-        sum_sky as f32 / denom as f32,
-        sum_block as f32 / denom as f32,
-    );
+    // `warm_amount` is `block01 * (1 - sky01) * strength`, so no block-light means
+    // exactly 0.0 warmth — skip its two f32 divisions in the torch-free common case
+    // (nearly all daylit terrain). Byte-identical: the multiply by a zero block term
+    // yields +0.0, the same bits this returns.
+    let warm = if sum_block == 0 {
+        0.0
+    } else {
+        warm_amount(
+            sum_sky as f32 / denom as f32,
+            sum_block as f32 / denom as f32,
+        )
+    };
     (light6, warm)
 }
 
-/// One corner's ambient-occlusion level and smooth skylight, sampled from the
-/// shared 2x2 neighbourhood just outside the face: the front voxel `F = (fx,fy,fz)`
-/// (= block + normal, with its pre-sampled light `f_l`) plus its two edge
-/// neighbours and the diagonal one, picked by this `corner`'s `ao_signs`. AO counts
-/// solid occluders (opaque cubes AND leaves, for canopy self-occlusion); skylight
-/// averages the light of the non-opaque cells of that 2x2 (F is always non-opaque
-/// for an emitted face). Returns `(ao 0..3, skylight 0..63)`.
-#[allow(clippy::too_many_arguments)]
+/// Like [`fold_light`] but for the per-corner smooth-light mean over `cnt` cells
+/// (`1..=4`). The divisor `cnt * SKY_FULL` is one of four constants, so matching on
+/// `cnt` lets the compiler lower each arm's integer division to a multiply-shift —
+/// removing the last per-corner division from the emit hot loop. Byte-identical to
+/// `fold_light(sum_sky, sum_block, cnt * SKY_FULL)`.
 #[inline]
-fn vertex_ao_and_light<B, L, K>(
-    face: Face,
-    corner: usize,
-    fx: i32,
-    fy: i32,
-    fz: i32,
-    f_l: u32,
-    f_bl: u32,
-    smooth_light: bool,
-    block_at: &B,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) -> (u32, u32, f32)
-where
-    B: Fn(i32, i32, i32) -> Block,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
-{
-    let (ux, uy, uz) = face.ao_u();
-    let (vx, vy, vz) = face.ao_v();
-    let (su, sv) = face.ao_signs()[corner];
-    let (e1x, e1y, e1z) = (fx + su * ux, fy + su * uy, fz + su * uz);
-    let (e2x, e2y, e2z) = (fx + sv * vx, fy + sv * vy, fz + sv * vz);
-    let (dxx, dyy, dzz) = (
-        fx + su * ux + sv * vx,
-        fy + su * uy + sv * vy,
-        fz + su * uz + sv * vz,
-    );
-    let b1 = block_at(e1x, e1y, e1z);
-    let b2 = block_at(e2x, e2y, e2z);
-    let bd = block_at(dxx, dyy, dzz);
-    let ao = vertex_ao(b1.occludes_ao(), b2.occludes_ao(), bd.occludes_ao());
-    if !smooth_light {
-        let (light6, warm) = fold_light(f_l, f_bl, SKY_FULL as u32);
-        return (ao, light6, warm);
+fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, f32) {
+    let v = sum_sky.max(sum_block) * 63;
+    let light6 = match cnt {
+        1 => (v + 15) / 30,
+        2 => (v + 30) / 60,
+        3 => (v + 45) / 90,
+        _ => (v + 60) / 120,
     }
-
-    // Smooth skylight AND block-light: mean over F + the surround cells that carry
-    // light (anything not fully opaque -- leaves included, since they transmit
-    // light even though they occlude AO). The two channels share the same cells and
-    // count, so `fold_light` can max the sums for brightness and compare them for
-    // the warm tint.
-    let mut sum = f_l;
-    let mut sum_block = f_bl;
-    let mut cnt = 1u32;
-    if !b1.is_opaque() {
-        sum += neighbour_light(e1x, e1y, e1z) as u32;
-        sum_block += neighbour_blocklight(e1x, e1y, e1z) as u32;
-        cnt += 1;
-    }
-    if !b2.is_opaque() {
-        sum += neighbour_light(e2x, e2y, e2z) as u32;
-        sum_block += neighbour_blocklight(e2x, e2y, e2z) as u32;
-        cnt += 1;
-    }
-    if !bd.is_opaque() {
-        sum += neighbour_light(dxx, dyy, dzz) as u32;
-        sum_block += neighbour_blocklight(dxx, dyy, dzz) as u32;
-        cnt += 1;
-    }
-    // avg in [0,SKY_FULL] -> 6-bit level in [0,63], integer round-half-up (no f32
-    // for the level, to keep skylight-only meshes byte-identical).
-    let denom = cnt * SKY_FULL as u32;
-    let (light6, warm) = fold_light(sum, sum_block, denom);
-    (ao, light6, warm)
+    .min(63);
+    let warm = if sum_block == 0 {
+        0.0
+    } else {
+        let denom = cnt * SKY_FULL as u32;
+        warm_amount(
+            sum_sky as f32 / denom as f32,
+            sum_block as f32 / denom as f32,
+        )
+    };
+    (light6, warm)
 }
 
-/// Emit one resolved cube face: sample per-corner AO + skylight from the shared 2x2
-/// neighbourhood, push the four packed vertices, and append the (AO-symmetric,
-/// possibly flipped) triangulation. Returns the two triangles' six indices so the
-/// caller can add water's reverse winding before closing the section. The `corners`
-/// are already in world space (and water-warped); `face` drives shade + the AO
-/// neighbourhood; `(fx,fy,fz)`/`f_l` are the front voxel and its light.
+/// Emit one resolved cube face: gather the shared 3×3 tangent-plane ring around the
+/// front voxel F once, derive each corner's AO + smooth light from it, push the four
+/// packed vertices, and append the (AO-symmetric, possibly flipped) triangulation.
+/// Returns the two triangles' six indices so the caller can add water's reverse winding
+/// before closing the section. The `corners` are already in world space (and
+/// water-warped); `face` drives shade + the AO neighbourhood; `(fx,fy,fz)`/`f_l`/`f_bl`
+/// are the front voxel and its pre-sampled light.
 #[allow(clippy::too_many_arguments)]
 fn emit_cube_face<B, L, K>(
     vbuf: &mut Vec<Vertex>,
@@ -1313,37 +1708,246 @@ where
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
 {
-    let shade_idx = face.shade_idx();
+    let (ao, light6, warm) = cube_face_lighting(
+        face,
+        fx,
+        fy,
+        fz,
+        f_l,
+        f_bl,
+        smooth_light,
+        block_at,
+        neighbour_light,
+        neighbour_blocklight,
+    );
+    push_cube_face(
+        vbuf,
+        ibuf,
+        corners,
+        base_tile,
+        overlay,
+        has_overlay,
+        uv_mode,
+        tint,
+        face,
+        ao,
+        light6,
+        warm,
+    )
+}
+
+/// One cube face's per-corner AO + smooth light (skylight/block-light + warm amount),
+/// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
+/// four corners share these eight ring cells (each edge cell feeds two corners, each
+/// diagonal one), so a single gather replaces per-corner re-reads. `occ` = AO occluders
+/// (opaque cubes AND leaves, for canopy self-occlusion); `opq` = full-opaque, which carry
+/// no light and so are excluded from the smooth-light mean (leaves differ between the two,
+/// hence both bits). The centre cell (a=b=0) is F itself and is never sampled, so skipped.
+///
+/// Split from the vertex push so the greedy mesher can test a face for flatness (all four
+/// corners equal — the merge condition) before deciding to emit it per-cell or merge it.
+#[allow(clippy::too_many_arguments)]
+fn cube_face_lighting<B, L, K>(
+    face: Face,
+    fx: i32,
+    fy: i32,
+    fz: i32,
+    f_l: u32,
+    f_bl: u32,
+    smooth_light: bool,
+    block_at: &B,
+    neighbour_light: &L,
+    neighbour_blocklight: &K,
+) -> ([u32; 4], [u32; 4], [f32; 4])
+where
+    B: Fn(i32, i32, i32) -> Block,
+    L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> u8,
+{
+    let (ux, uy, uz) = face.ao_u();
+    let (vx, vy, vz) = face.ao_v();
+
+    let mut occ = [[false; 3]; 3];
+    let mut opq = [[false; 3]; 3];
+    let mut sky = [[0u32; 3]; 3];
+    let mut blk = [[0u32; 3]; 3];
+    for a in -1i32..=1 {
+        for b in -1i32..=1 {
+            if a == 0 && b == 0 {
+                continue;
+            }
+            let (cx, cy, cz) = (
+                fx + a * ux + b * vx,
+                fy + a * uy + b * vy,
+                fz + a * uz + b * vz,
+            );
+            let cell = block_at(cx, cy, cz);
+            let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
+            occ[ia][ib] = cell.occludes_ao();
+            if smooth_light {
+                opq[ia][ib] = cell.is_opaque();
+                if !opq[ia][ib] {
+                    sky[ia][ib] = neighbour_light(cx, cy, cz) as u32;
+                    blk[ia][ib] = neighbour_blocklight(cx, cy, cz) as u32;
+                }
+            }
+        }
+    }
+
+    // Per corner, resolve AO + light from the gathered ring: its two edge cells
+    // (`[iu][1]` along u, `[1][iv]` along v) and its diagonal (`[iu][iv]`).
+    let signs = face.ao_signs();
     let mut ao = [3u32; 4];
+    let mut light6 = [0u32; 4];
+    let mut warm = [0f32; 4];
+    let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
+    for corner in 0..4 {
+        let (su, sv) = signs[corner];
+        let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
+        ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
+        if !smooth_light {
+            (light6[corner], warm[corner]) = flat;
+            continue;
+        }
+        let mut sum = f_l;
+        let mut sum_block = f_bl;
+        let mut cnt = 1u32;
+        if !opq[iu][1] {
+            sum += sky[iu][1];
+            sum_block += blk[iu][1];
+            cnt += 1;
+        }
+        if !opq[1][iv] {
+            sum += sky[1][iv];
+            sum_block += blk[1][iv];
+            cnt += 1;
+        }
+        if !opq[iu][iv] {
+            sum += sky[iu][iv];
+            sum_block += blk[iu][iv];
+            cnt += 1;
+        }
+        (light6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
+    }
+    (ao, light6, warm)
+}
+
+fn cube_face_lighting_pad(
+    pad: &SectionMeshPad<'_>,
+    face: Face,
+    fx: usize,
+    fy: usize,
+    fz: usize,
+    f_l: u32,
+    f_bl: u32,
+    smooth_light: bool,
+) -> ([u32; 4], [u32; 4], [f32; 4]) {
+    let (ux, uy, uz) = face.ao_u();
+    let (vx, vy, vz) = face.ao_v();
+
+    let mut occ = [[false; 3]; 3];
+    let mut opq = [[false; 3]; 3];
+    let mut sky = [[0u32; 3]; 3];
+    let mut blk = [[0u32; 3]; 3];
+    for a in -1i32..=1 {
+        for b in -1i32..=1 {
+            if a == 0 && b == 0 {
+                continue;
+            }
+            let (cx, cy, cz) = (
+                (fx as i32 + a * ux + b * vx) as usize,
+                (fy as i32 + a * uy + b * vy) as usize,
+                (fz as i32 + a * uz + b * vz) as usize,
+            );
+            let cell = pad.block_at_pad(cx, cy, cz);
+            let i = mesh_pad_idx(cx, cy, cz);
+            let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
+            occ[ia][ib] = cell.occludes_ao();
+            if smooth_light {
+                opq[ia][ib] = cell.is_opaque();
+                if !opq[ia][ib] {
+                    sky[ia][ib] = pad.skylight[i] as u32;
+                    blk[ia][ib] = pad.blocklight[i] as u32;
+                }
+            }
+        }
+    }
+
+    let signs = face.ao_signs();
+    let mut ao = [3u32; 4];
+    let mut light6 = [0u32; 4];
+    let mut warm = [0f32; 4];
+    let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
+    for corner in 0..4 {
+        let (su, sv) = signs[corner];
+        let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
+        ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
+        if !smooth_light {
+            (light6[corner], warm[corner]) = flat;
+            continue;
+        }
+        let mut sum = f_l;
+        let mut sum_block = f_bl;
+        let mut cnt = 1u32;
+        if !opq[iu][1] {
+            sum += sky[iu][1];
+            sum_block += blk[iu][1];
+            cnt += 1;
+        }
+        if !opq[1][iv] {
+            sum += sky[1][iv];
+            sum_block += blk[1][iv];
+            cnt += 1;
+        }
+        if !opq[iu][iv] {
+            sum += sky[iu][iv];
+            sum_block += blk[iu][iv];
+            cnt += 1;
+        }
+        (light6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
+    }
+    (ao, light6, warm)
+}
+
+/// Push one resolved cube face's four packed vertices (given precomputed per-corner
+/// lighting) + its (AO-symmetric, possibly flipped) triangulation. Returns the six indices
+/// so the caller can add water's reverse winding.
+#[allow(clippy::too_many_arguments)]
+fn push_cube_face(
+    vbuf: &mut Vec<Vertex>,
+    ibuf: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    base_tile: Tile,
+    overlay: u32,
+    has_overlay: bool,
+    uv_mode: u32,
+    tint: [f32; 3],
+    face: Face,
+    ao: [u32; 4],
+    light6: [u32; 4],
+    warm: [f32; 4],
+) -> [u32; 6] {
+    let shade_idx = face.shade_idx();
     let start = vbuf.len() as u32;
     for (corner, p) in corners.into_iter().enumerate() {
-        let (a, light6, warm) = vertex_ao_and_light(
-            face,
-            corner,
-            fx,
-            fy,
-            fz,
-            f_l,
-            f_bl,
-            smooth_light,
-            block_at,
-            neighbour_light,
-            neighbour_blocklight,
-        );
-        ao[corner] = a;
         vbuf.push(Vertex {
             pos: p,
             // Warm the face tint per corner by however much torch light reaches it,
-            // so the glow fades smoothly across the surface (0 warm = unchanged).
-            tint: warm_tint(tint, warm),
+            // so the glow fades smoothly across the surface (0 warm = unchanged, so
+            // skip the multiply entirely — the torch-free common case).
+            tint: if warm[corner] == 0.0 {
+                tint
+            } else {
+                warm_tint(tint, warm[corner])
+            },
             packed: pack_vertex(
                 base_tile as u32,
                 corner as u32,
                 shade_idx,
                 overlay,
                 has_overlay,
-                a,
-                light6,
+                ao[corner],
+                light6[corner],
             ) | (uv_mode << UV_MODE_SHIFT),
         });
     }
@@ -1356,6 +1960,233 @@ where
     };
     ibuf.extend_from_slice(&tris);
     tris
+}
+
+/// A flat (uniform-across-corners) opaque cube face, recorded per (direction, cell) so a
+/// run of identical adjacent faces can collapse into ONE tiled quad (greedy meshing). Only
+/// faces whose four corners share the same AO + light + tint + tile qualify — then the merged
+/// quad, drawn flat with its layer tiled W×H (REPEAT sampler), is pixel-identical to the
+/// per-cell faces it replaces. `gen` matches the current build's generation for a live face
+/// (a generation counter avoids re-zeroing the whole 6×4096 scratch every section — the fixed
+/// cost that otherwise ~doubled meshing throughput; a stale entry from a prior build has an
+/// old `gen` and reads as absent).
+#[derive(Copy, Clone, PartialEq)]
+struct FlatFace {
+    gen: u32,
+    tile: u32,
+    ao: u32,
+    light6: u32,
+    tint: [f32; 3],
+}
+
+const FLAT_ABSENT: FlatFace = FlatFace {
+    gen: 0,
+    tile: 0,
+    ao: 0,
+    light6: 0,
+    tint: [0.0; 3],
+};
+
+/// Reused per-thread greedy-merge scratch: a `FlatFace` per (face direction 0..6, cell), a
+/// per-slice merged-flag grid, the current build generation, and a deferred-face count per
+/// direction (to skip merging directions that received none). Thread-local + reused so meshing
+/// a section allocates nothing AND clears nothing (the `gen` bump retires the prior build).
+struct GreedyScratch {
+    faces: Vec<FlatFace>,
+    merged: Vec<bool>,
+    gen: u32,
+    /// Deferred-face count per (direction, slice), so the merge pass scans only the few slices
+    /// that actually received flat faces instead of all 6×16 (empty slices dominate — flat
+    /// faces cluster in the surface/floor layers).
+    slice_counts: [u32; FACES.len() * SECTION_SIZE],
+}
+
+impl GreedyScratch {
+    /// Retire the previous build and return this build's generation. No `faces` reset: a bumped
+    /// `gen` makes every prior entry read as absent. Only allocates on first use per thread, and
+    /// only re-zeroes on the (≈4-billion-build) `gen` wrap so a stale entry can't alias.
+    fn begin(&mut self) -> u32 {
+        if self.faces.len() != FACES.len() * SECTION_VOLUME {
+            self.faces = vec![FLAT_ABSENT; FACES.len() * SECTION_VOLUME];
+        }
+        if self.merged.len() != SECTION_SIZE * SECTION_SIZE {
+            self.merged = vec![false; SECTION_SIZE * SECTION_SIZE];
+        }
+        self.gen = self.gen.wrapping_add(1);
+        if self.gen == 0 {
+            self.gen = 1;
+            self.faces.fill(FLAT_ABSENT);
+        }
+        self.slice_counts = [0; FACES.len() * SECTION_SIZE];
+        self.gen
+    }
+}
+
+thread_local! {
+    static GREEDY: RefCell<GreedyScratch> = const {
+        RefCell::new(GreedyScratch {
+            faces: Vec::new(),
+            merged: Vec::new(),
+            gen: 0,
+            slice_counts: [0; FACES.len() * SECTION_SIZE],
+        })
+    };
+}
+
+/// A cube face's `(normal, U, V)` local axes (0=X, 1=Y, 2=Z), derived from `Face::quad_box`
+/// so the greedy slice's `(u,v)` grid and a merged quad's tiled UV (W tiles along U, H along
+/// V) align with `corner_local`: normal-X → U=Z,V=Y; normal-Y → U=X,V=Z; normal-Z → U=X,V=Y.
+#[inline]
+fn face_axes(face: Face) -> (usize, usize, usize) {
+    match face {
+        Face::PosX | Face::NegX => (0, 2, 1),
+        Face::PosY | Face::NegY => (1, 0, 2),
+        Face::PosZ | Face::NegZ => (2, 0, 1),
+    }
+}
+
+/// Index of a face in [`FACES`] — the per-direction plane in [`GreedyScratch::faces`]. Must
+/// match `FACES.into_iter().enumerate()` in [`emit_greedy_quads`].
+#[inline]
+fn face_index(face: Face) -> usize {
+    match face {
+        Face::PosX => 0,
+        Face::NegX => 1,
+        Face::PosY => 2,
+        Face::NegY => 3,
+        Face::PosZ => 4,
+        Face::NegZ => 5,
+    }
+}
+
+/// Greedy-merge every deferred flat face (in `scratch.faces`) into the fewest tiled quads and
+/// push them to the opaque buffers. For each direction and each 16-cell slice, it 2D-merges
+/// maximal rectangles of identical `FlatFace`s (extend width along U, then height along V),
+/// emitting one quad per rectangle with `(W-1, H-1)` packed so the shader tiles its layer.
+fn emit_greedy_quads(
+    scratch: &mut GreedyScratch,
+    opaque: &mut Vec<Vertex>,
+    opaque_idx: &mut Vec<u32>,
+    ox: i32,
+    oy: i32,
+    oz: i32,
+) {
+    let cur = scratch.gen;
+    let slice_counts = scratch.slice_counts;
+    let key_at = |faces: &[FlatFace],
+                  fi: usize,
+                  n: usize,
+                  s: usize,
+                  ua: usize,
+                  u: usize,
+                  va: usize,
+                  v: usize|
+     -> FlatFace {
+        let mut l = [0usize; 3];
+        l[n] = s;
+        l[ua] = u;
+        l[va] = v;
+        faces[fi * SECTION_VOLUME + section_idx(l[0], l[1], l[2])]
+    };
+    for (fi, face) in FACES.into_iter().enumerate() {
+        let (n, ua, va) = face_axes(face);
+        for s in 0..SECTION_SIZE {
+            if slice_counts[fi * SECTION_SIZE + s] == 0 {
+                continue; // no deferred faces in this slice — skip its 16×16 scan + fill.
+            }
+            scratch.merged.fill(false);
+            for v in 0..SECTION_SIZE {
+                for u in 0..SECTION_SIZE {
+                    if scratch.merged[v * SECTION_SIZE + u] {
+                        continue;
+                    }
+                    let key = key_at(&scratch.faces, fi, n, s, ua, u, va, v);
+                    if key.gen != cur {
+                        continue; // stale (prior build) or never written = absent.
+                    }
+                    // Extend the run along U while cells match and are unmerged.
+                    let mut w = 1;
+                    while u + w < SECTION_SIZE
+                        && !scratch.merged[v * SECTION_SIZE + u + w]
+                        && key_at(&scratch.faces, fi, n, s, ua, u + w, va, v) == key
+                    {
+                        w += 1;
+                    }
+                    // Extend along V while the whole W-wide row matches and is unmerged.
+                    let mut h = 1;
+                    'grow: while v + h < SECTION_SIZE {
+                        for k in 0..w {
+                            if scratch.merged[(v + h) * SECTION_SIZE + u + k]
+                                || key_at(&scratch.faces, fi, n, s, ua, u + k, va, v + h) != key
+                            {
+                                break 'grow;
+                            }
+                        }
+                        h += 1;
+                    }
+                    for dv in 0..h {
+                        for du in 0..w {
+                            scratch.merged[(v + dv) * SECTION_SIZE + u + du] = true;
+                        }
+                    }
+                    let mut lmin = [0i32; 3];
+                    let mut lmax = [0i32; 3];
+                    lmin[n] = s as i32;
+                    lmax[n] = s as i32 + 1;
+                    lmin[ua] = u as i32;
+                    lmax[ua] = (u + w) as i32;
+                    lmin[va] = v as i32;
+                    lmax[va] = (v + h) as i32;
+                    let min = [
+                        (ox + lmin[0]) as f32,
+                        (oy + lmin[1]) as f32,
+                        (oz + lmin[2]) as f32,
+                    ];
+                    let max = [
+                        (ox + lmax[0]) as f32,
+                        (oy + lmax[1]) as f32,
+                        (oz + lmax[2]) as f32,
+                    ];
+                    push_greedy_quad(opaque, opaque_idx, face, min, max, key, w as u32, h as u32);
+                }
+            }
+        }
+    }
+}
+
+/// Push one greedy-merged quad: four flat vertices over the world box `[min,max]` with the
+/// merge extents `(w,h)` packed into the overlay-tile bits (`(W-1) | (H-1)<<4`), which the
+/// block shader reads to tile the layer. Uniform AO ⇒ no diagonal flip (default winding).
+fn push_greedy_quad(
+    opaque: &mut Vec<Vertex>,
+    opaque_idx: &mut Vec<u32>,
+    face: Face,
+    min: [f32; 3],
+    max: [f32; 3],
+    key: FlatFace,
+    w: u32,
+    h: u32,
+) {
+    let corners = face.quad_box(min, max);
+    let shade_idx = face.shade_idx();
+    let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
+    let start = opaque.len() as u32;
+    for (corner, p) in corners.into_iter().enumerate() {
+        opaque.push(Vertex {
+            pos: p,
+            tint: key.tint,
+            packed: pack_vertex(
+                key.tile,
+                corner as u32,
+                shade_idx,
+                wh,
+                false,
+                key.ao,
+                key.light6,
+            ) | (UV_MODE_NONE << UV_MODE_SHIFT),
+        });
+    }
+    opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
 /// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)

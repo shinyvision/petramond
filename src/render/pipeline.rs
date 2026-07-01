@@ -220,6 +220,9 @@ pub(super) const MAX_UI_VERTICES: u64 = 16384;
 pub(super) struct PipelineResources {
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
+    /// The terrain tile-ARRAY bind (group 1 for the opaque/transparent block pipelines),
+    /// parallel to `atlas_bind` — see [`create_atlas_array`](super::resources::create_atlas_array).
+    pub atlas_array_bind: wgpu::BindGroup,
     /// The atlas bind-group LAYOUT (texture + sampler), returned so the renderer
     /// can build a separate bind group over the entity model texture for the `mob`
     /// pipeline (same shape, different texture).
@@ -327,6 +330,8 @@ pub(super) fn create_pipeline_resources(
     uniform_buf: &wgpu::Buffer,
     atlas_view: &wgpu::TextureView,
     atlas_sampler: &wgpu::Sampler,
+    array_view: &wgpu::TextureView,
+    array_sampler: &wgpu::Sampler,
 ) -> PipelineResources {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("block shader"),
@@ -439,6 +444,50 @@ pub(super) fn create_pipeline_resources(
         push_constant_ranges: &[],
     });
 
+    // Terrain-only tile ARRAY (group 1 for the opaque/transparent block pipelines): one
+    // layer per tile with REPEAT wrapping, so a greedy-meshed quad tiles its layer. The 2D
+    // `atlas_bgl`/`atlas_bind` above stay for the model/break/particle/mob passes.
+    let array_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("atlas array bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let atlas_array_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("atlas array bg"),
+        layout: &array_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(array_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(array_sampler),
+            },
+        ],
+    });
+    let array_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("array pipe layout"),
+        bind_group_layouts: &[&uniform_bgl, &array_bgl],
+        push_constant_ranges: &[],
+    });
+
     // 28-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32).
     let vbuf_attrs = [
         wgpu::VertexAttribute {
@@ -481,7 +530,7 @@ pub(super) fn create_pipeline_resources(
     let opaque_pipe = world_pipeline(
         device,
         "opaque pipe",
-        &layout,
+        &array_layout,
         &shader,
         "vs_main",
         "fs_opaque",
@@ -500,7 +549,7 @@ pub(super) fn create_pipeline_resources(
     let transparent_pipe = world_pipeline(
         device,
         "transparent pipe",
-        &layout,
+        &array_layout,
         &shader,
         "vs_main",
         "fs_transparent",
@@ -1277,6 +1326,7 @@ pub(super) fn create_pipeline_resources(
     );
 
     PipelineResources {
+        atlas_array_bind,
         uniform_bind,
         atlas_bind,
         atlas_bgl,
@@ -1380,6 +1430,26 @@ mod gpu_validation {
             view_formats: &[],
         });
         let atlas_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // A 1-layer D2Array view for the terrain pipeline's tile-array bind (matches the
+        // real `D2Array` BGL). A D2 texture with one layer views fine as D2Array.
+        let array_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test atlas array"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let array_view = array_tex.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("test sampler"),
             ..Default::default()
@@ -1402,6 +1472,8 @@ mod gpu_validation {
             1,
             &uniform_buf,
             &atlas_view,
+            &sampler,
+            &array_view,
             &sampler,
         );
 

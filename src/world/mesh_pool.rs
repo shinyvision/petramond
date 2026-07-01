@@ -13,9 +13,9 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
+use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use crate::furnace::Facing;
-use crate::mesh::{build_section_mesh, ChunkMesh};
+use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
 
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
@@ -150,9 +150,153 @@ impl MeshPool {
     }
 }
 
-/// Build one section mesh from its owned snapshot. The neighbour closures read the
-/// padded buffers (covering this section and its one-cell shell); reads beyond the pad
-/// fall back exactly as the live world's accessors do (air / open sky / not-loaded).
+/// The assembled one-cell-padded neighbourhood buffers a section mesh reads (18³ each):
+/// block ids, water/light state, per-cell stair facing, and a loaded flag. Reads beyond
+/// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).
+struct Pad {
+    blocks: Box<[u8]>,
+    water: Box<[u8]>,
+    skylight: Box<[u8]>,
+    blocklight: Box<[u8]>,
+    stair_facings: Box<[u8]>,
+    loaded: Box<[bool]>,
+}
+
+/// Assemble the 18³ padded neighbourhood from the cheap field-`Arc` snapshots the request
+/// took — off the render thread. Reads match the live neighbour accessors exactly (air /
+/// open-sky / not-loaded fallbacks), so the off-thread mesh is byte-identical to an inline one.
+///
+/// Filled a row at a time along X: the 16-wide interior run of each row comes from ONE
+/// neighbour (the centre-X section) and is a contiguous slice copy, not 16 per-cell
+/// neighbour lookups; only the two X-border cells fall to per-cell handling. That keeps the
+/// per-cell `pad_axis`/`nbhd_idx27`/`Option` decode to the two edges plus once per row,
+/// instead of all 18³ cells. Stair facings (rare) are scattered per bearing neighbour after.
+fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27]) -> Pad {
+    let (_ox, oy, _oz) = pos.origin_world();
+    let mut blocks = vec![0u8; PAD_VOL].into_boxed_slice();
+    let mut water = vec![0u8; PAD_VOL].into_boxed_slice();
+    let mut skylight = vec![SKY_FULL; PAD_VOL].into_boxed_slice();
+    let mut blocklight = vec![0u8; PAD_VOL].into_boxed_slice();
+    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice();
+    let mut loaded = vec![false; PAD_VOL].into_boxed_slice();
+
+    // Interior X run of every row: cells px=1..=16 all come from the centre-X neighbour
+    // (dx=0), so one neighbour lookup + one slice copy per (py,pz) fills 16 cells. The two
+    // X-border cells (px=0 from dx=-1, px=17 from dx=+1) are handled per-cell below.
+    for pz in 0..PAD {
+        let (ddz, lz) = pad_axis(pz);
+        for py in 0..PAD {
+            let (ddy, ly) = pad_axis(py);
+            let base = pad_idx(1, py, pz); // px=1
+            let src = crate::chunk::section_idx(0, ly, lz); // local x=0 of this row
+            match nbhd[nbhd_idx27(0, ddy, ddz)].as_ref() {
+                Some(s) => {
+                    blocks[base..base + SECTION_SIZE]
+                        .copy_from_slice(&s.blocks[src..src + SECTION_SIZE]);
+                    if let Some(w) = s.water.as_ref() {
+                        water[base..base + SECTION_SIZE]
+                            .copy_from_slice(&w[src..src + SECTION_SIZE]);
+                    }
+                    // skylight buffer starts full sky, so a `None` (uncomputed) neighbour
+                    // correctly leaves the run at SKY_FULL — only copy a computed cube.
+                    if let Some(sk) = s.skylight.as_ref() {
+                        skylight[base..base + SECTION_SIZE]
+                            .copy_from_slice(&sk[src..src + SECTION_SIZE]);
+                    }
+                    if let Some(bl) = s.blocklight.as_ref() {
+                        blocklight[base..base + SECTION_SIZE]
+                            .copy_from_slice(&bl[src..src + SECTION_SIZE]);
+                    }
+                    loaded[base..base + SECTION_SIZE].fill(true);
+                }
+                None => {
+                    // Absent neighbour: air / no light / not loaded (buffer defaults),
+                    // and dark below the world floor (above stays the SKY_FULL default).
+                    let wy = oy - 1 + py as i32;
+                    if wy < WORLD_MIN_Y {
+                        skylight[base..base + SECTION_SIZE].fill(0);
+                    }
+                }
+            }
+        }
+    }
+
+    // The two X-border planes: px=0 (from the dx=-1 neighbour, its local x=15) and
+    // px=PAD-1 (dx=+1, local x=0). One cell of each row, per-cell like the old assembler.
+    for &(px, ddx, lx) in &[(0usize, -1i32, SECTION_SIZE - 1), (PAD - 1, 1i32, 0usize)] {
+        for pz in 0..PAD {
+            let (ddz, lz) = pad_axis(pz);
+            for py in 0..PAD {
+                let (ddy, ly) = pad_axis(py);
+                let pi = pad_idx(px, py, pz);
+                let li = crate::chunk::section_idx(lx, ly, lz);
+                match nbhd[nbhd_idx27(ddx, ddy, ddz)].as_ref() {
+                    Some(s) => {
+                        blocks[pi] = s.blocks[li];
+                        water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
+                        skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
+                        blocklight[pi] = s.blocklight.as_ref().map_or(0, |b| b[li]);
+                        loaded[pi] = true;
+                    }
+                    None => {
+                        let wy = oy - 1 + py as i32;
+                        skylight[pi] = if wy >= WORLD_MIN_Y { SKY_FULL } else { 0 };
+                    }
+                }
+            }
+        }
+    }
+
+    // Stair facings are rare (most sections carry none, so most neighbours skip entirely).
+    // Scatter each bearing neighbour's sparse entries into the pad, mapping the cell's
+    // local coords to a pad index only when the cell actually lies inside the pad.
+    for dy in -1i32..=1 {
+        for dz in -1i32..=1 {
+            for dx in -1i32..=1 {
+                let Some(s) = nbhd[nbhd_idx27(dx, dy, dz)].as_ref() else {
+                    continue;
+                };
+                let Some(facings) = s.stair_facings.as_ref() else {
+                    continue;
+                };
+                for &(key, facing) in facings.iter() {
+                    let li = key as usize;
+                    let (lx, ly, lz) = (li & 15, li >> 8, (li >> 4) & 15);
+                    let (Some(px), Some(py), Some(pz)) =
+                        (pad_border(dx, lx), pad_border(dy, ly), pad_border(dz, lz))
+                    else {
+                        continue;
+                    };
+                    stair_facings[pad_idx(px, py, pz)] = facing.to_u8();
+                }
+            }
+        }
+    }
+
+    Pad {
+        blocks,
+        water,
+        skylight,
+        blocklight,
+        stair_facings,
+        loaded,
+    }
+}
+
+/// Pad coordinate a neighbour cell at local `c` (0..16) maps to for neighbour delta `d`,
+/// or `None` when that cell lies outside this section's one-cell pad (a `d=±1` neighbour
+/// only contributes its single face plane).
+#[inline]
+fn pad_border(d: i32, c: usize) -> Option<usize> {
+    match d {
+        0 => Some(c + 1),
+        -1 if c == SECTION_SIZE - 1 => Some(0),
+        1 if c == 0 => Some(PAD - 1),
+        _ => None,
+    }
+}
+
+/// Build one section mesh from its owned snapshot.
 fn build(job: MeshJob) -> MeshDone {
     let MeshJob {
         pos,
@@ -162,99 +306,28 @@ fn build(job: MeshJob) -> MeshDone {
         biome,
     } = job;
 
-    // Assemble the padded neighbourhood buffers here, off the render thread, from the cheap
-    // field-Arc snapshots the request took. Reads match the live neighbour accessors exactly
-    // (air / open-sky / not-loaded fallbacks), so the off-thread mesh is byte-identical to
-    // an inline one.
-    let (ox, oy, oz) = pos.origin_world();
-    let mut blocks = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut water = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut skylight = vec![SKY_FULL; PAD_VOL].into_boxed_slice();
-    let mut blocklight = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice();
-    let mut loaded = vec![false; PAD_VOL].into_boxed_slice();
-    for pz in 0..PAD {
-        let (ddz, lz) = pad_axis(pz);
-        for py in 0..PAD {
-            let (ddy, ly) = pad_axis(py);
-            let wy = oy - 1 + py as i32;
-            for px in 0..PAD {
-                let (ddx, lx) = pad_axis(px);
-                let pi = pad_idx(px, py, pz);
-                let li = crate::chunk::section_idx(lx, ly, lz);
-                match nbhd[nbhd_idx27(ddx, ddy, ddz)].as_ref() {
-                    Some(s) => {
-                        blocks[pi] = s.blocks[li];
-                        water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
-                        skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
-                        blocklight[pi] = s.blocklight.as_ref().map_or(0, |b| b[li]);
-                        if let Some(facings) = s.stair_facings.as_ref() {
-                            if let Some((_, facing)) =
-                                facings.iter().find(|(key, _)| *key as usize == li)
-                            {
-                                stair_facings[pi] = facing.to_u8();
-                            }
-                        }
-                        loaded[pi] = true;
-                    }
-                    None => {
-                        // Absent neighbour: air, no block light, not loaded; skylight reads
-                        // open sky in/above the world and dark below it.
-                        skylight[pi] = if wy >= WORLD_MIN_Y { SKY_FULL } else { 0 };
-                    }
-                }
-            }
-        }
-    }
+    let Pad {
+        blocks,
+        water,
+        skylight,
+        blocklight,
+        stair_facings,
+        loaded,
+    } = assemble_pad(pos, &nbhd);
+
     let center = &center;
-    let (bx, by, bz) = (ox - 1, oy - 1, oz - 1);
-    let pad = |wx: i32, wy: i32, wz: i32| -> Option<usize> {
-        let (px, py, pz) = (wx - bx, wy - by, wz - bz);
-        let n = PAD as i32;
-        if (0..n).contains(&px) && (0..n).contains(&py) && (0..n).contains(&pz) {
-            Some(pad_idx(px as usize, py as usize, pz as usize))
-        } else {
-            None
-        }
-    };
-    let nb_block = |wx, wy, wz| pad(wx, wy, wz).map(|i| blocks[i]).unwrap_or(0);
-    let nb_stair_facing = |wx, wy, wz| {
-        pad(wx, wy, wz)
-            .map(|i| Facing::from_u8(stair_facings[i]))
-            .unwrap_or(Facing::North)
-    };
-    let nb_water = |wx, wy, wz| pad(wx, wy, wz).map(|i| water[i]).unwrap_or(0);
-    let nb_skylight = |wx, wy, wz| {
-        if wy >= WORLD_MAX_Y {
-            return SKY_FULL;
-        }
-        if wy < WORLD_MIN_Y {
-            return 0;
-        }
-        pad(wx, wy, wz).map(|i| skylight[i]).unwrap_or(SKY_FULL)
-    };
-    let nb_blocklight = |wx, wy, wz| pad(wx, wy, wz).map(|i| blocklight[i]).unwrap_or(0);
-    let nb_loaded = |wx, wy, wz| pad(wx, wy, wz).map(|i| loaded[i]).unwrap_or(false);
-    let (biome_bx, biome_bz) = (ox - BIOME_PAD_RADIUS, oz - BIOME_PAD_RADIUS);
-    let nb_biome = |wx: i32, wz: i32| {
-        let (px, pz) = (wx - biome_bx, wz - biome_bz);
-        let n = BIOME_PAD as i32;
-        if (0..n).contains(&px) && (0..n).contains(&pz) {
-            biome[biome_pad_idx(px as usize, pz as usize)]
-        } else {
-            0
-        }
-    };
-    let mesh = build_section_mesh(
+    let mesh = build_section_mesh_from_pad(
         center,
         pos,
-        nb_block,
-        nb_stair_facing,
-        nb_water,
-        nb_biome,
-        nb_skylight,
-        nb_blocklight,
-        nb_loaded,
+        SectionMeshPad {
+            blocks: &blocks,
+            water: &water,
+            skylight: &skylight,
+            blocklight: &blocklight,
+            stair_facings: &stair_facings,
+            loaded: &loaded,
+            biome: &biome,
+        },
     );
     MeshDone {
         pos,

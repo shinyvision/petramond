@@ -19,7 +19,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-const TARGET_FPS: u64 = 90;
+const TARGET_FPS: u64 = 60;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
 /// Idle update cadence. The sim is decoupled from drawing: when nothing is animating
 /// and no input is pending, the host still wakes this often to run `App::update` (so

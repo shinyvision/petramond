@@ -16,11 +16,13 @@ mod torch;
 mod vertex;
 mod water;
 
+#[cfg(test)]
 pub use builder::build_section_mesh;
 #[cfg(test)]
 pub use builder::{build_mesh, build_mesh_lods_with_loaded_neighbors};
 #[cfg(test)]
 pub use builder::{build_mesh_with_options, MeshOptions};
+pub(crate) use builder::{build_section_mesh_from_pad, SectionMeshPad};
 #[cfg(test)]
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
 pub use vertex::{ChunkMesh, ModelVertex, Vertex, SHADES};

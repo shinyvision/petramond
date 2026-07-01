@@ -207,7 +207,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Clear(1.0)),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
             for (_, pos) in opaque_columns {
                 let Some(col) = self.terrain_columns.get(pos) else {
@@ -323,7 +323,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.item_entity_draw.draw(&mut pass);
         }
         // CHEST + DOOR PASS: placed chests (inset body + hinged lid) and doors (2-tall
@@ -340,7 +340,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.chest_draw.draw(&mut pass);
             self.door_draw.draw(&mut pass);
         }
@@ -443,7 +443,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(&self.transparent_pipe);
             for item in order.iter().rev() {
                 if item.transparent_idx_count == 0 {

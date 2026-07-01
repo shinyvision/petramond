@@ -35,8 +35,8 @@ use super::mob_model::build_mob_instances;
 use super::particles::build_particles_split;
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
-    create_atlas, create_depth, create_gui_panel, create_model_texture, upload_column_mesh,
-    ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
+    create_atlas, create_atlas_array, create_depth, create_gui_panel, create_model_texture,
+    upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
@@ -156,6 +156,9 @@ pub struct Renderer {
     uniform_buf: wgpu::Buffer,
     uniform_bind: wgpu::BindGroup,
     atlas_bind: wgpu::BindGroup,
+    /// Terrain tile-ARRAY bind (group 1 for the opaque/transparent block pipelines),
+    /// parallel to `atlas_bind`; the block terrain draws bind this, everything else the 2D atlas.
+    atlas_array_bind: wgpu::BindGroup,
     /// Depth-enabled model3d variant for the first-person held block in the hand
     /// pass (same shader; the hand pass clears depth so the held block self-sorts).
     /// (The depthless `model3d_pipe` is now used only to bake the icon atlas at init,

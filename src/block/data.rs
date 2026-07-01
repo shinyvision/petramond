@@ -2107,3 +2107,28 @@ pub(super) fn from_id(id: u8) -> Block {
 pub(super) fn def(block: Block) -> &'static BlockDef {
     &BLOCK_DEFS[block.id() as usize]
 }
+
+/// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.
+///
+/// The mesher/light hot loops test `is_opaque`/`occludes_ao` on neighbour ids tens of
+/// times per emitted face. Going through [`def`] loads a pointer into the large
+/// `BlockDef` array (≈100 rows × dozens of bytes, scattered across many cache lines) just
+/// to read one flag byte. This table is 256 bytes — a handful of cache lines that stay hot
+/// — so a flag query is one small-array read, not a big-struct indirection. It is derived
+/// from `BLOCK_DEFS` at compile time, so it can never disagree with the source of truth.
+static BLOCK_FLAGS: [BlockFlags; 256] = build_flag_table();
+
+const fn build_flag_table() -> [BlockFlags; 256] {
+    let mut table = [BlockFlags::NONE; 256];
+    let mut i = 0;
+    while i < BLOCK_DEFS.len() {
+        table[BLOCK_DEFS[i].block.id() as usize] = BLOCK_DEFS[i].flags;
+        i += 1;
+    }
+    table
+}
+
+#[inline]
+pub(super) fn flags(id: u8) -> BlockFlags {
+    BLOCK_FLAGS[id as usize]
+}

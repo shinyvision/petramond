@@ -44,6 +44,38 @@ pub fn decode_atlas_mips() -> (Vec<Vec<u8>>, u32, u32) {
     (build_atlas_mips(&rgba), w, h)
 }
 
+/// Per-tile texture-ARRAY data for the terrain pipeline: one `TILE×TILE` layer per tile id,
+/// with a per-layer mip chain. Returned as `(levels, tile_size, layer_count)` where
+/// `levels[mip]` is layer-major packed RGBA (`layer_count × (tile>>mip)² × 4` bytes) — one
+/// `write_texture` per mip. Extracted from the same tile-isolated mips [`build_atlas_mips`]
+/// builds (so leaf alpha-expansion etc. carry over), but repacked per layer so the array can
+/// use real REPEAT wrapping + mips with NO cross-tile bleed — exactly what a greedy-meshed
+/// quad's tiled UVs need. Layer index == tile id, matching the `uv_rects` / mesher numbering.
+pub fn decode_atlas_array() -> (Vec<Vec<u8>>, u32, u32) {
+    let (rgba, _w, _h) = decode_atlas();
+    let mips = build_atlas_mips(&rgba);
+    let layers = TILE_COUNT as u32;
+    let mut levels = Vec::with_capacity(mips.len());
+    for (level, mip) in mips.iter().enumerate() {
+        let t = (TILE >> level).max(1) as usize;
+        let mip_w = ATLAS_COLS as usize * t;
+        let row_bytes = t * 4;
+        let mut buf = vec![0u8; layers as usize * t * t * 4];
+        for &tile in Tile::ALL {
+            let (col, row) = tile.grid();
+            let (col, row) = (col as usize, row as usize);
+            let layer = tile as usize;
+            for y in 0..t {
+                let src = ((row * t + y) * mip_w + col * t) * 4;
+                let dst = (layer * t * t + y * t) * 4;
+                buf[dst..dst + row_bytes].copy_from_slice(&mip[src..src + row_bytes]);
+            }
+        }
+        levels.push(buf);
+    }
+    (levels, TILE, layers)
+}
+
 fn build_atlas_mips(base: &[u8]) -> Vec<Vec<u8>> {
     let levels = TILE.trailing_zeros() as usize + 1;
     let mut mips = Vec::with_capacity(levels);

@@ -150,7 +150,7 @@ impl Game {
     }
 
     pub(super) fn tick_mesh_budget(&mut self) {
-        const MESH_BUDGET: usize = 8;
+        const MESH_BUDGET: usize = 4;
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
 }

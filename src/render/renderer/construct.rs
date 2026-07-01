@@ -88,6 +88,8 @@ async fn new_renderer_inner(
     surface.configure(&device, &config);
 
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
+    let (_atlas_array_texture, atlas_array_view, atlas_array_sampler) =
+        create_atlas_array(&device, &queue);
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniforms"),
         contents: bytemuck::cast_slice(&[Uniforms {
@@ -108,6 +110,8 @@ async fn new_renderer_inner(
         &uniform_buf,
         &atlas_view,
         &atlas_sampler,
+        &atlas_array_view,
+        &atlas_array_sampler,
     );
     let depth = create_depth(&device, width, height);
 
@@ -324,6 +328,7 @@ async fn new_renderer_inner(
         uniform_buf,
         uniform_bind: pipelines.uniform_bind,
         atlas_bind: pipelines.atlas_bind,
+        atlas_array_bind: pipelines.atlas_array_bind,
         model3d_hand_pipe: pipelines.model3d_hand_pipe,
         model3d_mvp_buf: pipelines.model3d_mvp_buf,
         model3d_mvp_bind: pipelines.model3d_mvp_bind,

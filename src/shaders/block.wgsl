@@ -45,12 +45,11 @@ const UV_MODE_STAIR_NEG_Z: u32 = 6u;
 const UV_MODE_STAIR_TOP: u32 = 7u;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-// uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
-// The shader only SELECTS from it — no arithmetic — so uvs are bit-identical
-// across backends. Size MUST mirror render::UV_RECTS_LEN (= 256, the 8-bit tile
-// cap); a mismatch fails `packed_vertex_pipeline_validates`.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
-@group(1) @binding(0) var atlas: texture_2d<f32>;
+// The terrain pipeline samples a tile texture ARRAY: layer = tile id, uv is tile-LOCAL
+// [0,1] (REPEAT-wrapped so a greedy-meshed quad can tile a single layer across a wide/tall
+// face). group(0) binding 1 (the legacy `uv_rects` table) stays in the shared bind-group
+// layout for the model/break/particle pipelines but is unused here.
+@group(1) @binding(0) var atlas: texture_2d_array<f32>;
 @group(1) @binding(1) var samp: sampler;
 
 struct VsIn {
@@ -71,19 +70,14 @@ struct VsOut {
     @location(4) uv2: vec2<f32>,
     @location(5) @interpolate(flat) overlay: u32,
     @location(6) world_pos: vec3<f32>,
+    // Texture-array layers (tile ids): the base tile and the overlay tile. Flat.
+    @location(7) @interpolate(flat) layer: u32,
+    @location(8) @interpolate(flat) overlay_layer: u32,
 };
 
-// Select a tile-rect corner. r = (u0,v0,u1,v1); corner order matches the mesher:
-// 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
-fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
-    if (corner == 0u) { return vec2<f32>(r.x, r.w); }
-    if (corner == 1u) { return vec2<f32>(r.z, r.w); }
-    if (corner == 2u) { return vec2<f32>(r.z, r.y); }
-    return vec2<f32>(r.x, r.y);
-}
-
-// Per-corner UV in unit-tile space [0,1]^2 (same corner order as `corner_uv`),
-// used to rotate the flowing-water tile about its centre.
+// Per-corner UV in unit-tile space [0,1]^2. Corner order matches the mesher:
+// 0->(0,1) 1->(1,1) 2->(1,0) 3->(0,0). This IS the tile-local sample coord now that
+// every tile is its own array layer (no atlas sub-rect remap).
 fn corner_local(corner: u32) -> vec2<f32> {
     if (corner == 0u) { return vec2<f32>(0.0, 1.0); }
     if (corner == 1u) { return vec2<f32>(1.0, 1.0); }
@@ -97,7 +91,7 @@ fn cell_axis_coord(axis: f32, upper: bool) -> f32 {
     return v;
 }
 
-fn stair_side_uv(r: vec4<f32>, corner: u32, pos: vec3<f32>, mode: u32) -> vec2<f32> {
+fn stair_side_uv(corner: u32, pos: vec3<f32>, mode: u32) -> vec2<f32> {
     let right = corner == 1u || corner == 2u;
     let top = corner == 2u || corner == 3u;
     let y = cell_axis_coord(pos.y, top);
@@ -115,21 +109,15 @@ fn stair_side_uv(r: vec4<f32>, corner: u32, pos: vec3<f32>, mode: u32) -> vec2<f
         let x = cell_axis_coord(pos.x, !right);
         u01 = 1.0 - x;
     }
-    return vec2<f32>(
-        r.x + u01 * (r.z - r.x),
-        r.y + (1.0 - y) * (r.w - r.y),
-    );
+    return vec2<f32>(u01, 1.0 - y);
 }
 
-fn stair_top_uv(r: vec4<f32>, corner: u32, pos: vec3<f32>) -> vec2<f32> {
+fn stair_top_uv(corner: u32, pos: vec3<f32>) -> vec2<f32> {
     let right = corner == 1u || corner == 2u;
     let far_z = corner == 0u || corner == 1u;
     let x = cell_axis_coord(pos.x, right);
     let z = cell_axis_coord(pos.z, far_z);
-    return vec2<f32>(
-        r.x + x * (r.z - r.x),
-        r.y + z * (r.w - r.y),
-    );
+    return vec2<f32>(x, z);
 }
 
 @vertex
@@ -156,12 +144,12 @@ fn vs_main(in: VsIn) -> VsOut {
         atile = tile + (u32(floor(u.fog.z * fps)) % frames);
     }
 
-    var uv = corner_uv(uv_rects[atile], corner);
+    // Tile-LOCAL uv in [0,1]; the array layer selects the tile.
+    var uv = corner_local(corner);
     // The flow tile carries shader-side data in `overlay_tile` (no grass overlay
     // on water): top faces rotate toward the flow heading; side faces crop to the
     // water height. Still-water tops/bottoms are not the flow tile, so untouched.
     if (tile == u.water_anim.y) {
-        let r = uv_rects[atile];
         if (shade_idx == 0u) {
             // TOP: rotate the tile about its centre by the flow heading so a cell
             // streaming into a corner points diagonally, not snapped to a cardinal.
@@ -172,45 +160,57 @@ fn vs_main(in: VsIn) -> VsOut {
             let cs = cos(a);
             let sn = sin(a);
             let inv = 1.0 / (abs(cs) + abs(sn));
-            let rr = vec2<f32>(rel.x * cs - rel.y * sn, rel.x * sn + rel.y * cs) * inv
+            uv = vec2<f32>(rel.x * cs - rel.y * sn, rel.x * sn + rel.y * cs) * inv
                 + vec2<f32>(0.5, 0.5);
-            uv = vec2<f32>(r.x, r.y) + rr * vec2<f32>(r.z - r.x, r.w - r.y);
         } else if (shade_idx == 1u || shade_idx == 2u) {
             // SIDE: map the tile's V to this vertex's height within its cell, so a
             // partial sheet (thin flow) or a trimmed exposed step shows the matching
             // slice of the texture instead of squishing/stretching the full tile.
-            // v0 at the cell top, v1 at the bottom. A full-height top vertex lands on
+            // v=0 at the cell top, v=1 at the bottom. A full-height top vertex lands on
             // an integer Y (fract 0), so treat that as height 1.
             var lh = in.pos.y - floor(in.pos.y);
             if ((corner == 2u || corner == 3u) && lh < 0.001) { lh = 1.0; }
-            uv.y = r.y + (1.0 - lh) * (r.w - r.y);
+            uv.y = 1.0 - lh;
         }
     }
     // UV modes above the base packed face corner. Doors crop thin edge faces;
     // stairs remap side/top faces to their cell-local X/Z/Y coordinates.
     if (uv_mode == UV_MODE_THIN_U || uv_mode == UV_MODE_THIN_V) {
-        let sr = uv_rects[atile];
         if (uv_mode == UV_MODE_THIN_U) {
             let lu = select(0.0, 1.0, corner == 1u || corner == 2u);
-            uv.x = sr.x + lu * THIN_SLICE * (sr.z - sr.x);
+            uv.x = lu * THIN_SLICE;
         } else {
             let lv = select(0.0, 1.0, corner == 0u || corner == 1u);
-            uv.y = sr.y + lv * THIN_SLICE * (sr.w - sr.y);
+            uv.y = lv * THIN_SLICE;
         }
     } else if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
-        uv = stair_side_uv(uv_rects[atile], corner, in.pos, uv_mode);
+        uv = stair_side_uv(corner, in.pos, uv_mode);
     } else if (uv_mode == UV_MODE_STAIR_TOP) {
-        uv = stair_top_uv(uv_rects[atile], corner, in.pos);
+        uv = stair_top_uv(corner, in.pos);
+    } else {
+        // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
+        // bits 12..20 so its layer tiles W×H across the merge under the REPEAT sampler;
+        // a normal 1×1 face has 0 there → ×(1,1), a no-op. Water tops/sides (flow
+        // heading) and grass-side overlays reuse those bits for other data, so exclude
+        // them (they are never greedy-merged by the mesher).
+        let has_overlay = (in.packed >> 20u) & 0x1u;
+        if (has_overlay == 0u && tile != u.water_anim.x && tile != u.water_anim.y) {
+            let gw = f32(((in.packed >> 12u) & 0xFu) + 1u);
+            let gh = f32(((in.packed >> 16u) & 0xFu) + 1u);
+            uv = corner_local(corner) * vec2<f32>(gw, gh);
+        }
     }
     out.uv = uv;
-    var uv2 = corner_uv(uv_rects[overlay_tile], corner);
+    out.layer = atile;
+    var uv2 = corner_local(corner);
     if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
-        uv2 = stair_side_uv(uv_rects[overlay_tile], corner, in.pos, uv_mode);
+        uv2 = stair_side_uv(corner, in.pos, uv_mode);
     } else if (uv_mode == UV_MODE_STAIR_TOP) {
-        uv2 = stair_top_uv(uv_rects[overlay_tile], corner, in.pos);
+        uv2 = stair_top_uv(corner, in.pos);
     }
     out.uv2 = uv2;
     out.overlay = (in.packed >> 20u) & 0x1u;
+    out.overlay_layer = overlay_tile;
 
     // Final vertex light = directional face shade (mirror of mesh::SHADES — keep
     // byte-identical) * per-vertex AO * per-vertex skylight, all smoothly
@@ -234,12 +234,12 @@ fn vs_main(in: VsIn) -> VsOut {
 
 @fragment
 fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
-    let base = textureSample(atlas, samp, in.uv);
+    let base = textureSample(atlas, samp, in.uv, i32(in.layer));
     var rgb: vec3<f32>;
     if (in.overlay == 1u) {
         // Grass side: untinted dirt base + biome-tinted grayscale grass overlay,
         // composited by the overlay's alpha so the grass matches the tinted top.
-        let ov = textureSample(atlas, samp, in.uv2);
+        let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
         rgb = mix(base.rgb, ov.rgb * in.tint, ov.a);
     } else {
         if (base.a < 0.5) { discard; } // leaf/cutout
@@ -257,7 +257,7 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(atlas, samp, in.uv);
+    let tex = textureSample(atlas, samp, in.uv, i32(in.layer));
     // Only water uses this alpha-blended pass; water tiles are full-alpha so the
     // discard is a no-op for them.
     if (tex.a < 0.5) { discard; }

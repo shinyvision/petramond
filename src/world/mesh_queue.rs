@@ -14,6 +14,15 @@ const CANDIDATE_SCAN_PER_MESH_JOB: usize = 4;
 /// Bound result drains so a burst of finished background work cannot monopolize the frame.
 const MAX_LIGHT_RESULTS_PER_PUMP: usize = 24;
 const MAX_MESH_RESULTS_PER_PUMP: usize = 24;
+/// Cap on mesh jobs queued in the pool's FIFO channel. The pool has only a few worker
+/// threads, so under a heavy (or debug-slow) load, submitting a fixed budget every frame
+/// without this cap grows the channel without bound — and because the channel is FIFO, a
+/// newly-dirtied section (e.g. a block the player just placed) queues behind the ENTIRE
+/// backlog and takes seconds to remesh. Bounding in-flight keeps the channel shallow so the
+/// backlog stays in `dirty_meshes` (re-sorted NEAREST-FIRST every frame), and a fresh edit is
+/// serviced within ~cap/workers jobs. Comfortably exceeds the worker count (≤6), so workers
+/// never starve; in release the pump is submit-bound and this never binds.
+const MAX_MESH_JOBS_IN_FLIGHT: usize = 48;
 /// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
 /// always allowed; after that, the pump yields to rendering once it burns this much CPU.
 const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_000);
@@ -88,7 +97,15 @@ impl World {
             return;
         }
 
-        let target_jobs = max_per_frame.max(MIN_MESH_JOBS_PER_PUMP);
+        // Never let the pool's FIFO channel outgrow the cap: leave the rest of the backlog in
+        // the nearest-first `dirty_meshes` so a just-edited section isn't stuck behind it.
+        let in_flight_room = MAX_MESH_JOBS_IN_FLIGHT.saturating_sub(self.mesh_jobs_in_flight);
+        if in_flight_room == 0 {
+            return;
+        }
+        let target_jobs = max_per_frame
+            .max(MIN_MESH_JOBS_PER_PUMP)
+            .min(in_flight_room);
         let candidate_cap = if max_per_frame < MIN_MESH_JOBS_PER_PUMP {
             target_jobs.saturating_mul(CANDIDATE_SCAN_PER_MESH_JOB)
         } else {

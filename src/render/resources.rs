@@ -268,6 +268,69 @@ pub(super) fn create_atlas(
     (texture, view, sampler)
 }
 
+/// The terrain pipeline's tile texture ARRAY (one layer per tile, per-layer mips), with a
+/// REPEAT sampler so a greedy-meshed quad can tile its layer across a wide/tall face without
+/// the atlas cross-tile bleed. Parallel to [`create_atlas`]: the 2D atlas stays for the model
+/// / break-overlay / particle / mob passes; only the block terrain pipeline binds this.
+pub(super) fn create_atlas_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+    let (levels, tile, layers) = crate::atlas::decode_atlas_array();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("atlas array"),
+        size: wgpu::Extent3d {
+            width: tile,
+            height: tile,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: levels.len() as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, data) in levels.iter().enumerate() {
+        let tw = (tile >> level).max(1);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(tw * 4),
+                rows_per_image: Some(tw),
+            },
+            wgpu::Extent3d {
+                width: tw,
+                height: tw,
+                depth_or_array_layers: layers,
+            },
+        );
+    }
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("atlas array sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        lod_max_clamp: (levels.len() - 1) as f32,
+        ..Default::default()
+    });
+    (texture, view, sampler)
+}
+
 pub(super) fn create_depth(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),

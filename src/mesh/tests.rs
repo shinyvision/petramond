@@ -1079,3 +1079,237 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     assert_eq!(count(&lit, Tile::FurnaceFront), 0);
     assert_eq!(count(&lit, Tile::FurnaceSide), 12, "sides never glow");
 }
+
+/// Greedy meshing collapses a flat, uniformly-lit region of identical opaque faces into a
+/// single tiled quad, and encodes the merge extent so the shader tiles the tile W×H. A 16×16
+/// stone floor's top faces (all AO=3, full sky, same tile+tint) must merge to ONE quad whose
+/// packed W,H = 16, and the whole section's opaque geometry must collapse far below the
+/// per-cell face count. Pins the merge condition + the (W-1,H-1) packing the shader decodes.
+#[test]
+fn greedy_merges_flat_floor_into_tiled_quads() {
+    use crate::chunk::SectionPos;
+    use crate::furnace::Facing;
+    use crate::section::Section;
+
+    let pos = SectionPos::new(0, 0, 0);
+    let mut section = Section::new(0, 0, 0);
+    for lz in 0..CHUNK_SZ {
+        for lx in 0..CHUNK_SX {
+            section.set_block(lx, 0, lz, Block::Stone);
+        }
+    }
+    section.recompute_opaque_count();
+
+    let mesh = super::build_section_mesh(
+        &section,
+        pos,
+        |wx, wy, wz| {
+            if wy == 0 && (0..16).contains(&wx) && (0..16).contains(&wz) {
+                Block::Stone.id()
+            } else {
+                Block::Air.id()
+            }
+        },
+        |_, _, _| Facing::North,
+        |_, _, _| 0,
+        |_, _| 0,
+        |_, _, _| SKY_FULL,
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    // The 16×16 top (+Y, shade idx 0) at y=1 collapses to a single 4-vertex quad.
+    let top: Vec<&Vertex> = mesh
+        .opaque
+        .iter()
+        .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 1.0).abs() < 1e-3)
+        .collect();
+    assert_eq!(top.len(), 4, "flat 16×16 top should merge into one quad");
+    let w = ((top[0].packed >> 12) & 0xF) + 1;
+    let h = ((top[0].packed >> 16) & 0xF) + 1;
+    assert_eq!(
+        (w, h),
+        (16, 16),
+        "merged top quad must tile its layer 16×16"
+    );
+    // The quad spans the full section footprint.
+    let (min_x, max_x) = (
+        top.iter().map(|v| v.pos[0]).fold(f32::INFINITY, f32::min),
+        top.iter()
+            .map(|v| v.pos[0])
+            .fold(f32::NEG_INFINITY, f32::max),
+    );
+    assert!((min_x - 0.0).abs() < 1e-3 && (max_x - 16.0).abs() < 1e-3);
+
+    // Per cell this floor would emit 256 top + 256 bottom + 4×16 side faces = 576 quads
+    // (2304 verts); greedy collapses it to a handful.
+    assert!(
+        mesh.opaque.len() < 64,
+        "greedy should collapse the flat floor, got {} verts",
+        mesh.opaque.len()
+    );
+}
+
+#[test]
+fn pad_local_section_mesher_matches_closure_mesher() {
+    use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
+    use crate::furnace::{Facing, Furnace};
+    use crate::section::Section;
+
+    const PAD: usize = SECTION_SIZE + 2;
+    const PAD_VOL: usize = PAD * PAD * PAD;
+    const BIOME_PAD_RADIUS: i32 = 2;
+    const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
+    let pidx = |x: usize, y: usize, z: usize| (y * PAD + z) * PAD + x;
+    let bidx = |x: usize, z: usize| z * BIOME_PAD + x;
+
+    let pos = SectionPos::new(0, 0, 0);
+    let mut section = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            section.set_block(x, 0, z, Block::Stone);
+        }
+    }
+    section.set_block(2, 1, 2, Block::Grass);
+    section.set_block(3, 1, 2, Block::OakLeaves);
+    section.set_block(4, 1, 2, Block::ShortGrass);
+    section.set_water(5, 1, 2, Block::Water, 4);
+    section.set_block(6, 1, 2, Block::Furnace);
+    section.insert_furnace(
+        6,
+        1,
+        2,
+        Furnace {
+            facing: Facing::East,
+            burn_remaining: 10,
+            ..Default::default()
+        },
+    );
+    section.set_block(7, 1, 2, Block::Cactus);
+    section.set_block(8, 1, 2, Block::OakStairs);
+    section.set_stair_facing(8, 1, 2, Facing::South);
+
+    let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+        if (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+        {
+            section.block_raw(wx as usize, wy as usize, wz as usize)
+        } else if wy == 0
+            && (-1..=SECTION_SIZE as i32).contains(&wx)
+            && (-1..=SECTION_SIZE as i32).contains(&wz)
+        {
+            Block::Stone.id()
+        } else {
+            Block::Air.id()
+        }
+    };
+    let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+        if (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+        {
+            section.water_meta(wx as usize, wy as usize, wz as usize)
+        } else {
+            0
+        }
+    };
+    let stair_at = |wx: i32, wy: i32, wz: i32| -> Facing {
+        if (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+        {
+            section.stair_facing(wx as usize, wy as usize, wz as usize)
+        } else {
+            Facing::North
+        }
+    };
+    let sky_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+        if wy < 0 {
+            0
+        } else if wy >= SECTION_SIZE as i32 {
+            SKY_FULL
+        } else {
+            (18 + (wx * 3 + wy * 5 + wz * 7).rem_euclid(13)) as u8
+        }
+    };
+    let blocklight_at =
+        |wx: i32, wy: i32, wz: i32| -> u8 { ((wx + wy * 2 + wz * 3).rem_euclid(5) * 2) as u8 };
+    let biome_at = |_: i32, _: i32| -> u8 { 0 };
+    let loaded_at = |_: i32, _: i32, _: i32| -> bool { true };
+
+    let serial = build_section_mesh(
+        &section,
+        pos,
+        block_at,
+        stair_at,
+        water_at,
+        biome_at,
+        sky_at,
+        blocklight_at,
+        loaded_at,
+    );
+
+    let mut blocks = vec![0u8; PAD_VOL];
+    let mut water = vec![0u8; PAD_VOL];
+    let mut skylight = vec![SKY_FULL; PAD_VOL];
+    let mut blocklight = vec![0u8; PAD_VOL];
+    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL];
+    let loaded = vec![true; PAD_VOL];
+    for py in 0..PAD {
+        for pz in 0..PAD {
+            for px in 0..PAD {
+                let (wx, wy, wz) = (px as i32 - 1, py as i32 - 1, pz as i32 - 1);
+                let i = pidx(px, py, pz);
+                blocks[i] = block_at(wx, wy, wz);
+                water[i] = water_at(wx, wy, wz);
+                skylight[i] = sky_at(wx, wy, wz);
+                blocklight[i] = blocklight_at(wx, wy, wz);
+                stair_facings[i] = stair_at(wx, wy, wz).to_u8();
+            }
+        }
+    }
+    let mut biome = vec![0u8; BIOME_PAD * BIOME_PAD];
+    for pz in 0..BIOME_PAD {
+        for px in 0..BIOME_PAD {
+            biome[bidx(px, pz)] =
+                biome_at(px as i32 - BIOME_PAD_RADIUS, pz as i32 - BIOME_PAD_RADIUS);
+        }
+    }
+
+    let pad = build_section_mesh_from_pad(
+        &section,
+        pos,
+        SectionMeshPad {
+            blocks: &blocks,
+            water: &water,
+            skylight: &skylight,
+            blocklight: &blocklight,
+            stair_facings: &stair_facings,
+            loaded: &loaded,
+            biome: &biome,
+        },
+    );
+
+    assert_eq!(
+        bytemuck::cast_slice::<Vertex, u8>(&serial.opaque),
+        bytemuck::cast_slice::<Vertex, u8>(&pad.opaque)
+    );
+    assert_eq!(serial.opaque_idx, pad.opaque_idx);
+    assert_eq!(
+        bytemuck::cast_slice::<Vertex, u8>(&serial.transparent),
+        bytemuck::cast_slice::<Vertex, u8>(&pad.transparent)
+    );
+    assert_eq!(serial.transparent_idx, pad.transparent_idx);
+    assert_eq!(
+        bytemuck::cast_slice::<Vertex, u8>(&serial.far_opaque),
+        bytemuck::cast_slice::<Vertex, u8>(&pad.far_opaque)
+    );
+    assert_eq!(serial.far_opaque_idx, pad.far_opaque_idx);
+    assert_eq!(
+        bytemuck::cast_slice::<ModelVertex, u8>(&serial.model),
+        bytemuck::cast_slice::<ModelVertex, u8>(&pad.model)
+    );
+    assert_eq!(serial.model_idx, pad.model_idx);
+    assert_eq!(serial.mesh_dirty, pad.mesh_dirty);
+}
