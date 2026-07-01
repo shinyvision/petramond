@@ -111,6 +111,9 @@ impl World {
         } else {
             target_jobs
         };
+        if self.vis_dirty {
+            self.refresh_deep_visibility();
+        }
         let target = self.last_load_target;
         let candidates = self.dirty_meshes.pop_nearest_batch(candidate_cap, target);
         let mut submitted = 0usize;
@@ -125,6 +128,13 @@ impl World {
             // sections above cull against it and the player can still dig in. Carving air
             // into it or a neighbour re-dirties it (`set_block_world`'s neighbourhood mark),
             // bringing it back through here as a real mesh.
+            // Hidden deep section: nothing can see it — park it out of the hot
+            // queue (its light parks with it, since light is mesh-demanded). The
+            // visibility refresh re-queues it the moment a sightline can reach it.
+            if self.section_hidden(pos) {
+                self.hidden_parked.insert(pos);
+                continue;
+            }
             if self.clear_mesh_if_section_produces_no_mesh(pos) {
                 if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
@@ -166,18 +176,22 @@ impl World {
     }
 
     /// Whether `pos` produces no visible geometry, so meshing/lighting/drawing it is pure
-    /// waste: it is either entirely air (emits nothing), or fully opaque AND walled in by
-    /// known fully-opaque neighbours (no exposed faces). Neighbours can be loaded sections
-    /// or generated section summaries; truly unknown neighbours still count as open.
+    /// waste: it is either entirely air (emits nothing), or SEALED — every neighbour's
+    /// 16×16 plane adjoining it is fully opaque. A section's mesh can only be seen
+    /// through a non-opaque cell in one of those planes: a sightline into its interior
+    /// air must cross one, and a boundary face is only emitted (and only viewable) where
+    /// the adjoining neighbour cell is non-opaque. The centre's own content is
+    /// irrelevant, so buried MIXED sections (sealed caves, water lenses) settle too, not
+    /// just solid stone. Re-exposure is already wired: any edit or newly streamed
+    /// neighbour re-dirties the full 3×3×3, which re-runs this test. Neighbours answer
+    /// from an exact plane scan when loaded (with counter fast paths) or from generated
+    /// section summaries; truly unknown neighbours still count as open.
     pub(super) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
         let Some(s) = self.sections.get(&pos) else {
             return false;
         };
         if s.is_empty_air() {
             return true;
-        }
-        if !s.all_opaque() {
-            return false;
         }
         const FACES: [(i32, i32, i32); 6] = [
             (1, 0, 0),
@@ -188,8 +202,13 @@ impl World {
             (0, 0, -1),
         ];
         FACES.iter().all(|&(dx, dy, dz)| {
-            self.section_summary(SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
-                .is_full_opaque()
+            let npos = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
+            match self.sections.get(&npos) {
+                // The neighbour plane adjoining the centre faces the opposite way
+                // to the outward step direction.
+                Some(n) => n.face_plane_fully_opaque(-dx, -dy, -dz),
+                None => self.section_summary(npos).is_full_opaque(),
+            }
         })
     }
 

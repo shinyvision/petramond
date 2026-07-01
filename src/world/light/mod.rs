@@ -14,6 +14,14 @@ use crate::chunk::SECTION_SIZE;
 
 pub(super) use queue::LightBakeQueue;
 
+/// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
+pub(crate) fn stage_stats() -> (
+    &'static std::sync::atomic::AtomicU64,
+    &'static std::sync::atomic::AtomicU64,
+) {
+    (&queue::LIGHT_STAGE_NS, &queue::LIGHT_STAGE_JOBS)
+}
+
 /// Side length of the light flood neighbourhood (3 sections).
 pub(super) const NBHD: usize = 3 * SECTION_SIZE;
 pub(super) const NBHD_VOLUME: usize = NBHD * NBHD * NBHD;

@@ -3,6 +3,26 @@
 //! The game/runtime modules stay crate-internal; binaries under `src/bin` are
 //! separate crates, so they use this narrow surface.
 
+// TEMPORARY (perf session scratch, do not commit): re-exposes the live `World`
+// for the out-of-tree streaming profiler while there is an active measurement
+// question. Remove together with src/bin/streamprofile.rs.
+pub mod stream {
+    pub use crate::world::World;
+
+    /// (mesh ns, mesh jobs, light ns, light jobs) — temporary perf-session diagnostics.
+    pub fn stage_stats() -> (u64, u64, u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (mesh_ns, mesh_jobs) = crate::world::mesh_stage_stats();
+        let (light_ns, light_jobs) = crate::world::light_stage_stats();
+        (
+            mesh_ns.load(Relaxed),
+            mesh_jobs.load(Relaxed),
+            light_ns.load(Relaxed),
+            light_jobs.load(Relaxed),
+        )
+    }
+}
+
 pub mod biome {
     pub use crate::biome::Biome;
 }

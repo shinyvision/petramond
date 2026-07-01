@@ -20,6 +20,7 @@ pub(crate) mod sapling;
 mod stair;
 mod store;
 mod stream;
+mod visibility;
 mod tick;
 mod torch;
 pub(crate) mod water;
@@ -29,3 +30,18 @@ pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub use store::{World, RENDER_DIST};
+
+/// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
+pub(crate) fn mesh_stage_stats() -> (
+    &'static std::sync::atomic::AtomicU64,
+    &'static std::sync::atomic::AtomicU64,
+) {
+    (&mesh_pool::MESH_STAGE_NS, &mesh_pool::MESH_STAGE_JOBS)
+}
+
+pub(crate) fn light_stage_stats() -> (
+    &'static std::sync::atomic::AtomicU64,
+    &'static std::sync::atomic::AtomicU64,
+) {
+    light::stage_stats()
+}

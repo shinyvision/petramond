@@ -60,9 +60,11 @@ pub(super) fn gather(pos: SectionPos, sections: &HashMap<SectionPos, Arc<Section
     Snapshot { blocks, states }
 }
 
-/// Assemble the neighbourhood block-id cube. Absent neighbours read as air.
-pub(super) fn assemble_blocks(snapshot: &Snapshot) -> Box<[u8]> {
-    let mut out = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+/// Assemble the neighbourhood block-id cube into `out` (a reused per-thread
+/// buffer of `NBHD_VOLUME` bytes). Absent neighbours read as air.
+pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u8]) {
+    debug_assert_eq!(out.len(), NBHD_VOLUME);
+    out.fill(0);
     for dcy in -1..=1 {
         for dcz in -1..=1 {
             for dcx in -1..=1 {
@@ -82,7 +84,6 @@ pub(super) fn assemble_blocks(snapshot: &Snapshot) -> Box<[u8]> {
             }
         }
     }
-    out
 }
 
 /// Collect every block-light emitter in `pos`'s 3x3x3 section neighbourhood.

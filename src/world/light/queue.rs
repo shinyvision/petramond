@@ -104,7 +104,30 @@ impl LightBakeQueue {
     }
 }
 
+/// Per-light-thread reusable bake scratch: the assembled 48³ neighbourhood block
+/// cube plus the flood working set. Streaming bakes run thousands of times across
+/// several threads; reusing these keeps ~220 KB of per-bake churn off the allocator
+/// (the returned per-section light cubes are still allocated fresh — they outlive
+/// the bake).
+struct BakeScratch {
+    blocks: Box<[u8]>,
+    flood: flood::FloodScratch,
+}
+
+thread_local! {
+    static BAKE_SCRATCH: std::cell::RefCell<BakeScratch> = std::cell::RefCell::new(BakeScratch {
+        blocks: vec![0u8; super::NBHD_VOLUME].into_boxed_slice(),
+        flood: flood::FloodScratch::new(),
+    });
+}
+
+/// Total worker nanoseconds and jobs spent on light bakes — temporary perf-session
+/// diagnostics read by the out-of-tree streaming profiler.
+pub(crate) static LIGHT_STAGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static LIGHT_STAGE_JOBS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
+    let t_stage = std::time::Instant::now();
     let LightBakeJob {
         id,
         pos,
@@ -114,39 +137,49 @@ fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         emitters,
     } = job;
 
-    let blocks = nbhd.as_ref().map(neighborhood::assemble_blocks);
-    let states = nbhd
-        .as_ref()
-        .map(|n| ShapeStateSnapshot::from_sparse(n.states()))
-        .unwrap_or_default();
+    BAKE_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let BakeScratch { blocks, flood } = &mut *scratch;
 
-    let skylight = match sky {
-        SkyPlan::Full => vec![crate::chunk::SKY_FULL; SECTION_VOLUME].into(),
-        SkyPlan::Dark => vec![0u8; SECTION_VOLUME].into(),
-        SkyPlan::Flood { surface } => {
-            let blocks = blocks
-                .as_deref()
-                .expect("a flooding skylight bake carries its neighbourhood blocks");
-            flood::skylight(pos, LightCells::new(blocks, &states), &surface)
+        let blocks: Option<&[u8]> = nbhd.as_ref().map(|n| {
+            neighborhood::assemble_blocks(n, blocks);
+            &blocks[..]
+        });
+        let states = nbhd
+            .as_ref()
+            .map(|n| ShapeStateSnapshot::from_sparse(n.states()))
+            .unwrap_or_default();
+
+        let skylight = match sky {
+            SkyPlan::Full => vec![crate::chunk::SKY_FULL; SECTION_VOLUME].into(),
+            SkyPlan::Dark => vec![0u8; SECTION_VOLUME].into(),
+            SkyPlan::Flood { surface } => {
+                let blocks =
+                    blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
+                flood::skylight(pos, LightCells::new(blocks, &states), &surface, flood)
+            }
+        };
+
+        let blocklight = if emitters.is_empty() {
+            vec![0u8; SECTION_VOLUME].into()
+        } else {
+            let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
+            flood::block_light(pos, LightCells::new(blocks, &states), &emitters, flood)
+        };
+
+        LIGHT_STAGE_NS.fetch_add(
+            t_stage.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        LIGHT_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        LightBakeResult {
+            id,
+            pos,
+            revision,
+            skylight,
+            blocklight,
         }
-    };
-
-    let blocklight = if emitters.is_empty() {
-        vec![0u8; SECTION_VOLUME].into()
-    } else {
-        let blocks = blocks
-            .as_deref()
-            .expect("a block-light bake carries its neighbourhood blocks");
-        flood::block_light(pos, LightCells::new(blocks, &states), &emitters)
-    };
-
-    LightBakeResult {
-        id,
-        pos,
-        revision,
-        skylight,
-        blocklight,
-    }
+    })
 }
 
 struct Backend {

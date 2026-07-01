@@ -38,6 +38,8 @@ impl World {
         // Re-mesh the 3×3×3 so the border flood, vertex light sampling, and
         // cross-section face culling remain correct.
         self.mark_dirty_neighborhood(pos, true);
+        // Plane openness may have changed; deep-visibility must re-evaluate.
+        self.vis_dirty = true;
 
         // Announce the change: re-lights the neighbourhood and lets reactive
         // neighbours (e.g. water) re-evaluate on the next game tick.

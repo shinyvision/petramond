@@ -404,13 +404,52 @@ pub(crate) fn build_climate_field(
 /// sampled at the 1:4 quart scale (world block → quart cell).
 #[derive(Clone, Debug)]
 pub(crate) struct ShiftedClimateField {
+    world_seed: u64,
     shift: ReferenceDoublePerlin,
     field: ReferenceDoublePerlin,
+}
+
+/// Per-thread memo of the climate domain warp. Every [`ShiftedClimateField`] of a
+/// given world seed embeds the SAME shift field (`climate_fields::SHIFT` forks only
+/// from the world seed), so temperature/humidity/continentality/erosion/weirdness
+/// all recompute an identical `(sx, sz)` at the same quart cell — as do the height
+/// (density lattice) and biome (climate cell) passes, which sample the same
+/// world-anchored 4-block grid. Memoizing the warp is bit-exact: the cached values
+/// are the very f64s the direct computation yields for that `(seed, qx, qz)`.
+#[derive(Copy, Clone)]
+struct WarpMemoEntry {
+    init: bool,
+    seed: u64,
+    qx: u64,
+    qz: u64,
+    sx: f64,
+    sz: f64,
+}
+
+const WARP_MEMO_ENTRIES: usize = 1024;
+
+thread_local! {
+    static WARP_MEMO: std::cell::RefCell<Box<[WarpMemoEntry]>> =
+        std::cell::RefCell::new(
+            vec![
+                WarpMemoEntry {
+                    init: false,
+                    seed: 0,
+                    qx: 0,
+                    qz: 0,
+                    sx: 0.0,
+                    sz: 0.0,
+                };
+                WARP_MEMO_ENTRIES
+            ]
+            .into_boxed_slice(),
+        );
 }
 
 impl ShiftedClimateField {
     pub(crate) fn new(world_seed: u64, params: &ClimateFieldParams) -> Self {
         Self {
+            world_seed,
             shift: build_climate_field(world_seed, &climate_fields::SHIFT),
             field: build_climate_field(world_seed, params),
         }
@@ -419,9 +458,34 @@ impl ShiftedClimateField {
     /// Sample at quart coordinates (the reference's native climate scale). The shift
     /// for `z` reads the shift field at `(qz, qx, 0)` — swapped, matching the source.
     pub(crate) fn sample_quart(&self, qx: f64, qz: f64) -> f64 {
-        let sx = self.shift.sample(qx, 0.0, qz) * 4.0;
-        let sz = self.shift.sample(qz, qx, 0.0) * 4.0;
+        let (sx, sz) = self.warp(qx, qz);
         self.field.sample(qx + sx, 0.0, qz + sz)
+    }
+
+    /// The domain warp at a quart cell, memoized per thread (direct-mapped).
+    fn warp(&self, qx: f64, qz: f64) -> (f64, f64) {
+        let (qxb, qzb) = (qx.to_bits(), qz.to_bits());
+        let hash = (qxb ^ qzb.rotate_left(32) ^ self.world_seed)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let idx = (hash >> (64 - WARP_MEMO_ENTRIES.trailing_zeros())) as usize;
+        WARP_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            let e = &mut memo[idx];
+            if e.init && e.seed == self.world_seed && e.qx == qxb && e.qz == qzb {
+                return (e.sx, e.sz);
+            }
+            let sx = self.shift.sample(qx, 0.0, qz) * 4.0;
+            let sz = self.shift.sample(qz, qx, 0.0) * 4.0;
+            *e = WarpMemoEntry {
+                init: true,
+                seed: self.world_seed,
+                qx: qxb,
+                qz: qzb,
+                sx,
+                sz,
+            };
+            (sx, sz)
+        })
     }
 }
 
@@ -452,6 +516,42 @@ fn fade(t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warp_memo_is_bit_exact_across_interleaved_seeds_and_fields() {
+        // The per-thread warp memo must be pure memoization: sampling two different
+        // seeds and several fields interleaved over the same cells (worst case for
+        // key collisions / a missing seed key) must yield exactly what an inline
+        // warp computes. A stale or mis-keyed memo entry shifts the climate warp
+        // and silently moves every biome border.
+        let fields: Vec<ShiftedClimateField> = vec![
+            ShiftedClimateField::new(0x1234_5678, &climate_fields::CONTINENTALITY),
+            ShiftedClimateField::new(0x1234_5678, &climate_fields::EROSION),
+            ShiftedClimateField::new(0x1234_5678, &climate_fields::WEIRDNESS),
+            ShiftedClimateField::new(0xDEAD_BEEF, &climate_fields::EROSION),
+        ];
+
+        let mut expected = std::collections::VecDeque::new();
+        for pass in 0..2 {
+            for q in 0..64 {
+                let (qx, qz) = ((q % 8) as f64, (q / 8) as f64);
+                for f in &fields {
+                    let got = f.sample_quart(qx, qz);
+                    if pass == 0 {
+                        let sx = f.shift.sample(qx, 0.0, qz) * 4.0;
+                        let sz = f.shift.sample(qz, qx, 0.0) * 4.0;
+                        let inline = f.field.sample(qx + sx, 0.0, qz + sz);
+                        assert_eq!(got.to_bits(), inline.to_bits());
+                        expected.push_back(got);
+                    } else {
+                        // Second pass re-reads every cell through a fully warm memo.
+                        let want = expected.pop_front().unwrap();
+                        assert_eq!(got.to_bits(), want.to_bits());
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn perlin_gradients_have_root_two_magnitude() {

@@ -80,6 +80,8 @@ impl World {
         }
         let prev = self.last_load_target;
         self.last_load_target = Some(target);
+        // The player ring and disc edge moved; deep-visibility must re-evaluate.
+        self.vis_dirty = true;
         let vertical_moved = prev.is_none_or(|p| p.center_cy != target.center_cy);
         let horizontal_keep_changed =
             prev.is_none_or(|p| p.center != target.center || p.render_dist != target.render_dist);
@@ -92,7 +94,10 @@ impl World {
         // newly wanted, so scan only that entering subset instead of every column in
         // the new cone.
         if vertical_moved {
-            self.request_wanted_sections(target);
+            match prev {
+                Some(p) => self.request_vertical_delta_sections(p, target),
+                None => self.request_wanted_sections(target),
+            }
         }
         if !vertical_moved {
             if let Some(prev) = prev {
@@ -121,7 +126,10 @@ impl World {
     /// A surface/content retention band for a generated column. This is intentionally
     /// independent from the player's current section: spectator flight far above the
     /// world should not evict the terrain stack underneath a still-visible column.
-    fn surface_window_for_column(col: &ColumnGen, slack: i32) -> std::ops::RangeInclusive<i32> {
+    pub(super) fn surface_window_for_column(
+        col: &ColumnGen,
+        slack: i32,
+    ) -> std::ops::RangeInclusive<i32> {
         let (surf_min, _) = col.surf_range();
         let bottom_y = surf_min.max(SEA_LEVEL);
         let top_y = col.content_top().max(SEA_LEVEL);
@@ -130,17 +138,16 @@ impl World {
         lo.max(SECTION_MIN_CY)..=hi.min(SECTION_MAX_CY)
     }
 
-    /// Player-centred vertical window plus the column's surface/content band, sorted
-    /// nearest to the player's current section first. Duplicates are removed in-place.
+    /// Player-centred vertical window plus the column's surface/content band.
+    /// UNORDERED (duplicates removed in-place): every consumer re-orders by its own
+    /// submission priority key, so sorting here was pure per-column waste.
     fn wanted_section_cys(col: &ColumnGen, center_cy: i32, slack: i32) -> Vec<i32> {
-        let center = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
         let mut out: Vec<i32> = Self::vertical_window(center_cy, slack).collect();
         for cy in Self::surface_window_for_column(col, slack) {
             if !out.contains(&cy) {
                 out.push(cy);
             }
         }
-        out.sort_unstable_by_key(|&cy| ((cy - center).abs(), cy));
         out
     }
 
@@ -151,7 +158,6 @@ impl World {
         center_cy: i32,
         slack: i32,
     ) -> Vec<i32> {
-        let center = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
         let mut out = Self::wanted_section_cys(col, center_cy, slack);
         if let Some(save) = self.save.as_ref() {
             for sp in save.manifest_sections_in_column(pos) {
@@ -160,7 +166,6 @@ impl World {
                 }
             }
         }
-        out.sort_unstable_by_key(|&cy| ((cy - center).abs(), cy));
         out
     }
 
@@ -245,6 +250,60 @@ impl World {
     /// columns are handled directly in `poll` via [`request_sections_for_column`].
     fn request_wanted_sections(&mut self, target: LoadTarget) {
         self.request_wanted_sections_matching(target, |_| true);
+    }
+
+    /// Vertical-crossing section requests. Columns already wanted under `prev` had
+    /// their full window + surface band + manifest requested when they entered (and
+    /// their player-window edge on every crossing since), so only the cys ENTERING
+    /// the player window this move need checking — plus saved manifest sections,
+    /// which stream in regardless of the vertical window (sky builds). Columns just
+    /// entering the wanted shape still get the full per-column window build. This
+    /// turns the per-crossing O(columns × window) rescan into O(columns × Δ).
+    fn request_vertical_delta_sections(&mut self, prev: LoadTarget, target: LoadTarget) {
+        let prev_window = Self::vertical_window(prev.center_cy, 0);
+        let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
+        let mut cys: Vec<i32> = Vec::new();
+        for (pos, col) in &self.column_gen {
+            if !Self::column_wanted(target, *pos) {
+                continue;
+            }
+            cys.clear();
+            if Self::column_wanted(prev, *pos) {
+                cys.extend(
+                    Self::vertical_window(target.center_cy, 0)
+                        .filter(|cy| !prev_window.contains(cy)),
+                );
+            } else {
+                cys.extend(Self::vertical_window(target.center_cy, 0));
+                for cy in Self::surface_window_for_column(col, 0) {
+                    if !cys.contains(&cy) {
+                        cys.push(cy);
+                    }
+                }
+            }
+            if let Some(save) = self.save.as_ref() {
+                for sp in save.manifest_sections_in_column(*pos) {
+                    if !cys.contains(&sp.cy) {
+                        cys.push(sp.cy);
+                    }
+                }
+            }
+            let content_top = col.content_top();
+            for &cy in &cys {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                    continue;
+                }
+                if self.skip_empty_sky_section(sp, content_top) {
+                    continue;
+                }
+                wanted.push((target.section_priority_key(sp), sp, col.clone()));
+            }
+        }
+        wanted.sort_by_key(|(priority, _, _)| *priority);
+        for (_, sp, col) in wanted {
+            self.submit_section_job(sp, col);
+        }
     }
 
     fn request_newly_wanted_sections(&mut self, prev: LoadTarget, target: LoadTarget) {
@@ -368,11 +427,17 @@ impl World {
             self.sections
                 .keys()
                 .filter(|sp| {
+                    // Cheapest rejection first: almost every section is still inside
+                    // the player window, so answer that with two integer compares
+                    // before the column-shape test and the per-column surface band.
+                    if vwindow.contains(&sp.cy) {
+                        return false;
+                    }
                     let cp = sp.chunk_pos();
-                    let surface_kept = self.column_gen.get(&cp).is_some_and(|col| {
-                        Self::surface_window_for_column(col, 2).contains(&sp.cy)
-                    });
-                    Self::column_kept(target, cp) && !vwindow.contains(&sp.cy) && !surface_kept
+                    Self::column_kept(target, cp)
+                        && !self.column_gen.get(&cp).is_some_and(|col| {
+                            Self::surface_window_for_column(col, 2).contains(&sp.cy)
+                        })
                 })
                 .copied()
                 .collect()
@@ -472,6 +537,7 @@ impl World {
                         continue;
                     }
                     self.sections.insert(sp, Arc::new(section));
+                    self.classify_deep_on_install(sp);
                     ingested.push(sp);
                 }
             }

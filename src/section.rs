@@ -119,6 +119,12 @@ pub struct Section {
     /// drawing can all be skipped (the deep-stone fast path) until something carves air
     /// into it or a neighbour.
     opaque_count: u32,
+    /// Opaque cells per 16×16 boundary plane, order [+X, −X, +Y, −Y, +Z, −Z].
+    /// A count of 256 means that face of the section is fully walled: no sightline
+    /// can cross it and every boundary face behind it is culled. Maintained by the
+    /// setters and `recompute_opaque_count`; read by the sealed-section skip and
+    /// the deep-section visibility BFS as O(1) plane-openness.
+    plane_opaque: [u16; 6],
     /// Count of NON-AIR cells. `0` ⇒ the section is empty air, which emits no mesh faces
     /// at all (air draws nothing; solid neighbours draw their own faces toward it), so it
     /// is skipped from meshing/drawing unconditionally — the empty-sky fast path for the
@@ -157,6 +163,7 @@ impl Section {
             mesh_revision: 0,
             random_tick_count: 0,
             opaque_count: 0,
+            plane_opaque: [0; 6],
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,
@@ -195,7 +202,7 @@ impl Section {
         let old = blocks[i];
         blocks[i] = id;
         self.adjust_random_tick_count(old, id);
-        self.adjust_opaque_count(old, id);
+        self.adjust_opaque_count(x, y, z, old, id);
         self.clear_water_meta(i);
         self.clear_model_cell(i);
         self.clear_sapling_stage(i);
@@ -253,7 +260,7 @@ impl Section {
         let old = blocks[i];
         blocks[i] = id;
         self.adjust_random_tick_count(old, id);
-        self.adjust_opaque_count(old, id);
+        self.adjust_opaque_count(x, y, z, old, id);
         let meta = if b == Block::Water { meta } else { 0 };
         self.store_water_meta(i, meta);
         self.dirty = true;
@@ -351,13 +358,38 @@ impl Section {
 
     /// Keep the opaque + non-air skip counters in step with one cell changing.
     #[inline]
-    fn adjust_opaque_count(&mut self, old_id: u8, new_id: u8) {
+    fn adjust_opaque_count(&mut self, x: usize, y: usize, z: usize, old_id: u8, new_id: u8) {
         let was_op = Block::from_id(old_id).is_opaque();
         let now_op = Block::from_id(new_id).is_opaque();
         match (was_op, now_op) {
             (false, true) => self.opaque_count += 1,
             (true, false) => self.opaque_count -= 1,
             _ => {}
+        }
+        if was_op != now_op {
+            let d: i32 = if now_op { 1 } else { -1 };
+            let hi = SECTION_SIZE - 1;
+            let mut bump = |plane: usize| {
+                self.plane_opaque[plane] = (self.plane_opaque[plane] as i32 + d) as u16;
+            };
+            if x == hi {
+                bump(0);
+            }
+            if x == 0 {
+                bump(1);
+            }
+            if y == hi {
+                bump(2);
+            }
+            if y == 0 {
+                bump(3);
+            }
+            if z == hi {
+                bump(4);
+            }
+            if z == 0 {
+                bump(5);
+            }
         }
         let was_air = old_id == 0;
         let now_air = new_id == 0;
@@ -408,6 +440,23 @@ impl Section {
         self.non_air_count = non_air;
         self.water_count = water;
         self.biome_tint_count = biome_tint;
+
+        let mut planes = [0u16; 6];
+        let hi = SECTION_SIZE - 1;
+        for a in 0..SECTION_SIZE {
+            for b in 0..SECTION_SIZE {
+                let op = |x: usize, y: usize, z: usize| {
+                    Block::from_id(self.blocks[section_idx(x, y, z)]).is_opaque() as u16
+                };
+                planes[0] += op(hi, a, b);
+                planes[1] += op(0, a, b);
+                planes[2] += op(a, hi, b);
+                planes[3] += op(a, 0, b);
+                planes[4] += op(a, b, hi);
+                planes[5] += op(a, b, 0);
+            }
+        }
+        self.plane_opaque = planes;
     }
 
     /// Whether every cell is opaque (fully solid). Such a section, when its six
@@ -423,6 +472,38 @@ impl Section {
     #[inline]
     pub fn is_empty_air(&self) -> bool {
         self.non_air_count == 0
+    }
+
+    /// Whether this section's 16×16 boundary plane facing `(dx,dy,dz)` (one unit axis
+    /// step) is fully opaque. A fully-opaque plane admits no sightline across that face
+    /// and culls every boundary face behind it, so six such planes seal the adjoining
+    /// section — the buried-section mesh/light skip builds on this. O(1) from the
+    /// per-plane counters.
+    #[inline]
+    pub fn face_plane_fully_opaque(&self, dx: i32, dy: i32, dz: i32) -> bool {
+        const PLANE_AREA: u16 = (SECTION_SIZE * SECTION_SIZE) as u16;
+        self.plane_opaque[Self::plane_index(dx, dy, dz)] == PLANE_AREA
+    }
+
+    /// Whether the boundary plane facing `(dx,dy,dz)` holds ANY non-opaque cell —
+    /// i.e. a sightline (or an emitted boundary face) can exist on that face. The
+    /// deep-section visibility BFS crosses section seams through open planes.
+    #[inline]
+    pub fn face_plane_open(&self, dx: i32, dy: i32, dz: i32) -> bool {
+        !self.face_plane_fully_opaque(dx, dy, dz)
+    }
+
+    #[inline]
+    fn plane_index(dx: i32, dy: i32, dz: i32) -> usize {
+        debug_assert_eq!(dx.abs() + dy.abs() + dz.abs(), 1);
+        match (dx, dy, dz) {
+            (1, 0, 0) => 0,
+            (-1, 0, 0) => 1,
+            (0, 1, 0) => 2,
+            (0, -1, 0) => 3,
+            (0, 0, 1) => 4,
+            _ => 5,
+        }
     }
 
     /// Whether the section holds any Water cell. The streamed-water kick scans only these.
@@ -793,6 +874,7 @@ impl Section {
             mesh_revision: 0,
             random_tick_count: 0,
             opaque_count: 0,
+            plane_opaque: [0; 6],
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,

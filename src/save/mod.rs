@@ -20,7 +20,7 @@ mod torch;
 pub use codec::SectionSnapshot;
 pub use level::LevelData;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
@@ -57,6 +57,10 @@ pub struct WorldSave {
     /// as we save. The load path consults it to choose overlay-from-disk vs
     /// regenerate.
     manifest: HashSet<SectionPos>,
+    /// Per-column view of `manifest`, so the streamer's per-column wanted-section
+    /// scans don't walk the whole manifest for every column (that made vertical
+    /// crossings O(columns × manifest) on a lived-in save).
+    manifest_columns: HashMap<ChunkPos, Vec<i32>>,
     /// Section coords whose written record currently carries live entities — dropped
     /// items OR mobs. A section leaves the set when re-saved with neither. The persist
     /// decision consults it so a section whose drops were picked up / despawned (or whose
@@ -94,10 +98,11 @@ impl WorldSave {
         &self,
         pos: ChunkPos,
     ) -> impl Iterator<Item = SectionPos> + '_ {
-        self.manifest
-            .iter()
-            .copied()
-            .filter(move |sp| sp.cx == pos.cx && sp.cz == pos.cz)
+        self.manifest_columns
+            .get(&pos)
+            .into_iter()
+            .flatten()
+            .map(move |&cy| SectionPos::new(pos.cx, cy, pos.cz))
     }
 
     /// `true` if `pos`'s written record currently carries live entities (dropped items
@@ -121,7 +126,12 @@ impl WorldSave {
             return;
         }
         for s in &snaps {
-            self.manifest.insert(s.pos);
+            if self.manifest.insert(s.pos) {
+                self.manifest_columns
+                    .entry(s.pos.chunk_pos())
+                    .or_default()
+                    .push(s.pos.cy);
+            }
             // Track whether the record we're about to write carries any live entities —
             // drops or mobs (matching `encode_snapshot`'s FLAG_HAS_ENTITIES /
             // FLAG_HAS_MOBS). A section that loses them all is then re-saved once to clear
@@ -348,12 +358,18 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         .spawn(move || io_thread(dir, rx, load_tx))
         .expect("spawn save thread");
 
+    let mut manifest_columns: HashMap<ChunkPos, Vec<i32>> = HashMap::new();
+    for sp in &manifest {
+        manifest_columns.entry(sp.chunk_pos()).or_default().push(sp.cy);
+    }
+
     Ok(OpenedWorld {
         save: WorldSave {
             tx,
             load_rx,
             handle: Some(handle),
             manifest,
+            manifest_columns,
             entities_on_disk: HashSet::new(),
         },
         level,

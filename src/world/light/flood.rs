@@ -19,32 +19,115 @@ const DIRECTIONS: [(i32, i32, i32); 6] = [
 /// Light value an emitter seeds at its own cell (x2 scale). One torch is level 14.
 pub(super) const EMITTER_LIGHT: u8 = 28;
 
+/// Reusable flood scratch: the 48³ working light cube plus the BFS queue. One per
+/// light worker thread (see `queue::run_light_bake`) so streaming bakes don't
+/// allocate ~110 KB per flood; the flood functions reset it on entry, and the
+/// clipped centre result is allocated fresh since it outlives the bake.
+pub(super) struct FloodScratch {
+    light: Box<[u8]>,
+    queue: VecDeque<(usize, usize, usize)>,
+}
+
+impl FloodScratch {
+    pub(super) fn new() -> Self {
+        Self {
+            light: vec![0u8; NBHD_VOLUME].into_boxed_slice(),
+            queue: VecDeque::new(),
+        }
+    }
+
+    fn reset(&mut self) -> (&mut [u8], &mut VecDeque<(usize, usize, usize)>) {
+        self.light.fill(0);
+        self.queue.clear();
+        (&mut self.light, &mut self.queue)
+    }
+}
+
 /// Flood skylight across the 3x3x3 section neighbourhood, then clip to the centre.
-pub(super) fn skylight(pos: SectionPos, cells: LightCells<'_>, surface: &[i32]) -> Arc<[u8]> {
+pub(super) fn skylight(
+    pos: SectionPos,
+    cells: LightCells<'_>,
+    surface: &[i32],
+    scratch: &mut FloodScratch,
+) -> Arc<[u8]> {
     let noy = pos.origin_world().1 - SECTION_SIZE as i32;
 
-    let mut light = vec![0u8; NBHD_VOLUME].into_boxed_slice();
-    let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
+    let (light, queue) = scratch.reset();
 
+    // Every above-surface cell reads as full sky (the flood relaxations and the
+    // clipped output both read these) ...
     for y in 0..NBHD {
         let wy = noy + y as i32;
         for z in 0..NBHD {
             for x in 0..NBHD {
                 if wy > surface[z * NBHD + x] {
-                    let i = nbhd_idx(x, y, z);
-                    light[i] = SKY_FULL;
-                    queue.push_back((x, y, z));
+                    light[nbhd_idx(x, y, z)] = SKY_FULL;
                 }
             }
         }
     }
 
-    propagate(cells, &mut light, &mut queue);
-    clip_center(&light)
+    // ... but only the terrain-envelope FRONTIER enters the BFS queue: sky cells
+    // with at least one in-cube neighbour at-or-below that neighbour's column
+    // surface. An interior sky cell's pop can never push (all its neighbours
+    // already hold SKY_FULL), so skipping it is byte-identical — and a surface
+    // bake used to enqueue every one of its ~50k open-sky cells just to pop them
+    // for nothing. Per column the frontier is the band from the cell directly
+    // above the surface up to the highest of the four horizontal neighbours'
+    // surfaces (cells beside terrain), clamped to the cube.
+    let cube_y_lo = noy;
+    let cube_y_hi = noy + NBHD as i32 - 1;
+    for z in 0..NBHD {
+        for x in 0..NBHD {
+            let s = surface[z * NBHD + x];
+            if s >= cube_y_hi {
+                continue;
+            }
+            let mut band_top = s + 1;
+            if x > 0 {
+                band_top = band_top.max(surface[z * NBHD + x - 1]);
+            }
+            if x + 1 < NBHD {
+                band_top = band_top.max(surface[z * NBHD + x + 1]);
+            }
+            if z > 0 {
+                band_top = band_top.max(surface[(z - 1) * NBHD + x]);
+            }
+            if z + 1 < NBHD {
+                band_top = band_top.max(surface[(z + 1) * NBHD + x]);
+            }
+            let y_lo = if s < cube_y_lo {
+                0
+            } else {
+                (s + 1 - noy) as usize
+            };
+            let y_hi = if band_top < cube_y_lo {
+                continue;
+            } else if band_top >= cube_y_hi {
+                NBHD - 1
+            } else {
+                (band_top - noy) as usize
+            };
+            if y_lo > y_hi {
+                continue;
+            }
+            for y in y_lo..=y_hi {
+                queue.push_back((x, y, z));
+            }
+        }
+    }
+
+    propagate(cells, light, queue);
+    clip_center(light)
 }
 
 /// Flood block light from every emitter in the neighbourhood, then clip to the centre.
-pub(super) fn block_light(pos: SectionPos, cells: LightCells<'_>, emitters: &[IVec3]) -> Arc<[u8]> {
+pub(super) fn block_light(
+    pos: SectionPos,
+    cells: LightCells<'_>,
+    emitters: &[IVec3],
+    scratch: &mut FloodScratch,
+) -> Arc<[u8]> {
     let (cox, coy, coz) = pos.origin_world();
     let (nox, noy, noz) = (
         cox - SECTION_SIZE as i32,
@@ -53,8 +136,7 @@ pub(super) fn block_light(pos: SectionPos, cells: LightCells<'_>, emitters: &[IV
     );
     let n = NBHD as i32;
 
-    let mut light = vec![0u8; NBHD_VOLUME].into_boxed_slice();
-    let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
+    let (light, queue) = scratch.reset();
     for e in emitters {
         let (x, y, z) = (e.x - nox, e.y - noy, e.z - noz);
         if !(0..n).contains(&x) || !(0..n).contains(&y) || !(0..n).contains(&z) {
@@ -68,8 +150,8 @@ pub(super) fn block_light(pos: SectionPos, cells: LightCells<'_>, emitters: &[IV
         }
     }
 
-    propagate(cells, &mut light, &mut queue);
-    clip_center(&light)
+    propagate(cells, light, queue);
+    clip_center(light)
 }
 
 fn propagate(cells: LightCells<'_>, light: &mut [u8], queue: &mut VecDeque<(usize, usize, usize)>) {
@@ -133,6 +215,25 @@ mod tests {
         LightCells::new(blocks, states)
     }
 
+    fn full_seed_skylight(pos: SectionPos, cells: LightCells<'_>, surface: &[i32]) -> Arc<[u8]> {
+        let noy = pos.origin_world().1 - SECTION_SIZE as i32;
+        let mut light = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
+        for y in 0..NBHD {
+            let wy = noy + y as i32;
+            for z in 0..NBHD {
+                for x in 0..NBHD {
+                    if wy > surface[z * NBHD + x] {
+                        light[nbhd_idx(x, y, z)] = SKY_FULL;
+                        queue.push_back((x, y, z));
+                    }
+                }
+            }
+        }
+        propagate(cells, &mut light, &mut queue);
+        clip_center(&light)
+    }
+
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
         let states = entries
             .iter()
@@ -142,13 +243,90 @@ mod tests {
     }
 
     #[test]
+    fn frontier_seeding_matches_full_sky_seeding() {
+        // The frontier-only seed set must reproduce the full-seed flood exactly:
+        // an interior sky cell's pop can never push (its neighbours are all
+        // SKY_FULL already), so the two fixpoints are identical. Randomized
+        // rough terrain with cave holes exercises bands above/inside/below the
+        // cube and diagonal-neighbour seams.
+        let pos = SectionPos::new(3, 2, -5);
+        let noy = pos.origin_world().1 - SECTION_SIZE as i32;
+        let mut rng = 0x1234_5678_9abc_def0u64;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for round in 0..4 {
+            let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+            let mut surface = vec![0i32; NBHD_AREA].into_boxed_slice();
+            for z in 0..NBHD {
+                for x in 0..NBHD {
+                    let h = noy + (next() % 60) as i32 - 6;
+                    surface[z * NBHD + x] = h;
+                    for y in 0..NBHD {
+                        let wy = noy + y as i32;
+                        if wy <= h && next() % 8 != 0 {
+                            blocks[nbhd_idx(x, y, z)] = Block::Stone.id();
+                        }
+                    }
+                }
+            }
+            let states = default_states();
+
+            let got = skylight(
+                pos,
+                cells(&blocks, &states),
+                &surface,
+                &mut FloodScratch::new(),
+            );
+
+            // Reference: the pre-optimization seeding — every above-surface cell.
+            let want = full_seed_skylight(pos, cells(&blocks, &states), &surface);
+
+            assert_eq!(&got[..], &want[..], "flood mismatch in round {round}");
+        }
+    }
+
+    #[test]
+    fn frontier_seeding_handles_covered_sentinel_columns() {
+        let pos = SectionPos::new(0, 0, 0);
+        let noy = pos.origin_world().1 - SECTION_SIZE as i32;
+        let mut surface = vec![noy + 24; NBHD_AREA].into_boxed_slice();
+        for z in 0..NBHD {
+            for x in 0..SECTION_SIZE {
+                surface[z * NBHD + x] = i32::MAX;
+            }
+        }
+        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let states = default_states();
+
+        let got = skylight(
+            pos,
+            cells(&blocks, &states),
+            &surface,
+            &mut FloodScratch::new(),
+        );
+
+        let want = full_seed_skylight(pos, cells(&blocks, &states), &surface);
+
+        assert_eq!(&got[..], &want[..]);
+    }
+
+    #[test]
     fn block_light_floods_across_a_section_seam() {
         let pos = SectionPos::new(0, 0, 0);
         let emitter = IVec3::new(-1, 8, 8);
         let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
         let states = default_states();
 
-        let cube = block_light(pos, cells(&blocks, &states), &[emitter]);
+        let cube = block_light(
+            pos,
+            cells(&blocks, &states),
+            &[emitter],
+            &mut FloodScratch::new(),
+        );
 
         assert_eq!(cube[section_idx(0, 8, 8)], EMITTER_LIGHT - 2);
         assert!(cube[section_idx(4, 8, 8)] < cube[section_idx(0, 8, 8)]);
@@ -168,7 +346,12 @@ mod tests {
         }
         let states = default_states();
 
-        let cube = block_light(pos, cells(&blocks, &states), &[emitter]);
+        let cube = block_light(
+            pos,
+            cells(&blocks, &states),
+            &[emitter],
+            &mut FloodScratch::new(),
+        );
 
         assert_eq!(cube[section_idx(0, 8, 8)], 0);
         assert_eq!(cube[section_idx(1, 8, 8)], 0);
@@ -189,11 +372,21 @@ mod tests {
         blocks[nbhd_idx(x, y, z + 1)] = Block::Stone.id();
 
         let closed_back = stair_states(&[(stair_i, Facing::East)]);
-        let closed = block_light(pos, cells(&blocks, &closed_back), &[emitter]);
+        let closed = block_light(
+            pos,
+            cells(&blocks, &closed_back),
+            &[emitter],
+            &mut FloodScratch::new(),
+        );
         assert_eq!(closed[section_idx(0, 8, 8)], 0);
 
         let open_side = stair_states(&[(stair_i, Facing::West)]);
-        let open = block_light(pos, cells(&blocks, &open_side), &[emitter]);
+        let open = block_light(
+            pos,
+            cells(&blocks, &open_side),
+            &[emitter],
+            &mut FloodScratch::new(),
+        );
         assert!(open[section_idx(0, 8, 8)] > 0);
     }
 
@@ -206,7 +399,12 @@ mod tests {
         surface[gz * NBHD + gx] = 40;
         let states = default_states();
 
-        let cube = skylight(pos, cells(&blocks, &states), &surface);
+        let cube = skylight(
+            pos,
+            cells(&blocks, &states),
+            &surface,
+            &mut FloodScratch::new(),
+        );
 
         assert!(cube[section_idx(8, 8, 8)] > 0);
         assert_eq!(cube[section_idx(7, 8, 8)], SKY_FULL);
@@ -229,7 +427,12 @@ mod tests {
         let mut surface = vec![40i32; NBHD_AREA].into_boxed_slice();
         surface[z * NBHD + x] = 8;
 
-        let cube = skylight(pos, cells(&blocks, &states), &surface);
+        let cube = skylight(
+            pos,
+            cells(&blocks, &states),
+            &surface,
+            &mut FloodScratch::new(),
+        );
 
         assert!(cube[section_idx(8, 8, 8)] > 0);
         assert_eq!(cube[section_idx(8, 7, 8)], 0);
@@ -305,7 +508,12 @@ mod tests {
         surface[cz * NBHD + cx] = 9;
 
         let states = stair_states(&stairs);
-        let cube = skylight(pos, cells(&blocks, &states), &surface);
+        let cube = skylight(
+            pos,
+            cells(&blocks, &states),
+            &surface,
+            &mut FloodScratch::new(),
+        );
 
         assert_eq!(cube[section_idx(8, 8, 8)], 0);
     }
@@ -317,7 +525,12 @@ mod tests {
         let surface = vec![40i32; NBHD_AREA].into_boxed_slice();
         let states = default_states();
 
-        let cube = skylight(pos, cells(&blocks, &states), &surface);
+        let cube = skylight(
+            pos,
+            cells(&blocks, &states),
+            &surface,
+            &mut FloodScratch::new(),
+        );
 
         assert!(cube.iter().all(|&l| l == 0));
     }

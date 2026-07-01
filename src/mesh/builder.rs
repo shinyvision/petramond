@@ -57,6 +57,9 @@ impl MeshOptions {
 const SECTION_PAD: usize = SECTION_SIZE + 2;
 const BIOME_PAD_RADIUS: i32 = 2;
 const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
+// Long greedy edges can meet subdivided neighbour faces as T-junctions; a tiny tangent-only
+// overlap covers the rasterizer crack without moving the face plane or affecting water.
+const GREEDY_FACE_OVERLAP: f32 = 1.0 / 1024.0;
 
 #[inline]
 fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
@@ -2167,6 +2170,7 @@ fn push_greedy_quad(
     w: u32,
     h: u32,
 ) {
+    let (min, max) = overlap_greedy_box(face, min, max);
     let corners = face.quad_box(min, max);
     let shade_idx = face.shade_idx();
     let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
@@ -2187,6 +2191,16 @@ fn push_greedy_quad(
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+}
+
+#[inline]
+fn overlap_greedy_box(face: Face, mut min: [f32; 3], mut max: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let (_, u, v) = face_axes(face);
+    min[u] -= GREEDY_FACE_OVERLAP;
+    max[u] += GREEDY_FACE_OVERLAP;
+    min[v] -= GREEDY_FACE_OVERLAP;
+    max[v] += GREEDY_FACE_OVERLAP;
+    (min, max)
 }
 
 /// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)

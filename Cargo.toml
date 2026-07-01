@@ -56,6 +56,7 @@ bincode = "1"
 # Audio playback (cpal output + symphonia ogg/vorbis decode only — no mp3/flac/wav/
 # recording), kept lean like `image`/`noise`. Used by `crate::audio`.
 rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"] }
+mimalloc = "0.1.52"
 
 [profile.release]
 opt-level = 3

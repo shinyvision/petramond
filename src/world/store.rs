@@ -180,6 +180,18 @@ pub struct World {
     pub(super) mesh_pool: super::mesh_pool::MeshPool,
     pub(super) mesh_jobs_in_flight: usize,
     pub(super) dirty_meshes: DirtyMeshQueue,
+    /// Loaded sections wholly below their column's surface retention band — only
+    /// visible through cave openings (see `world::visibility`).
+    pub(super) deep_sections: HashSet<SectionPos>,
+    /// The deep sections the last visibility refresh could reach from the visible
+    /// region. Deep sections outside this set park instead of meshing.
+    pub(super) visible_deep: HashSet<SectionPos>,
+    /// Dirty deep sections parked because nothing can see them. Re-queued by the
+    /// visibility refresh when they become reachable (or the player ring arrives).
+    pub(super) hidden_parked: HashSet<SectionPos>,
+    /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
+    /// which re-runs the deep-visibility BFS before submitting work.
+    pub(super) vis_dirty: bool,
     /// Dirty meshes parked while async light bakes their sampling neighbourhood.
     /// They re-enter `dirty_meshes` only once the 3×3×3 light dependency set is clean.
     pub(super) light_blocked_meshes: HashSet<SectionPos>,
@@ -214,6 +226,10 @@ impl World {
             mesh_pool: super::mesh_pool::MeshPool::new(crate::worker::background_thread_counts().2),
             mesh_jobs_in_flight: 0,
             dirty_meshes: DirtyMeshQueue::default(),
+            deep_sections: HashSet::new(),
+            visible_deep: HashSet::new(),
+            hidden_parked: HashSet::new(),
+            vis_dirty: false,
             light_blocked_meshes: HashSet::new(),
             last_load_target: None,
             sim: TickState::new(seed),
@@ -454,6 +470,7 @@ impl World {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
             self.light_blocked_meshes.remove(&pos);
+            self.hidden_parked.remove(&pos);
             self.dirty_meshes.push(pos);
         }
     }
@@ -726,6 +743,9 @@ impl World {
         }
         self.dirty_meshes.remove(pos);
         self.light_blocked_meshes.remove(&pos);
+        self.deep_sections.remove(&pos);
+        self.visible_deep.remove(&pos);
+        self.hidden_parked.remove(&pos);
         self.light_bakes.cancel(pos);
         self.mark_light_dirty_neighborhood(pos, false);
         self.mark_dirty_neighborhood(pos, false);
@@ -740,6 +760,9 @@ impl World {
             self.meshes.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
+            self.deep_sections.remove(&sp);
+            self.visible_deep.remove(&sp);
+            self.hidden_parked.remove(&sp);
             self.light_bakes.cancel(sp);
         }
         self.mesh_columns.remove(&pos);
@@ -754,6 +777,9 @@ impl World {
     /// regen path.
     pub fn clear_world(&mut self) {
         self.sections.clear();
+        self.deep_sections.clear();
+        self.visible_deep.clear();
+        self.hidden_parked.clear();
         self.columns.clear();
         self.column_gen.clear();
         self.meshes.clear();

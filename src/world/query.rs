@@ -43,6 +43,16 @@ impl World {
         self.columns.len()
     }
 
+    /// (deep, visible-deep, hidden-parked) counts — a visibility diagnostic for
+    /// streaming/perf tooling.
+    pub fn deep_visibility_counts(&self) -> (usize, usize, usize) {
+        (
+            self.deep_sections.len(),
+            self.visible_deep.len(),
+            self.hidden_parked.len(),
+        )
+    }
+
     /// Raw block id at a world voxel. Out of range (above/below the column) or in
     /// an unloaded chunk reads as `0` (air) — the mesh-border air fallback.
     pub fn chunk_block(&self, wx: i32, wy: i32, wz: i32) -> u8 {

@@ -18,6 +18,11 @@ use crate::furnace::Facing;
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
 
+/// Total worker nanoseconds and jobs spent building section meshes — temporary
+/// perf-session diagnostics read by the out-of-tree streaming profiler.
+pub(crate) static MESH_STAGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static MESH_STAGE_JOBS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
 /// face — all the mesher's face-culling / AO / smooth-light sampling ever reaches.
 pub(super) const PAD: usize = SECTION_SIZE + 2;
@@ -162,6 +167,38 @@ struct Pad {
     loaded: Box<[bool]>,
 }
 
+impl Pad {
+    fn new() -> Self {
+        Self {
+            blocks: vec![0u8; PAD_VOL].into_boxed_slice(),
+            water: vec![0u8; PAD_VOL].into_boxed_slice(),
+            skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
+            blocklight: vec![0u8; PAD_VOL].into_boxed_slice(),
+            stair_facings: vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice(),
+            loaded: vec![false; PAD_VOL].into_boxed_slice(),
+        }
+    }
+
+    /// Restore the freshly-allocated defaults (air / no water / full sky / no block
+    /// light / north stairs / not loaded) so a reused pad assembles byte-identically.
+    fn reset(&mut self) {
+        self.blocks.fill(0);
+        self.water.fill(0);
+        self.skylight.fill(SKY_FULL);
+        self.blocklight.fill(0);
+        self.stair_facings.fill(Facing::North.to_u8());
+        self.loaded.fill(false);
+    }
+}
+
+thread_local! {
+    /// Reusable per-mesh-thread pad (~35 KB of buffers): streaming meshes thousands of
+    /// sections, so assembling into a reused pad keeps the six per-job neighbourhood
+    /// boxes off the allocator. Reset before each assemble; the built `ChunkMesh`
+    /// output is allocated fresh since it outlives the job.
+    static PAD_SCRATCH: std::cell::RefCell<Pad> = std::cell::RefCell::new(Pad::new());
+}
+
 /// Assemble the 18³ padded neighbourhood from the cheap field-`Arc` snapshots the request
 /// took — off the render thread. Reads match the live neighbour accessors exactly (air /
 /// open-sky / not-loaded fallbacks), so the off-thread mesh is byte-identical to an inline one.
@@ -171,14 +208,17 @@ struct Pad {
 /// neighbour lookups; only the two X-border cells fall to per-cell handling. That keeps the
 /// per-cell `pad_axis`/`nbhd_idx27`/`Option` decode to the two edges plus once per row,
 /// instead of all 18³ cells. Stair facings (rare) are scattered per bearing neighbour after.
-fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27]) -> Pad {
+fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pad) {
     let (_ox, oy, _oz) = pos.origin_world();
-    let mut blocks = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut water = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut skylight = vec![SKY_FULL; PAD_VOL].into_boxed_slice();
-    let mut blocklight = vec![0u8; PAD_VOL].into_boxed_slice();
-    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice();
-    let mut loaded = vec![false; PAD_VOL].into_boxed_slice();
+    pad.reset();
+    let Pad {
+        blocks,
+        water,
+        skylight,
+        blocklight,
+        stair_facings,
+        loaded,
+    } = pad;
 
     // Interior X run of every row: cells px=1..=16 all come from the centre-X neighbour
     // (dx=0), so one neighbour lookup + one slice copy per (py,pz) fills 16 cells. The two
@@ -272,15 +312,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27]) -> Pad {
             }
         }
     }
-
-    Pad {
-        blocks,
-        water,
-        skylight,
-        blocklight,
-        stair_facings,
-        loaded,
-    }
 }
 
 /// Pad coordinate a neighbour cell at local `c` (0..16) maps to for neighbour delta `d`,
@@ -298,6 +329,7 @@ fn pad_border(d: i32, c: usize) -> Option<usize> {
 
 /// Build one section mesh from its owned snapshot.
 fn build(job: MeshJob) -> MeshDone {
+    let t_stage = std::time::Instant::now();
     let MeshJob {
         pos,
         revision,
@@ -306,29 +338,29 @@ fn build(job: MeshJob) -> MeshDone {
         biome,
     } = job;
 
-    let Pad {
-        blocks,
-        water,
-        skylight,
-        blocklight,
-        stair_facings,
-        loaded,
-    } = assemble_pad(pos, &nbhd);
+    let mesh = PAD_SCRATCH.with(|pad| {
+        let mut pad = pad.borrow_mut();
+        assemble_pad(pos, &nbhd, &mut pad);
 
-    let center = &center;
-    let mesh = build_section_mesh_from_pad(
-        center,
-        pos,
-        SectionMeshPad {
-            blocks: &blocks,
-            water: &water,
-            skylight: &skylight,
-            blocklight: &blocklight,
-            stair_facings: &stair_facings,
-            loaded: &loaded,
-            biome: &biome,
-        },
+        build_section_mesh_from_pad(
+            &center,
+            pos,
+            SectionMeshPad {
+                blocks: &pad.blocks,
+                water: &pad.water,
+                skylight: &pad.skylight,
+                blocklight: &pad.blocklight,
+                stair_facings: &pad.stair_facings,
+                loaded: &pad.loaded,
+                biome: &biome,
+            },
+        )
+    });
+    MESH_STAGE_NS.fetch_add(
+        t_stage.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
     );
+    MESH_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     MeshDone {
         pos,
         revision,
