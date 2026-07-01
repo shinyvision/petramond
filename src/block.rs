@@ -245,10 +245,9 @@ pub enum RenderShape {
     Cube,
     Cross,
     Torch,
-    /// A chunk-meshed directional stair: two cell-local boxes, with the low side
-    /// facing the player when placed. Its per-cell facing lives in the section's
-    /// stair-facing map; collision, selection, and meshing resolve through
-    /// `crate::stair`.
+    /// A chunk-meshed directional stair, with the low side facing the player when
+    /// placed. Its per-cell facing lives in the section's stair-facing map; collision,
+    /// selection, and meshing resolve straight/corner boxes through `crate::stair`.
     Stair,
     Model(BlockModelKind),
     /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT

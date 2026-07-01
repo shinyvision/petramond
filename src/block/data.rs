@@ -52,8 +52,8 @@ const CACTUS_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::AO_OCCLUDER)
 // `crate::door` / `world::door`.
 const DOOR_FLAGS: BlockFlags = BlockFlags::SOLID;
 // Stair: SOLID (collision/build target) but NOT opaque and NOT an AO occluder. It is
-// chunk-meshed from two boxes whose facing is per-cell metadata, so neighbours keep faces
-// toward its cut-out half and light treats it like a partial block.
+// chunk-meshed from per-cell facing/corner boxes, so neighbours keep faces toward its
+// cut-out volume and light treats it like a partial block.
 const STAIR_FLAGS: BlockFlags = BlockFlags::SOLID;
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,

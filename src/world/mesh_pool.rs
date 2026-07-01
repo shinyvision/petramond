@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
+use crate::furnace::Facing;
 use crate::mesh::{build_section_mesh, ChunkMesh};
 use crate::section::Section;
 
@@ -63,6 +64,7 @@ pub(super) struct NeighborSnap {
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[u8]>>,
+    pub stair_facings: Option<Box<[(u16, Facing)]>>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -169,6 +171,7 @@ fn build(job: MeshJob) -> MeshDone {
     let mut water = vec![0u8; PAD_VOL].into_boxed_slice();
     let mut skylight = vec![SKY_FULL; PAD_VOL].into_boxed_slice();
     let mut blocklight = vec![0u8; PAD_VOL].into_boxed_slice();
+    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice();
     let mut loaded = vec![false; PAD_VOL].into_boxed_slice();
     for pz in 0..PAD {
         let (ddz, lz) = pad_axis(pz);
@@ -185,6 +188,13 @@ fn build(job: MeshJob) -> MeshDone {
                         water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
                         skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
                         blocklight[pi] = s.blocklight.as_ref().map_or(0, |b| b[li]);
+                        if let Some(facings) = s.stair_facings.as_ref() {
+                            if let Some((_, facing)) =
+                                facings.iter().find(|(key, _)| *key as usize == li)
+                            {
+                                stair_facings[pi] = facing.to_u8();
+                            }
+                        }
                         loaded[pi] = true;
                     }
                     None => {
@@ -208,6 +218,11 @@ fn build(job: MeshJob) -> MeshDone {
         }
     };
     let nb_block = |wx, wy, wz| pad(wx, wy, wz).map(|i| blocks[i]).unwrap_or(0);
+    let nb_stair_facing = |wx, wy, wz| {
+        pad(wx, wy, wz)
+            .map(|i| Facing::from_u8(stair_facings[i]))
+            .unwrap_or(Facing::North)
+    };
     let nb_water = |wx, wy, wz| pad(wx, wy, wz).map(|i| water[i]).unwrap_or(0);
     let nb_skylight = |wx, wy, wz| {
         if wy >= WORLD_MAX_Y {
@@ -234,6 +249,7 @@ fn build(job: MeshJob) -> MeshDone {
         center,
         pos,
         nb_block,
+        nb_stair_facing,
         nb_water,
         nb_biome,
         nb_skylight,

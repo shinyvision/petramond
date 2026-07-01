@@ -324,30 +324,24 @@ fn push_stair_item_lit(
     skylight: u8,
 ) {
     let facing = crate::furnace::Facing::South;
-    let front = match facing {
-        crate::furnace::Facing::North => Face::NegZ,
-        crate::furnace::Facing::South => Face::PosZ,
-        crate::furnace::Facing::West => Face::NegX,
-        crate::furnace::Facing::East => Face::PosX,
-    };
-    let internal_low_back = opposite_face(front);
-    let boxes = crate::stair::boxes(facing);
-    let low = boxes[0];
-    let high = boxes[1];
-    for face in Face::ALL {
-        if face != internal_low_back {
-            push_stair_item_face(
-                verts, indices, faces, origin, size, low.min, low.max, face, skylight,
-            );
+    let mask = crate::stair::mask(facing);
+    for iy in 0..2 {
+        for iz in 0..2 {
+            for ix in 0..2 {
+                if !crate::stair::half_cell_occupied(mask, ix, iy, iz) {
+                    continue;
+                }
+                let (min, max) = crate::stair::half_cell_bounds(ix, iy, iz);
+                for face in Face::ALL {
+                    if crate::stair::adjacent_half_cell_occupied(mask, ix, iy, iz, face.dir()) {
+                        continue;
+                    }
+                    push_stair_item_face(
+                        verts, indices, faces, origin, size, min, max, face, skylight,
+                    );
+                }
+            }
         }
-        let mut min = high.min;
-        let max = high.max;
-        if face == front {
-            min[1] = low.max[1];
-        }
-        push_stair_item_face(
-            verts, indices, faces, origin, size, min, max, face, skylight,
-        );
     }
 }
 
@@ -377,18 +371,6 @@ fn push_stair_item_face(
         mat.tint,
         face_bits_textured_lit(mat, face, skylight),
     );
-}
-
-#[inline]
-fn opposite_face(face: Face) -> Face {
-    match face {
-        Face::PosX => Face::NegX,
-        Face::NegX => Face::PosX,
-        Face::PosY => Face::NegY,
-        Face::NegY => Face::PosY,
-        Face::PosZ => Face::NegZ,
-        Face::NegZ => Face::PosZ,
-    }
 }
 
 /// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles

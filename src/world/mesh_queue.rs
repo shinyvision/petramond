@@ -279,6 +279,13 @@ impl World {
                             water: s.water_arc(),
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),
+                            stair_facings: (!s.stair_facings().is_empty()).then(|| {
+                                s.stair_facings()
+                                    .iter()
+                                    .map(|(&key, &facing)| (key, facing))
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice()
+                            }),
                         });
                 }
             }

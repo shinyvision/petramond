@@ -1,4 +1,4 @@
-use crate::mathh::{IVec3, Mat4, SelectionShape, Vec3};
+use crate::mathh::{IVec3, Mat4, SelectionBoxes, SelectionShape, Vec3};
 use crate::torch::{POLE_HALF, POLE_HEIGHT};
 
 pub(super) const MAX_OUTLINE_VERTICES: usize = 96;
@@ -20,7 +20,7 @@ pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
             v_max,
         } => cross_outline_vertices(origin, u_min, u_max, v_min, v_max),
         SelectionShape::Torch { origin, transform } => torch_outline_vertices(origin, transform),
-        SelectionShape::TwoBoxes { boxes } => two_box_outline_vertices(boxes),
+        SelectionShape::Boxes { boxes } => box_list_outline_vertices(boxes),
     }
 }
 
@@ -37,7 +37,7 @@ fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
     out
 }
 
-fn two_box_outline_vertices(boxes: [(Vec3, Vec3); 2]) -> OutlineVertices {
+fn box_list_outline_vertices(boxes: SelectionBoxes) -> OutlineVertices {
     let mut out = OutlineVertices {
         vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
         count: 0,
@@ -46,7 +46,7 @@ fn two_box_outline_vertices(boxes: [(Vec3, Vec3); 2]) -> OutlineVertices {
     let mut xs = Vec::with_capacity(4);
     let mut ys = Vec::with_capacity(4);
     let mut zs = Vec::with_capacity(4);
-    for (min, max) in boxes {
+    for (min, max) in boxes.iter() {
         xs.extend([min.x, max.x]);
         ys.extend([min.y, max.y]);
         zs.extend([min.z, max.z]);
@@ -71,7 +71,7 @@ fn two_box_outline_vertices(boxes: [(Vec3, Vec3); 2]) -> OutlineVertices {
                     (zs[iz] + zs[iz + 1]) * 0.5,
                 );
                 filled[cell_idx(ix, iy, iz, nx, ny)] =
-                    boxes.iter().any(|&(min, max)| point_in_box(p, min, max));
+                    boxes.iter().any(|(min, max)| point_in_box(p, min, max));
             }
         }
     }
@@ -379,9 +379,12 @@ mod tests {
     use crate::furnace::Facing;
 
     #[test]
-    fn stair_two_box_outline_removes_internal_join_but_keeps_step_edges() {
-        let boxes = crate::stair::world_boxes(IVec3::ZERO, Facing::South);
-        let outline = outline_vertices(SelectionShape::TwoBoxes { boxes });
+    fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {
+        let (boxes, len) =
+            crate::stair::world_boxes(IVec3::ZERO, crate::stair::boxes(Facing::South));
+        let outline = outline_vertices(SelectionShape::Boxes {
+            boxes: SelectionBoxes { boxes, len },
+        });
         let segments = segments(&outline);
 
         assert!(
@@ -392,7 +395,7 @@ mod tests {
                     && mid(a, b)[1] > -0.02
                     && mid(a, b)[1] < 0.5
             }),
-            "the internal lower seam where the two stair boxes touch should not be outlined"
+            "the internal lower seam where stair boxes touch should not be outlined"
         );
         assert!(
             segments.iter().any(|&(a, b)| {

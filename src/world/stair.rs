@@ -1,6 +1,6 @@
 //! Directional stairs at the world level: position-aware facing lookup and placement.
 
-use crate::block::Block;
+use crate::block::{Aabb, Block};
 use crate::furnace::Facing;
 use crate::mathh::IVec3;
 
@@ -14,6 +14,28 @@ impl World {
             Some((c, lx, ly, lz)) => c.stair_facing(lx, ly, lz),
             None => Facing::default(),
         }
+    }
+
+    /// The collision/render boxes for a stair as shaped by adjacent perpendicular
+    /// stairs. Corner-ness is derived, not saved, so old worlds remain compatible.
+    #[inline]
+    pub fn stair_boxes_at(&self, wx: i32, wy: i32, wz: i32) -> &'static [Aabb] {
+        let facing = self.stair_facing_at(wx, wy, wz);
+        self.resolved_stair_boxes(IVec3::new(wx, wy, wz), facing)
+    }
+
+    /// Resolve the boxes a stair with `facing` would have at `pos`, using the current
+    /// neighbouring world state. Used both after placement and for placement overlap
+    /// checks before the block is written.
+    #[inline]
+    pub fn resolved_stair_boxes(&self, pos: IVec3, facing: Facing) -> &'static [Aabb] {
+        crate::stair::resolved_boxes(pos, facing, |p| self.stair_facing_if_stair(p))
+    }
+
+    #[inline]
+    fn stair_facing_if_stair(&self, pos: IVec3) -> Option<Facing> {
+        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        crate::stair::is_stair(block).then(|| self.stair_facing_at(pos.x, pos.y, pos.z))
     }
 
     /// Place a single-cell stair and record its facing before relighting/remeshing.

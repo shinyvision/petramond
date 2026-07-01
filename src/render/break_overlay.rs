@@ -91,7 +91,7 @@ pub fn build_break_overlay(
         }
     } else {
         if let Some(boxes) = view.visual_boxes {
-            for (mn, mx) in boxes {
+            for (mn, mx) in boxes.iter() {
                 let min = base + Vec3::new(mn[0], mn[1], mn[2]);
                 let max = base + Vec3::new(mx[0], mx[1], mx[2]);
                 push_box_faces_lit(

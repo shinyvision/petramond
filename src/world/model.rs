@@ -51,7 +51,7 @@ impl World {
             );
         }
         if block.render_shape() == RenderShape::Stair {
-            return crate::stair::boxes(self.stair_facing_at(wx, wy, wz));
+            return self.stair_boxes_at(wx, wy, wz);
         }
         // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
         // open — both read from the chunk door state (see `world::door` / `crate::door`).

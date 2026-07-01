@@ -1,7 +1,7 @@
 use super::state::Player;
 use crate::atlas::{tile_alpha_bounds, tile_alpha_opaque, TileAlphaBounds};
 use crate::block::{Block, RenderShape};
-use crate::mathh::{IVec3, SelectionShape, Vec3};
+use crate::mathh::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::World;
 
@@ -70,11 +70,12 @@ impl Player {
                 };
             }
         } else if hit_block.render_shape() == RenderShape::Stair {
-            hit.outline = SelectionShape::TwoBoxes {
-                boxes: crate::stair::world_boxes(
-                    hit.block,
-                    world.stair_facing_at(hit.block.x, hit.block.y, hit.block.z),
-                ),
+            let (boxes, len) = crate::stair::world_boxes(
+                hit.block,
+                world.stair_boxes_at(hit.block.x, hit.block.y, hit.block.z),
+            );
+            hit.outline = SelectionShape::Boxes {
+                boxes: SelectionBoxes { boxes, len },
             };
         }
         Some((hit, dist))
@@ -276,9 +277,9 @@ fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &Wor
         return ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
     if block.render_shape() == RenderShape::Stair {
-        let facing = world.stair_facing_at(pos.x, pos.y, pos.z);
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return crate::stair::boxes(facing)
+        return world
+            .stair_boxes_at(pos.x, pos.y, pos.z)
             .iter()
             .filter_map(|b| {
                 ray_vs_aabb(

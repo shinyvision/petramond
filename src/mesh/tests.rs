@@ -762,6 +762,7 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
                 Block::Air.id()
             }
         },
+        |_, _, _| crate::furnace::Facing::North,
         |_, _, _| 0,
         |_, _| 0,
         |wx, wy, wz| {
@@ -810,6 +811,7 @@ fn stair_faces_use_cell_local_uv_modes() {
                 Block::Air.id()
             }
         },
+        |_, _, _| crate::furnace::Facing::North,
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -844,6 +846,60 @@ fn stair_faces_use_cell_local_uv_modes() {
             .filter(|v| (v.pos[1] - 8.0).abs() < 1.0e-3)
             .any(|v| uv_mode(v) == UV_MODE_NONE),
         "stair bottom faces should keep normal full-tile UVs"
+    );
+}
+
+#[test]
+fn stair_mesh_uses_resolved_outside_corner_shape() {
+    use crate::furnace::Facing;
+
+    let pos = crate::chunk::SectionPos::new(0, 0, 0);
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::OakStairs);
+    section.set_stair_facing(8, 8, 8, Facing::East);
+    section.set_block(7, 8, 8, Block::OakStairs);
+    section.set_stair_facing(7, 8, 8, Facing::South);
+
+    let mesh = super::build_section_mesh(
+        &section,
+        pos,
+        |wx, wy, wz| match (wx, wy, wz) {
+            (8, 8, 8) | (7, 8, 8) => Block::OakStairs.id(),
+            _ => Block::Air.id(),
+        },
+        |wx, wy, wz| match (wx, wy, wz) {
+            (8, 8, 8) => Facing::East,
+            (7, 8, 8) => Facing::South,
+            _ => Facing::North,
+        },
+        |_, _, _| 0,
+        |_, _| 0,
+        |_, _, _| SKY_FULL,
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    let target_high_top = mesh
+        .opaque
+        .iter()
+        .filter(|v| {
+            (v.pos[1] - 9.0).abs() < 1.0e-3
+                && v.pos[0] >= 8.0 - 1.0e-3
+                && v.pos[0] < 9.0 - 1.0e-3
+                && v.pos[2] >= 8.0 - 1.0e-3
+                && v.pos[2] < 9.0 - 1.0e-3
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        !target_high_top.is_empty(),
+        "target stair should still have one high quadrant"
+    );
+    assert!(
+        target_high_top
+            .iter()
+            .all(|v| v.pos[0] <= 8.5 + 1.0e-3 && v.pos[2] <= 8.5 + 1.0e-3),
+        "the high-side perpendicular neighbour must render an outside corner"
     );
 }
 

@@ -18,6 +18,21 @@ use crate::mob::Mob;
 
 use super::Game;
 
+pub const MAX_VISUAL_BOXES: usize = 3;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LocalVisualBoxes {
+    pub boxes: [([f32; 3], [f32; 3]); MAX_VISUAL_BOXES],
+    pub len: u8,
+}
+
+impl LocalVisualBoxes {
+    #[inline]
+    pub fn iter(self) -> impl Iterator<Item = ([f32; 3], [f32; 3])> {
+        self.boxes.into_iter().take(self.len as usize)
+    }
+}
+
 /// The block-break overlay to draw this frame: a cracked-texture overlay over
 /// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -25,8 +40,8 @@ pub struct BreakOverlayView {
     pub block: IVec3,
     /// The cell-local visual box the crack hugs. `None` means an ordinary full cube.
     pub visual_box: Option<([f32; 3], [f32; 3])>,
-    /// Cell-local visual boxes for two-box partial blocks such as stairs.
-    pub visual_boxes: Option<[([f32; 3], [f32; 3]); 2]>,
+    /// Cell-local visual boxes for partial blocks such as stairs.
+    pub visual_boxes: Option<LocalVisualBoxes>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
@@ -266,8 +281,9 @@ fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
         };
         let block_type = Block::from_id(game.world.chunk_block(block.x, block.y, block.z));
         let visual_boxes = if block_type.render_shape() == RenderShape::Stair {
-            let facing = game.world.stair_facing_at(block.x, block.y, block.z);
-            Some(crate::stair::boxes(facing).map(|b| (b.min, b.max)))
+            let (boxes, len) =
+                crate::stair::local_boxes(game.world.stair_boxes_at(block.x, block.y, block.z));
+            Some(LocalVisualBoxes { boxes, len })
         } else {
             None
         };

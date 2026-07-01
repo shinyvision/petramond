@@ -2,6 +2,21 @@
 
 pub use glam::{IVec3, Mat4, Vec3, Vec4};
 
+pub const MAX_SELECTION_BOXES: usize = 3;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SelectionBoxes {
+    pub boxes: [(Vec3, Vec3); MAX_SELECTION_BOXES],
+    pub len: u8,
+}
+
+impl SelectionBoxes {
+    #[inline]
+    pub fn iter(self) -> impl Iterator<Item = (Vec3, Vec3)> {
+        self.boxes.into_iter().take(self.len as usize)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionShape {
     Box {
@@ -24,10 +39,10 @@ pub enum SelectionShape {
         origin: IVec3,
         transform: Mat4,
     },
-    /// A shape made from two world-space boxes. Used for stairs so the outline traces
-    /// the two solid halves instead of a full block cube.
-    TwoBoxes {
-        boxes: [(Vec3, Vec3); 2],
+    /// A shape made from a small fixed list of world-space boxes. Used for stairs so
+    /// the outline traces the solid stair volume instead of a full block cube.
+    Boxes {
+        boxes: SelectionBoxes,
     },
 }
 

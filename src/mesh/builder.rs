@@ -29,18 +29,6 @@ fn facing_face(facing: Facing) -> Face {
     }
 }
 
-#[inline]
-fn opposite_face(face: Face) -> Face {
-    match face {
-        Face::PosX => Face::NegX,
-        Face::NegX => Face::PosX,
-        Face::PosY => Face::NegY,
-        Face::NegY => Face::PosY,
-        Face::PosZ => Face::NegZ,
-        Face::NegZ => Face::PosZ,
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LeafMeshMode {
     Detailed,
@@ -173,6 +161,7 @@ pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_stair_facing: impl Fn(i32, i32, i32) -> Facing,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
@@ -187,6 +176,7 @@ pub fn build_section_mesh(
         section,
         pos,
         &neighbour_block,
+        &neighbour_stair_facing,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -201,6 +191,7 @@ pub fn build_section_mesh(
         section,
         pos,
         &neighbour_block,
+        &neighbour_stair_facing,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -220,6 +211,7 @@ fn section_geometry(
     section: &Section,
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_stair_facing: impl Fn(i32, i32, i32) -> Facing,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
@@ -346,13 +338,18 @@ fn section_geometry(
                 if block.render_shape() == RenderShape::Stair {
                     let [tile_top, tile_bot, tile_side] = block.tiles();
                     let tint_for = |tile| tint_tile(tile_tint(tile), ci);
+                    let facing = section.stair_facing(lx, ly, lz);
+                    let mask = crate::stair::resolved_mask(IVec3::new(wx, wy, wz), facing, |p| {
+                        crate::stair::is_stair(block_at(p.x, p.y, p.z))
+                            .then(|| neighbour_stair_facing(p.x, p.y, p.z))
+                    });
                     emit_stair_block(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         wy,
                         wz,
-                        section.stair_facing(lx, ly, lz),
+                        mask,
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
@@ -741,13 +738,14 @@ fn chunk_geometry(
                     let wz = oz + z as i32;
                     let ci = z * CHUNK_SX + x;
                     let tint_for = |tile| tints.tile(tile_tint(tile), ci);
+                    let mask = crate::stair::mask(crate::block_model::DEFAULT_MODEL_FACING);
                     emit_stair_block(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         y as i32,
                         wz,
-                        crate::block_model::DEFAULT_MODEL_FACING,
+                        mask,
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
@@ -1053,7 +1051,7 @@ fn emit_stair_block<B, L, K, T>(
     wx: i32,
     wy: i32,
     wz: i32,
-    facing: Facing,
+    mask: u8,
     tiles: [Tile; 3],
     tint_for: &T,
     block_at: &B,
@@ -1065,51 +1063,35 @@ fn emit_stair_block<B, L, K, T>(
     K: Fn(i32, i32, i32) -> u8,
     T: Fn(Tile) -> [f32; 3],
 {
-    let front = facing_face(facing);
-    let internal_low_back = opposite_face(front);
-    let boxes = crate::stair::boxes(facing);
-    let low = boxes[0];
-    let high = boxes[1];
-
-    for face in FACES {
-        if face != internal_low_back {
-            emit_stair_face(
-                opaque,
-                opaque_idx,
-                wx,
-                wy,
-                wz,
-                low.min,
-                low.max,
-                face,
-                tiles,
-                tint_for,
-                block_at,
-                neighbour_light,
-                neighbour_blocklight,
-            );
+    for iy in 0..2 {
+        for iz in 0..2 {
+            for ix in 0..2 {
+                if !crate::stair::half_cell_occupied(mask, ix, iy, iz) {
+                    continue;
+                }
+                let (min, max) = crate::stair::half_cell_bounds(ix, iy, iz);
+                for face in FACES {
+                    if crate::stair::adjacent_half_cell_occupied(mask, ix, iy, iz, face.dir()) {
+                        continue;
+                    }
+                    emit_stair_face(
+                        opaque,
+                        opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        min,
+                        max,
+                        face,
+                        tiles,
+                        tint_for,
+                        block_at,
+                        neighbour_light,
+                        neighbour_blocklight,
+                    );
+                }
+            }
         }
-
-        let mut min = high.min;
-        let max = high.max;
-        if face == front {
-            min[1] = low.max[1];
-        }
-        emit_stair_face(
-            opaque,
-            opaque_idx,
-            wx,
-            wy,
-            wz,
-            min,
-            max,
-            face,
-            tiles,
-            tint_for,
-            block_at,
-            neighbour_light,
-            neighbour_blocklight,
-        );
     }
 }
 

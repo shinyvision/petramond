@@ -198,7 +198,7 @@ impl Game {
             if !self.world.placement_cell_open(p) {
                 return false;
             }
-            let boxes = crate::stair::boxes(facing);
+            let boxes = self.world.resolved_stair_boxes(p, facing);
             let blocked = self.player.intersects_block_boxes(p, boxes)
                 || self.world.mobs().any_overlapping_boxes(p, boxes);
             if !blocked && self.world.place_stair(p, block, facing) {

@@ -24,7 +24,7 @@ impl Face {
         Face::NegZ,
     ];
 
-    pub(super) fn dir(self) -> (i32, i32, i32) {
+    pub(crate) fn dir(self) -> (i32, i32, i32) {
         match self {
             Face::PosX => (1, 0, 0),
             Face::NegX => (-1, 0, 0),
