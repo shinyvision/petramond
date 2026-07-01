@@ -1,0 +1,83 @@
+//! Player health: fall damage on the tick, and the HUD read model.
+//!
+//! Physics only *measures* a fall (per-frame, for local feel — see
+//! [`crate::player::Player::track_fall`]); the health *mutation* happens here, on the
+//! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG). The
+//! only damage source today is falling; other sources would drain the same latched
+//! path into [`Player::apply_damage`](crate::player::Player::apply_damage).
+
+use crate::gui::HealthView;
+use crate::player::MAX_HEALTH;
+
+use super::Game;
+
+/// Blocks you can fall with no damage. Beyond this, each further whole block costs one
+/// half-heart, so a 4-block fall (one past the safe 3) is the first to hurt — half a
+/// heart (1 health point) — matching "a fall from 4 blocks hurts for 0.5 hearts".
+const SAFE_FALL_BLOCKS: f32 = 3.0;
+
+/// Float slack (blocks) absorbing the ~1-ULP rounding the collision sweep leaves in a
+/// landing's `y`: without it a clean N-block fall can measure N − ε and fall short of
+/// the whole-block floor boundary, dealing no damage. Far smaller than any real
+/// fractional fall (slab/jump geometry), so it never lifts an honestly sub-threshold
+/// fall over the line.
+const FALL_EPS: f32 = 1e-3;
+
+/// Half-hearts of fall damage for a landing that fell `distance` blocks: the whole
+/// blocks past the safe distance, never negative. `3 → 0`, `4 → 1`, `5 → 2`, ….
+pub(super) fn fall_damage_health(distance: f32) -> i32 {
+    (distance - SAFE_FALL_BLOCKS + FALL_EPS).floor().max(0.0) as i32
+}
+
+impl Game {
+    /// Consume the landing the player's physics latched and apply its fall damage on
+    /// the tick. Spectators float, so their (absent) fall is drained without harm.
+    pub(super) fn tick_fall_damage(&mut self) {
+        let distance = self.player.take_fall_distance();
+        if self.player.is_spectator() {
+            return;
+        }
+        self.player.apply_damage(fall_damage_health(distance));
+    }
+
+    /// The player's health for the HUD hearts, or `None` when there is no survival
+    /// bar to draw (a floating spectator). `(current, max)` in half-heart points.
+    pub fn player_health(&self) -> Option<HealthView> {
+        if self.player.is_spectator() {
+            return None;
+        }
+        Some(HealthView {
+            current: self.player.health(),
+            max: MAX_HEALTH,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_fall_is_free_and_four_blocks_is_half_a_heart() {
+        // Nothing up to and including the safe distance; the first damage is at 4 blocks.
+        assert_eq!(fall_damage_health(0.0), 0);
+        assert_eq!(fall_damage_health(3.0), 0, "3-block fall is safe");
+        assert_eq!(fall_damage_health(3.9), 0, "under 4 blocks: no damage");
+        assert_eq!(fall_damage_health(4.0), 1, "4 blocks = 0.5 hearts");
+    }
+
+    #[test]
+    fn damage_scales_one_half_heart_per_block_past_the_safe_distance() {
+        assert_eq!(fall_damage_health(5.0), 2);
+        assert_eq!(fall_damage_health(12.0), 9);
+        // A huge fall just returns a large amount; the clamp to 0 lives in apply_damage.
+        assert_eq!(fall_damage_health(103.0), 100);
+    }
+
+    #[test]
+    fn a_clean_four_block_fall_still_hurts_despite_landing_rounding() {
+        // The collision sweep can leave the landing a hair high, so a nominal 4.0 fall
+        // arrives as 4 − ~1 ULP. FALL_EPS must keep it a half-heart, not silently zero.
+        assert_eq!(fall_damage_health(4.0 - 8e-6), 1);
+    }
+}

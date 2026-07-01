@@ -13,6 +13,9 @@ pub const DT_MAX: f32 = 0.05;
 /// Pitch is clamped to just shy of straight up/down (~89°) so the look never
 /// tips through vertical — past it the view flips and yaw inverts (gimbal).
 pub const PITCH_LIMIT: f32 = 1.553_343;
+/// Full health, in half-heart points: 20 points = 10 hearts. Health is integer
+/// half-hearts so the HUD renders full/half/empty cells directly from it.
+pub const MAX_HEALTH: i32 = 20;
 
 /// Per-frame movement intent, in world space.
 #[derive(Copy, Clone, Default)]
@@ -47,6 +50,21 @@ pub struct Player {
     /// or head-bonk). Gates the apex easing so only a genuine jump arc is
     /// softened — walking off a ledge or bonking a ceiling falls at full gravity.
     pub(super) jumping: bool,
+    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]). Fall damage is the
+    /// only source for now; it is mutated on the deterministic tick (see
+    /// `crate::game::health`), never in per-frame physics — the physics only *measures*
+    /// a fall (below).
+    health: i32,
+    /// Highest feet-`y` reached since the player last stood on the ground (or was in
+    /// water). The fall distance of a landing is this minus the landing `y`. Reset when
+    /// grounded/submerged so a fall is measured from where it began, and the arc of a
+    /// jump counts from its apex, not its take-off.
+    pub(super) fall_peak_y: f32,
+    /// Fall distance (blocks) of the hardest landing since the tick last consumed it —
+    /// latched by per-frame physics, drained on the tick where it becomes damage. Kept
+    /// as the max (not a sum) because two damaging landings can't occur within one 50 ms
+    /// tick, and it keeps the physics side free of the damage rule.
+    fall_distance: f32,
     /// The player's 36-slot inventory (9 hotbar + 27 main). Owns the active
     /// hotbar selection that drives the held item and placement.
     pub inventory: crate::inventory::Inventory,
@@ -62,7 +80,56 @@ impl Player {
             on_ground: false,
             mode: PlayerMode::Survival,
             jumping: false,
+            health: MAX_HEALTH,
+            fall_peak_y: feet.y,
+            fall_distance: 0.0,
             inventory: crate::inventory::Inventory::new(),
+        }
+    }
+
+    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]).
+    #[inline]
+    pub fn health(&self) -> i32 {
+        self.health
+    }
+
+    /// Overwrite health (clamped to `0..=`[`MAX_HEALTH`]). Used to restore a saved
+    /// player; gameplay damage goes through [`apply_damage`](Self::apply_damage).
+    pub fn set_health(&mut self, health: i32) {
+        self.health = health.clamp(0, MAX_HEALTH);
+    }
+
+    /// Subtract `points` half-hearts of damage, never below zero. A no-op for a
+    /// non-positive amount. Call this on the tick, not in per-frame physics.
+    pub fn apply_damage(&mut self, points: i32) {
+        if points > 0 {
+            self.health = (self.health - points).max(0);
+        }
+    }
+
+    /// Take and clear the pending fall distance (blocks) latched by the last landing,
+    /// for the tick to convert into damage. Returns `0.0` when there was no landing.
+    pub(crate) fn take_fall_distance(&mut self) -> f32 {
+        std::mem::replace(&mut self.fall_distance, 0.0)
+    }
+
+    /// Update the fall bookkeeping after a physics sub-step has resolved `on_ground`
+    /// and the final feet `y`. `in_water` cancels the fall (water breaks a fall), a
+    /// fresh landing (`was_on_ground` false, now grounded) latches its distance, and
+    /// while airborne the peak tracks the highest point of the arc.
+    pub(super) fn track_fall(&mut self, was_on_ground: bool, in_water: bool) {
+        if in_water {
+            self.fall_peak_y = self.pos.y;
+        } else if self.on_ground {
+            if !was_on_ground {
+                let dist = self.fall_peak_y - self.pos.y;
+                if dist > self.fall_distance {
+                    self.fall_distance = dist;
+                }
+            }
+            self.fall_peak_y = self.pos.y;
+        } else {
+            self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
         }
     }
 
@@ -92,6 +159,10 @@ impl Player {
         self.vel = Vec3::ZERO;
         self.on_ground = false;
         self.jumping = false;
+        // A mode switch is not a fall: re-anchor the peak and drop any pending landing so
+        // dropping out of spectator (or into it) never lands as fall damage.
+        self.fall_peak_y = self.pos.y;
+        self.fall_distance = 0.0;
     }
 
     pub fn toggle_mode(&mut self) {

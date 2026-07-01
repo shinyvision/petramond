@@ -156,6 +156,7 @@ impl Game {
         self.tick_attack(events);
         self.tick_drops(events);
         self.tick_menu();
+        self.tick_fall_damage();
 
         self.world.game_tick(&self.recipes);
         self.process_natural_breaks();

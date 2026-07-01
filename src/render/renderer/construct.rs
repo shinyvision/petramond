@@ -294,6 +294,14 @@ async fn new_renderer_inner(
             gui_textures.insert(GuiTexId::Overlay(kind, tag), bind);
         }
     }
+    // HUD heart atlas (empty | half | full, side by side). One texture for the whole
+    // health bar; the UI pass selects a cell per heart by UV. Loaded like any GUI PNG.
+    if let Some(bind) = load_gui_bind(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/textures/gui/hearts.png"
+    ))) {
+        gui_textures.insert(GuiTexId::Hearts, bind);
+    }
     let new_ui_quad_vbuf = |label| {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
@@ -305,6 +313,7 @@ async fn new_renderer_inner(
     let ui_panel_vbuf = new_ui_quad_vbuf("ui panel vbuf");
     let ui_overlay_vbuf = new_ui_quad_vbuf("ui overlay vbuf");
     let ui_hover_vbuf = new_ui_quad_vbuf("ui hover vbuf");
+    let ui_hearts_vbuf = new_ui_quad_vbuf("ui hearts vbuf");
 
     Renderer {
         surface,
@@ -437,6 +446,8 @@ async fn new_renderer_inner(
         ui_overlay_vertex_count: 0,
         ui_hover_vbuf,
         ui_hover_vertex_count: 0,
+        ui_hearts_vbuf,
+        ui_hearts_vertex_count: 0,
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),

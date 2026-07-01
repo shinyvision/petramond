@@ -128,6 +128,7 @@ fn restore_player(level: &LevelData) -> Player {
     player.vel = level.player_vel;
     player.yaw = level.player_yaw;
     player.pitch = level.player_pitch;
+    player.set_health(level.player_health);
     player.inventory = level.inventory.clone();
     player
 }

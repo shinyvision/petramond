@@ -52,6 +52,16 @@ const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 /// sizes the held item to this; slot rects themselves come from the manifest.
 pub(super) const SLOT_PX: f32 = 16.0;
 
+/// Heart sprite side in logical px (the atlas cells are 9×9), scaled by `gui_scale`.
+const HEART_PX: f32 = 9.0;
+/// Horizontal step between hearts in logical px — one under the sprite width so
+/// neighbours tuck together like the vanilla bar.
+const HEART_STEP: f32 = 8.0;
+/// Gap from the screen's left and bottom edges to the heart bar, logical px.
+const HEART_MARGIN: f32 = 8.0;
+/// One heart atlas cell as a fraction of atlas width — three cells: empty | half | full.
+const HEART_CELL_U: f32 = 1.0 / 3.0;
+
 /// One dynamic-overlay quad's place in [`UiBuild::overlays`]: which texture binds
 /// it ([`OverlayTag`]) and how many vertices it spans (always 6 for one quad).
 #[derive(Copy, Clone, Debug)]
@@ -75,6 +85,9 @@ pub struct UiBuild {
     /// Hover / selection highlight quad (its own texture). Empty when nothing is
     /// highlighted.
     pub hover: Vec<UiVertex>,
+    /// HUD heart quads (bottom-left health bar), sampling the heart atlas. Empty for a
+    /// spectator or behind an open menu.
+    pub hearts: Vec<UiVertex>,
     /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
     /// pre-baked icon-atlas cell and emits a textured quad.
     pub icon_quads: Vec<(ItemType, SlotRect)>,
@@ -99,6 +112,7 @@ impl UiBuild {
         self.overlays.clear();
         self.overlay_spans.clear();
         self.hover.clear();
+        self.hearts.clear();
         self.icon_quads.clear();
         self.dim_icon_quads.clear();
         self.counts.clear();
@@ -252,6 +266,45 @@ fn push_overlay(
     build.overlay_spans.push(OverlaySpan { tag, count });
 }
 
+/// Emit the bottom-left heart bar for `health` (half-heart points). Every heart gets an
+/// empty container, then a full or half heart laid over it per the current health, so a
+/// damaged heart shows the container through its missing portion — the vanilla read.
+/// Scaled with the rest of the HUD. Called only for the [`GuiKind::Hotbar`] HUD.
+fn push_hearts(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    health: crate::gui::HealthView,
+    scale: f32,
+) {
+    let hearts = (health.max / 2).max(0);
+    if hearts == 0 {
+        return;
+    }
+    let size = HEART_PX * scale;
+    let step = HEART_STEP * scale;
+    let margin = HEART_MARGIN * scale;
+    let y = screen.1 as f32 - margin - size;
+    // Atlas cell `c` (0 empty, 1 half, 2 full) as top-left / bottom-right uv corners.
+    let cell_uv = |c: i32| -> ([f32; 2], [f32; 2]) {
+        let u0 = c as f32 * HEART_CELL_U;
+        ([u0, 0.0], [u0 + HEART_CELL_U, 1.0])
+    };
+    let current = health.current.clamp(0, health.max);
+    for i in 0..hearts {
+        let x = margin + i as f32 * step;
+        let (tl, br) = cell_uv(0);
+        push_quad_uv(out, screen, x, y, size, size, tl, br, WHITE);
+        // 2 points = full heart, 1 = half, 0 = just the empty container.
+        let cell = match (current - i * 2).clamp(0, 2) {
+            2 => 2,
+            1 => 1,
+            _ => continue,
+        };
+        let (tl, br) = cell_uv(cell);
+        push_quad_uv(out, screen, x, y, size, size, tl, br, WHITE);
+    }
+}
+
 /// Build the full UI for `ui` this frame from its open [`GuiKind`]'s baked def.
 /// The buffers are the caller-owned reusable [`UiBuild`] (cleared, capacity kept).
 pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
@@ -322,6 +375,14 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
                 [1.0, 1.0],
                 [1.0, 1.0, 1.0, h.opacity],
             );
+        }
+    }
+
+    // HUD hearts (bottom-left). Only on the hotbar HUD, so an open menu hides them —
+    // and a spectator carries no health, so `None` draws nothing.
+    if kind == GuiKind::Hotbar {
+        if let Some(health) = ui.health {
+            push_hearts(&mut build.hearts, screen, health, scale);
         }
     }
 
@@ -432,6 +493,35 @@ mod tests {
         assert!(!b.panel.is_empty());
         assert_eq!(b.drag_icon_quads.len(), 1);
         assert!(!b.drag_counts.is_empty(), "drag count > 1 drawn");
+    }
+
+    #[test]
+    fn hotbar_hud_draws_hearts_from_health() {
+        let mut b = UiBuild::default();
+        let mut s = snap(GuiKind::Hotbar, false);
+        s.health = Some(crate::gui::HealthView {
+            current: 15,
+            max: 20,
+        });
+        build_ui(&s, &mut b);
+        assert!(!b.hearts.is_empty(), "the HUD draws the heart bar");
+    }
+
+    #[test]
+    fn hearts_hidden_behind_a_menu_and_without_health() {
+        // Behind an open inventory (kind != Hotbar) hearts are hidden even with health.
+        let mut b = UiBuild::default();
+        let mut s = snap(GuiKind::Inventory, true);
+        s.health = Some(crate::gui::HealthView {
+            current: 20,
+            max: 20,
+        });
+        build_ui(&s, &mut b);
+        assert!(b.hearts.is_empty(), "no hearts behind an open menu");
+        // On the HUD but with no health (a spectator): still nothing.
+        let mut b2 = UiBuild::default();
+        build_ui(&snap(GuiKind::Hotbar, false), &mut b2); // health defaults to None
+        assert!(b2.hearts.is_empty(), "no hearts without survival health");
     }
 
     #[test]

@@ -53,8 +53,9 @@ impl App {
         }
         renderer.render();
 
-        // Remember the drawn view so the next `update` can tell a still camera (idle)
-        // from a moved one and redraw only on change.
+        // Remember the drawn view + health so the next `update` can tell a still, unchanged
+        // frame (idle) from one that moved or lost a heart, and redraw only on change.
         self.last_pose = Some(last_pose);
+        self.last_health = self.game.player_health();
     }
 }

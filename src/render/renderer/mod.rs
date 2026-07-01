@@ -85,6 +85,9 @@ enum GuiTexId {
     Panel(GuiKind),
     Hover(GuiKind),
     Overlay(GuiKind, OverlayTag),
+    /// The HUD heart atlas (one texture, cells empty | half | full). Not tied to a
+    /// [`GuiKind`] — it is HUD chrome drawn over the hotbar, independent of any panel.
+    Hearts,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -324,6 +327,10 @@ pub struct Renderer {
     /// The hover / selection highlight quad + its vertex count.
     ui_hover_vbuf: wgpu::Buffer,
     ui_hover_vertex_count: u32,
+    /// HUD heart quads (bottom-left health bar) + their vertex count. Sampled from the
+    /// [`GuiTexId::Hearts`] atlas; empty for a spectator or behind an open menu.
+    ui_hearts_vbuf: wgpu::Buffer,
+    ui_hearts_vertex_count: u32,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.

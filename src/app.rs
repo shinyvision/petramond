@@ -59,6 +59,10 @@ pub struct App {
     /// trigger) without redrawing an unchanged one. Standing still reproduces
     /// bit-identical values, so equality means "view unchanged".
     last_pose: Option<CameraPose>,
+    /// Player health at the last render, so a change (fall damage) forces a redraw even
+    /// when the view is otherwise idle — the hearts settle a tick or two after landing,
+    /// once the camera has already stopped moving.
+    last_health: Option<crate::gui::HealthView>,
     /// First-person hand-animation triggers latched since the last render, so a
     /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
     hand: HandTriggers,
@@ -91,6 +95,7 @@ impl App {
             dirty: true,
             last_render: now_seconds(),
             last_pose: None,
+            last_health: None,
             hand: HandTriggers::default(),
         }
     }

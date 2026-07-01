@@ -174,6 +174,14 @@ pub struct WorkbenchView {
     pub results: Vec<(ItemType, bool)>,
 }
 
+/// The player's health for the HUD hearts: `current` and `max` in half-heart points
+/// (a full heart is 2). `None` in a [`UiSnapshot`] hides the bar (spectator).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HealthView {
+    pub current: i32,
+    pub max: i32,
+}
+
 /// An owned, neutral UI read model of the flat UI data needed to draw the hotbar
 /// or open menu. Built by the app presentation boundary and consumed by the
 /// renderer.
@@ -204,6 +212,9 @@ pub struct UiSnapshot {
     /// The open furniture workbench's input + offered results, or `None`. When `Some`,
     /// the workbench panel is drawn with the result grid (greyed where not craftable).
     pub workbench: Option<WorkbenchView>,
+    /// The player's health for the bottom-left hearts, or `None` to hide the bar
+    /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
+    pub health: Option<HealthView>,
 }
 
 impl Default for UiSnapshot {
@@ -221,6 +232,7 @@ impl Default for UiSnapshot {
             furnace: None,
             chest: None,
             workbench: None,
+            health: None,
         }
     }
 }

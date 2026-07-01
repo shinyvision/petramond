@@ -23,6 +23,7 @@ pub(super) fn build(
         furnace: menu.furnace,
         chest: menu.chest,
         workbench: menu.workbench,
+        health: game.player_health(),
         ..Default::default()
     };
 

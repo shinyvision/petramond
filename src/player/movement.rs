@@ -390,6 +390,10 @@ impl Player {
         if hit_z {
             self.vel.z = 0.0;
         }
+
+        // Measure the fall now that `on_ground` and the final feet `y` are settled; the
+        // tick turns a latched landing into damage (see `crate::game::health`).
+        self.track_fall(was_on_ground, in_water);
     }
 
     fn update_spectator(&mut self, dt: f32, input: Input) {

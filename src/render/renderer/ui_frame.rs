@@ -26,6 +26,7 @@ impl Renderer {
         self.ui_panel_vertex_count = 0;
         self.ui_overlay_vertex_count = 0;
         self.ui_hover_vertex_count = 0;
+        self.ui_hearts_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
@@ -83,6 +84,12 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.ui_hover_vbuf, 0, bytemuck::cast_slice(hover));
             self.ui_hover_vertex_count = hover.len() as u32;
+        }
+        let hearts = &self.ui_build.hearts;
+        if !hearts.is_empty() && hearts.len() <= cap {
+            self.queue
+                .write_buffer(&self.ui_hearts_vbuf, 0, bytemuck::cast_slice(hearts));
+            self.ui_hearts_vertex_count = hearts.len() as u32;
         }
 
         // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's

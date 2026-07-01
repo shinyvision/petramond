@@ -55,6 +55,7 @@ impl App {
             || renderer.hand_animation_active()
             || frame_before_tick.mesh_pending
             || self.camera_moved(camera_pose)
+            || self.game.player_health() != self.last_health
             || visually_active
     }
 

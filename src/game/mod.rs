@@ -11,6 +11,7 @@ mod drops;
 mod entities;
 mod environment;
 mod frame;
+mod health;
 mod local_player;
 mod menu;
 mod placement;

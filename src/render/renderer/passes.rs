@@ -552,6 +552,7 @@ impl Renderer {
             || self.ui_panel_vertex_count > 0
             || self.ui_overlay_vertex_count > 0
             || self.ui_hover_vertex_count > 0
+            || self.ui_hearts_vertex_count > 0
             || self.icon_quad_vertex_count > 0
         {
             let mut pass =
@@ -593,6 +594,14 @@ impl Renderer {
                     pass.set_bind_group(0, bind, &[]);
                     pass.set_vertex_buffer(0, self.ui_hover_vbuf.slice(..));
                     pass.draw(0..self.ui_hover_vertex_count, 0..1);
+                }
+            }
+            // 4b) HUD hearts (bottom-left health bar), one draw from the heart atlas.
+            if self.ui_hearts_vertex_count > 0 {
+                if let Some(bind) = self.gui_textures.get(&GuiTexId::Hearts) {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_hearts_vbuf.slice(..));
+                    pass.draw(0..self.ui_hearts_vertex_count, 0..1);
                 }
             }
             // 5) Per-slot item icons (icon atlas), one bind + one draw.
