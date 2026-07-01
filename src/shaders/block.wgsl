@@ -30,12 +30,19 @@ const SKY_GAMMA: f32 = 3.0;
 // while submerged.
 const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
-// Thin-face UV slice (packed bits 29..31): a 3/16-deep face would squish a whole
-// 16px tile across its thin edge, so dynamic thin geometry (the door's 3/16 side
-// edges) sets a slice mode and the shader crops the tile to a matching slice
-// instead — keeping the texel density equal to the wide front face. Mirrors
-// `door::THICKNESS`; the chunk mesher never sets these bits (mode 0 = no crop).
+// Packed UV modes (bits 29..32):
+// - dynamic thin geometry crops a 3/16-deep face to a matching strip instead of
+//   squishing a whole 16px tile across a door edge.
+// - stair side/top faces sample from their position inside the block cell, so the
+//   lower half-step and full-height back half read as one continuous block.
 const THIN_SLICE: f32 = 3.0 / 16.0;
+const UV_MODE_THIN_U: u32 = 1u;
+const UV_MODE_THIN_V: u32 = 2u;
+const UV_MODE_STAIR_POS_X: u32 = 3u;
+const UV_MODE_STAIR_NEG_X: u32 = 4u;
+const UV_MODE_STAIR_POS_Z: u32 = 5u;
+const UV_MODE_STAIR_NEG_Z: u32 = 6u;
+const UV_MODE_STAIR_TOP: u32 = 7u;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // uv-rect table: (u0, v0, u1, v1) per tile, baked on the CPU from tile_uv().
@@ -50,7 +57,8 @@ struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
     // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index,
-    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = skylight.
+    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = skylight,
+    // 29..32 = UV mode.
     @location(2) packed: u32,
 };
 
@@ -83,6 +91,47 @@ fn corner_local(corner: u32) -> vec2<f32> {
     return vec2<f32>(0.0, 0.0);
 }
 
+fn cell_axis_coord(axis: f32, upper: bool) -> f32 {
+    var v = axis - floor(axis);
+    if (upper && v < 0.001) { v = 1.0; }
+    return v;
+}
+
+fn stair_side_uv(r: vec4<f32>, corner: u32, pos: vec3<f32>, mode: u32) -> vec2<f32> {
+    let right = corner == 1u || corner == 2u;
+    let top = corner == 2u || corner == 3u;
+    let y = cell_axis_coord(pos.y, top);
+    var u01 = 0.0;
+    if (mode == UV_MODE_STAIR_POS_X) {
+        let z = cell_axis_coord(pos.z, !right);
+        u01 = 1.0 - z;
+    } else if (mode == UV_MODE_STAIR_NEG_X) {
+        let z = cell_axis_coord(pos.z, right);
+        u01 = z;
+    } else if (mode == UV_MODE_STAIR_POS_Z) {
+        let x = cell_axis_coord(pos.x, right);
+        u01 = x;
+    } else {
+        let x = cell_axis_coord(pos.x, !right);
+        u01 = 1.0 - x;
+    }
+    return vec2<f32>(
+        r.x + u01 * (r.z - r.x),
+        r.y + (1.0 - y) * (r.w - r.y),
+    );
+}
+
+fn stair_top_uv(r: vec4<f32>, corner: u32, pos: vec3<f32>) -> vec2<f32> {
+    let right = corner == 1u || corner == 2u;
+    let far_z = corner == 0u || corner == 1u;
+    let x = cell_axis_coord(pos.x, right);
+    let z = cell_axis_coord(pos.z, far_z);
+    return vec2<f32>(
+        r.x + x * (r.z - r.x),
+        r.y + z * (r.w - r.y),
+    );
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
@@ -95,6 +144,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let overlay_tile = (in.packed >> 12u) & 0xFFu;
     let ao = (in.packed >> 21u) & 0x3u;
     let sky6 = (in.packed >> 23u) & 0x3Fu;
+    let uv_mode = (in.packed >> 29u) & 0x7u;
 
     // Animate water: WaterStill / WaterFlow are the first of `frame_count`
     // consecutive flipbook tiles; advance base + frame over time.
@@ -136,24 +186,30 @@ fn vs_main(in: VsIn) -> VsOut {
             uv.y = r.y + (1.0 - lh) * (r.w - r.y);
         }
     }
-    // Thin-face slice (bits 29..31): crop the tile to a `THIN_SLICE`-wide strip
-    // along the squished axis so a 3/16-deep edge shows a matching slice instead
-    // of the whole tile crushed flat. Mode 1 crops U (faces whose thin world
-    // extent maps to U), mode 2 crops V; mode 0 (all chunk geometry) is untouched.
-    // Doors set this on their canonical side/edge faces (see `render::door_model`).
-    let slice_mode = (in.packed >> 29u) & 0x3u;
-    if (slice_mode != 0u) {
+    // UV modes above the base packed face corner. Doors crop thin edge faces;
+    // stairs remap side/top faces to their cell-local X/Z/Y coordinates.
+    if (uv_mode == UV_MODE_THIN_U || uv_mode == UV_MODE_THIN_V) {
         let sr = uv_rects[atile];
-        if (slice_mode == 1u) {
+        if (uv_mode == UV_MODE_THIN_U) {
             let lu = select(0.0, 1.0, corner == 1u || corner == 2u);
             uv.x = sr.x + lu * THIN_SLICE * (sr.z - sr.x);
         } else {
             let lv = select(0.0, 1.0, corner == 0u || corner == 1u);
             uv.y = sr.y + lv * THIN_SLICE * (sr.w - sr.y);
         }
+    } else if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
+        uv = stair_side_uv(uv_rects[atile], corner, in.pos, uv_mode);
+    } else if (uv_mode == UV_MODE_STAIR_TOP) {
+        uv = stair_top_uv(uv_rects[atile], corner, in.pos);
     }
     out.uv = uv;
-    out.uv2 = corner_uv(uv_rects[overlay_tile], corner);
+    var uv2 = corner_uv(uv_rects[overlay_tile], corner);
+    if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
+        uv2 = stair_side_uv(uv_rects[overlay_tile], corner, in.pos, uv_mode);
+    } else if (uv_mode == UV_MODE_STAIR_TOP) {
+        uv2 = stair_top_uv(uv_rects[overlay_tile], corner, in.pos);
+    }
+    out.uv2 = uv2;
     out.overlay = (in.packed >> 20u) & 0x1u;
 
     // Final vertex light = directional face shade (mirror of mesh::SHADES — keep

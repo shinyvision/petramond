@@ -43,7 +43,7 @@ struct VsIn {
     @location(1) tint: vec3<f32>,
     // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index, 12..20 = overlay
     // tile, 20 = flag (solid-color OR has grass-side overlay), 21..23 = AO,
-    // 23..29 = skylight.
+    // 23..29 = skylight, 29..32 = UV mode (unused by this transformed-item path).
     @location(2) packed: u32,
 };
 

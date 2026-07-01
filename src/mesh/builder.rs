@@ -12,7 +12,10 @@ use crate::torch::{warm_amount, warm_tint};
 
 use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::tint::{self, tile_tint};
-use super::vertex::ModelVertex;
+use super::vertex::{
+    pack_vertex, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE, UV_MODE_SHIFT, UV_MODE_STAIR_NEG_X,
+    UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X, UV_MODE_STAIR_POS_Z, UV_MODE_STAIR_TOP,
+};
 use super::water::{self, SideVsWater, WaterSurface};
 
 /// The horizontal cube face a furnace's front points to, for its [`Facing`].
@@ -37,7 +40,6 @@ fn opposite_face(face: Face) -> Face {
         Face::NegZ => Face::PosZ,
     }
 }
-use super::vertex::{pack_vertex, ChunkMesh, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LeafMeshMode {
@@ -476,6 +478,7 @@ fn section_geometry(
                         base_tile,
                         overlay,
                         has_overlay,
+                        UV_MODE_NONE,
                         tint,
                         face,
                         fx,
@@ -954,6 +957,7 @@ fn chunk_geometry(
                         base_tile,
                         overlay,
                         has_overlay,
+                        UV_MODE_NONE,
                         tint,
                         face,
                         fx,
@@ -1149,6 +1153,7 @@ fn emit_stair_face<B, L, K, T>(
         Face::NegY => tiles[1],
         _ => tiles[2],
     };
+    let uv_mode = stair_uv_mode(face);
     let world_min = [wx as f32 + min[0], wy as f32 + min[1], wz as f32 + min[2]];
     let world_max = [wx as f32 + max[0], wy as f32 + max[1], wz as f32 + max[2]];
     let corners = face.quad_box(world_min, world_max);
@@ -1162,6 +1167,7 @@ fn emit_stair_face<B, L, K, T>(
         tile,
         0,
         false,
+        uv_mode,
         tint_for(tile),
         face,
         fx,
@@ -1174,6 +1180,18 @@ fn emit_stair_face<B, L, K, T>(
         neighbour_light,
         neighbour_blocklight,
     );
+}
+
+#[inline]
+fn stair_uv_mode(face: Face) -> u32 {
+    match face {
+        Face::PosX => UV_MODE_STAIR_POS_X,
+        Face::NegX => UV_MODE_STAIR_NEG_X,
+        Face::PosZ => UV_MODE_STAIR_POS_Z,
+        Face::NegZ => UV_MODE_STAIR_NEG_Z,
+        Face::PosY => UV_MODE_STAIR_TOP,
+        Face::NegY => UV_MODE_NONE,
+    }
 }
 
 #[inline]
@@ -1295,6 +1313,7 @@ fn emit_cube_face<B, L, K>(
     base_tile: Tile,
     overlay: u32,
     has_overlay: bool,
+    uv_mode: u32,
     tint: [f32; 3],
     face: Face,
     fx: i32,
@@ -1343,7 +1362,7 @@ where
                 has_overlay,
                 a,
                 light6,
-            ),
+            ) | (uv_mode << UV_MODE_SHIFT),
         });
     }
     // Flip the triangulation so the split runs along the darker diagonal -- keeps

@@ -9,7 +9,7 @@
 //!
 //! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
 //! The 28-byte vertex packs into one `u32`:
-//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 skylight`.
+//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 skylight | 29..32 UV mode`.
 //! For the textured path ([`cube_textured`], [`billboard_quad`]) we set the tile,
 //! corner, shade, AO = 3, skylight = 63.
 //!
@@ -40,7 +40,7 @@ use super::lighting;
 use crate::atlas::Tile;
 use crate::block::Block;
 use crate::mesh::face::Face;
-use crate::mesh::Vertex;
+use crate::mesh::{Vertex, UV_MODE_SHIFT};
 
 use glam::Vec3;
 
@@ -192,11 +192,10 @@ pub(super) fn push_box_faces_lit(
     }
 }
 
-/// Packed bit shift for the thin-face UV-slice mode (bits 29..31, above the 6-bit
-/// skylight that tops out at bit 28). 0 = no crop, 1 = crop U, 2 = crop V — read by
-/// `block.wgsl`'s `slice_mode` branch. Only dynamic thin geometry (the door's 3/16
-/// side/edge faces) sets it; the chunk mesher leaves these bits 0.
-pub(super) const UV_SLICE_SHIFT: u32 = 29;
+/// Packed bit shift for the UV mode field (bits 29..32, above the 6-bit skylight
+/// that tops out at bit 28). Dynamic thin geometry uses 1 = crop U and 2 = crop V;
+/// chunk-meshed stairs use the remaining modes for cell-local side UVs.
+pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
 
 /// As [`push_box_faces_lit`] but, per face (`ALL_FACES` order):
 /// - MIRRORS the texture horizontally where `mirror_u` is set — used by the door so
@@ -204,7 +203,7 @@ pub(super) const UV_SLICE_SHIFT: u32 = 29;
 ///   physical side from either side). Mirroring is pure UV: the quad's corner indices
 ///   are swapped left↔right (`[1,0,3,2]`), flipping `u`, no geometry/winding change.
 /// - applies a thin-face UV-SLICE mode from `slice_mode` (0 none, 1 crop-U, 2 crop-V),
-///   packed into bits 29..31 ([`UV_SLICE_SHIFT`]) so the shader crops a 3/16-deep face
+///   packed into bits 29..32 ([`UV_SLICE_SHIFT`]) so the shader crops a 3/16-deep face
 ///   to a matching strip of its tile instead of squishing the whole tile flat — used
 ///   by the door's thin side (crop-U) and top/bottom edge (crop-V) faces.
 pub(super) fn push_box_faces_lit_mirrored(

@@ -24,6 +24,7 @@ pub use builder::{build_mesh_with_options, MeshOptions};
 #[cfg(test)]
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
 pub use vertex::{ChunkMesh, ModelVertex, Vertex, SHADES};
+pub(crate) use vertex::{UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V};
 
 #[cfg(test)]
 mod tests;

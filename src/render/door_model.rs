@@ -19,7 +19,7 @@ use super::block_model::push_box_faces_lit_mirrored;
 use super::DoorInstance;
 use crate::door::{self, THICKNESS};
 use crate::furnace::Facing;
-use crate::mesh::Vertex;
+use crate::mesh::{Vertex, UV_MODE_THIN_U, UV_MODE_THIN_V};
 
 /// Canonical closed-door slab extent on the thin (Z) axis: flush with the `+Z` face.
 const Z_BACK: f32 = 1.0 - THICKNESS;
@@ -63,12 +63,19 @@ fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorI
     // Mirror ONLY the back face (NegZ, index 5) so the door reads identically (hinge on
     // the hinge side) from front AND back, instead of flipping handedness behind.
     const MIRROR_BACK: [bool; 6] = [false, false, false, false, false, true];
-    // Thin-face UV slice (ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ]): the four
+    // Thin-face UV mode (ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ]): the four
     // 3/16-deep EDGE faces would squish a whole tile across that thin edge, so each crops
     // its tile to a matching strip. The side edges (±X) are thin along Z, which maps to
     // the face's U axis → crop-U (mode 1); the top/bottom edges (±Y) are thin along Z,
     // which maps to V → crop-V (mode 2). The wide front/back art (±Z) is full-tile (0).
-    const SLICE: [u32; 6] = [1, 1, 2, 2, 0, 0];
+    const SLICE: [u32; 6] = [
+        UV_MODE_THIN_U,
+        UV_MODE_THIN_U,
+        UV_MODE_THIN_V,
+        UV_MODE_THIN_V,
+        0,
+        0,
+    ];
     // Canonical south-facing slab: lower half (bottom art) then upper half (top art).
     push_box_faces_lit_mirrored(
         verts,
@@ -190,7 +197,7 @@ mod tests {
 
     #[test]
     fn thin_edge_faces_carry_a_uv_slice_mode() {
-        // The 3/16-deep edge faces must crop their tile (packed bits 29..31) so the
+        // The 3/16-deep edge faces must crop their tile (packed bits 29..32) so the
         // plank side isn't a whole tile squished flat; the wide front/back art is full.
         let mut v = Vec::new();
         let mut i = Vec::new();

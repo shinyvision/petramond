@@ -29,7 +29,7 @@ pub struct Vertex {
 /// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`):
 ///   0..8 tile id | 8..10 corner (0..3) | 10..12 shade index (into `SHADES`)
 ///   12..20 overlay tile | 20 has-overlay flag | 21..23 AO (0 dark..3 bright)
-///   23..29 skylight (0 dark..63 full sky)
+///   23..29 skylight (0 dark..63 full sky) | 29..32 UV mode
 ///
 /// `overlay`/`has_overlay` are the raw 12..20 payload and the bit-20 flag: a grass
 /// SIDE sets them to `(GrassSideOverlay, true)`; a flowing-water TOP reuses the
@@ -52,6 +52,17 @@ pub(crate) fn pack_vertex(
         | (ao << 21)
         | (light << 23)
 }
+
+/// Packed UV mode field, shared by `block.wgsl` and dynamic block geometry.
+pub(crate) const UV_MODE_SHIFT: u32 = 29;
+pub(crate) const UV_MODE_NONE: u32 = 0;
+pub(crate) const UV_MODE_THIN_U: u32 = 1;
+pub(crate) const UV_MODE_THIN_V: u32 = 2;
+pub(crate) const UV_MODE_STAIR_POS_X: u32 = 3;
+pub(crate) const UV_MODE_STAIR_NEG_X: u32 = 4;
+pub(crate) const UV_MODE_STAIR_POS_Z: u32 = 5;
+pub(crate) const UV_MODE_STAIR_NEG_Z: u32 = 6;
+pub(crate) const UV_MODE_STAIR_TOP: u32 = 7;
 
 /// GPU vertex for the chunk's bbmodel-block geometry: 36 bytes of EXPLICIT attributes
 /// (not the packed tile word), because a `.bbmodel` face carries an arbitrary

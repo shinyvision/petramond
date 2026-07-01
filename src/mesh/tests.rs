@@ -257,6 +257,10 @@ fn light6(v: &Vertex) -> u32 {
     (v.packed >> 23) & 0x3F
 }
 
+fn uv_mode(v: &Vertex) -> u32 {
+    (v.packed >> super::vertex::UV_MODE_SHIFT) & 0x7
+}
+
 /// Sampler over a computed skylight band, for the skylight unit tests.
 struct TestSky {
     band: Box<[u8]>,
@@ -780,6 +784,66 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     assert!(
         bottom.iter().all(|v| light6(v) == 0),
         "a stair's solid bottom must not show skylight from adjacent below cells"
+    );
+}
+
+#[test]
+fn stair_faces_use_cell_local_uv_modes() {
+    use super::vertex::{
+        UV_MODE_NONE, UV_MODE_STAIR_NEG_X, UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X,
+        UV_MODE_STAIR_POS_Z, UV_MODE_STAIR_TOP,
+    };
+    use crate::furnace::Facing;
+
+    let pos = crate::chunk::SectionPos::new(0, 0, 0);
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::RedwoodStairs);
+    section.set_stair_facing(8, 8, 8, Facing::South);
+
+    let mesh = super::build_section_mesh(
+        &section,
+        pos,
+        |wx, wy, wz| {
+            if (wx, wy, wz) == (8, 8, 8) {
+                Block::RedwoodStairs.id()
+            } else {
+                Block::Air.id()
+            }
+        },
+        |_, _, _| 0,
+        |_, _| 0,
+        |_, _, _| SKY_FULL,
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    let expect_mode = |x: f32, y: f32, z: f32, mode: u32| {
+        let v = mesh
+            .opaque
+            .iter()
+            .find(|v| {
+                (v.pos[0] - x).abs() < 1.0e-3
+                    && (v.pos[1] - y).abs() < 1.0e-3
+                    && (v.pos[2] - z).abs() < 1.0e-3
+                    && uv_mode(v) == mode
+            })
+            .unwrap_or_else(|| panic!("no stair vertex at ({x}, {y}, {z}) with UV mode {mode}"));
+        assert_eq!(uv_mode(v), mode);
+    };
+
+    expect_mode(9.0, 8.0, 8.0, UV_MODE_STAIR_POS_X);
+    expect_mode(8.0, 8.0, 8.0, UV_MODE_STAIR_NEG_X);
+    expect_mode(8.0, 8.0, 9.0, UV_MODE_STAIR_POS_Z);
+    expect_mode(8.0, 8.0, 8.0, UV_MODE_STAIR_NEG_Z);
+    expect_mode(8.0, 8.5, 9.0, UV_MODE_STAIR_TOP);
+    expect_mode(8.0, 9.0, 8.0, UV_MODE_STAIR_TOP);
+
+    assert!(
+        mesh.opaque
+            .iter()
+            .filter(|v| (v.pos[1] - 8.0).abs() < 1.0e-3)
+            .any(|v| uv_mode(v) == UV_MODE_NONE),
+        "stair bottom faces should keep normal full-tile UVs"
     );
 }
 
