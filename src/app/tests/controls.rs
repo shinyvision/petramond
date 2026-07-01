@@ -1,7 +1,7 @@
 use super::app;
 use crate::app::{App, CursorPolicy};
 use crate::camera::Camera;
-use crate::controls::Control;
+use crate::controls::{Control, PointerButton};
 use crate::mathh::Vec3;
 use crate::player::PlayerMode;
 use crate::save::WorldInfo;
@@ -159,6 +159,30 @@ fn opening_inventory_releases_grab() {
     app.handle_control(Control::ToggleInventory, true);
     assert!(app.screen.inventory_open());
     assert!(!app.pointer.is_grabbing());
+}
+
+#[test]
+fn opening_inventory_clears_held_pointer_buttons() {
+    let mut app = app();
+    app.set_pointer_button(PointerButton::Primary, true);
+
+    app.handle_control(Control::ToggleInventory, true);
+    let game_input = app.take_game_input();
+
+    assert!(!game_input.break_held);
+    assert!(!game_input.attack_clicked);
+}
+
+#[test]
+fn focus_loss_clears_held_pointer_buttons() {
+    let mut app = app();
+    app.set_pointer_button(PointerButton::Primary, true);
+
+    app.release_pointer_buttons();
+    let game_input = app.take_game_input();
+
+    assert!(!game_input.break_held);
+    assert!(!game_input.attack_clicked);
 }
 
 #[test]

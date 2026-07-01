@@ -53,6 +53,12 @@ impl PointerState {
         }
     }
 
+    fn clear_buttons(&mut self) {
+        self.left_click = false;
+        self.right_click = false;
+        self.left_held = false;
+    }
+
     fn add_scroll_delta(&mut self, delta: f32) {
         self.scroll_delta += delta;
     }
@@ -83,8 +89,13 @@ impl PointerState {
     }
 
     pub(super) fn release_for_menu(&mut self) {
+        self.clear_buttons();
         self.grabbing = false;
         self.recenter_pending = true;
+    }
+
+    pub(super) fn release_buttons(&mut self) {
+        self.clear_buttons();
     }
 
     pub(super) fn grab_for_gameplay(&mut self) {
@@ -163,6 +174,12 @@ impl App {
         if !self.adjust_world_scroll(delta) {
             self.pointer.add_scroll_delta(delta);
         }
+        self.dirty = true;
+    }
+
+    pub fn release_pointer_buttons(&mut self) {
+        self.pointer.release_buttons();
+        self.audio.set_loop(None, super::now_seconds());
         self.dirty = true;
     }
 

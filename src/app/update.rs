@@ -55,6 +55,7 @@ impl App {
             .expect("game exists after shell/no-game guard")
             .tick(dt, &game_input);
         self.handle_open_screen_events(&events);
+        let mining_audio_held = self.screen.gameplay_enabled() && game_input.break_held;
         let (mining_block, camera_pose, visually_active) = {
             let frame = self
                 .game
@@ -62,7 +63,9 @@ impl App {
                 .expect("game exists after shell/no-game guard")
                 .client_frame(now);
             (
-                frame.held_item.mining_block,
+                mining_audio_held
+                    .then_some(frame.held_item.mining_block)
+                    .flatten(),
                 frame.camera_pose,
                 frame.activity.visually_active,
             )

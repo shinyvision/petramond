@@ -24,9 +24,9 @@ use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate};
 use keep_alive::KeepAlive;
 use registry::SOUND_DEFS;
 
-/// Floor on a looping sound's repeat period, so a sound with no decoded buffer
-/// (duration `0`) can't retrigger every frame. Far below any real clip length.
-const MIN_LOOP_PERIOD: f64 = 0.02;
+/// Mining punch sounds retrigger at a fixed cadence while held. Each trigger is a
+/// one-shot mixed over any previous trigger, so long clips can overlap naturally.
+const MINING_REPEAT_INTERVAL: f64 = 0.300;
 
 /// A sound decoded into memory once at startup, replayed by cloning the sample
 /// buffer (a memcpy — far cheaper than re-decoding the OGG on every play).
@@ -38,9 +38,9 @@ struct DecodedSound {
 
 impl DecodedSound {
     /// Playback length at unit speed, in seconds — read from the decoded clip itself
-    /// (frames ÷ sample rate), so it tracks whatever asset is loaded with no
-    /// hard-coded duration anywhere.
+    /// (frames ÷ sample rate), so decode checks do not pin asset metadata.
     #[inline]
+    #[cfg(test)]
     fn duration(&self) -> f64 {
         let frames = self.samples.len() / self.channels.get() as usize;
         frames as f64 / self.sample_rate.get() as f64
@@ -48,7 +48,7 @@ impl DecodedSound {
 }
 
 /// The audio engine: owns the output stream and the decoded sound buffers, and
-/// drives at most one looping sound (e.g. mining). Lives on the client (the `App`);
+/// drives at most one repeated sound (e.g. mining). Lives on the client (the `App`);
 /// the simulation never touches it.
 pub struct Audio {
     /// OS output stream + mixer. `None` when no device opened (runs silent). Kept
@@ -63,8 +63,8 @@ pub struct Audio {
     /// xorshift64 state for per-play pitch jitter. Presentation-only randomness,
     /// seeded from the wall clock so runs differ; only the sequence matters.
     rng: u64,
-    /// The sound currently looping (e.g. mining) and the wall-clock time its next
-    /// repeat is due. Driven per-frame by [`set_loop`](Self::set_loop).
+    /// The sound currently repeating (e.g. mining) and the wall-clock time its next
+    /// trigger is due. Driven per-frame by [`set_loop`](Self::set_loop).
     loop_sound: Option<Sound>,
     loop_next: f64,
 }
@@ -118,24 +118,22 @@ impl Audio {
         }
     }
 
-    /// Drive a looping sound (e.g. the mining "punch"). Call every frame with the
-    /// sound that should be looping right now (`None` = stop) and the current
+    /// Drive a repeating sound (e.g. the mining "punch"). Call every frame with the
+    /// sound that should be repeating right now (`None` = stop) and the current
     /// wall-clock time `now`.
     ///
-    /// It starts the instant the sound changes, then repeats exactly as each play
-    /// finishes — the period is the clip's **own decoded length**, never a hard-coded
-    /// interval, so it adapts to any asset — with fresh pitch each repeat so it never
-    /// sounds robotic. Stopping just ends the repeats; the in-flight play finishes
-    /// naturally.
+    /// It starts the instant the sound changes, then triggers a fresh randomized
+    /// one-shot every 300 ms while active. Each trigger is mixed in rather than
+    /// replacing the previous one, so in-flight plays finish naturally and can layer.
     pub fn set_loop(&mut self, sound: Option<Sound>, now: f64) {
         match sound {
             None => self.loop_sound = None,
             Some(s) => {
                 let changed = self.loop_sound != Some(s);
                 if changed || now >= self.loop_next {
-                    let played = self.emit(s);
+                    self.emit(s);
                     self.loop_sound = Some(s);
-                    self.loop_next = now + played.max(MIN_LOOP_PERIOD);
+                    self.loop_next = now + MINING_REPEAT_INTERVAL;
                 }
             }
         }
@@ -147,16 +145,14 @@ impl Audio {
         self.emit(sound);
     }
 
-    /// Play `sound` once with fresh random pitch and its gain, returning how long
-    /// (wall clock) the play will take — read from the clip, so it adapts to any
-    /// asset. `0.0` if the sound has no decoded buffer. A no-op for output when audio
-    /// is disabled, but it still returns the duration so loop timing stays stable.
-    fn emit(&mut self, sound: Sound) -> f64 {
+    /// Play `sound` once with fresh random pitch and its gain. No-op if audio is
+    /// disabled or the sound didn't decode.
+    fn emit(&mut self, sound: Sound) {
         let def = sound.def();
         // How many decoded variants this sound has (immutable borrow, released here).
         let count = self.buffers.get(sound as usize).map_or(0, Vec::len);
         if count == 0 {
-            return 0.0;
+            return;
         }
         // All randomness up front — the only `&mut self` use, so the buffer borrow
         // below doesn't conflict: a random variant (so a repeated sound isn't the
@@ -166,8 +162,6 @@ impl Audio {
         let gain = self.master_gain * category_gain(def.category) * def.gain;
 
         let buf = &self.buffers[sound as usize][variant];
-        // The faster it plays (higher pitch), the sooner it ends.
-        let duration = buf.duration() / pitch.max(0.01) as f64;
         if let Some(sink) = self.sink.as_ref() {
             // Clone the decoded PCM into a fresh replayable source, shift its pitch
             // and gain, and mix it in. `speed` resamples (pitch + tempo together);
@@ -177,7 +171,6 @@ impl Audio {
                 .amplify(gain);
             sink.mixer().add(source);
         }
-        duration
     }
 
     /// Step the xorshift64 stream. Presentation-only randomness (variant + pitch),
@@ -316,5 +309,28 @@ mod tests {
         // Degenerate counts never panic or index out of bounds.
         assert_eq!(a.next_index(1), 0);
         assert_eq!(a.next_index(0), 0);
+    }
+
+    #[test]
+    fn mining_loop_retriggers_on_fixed_cadence() {
+        let mut a = silent_audio(0x1234_5678_9abc_def1);
+
+        a.set_loop(Some(Sound::WoodPunch), 10.0);
+        assert_eq!(a.loop_sound, Some(Sound::WoodPunch));
+        assert_close(a.loop_next, 10.0 + MINING_REPEAT_INTERVAL);
+
+        let first_next = a.loop_next;
+        a.set_loop(Some(Sound::WoodPunch), first_next - 0.001);
+        assert_close(a.loop_next, first_next);
+
+        a.set_loop(Some(Sound::WoodPunch), first_next);
+        assert_close(a.loop_next, first_next + MINING_REPEAT_INTERVAL);
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= 1e-9,
+            "expected {expected}, got {actual}"
+        );
     }
 }

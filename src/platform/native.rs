@@ -229,6 +229,9 @@ impl ApplicationHandler for NativeHost {
                     shift: state.shift_key(),
                 });
             }
+            WindowEvent::Focused(false) => {
+                app.release_pointer_buttons();
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 app.add_scroll_delta(-wheel_notches(delta));
             }
