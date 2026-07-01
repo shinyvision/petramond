@@ -27,8 +27,12 @@
 // the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
 pub(crate) mod icon;
 
-use crate::gui::UiSnapshot;
-use crate::gui::{self as gui_layout, gui_scale, GuiKind, OverlayTag, Role, SlotRect};
+use crate::gui::{
+    self as gui_layout, gui_scale, GuiKind, HoverFit, OverlayTag, Role, ShellKind, SlotRect,
+};
+use crate::gui::{
+    ShellButton, ShellInput, ShellListRow, ShellScrollbar, ShellText, ShellTextAlign, UiSnapshot,
+};
 use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;
 
@@ -47,6 +51,10 @@ pub(super) const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 
 /// Opaque white tint: draw a textured quad at full color.
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const TEXT_DISABLED: [f32; 4] = [0.62, 0.62, 0.62, 1.0];
+const TEXT_PLACEHOLDER: [f32; 4] = [0.50, 0.56, 0.56, 1.0];
+const SHADOW: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+const INPUT_ACTIVE: [f32; 4] = [0.72, 0.67, 0.62, 1.0];
 
 /// Slot interior side (logical px) — the textured icon area. The drag cursor
 /// sizes the held item to this; slot rects themselves come from the manifest.
@@ -85,6 +93,10 @@ pub struct UiBuild {
     /// Hover / selection highlight quad (its own texture). Empty when nothing is
     /// highlighted.
     pub hover: Vec<UiVertex>,
+    /// Builder-baked app-shell skin quad (title/world-select/create-world/pause).
+    pub shell_skin: Vec<UiVertex>,
+    /// Builder-baked dynamic app-shell scrollbar thumbs.
+    pub shell_scroll_thumb: Vec<UiVertex>,
     /// HUD heart quads (bottom-left health bar), sampling the heart atlas. Empty for a
     /// spectator or behind an open menu.
     pub hearts: Vec<UiVertex>,
@@ -103,6 +115,8 @@ pub struct UiBuild {
     /// Which baked GUI this frame draws, so the renderer binds the matching panel /
     /// hover / overlay textures. `None` when nothing is drawn.
     pub(crate) kind: Option<GuiKind>,
+    /// Which baked app-shell skin this frame draws.
+    pub(crate) shell_kind: Option<ShellKind>,
 }
 
 impl UiBuild {
@@ -112,6 +126,8 @@ impl UiBuild {
         self.overlays.clear();
         self.overlay_spans.clear();
         self.hover.clear();
+        self.shell_skin.clear();
+        self.shell_scroll_thumb.clear();
         self.hearts.clear();
         self.icon_quads.clear();
         self.dim_icon_quads.clear();
@@ -119,6 +135,7 @@ impl UiBuild {
         self.drag_icon_quads.clear();
         self.drag_counts.clear();
         self.kind = None;
+        self.shell_kind = None;
     }
 }
 
@@ -169,6 +186,390 @@ pub(super) fn push_quad_uv(
     out.push(v(p_tl, uv_tl));
     out.push(v(p_br, uv_br));
     out.push(v(p_tr, uv_tr));
+}
+
+fn push_shell_box(out: &mut Vec<UiVertex>, screen: (u32, u32), r: SlotRect, color: [f32; 4]) {
+    push_solid(out, screen, r.x, r.y, r.w, r.h, color);
+}
+
+fn push_shell_hover(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    r: SlotRect,
+    margin: f32,
+    opacity: f32,
+    fit: HoverFit,
+    image_size: (u32, u32),
+    scale: f32,
+) {
+    let dest = SlotRect {
+        x: r.x - margin,
+        y: r.y - margin,
+        w: r.w + 2.0 * margin,
+        h: r.h + 2.0 * margin,
+    };
+    push_fit_textured(
+        out,
+        screen,
+        dest,
+        fit,
+        image_size,
+        scale,
+        [1.0, 1.0, 1.0, opacity],
+    );
+}
+
+fn push_fit_textured(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    r: SlotRect,
+    fit: HoverFit,
+    image_size: (u32, u32),
+    scale: f32,
+    color: [f32; 4],
+) {
+    let (sw, sh) = (image_size.0.max(1) as f32, image_size.1.max(1) as f32);
+    match fit {
+        HoverFit::Stretch => {
+            push_quad_uv(
+                out,
+                screen,
+                r.x,
+                r.y,
+                r.w,
+                r.h,
+                [0.0, 0.0],
+                [1.0, 1.0],
+                color,
+            );
+        }
+        HoverFit::Tile => {
+            let tile_w = (sw * scale.max(1.0)).max(1.0);
+            let tile_h = (sh * scale.max(1.0)).max(1.0);
+            let mut y = r.y;
+            let y_end = r.y + r.h;
+            while y < y_end - 0.01 {
+                let h = tile_h.min(y_end - y);
+                let mut x = r.x;
+                let x_end = r.x + r.w;
+                while x < x_end - 0.01 {
+                    let w = tile_w.min(x_end - x);
+                    push_quad_uv(
+                        out,
+                        screen,
+                        x,
+                        y,
+                        w,
+                        h,
+                        [0.0, 0.0],
+                        [w / tile_w, h / tile_h],
+                        color,
+                    );
+                    x += tile_w;
+                }
+                y += tile_h;
+            }
+        }
+        HoverFit::NineSlice {
+            src_l,
+            src_r,
+            src_t,
+            src_b,
+            dst_l,
+            dst_r,
+            dst_t,
+            dst_b,
+        } => {
+            let src_l = src_l.clamp(0.0, sw * 0.5);
+            let src_r = src_r.clamp(0.0, sw * 0.5);
+            let src_t = src_t.clamp(0.0, sh * 0.5);
+            let src_b = src_b.clamp(0.0, sh * 0.5);
+            let dst_l = (dst_l * scale).clamp(0.0, r.w * 0.5);
+            let dst_r = (dst_r * scale).clamp(0.0, r.w * 0.5);
+            let dst_t = (dst_t * scale).clamp(0.0, r.h * 0.5);
+            let dst_b = (dst_b * scale).clamp(0.0, r.h * 0.5);
+
+            let xs = [0.0, src_l, sw - src_r, sw];
+            let ys = [0.0, src_t, sh - src_b, sh];
+            let dx = [r.x, r.x + dst_l, r.x + r.w - dst_r, r.x + r.w];
+            let dy = [r.y, r.y + dst_t, r.y + r.h - dst_b, r.y + r.h];
+            for row in 0..3 {
+                for col in 0..3 {
+                    let w = dx[col + 1] - dx[col];
+                    let h = dy[row + 1] - dy[row];
+                    if w <= 0.01 || h <= 0.01 {
+                        continue;
+                    }
+                    push_quad_uv(
+                        out,
+                        screen,
+                        dx[col],
+                        dy[row],
+                        w,
+                        h,
+                        [xs[col] / sw, ys[row] / sh],
+                        [xs[col + 1] / sw, ys[row + 1] / sh],
+                        color,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn inset_rect(r: SlotRect, inset: f32) -> SlotRect {
+    SlotRect {
+        x: r.x + inset,
+        y: r.y + inset,
+        w: (r.w - inset * 2.0).max(0.0),
+        h: (r.h - inset * 2.0).max(0.0),
+    }
+}
+
+fn framed_text_rect(r: SlotRect, scale: f32) -> SlotRect {
+    let inset = (6.0 * scale).max(4.0);
+    inset_rect(r, inset)
+}
+
+fn push_shell_text(out: &mut Vec<UiVertex>, screen: (u32, u32), text: &ShellText) {
+    let cell = text.cell_px.max(1.0);
+    let fitted = fit_text(&text.text, text.rect.w, cell);
+    let width = crate::render::ui_text::text_width(&fitted) as f32 * cell;
+    let height = crate::render::ui_text::TEXT_GLYPH_H as f32 * cell;
+    let x = match text.align {
+        ShellTextAlign::Left => text.rect.x,
+        ShellTextAlign::Center => text.rect.x + (text.rect.w - width).max(0.0) * 0.5,
+    };
+    let y = text.rect.y + (text.rect.h - height).max(0.0) * 0.5;
+    push_text_at(out, screen, &fitted, x, y, cell, text.color, true);
+}
+
+fn push_text_at(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    text: &str,
+    x: f32,
+    y: f32,
+    cell: f32,
+    color: [f32; 4],
+    shadow: bool,
+) {
+    let emit = |out: &mut Vec<UiVertex>, dx: f32, dy: f32, color| {
+        crate::render::ui_text::for_each_text_lit_cell(text, |px, py| {
+            push_solid(
+                out,
+                screen,
+                x + dx + px as f32 * cell,
+                y + dy + py as f32 * cell,
+                cell,
+                cell,
+                color,
+            );
+        });
+    };
+    if shadow {
+        emit(out, cell, cell, SHADOW);
+    }
+    emit(out, 0.0, 0.0, color);
+}
+
+fn fit_text(text: &str, max_width: f32, cell: f32) -> String {
+    let width = |s: &str| crate::render::ui_text::text_width(s) as f32 * cell;
+    if width(text) <= max_width {
+        return text.to_string();
+    }
+    let ellipsis = "...";
+    if width(ellipsis) > max_width {
+        return String::new();
+    }
+    let mut out = String::new();
+    for ch in text.chars() {
+        let mut candidate = out.clone();
+        candidate.push(ch);
+        candidate.push_str(ellipsis);
+        if width(&candidate) > max_width {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str(ellipsis);
+    out
+}
+
+fn push_button(fg: &mut Vec<UiVertex>, screen: (u32, u32), button: &ShellButton, scale: f32) {
+    if !button.enabled {
+        push_shell_box(fg, screen, button.rect, [0.0, 0.0, 0.0, 0.36]);
+    }
+    let text = ShellText {
+        rect: framed_text_rect(button.rect, scale),
+        text: button.label.clone(),
+        color: if button.enabled { WHITE } else { TEXT_DISABLED },
+        cell_px: scale.max(1.0),
+        align: ShellTextAlign::Center,
+    };
+    push_shell_text(fg, screen, &text);
+}
+
+fn push_input(fg: &mut Vec<UiVertex>, screen: (u32, u32), input: &ShellInput, scale: f32) {
+    if input.active {
+        let line = scale.max(1.0);
+        push_solid(
+            fg,
+            screen,
+            input.rect.x + line,
+            input.rect.y + line,
+            (input.rect.w - line * 2.0).max(0.0),
+            line,
+            INPUT_ACTIVE,
+        );
+    }
+    let text = if input.text.is_empty() {
+        input.placeholder.as_str()
+    } else {
+        input.text.as_str()
+    };
+    let mut rendered = text.to_string();
+    if input.active {
+        rendered.push('_');
+    }
+    let pad = 5.0 * scale;
+    let text_rect = SlotRect {
+        x: input.rect.x + pad,
+        y: input.rect.y,
+        w: (input.rect.w - pad * 2.0).max(0.0),
+        h: input.rect.h,
+    };
+    let text = ShellText {
+        rect: text_rect,
+        text: rendered,
+        color: if input.text.is_empty() {
+            TEXT_PLACEHOLDER
+        } else {
+            WHITE
+        },
+        cell_px: scale.max(1.0),
+        align: ShellTextAlign::Left,
+    };
+    push_shell_text(fg, screen, &text);
+}
+
+fn push_row(fg: &mut Vec<UiVertex>, screen: (u32, u32), row: &ShellListRow, scale: f32) {
+    if row.selected {
+        push_shell_box(fg, screen, row.rect, [0.75, 0.95, 1.0, 0.18]);
+    }
+    let text = ShellText {
+        rect: SlotRect {
+            x: row.rect.x + 7.0 * scale,
+            y: row.rect.y,
+            w: (row.rect.w - 14.0 * scale).max(0.0),
+            h: row.rect.h,
+        },
+        text: row.label.clone(),
+        color: WHITE,
+        cell_px: scale.max(1.0),
+        align: ShellTextAlign::Left,
+    };
+    push_shell_text(fg, screen, &text);
+}
+
+fn push_scrollbar_thumb(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    scrollbar: &ShellScrollbar,
+    fit: HoverFit,
+    image_size: (u32, u32),
+    scale: f32,
+) {
+    let r = scrollbar.thumb;
+    push_fit_textured(out, screen, r, fit, image_size, scale, WHITE);
+}
+
+fn push_shell_ui(ui: &UiSnapshot, build: &mut UiBuild, scale: f32) {
+    if !ui.shell.active {
+        return;
+    }
+    let screen = ui.screen;
+    for quad in &ui.shell.quads {
+        push_shell_box(&mut build.dim, screen, quad.rect, quad.color);
+    }
+    let kind = ui
+        .shell
+        .skin
+        .expect("active shell UI must name a baked shell skin");
+    let def = gui_layout::shell_def(kind).unwrap_or_else(|| {
+        panic!(
+            "missing required baked shell GUI {:?}; bake it to assets/textures/gui/shell/baked",
+            kind
+        )
+    });
+    build.shell_kind = Some(kind);
+    let r = def.panel_rect(screen);
+    push_quad_uv(
+        &mut build.shell_skin,
+        screen,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        [0.0, 0.0],
+        [1.0, 1.0],
+        WHITE,
+    );
+    if let Some(thumb) = def.scroll_thumb() {
+        for scrollbar in &ui.shell.scrollbars {
+            push_scrollbar_thumb(
+                &mut build.shell_scroll_thumb,
+                screen,
+                scrollbar,
+                thumb.fit,
+                thumb.image_size,
+                scale,
+            );
+        }
+    }
+    if let Some(hover) = def.hover() {
+        let margin = hover.margin as f32 * scale;
+        for row in &ui.shell.rows {
+            if row.hovered {
+                push_shell_hover(
+                    &mut build.hover,
+                    screen,
+                    row.rect,
+                    margin,
+                    hover.opacity,
+                    hover.fit,
+                    hover.image_size,
+                    scale,
+                );
+            }
+        }
+        for button in &ui.shell.buttons {
+            if button.enabled && button.hovered {
+                push_shell_hover(
+                    &mut build.hover,
+                    screen,
+                    button.rect,
+                    margin,
+                    hover.opacity,
+                    hover.fit,
+                    hover.image_size,
+                    scale,
+                );
+            }
+        }
+    }
+    for row in &ui.shell.rows {
+        push_row(&mut build.counts, screen, row, scale);
+    }
+    for input in &ui.shell.inputs {
+        push_input(&mut build.counts, screen, input, scale);
+    }
+    for button in &ui.shell.buttons {
+        push_button(&mut build.counts, screen, button, scale);
+    }
+    for text in &ui.shell.texts {
+        push_shell_text(&mut build.counts, screen, text);
+    }
 }
 
 /// The game state filling slot `i` of `role`, as `(item, count)` — the one place
@@ -317,6 +718,7 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     let scale = gui_scale(screen);
     let kind = ui.kind;
     let Some(def) = gui_layout::def(kind) else {
+        push_shell_ui(ui, build, scale);
         return; // No baked manifest for this screen => nothing to draw.
     };
     build.kind = Some(kind);
@@ -364,15 +766,18 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         };
         if let Some(sr) = highlighted {
             let m = h.margin as f32 * scale;
-            push_quad_uv(
+            push_fit_textured(
                 &mut build.hover,
                 screen,
-                sr.x - m,
-                sr.y - m,
-                sr.w + 2.0 * m,
-                sr.h + 2.0 * m,
-                [0.0, 0.0],
-                [1.0, 1.0],
+                SlotRect {
+                    x: sr.x - m,
+                    y: sr.y - m,
+                    w: sr.w + 2.0 * m,
+                    h: sr.h + 2.0 * m,
+                },
+                h.fit,
+                h.image_size,
+                scale,
                 [1.0, 1.0, 1.0, h.opacity],
             );
         }
@@ -433,6 +838,8 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
             }
         }
     }
+
+    push_shell_ui(ui, build, scale);
 }
 
 #[cfg(test)]
@@ -522,6 +929,35 @@ mod tests {
         let mut b2 = UiBuild::default();
         build_ui(&snap(GuiKind::Hotbar, false), &mut b2); // health defaults to None
         assert!(b2.hearts.is_empty(), "no hearts without survival health");
+    }
+
+    #[test]
+    fn hover_nine_slice_emits_all_regions() {
+        let mut verts = Vec::new();
+        push_fit_textured(
+            &mut verts,
+            (1280, 720),
+            SlotRect {
+                x: 100.0,
+                y: 100.0,
+                w: 32.0,
+                h: 32.0,
+            },
+            HoverFit::NineSlice {
+                src_l: 4.0,
+                src_r: 4.0,
+                src_t: 4.0,
+                src_b: 4.0,
+                dst_l: 4.0,
+                dst_r: 4.0,
+                dst_t: 4.0,
+                dst_b: 4.0,
+            },
+            (16, 16),
+            1.0,
+            WHITE,
+        );
+        assert_eq!(verts.len(), 9 * 6);
     }
 
     #[test]

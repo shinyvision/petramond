@@ -9,7 +9,11 @@ impl Renderer {
     /// Refresh the crosshair + selection-outline vertex buffers when their
     /// inputs changed (resize / new target). Extracted from `render`'s prologue.
     pub(super) fn refresh_overlay_buffers(&mut self) {
-        if self.crosshair_drawn_size != (self.config.width, self.config.height) {
+        if !self.crosshair_visible {
+            self.crosshair_vertex_count = 0;
+        } else if self.crosshair_drawn_size != (self.config.width, self.config.height)
+            || self.crosshair_vertex_count == 0
+        {
             let verts = crosshair_vertices(self.config.width, self.config.height);
             self.crosshair_vertex_count = verts.count;
             if verts.count > 0 {
@@ -43,6 +47,13 @@ impl Renderer {
     /// Build + upload this frame's first-person hand geometry and the extruded /
     /// bbmodel held-item geometry (mutually exclusive). Extracted from `render`.
     pub(super) fn prepare_held_item(&mut self) {
+        if !self.hand_visible {
+            self.hand_index_count = 0;
+            self.hand_vertex_count = 0;
+            self.item3d_vertex_count = 0;
+            return;
+        }
+
         // Build + upload the first-person hand geometry for this frame. The hand
         // uses its own fixed perspective (it is drawn over the world, no depth),
         // so the MVP is computed entirely here from the framebuffer aspect and the

@@ -1,5 +1,6 @@
 use super::App;
 use crate::camera::Camera;
+use crate::game::Game;
 use crate::gui::MenuSlot;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
@@ -9,33 +10,41 @@ mod drops;
 mod gui_routing;
 
 impl App {
+    fn game(&self) -> &Game {
+        self.game.as_ref().expect("test app has a loaded game")
+    }
+
+    fn game_mut(&mut self) -> &mut Game {
+        self.game.as_mut().expect("test app has a loaded game")
+    }
+
     /// Route a screen click and then apply the latched container edit / drop, standing in
     /// for the game tick that resolves it in play. Tests assert the resulting inventory /
     /// world state right after, and a real tick interleaves between two clicks (applying
     /// the first before the second is decided), so the per-click apply mirrors play.
     fn click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
         let consumed = self.route_screen_click(screen, now);
-        self.game.apply_latched_actions_for_test();
+        self.game_mut().apply_latched_actions_for_test();
         consumed
     }
 
     /// Right-click counterpart of [`click_screen_for_test`](Self::click_screen_for_test).
     fn right_click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
         let consumed = self.route_screen_right_click(screen, now);
-        self.game.apply_latched_actions_for_test();
+        self.game_mut().apply_latched_actions_for_test();
         consumed
     }
 }
 
 fn app() -> App {
-    App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
+    App::new_in_game(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
 }
 
 /// An app whose player holds one full stack in hotbar slot 0 - the starting
 /// inventory is empty now, so inventory-interaction tests seed a stack first.
 fn app_with_grass() -> App {
     let mut app = app();
-    app.game
+    app.game_mut()
         .add_to_inventory(ItemStack::new(ItemType::Grass, 64));
     app
 }

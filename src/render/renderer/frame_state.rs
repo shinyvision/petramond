@@ -85,6 +85,14 @@ impl Renderer {
         self.held_item = self.held_item_anim.update(v);
     }
 
+    pub fn set_hand_visible(&mut self, visible: bool) {
+        self.hand_visible = visible;
+    }
+
+    pub fn set_crosshair_visible(&mut self, visible: bool) {
+        self.crosshair_visible = visible;
+    }
+
     /// Whether the renderer-owned first-person hand animation is still moving.
     /// The app uses this to keep redraw-on-demand alive for one-shot place/break/
     /// attack swings after the sim event frame has already passed.
@@ -145,6 +153,40 @@ impl Renderer {
     /// Store the already-owned UI state needed for this frame's UI pass.
     pub fn set_ui(&mut self, v: UiSnapshot) {
         self.ui = v;
+    }
+
+    pub fn clear_world_state(&mut self) {
+        self.terrain_columns.clear();
+        self.far_leaf_lod_state.clear();
+        self.draw_order.clear();
+        self.opaque_column_order.clear();
+        self.model_column_order.clear();
+        self.selection = None;
+        self.selection_drawn = None;
+        self.outline_vertex_count = 0;
+        self.crosshair_visible = false;
+        self.crosshair_vertex_count = 0;
+        self.hand_visible = false;
+        self.hand_index_count = 0;
+        self.hand_vertex_count = 0;
+        self.item3d_vertex_count = 0;
+        self.break_overlay = None;
+        self.break_draw.index_count = 0;
+        self.item_entity_draw.index_count = 0;
+        self.item_model_entity_draw.index_count = 0;
+        self.chest_draw.index_count = 0;
+        self.door_draw.index_count = 0;
+        self.particle_draw.vertex_count = 0;
+        self.item_entities.clear();
+        self.particles.clear();
+        self.model_particles.clear();
+        self.chests.clear();
+        self.doors.clear();
+        self.mobs.clear();
+        for mob in &mut self.mob_gpu {
+            mob.draw.index_count = 0;
+            mob.visible.clear();
+        }
     }
 
     /// Synchronize GPU meshes with the terrain CPU meshes.

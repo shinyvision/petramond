@@ -160,7 +160,9 @@ impl App {
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
-        self.pointer.add_scroll_delta(delta);
+        if !self.adjust_world_scroll(delta) {
+            self.pointer.add_scroll_delta(delta);
+        }
         self.dirty = true;
     }
 

@@ -12,6 +12,7 @@ mod pointer;
 mod presentation_events;
 mod render;
 mod screen;
+mod shell;
 mod ui_snapshot;
 mod update;
 
@@ -29,7 +30,9 @@ use crate::game::{CameraPose, Game};
 use crate::render::Scene;
 
 pub struct App {
-    game: Game,
+    game: Option<Game>,
+    shell_camera: Camera,
+    render_dist: i32,
     /// Reusable builder for neutral per-frame presentation data read from the game.
     presentation: GamePresentationScratch,
     /// Render-side translation of neutral per-frame presentation data into the
@@ -66,6 +69,15 @@ pub struct App {
     /// First-person hand-animation triggers latched since the last render, so a
     /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
     hand: HandTriggers,
+    worlds: Vec<crate::save::WorldInfo>,
+    selected_world: Option<usize>,
+    world_scroll: usize,
+    create_world_name: String,
+    create_world_seed: String,
+    focused_create_field: Option<shell::CreateField>,
+    shell_clicks: shell::ShellClickStreak,
+    quit_requested: bool,
+    renderer_world_clear_pending: bool,
 }
 
 /// One-shot first-person hand-animation triggers, latched by [`App::update`] and
@@ -79,9 +91,11 @@ struct HandTriggers {
 }
 
 impl App {
-    pub fn new(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
-        Self {
-            game: Game::new(cam, world_name, seed, render_dist),
+    pub fn new(cam: Camera, render_dist: i32) -> Self {
+        let mut app = Self {
+            game: None,
+            shell_camera: cam,
+            render_dist,
             presentation: GamePresentationScratch::new(),
             scene: Scene::new(),
             audio: Audio::new(),
@@ -89,7 +103,7 @@ impl App {
             input: InputController::default(),
             pointer: PointerState::default(),
             gui_router: GuiRouter::default(),
-            screen: AppScreen::Game,
+            screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             // Draw the first frame unconditionally (also forced by `last_pose: None`).
             dirty: true,
@@ -97,13 +111,34 @@ impl App {
             last_pose: None,
             last_health: None,
             hand: HandTriggers::default(),
-        }
+            worlds: Vec::new(),
+            selected_world: None,
+            world_scroll: 0,
+            create_world_name: String::new(),
+            create_world_seed: String::new(),
+            focused_create_field: None,
+            shell_clicks: shell::ShellClickStreak::default(),
+            quit_requested: false,
+            renderer_world_clear_pending: true,
+        };
+        app.pointer.release_for_menu();
+        app.refresh_worlds();
+        app
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_in_game(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
+        let mut app = Self::new(cam, render_dist);
+        app.start_game(world_name, seed);
+        app
     }
 
     /// Flush the world to disk on quit. The `WorldSave` I/O thread is joined when
     /// the `App` (and the `World` it owns) drops, after this queues the writes.
     pub fn save_on_exit(&mut self) {
-        self.game.save_all();
+        if let Some(game) = self.game.as_mut() {
+            game.save_all();
+        }
     }
 
     #[inline]
@@ -112,7 +147,11 @@ impl App {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.game.set_aspect(width as f32 / height.max(1) as f32);
+        let aspect = width as f32 / height.max(1) as f32;
+        self.shell_camera.aspect = aspect;
+        if let Some(game) = self.game.as_mut() {
+            game.set_aspect(aspect);
+        }
         self.dirty = true;
     }
 
@@ -128,17 +167,25 @@ impl App {
 
         match event {
             ControlEvent::ToggleInventory => {
-                self.toggle_inventory();
+                if self.game.is_some() && !self.screen.shell_open() {
+                    self.toggle_inventory();
+                }
                 true
             }
             ControlEvent::TogglePlayerMode => {
-                self.game.toggle_player_mode();
+                if self.screen.gameplay_enabled() {
+                    if let Some(game) = self.game.as_mut() {
+                        game.toggle_player_mode();
+                    }
+                }
                 true
             }
             ControlEvent::CloseScreen => self.close_screen(),
             ControlEvent::SelectHotbar(slot) => {
                 if self.screen.gameplay_enabled() {
-                    self.game.set_active_hotbar(slot);
+                    if let Some(game) = self.game.as_mut() {
+                        game.set_active_hotbar(slot);
+                    }
                 }
                 true
             }
@@ -146,7 +193,9 @@ impl App {
                 // Q drops the held item only while playing (not in a menu). The
                 // physical Ctrl modifier (not the sprint key) selects whole-stack.
                 if self.screen.gameplay_enabled() {
-                    self.game.drop_selected_item(self.modifiers.ctrl);
+                    if let Some(game) = self.game.as_mut() {
+                        game.drop_selected_item(self.modifiers.ctrl);
+                    }
                 }
                 true
             }

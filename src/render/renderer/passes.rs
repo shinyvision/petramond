@@ -550,6 +550,8 @@ impl Renderer {
         let kind = self.ui_build.kind;
         if self.ui_dim_vertex_count > 0
             || self.ui_panel_vertex_count > 0
+            || self.ui_shell_vertex_count > 0
+            || self.ui_shell_scroll_thumb_vertex_count > 0
             || self.ui_overlay_vertex_count > 0
             || self.ui_hover_vertex_count > 0
             || self.ui_hearts_vertex_count > 0
@@ -564,7 +566,30 @@ impl Renderer {
                 pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
                 pass.draw(0..self.ui_dim_vertex_count, 0..1);
             }
-            // 2) Baked panel PNG for the open GUI.
+            // 2) Builder-baked app-shell skin.
+            if self.ui_shell_vertex_count > 0 {
+                if let Some(bind) = self
+                    .ui_build
+                    .shell_kind
+                    .and_then(|k| self.gui_textures.get(&GuiTexId::Shell(k)))
+                {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_shell_vbuf.slice(..));
+                    pass.draw(0..self.ui_shell_vertex_count, 0..1);
+                }
+            }
+            if self.ui_shell_scroll_thumb_vertex_count > 0 {
+                if let Some(bind) = self
+                    .ui_build
+                    .shell_kind
+                    .and_then(|k| self.gui_textures.get(&GuiTexId::ShellScrollThumb(k)))
+                {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_shell_scroll_thumb_vbuf.slice(..));
+                    pass.draw(0..self.ui_shell_scroll_thumb_vertex_count, 0..1);
+                }
+            }
+            // 3) Baked panel PNG for the open GUI.
             if self.ui_panel_vertex_count > 0 {
                 if let Some(bind) = kind.and_then(|k| self.gui_textures.get(&GuiTexId::Panel(k))) {
                     pass.set_bind_group(0, bind, &[]);
@@ -572,7 +597,7 @@ impl Renderer {
                     pass.draw(0..self.ui_panel_vertex_count, 0..1);
                 }
             }
-            // 3) Dynamic overlays (furnace gauges): one draw per tagged span, each
+            // 4) Dynamic overlays (furnace gauges): one draw per tagged span, each
             //    bound to its own overlay texture.
             if self.ui_overlay_vertex_count > 0 {
                 pass.set_vertex_buffer(0, self.ui_overlay_vbuf.slice(..));
@@ -588,15 +613,22 @@ impl Renderer {
                     start = end;
                 }
             }
-            // 4) Hover / selection highlight, over the panel, under the icons.
+            // 5) Hover / selection highlight, over the panel, under the icons.
             if self.ui_hover_vertex_count > 0 {
-                if let Some(bind) = kind.and_then(|k| self.gui_textures.get(&GuiTexId::Hover(k))) {
+                let bind = kind
+                    .and_then(|k| self.gui_textures.get(&GuiTexId::Hover(k)))
+                    .or_else(|| {
+                        self.ui_build
+                            .shell_kind
+                            .and_then(|k| self.gui_textures.get(&GuiTexId::ShellHover(k)))
+                    });
+                if let Some(bind) = bind {
                     pass.set_bind_group(0, bind, &[]);
                     pass.set_vertex_buffer(0, self.ui_hover_vbuf.slice(..));
                     pass.draw(0..self.ui_hover_vertex_count, 0..1);
                 }
             }
-            // 4b) HUD hearts (bottom-left health bar), one draw from the heart atlas.
+            // 5b) HUD hearts (bottom-left health bar), one draw from the heart atlas.
             if self.ui_hearts_vertex_count > 0 {
                 if let Some(bind) = self.gui_textures.get(&GuiTexId::Hearts) {
                     pass.set_bind_group(0, bind, &[]);
@@ -604,7 +636,7 @@ impl Renderer {
                     pass.draw(0..self.ui_hearts_vertex_count, 0..1);
                 }
             }
-            // 5) Per-slot item icons (icon atlas), one bind + one draw.
+            // 6) Per-slot item icons (icon atlas), one bind + one draw.
             if self.icon_quad_vertex_count > 0 {
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
                 pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));

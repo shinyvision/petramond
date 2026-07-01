@@ -28,18 +28,39 @@ impl App {
         if self.pointer.right_clicked() && self.route_screen_right_click(screen_size, now) {
             self.pointer.clear_right_click();
         }
+        if self.pointer.left_clicked() && self.route_shell_click(screen_size, now) {
+            self.pointer.clear_left_click();
+        }
+
+        if self.screen.shell_open() || self.game.is_none() {
+            self.audio.set_loop(None, now);
+            self.pointer.clear_edges();
+            return std::mem::take(&mut self.dirty);
+        }
 
         // Sampled BEFORE the tick: `game.tick` runs the mesh budget, which drains the
         // dirty-mesh queue into built-but-unuploaded meshes that `render` uploads. Reading
         // it here keeps build + upload in the same frame, so a changed chunk can never
         // settle without being drawn.
-        let frame_before_tick = self.game.client_frame_before_tick();
+        let frame_before_tick = self
+            .game
+            .as_ref()
+            .expect("game exists after shell/no-game guard")
+            .client_frame_before_tick();
 
         let game_input = self.take_game_input();
-        let events = self.game.tick(dt, &game_input);
+        let events = self
+            .game
+            .as_mut()
+            .expect("game exists after shell/no-game guard")
+            .tick(dt, &game_input);
         self.handle_open_screen_events(&events);
         let (mining_block, camera_pose, visually_active) = {
-            let frame = self.game.client_frame(now);
+            let frame = self
+                .game
+                .as_ref()
+                .expect("game exists after shell/no-game guard")
+                .client_frame(now);
             (
                 frame.held_item.mining_block,
                 frame.camera_pose,
@@ -55,7 +76,12 @@ impl App {
             || renderer.hand_animation_active()
             || frame_before_tick.mesh_pending
             || self.camera_moved(camera_pose)
-            || self.game.player_health() != self.last_health
+            || self
+                .game
+                .as_ref()
+                .expect("game exists after shell/no-game guard")
+                .player_health()
+                != self.last_health
             || visually_active
     }
 

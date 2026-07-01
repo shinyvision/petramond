@@ -11,9 +11,15 @@ const TABLER_TTF: &[u8] = include_bytes!("../assets/tabler-icons.ttf");
 /// families. Call once during app creation.
 pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert("tabler".to_owned(), egui::FontData::from_static(TABLER_TTF));
+    fonts
+        .font_data
+        .insert("tabler".to_owned(), egui::FontData::from_static(TABLER_TTF));
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts.families.entry(family).or_default().push("tabler".to_owned());
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("tabler".to_owned());
     }
     ctx.set_fonts(fonts);
 }

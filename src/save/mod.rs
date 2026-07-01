@@ -21,7 +21,7 @@ pub use codec::SectionSnapshot;
 pub use level::LevelData;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
@@ -72,6 +72,16 @@ pub struct OpenedWorld {
     pub save: WorldSave,
     /// `Some` if a `level.dat` already existed (a returning world).
     pub level: Option<LevelData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorldInfo {
+    /// User-facing world name. New worlds persist this in `world.json`; old worlds
+    /// fall back to their save-directory name.
+    pub name: String,
+    /// Directory name under `<data>/saves/`, after path sanitization.
+    pub dir_name: String,
+    pub has_level: bool,
 }
 
 impl WorldSave {
@@ -166,9 +176,13 @@ fn base_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".llamacraft"))
 }
 
+fn saves_dir() -> PathBuf {
+    base_data_dir().join("saves")
+}
+
 /// Directory for a named world: `<data>/saves/<name>/`.
 pub fn world_dir(name: &str) -> PathBuf {
-    base_data_dir().join("saves").join(sanitize(name))
+    saves_dir().join(sanitize(name))
 }
 
 /// Reduce a world name to a single safe path component.
@@ -188,6 +202,113 @@ fn sanitize(name: &str) -> String {
     } else {
         s
     }
+}
+
+pub fn world_exists(name: &str) -> bool {
+    world_dir(name).exists()
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WorldMetadata {
+    name: String,
+}
+
+pub fn write_world_metadata(name: &str) -> std::io::Result<()> {
+    let dir = world_dir(name);
+    std::fs::create_dir_all(&dir)?;
+    let metadata = serde_json::to_vec(&WorldMetadata {
+        name: name.trim().to_string(),
+    })
+    .map_err(std::io::Error::other)?;
+    write_atomic(&dir.join("world.json"), &metadata)
+}
+
+pub fn list_worlds() -> std::io::Result<Vec<WorldInfo>> {
+    let dir = saves_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+
+    let mut worlds = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        let name = std::fs::read(path.join("world.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<WorldMetadata>(&bytes).ok())
+            .map(|m| m.name)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| dir_name.clone());
+        worlds.push(WorldInfo {
+            name,
+            dir_name,
+            has_level: path.join("level.dat").exists(),
+        });
+    }
+    worlds.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+            .then_with(|| a.dir_name.cmp(&b.dir_name))
+    });
+    Ok(worlds)
+}
+
+pub fn delete_world(dir_name: &str) -> std::io::Result<()> {
+    delete_world_at(&saves_dir(), dir_name)
+}
+
+fn delete_world_at(saves: &Path, dir_name: &str) -> std::io::Result<()> {
+    if !is_single_path_component(dir_name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "world directory must be a single path component",
+        ));
+    }
+    match std::fs::remove_dir_all(saves.join(dir_name)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn is_single_path_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+pub fn seed_from_text(text: &str) -> u32 {
+    let text = text.trim();
+    if let Ok(seed) = text.parse::<u32>() {
+        return seed;
+    }
+
+    let mut hash = 0x811c_9dc5u32;
+    for &b in text.as_bytes() {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+pub fn random_seed() -> u32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut z = nanos ^ ((std::process::id() as u64) << 32);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    (z ^ (z >> 31)) as u32
 }
 
 /// Open (or create) a world's save directory and spin up its I/O thread.
@@ -398,6 +519,38 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_text_accepts_numbers_and_hashes_strings() {
+        assert_eq!(seed_from_text("12345"), 12345);
+        assert_eq!(seed_from_text(" 12345 "), 12345);
+        assert_eq!(
+            seed_from_text("llamacraft"),
+            seed_from_text("llamacraft"),
+            "string seeds are stable"
+        );
+        assert_ne!(
+            seed_from_text("llamacraft"),
+            seed_from_text("Llamacraft"),
+            "different strings choose different compatible seeds"
+        );
+    }
+
+    #[test]
+    fn delete_world_removes_only_a_single_save_directory() {
+        let saves = temp_world_dir("delete-world");
+        let world = saves.join("My_World");
+        std::fs::create_dir_all(world.join("region")).expect("create world dir");
+        std::fs::write(world.join("level.dat"), b"level").expect("write level");
+
+        delete_world_at(&saves, "My_World").expect("delete world");
+        assert!(!world.exists(), "selected world directory is removed");
+
+        let invalid = delete_world_at(&saves, "../outside").expect_err("reject nested path");
+        assert_eq!(invalid.kind(), std::io::ErrorKind::InvalidInput);
+
+        let _ = std::fs::remove_dir_all(&saves);
     }
 
     /// The unload/reload dupe, at the save layer: a section record written with a

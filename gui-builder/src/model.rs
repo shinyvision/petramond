@@ -18,17 +18,27 @@ pub enum GuiType {
     Furnace,
     Hotbar,
     FurnitureWorkbench,
+    Title,
+    WorldSelect,
+    CreateWorld,
+    DeleteWorld,
+    Pause,
     Custom,
 }
 
 impl GuiType {
-    pub const ALL: [GuiType; 7] = [
+    pub const ALL: [GuiType; 12] = [
         GuiType::Chest,
         GuiType::Inventory,
         GuiType::CraftingTable,
         GuiType::Furnace,
         GuiType::Hotbar,
         GuiType::FurnitureWorkbench,
+        GuiType::Title,
+        GuiType::WorldSelect,
+        GuiType::CreateWorld,
+        GuiType::DeleteWorld,
+        GuiType::Pause,
         GuiType::Custom,
     ];
 
@@ -40,6 +50,11 @@ impl GuiType {
             GuiType::Furnace => "Furnace",
             GuiType::Hotbar => "Hotbar",
             GuiType::FurnitureWorkbench => "Furniture Workbench",
+            GuiType::Title => "Title Screen",
+            GuiType::WorldSelect => "World Select",
+            GuiType::CreateWorld => "Create World",
+            GuiType::DeleteWorld => "Delete World",
+            GuiType::Pause => "Pause",
             GuiType::Custom => "Custom",
         }
     }
@@ -52,6 +67,11 @@ impl GuiType {
             GuiType::Furnace => (176, 166),
             GuiType::Hotbar => (182, 22),
             GuiType::FurnitureWorkbench => (176, 166),
+            GuiType::Title => (240, 146),
+            GuiType::WorldSelect => (276, 188),
+            GuiType::CreateWorld => (276, 170),
+            GuiType::DeleteWorld => (240, 132),
+            GuiType::Pause => (218, 116),
             GuiType::Custom => (176, 166),
         }
     }
@@ -60,6 +80,17 @@ impl GuiType {
         // The workbench, like a custom GUI, keeps a free canvas (its result grid drove a
         // bespoke layout); the fixed-size vanilla screens stay aspect-locked.
         !matches!(self, GuiType::Custom | GuiType::FurnitureWorkbench)
+    }
+
+    pub fn is_shell(self) -> bool {
+        matches!(
+            self,
+            GuiType::Title
+                | GuiType::WorldSelect
+                | GuiType::CreateWorld
+                | GuiType::DeleteWorld
+                | GuiType::Pause
+        )
     }
 }
 
@@ -77,10 +108,26 @@ pub enum SlotRole {
     FurnaceOutput,
     WorkbenchInput,
     WorkbenchResult,
+    TitleStart,
+    TitleQuit,
+    WorldPlay,
+    WorldCreate,
+    WorldDelete,
+    WorldBack,
+    WorldRow,
+    WorldScrollTrack,
+    CreateNameInput,
+    CreateSeedInput,
+    CreateCreate,
+    CreateCancel,
+    DeleteWorldConfirm,
+    DeleteWorldCancel,
+    PauseResume,
+    PauseSaveQuit,
 }
 
 impl SlotRole {
-    pub const ALL: [SlotRole; 11] = [
+    pub const ALL: [SlotRole; 27] = [
         SlotRole::Generic,
         SlotRole::Storage,
         SlotRole::PlayerInv,
@@ -92,6 +139,22 @@ impl SlotRole {
         SlotRole::FurnaceOutput,
         SlotRole::WorkbenchInput,
         SlotRole::WorkbenchResult,
+        SlotRole::TitleStart,
+        SlotRole::TitleQuit,
+        SlotRole::WorldPlay,
+        SlotRole::WorldCreate,
+        SlotRole::WorldDelete,
+        SlotRole::WorldBack,
+        SlotRole::WorldRow,
+        SlotRole::WorldScrollTrack,
+        SlotRole::CreateNameInput,
+        SlotRole::CreateSeedInput,
+        SlotRole::CreateCreate,
+        SlotRole::CreateCancel,
+        SlotRole::DeleteWorldConfirm,
+        SlotRole::DeleteWorldCancel,
+        SlotRole::PauseResume,
+        SlotRole::PauseSaveQuit,
     ];
 
     pub fn label(self) -> &'static str {
@@ -107,6 +170,22 @@ impl SlotRole {
             SlotRole::FurnaceOutput => "Furnace Output",
             SlotRole::WorkbenchInput => "Workbench Input",
             SlotRole::WorkbenchResult => "Workbench Result",
+            SlotRole::TitleStart => "Title Start",
+            SlotRole::TitleQuit => "Title Quit",
+            SlotRole::WorldPlay => "World Play",
+            SlotRole::WorldCreate => "World Create",
+            SlotRole::WorldDelete => "World Delete",
+            SlotRole::WorldBack => "World Back",
+            SlotRole::WorldRow => "World Row",
+            SlotRole::WorldScrollTrack => "World Scroll Track",
+            SlotRole::CreateNameInput => "Create Name Input",
+            SlotRole::CreateSeedInput => "Create Seed Input",
+            SlotRole::CreateCreate => "Create Button",
+            SlotRole::CreateCancel => "Create Cancel",
+            SlotRole::DeleteWorldConfirm => "Delete World Confirm",
+            SlotRole::DeleteWorldCancel => "Delete World Cancel",
+            SlotRole::PauseResume => "Pause Resume",
+            SlotRole::PauseSaveQuit => "Pause Save Quit",
         }
     }
 
@@ -123,7 +202,30 @@ impl SlotRole {
             SlotRole::FurnaceOutput => [150, 200, 110],
             SlotRole::WorkbenchInput => [130, 180, 230],
             SlotRole::WorkbenchResult => [230, 160, 120],
+            SlotRole::TitleStart => [110, 210, 180],
+            SlotRole::TitleQuit => [210, 130, 130],
+            SlotRole::WorldPlay => [120, 220, 150],
+            SlotRole::WorldCreate => [120, 170, 230],
+            SlotRole::WorldDelete => [220, 120, 120],
+            SlotRole::WorldBack => [190, 170, 120],
+            SlotRole::WorldRow => [150, 210, 230],
+            SlotRole::WorldScrollTrack => [210, 190, 130],
+            SlotRole::CreateNameInput => [160, 200, 230],
+            SlotRole::CreateSeedInput => [160, 180, 230],
+            SlotRole::CreateCreate => [120, 220, 150],
+            SlotRole::CreateCancel => [210, 160, 120],
+            SlotRole::DeleteWorldConfirm => [220, 120, 120],
+            SlotRole::DeleteWorldCancel => [210, 160, 120],
+            SlotRole::PauseResume => [120, 220, 150],
+            SlotRole::PauseSaveQuit => [220, 160, 120],
         }
+    }
+
+    pub fn previews_hover(self) -> bool {
+        !matches!(
+            self,
+            SlotRole::WorldScrollTrack | SlotRole::CreateNameInput | SlotRole::CreateSeedInput
+        )
     }
 }
 
@@ -156,7 +258,12 @@ pub struct Grid {
 
 impl Default for Grid {
     fn default() -> Self {
-        Self { cols: 1, rows: 1, pitch_x: 18, pitch_y: 18 }
+        Self {
+            cols: 1,
+            rows: 1,
+            pitch_x: 18,
+            pitch_y: 18,
+        }
     }
 }
 
@@ -186,16 +293,22 @@ pub enum LayerFit {
 pub enum LayerTag {
     FurnaceArrow,
     FurnaceFlame,
+    WorldScrollThumb,
 }
 
 impl LayerTag {
-    pub const ALL: [LayerTag; 2] = [LayerTag::FurnaceArrow, LayerTag::FurnaceFlame];
+    pub const ALL: [LayerTag; 3] = [
+        LayerTag::FurnaceArrow,
+        LayerTag::FurnaceFlame,
+        LayerTag::WorldScrollThumb,
+    ];
 
     /// Full label for the tag dialog / tooltips.
     pub fn label(self) -> &'static str {
         match self {
             LayerTag::FurnaceArrow => "Furnace Arrow",
             LayerTag::FurnaceFlame => "Furnace Flame",
+            LayerTag::WorldScrollThumb => "World Scroll Thumb",
         }
     }
 
@@ -204,6 +317,7 @@ impl LayerTag {
         match self {
             LayerTag::FurnaceArrow => "arrow",
             LayerTag::FurnaceFlame => "flame",
+            LayerTag::WorldScrollThumb => "scroll",
         }
     }
 
@@ -213,6 +327,7 @@ impl LayerTag {
         match self {
             LayerTag::FurnaceArrow => "furnace_arrow",
             LayerTag::FurnaceFlame => "furnace_flame",
+            LayerTag::WorldScrollThumb => "world_scroll_thumb",
         }
     }
 
@@ -221,6 +336,7 @@ impl LayerTag {
         match self {
             LayerTag::FurnaceArrow => [90, 160, 235],
             LayerTag::FurnaceFlame => [228, 120, 64],
+            LayerTag::WorldScrollThumb => [220, 185, 85],
         }
     }
 }
@@ -343,7 +459,12 @@ pub struct Hover {
 }
 
 fn hover_default_fit() -> LayerFit {
-    LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 }
+    LayerFit::NineSlice {
+        l: 4,
+        r: 4,
+        t: 4,
+        b: 4,
+    }
 }
 
 fn hover_default_opacity() -> f32 {
@@ -476,7 +597,11 @@ fn remove_node(nodes: &mut Vec<Node>, id: u64) -> bool {
     false
 }
 
-fn extract_node(nodes: &mut Vec<Node>, container: Container, id: u64) -> Option<(Container, usize, Node)> {
+fn extract_node(
+    nodes: &mut Vec<Node>,
+    container: Container,
+    id: u64,
+) -> Option<(Container, usize, Node)> {
     if let Some(pos) = nodes.iter().position(|n| n.id() == id) {
         return Some((container, pos, nodes.remove(pos)));
     }
@@ -533,7 +658,10 @@ fn dup_in(nodes: &mut Vec<Node>, id: u64, first: u64) -> Option<(u64, u64, bool)
 }
 
 fn ungroup_in(nodes: &mut Vec<Node>, gid: u64) -> bool {
-    if let Some(pos) = nodes.iter().position(|n| matches!(n, Node::Group(g) if g.id == gid)) {
+    if let Some(pos) = nodes
+        .iter()
+        .position(|n| matches!(n, Node::Group(g) if g.id == gid))
+    {
         if let Node::Group(g) = nodes.remove(pos) {
             for (i, c) in g.children.into_iter().enumerate() {
                 nodes.insert(pos + i, c);
@@ -589,15 +717,313 @@ fn max_id_in(nodes: &[Node]) -> u64 {
     m
 }
 
+fn shell_layer(id: u64, name: &str, key: &str, rect: RectF, fit: LayerFit) -> Node {
+    Node::Layer(Layer {
+        id,
+        name: name.to_string(),
+        asset: AssetSpec::Builtin {
+            key: key.to_string(),
+        },
+        rect,
+        fit,
+        opacity: 1.0,
+        visible: true,
+        flip_h: false,
+        flip_v: false,
+        rotation: 0,
+        tag: None,
+    })
+}
+
+fn tagged_shell_layer(
+    id: u64,
+    name: &str,
+    key: &str,
+    rect: RectF,
+    fit: LayerFit,
+    tag: LayerTag,
+) -> Node {
+    let mut node = shell_layer(id, name, key, rect, fit);
+    if let Node::Layer(layer) = &mut node {
+        layer.tag = Some(tag);
+    }
+    node
+}
+
+fn shell_slot(id: u64, role: SlotRole, rect: RectF) -> Slot {
+    let tint = role.tint();
+    Slot {
+        id,
+        role,
+        rect,
+        grid: Grid::default(),
+        color: [tint[0], tint[1], tint[2], 96],
+        paint_frame: false,
+        visible: true,
+    }
+}
+
+fn push_shell_control(
+    nodes: &mut Vec<Node>,
+    slots: &mut Vec<Slot>,
+    next: &mut u64,
+    role: SlotRole,
+    name: &str,
+    asset: &str,
+    rect: RectF,
+) {
+    push_shell_control_fit(
+        nodes,
+        slots,
+        next,
+        role,
+        name,
+        asset,
+        rect,
+        LayerFit::NineSlice {
+            l: 6,
+            r: 6,
+            t: 6,
+            b: 6,
+        },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_shell_control_fit(
+    nodes: &mut Vec<Node>,
+    slots: &mut Vec<Slot>,
+    next: &mut u64,
+    role: SlotRole,
+    name: &str,
+    asset: &str,
+    rect: RectF,
+    fit: LayerFit,
+) {
+    nodes.push(shell_layer(*next, name, asset, rect, fit));
+    *next += 1;
+    slots.push(shell_slot(*next, role, rect));
+    *next += 1;
+}
+
+fn add_shell_defaults(gui_type: GuiType, nodes: &mut Vec<Node>, slots: &mut Vec<Slot>) {
+    let mut next = 2;
+    match gui_type {
+        GuiType::Title => {
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::TitleStart,
+                "Start button",
+                "shell_button",
+                RectF::new(20, 90, 200, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::TitleQuit,
+                "Quit button",
+                "shell_button",
+                RectF::new(20, 118, 200, 20),
+            );
+        }
+        GuiType::WorldSelect => {
+            nodes.push(shell_layer(
+                next,
+                "World list well",
+                "shell_input",
+                RectF::new(12, 31, 252, 101),
+                LayerFit::NineSlice {
+                    l: 6,
+                    r: 6,
+                    t: 6,
+                    b: 6,
+                },
+            ));
+            next += 1;
+            for i in 0..5 {
+                let y = 37 + i * 18;
+                push_shell_control(
+                    nodes,
+                    slots,
+                    &mut next,
+                    SlotRole::WorldRow,
+                    "World row",
+                    "shell_row",
+                    RectF::new(18, y, 222, 16),
+                );
+            }
+            push_shell_control_fit(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::WorldScrollTrack,
+                "Scroll track",
+                "shell_scroll_track",
+                RectF::new(246, 37, 10, 88),
+                LayerFit::NineSlice {
+                    l: 4,
+                    r: 4,
+                    t: 4,
+                    b: 4,
+                },
+            );
+            nodes.push(tagged_shell_layer(
+                next,
+                "Scroll thumb",
+                "shell_scroll_thumb",
+                RectF::new(246, 37, 10, 28),
+                LayerFit::NineSlice {
+                    l: 4,
+                    r: 4,
+                    t: 4,
+                    b: 4,
+                },
+                LayerTag::WorldScrollThumb,
+            ));
+            next += 1;
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::WorldPlay,
+                "Play button",
+                "shell_button",
+                RectF::new(12, 142, 84, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::WorldCreate,
+                "Create button",
+                "shell_button",
+                RectF::new(102, 142, 142, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::WorldDelete,
+                "Delete button",
+                "shell_button",
+                RectF::new(102, 166, 142, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::WorldBack,
+                "Back button",
+                "shell_button",
+                RectF::new(180, 166, 84, 20),
+            );
+        }
+        GuiType::CreateWorld => {
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::CreateNameInput,
+                "World name input",
+                "shell_input",
+                RectF::new(16, 50, 244, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::CreateSeedInput,
+                "Seed input",
+                "shell_input",
+                RectF::new(16, 88, 244, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::CreateCreate,
+                "Create button",
+                "shell_button",
+                RectF::new(16, 139, 116, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::CreateCancel,
+                "Cancel button",
+                "shell_button",
+                RectF::new(144, 139, 116, 20),
+            );
+        }
+        GuiType::DeleteWorld => {
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::DeleteWorldConfirm,
+                "Delete world button",
+                "shell_button",
+                RectF::new(20, 96, 96, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::DeleteWorldCancel,
+                "Cancel button",
+                "shell_button",
+                RectF::new(124, 96, 96, 20),
+            );
+        }
+        GuiType::Pause => {
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::PauseResume,
+                "Resume button",
+                "shell_button",
+                RectF::new(21, 57, 176, 20),
+            );
+            push_shell_control(
+                nodes,
+                slots,
+                &mut next,
+                SlotRole::PauseSaveQuit,
+                "Save quit button",
+                "shell_button",
+                RectF::new(21, 84, 176, 20),
+            );
+        }
+        _ => {}
+    }
+}
+
 impl Project {
     pub fn new(gui_type: GuiType) -> Self {
         let (bw, bh) = gui_type.base_size();
         let bg = Layer {
             id: 1,
             name: "Background".to_string(),
-            asset: AssetSpec::Builtin { key: "panel".to_string() },
+            asset: AssetSpec::Builtin {
+                key: if gui_type.is_shell() {
+                    "shell_panel"
+                } else {
+                    "panel"
+                }
+                .to_string(),
+            },
             rect: RectF::new(0, 0, bw as i32, bh as i32),
-            fit: LayerFit::NineSlice { l: 8, r: 8, t: 8, b: 8 },
+            fit: LayerFit::NineSlice {
+                l: 8,
+                r: 8,
+                t: 8,
+                b: 8,
+            },
             opacity: 1.0,
             visible: true,
             flip_h: false,
@@ -605,13 +1031,18 @@ impl Project {
             rotation: 0,
             tag: None,
         };
+        let mut nodes = vec![Node::Layer(bg)];
+        let mut slots = Vec::new();
+        if gui_type.is_shell() {
+            add_shell_defaults(gui_type, &mut nodes, &mut slots);
+        }
         Self {
             version: 2,
             gui_type,
             scale: 1,
             canvas: Canvas { w: bw, h: bh },
-            nodes: vec![Node::Layer(bg)],
-            slots: Vec::new(),
+            nodes,
+            slots,
             hover: None,
         }
     }
@@ -626,7 +1057,10 @@ impl Project {
         if self.gui_type.aspect_locked() {
             let (bw, bh) = self.gui_type.base_size();
             let s = self.scale.max(1);
-            self.canvas = Canvas { w: bw * s, h: bh * s };
+            self.canvas = Canvas {
+                w: bw * s,
+                h: bh * s,
+            };
         }
     }
 
@@ -649,10 +1083,19 @@ impl Project {
     }
 
     pub fn flat_layers(&self) -> Vec<FlatLayer<'_>> {
-        fn walk<'a>(nodes: &'a [Node], vis: bool, group: Option<u64>, out: &mut Vec<FlatLayer<'a>>) {
+        fn walk<'a>(
+            nodes: &'a [Node],
+            vis: bool,
+            group: Option<u64>,
+            out: &mut Vec<FlatLayer<'a>>,
+        ) {
             for n in nodes {
                 match n {
-                    Node::Layer(l) => out.push(FlatLayer { layer: l, effective_visible: vis && l.visible, group }),
+                    Node::Layer(l) => out.push(FlatLayer {
+                        layer: l,
+                        effective_visible: vis && l.visible,
+                        group,
+                    }),
                     Node::Group(g) => walk(&g.children, vis && g.visible, Some(g.id), out),
                 }
             }
@@ -791,7 +1234,9 @@ mod tests {
         Layer {
             id,
             name: name.to_string(),
-            asset: AssetSpec::Builtin { key: "panel".to_string() },
+            asset: AssetSpec::Builtin {
+                key: "panel".to_string(),
+            },
             rect: RectF::new(0, 0, 16, 16),
             fit: LayerFit::Stretch,
             opacity: 1.0,
@@ -804,11 +1249,25 @@ mod tests {
     }
 
     fn group(id: u64, children: Vec<Node>) -> Group {
-        Group { id, name: format!("g{id}"), visible: true, collapsed: false, children }
+        Group {
+            id,
+            name: format!("g{id}"),
+            visible: true,
+            collapsed: false,
+            children,
+        }
     }
 
     fn proj(nodes: Vec<Node>) -> Project {
-        Project { version: 2, gui_type: GuiType::Custom, scale: 1, canvas: Canvas { w: 100, h: 100 }, nodes, slots: vec![], hover: None }
+        Project {
+            version: 2,
+            gui_type: GuiType::Custom,
+            scale: 1,
+            canvas: Canvas { w: 100, h: 100 },
+            nodes,
+            slots: vec![],
+            hover: None,
+        }
     }
 
     #[test]
@@ -823,13 +1282,27 @@ mod tests {
     fn hover_round_trips_through_llgui() {
         let mut p = proj(vec![]);
         p.hover = Some(Hover {
-            asset: AssetSpec::Builtin { key: "highlight".to_string() },
+            asset: AssetSpec::Builtin {
+                key: "highlight".to_string(),
+            },
             margin: 6,
-            fit: LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 },
+            fit: LayerFit::NineSlice {
+                l: 4,
+                r: 4,
+                t: 4,
+                b: 4,
+            },
             opacity: 0.8,
         });
         let s = serde_json::to_string(&p).unwrap();
         assert_eq!(serde_json::from_str::<Project>(&s).unwrap(), p);
+    }
+
+    #[test]
+    fn scroll_track_role_does_not_preview_hover() {
+        assert!(!SlotRole::WorldScrollTrack.previews_hover());
+        assert!(SlotRole::WorldRow.previews_hover());
+        assert!(SlotRole::TitleStart.previews_hover());
     }
 
     #[test]
@@ -850,7 +1323,13 @@ mod tests {
         let p_inner = group(11, vec![Node::Layer(layer(2, "a"))]);
         let target = group(20, vec![]);
         let mut p = proj(vec![Node::Group(p_inner), Node::Group(target)]);
-        p.move_item(11, DropTarget { container: Container::Group(20), index: 0 });
+        p.move_item(
+            11,
+            DropTarget {
+                container: Container::Group(20),
+                index: 0,
+            },
+        );
         assert_eq!(p.nodes.len(), 1); // only group 20 at top
         let g20 = p.group(20).unwrap();
         assert_eq!(g20.children.len(), 1);
@@ -865,7 +1344,13 @@ mod tests {
         let outer = group(10, vec![Node::Group(inner)]);
         let mut p = proj(vec![Node::Group(outer)]);
         // Try to drop the outer group into its own child group -> rejected.
-        p.move_item(10, DropTarget { container: Container::Group(11), index: 0 });
+        p.move_item(
+            10,
+            DropTarget {
+                container: Container::Group(11),
+                index: 0,
+            },
+        );
         // Tree unchanged: outer still at top, inner still inside outer.
         assert_eq!(p.nodes.len(), 1);
         assert_eq!(p.nodes[0].id(), 10);
@@ -915,7 +1400,13 @@ mod tests {
         let inner = group(11, vec![Node::Layer(layer(3, "a"))]);
         let outer = group(10, vec![Node::Group(inner)]);
         let mut p = proj(vec![Node::Group(outer)]);
-        p.move_item(3, DropTarget { container: Container::Top, index: 0 });
+        p.move_item(
+            3,
+            DropTarget {
+                container: Container::Top,
+                index: 0,
+            },
+        );
         assert_eq!(p.nodes[0].id(), 3);
         assert!(p.group(11).unwrap().children.is_empty());
     }
@@ -928,7 +1419,10 @@ mod tests {
 
     #[test]
     fn tag_is_unique_and_moves_between_layers() {
-        let mut p = proj(vec![Node::Layer(tagged(2, "a", LayerTag::FurnaceArrow)), Node::Layer(layer(3, "b"))]);
+        let mut p = proj(vec![
+            Node::Layer(tagged(2, "a", LayerTag::FurnaceArrow)),
+            Node::Layer(layer(3, "b")),
+        ]);
         // Applying the same tag to b moves it off a.
         p.set_layer_tag(3, Some(LayerTag::FurnaceArrow));
         assert_eq!(p.layer(2).unwrap().tag, None);
@@ -966,7 +1460,10 @@ mod tests {
 
     #[test]
     fn applying_a_tag_held_deep_in_a_group_clears_the_nested_layer() {
-        let inner = group(11, vec![Node::Layer(tagged(3, "deep", LayerTag::FurnaceFlame))]);
+        let inner = group(
+            11,
+            vec![Node::Layer(tagged(3, "deep", LayerTag::FurnaceFlame))],
+        );
         let outer = group(10, vec![Node::Group(inner)]);
         let mut p = proj(vec![Node::Layer(layer(2, "top")), Node::Group(outer)]);
         p.set_layer_tag(2, Some(LayerTag::FurnaceFlame));
@@ -987,7 +1484,10 @@ mod tests {
 
     #[test]
     fn tag_round_trips_and_untagged_layers_omit_the_field() {
-        let mut p = proj(vec![Node::Layer(tagged(2, "a", LayerTag::FurnaceArrow)), Node::Layer(layer(3, "b"))]);
+        let mut p = proj(vec![
+            Node::Layer(tagged(2, "a", LayerTag::FurnaceArrow)),
+            Node::Layer(layer(3, "b")),
+        ]);
         p.version = 2;
         let s = serde_json::to_string(&p).unwrap();
         // Untagged layers don't write the field (skip_serializing_if).

@@ -26,7 +26,7 @@
 //! counts and the row-major ordering at load, so a future re-bake can never
 //! silently mis-route a click.
 
-use super::{gui_scale, GuiKind, MenuSlot, Role, SlotRect};
+use super::{gui_scale, GuiKind, HoverFit, HoverFitJson, MenuSlot, Role, SlotRect};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,7 +65,7 @@ fn load_baked() -> Vec<Loaded> {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Some(def) = GuiDef::from_manifest(&text) else {
+        let Some(mut def) = GuiDef::from_manifest(&text) else {
             eprintln!("gui: ignoring unparseable manifest {}", path.display());
             continue;
         };
@@ -87,6 +87,11 @@ fn load_baked() -> Vec<Loaded> {
             .as_ref()
             .map(|h| dir.join(&h.image))
             .filter(|p| p.exists());
+        if let (Some(hover), Some(path)) = (def.hover.as_mut(), hover_path.as_ref()) {
+            if let Ok((w, h)) = image::image_dimensions(path) {
+                hover.image_size = (w, h);
+            }
+        }
         let overlay_paths = def
             .overlays
             .iter()
@@ -206,10 +211,10 @@ struct SlotJson {
 struct HoverJson {
     image: String,
     margin: i32,
+    #[serde(default)]
+    fit: HoverFitJson,
     #[serde(default = "default_opacity")]
     opacity: f32,
-    // `fit` is present in the manifest but the game draws the highlight stretched
-    // for now; serde ignores the unlisted key.
 }
 
 #[derive(Deserialize)]
@@ -231,6 +236,8 @@ pub(crate) struct HoverDef {
     /// Logical px the highlight extends beyond the slot on every side.
     pub margin: i32,
     pub opacity: f32,
+    pub fit: HoverFit,
+    pub image_size: (u32, u32),
     /// Panel-relative PNG filename (resolved to a path in [`load_baked`]).
     image: String,
 }
@@ -294,6 +301,8 @@ impl GuiDef {
         let hover = m.hover.map(|h| HoverDef {
             margin: (h.margin as f32 / scale).round() as i32,
             opacity: h.opacity,
+            fit: HoverFit::from_json(h.fit, scale),
+            image_size: (1, 1),
             image: h.image,
         });
         Some(GuiDef {

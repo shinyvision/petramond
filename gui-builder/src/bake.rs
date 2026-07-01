@@ -42,7 +42,9 @@ pub fn layer_regions(
     let (xf, yf, wf, hf) = (x as f32, y as f32, w as f32, h as f32);
     let mut regs = match fit {
         LayerFit::Stretch => nine_slice_regions(src_w, src_h, 0, 0, 0, 0, xf, yf, wf, hf),
-        LayerFit::NineSlice { l, r, t, b } => nine_slice_regions(src_w, src_h, l, r, t, b, xf, yf, wf, hf),
+        LayerFit::NineSlice { l, r, t, b } => {
+            nine_slice_regions(src_w, src_h, l, r, t, b, xf, yf, wf, hf)
+        }
         LayerFit::Tile => tile_regions(src_w, src_h, xf, yf, wf, hf),
     };
     for reg in &mut regs {
@@ -59,7 +61,18 @@ pub fn layer_regions(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn nine_slice_regions(src_w: usize, src_h: usize, l: u32, r: u32, t: u32, b: u32, rx: f32, ry: f32, rw: f32, rh: f32) -> Vec<Region> {
+fn nine_slice_regions(
+    src_w: usize,
+    src_h: usize,
+    l: u32,
+    r: u32,
+    t: u32,
+    b: u32,
+    rx: f32,
+    ry: f32,
+    rw: f32,
+    rh: f32,
+) -> Vec<Region> {
     let sw = src_w.max(1) as f32;
     let sh = src_h.max(1) as f32;
     // Clamp insets so opposite pairs never overlap in source OR dest.
@@ -101,7 +114,10 @@ fn tile_regions(src_w: usize, src_h: usize, rx: f32, ry: f32, rw: f32, rh: f32) 
         let mut cols = 0;
         while x < rx + rw - 0.01 && cols < 4096 {
             let tw = sw.min(rx + rw - x);
-            out.push(Region { dst: [x, y, tw, th], uv: [0.0, 0.0, tw / sw, th / sh] });
+            out.push(Region {
+                dst: [x, y, tw, th],
+                uv: [0.0, 0.0, tw / sw, th / sh],
+            });
             x += sw;
             cols += 1;
         }
@@ -116,7 +132,9 @@ fn tile_regions(src_w: usize, src_h: usize, rx: f32, ry: f32, rw: f32, rh: f32) 
 // ---------------------------------------------------------------------------
 
 fn asset_image(lib: &AssetLibrary, spec: &AssetSpec) -> Result<RgbaImage, String> {
-    let data = lib.get(spec).ok_or_else(|| format!("asset not loaded: {spec:?}"))?;
+    let data = lib
+        .get(spec)
+        .ok_or_else(|| format!("asset not loaded: {spec:?}"))?;
     RgbaImage::from_raw(data.size[0] as u32, data.size[1] as u32, data.rgba.clone())
         .ok_or_else(|| "asset buffer size mismatch".to_string())
 }
@@ -153,7 +171,12 @@ fn blit_region(canvas: &mut RgbaImage, src: &RgbaImage, reg: &Region, opacity: f
             p.0[3] = (p.0[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
         }
     }
-    imageops::overlay(canvas, &resized, reg.dst[0].round() as i64, reg.dst[1].round() as i64);
+    imageops::overlay(
+        canvas,
+        &resized,
+        reg.dst[0].round() as i64,
+        reg.dst[1].round() as i64,
+    );
 }
 
 /// Nearest-neighbor rotation of `src` clockwise by `angle` radians about its
@@ -232,7 +255,9 @@ pub fn bake_png(project: &Project, lib: &AssetLibrary) -> Result<RgbaImage, Stri
 
     // Slot frames are baked separately so a slot's logical position and its
     // painted frame can never drift apart.
-    let frame_spec = AssetSpec::Builtin { key: "slot".to_string() };
+    let frame_spec = AssetSpec::Builtin {
+        key: "slot".to_string(),
+    };
     if project.slots.iter().any(|s| s.paint_frame) {
         let frame = asset_image(lib, &frame_spec)?;
         for slot in &project.slots {
@@ -240,7 +265,10 @@ pub fn bake_png(project: &Project, lib: &AssetLibrary) -> Result<RgbaImage, Stri
                 continue;
             }
             for cell in slot.cells() {
-                let reg = Region { dst: [cell.x as f32, cell.y as f32, cell.w as f32, cell.h as f32], uv: [0.0, 0.0, 1.0, 1.0] };
+                let reg = Region {
+                    dst: [cell.x as f32, cell.y as f32, cell.w as f32, cell.h as f32],
+                    uv: [0.0, 0.0, 1.0, 1.0],
+                };
                 blit_region(&mut canvas, &frame, &reg, 1.0);
             }
         }
@@ -281,6 +309,7 @@ struct TaggedManifest {
     y: i32,
     w: u32,
     h: u32,
+    fit: LayerFit,
 }
 
 #[derive(Serialize)]
@@ -297,11 +326,22 @@ struct Manifest {
     tagged: Vec<TaggedManifest>,
 }
 
-fn build_manifest(project: &Project, image_name: String, hover: Option<HoverManifest>, tagged: Vec<TaggedManifest>) -> Manifest {
+fn build_manifest(
+    project: &Project,
+    image_name: String,
+    hover: Option<HoverManifest>,
+    tagged: Vec<TaggedManifest>,
+) -> Manifest {
     let mut slots = Vec::new();
     for slot in &project.slots {
         for cell in slot.cells() {
-            slots.push(ManifestSlot { role: slot.role, x: cell.x, y: cell.y, w: cell.w, h: cell.h });
+            slots.push(ManifestSlot {
+                role: slot.role,
+                x: cell.x,
+                y: cell.y,
+                w: cell.w,
+                h: cell.h,
+            });
         }
     }
     Manifest {
@@ -318,10 +358,17 @@ fn build_manifest(project: &Project, image_name: String, hover: Option<HoverMani
 /// Bake the project to `<name>.png` + `<name>.json` at the chosen png path.
 pub fn bake_to_files(project: &Project, lib: &AssetLibrary, png_path: &Path) -> Result<(), String> {
     let img = bake_png(project, lib)?;
-    let png_path = if png_path.extension().is_some() { png_path.to_path_buf() } else { png_path.with_extension("png") };
+    let png_path = if png_path.extension().is_some() {
+        png_path.to_path_buf()
+    } else {
+        png_path.with_extension("png")
+    };
     img.save(&png_path).map_err(|e| format!("write png: {e}"))?;
 
-    let stem = png_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "gui".to_string());
+    let stem = png_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "gui".to_string());
 
     // The hover highlight (if any) is a SEPARATE PNG next to the panel — it's
     // drawn dynamically on hover, so it can't be composited into the static panel.
@@ -329,8 +376,14 @@ pub fn bake_to_files(project: &Project, lib: &AssetLibrary, png_path: &Path) -> 
         let src = asset_image(lib, &h.asset)?;
         let hover_name = format!("{stem}_hover.png");
         let hover_path = png_path.with_file_name(&hover_name);
-        src.save(&hover_path).map_err(|e| format!("write hover png: {e}"))?;
-        Some(HoverManifest { image: hover_name, margin: h.margin, fit: h.fit, opacity: h.opacity })
+        src.save(&hover_path)
+            .map_err(|e| format!("write hover png: {e}"))?;
+        Some(HoverManifest {
+            image: hover_name,
+            margin: h.margin,
+            fit: h.fit,
+            opacity: h.opacity,
+        })
     } else {
         None
     };
@@ -347,8 +400,18 @@ pub fn bake_to_files(project: &Project, lib: &AssetLibrary, png_path: &Path) -> 
         let (overlay, x, y) = render_layer(fl.layer, lib)?;
         let (w, h) = (overlay.width(), overlay.height());
         let name = format!("{stem}_{}.png", tag.key());
-        overlay.save(png_path.with_file_name(&name)).map_err(|e| format!("write tagged png: {e}"))?;
-        tagged.push(TaggedManifest { tag, image: name, x, y, w, h });
+        overlay
+            .save(png_path.with_file_name(&name))
+            .map_err(|e| format!("write tagged png: {e}"))?;
+        tagged.push(TaggedManifest {
+            tag,
+            image: name,
+            x,
+            y,
+            w,
+            h,
+            fit: fl.layer.fit,
+        });
     }
 
     let json_path = png_path.with_extension("json");
@@ -376,25 +439,67 @@ mod tests {
 
     #[test]
     fn nine_slice_keeps_corners_native_and_covers_rect() {
-        let regs = layer_regions(LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 }, 16, 16, 0, 0, 80, 60, false, false);
+        let regs = layer_regions(
+            LayerFit::NineSlice {
+                l: 4,
+                r: 4,
+                t: 4,
+                b: 4,
+            },
+            16,
+            16,
+            0,
+            0,
+            80,
+            60,
+            false,
+            false,
+        );
         assert_eq!(regs.len(), 9);
         // Top-left corner: native inset size, sampling the source corner.
-        let tl = regs.iter().find(|r| r.dst[0] == 0.0 && r.dst[1] == 0.0).unwrap();
+        let tl = regs
+            .iter()
+            .find(|r| r.dst[0] == 0.0 && r.dst[1] == 0.0)
+            .unwrap();
         assert_eq!((tl.dst[2], tl.dst[3]), (4.0, 4.0));
         assert_eq!(tl.uv, [0.0, 0.0, 4.0 / 16.0, 4.0 / 16.0]);
         // The union of regions spans exactly the destination rect.
-        let max_x = regs.iter().map(|r| r.dst[0] + r.dst[2]).fold(0.0_f32, f32::max);
-        let max_y = regs.iter().map(|r| r.dst[1] + r.dst[3]).fold(0.0_f32, f32::max);
+        let max_x = regs
+            .iter()
+            .map(|r| r.dst[0] + r.dst[2])
+            .fold(0.0_f32, f32::max);
+        let max_y = regs
+            .iter()
+            .map(|r| r.dst[1] + r.dst[3])
+            .fold(0.0_f32, f32::max);
         assert_eq!((max_x, max_y), (80.0, 60.0));
     }
 
     #[test]
     fn nine_slice_insets_clamp_when_rect_too_small() {
-        let regs = layer_regions(LayerFit::NineSlice { l: 8, r: 8, t: 8, b: 8 }, 16, 16, 0, 0, 6, 6, false, false);
+        let regs = layer_regions(
+            LayerFit::NineSlice {
+                l: 8,
+                r: 8,
+                t: 8,
+                b: 8,
+            },
+            16,
+            16,
+            0,
+            0,
+            6,
+            6,
+            false,
+            false,
+        );
         for r in &regs {
             assert!(r.dst[2] >= 0.0 && r.dst[3] >= 0.0);
         }
-        let max_x = regs.iter().map(|r| r.dst[0] + r.dst[2]).fold(0.0_f32, f32::max);
+        let max_x = regs
+            .iter()
+            .map(|r| r.dst[0] + r.dst[2])
+            .fold(0.0_f32, f32::max);
         assert!((max_x - 6.0).abs() < 0.001);
     }
 
@@ -418,7 +523,22 @@ mod tests {
     #[test]
     fn flip_h_mirrors_nine_slice_corner_to_far_side() {
         // The top-left 4x4 corner should land at the top-right after h-flip.
-        let regs = layer_regions(LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 }, 16, 16, 0, 0, 80, 60, true, false);
+        let regs = layer_regions(
+            LayerFit::NineSlice {
+                l: 4,
+                r: 4,
+                t: 4,
+                b: 4,
+            },
+            16,
+            16,
+            0,
+            0,
+            80,
+            60,
+            true,
+            false,
+        );
         assert!(regs.iter().any(|r| r.dst == [76.0, 0.0, 4.0, 4.0]));
     }
 

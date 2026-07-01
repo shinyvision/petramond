@@ -1,0 +1,142 @@
+{
+  "version": 2,
+  "gui_type": "pause",
+  "scale": 1,
+  "canvas": {
+    "w": 218,
+    "h": 116
+  },
+  "nodes": [
+    {
+      "node": "layer",
+      "id": 1,
+      "name": "Background",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_panel"
+      },
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 218,
+        "h": 116
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 8,
+        "r": 8,
+        "t": 8,
+        "b": 8
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 2,
+      "name": "Resume button",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_button"
+      },
+      "rect": {
+        "x": 21,
+        "y": 57,
+        "w": 176,
+        "h": 20
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 6,
+        "r": 6,
+        "t": 6,
+        "b": 6
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 4,
+      "name": "Save quit button",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_button"
+      },
+      "rect": {
+        "x": 21,
+        "y": 84,
+        "w": 176,
+        "h": 20
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 6,
+        "r": 6,
+        "t": 6,
+        "b": 6
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    }
+  ],
+  "slots": [
+    {
+      "id": 3,
+      "role": "pause_resume",
+      "rect": {
+        "x": 21,
+        "y": 57,
+        "w": 176,
+        "h": 20
+      },
+      "grid": {
+        "cols": 1,
+        "rows": 1,
+        "pitch_x": 18,
+        "pitch_y": 18
+      },
+      "color": [
+        120,
+        220,
+        150,
+        96
+      ],
+      "paint_frame": false,
+      "visible": true
+    },
+    {
+      "id": 5,
+      "role": "pause_save_quit",
+      "rect": {
+        "x": 21,
+        "y": 84,
+        "w": 176,
+        "h": 20
+      },
+      "grid": {
+        "cols": 1,
+        "rows": 1,
+        "pitch_x": 18,
+        "pitch_y": 18
+      },
+      "color": [
+        220,
+        160,
+        120,
+        96
+      ],
+      "paint_frame": false,
+      "visible": true
+    }
+  ]
+}

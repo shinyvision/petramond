@@ -28,6 +28,16 @@ pub enum PointerButton {
     Secondary,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextKey {
+    Backspace,
+    Delete,
+    Enter,
+    Tab,
+    ArrowUp,
+    ArrowDown,
+}
+
 /// Keyboard modifier state (Ctrl / Shift), tracked from the OS independently of
 /// the game-action keybinds. UI shortcuts key off these physical modifiers — Ctrl
 /// for "drop the whole stack", Shift for inventory quick-move — so they stay
@@ -64,6 +74,20 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::Digit7 => Some(Control::SelectHotbar(6)),
         KeyCode::Digit8 => Some(Control::SelectHotbar(7)),
         KeyCode::Digit9 => Some(Control::SelectHotbar(8)),
+        _ => None,
+    }
+}
+
+pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
+    use winit::keyboard::NamedKey;
+
+    match key {
+        NamedKey::Backspace => Some(TextKey::Backspace),
+        NamedKey::Delete => Some(TextKey::Delete),
+        NamedKey::Enter => Some(TextKey::Enter),
+        NamedKey::Tab => Some(TextKey::Tab),
+        NamedKey::ArrowUp => Some(TextKey::ArrowUp),
+        NamedKey::ArrowDown => Some(TextKey::ArrowDown),
         _ => None,
     }
 }

@@ -26,7 +26,12 @@ impl Selection {
 
 /// An in-flight drag from the asset palette onto the canvas.
 pub enum DragPayload {
-    Asset { spec: AssetSpec, size: [usize; 2], default_fit: LayerFit, cover: bool },
+    Asset {
+        spec: AssetSpec,
+        size: [usize; 2],
+        default_fit: LayerFit,
+        cover: bool,
+    },
     Slot,
 }
 
@@ -128,7 +133,10 @@ impl App {
             project,
             selection: None,
             show_slots: true,
-            view: View { zoom: 1.0, pan: egui::Vec2::ZERO },
+            view: View {
+                zoom: 1.0,
+                pan: egui::Vec2::ZERO,
+            },
             drag: None,
             active_drag: None,
             panning: false,
@@ -137,7 +145,8 @@ impl App {
             rename_buf: String::new(),
             rename_focus: false,
             project_path: None,
-            status: "New chest GUI. Drag parts from the right; place slots; File ▾ to bake.".to_string(),
+            status: "New chest GUI. Drag parts from the right; place slots; File ▾ to bake."
+                .to_string(),
             snap_enabled: false,
             snap_step: 8,
             show_snap_dialog: false,
@@ -164,7 +173,10 @@ impl App {
     // ---- Undo / redo -----------------------------------------------------
 
     fn snapshot(&self) -> Snapshot {
-        Snapshot { project: self.project.clone(), selection: self.selection }
+        Snapshot {
+            project: self.project.clone(),
+            selection: self.selection,
+        }
     }
 
     pub fn begin_edit(&mut self) {
@@ -246,7 +258,11 @@ impl App {
         let start = self.next_id + 1;
         if let Some((new_id, used, is_group)) = self.project.duplicate(id, start) {
             self.next_id += used;
-            self.selection = Some(if is_group { Selection::Group(new_id) } else { Selection::Layer(new_id) });
+            self.selection = Some(if is_group {
+                Selection::Group(new_id)
+            } else {
+                Selection::Layer(new_id)
+            });
             self.status = "Duplicated".to_string();
         }
     }
@@ -308,7 +324,10 @@ impl App {
     }
 
     pub fn open(&mut self, ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new().add_filter("Llamacraft GUI", &["llgui"]).pick_file() else {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Llamacraft GUI", &["llgui"])
+            .pick_file()
+        else {
             return;
         };
         match std::fs::read_to_string(&path)
@@ -344,7 +363,11 @@ impl App {
         else {
             return;
         };
-        let path = if path.extension().is_some() { path } else { path.with_extension("llgui") };
+        let path = if path.extension().is_some() {
+            path
+        } else {
+            path.with_extension("llgui")
+        };
         self.write_project(&path);
         self.project_path = Some(path);
     }
@@ -378,7 +401,12 @@ impl App {
     }
 
     fn ensure_assets(&mut self, ctx: &egui::Context) {
-        let mut specs: Vec<AssetSpec> = self.project.flat_layers().iter().map(|fl| fl.layer.asset.clone()).collect();
+        let mut specs: Vec<AssetSpec> = self
+            .project
+            .flat_layers()
+            .iter()
+            .map(|fl| fl.layer.asset.clone())
+            .collect();
         if let Some(h) = &self.project.hover {
             specs.push(h.asset.clone());
         }
@@ -389,7 +417,11 @@ impl App {
             }
         }
         if !missing.is_empty() {
-            self.status = format!("Loaded with {} missing asset(s): {}", missing.len(), missing.join("; "));
+            self.status = format!(
+                "Loaded with {} missing asset(s): {}",
+                missing.len(),
+                missing.join("; ")
+            );
         }
     }
 
@@ -471,6 +503,11 @@ pub fn gui_file_stem(ty: GuiType) -> &'static str {
         GuiType::Furnace => "furnace",
         GuiType::Hotbar => "hotbar",
         GuiType::FurnitureWorkbench => "furniture_workbench",
+        GuiType::Title => "title",
+        GuiType::WorldSelect => "world_select",
+        GuiType::CreateWorld => "create_world",
+        GuiType::DeleteWorld => "delete_world",
+        GuiType::Pause => "pause",
         GuiType::Custom => "gui",
     }
 }

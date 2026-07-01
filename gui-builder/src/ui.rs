@@ -8,7 +8,10 @@
 
 use crate::app::{App, DragPayload, PanelItem, Selection, TagDialog};
 use crate::icons;
-use crate::model::{AssetSpec, Container, DropTarget, Grid, GuiType, Hover, Layer, LayerFit, LayerTag, Node, RectF, Slot, SlotRole};
+use crate::model::{
+    AssetSpec, Container, DropTarget, Grid, GuiType, Hover, Layer, LayerFit, LayerTag, Node, RectF,
+    Slot, SlotRole,
+};
 use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, RichText, Sense, Stroke};
 use std::collections::HashSet;
 
@@ -18,9 +21,17 @@ fn rtl() -> egui::Layout {
 
 fn eye_button(ui: &mut egui::Ui, visible: bool) -> bool {
     let (glyph, col, hint) = if visible {
-        (icons::EYE, Color32::from_gray(235), "Visible — click to hide")
+        (
+            icons::EYE,
+            Color32::from_gray(235),
+            "Visible — click to hide",
+        )
     } else {
-        (icons::EYE_OFF, Color32::from_gray(120), "Hidden — click to show")
+        (
+            icons::EYE_OFF,
+            Color32::from_gray(120),
+            "Hidden — click to show",
+        )
     };
     ui.add(egui::Button::new(RichText::new(glyph).color(col).size(16.0)).frame(false))
         .on_hover_text(hint)
@@ -52,11 +63,13 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
 
             ui.label("Type");
             let mut ty = app.project.gui_type;
-            egui::ComboBox::from_id_salt("gui_type").selected_text(ty.label()).show_ui(ui, |ui| {
-                for t in GuiType::ALL {
-                    ui.selectable_value(&mut ty, t, t.label());
-                }
-            });
+            egui::ComboBox::from_id_salt("gui_type")
+                .selected_text(ty.label())
+                .show_ui(ui, |ui| {
+                    for t in GuiType::ALL {
+                        ui.selectable_value(&mut ty, t, t.label());
+                    }
+                });
             if ty != app.project.gui_type {
                 app.begin_edit();
                 app.project.gui_type = ty;
@@ -66,11 +79,13 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
             if app.project.gui_type.aspect_locked() {
                 ui.label("Resolution");
                 let mut s = app.project.scale.max(1);
-                egui::ComboBox::from_id_salt("scale").selected_text(format!("{s}×")).show_ui(ui, |ui| {
-                    for v in 1..=8u32 {
-                        ui.selectable_value(&mut s, v, format!("{v}×"));
-                    }
-                });
+                egui::ComboBox::from_id_salt("scale")
+                    .selected_text(format!("{s}×"))
+                    .show_ui(ui, |ui| {
+                        for v in 1..=8u32 {
+                            ui.selectable_value(&mut s, v, format!("{v}×"));
+                        }
+                    });
                 if s != app.project.scale {
                     app.begin_edit();
                     app.project.scale = s;
@@ -78,21 +93,37 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
                 }
             } else {
                 ui.label("W");
-                if ui.add(egui::DragValue::new(&mut app.project.canvas.w).speed(1.0)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut app.project.canvas.w).speed(1.0))
+                    .changed()
+                {
                     app.begin_edit();
                 }
                 ui.label("H");
-                if ui.add(egui::DragValue::new(&mut app.project.canvas.h).speed(1.0)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut app.project.canvas.h).speed(1.0))
+                    .changed()
+                {
                     app.begin_edit();
                 }
                 app.project.canvas.w = app.project.canvas.w.max(1);
                 app.project.canvas.h = app.project.canvas.h.max(1);
             }
-            ui.label(RichText::new(format!("{}×{} px", app.project.canvas.w, app.project.canvas.h)).weak());
+            ui.label(
+                RichText::new(format!(
+                    "{}×{} px",
+                    app.project.canvas.w, app.project.canvas.h
+                ))
+                .weak(),
+            );
 
             ui.separator();
             ui.label("Zoom");
-            ui.add(egui::Slider::new(&mut app.view.zoom, 0.1..=8.0).logarithmic(true).show_value(false));
+            ui.add(
+                egui::Slider::new(&mut app.view.zoom, 0.1..=8.0)
+                    .logarithmic(true)
+                    .show_value(false),
+            );
             if ui.button("Fit").clicked() {
                 app.view.zoom = 1.0;
                 app.view.pan = egui::Vec2::ZERO;
@@ -140,22 +171,39 @@ fn file_menu(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
 
 fn edit_menu(app: &mut App, ui: &mut egui::Ui) {
     ui.menu_button("Edit", |ui| {
-        if ui.add_enabled(app.can_undo(), egui::Button::new("Undo   Ctrl+Z")).clicked() {
+        if ui
+            .add_enabled(app.can_undo(), egui::Button::new("Undo   Ctrl+Z"))
+            .clicked()
+        {
             app.undo();
             ui.close_menu();
         }
-        if ui.add_enabled(app.can_redo(), egui::Button::new("Redo   Ctrl+Shift+Z")).clicked() {
+        if ui
+            .add_enabled(app.can_redo(), egui::Button::new("Redo   Ctrl+Shift+Z"))
+            .clicked()
+        {
             app.redo();
             ui.close_menu();
         }
         ui.separator();
         ui.checkbox(&mut app.snap_enabled, "Snap to grid");
-        if ui.button(format!("Snapping resolution…  ({} px)", app.snap_step)).clicked() {
+        if ui
+            .button(format!("Snapping resolution…  ({} px)", app.snap_step))
+            .clicked()
+        {
             app.show_snap_dialog = true;
             ui.close_menu();
         }
-        ui.label(RichText::new("Ctrl while dragging bypasses snap.").weak().small());
-        ui.label(RichText::new("Shift while dragging locks an axis.").weak().small());
+        ui.label(
+            RichText::new("Ctrl while dragging bypasses snap.")
+                .weak()
+                .small(),
+        );
+        ui.label(
+            RichText::new("Shift while dragging locks an axis.")
+                .weak()
+                .small(),
+        );
     });
 }
 
@@ -164,24 +212,28 @@ pub fn snap_dialog(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_snap_dialog;
-    egui::Window::new("Snapping resolution").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-        ui.checkbox(&mut app.snap_enabled, "Snap to grid enabled");
-        ui.add_space(6.0);
-        ui.label("Grid step (pixels):");
-        ui.add(egui::Slider::new(&mut app.snap_step, 1..=64));
-        ui.horizontal(|ui| {
-            ui.label("Exact:");
-            ui.add(egui::DragValue::new(&mut app.snap_step).speed(1.0));
-        });
-        ui.horizontal(|ui| {
-            for preset in [1, 2, 4, 8, 16, 18] {
-                if ui.small_button(preset.to_string()).clicked() {
-                    app.snap_step = preset;
+    egui::Window::new("Snapping resolution")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.checkbox(&mut app.snap_enabled, "Snap to grid enabled");
+            ui.add_space(6.0);
+            ui.label("Grid step (pixels):");
+            ui.add(egui::Slider::new(&mut app.snap_step, 1..=64));
+            ui.horizontal(|ui| {
+                ui.label("Exact:");
+                ui.add(egui::DragValue::new(&mut app.snap_step).speed(1.0));
+            });
+            ui.horizontal(|ui| {
+                for preset in [1, 2, 4, 8, 16, 18] {
+                    if ui.small_button(preset.to_string()).clicked() {
+                        app.snap_step = preset;
+                    }
                 }
-            }
+            });
+            app.snap_step = app.snap_step.clamp(1, 1024);
         });
-        app.snap_step = app.snap_step.clamp(1, 1024);
-    });
     app.show_snap_dialog = open;
 }
 
@@ -252,43 +304,52 @@ pub fn tag_dialog(app: &mut App, ctx: &egui::Context) {
 // ===========================================================================
 
 pub fn left_panel(app: &mut App, ctx: &egui::Context) {
-    egui::SidePanel::left("left").resizable(true).default_width(290.0).show(ctx, |ui| {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.heading("Layers");
-                ui.with_layout(rtl(), |ui| {
-                    if ui.button(format!("{} Group", icons::PLUS)).clicked() {
-                        app.add_group();
-                    }
+    egui::SidePanel::left("left")
+        .resizable(true)
+        .default_width(290.0)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.heading("Layers");
+                    ui.with_layout(rtl(), |ui| {
+                        if ui.button(format!("{} Group", icons::PLUS)).clicked() {
+                            app.add_group();
+                        }
+                    });
                 });
-            });
-            ui.label(RichText::new("top = back · drag to reorder · dbl-click to rename · right-click for menu").weak().small());
-            tree_panel(app, ui);
+                ui.label(
+                    RichText::new(
+                        "top = back · drag to reorder · dbl-click to rename · right-click for menu",
+                    )
+                    .weak()
+                    .small(),
+                );
+                tree_panel(app, ui);
 
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.heading("Slots");
-                ui.with_layout(rtl(), |ui| {
-                    if ui.button(format!("{} Slot", icons::PLUS)).clicked() {
-                        add_slot_center(app);
-                    }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.heading("Slots");
+                    ui.with_layout(rtl(), |ui| {
+                        if ui.button(format!("{} Slot", icons::PLUS)).clicked() {
+                            add_slot_center(app);
+                        }
+                    });
                 });
+                slots_list(app, ui);
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.heading("Hover highlight");
+                hover_panel(app, ui);
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.heading("Inspector");
+                inspector(app, ui);
             });
-            slots_list(app, ui);
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.heading("Hover highlight");
-            hover_panel(app, ui);
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.heading("Inspector");
-            inspector(app, ui);
         });
-    });
 }
 
 enum TreeOp {
@@ -360,7 +421,10 @@ fn tree_panel(app: &mut App, ui: &mut egui::Ui) {
     let pointer = ui.ctx().input(|i| i.pointer.hover_pos());
     let released = ui.ctx().input(|i| i.pointer.any_released());
     let drag_name = dragging.and_then(|d| {
-        app.project.group(d.id).map(|g| g.name.clone()).or_else(|| app.project.layer(d.id).map(|l| l.name.clone()))
+        app.project
+            .group(d.id)
+            .map(|g| g.name.clone())
+            .or_else(|| app.project.layer(d.id).map(|l| l.name.clone()))
     });
     // When dragging a group, its own subtree is not a valid drop destination.
     let forbidden: HashSet<u64> = match dragging {
@@ -379,33 +443,76 @@ fn tree_panel(app: &mut App, ui: &mut egui::Ui) {
 
     for row in &rows {
         let rect = if row.is_group {
-            render_group_header(app, ui, sel, renaming, row.id, &row.name, row.visible, row.collapsed, row.depth, &mut ops)
+            render_group_header(
+                app,
+                ui,
+                sel,
+                renaming,
+                row.id,
+                &row.name,
+                row.visible,
+                row.collapsed,
+                row.depth,
+                &mut ops,
+            )
         } else {
-            render_layer_row(app, ui, sel, renaming, row.id, &row.name, row.visible, row.tag, row.depth, &mut ops)
+            render_layer_row(
+                app,
+                ui,
+                sel,
+                renaming,
+                row.id,
+                &row.name,
+                row.visible,
+                row.tag,
+                row.depth,
+                &mut ops,
+            )
         };
         last_bottom = rect.bottom();
-        consider_drop(row, rect, dragging, &forbidden, pointer, &mut drop, &mut line);
+        consider_drop(
+            row, rect, dragging, &forbidden, pointer, &mut drop, &mut line,
+        );
     }
     if rows.is_empty() {
-        ui.label(RichText::new("No layers. Drag a part from the right.").weak().small());
+        ui.label(
+            RichText::new("No layers. Drag a part from the right.")
+                .weak()
+                .small(),
+        );
     }
 
     // Dropping in the empty space below the list appends to the top level.
     if let (Some(_), Some(p)) = (dragging, pointer) {
         if drop.is_none() && p.y > last_bottom {
-            drop = Some(DropTarget { container: Container::Top, index: top_len });
+            drop = Some(DropTarget {
+                container: Container::Top,
+                index: top_len,
+            });
             line = Some((last_bottom, ui.min_rect().left()));
         }
     }
 
     if let Some((y, x0)) = line {
         let r = ui.min_rect();
-        ui.painter().hline(egui::Rangef::new(x0, r.right()), y, Stroke::new(2.0, Color32::from_rgb(250, 220, 90)));
+        ui.painter().hline(
+            egui::Rangef::new(x0, r.right()),
+            y,
+            Stroke::new(2.0, Color32::from_rgb(250, 220, 90)),
+        );
     }
     if dragging.is_some() {
         if let (Some(p), Some(name)) = (pointer, &drag_name) {
-            let gp = ui.ctx().layer_painter(LayerId::new(Order::Tooltip, Id::new("panel_ghost")));
-            gp.text(p + egui::vec2(14.0, 2.0), egui::Align2::LEFT_TOP, name, egui::FontId::proportional(13.0), Color32::WHITE);
+            let gp = ui
+                .ctx()
+                .layer_painter(LayerId::new(Order::Tooltip, Id::new("panel_ghost")));
+            gp.text(
+                p + egui::vec2(14.0, 2.0),
+                egui::Align2::LEFT_TOP,
+                name,
+                egui::FontId::proportional(13.0),
+                Color32::WHITE,
+            );
         }
     }
 
@@ -421,7 +528,18 @@ fn tree_panel(app: &mut App, ui: &mut egui::Ui) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_layer_row(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: Option<u64>, id: u64, name: &str, visible: bool, tag: Option<LayerTag>, depth: usize, ops: &mut Vec<TreeOp>) -> Rect {
+fn render_layer_row(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    sel: Option<Selection>,
+    renaming: Option<u64>,
+    id: u64,
+    name: &str,
+    visible: bool,
+    tag: Option<LayerTag>,
+    depth: usize,
+    ops: &mut Vec<TreeOp>,
+) -> Rect {
     ui.horizontal(|ui| {
         if depth > 0 {
             ui.add_space(depth as f32 * 16.0);
@@ -436,13 +554,31 @@ fn render_layer_row(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, re
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_group_header(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: Option<u64>, id: u64, name: &str, visible: bool, collapsed: bool, depth: usize, ops: &mut Vec<TreeOp>) -> Rect {
+fn render_group_header(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    sel: Option<Selection>,
+    renaming: Option<u64>,
+    id: u64,
+    name: &str,
+    visible: bool,
+    collapsed: bool,
+    depth: usize,
+    ops: &mut Vec<TreeOp>,
+) -> Rect {
     ui.horizontal(|ui| {
         if depth > 0 {
             ui.add_space(depth as f32 * 16.0);
         }
-        let tri = if collapsed { icons::CHEVRON_RIGHT } else { icons::CHEVRON_DOWN };
-        if ui.add(egui::Label::new(RichText::new(tri).size(14.0)).sense(Sense::click())).clicked() {
+        let tri = if collapsed {
+            icons::CHEVRON_RIGHT
+        } else {
+            icons::CHEVRON_DOWN
+        };
+        if ui
+            .add(egui::Label::new(RichText::new(tri).size(14.0)).sense(Sense::click()))
+            .clicked()
+        {
             ops.push(TreeOp::ToggleCollapse(id));
         }
         if eye_button(ui, visible) {
@@ -455,7 +591,17 @@ fn render_group_header(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn row_name(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: Option<u64>, id: u64, name: &str, is_group: bool, tag: Option<LayerTag>, ops: &mut Vec<TreeOp>) {
+fn row_name(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    sel: Option<Selection>,
+    renaming: Option<u64>,
+    id: u64,
+    name: &str,
+    is_group: bool,
+    tag: Option<LayerTag>,
+    ops: &mut Vec<TreeOp>,
+) {
     if renaming == Some(id) {
         let resp = ui.add(egui::TextEdit::singleline(&mut app.rename_buf).desired_width(150.0));
         if app.rename_focus {
@@ -464,7 +610,11 @@ fn row_name(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: 
         }
         if resp.lost_focus() {
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            ops.push(if esc { TreeOp::CancelRename } else { TreeOp::CommitRename(id) });
+            ops.push(if esc {
+                TreeOp::CancelRename
+            } else {
+                TreeOp::CommitRename(id)
+            });
         }
         return;
     }
@@ -490,7 +640,11 @@ fn row_name(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: 
     } else if resp.double_clicked() {
         ops.push(TreeOp::StartRename(id));
     } else if resp.clicked() {
-        ops.push(TreeOp::Select(if is_group { Selection::Group(id) } else { Selection::Layer(id) }));
+        ops.push(TreeOp::Select(if is_group {
+            Selection::Group(id)
+        } else {
+            Selection::Layer(id)
+        }));
     }
     resp.context_menu(|ui| {
         if ui.button("Duplicate").clicked() {
@@ -502,7 +656,11 @@ fn row_name(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: 
             ui.close_menu();
         }
         if !is_group {
-            let tag_label = if tag.is_some() { "Tag…  (set)" } else { "Tag…" };
+            let tag_label = if tag.is_some() {
+                "Tag…  (set)"
+            } else {
+                "Tag…"
+            };
             if ui.button(tag_label).clicked() {
                 ops.push(TreeOp::Tag(id));
                 ui.close_menu();
@@ -520,7 +678,15 @@ fn row_name(app: &mut App, ui: &mut egui::Ui, sel: Option<Selection>, renaming: 
     });
 }
 
-fn consider_drop(row: &RenderRow, rect: Rect, dragging: Option<PanelItem>, forbidden: &HashSet<u64>, pointer: Option<Pos2>, drop: &mut Option<DropTarget>, line: &mut Option<(f32, f32)>) {
+fn consider_drop(
+    row: &RenderRow,
+    rect: Rect,
+    dragging: Option<PanelItem>,
+    forbidden: &HashSet<u64>,
+    pointer: Option<Pos2>,
+    drop: &mut Option<DropTarget>,
+    line: &mut Option<(f32, f32)>,
+) {
     if dragging.is_none() {
         return;
     }
@@ -544,17 +710,26 @@ fn consider_drop(row: &RenderRow, rect: Rect, dragging: Option<PanelItem>, forbi
     if row.is_group {
         if before {
             // Reorder before this group within its container.
-            *drop = Some(DropTarget { container: row.container, index: row.index });
+            *drop = Some(DropTarget {
+                container: row.container,
+                index: row.index,
+            });
             *line = Some((rect.top(), indent_x));
         } else {
             // Drop into this group (at its front). Works for layers and groups
             // (nesting); the model rejects cycles as a safety net.
-            *drop = Some(DropTarget { container: Container::Group(row.id), index: 0 });
+            *drop = Some(DropTarget {
+                container: Container::Group(row.id),
+                index: 0,
+            });
             *line = Some((rect.bottom(), indent_x + 16.0));
         }
     } else {
         let index = if before { row.index } else { row.index + 1 };
-        *drop = Some(DropTarget { container: row.container, index });
+        *drop = Some(DropTarget {
+            container: row.container,
+            index,
+        });
         *line = Some((if before { rect.top() } else { rect.bottom() }, indent_x));
     }
 }
@@ -607,7 +782,10 @@ fn apply_tree_op(app: &mut App, op: TreeOp) {
         TreeOp::Tag(id) => {
             let choice = app.project.layer(id).and_then(|l| l.tag);
             app.selection = Some(Selection::Layer(id));
-            app.tag_dialog = Some(TagDialog { layer_id: id, choice });
+            app.tag_dialog = Some(TagDialog {
+                layer_id: id,
+                choice,
+            });
         }
     }
 }
@@ -637,14 +815,22 @@ fn slots_list(app: &mut App, ui: &mut egui::Ui) {
                 ops.push(SlotOp::Select(id));
             }
             ui.with_layout(rtl(), |ui| {
-                if ui.small_button(icons::TRASH).on_hover_text("Delete").clicked() {
+                if ui
+                    .small_button(icons::TRASH)
+                    .on_hover_text("Delete")
+                    .clicked()
+                {
                     ops.push(SlotOp::Delete(i));
                 }
             });
         });
     }
     if app.project.slots.is_empty() {
-        ui.label(RichText::new("No slots yet — drag “New Slot” or click ＋ Slot.").weak().small());
+        ui.label(
+            RichText::new("No slots yet — drag “New Slot” or click ＋ Slot.")
+                .weak()
+                .small(),
+        );
     }
     for op in ops {
         match op {
@@ -724,7 +910,11 @@ fn layer_inspector(app: &mut App, ui: &mut egui::Ui, id: u64) {
         ui.checkbox(&mut l.flip_h, "Flip H");
         ui.checkbox(&mut l.flip_v, "Flip V");
     });
-    ui.add(egui::Slider::new(&mut l.rotation, 0..=359).text("rotation").suffix("°"));
+    ui.add(
+        egui::Slider::new(&mut l.rotation, 0..=359)
+            .text("rotation")
+            .suffix("°"),
+    );
 
     let mut mode = match l.fit {
         LayerFit::Stretch => 0usize,
@@ -744,10 +934,21 @@ fn layer_inspector(app: &mut App, ui: &mut egui::Ui, id: u64) {
         1 => LayerFit::Tile,
         _ => match cur {
             LayerFit::NineSlice { .. } => cur,
-            _ => LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 },
+            _ => LayerFit::NineSlice {
+                l: 4,
+                r: 4,
+                t: 4,
+                b: 4,
+            },
         },
     };
-    if let LayerFit::NineSlice { l: il, r: ir, t: it, b: ib } = &mut l.fit {
+    if let LayerFit::NineSlice {
+        l: il,
+        r: ir,
+        t: it,
+        b: ib,
+    } = &mut l.fit
+    {
         ui.horizontal(|ui| {
             ui.label("insets L/R/T/B");
             ui.add(egui::DragValue::new(il).speed(0.3));
@@ -770,17 +971,23 @@ fn group_inspector(app: &mut App, ui: &mut egui::Ui, id: u64) {
     });
     ui.checkbox(&mut g.visible, "Visible");
     ui.label(RichText::new(format!("{} layer(s)", g.children.len())).weak());
-    ui.label(RichText::new("Select on canvas to drag the whole group.").weak().small());
+    ui.label(
+        RichText::new("Select on canvas to drag the whole group.")
+            .weak()
+            .small(),
+    );
 }
 
 fn slot_inspector(app: &mut App, ui: &mut egui::Ui, i: usize) {
     app.begin_edit();
     let mut role = app.project.slots[i].role;
-    egui::ComboBox::from_id_salt(("slot_role", i)).selected_text(role.label()).show_ui(ui, |ui| {
-        for r in SlotRole::ALL {
-            ui.selectable_value(&mut role, r, r.label());
-        }
-    });
+    egui::ComboBox::from_id_salt(("slot_role", i))
+        .selected_text(role.label())
+        .show_ui(ui, |ui| {
+            for r in SlotRole::ALL {
+                ui.selectable_value(&mut role, r, r.label());
+            }
+        });
     if role != app.project.slots[i].role {
         app.project.slots[i].role = role;
         let t = role.tint();
@@ -819,15 +1026,31 @@ fn slot_inspector(app: &mut App, ui: &mut egui::Ui, i: usize) {
 /// beyond the slot so the slot frame sits inside it), fit mode and opacity. Baked
 /// to a sibling PNG + the manifest so the game can draw it on hover.
 fn hover_panel(app: &mut App, ui: &mut egui::Ui) {
-    ui.label(RichText::new("drawn over a hovered slot, inflated by margin so the slot frame sits inside").weak().small());
+    ui.label(
+        RichText::new(
+            "drawn over a hovered slot, inflated by margin so the slot frame sits inside",
+        )
+        .weak()
+        .small(),
+    );
 
     if app.project.hover.is_none() {
-        if ui.button(format!("{} Add hover highlight", icons::PLUS)).clicked() {
+        if ui
+            .button(format!("{} Add hover highlight", icons::PLUS))
+            .clicked()
+        {
             app.begin_edit();
             app.project.hover = Some(Hover {
-                asset: AssetSpec::Builtin { key: "highlight".to_string() },
+                asset: AssetSpec::Builtin {
+                    key: "highlight".to_string(),
+                },
                 margin: 4,
-                fit: LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 },
+                fit: LayerFit::NineSlice {
+                    l: 4,
+                    r: 4,
+                    t: 4,
+                    b: 4,
+                },
                 opacity: 1.0,
             });
         }
@@ -836,8 +1059,12 @@ fn hover_panel(app: &mut App, ui: &mut egui::Ui) {
 
     app.begin_edit();
     // Graphic picker: a combo over every palette asset (builtins + imported).
-    let choices: Vec<(String, AssetSpec)> =
-        app.assets.entries.iter().map(|e| (e.label.clone(), e.spec.clone())).collect();
+    let choices: Vec<(String, AssetSpec)> = app
+        .assets
+        .entries
+        .iter()
+        .map(|e| (e.label.clone(), e.spec.clone()))
+        .collect();
     let cur = app.project.hover.as_ref().map(|h| h.asset.clone());
     let cur_label = cur
         .as_ref()
@@ -846,16 +1073,18 @@ fn hover_panel(app: &mut App, ui: &mut egui::Ui) {
         .unwrap_or_else(|| "(missing)".to_string());
     ui.horizontal(|ui| {
         ui.label("graphic");
-        egui::ComboBox::from_id_salt("hover_asset").selected_text(cur_label).show_ui(ui, |ui| {
-            for (label, spec) in &choices {
-                let selected = cur.as_ref() == Some(spec);
-                if ui.selectable_label(selected, label).clicked() {
-                    if let Some(h) = &mut app.project.hover {
-                        h.asset = spec.clone();
+        egui::ComboBox::from_id_salt("hover_asset")
+            .selected_text(cur_label)
+            .show_ui(ui, |ui| {
+                for (label, spec) in &choices {
+                    let selected = cur.as_ref() == Some(spec);
+                    if ui.selectable_label(selected, label).clicked() {
+                        if let Some(h) = &mut app.project.hover {
+                            h.asset = spec.clone();
+                        }
                     }
                 }
-            }
-        });
+            });
     });
 
     if let Some(h) = &mut app.project.hover {
@@ -883,10 +1112,21 @@ fn hover_panel(app: &mut App, ui: &mut egui::Ui) {
             1 => LayerFit::Tile,
             _ => match cur_fit {
                 LayerFit::NineSlice { .. } => cur_fit,
-                _ => LayerFit::NineSlice { l: 4, r: 4, t: 4, b: 4 },
+                _ => LayerFit::NineSlice {
+                    l: 4,
+                    r: 4,
+                    t: 4,
+                    b: 4,
+                },
             },
         };
-        if let LayerFit::NineSlice { l: il, r: ir, t: it, b: ib } = &mut h.fit {
+        if let LayerFit::NineSlice {
+            l: il,
+            r: ir,
+            t: it,
+            b: ib,
+        } = &mut h.fit
+        {
             ui.horizontal(|ui| {
                 ui.label("insets L/R/T/B");
                 ui.add(egui::DragValue::new(il).speed(0.3));
@@ -901,7 +1141,11 @@ fn hover_panel(app: &mut App, ui: &mut egui::Ui) {
     if ui.button(format!("{} Remove", icons::TRASH)).clicked() {
         app.project.hover = None;
     }
-    ui.label(RichText::new("Select a slot to preview the highlight on it.").weak().small());
+    ui.label(
+        RichText::new("Select a slot to preview the highlight on it.")
+            .weak()
+            .small(),
+    );
 }
 
 // ===========================================================================
@@ -919,64 +1163,81 @@ struct PaletteItem {
 }
 
 pub fn right_panel(app: &mut App, ctx: &egui::Context) {
-    egui::SidePanel::right("assets").resizable(true).default_width(232.0).show(ctx, |ui| {
-        ui.add_space(4.0);
-        ui.heading("Assets");
-        if ui.button("Load PNG…").clicked() {
-            load_png(app, ctx);
-        }
-        ui.label(RichText::new("Click to add at center, or drag onto the canvas.").weak().small());
-        ui.separator();
-
-        ui.label(RichText::new("Tools").strong());
-        let slot_resp = tool_button(ui, &format!("{} New Slot", icons::PLUS), Color32::from_rgba_unmultiplied(120, 160, 220, 150));
-        if slot_resp.drag_started() {
-            app.drag = Some(DragPayload::Slot);
-        }
-        if slot_resp.clicked() {
-            add_slot_center(app);
-        }
-        ui.separator();
-
-        let items: Vec<PaletteItem> = app
-            .assets
-            .entries
-            .iter()
-            .filter_map(|e| {
-                app.assets.get(&e.spec).map(|d| PaletteItem {
-                    spec: e.spec.clone(),
-                    label: e.label.clone(),
-                    size: d.size,
-                    fit: e.default_fit,
-                    cover: e.cover,
-                    kind: e.kind,
-                    tex: d.tex.id(),
-                })
-            })
-            .collect();
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for kind in crate::assets::AssetKind::ORDER {
-                let group: Vec<&PaletteItem> = items.iter().filter(|it| it.kind == kind).collect();
-                if group.is_empty() {
-                    continue;
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new(kind.label()).strong());
-                ui.horizontal_wrapped(|ui| {
-                    for it in group {
-                        let resp = asset_thumb(ui, it.tex, &it.label);
-                        if resp.drag_started() {
-                            app.drag = Some(DragPayload::Asset { spec: it.spec.clone(), size: it.size, default_fit: it.fit, cover: it.cover });
-                        }
-                        if resp.clicked() {
-                            add_layer_center(app, it.spec.clone(), it.size, it.fit, it.cover);
-                        }
-                    }
-                });
+    egui::SidePanel::right("assets")
+        .resizable(true)
+        .default_width(232.0)
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.heading("Assets");
+            if ui.button("Load PNG…").clicked() {
+                load_png(app, ctx);
             }
+            ui.label(
+                RichText::new("Click to add at center, or drag onto the canvas.")
+                    .weak()
+                    .small(),
+            );
+            ui.separator();
+
+            ui.label(RichText::new("Tools").strong());
+            let slot_resp = tool_button(
+                ui,
+                &format!("{} New Slot", icons::PLUS),
+                Color32::from_rgba_unmultiplied(120, 160, 220, 150),
+            );
+            if slot_resp.drag_started() {
+                app.drag = Some(DragPayload::Slot);
+            }
+            if slot_resp.clicked() {
+                add_slot_center(app);
+            }
+            ui.separator();
+
+            let items: Vec<PaletteItem> = app
+                .assets
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    app.assets.get(&e.spec).map(|d| PaletteItem {
+                        spec: e.spec.clone(),
+                        label: e.label.clone(),
+                        size: d.size,
+                        fit: e.default_fit,
+                        cover: e.cover,
+                        kind: e.kind,
+                        tex: d.tex.id(),
+                    })
+                })
+                .collect();
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for kind in crate::assets::AssetKind::ORDER {
+                    let group: Vec<&PaletteItem> =
+                        items.iter().filter(|it| it.kind == kind).collect();
+                    if group.is_empty() {
+                        continue;
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(kind.label()).strong());
+                    ui.horizontal_wrapped(|ui| {
+                        for it in group {
+                            let resp = asset_thumb(ui, it.tex, &it.label);
+                            if resp.drag_started() {
+                                app.drag = Some(DragPayload::Asset {
+                                    spec: it.spec.clone(),
+                                    size: it.size,
+                                    default_fit: it.fit,
+                                    cover: it.cover,
+                                });
+                            }
+                            if resp.clicked() {
+                                add_layer_center(app, it.spec.clone(), it.size, it.fit, it.cover);
+                            }
+                        }
+                    });
+                }
+            });
         });
-    });
 }
 
 fn asset_thumb(ui: &mut egui::Ui, tex: egui::TextureId, label: &str) -> egui::Response {
@@ -986,7 +1247,14 @@ fn asset_thumb(ui: &mut egui::Ui, tex: egui::TextureId, label: &str) -> egui::Re
     let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     p.image(tex, rect.shrink(4.0), uv, Color32::WHITE);
     let hot = resp.hovered();
-    p.rect_stroke(rect, 3.0, Stroke::new(if hot { 2.0 } else { 1.0 }, Color32::from_gray(if hot { 210 } else { 90 })));
+    p.rect_stroke(
+        rect,
+        3.0,
+        Stroke::new(
+            if hot { 2.0 } else { 1.0 },
+            Color32::from_gray(if hot { 210 } else { 90 }),
+        ),
+    );
     resp.on_hover_text(label)
 }
 
@@ -996,14 +1264,23 @@ fn tool_button(ui: &mut egui::Ui, label: &str, fill: Color32) -> egui::Response 
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 4.0, fill);
     p.rect_stroke(rect, 4.0, Stroke::new(1.0, Color32::WHITE));
-    p.text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(13.0), Color32::WHITE);
+    p.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        Color32::WHITE,
+    );
     resp
 }
 
 // ---- helpers --------------------------------------------------------------
 
 fn load_png(app: &mut App, ctx: &egui::Context) {
-    if let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).pick_file() {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter("PNG", &["png"])
+        .pick_file()
+    {
         match app.assets.load_file(ctx, &path) {
             Ok(_) => app.status = format!("Imported {}", path.display()),
             Err(e) => app.status = format!("Import failed: {e}"),
@@ -1013,13 +1290,30 @@ fn load_png(app: &mut App, ctx: &egui::Context) {
 
 fn add_layer_center(app: &mut App, spec: AssetSpec, size: [usize; 2], fit: LayerFit, cover: bool) {
     app.begin_edit();
-    let name = app.assets.entry(&spec).map(|e| e.label.clone()).unwrap_or_else(|| "Layer".to_string());
+    let name = app
+        .assets
+        .entry(&spec)
+        .map(|e| e.label.clone())
+        .unwrap_or_else(|| "Layer".to_string());
     let id = app.alloc_id();
     let rect = if cover {
-        RectF::new(0, 0, app.project.canvas.w as i32, app.project.canvas.h as i32)
+        RectF::new(
+            0,
+            0,
+            app.project.canvas.w as i32,
+            app.project.canvas.h as i32,
+        )
     } else {
-        let (cx, cy) = (app.project.canvas.w as i32 / 2, app.project.canvas.h as i32 / 2);
-        RectF::new(cx - size[0] as i32 / 2, cy - size[1] as i32 / 2, size[0] as i32, size[1] as i32)
+        let (cx, cy) = (
+            app.project.canvas.w as i32 / 2,
+            app.project.canvas.h as i32 / 2,
+        );
+        RectF::new(
+            cx - size[0] as i32 / 2,
+            cy - size[1] as i32 / 2,
+            size[0] as i32,
+            size[1] as i32,
+        )
     };
     app.project.nodes.push(Node::Layer(Layer {
         id,
@@ -1039,7 +1333,10 @@ fn add_layer_center(app: &mut App, spec: AssetSpec, size: [usize; 2], fit: Layer
 
 fn add_slot_center(app: &mut App) {
     app.begin_edit();
-    let (cx, cy) = (app.project.canvas.w as i32 / 2, app.project.canvas.h as i32 / 2);
+    let (cx, cy) = (
+        app.project.canvas.w as i32 / 2,
+        app.project.canvas.h as i32 / 2,
+    );
     let id = app.alloc_id();
     let role = SlotRole::Generic;
     let t = role.tint();

@@ -1,0 +1,110 @@
+{
+  "type": "world_select",
+  "canvas": {
+    "w": 276,
+    "h": 188
+  },
+  "scale": 1,
+  "image": "world_select.png",
+  "slots": [
+    {
+      "role": "world_row",
+      "x": 18,
+      "y": 37,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "world_row",
+      "x": 18,
+      "y": 55,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "world_row",
+      "x": 18,
+      "y": 73,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "world_row",
+      "x": 18,
+      "y": 91,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "world_row",
+      "x": 18,
+      "y": 109,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "world_scroll_track",
+      "x": 246,
+      "y": 37,
+      "w": 10,
+      "h": 88
+    },
+    {
+      "role": "world_play",
+      "x": 12,
+      "y": 135,
+      "w": 84,
+      "h": 20
+    },
+    {
+      "role": "world_create",
+      "x": 102,
+      "y": 135,
+      "w": 162,
+      "h": 20
+    },
+    {
+      "role": "world_delete",
+      "x": 102,
+      "y": 158,
+      "w": 162,
+      "h": 20
+    },
+    {
+      "role": "world_back",
+      "x": 12,
+      "y": 158,
+      "w": 84,
+      "h": 20
+    }
+  ],
+  "hover": {
+    "image": "world_select_hover.png",
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  },
+  "tagged": [
+    {
+      "tag": "world_scroll_thumb",
+      "image": "world_select_world_scroll_thumb.png",
+      "x": 246,
+      "y": 37,
+      "w": 10,
+      "h": 28,
+      "fit": {
+        "mode": "nine_slice",
+        "l": 4,
+        "r": 4,
+        "t": 4,
+        "b": 4
+      }
+    }
+  ]
+}

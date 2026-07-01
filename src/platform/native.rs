@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::app::{App, CursorPolicy};
 use crate::camera::Camera;
-use crate::controls::{control_from_key_code, Control, Modifiers, PointerButton};
+use crate::controls::{
+    control_from_key_code, text_key_from_named, Control, Modifiers, PointerButton,
+};
 use crate::mathh::Vec3;
 use crate::render::{new_renderer_from_target, Renderer};
 use crate::world::RENDER_DIST;
@@ -16,7 +18,7 @@ use winit::event::{
     DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{Key, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 const TARGET_FPS: u64 = 60;
@@ -39,9 +41,7 @@ pub fn run() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(RENDER_DIST);
-    let world_name = std::env::var("LLAMACRAFT_WORLD").unwrap_or_else(|_| "world".to_string());
-
-    let mut host = NativeHost::new(world_name, seed, rd);
+    let mut host = NativeHost::new(seed, rd);
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
@@ -57,7 +57,6 @@ struct NativeHost {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     app: Option<App>,
-    world_name: String,
     seed: u32,
     render_dist: i32,
     /// When the next `App::update` (sim + input) is due — `now + FRAME` while active,
@@ -83,12 +82,11 @@ struct NativeHost {
 }
 
 impl NativeHost {
-    fn new(world_name: String, seed: u32, render_dist: i32) -> Self {
+    fn new(seed: u32, render_dist: i32) -> Self {
         Self {
             window: None,
             renderer: None,
             app: None,
-            world_name,
             seed,
             render_dist,
             next_update: Instant::now(),
@@ -142,7 +140,12 @@ impl ApplicationHandler for NativeHost {
             Vec3::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
         );
-        let app = App::new(cam, &self.world_name, self.seed, self.render_dist);
+        let mut app = App::new(cam, self.render_dist);
+        if let Ok(world_name) = std::env::var("LLAMACRAFT_WORLD") {
+            if !world_name.is_empty() {
+                app.start_game(&world_name, self.seed);
+            }
+        }
 
         self.window = Some(window);
         self.renderer = Some(renderer);
@@ -178,21 +181,43 @@ impl ApplicationHandler for NativeHost {
                 renderer.resize(size.width, size.height);
                 app.resize(size.width, size.height);
             }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(code),
-                        state,
-                        ..
-                    },
-                ..
-            } => {
+            WindowEvent::KeyboardInput { event, .. } => {
+                let KeyEvent {
+                    physical_key,
+                    state,
+                    logical_key,
+                    text,
+                    ..
+                } = event;
                 let down = state == ElementState::Pressed;
-                if let Some(control) = control_from_key_code(code) {
+                if down {
+                    if let Key::Named(named) = &logical_key {
+                        if let Some(key) = text_key_from_named(named) {
+                            app.handle_text_key(key);
+                        }
+                    }
+                    if !app.take_quit_requested() {
+                        if let Some(text) = text.as_ref() {
+                            if !app.handle_text_input(text.as_str()) {
+                                // Text entry is opportunistic; non-text screens ignore it.
+                            }
+                        }
+                    }
+                }
+                if let PhysicalKey::Code(code) = physical_key {
+                    let Some(control) = control_from_key_code(code) else {
+                        if app.take_quit_requested() {
+                            event_loop.exit();
+                        }
+                        return;
+                    };
                     let consumed = app.handle_control(control, down);
                     if matches!(control, Control::CloseScreen) && down && !consumed {
                         event_loop.exit();
                     }
+                }
+                if app.take_quit_requested() {
+                    event_loop.exit();
                 }
             }
             WindowEvent::ModifiersChanged(mods) => {
@@ -276,6 +301,10 @@ impl ApplicationHandler for NativeHost {
         if due {
             let update_start = Instant::now();
             let need_render = app.update(renderer);
+            if app.take_quit_requested() {
+                event_loop.exit();
+                return;
+            }
             if self.perf_log {
                 let dt = update_start.elapsed();
                 self.perf_update_total += dt;

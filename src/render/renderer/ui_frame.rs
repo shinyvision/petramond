@@ -26,6 +26,8 @@ impl Renderer {
         self.ui_panel_vertex_count = 0;
         self.ui_overlay_vertex_count = 0;
         self.ui_hover_vertex_count = 0;
+        self.ui_shell_vertex_count = 0;
+        self.ui_shell_scroll_thumb_vertex_count = 0;
         self.ui_hearts_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
@@ -66,12 +68,27 @@ impl Renderer {
             self.ui_drag_count_vertex_count = drag_counts.len() as u32;
         }
 
-        // Baked panel + dynamic overlays + hover highlight, each its own buffer.
+        // Baked panel + shell skin + dynamic overlays + hover highlight, each its own buffer.
         let panel = &self.ui_build.panel;
         if !panel.is_empty() && panel.len() <= cap {
             self.queue
                 .write_buffer(&self.ui_panel_vbuf, 0, bytemuck::cast_slice(panel));
             self.ui_panel_vertex_count = panel.len() as u32;
+        }
+        let shell_skin = &self.ui_build.shell_skin;
+        if !shell_skin.is_empty() && shell_skin.len() <= cap {
+            self.queue
+                .write_buffer(&self.ui_shell_vbuf, 0, bytemuck::cast_slice(shell_skin));
+            self.ui_shell_vertex_count = shell_skin.len() as u32;
+        }
+        let shell_scroll_thumb = &self.ui_build.shell_scroll_thumb;
+        if !shell_scroll_thumb.is_empty() && shell_scroll_thumb.len() <= cap {
+            self.queue.write_buffer(
+                &self.ui_shell_scroll_thumb_vbuf,
+                0,
+                bytemuck::cast_slice(shell_scroll_thumb),
+            );
+            self.ui_shell_scroll_thumb_vertex_count = shell_scroll_thumb.len() as u32;
         }
         let overlays = &self.ui_build.overlays;
         if !overlays.is_empty() && overlays.len() <= cap {

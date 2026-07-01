@@ -13,15 +13,45 @@ impl App {
         self.last_render = now;
         let screen_size = renderer.screen_size();
 
+        if self.renderer_world_clear_pending {
+            renderer.clear_world_state();
+            self.renderer_world_clear_pending = false;
+        }
+
+        let shell = self.shell_ui_snapshot(screen_size, self.pointer.cursor());
+
+        let Some(game) = self.game.as_mut() else {
+            renderer.set_crosshair_visible(false);
+            renderer.set_hand_visible(false);
+            renderer.update_uniforms(&self.shell_camera, [0.60, 0.82, 1.00], now as f32, false);
+            renderer.set_ui(ui_snapshot::build(
+                None,
+                self.screen,
+                screen_size,
+                self.pointer.cursor(),
+                shell,
+            ));
+            renderer.render();
+            return;
+        };
+
+        renderer.set_crosshair_visible(self.screen.gameplay_enabled());
+        renderer.set_hand_visible(!matches!(self.screen, crate::app::AppScreen::Pause));
+
         let last_pose = {
-            let frame = self.game.client_frame(now);
+            let frame = game.client_frame(now);
             renderer.update_uniforms(
                 frame.camera,
                 frame.environment.fog,
                 frame.environment.time,
                 frame.environment.underwater,
             );
-            renderer.set_selection(frame.selection);
+            renderer.set_selection(
+                self.screen
+                    .gameplay_enabled()
+                    .then_some(frame.selection)
+                    .flatten(),
+            );
             let hand = std::mem::take(&mut self.hand);
             renderer.set_held_item(HeldItemFrame {
                 item: frame.held_item.item,
@@ -35,20 +65,21 @@ impl App {
         };
         // Build the neutral read snapshot, then bake it into render wire structs.
         {
-            let presentation = self.presentation.snapshot(&self.game);
+            let presentation = self.presentation.snapshot(game);
             renderer.set_break_overlay(presentation.break_overlay);
             self.scene.bake(&presentation);
         }
         self.scene.upload(renderer);
         renderer.set_ui(ui_snapshot::build(
-            &self.game,
+            Some(game),
             self.screen,
             screen_size,
             self.pointer.cursor(),
+            shell,
         ));
 
         {
-            let mut terrain = self.game.terrain_render_handoff();
+            let mut terrain = game.terrain_render_handoff();
             renderer.sync_meshes(&mut terrain);
         }
         renderer.render();
@@ -56,6 +87,6 @@ impl App {
         // Remember the drawn view + health so the next `update` can tell a still, unchanged
         // frame (idle) from one that moved or lost a heart, and redraw only on change.
         self.last_pose = Some(last_pose);
-        self.last_health = self.game.player_health();
+        self.last_health = game.player_health();
     }
 }

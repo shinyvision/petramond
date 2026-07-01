@@ -1,0 +1,25 @@
+{
+  "type": "pause",
+  "canvas": {
+    "w": 218,
+    "h": 116
+  },
+  "scale": 1,
+  "image": "pause.png",
+  "slots": [
+    {
+      "role": "pause_resume",
+      "x": 21,
+      "y": 57,
+      "w": 176,
+      "h": 20
+    },
+    {
+      "role": "pause_save_quit",
+      "x": 21,
+      "y": 84,
+      "w": 176,
+      "h": 20
+    }
+  ]
+}

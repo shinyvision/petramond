@@ -37,31 +37,41 @@ impl App {
 
     fn open_inventory(&mut self) {
         self.enter_menu(AppScreen::Inventory);
-        self.game.open_crafting(2);
+        if let Some(game) = self.game.as_mut() {
+            game.open_crafting(2);
+        }
     }
 
     /// Open the 3x3 crafting-table screen (after right-clicking a placed table).
     fn open_crafting_table(&mut self) {
         self.enter_menu(AppScreen::CraftingTable);
-        self.game.open_crafting(3);
+        if let Some(game) = self.game.as_mut() {
+            game.open_crafting(3);
+        }
     }
 
     /// Open the furnace screen for the furnace at `pos` (after right-clicking it).
     fn open_furnace(&mut self, pos: IVec3) {
         self.enter_menu(AppScreen::Furnace);
-        self.game.open_furnace_screen(pos);
+        if let Some(game) = self.game.as_mut() {
+            game.open_furnace_screen(pos);
+        }
     }
 
     /// Open the chest screen for the chest at `pos` (after right-clicking it).
     fn open_chest(&mut self, pos: IVec3) {
         self.enter_menu(AppScreen::Chest);
-        self.game.open_chest_screen(pos);
+        if let Some(game) = self.game.as_mut() {
+            game.open_chest_screen(pos);
+        }
     }
 
     /// Open the furniture-workbench screen (after right-clicking a placed workbench).
     fn open_furniture_workbench(&mut self) {
         self.enter_menu(AppScreen::FurnitureWorkbench);
-        self.game.open_workbench_screen();
+        if let Some(game) = self.game.as_mut() {
+            game.open_workbench_screen();
+        }
     }
 
     /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
@@ -78,7 +88,9 @@ impl App {
     /// open menu was a chest screen.
     fn close_menu(&mut self) {
         let was_chest = self.screen.is_chest();
-        self.game.close_open_menu();
+        if let Some(game) = self.game.as_mut() {
+            game.close_open_menu();
+        }
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         if was_chest {
@@ -89,6 +101,27 @@ impl App {
     pub(super) fn close_screen(&mut self) -> bool {
         if self.screen.ui_open() {
             self.close_menu();
+            true
+        } else if matches!(self.screen, AppScreen::Game) {
+            self.open_pause();
+            true
+        } else if matches!(self.screen, AppScreen::Pause) {
+            self.resume_game();
+            true
+        } else if matches!(self.screen, AppScreen::CreateWorld) {
+            self.screen = AppScreen::WorldSelect;
+            self.pointer.release_for_menu();
+            self.dirty = true;
+            true
+        } else if matches!(self.screen, AppScreen::DeleteWorld) {
+            self.screen = AppScreen::WorldSelect;
+            self.pointer.release_for_menu();
+            self.dirty = true;
+            true
+        } else if matches!(self.screen, AppScreen::WorldSelect) {
+            self.screen = AppScreen::Title;
+            self.pointer.release_for_menu();
+            self.dirty = true;
             true
         } else {
             false

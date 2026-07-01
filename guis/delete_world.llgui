@@ -1,0 +1,391 @@
+{
+  "version": 2,
+  "gui_type": "delete_world",
+  "scale": 1,
+  "canvas": {
+    "w": 240,
+    "h": 132
+  },
+  "nodes": [
+    {
+      "node": "layer",
+      "id": 1,
+      "name": "Background",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_panel"
+      },
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 240,
+        "h": 132
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 8,
+        "r": 8,
+        "t": 8,
+        "b": 8
+      },
+      "opacity": 1.0,
+      "visible": false,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 2,
+      "name": "bg.png",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/bg.png"
+      },
+      "rect": {
+        "x": 3,
+        "y": 4,
+        "w": 231,
+        "h": 123
+      },
+      "fit": {
+        "mode": "tile"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 3,
+      "name": "shadow.png",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/shadow.png"
+      },
+      "rect": {
+        "x": 8,
+        "y": 8,
+        "w": 224,
+        "h": 116
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 4,
+        "r": 4,
+        "t": 4,
+        "b": 4
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 4,
+      "name": "Delete world button",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_button"
+      },
+      "rect": {
+        "x": 20,
+        "y": 96,
+        "w": 96,
+        "h": 20
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 6,
+        "r": 6,
+        "t": 6,
+        "b": 6
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 5,
+      "name": "Cancel button",
+      "asset": {
+        "source": "builtin",
+        "key": "shell_button"
+      },
+      "rect": {
+        "x": 124,
+        "y": 96,
+        "w": 96,
+        "h": 20
+      },
+      "fit": {
+        "mode": "nine_slice",
+        "l": 6,
+        "r": 6,
+        "t": 6,
+        "b": 6
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 6,
+      "name": "border.png",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/border.png"
+      },
+      "rect": {
+        "x": 7,
+        "y": 1,
+        "w": 230,
+        "h": 8
+      },
+      "fit": {
+        "mode": "tile"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 7,
+      "name": "border.png copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/border.png"
+      },
+      "rect": {
+        "x": 7,
+        "y": 123,
+        "w": 230,
+        "h": 8
+      },
+      "fit": {
+        "mode": "tile"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": true,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 8,
+      "name": "border.png copy copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/border.png"
+      },
+      "rect": {
+        "x": 176,
+        "y": 62,
+        "w": 119,
+        "h": 8
+      },
+      "fit": {
+        "mode": "tile"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 90
+    },
+    {
+      "node": "layer",
+      "id": 9,
+      "name": "border.png copy copy copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/border.png"
+      },
+      "rect": {
+        "x": -55,
+        "y": 62,
+        "w": 119,
+        "h": 8
+      },
+      "fit": {
+        "mode": "tile"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 90
+    },
+    {
+      "node": "layer",
+      "id": 10,
+      "name": "corner.png",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/corner.png"
+      },
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 10,
+        "h": 10
+      },
+      "fit": {
+        "mode": "stretch"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 11,
+      "name": "corner.png copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/corner.png"
+      },
+      "rect": {
+        "x": 230,
+        "y": 0,
+        "w": 10,
+        "h": 10
+      },
+      "fit": {
+        "mode": "stretch"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": true,
+      "flip_v": false,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 12,
+      "name": "corner.png copy copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/corner.png"
+      },
+      "rect": {
+        "x": 230,
+        "y": 122,
+        "w": 10,
+        "h": 10
+      },
+      "fit": {
+        "mode": "stretch"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": true,
+      "flip_v": true,
+      "rotation": 0
+    },
+    {
+      "node": "layer",
+      "id": 13,
+      "name": "corner.png copy copy copy",
+      "asset": {
+        "source": "file",
+        "path": "/home/rachel/Downloads/corner.png"
+      },
+      "rect": {
+        "x": 0,
+        "y": 122,
+        "w": 10,
+        "h": 10
+      },
+      "fit": {
+        "mode": "stretch"
+      },
+      "opacity": 1.0,
+      "visible": true,
+      "flip_h": false,
+      "flip_v": true,
+      "rotation": 0
+    }
+  ],
+  "slots": [
+    {
+      "id": 14,
+      "role": "delete_world_confirm",
+      "rect": {
+        "x": 20,
+        "y": 96,
+        "w": 96,
+        "h": 20
+      },
+      "grid": {
+        "cols": 1,
+        "rows": 1,
+        "pitch_x": 18,
+        "pitch_y": 18
+      },
+      "color": [
+        220,
+        120,
+        120,
+        96
+      ],
+      "paint_frame": false,
+      "visible": true
+    },
+    {
+      "id": 15,
+      "role": "delete_world_cancel",
+      "rect": {
+        "x": 124,
+        "y": 96,
+        "w": 96,
+        "h": 20
+      },
+      "grid": {
+        "cols": 1,
+        "rows": 1,
+        "pitch_x": 18,
+        "pitch_y": 18
+      },
+      "color": [
+        210,
+        160,
+        120,
+        96
+      ],
+      "paint_frame": false,
+      "visible": true
+    }
+  ],
+  "hover": {
+    "asset": {
+      "source": "file",
+      "path": "/home/rachel/Downloads/title_hover.png"
+    },
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  }
+}

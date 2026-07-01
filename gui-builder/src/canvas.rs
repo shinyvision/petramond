@@ -14,11 +14,30 @@ use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Stroke,
 enum Act {
     Select(Selection),
     Deselect,
-    StartDrag { sel: Selection, mode: DragMode, start_rect: RectF },
-    StartDragGroup { gid: u64, start_bbox: RectF },
-    DrillInto { gid: u64, x: i32, y: i32 },
-    AddLayer { spec: AssetSpec, size: [usize; 2], fit: LayerFit, cover: bool, base: Pos2 },
-    AddSlot { base: Pos2 },
+    StartDrag {
+        sel: Selection,
+        mode: DragMode,
+        start_rect: RectF,
+    },
+    StartDragGroup {
+        gid: u64,
+        start_bbox: RectF,
+    },
+    DrillInto {
+        gid: u64,
+        x: i32,
+        y: i32,
+    },
+    AddLayer {
+        spec: AssetSpec,
+        size: [usize; 2],
+        fit: LayerFit,
+        cover: bool,
+        base: Pos2,
+    },
+    AddSlot {
+        base: Pos2,
+    },
 }
 
 pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
@@ -30,7 +49,8 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
     let pointer = ctx.input(|i| i.pointer.hover_pos());
 
     // Right-button drag pans the view.
-    if ctx.input(|i| i.pointer.secondary_pressed()) && pointer.map_or(false, |p| avail.contains(p)) {
+    if ctx.input(|i| i.pointer.secondary_pressed()) && pointer.map_or(false, |p| avail.contains(p))
+    {
         app.panning = true;
     }
     if !ctx.input(|i| i.pointer.secondary_down()) {
@@ -44,7 +64,9 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
     let cw = app.project.canvas.w.max(1) as f32;
     let ch = app.project.canvas.h.max(1) as f32;
     let margin = 28.0;
-    let fit = ((avail.width() - margin) / cw).min((avail.height() - margin) / ch).max(0.02);
+    let fit = ((avail.width() - margin) / cw)
+        .min((avail.height() - margin) / ch)
+        .max(0.02);
     let scale = (fit * app.view.zoom).max(0.02);
     let size = egui::vec2(cw * scale, ch * scale);
     let origin = avail.center() - size * 0.5 + app.view.pan;
@@ -76,10 +98,18 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
         // counts if the pointer is actually inside the rotated quad — so the
         // hitbox follows rotation.
         let corners = layer_corners_screen(fl.layer, origin, scale);
-        let resp = ui.interact(aabb_of(&corners), Id::new(("layer", fl.layer.id)), Sense::click_and_drag());
+        let resp = ui.interact(
+            aabb_of(&corners),
+            Id::new(("layer", fl.layer.id)),
+            Sense::click_and_drag(),
+        );
         let inside = pointer.map_or(false, |p| point_in_layer(fl.layer, p, origin, scale));
         if resp.drag_started_by(egui::PointerButton::Primary) && inside {
-            acts.push(Act::StartDrag { sel: Selection::Layer(fl.layer.id), mode: DragMode::Move, start_rect: fl.layer.rect });
+            acts.push(Act::StartDrag {
+                sel: Selection::Layer(fl.layer.id),
+                mode: DragMode::Move,
+                start_rect: fl.layer.rect,
+            });
         } else if resp.clicked() && inside {
             acts.push(Act::Select(Selection::Layer(fl.layer.id)));
         }
@@ -97,7 +127,11 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
             let scr = to_screen_rect(slot_bounds(slot));
             let resp = ui.interact(scr, Id::new(("slot", slot.id)), Sense::click_and_drag());
             if resp.drag_started_by(egui::PointerButton::Primary) {
-                acts.push(Act::StartDrag { sel: Selection::Slot(slot.id), mode: DragMode::Move, start_rect: slot.rect });
+                acts.push(Act::StartDrag {
+                    sel: Selection::Slot(slot.id),
+                    mode: DragMode::Move,
+                    start_rect: slot.rect,
+                });
             } else if resp.clicked() {
                 acts.push(Act::Select(Selection::Slot(slot.id)));
             }
@@ -111,14 +145,28 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
         let pointer = ui.ctx().input(|i| i.pointer.hover_pos());
         let mut cells: Vec<RectF> = Vec::new();
         if let Some(Selection::Slot(id)) = app.selection {
-            if let Some(c) = app.project.slots.iter().find(|s| s.id == id).and_then(|s| s.cells().into_iter().next()) {
+            if let Some(c) = app
+                .project
+                .slots
+                .iter()
+                .find(|s| s.id == id)
+                .filter(|s| s.role.previews_hover())
+                .and_then(|s| s.cells().into_iter().next())
+            {
                 cells.push(c);
             }
         }
         if let Some(p) = pointer {
             let bx = ((p.x - origin.x) / scale).floor() as i32;
             let by = ((p.y - origin.y) / scale).floor() as i32;
-            if let Some(c) = app.project.slots.iter().filter(|s| s.visible).flat_map(|s| s.cells()).find(|c| c.contains(bx, by)) {
+            if let Some(c) = app
+                .project
+                .slots
+                .iter()
+                .filter(|s| s.visible)
+                .filter(|s| s.role.previews_hover())
+                .find_map(|s| s.cells().into_iter().find(|c| c.contains(bx, by)))
+            {
                 cells.push(c);
             }
         }
@@ -135,7 +183,10 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
                 painter.rect_stroke(scr, 0.0, Stroke::new(2.0, Color32::from_rgb(250, 220, 90)));
                 let resp = ui.interact(scr, Id::new(("group_drag", gid)), Sense::click_and_drag());
                 if resp.drag_started_by(egui::PointerButton::Primary) {
-                    acts.push(Act::StartDragGroup { gid, start_bbox: bb });
+                    acts.push(Act::StartDragGroup {
+                        gid,
+                        start_bbox: bb,
+                    });
                 } else if resp.clicked() {
                     if let Some(p) = pointer {
                         let x = ((p.x - origin.x) / scale).floor() as i32;
@@ -149,13 +200,20 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
             if let Some(l) = app.project.layer(id) {
                 // Selection outline + resize handle follow the rotation.
                 let corners = layer_corners_screen(l, origin, scale);
-                painter.add(egui::Shape::closed_line(corners.to_vec(), Stroke::new(1.5, Color32::from_rgb(250, 220, 90))));
+                painter.add(egui::Shape::closed_line(
+                    corners.to_vec(),
+                    Stroke::new(1.5, Color32::from_rgb(250, 220, 90)),
+                ));
                 let handle = Rect::from_center_size(corners[2], egui::vec2(11.0, 11.0));
                 painter.rect_filled(handle, 2.0, Color32::from_rgb(250, 220, 90));
                 painter.rect_stroke(handle, 2.0, Stroke::new(1.0, Color32::BLACK));
                 let resp = ui.interact(handle, Id::new("resize_handle"), Sense::click_and_drag());
                 if resp.drag_started_by(egui::PointerButton::Primary) {
-                    acts.push(Act::StartDrag { sel: Selection::Layer(id), mode: DragMode::Resize, start_rect: l.rect });
+                    acts.push(Act::StartDrag {
+                        sel: Selection::Layer(id),
+                        mode: DragMode::Resize,
+                        start_rect: l.rect,
+                    });
                 }
             }
         }
@@ -167,7 +225,11 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
                 painter.rect_stroke(handle, 2.0, Stroke::new(1.0, Color32::BLACK));
                 let resp = ui.interact(handle, Id::new("resize_handle"), Sense::click_and_drag());
                 if resp.drag_started_by(egui::PointerButton::Primary) {
-                    acts.push(Act::StartDrag { sel, mode: DragMode::Resize, start_rect: own_rect });
+                    acts.push(Act::StartDrag {
+                        sel,
+                        mode: DragMode::Resize,
+                        start_rect: own_rect,
+                    });
                 }
             }
         }
@@ -198,7 +260,12 @@ pub fn show_canvas(app: &mut App, ui: &mut egui::Ui) {
                 if avail.contains(p) {
                     let base = egui::pos2((p.x - origin.x) / scale, (p.y - origin.y) / scale);
                     match payload {
-                        DragPayload::Asset { spec, size, default_fit, cover } => acts.push(Act::AddLayer {
+                        DragPayload::Asset {
+                            spec,
+                            size,
+                            default_fit,
+                            cover,
+                        } => acts.push(Act::AddLayer {
                             spec: spec.clone(),
                             size: *size,
                             fit: *default_fit,
@@ -232,7 +299,11 @@ fn apply_actions(app: &mut App, acts: Vec<Act>) {
         match act {
             Act::Select(s) => app.selection = Some(s),
             Act::Deselect => app.selection = None,
-            Act::StartDrag { sel, mode, start_rect } => {
+            Act::StartDrag {
+                sel,
+                mode,
+                start_rect,
+            } => {
                 app.begin_edit();
                 app.selection = Some(sel);
                 app.active_drag = Some(DragMove {
@@ -272,15 +343,35 @@ fn apply_actions(app: &mut App, acts: Vec<Act>) {
                     app.selection = Some(Selection::Layer(id));
                 }
             }
-            Act::AddLayer { spec, size, fit, cover, base } => {
+            Act::AddLayer {
+                spec,
+                size,
+                fit,
+                cover,
+                base,
+            } => {
                 app.begin_edit();
-                let name = app.assets.entry(&spec).map(|e| e.label.clone()).unwrap_or_else(|| "Layer".to_string());
+                let name = app
+                    .assets
+                    .entry(&spec)
+                    .map(|e| e.label.clone())
+                    .unwrap_or_else(|| "Layer".to_string());
                 let id = app.alloc_id();
                 let rect = if cover {
-                    RectF::new(0, 0, app.project.canvas.w as i32, app.project.canvas.h as i32)
+                    RectF::new(
+                        0,
+                        0,
+                        app.project.canvas.w as i32,
+                        app.project.canvas.h as i32,
+                    )
                 } else {
                     let (w, h) = (size[0] as i32, size[1] as i32);
-                    RectF::new(base.x.round() as i32 - w / 2, base.y.round() as i32 - h / 2, w, h)
+                    RectF::new(
+                        base.x.round() as i32 - w / 2,
+                        base.y.round() as i32 - h / 2,
+                        w,
+                        h,
+                    )
                 };
                 app.project.nodes.push(Node::Layer(Layer {
                     id,
@@ -335,7 +426,11 @@ fn update_drag_gesture(app: &mut App, ctx: &egui::Context, scale: f32) {
         if drag.axis.is_none() {
             let d = drag.raw_total - anchor;
             if d.x.abs().max(d.y.abs()) > 0.5 {
-                drag.axis = Some(if d.x.abs() >= d.y.abs() { Axis::Horizontal } else { Axis::Vertical });
+                drag.axis = Some(if d.x.abs() >= d.y.abs() {
+                    Axis::Horizontal
+                } else {
+                    Axis::Vertical
+                });
             }
         }
     } else {
@@ -349,7 +444,11 @@ fn update_drag_gesture(app: &mut App, ctx: &egui::Context, scale: f32) {
     };
 
     let ctrl = ctx.input(|i| i.modifiers.ctrl);
-    let snap = if app.snap_enabled && !ctrl { Some(app.snap_step.max(1)) } else { None };
+    let snap = if app.snap_enabled && !ctrl {
+        Some(app.snap_step.max(1))
+    } else {
+        None
+    };
 
     apply_drag(app, &drag, eff, snap);
     app.active_drag = Some(drag);
@@ -396,14 +495,20 @@ fn resize_anchor_topleft(start: RectF, rot_deg: i32, w: i32, h: i32) -> (i32, i3
     let a = (rot_deg as f32).to_radians();
     let (s, c) = (a.sin(), a.cos());
     let rot = |dx: f32, dy: f32| (c * dx - s * dy, s * dx + c * dy);
-    let (cx0, cy0) = (start.x as f32 + start.w as f32 * 0.5, start.y as f32 + start.h as f32 * 0.5);
+    let (cx0, cy0) = (
+        start.x as f32 + start.w as f32 * 0.5,
+        start.y as f32 + start.h as f32 * 0.5,
+    );
     let (ax, ay) = {
         let (rx, ry) = rot(-start.w as f32 * 0.5, -start.h as f32 * 0.5);
         (cx0 + rx, cy0 + ry)
     };
     let (rx, ry) = rot(w as f32 * 0.5, h as f32 * 0.5);
     let (cx1, cy1) = (ax + rx, ay + ry);
-    ((cx1 - w as f32 * 0.5).round() as i32, (cy1 - h as f32 * 0.5).round() as i32)
+    (
+        (cx1 - w as f32 * 0.5).round() as i32,
+        (cy1 - h as f32 * 0.5).round() as i32,
+    )
 }
 
 fn apply_drag(app: &mut App, drag: &DragMove, eff: Vec2, snap: Option<i32>) {
@@ -494,7 +599,14 @@ fn full_uv() -> Rect {
 
 /// Preview the hover highlight over one slot cell, inflated by `margin` on every
 /// side (so the slot frame sits inside it) — the same geometry the game uses.
-fn draw_hover_preview(painter: &egui::Painter, app: &App, hover: &crate::model::Hover, cell: RectF, origin: Pos2, scale: f32) {
+fn draw_hover_preview(
+    painter: &egui::Painter,
+    app: &App,
+    hover: &crate::model::Hover,
+    cell: RectF,
+    origin: Pos2,
+    scale: f32,
+) {
     let Some(data) = app.assets.get(&hover.asset) else {
         return;
     };
@@ -502,9 +614,25 @@ fn draw_hover_preview(painter: &egui::Painter, app: &App, hover: &crate::model::
     let rect = RectF::new(cell.x - m, cell.y - m, cell.w + 2 * m, cell.h + 2 * m);
     let tint = Color32::from_white_alpha((hover.opacity.clamp(0.0, 1.0) * 255.0) as u8);
     let to_scr = |x: f32, y: f32| egui::pos2(origin.x + x * scale, origin.y + y * scale);
-    for reg in layer_regions(hover.fit, data.size[0], data.size[1], rect.x, rect.y, rect.w, rect.h, false, false) {
-        let scr = Rect::from_min_max(to_scr(reg.dst[0], reg.dst[1]), to_scr(reg.dst[0] + reg.dst[2], reg.dst[1] + reg.dst[3]));
-        let uv = Rect::from_min_max(egui::pos2(reg.uv[0], reg.uv[1]), egui::pos2(reg.uv[2], reg.uv[3]));
+    for reg in layer_regions(
+        hover.fit,
+        data.size[0],
+        data.size[1],
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        false,
+        false,
+    ) {
+        let scr = Rect::from_min_max(
+            to_scr(reg.dst[0], reg.dst[1]),
+            to_scr(reg.dst[0] + reg.dst[2], reg.dst[1] + reg.dst[3]),
+        );
+        let uv = Rect::from_min_max(
+            egui::pos2(reg.uv[0], reg.uv[1]),
+            egui::pos2(reg.uv[2], reg.uv[3]),
+        );
         painter.image(data.tex.id(), scr, uv, tint);
     }
 }
@@ -530,8 +658,14 @@ fn draw_layer(painter: &egui::Painter, app: &App, layer: &Layer, origin: Pos2, s
 
     if layer.rotation.rem_euclid(360) == 0 {
         for reg in regs {
-            let scr = Rect::from_min_max(to_scr(reg.dst[0], reg.dst[1]), to_scr(reg.dst[0] + reg.dst[2], reg.dst[1] + reg.dst[3]));
-            let uv = Rect::from_min_max(egui::pos2(reg.uv[0], reg.uv[1]), egui::pos2(reg.uv[2], reg.uv[3]));
+            let scr = Rect::from_min_max(
+                to_scr(reg.dst[0], reg.dst[1]),
+                to_scr(reg.dst[0] + reg.dst[2], reg.dst[1] + reg.dst[3]),
+            );
+            let uv = Rect::from_min_max(
+                egui::pos2(reg.uv[0], reg.uv[1]),
+                egui::pos2(reg.uv[2], reg.uv[3]),
+            );
             painter.image(data.tex.id(), scr, uv, tint);
         }
         return;
@@ -539,16 +673,27 @@ fn draw_layer(painter: &egui::Painter, app: &App, layer: &Layer, origin: Pos2, s
 
     let ang = (layer.rotation as f32).to_radians();
     let (sin, cos) = (ang.sin(), ang.cos());
-    let center = to_scr(layer.rect.x as f32 + layer.rect.w as f32 * 0.5, layer.rect.y as f32 + layer.rect.h as f32 * 0.5);
+    let center = to_scr(
+        layer.rect.x as f32 + layer.rect.w as f32 * 0.5,
+        layer.rect.y as f32 + layer.rect.h as f32 * 0.5,
+    );
     let rotate = |p: Pos2| {
         let (dx, dy) = (p.x - center.x, p.y - center.y);
-        egui::pos2(center.x + cos * dx - sin * dy, center.y + sin * dx + cos * dy)
+        egui::pos2(
+            center.x + cos * dx - sin * dy,
+            center.y + sin * dx + cos * dy,
+        )
     };
     let mut mesh = egui::Mesh::with_texture(data.tex.id());
     for reg in regs {
         let (x0, y0) = (reg.dst[0], reg.dst[1]);
         let (x1, y1) = (x0 + reg.dst[2], y0 + reg.dst[3]);
-        let corners = [to_scr(x0, y0), to_scr(x1, y0), to_scr(x1, y1), to_scr(x0, y1)];
+        let corners = [
+            to_scr(x0, y0),
+            to_scr(x1, y0),
+            to_scr(x1, y1),
+            to_scr(x0, y1),
+        ];
         let uvs = [
             egui::pos2(reg.uv[0], reg.uv[1]),
             egui::pos2(reg.uv[2], reg.uv[1]),
@@ -557,15 +702,21 @@ fn draw_layer(painter: &egui::Painter, app: &App, layer: &Layer, origin: Pos2, s
         ];
         let base = mesh.vertices.len() as u32;
         for k in 0..4 {
-            mesh.vertices.push(egui::epaint::Vertex { pos: rotate(corners[k]), uv: uvs[k], color: tint });
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: rotate(corners[k]),
+                uv: uvs[k],
+                color: tint,
+            });
         }
-        mesh.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        mesh.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     painter.add(egui::Shape::mesh(mesh));
 }
 
 fn draw_slot(painter: &egui::Painter, slot: &Slot, origin: Pos2, scale: f32, selected: bool) {
-    let fill = Color32::from_rgba_unmultiplied(slot.color[0], slot.color[1], slot.color[2], slot.color[3]);
+    let fill =
+        Color32::from_rgba_unmultiplied(slot.color[0], slot.color[1], slot.color[2], slot.color[3]);
     let edge = if selected {
         Stroke::new(2.0, Color32::from_rgb(250, 220, 90))
     } else {
@@ -573,7 +724,10 @@ fn draw_slot(painter: &egui::Painter, slot: &Slot, origin: Pos2, scale: f32, sel
     };
     for cell in slot.cells() {
         let scr = Rect::from_min_size(
-            egui::pos2(origin.x + cell.x as f32 * scale, origin.y + cell.y as f32 * scale),
+            egui::pos2(
+                origin.x + cell.x as f32 * scale,
+                origin.y + cell.y as f32 * scale,
+            ),
             egui::vec2(cell.w as f32 * scale, cell.h as f32 * scale),
         );
         painter.rect_filled(scr, 0.0, fill);
@@ -587,7 +741,11 @@ fn draw_checker(painter: &egui::Painter, rect: Rect) {
     let rows = (rect.height() / cell).ceil() as i32;
     for j in 0..rows {
         for i in 0..cols {
-            let c = if (i + j) % 2 == 0 { Color32::from_gray(58) } else { Color32::from_gray(44) };
+            let c = if (i + j) % 2 == 0 {
+                Color32::from_gray(58)
+            } else {
+                Color32::from_gray(44)
+            };
             let r = Rect::from_min_size(
                 egui::pos2(rect.min.x + i as f32 * cell, rect.min.y + j as f32 * cell),
                 egui::vec2(cell, cell),
@@ -655,7 +813,10 @@ fn point_in_layer(layer: &Layer, p: Pos2, origin: Pos2, scale: f32) -> bool {
 /// For a Layer/Slot selection: (selection, its own rect, its bounding rect).
 fn selection_target(app: &App) -> Option<(Selection, RectF, RectF)> {
     match app.selection {
-        Some(Selection::Layer(id)) => app.project.layer(id).map(|l| (Selection::Layer(id), l.rect, l.rect)),
+        Some(Selection::Layer(id)) => app
+            .project
+            .layer(id)
+            .map(|l| (Selection::Layer(id), l.rect, l.rect)),
         Some(Selection::Slot(_)) => app.selected_slot_idx().map(|i| {
             let s = &app.project.slots[i];
             (Selection::Slot(s.id), s.rect, slot_bounds(s))
@@ -685,21 +846,33 @@ mod tests {
     #[test]
     fn move_snaps_when_enabled() {
         let start = RectF::new(10, 20, 16, 16);
-        assert_eq!(resolve_move(start, egui::vec2(5.4, -3.6), Some(8)), (16, 16));
+        assert_eq!(
+            resolve_move(start, egui::vec2(5.4, -3.6), Some(8)),
+            (16, 16)
+        );
     }
 
     #[test]
     fn resize_clamps_and_snaps() {
         let start = RectF::new(0, 0, 16, 16);
-        assert_eq!(resolve_resize(start, egui::vec2(10.0, -100.0), None), (26, 1));
-        assert_eq!(resolve_resize(start, egui::vec2(10.0, 0.0), Some(8)), (24, 16));
+        assert_eq!(
+            resolve_resize(start, egui::vec2(10.0, -100.0), None),
+            (26, 1)
+        );
+        assert_eq!(
+            resolve_resize(start, egui::vec2(10.0, 0.0), Some(8)),
+            (24, 16)
+        );
     }
 
     #[test]
     fn axis_lock_freezes_off_axis_at_anchor() {
         let raw = egui::vec2(10.0, 3.0);
         let anchor = egui::vec2(2.0, 1.0);
-        assert_eq!(lock_axis(raw, anchor, Axis::Horizontal), egui::vec2(10.0, 1.0));
+        assert_eq!(
+            lock_axis(raw, anchor, Axis::Horizontal),
+            egui::vec2(10.0, 1.0)
+        );
         assert_eq!(lock_axis(raw, anchor, Axis::Vertical), egui::vec2(2.0, 3.0));
     }
 
@@ -714,7 +887,10 @@ mod tests {
 
     #[test]
     fn resize_unrotated_keeps_topleft() {
-        assert_eq!(resize_anchor_topleft(RectF::new(10, 20, 16, 16), 0, 30, 40), (10, 20));
+        assert_eq!(
+            resize_anchor_topleft(RectF::new(10, 20, 16, 16), 0, 30, 40),
+            (10, 20)
+        );
     }
 
     #[test]
@@ -725,7 +901,10 @@ mod tests {
             let (ax, ay) = rotated_tl(start, deg);
             let (bx, by) = rotated_tl(RectF::new(x, y, 40, 8), deg);
             // Top-left corner must stay put (within integer-rounding tolerance).
-            assert!((ax - bx).abs() <= 1.0 && (ay - by).abs() <= 1.0, "deg {deg}: ({ax},{ay}) vs ({bx},{by})");
+            assert!(
+                (ax - bx).abs() <= 1.0 && (ay - by).abs() <= 1.0,
+                "deg {deg}: ({ax},{ay}) vs ({bx},{by})"
+            );
         }
     }
 }

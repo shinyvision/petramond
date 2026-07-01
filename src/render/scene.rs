@@ -50,6 +50,17 @@ impl Scene {
         Self::default()
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.item_entities.clear();
+        self.particles.clear();
+        self.model_particles.clear();
+        self.chests.clear();
+        self.doors.clear();
+        self.mobs.clear();
+        self.held_item_skylight = 0;
+        self.held_item_warm = 0;
+    }
+
     /// Translate the current presentation snapshot into this scene's reused buffers.
     /// Dropped items' cached skylight is kept fresh by the sim's per-tick light refresh,
     /// so baking just reads it here.

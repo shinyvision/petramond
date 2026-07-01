@@ -46,7 +46,7 @@ use super::{
     MobRenderInstance, ParticleInstance,
 };
 use crate::bbmodel::Model;
-use crate::gui::{GuiKind, OverlayTag, UiSnapshot};
+use crate::gui::{GuiKind, OverlayTag, ShellKind, UiSnapshot};
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 
@@ -85,6 +85,9 @@ enum GuiTexId {
     Panel(GuiKind),
     Hover(GuiKind),
     Overlay(GuiKind, OverlayTag),
+    Shell(ShellKind),
+    ShellHover(ShellKind),
+    ShellScrollThumb(ShellKind),
     /// The HUD heart atlas (one texture, cells empty | half | full). Not tied to a
     /// [`GuiKind`] — it is HUD chrome drawn over the hotbar, independent of any panel.
     Hearts,
@@ -152,6 +155,7 @@ pub struct Renderer {
     crosshair_vbuf: wgpu::Buffer,
     crosshair_vertex_count: u32,
     crosshair_drawn_size: (u32, u32),
+    crosshair_visible: bool,
     /// Currently-targeted outline shape, or None when nothing is targeted.
     selection: Option<SelectionShape>,
     /// The target whose geometry currently sits in `outline_vbuf`.
@@ -265,6 +269,7 @@ pub struct Renderer {
     break_overlay: Option<BreakOverlayView>,
     /// First-person held item / hand state (defaults to the bare hand).
     held_item: HeldItemView,
+    hand_visible: bool,
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
     held_item_warm: u8,
@@ -327,6 +332,12 @@ pub struct Renderer {
     /// The hover / selection highlight quad + its vertex count.
     ui_hover_vbuf: wgpu::Buffer,
     ui_hover_vertex_count: u32,
+    /// Builder-baked app-shell skin quad + its vertex count.
+    ui_shell_vbuf: wgpu::Buffer,
+    ui_shell_vertex_count: u32,
+    /// Builder-baked app-shell scrollbar thumb quad + its vertex count.
+    ui_shell_scroll_thumb_vbuf: wgpu::Buffer,
+    ui_shell_scroll_thumb_vertex_count: u32,
     /// HUD heart quads (bottom-left health bar) + their vertex count. Sampled from the
     /// [`GuiTexId::Hearts`] atlas; empty for a spectator or behind an open menu.
     ui_hearts_vbuf: wgpu::Buffer,

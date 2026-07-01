@@ -1,0 +1,37 @@
+{
+  "type": "title",
+  "canvas": {
+    "w": 240,
+    "h": 146
+  },
+  "scale": 1,
+  "image": "title.png",
+  "slots": [
+    {
+      "role": "title_start",
+      "x": 20,
+      "y": 78,
+      "w": 200,
+      "h": 20
+    },
+    {
+      "role": "title_quit",
+      "x": 20,
+      "y": 107,
+      "w": 200,
+      "h": 20
+    }
+  ],
+  "hover": {
+    "image": "title_hover.png",
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  }
+}

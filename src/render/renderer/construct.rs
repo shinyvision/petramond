@@ -294,6 +294,21 @@ async fn new_renderer_inner(
             gui_textures.insert(GuiTexId::Overlay(kind, tag), bind);
         }
     }
+    for (kind, path) in crate::gui::baked_shell_skins() {
+        if let Some(bind) = load_gui_bind(&path) {
+            gui_textures.insert(GuiTexId::Shell(kind), bind);
+        }
+    }
+    for (kind, path) in crate::gui::baked_shell_hovers() {
+        if let Some(bind) = load_gui_bind(&path) {
+            gui_textures.insert(GuiTexId::ShellHover(kind), bind);
+        }
+    }
+    for (kind, path) in crate::gui::baked_shell_scroll_thumbs() {
+        if let Some(bind) = load_gui_bind(&path) {
+            gui_textures.insert(GuiTexId::ShellScrollThumb(kind), bind);
+        }
+    }
     // HUD heart atlas (empty | half | full, side by side). One texture for the whole
     // health bar; the UI pass selects a cell per heart by UV. Loaded like any GUI PNG.
     if let Some(bind) = load_gui_bind(std::path::Path::new(concat!(
@@ -313,6 +328,8 @@ async fn new_renderer_inner(
     let ui_panel_vbuf = new_ui_quad_vbuf("ui panel vbuf");
     let ui_overlay_vbuf = new_ui_quad_vbuf("ui overlay vbuf");
     let ui_hover_vbuf = new_ui_quad_vbuf("ui hover vbuf");
+    let ui_shell_vbuf = new_ui_quad_vbuf("ui shell vbuf");
+    let ui_shell_scroll_thumb_vbuf = new_ui_quad_vbuf("ui shell scroll thumb vbuf");
     let ui_hearts_vbuf = new_ui_quad_vbuf("ui hearts vbuf");
 
     Renderer {
@@ -332,6 +349,7 @@ async fn new_renderer_inner(
         crosshair_vbuf: pipelines.crosshair_vbuf,
         crosshair_vertex_count: 0,
         crosshair_drawn_size: (0, 0),
+        crosshair_visible: false,
         selection: None,
         selection_drawn: None,
         uniform_buf,
@@ -413,6 +431,7 @@ async fn new_renderer_inner(
         last_stats: RenderStats::default(),
         break_overlay: None,
         held_item: HeldItemView::default(),
+        hand_visible: false,
         held_item_anim: HeldItemAnimator::default(),
         held_item_skylight: crate::render::lighting::FULL_SKYLIGHT,
         held_item_warm: 0,
@@ -446,6 +465,10 @@ async fn new_renderer_inner(
         ui_overlay_vertex_count: 0,
         ui_hover_vbuf,
         ui_hover_vertex_count: 0,
+        ui_shell_vbuf,
+        ui_shell_vertex_count: 0,
+        ui_shell_scroll_thumb_vbuf,
+        ui_shell_scroll_thumb_vertex_count: 0,
         ui_hearts_vbuf,
         ui_hearts_vertex_count: 0,
         icon_atlas,

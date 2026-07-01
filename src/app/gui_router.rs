@@ -124,6 +124,9 @@ impl App {
     }
 
     fn route_gui_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) -> bool {
+        let Some(game) = self.game.as_ref() else {
+            return false;
+        };
         let routed = self.gui_router.route_click(GuiClick {
             open: self.screen.ui_open(),
             kind: self.screen.gui_kind(),
@@ -132,7 +135,7 @@ impl App {
             button,
             shift: self.modifiers.shift,
             now,
-            cursor_has_stack: self.game.cursor_has_stack(),
+            cursor_has_stack: game.cursor_has_stack(),
         });
         if let Some(action) = routed.action {
             self.apply_gui_click_action(action);
@@ -148,10 +151,20 @@ impl App {
                 shift,
                 gather,
             } => {
-                self.game.menu_click(slot, button, shift, gather);
+                if let Some(game) = self.game.as_mut() {
+                    game.menu_click(slot, button, shift, gather);
+                }
             }
-            GuiClickAction::ThrowCursorStack => self.game.throw_cursor_stack(),
-            GuiClickAction::ThrowCursorOne => self.game.throw_cursor_one(),
+            GuiClickAction::ThrowCursorStack => {
+                if let Some(game) = self.game.as_mut() {
+                    game.throw_cursor_stack();
+                }
+            }
+            GuiClickAction::ThrowCursorOne => {
+                if let Some(game) = self.game.as_mut() {
+                    game.throw_cursor_one();
+                }
+            }
         }
     }
 }

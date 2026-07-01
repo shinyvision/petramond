@@ -7,6 +7,7 @@
 //! them on the tick.
 
 mod layout;
+mod shell_skin;
 
 use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemStack, ItemType};
@@ -14,6 +15,10 @@ use serde::Deserialize;
 
 pub(crate) use layout::{
     baked_hovers, baked_overlays, baked_panels, def, hit, panel_contains, GuiDef, OverlayTag,
+};
+pub(crate) use shell_skin::{
+    baked_shell_hovers, baked_shell_scroll_thumbs, baked_shell_skins, shell_def, ShellDef,
+    ShellKind, ShellRole,
 };
 
 /// Which container a baked GUI is for. Matches the gui-builder's `type` field.
@@ -141,6 +146,63 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     by_h.min(by_w).clamp(1, 4) as f32
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum HoverFit {
+    Stretch,
+    Tile,
+    NineSlice {
+        src_l: f32,
+        src_r: f32,
+        src_t: f32,
+        src_b: f32,
+        dst_l: f32,
+        dst_r: f32,
+        dst_t: f32,
+        dst_b: f32,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub(crate) enum HoverFitJson {
+    Stretch,
+    Tile,
+    NineSlice { l: f32, r: f32, t: f32, b: f32 },
+}
+
+impl Default for HoverFitJson {
+    fn default() -> Self {
+        HoverFitJson::NineSlice {
+            l: 4.0,
+            r: 4.0,
+            t: 4.0,
+            b: 4.0,
+        }
+    }
+}
+
+impl HoverFit {
+    pub(crate) fn from_json(fit: HoverFitJson, author_scale: f32) -> Self {
+        match fit {
+            HoverFitJson::Stretch => HoverFit::Stretch,
+            HoverFitJson::Tile => HoverFit::Tile,
+            HoverFitJson::NineSlice { l, r, t, b } => {
+                let s = author_scale.max(1.0);
+                HoverFit::NineSlice {
+                    src_l: l,
+                    src_r: r,
+                    src_t: t,
+                    src_b: b,
+                    dst_l: l / s,
+                    dst_r: r / s,
+                    dst_t: t / s,
+                    dst_b: b / s,
+                }
+            }
+        }
+    }
+}
+
 /// A furnace's view for the open furnace screen: its three slots plus the two
 /// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so render can
 /// snapshot it by value with no borrow.
@@ -215,6 +277,7 @@ pub struct UiSnapshot {
     /// The player's health for the bottom-left hearts, or `None` to hide the bar
     /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
     pub health: Option<HealthView>,
+    pub shell: ShellUiSnapshot,
 }
 
 impl Default for UiSnapshot {
@@ -233,6 +296,70 @@ impl Default for UiSnapshot {
             chest: None,
             workbench: None,
             health: None,
+            shell: ShellUiSnapshot::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ShellUiSnapshot {
+    pub active: bool,
+    pub skin: Option<ShellKind>,
+    pub quads: Vec<ShellQuad>,
+    pub texts: Vec<ShellText>,
+    pub buttons: Vec<ShellButton>,
+    pub inputs: Vec<ShellInput>,
+    pub rows: Vec<ShellListRow>,
+    pub scrollbars: Vec<ShellScrollbar>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShellQuad {
+    pub rect: SlotRect,
+    pub color: [f32; 4],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellText {
+    pub rect: SlotRect,
+    pub text: String,
+    pub color: [f32; 4],
+    pub cell_px: f32,
+    pub align: ShellTextAlign,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ShellTextAlign {
+    Left,
+    Center,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellButton {
+    pub rect: SlotRect,
+    pub label: String,
+    pub enabled: bool,
+    pub hovered: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellInput {
+    pub rect: SlotRect,
+    pub text: String,
+    pub placeholder: String,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellListRow {
+    pub rect: SlotRect,
+    pub label: String,
+    pub selected: bool,
+    pub hovered: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellScrollbar {
+    pub track: SlotRect,
+    pub thumb: SlotRect,
 }

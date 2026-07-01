@@ -1,6 +1,11 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum AppScreen {
+    Title,
+    WorldSelect,
+    CreateWorld,
+    DeleteWorld,
     Game,
+    Pause,
     Inventory,
     /// The 3×3 crafting-table screen, opened by right-clicking a placed table.
     CraftingTable,
@@ -20,6 +25,18 @@ impl AppScreen {
     }
 
     #[inline]
+    pub(super) fn shell_open(self) -> bool {
+        matches!(
+            self,
+            AppScreen::Title
+                | AppScreen::WorldSelect
+                | AppScreen::CreateWorld
+                | AppScreen::DeleteWorld
+                | AppScreen::Pause
+        )
+    }
+
+    #[inline]
     #[cfg(test)]
     pub(super) fn inventory_open(self) -> bool {
         matches!(self, AppScreen::Inventory)
@@ -29,7 +46,14 @@ impl AppScreen {
     /// routing and whether the panel UI is drawn.
     #[inline]
     pub(super) fn ui_open(self) -> bool {
-        !matches!(self, AppScreen::Game)
+        matches!(
+            self,
+            AppScreen::Inventory
+                | AppScreen::CraftingTable
+                | AppScreen::Furnace
+                | AppScreen::Chest
+                | AppScreen::FurnitureWorkbench
+        )
     }
 
     /// Which baked GUI this screen draws: the open menu's kind, or `Hotbar` for the
@@ -45,6 +69,11 @@ impl AppScreen {
             AppScreen::Furnace => GuiKind::Furnace,
             AppScreen::Chest => GuiKind::Chest,
             AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
+            AppScreen::Title
+            | AppScreen::WorldSelect
+            | AppScreen::CreateWorld
+            | AppScreen::DeleteWorld
+            | AppScreen::Pause => GuiKind::Other,
         }
     }
 
