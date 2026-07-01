@@ -24,6 +24,11 @@ pub enum SelectionShape {
         origin: IVec3,
         transform: Mat4,
     },
+    /// A shape made from two world-space boxes. Used for stairs so the outline traces
+    /// the two solid halves instead of a full block cube.
+    TwoBoxes {
+        boxes: [(Vec3, Vec3); 2],
+    },
 }
 
 impl SelectionShape {

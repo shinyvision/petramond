@@ -34,6 +34,8 @@ impl Game {
 
         Self {
             cam,
+            camera_step_y_offset: 0.0,
+            last_player_eye_y: player.eye().y,
             world,
             fallback_world,
             player,

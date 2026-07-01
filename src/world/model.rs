@@ -50,6 +50,9 @@ impl World {
                 self.model_facing_at(wx, wy, wz),
             );
         }
+        if block.render_shape() == RenderShape::Stair {
+            return crate::stair::boxes(self.stair_facing_at(wx, wy, wz));
+        }
         // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
         // open — both read from the chunk door state (see `world::door` / `crate::door`).
         if block.render_shape() == RenderShape::Door {
@@ -74,6 +77,9 @@ impl World {
                 self.model_offset_at(wx, wy, wz),
                 self.model_facing_at(wx, wy, wz),
             );
+        }
+        if block.render_shape() == RenderShape::Stair {
+            return Some(([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
         }
         // A door targets the thin slab where it actually is (closed/open edge), so the
         // raycast + break overlay hug the panel rather than the whole cell.

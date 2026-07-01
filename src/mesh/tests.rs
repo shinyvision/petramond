@@ -253,6 +253,10 @@ fn shade_idx(v: &Vertex) -> u32 {
     (v.packed >> 10) & 0x3
 }
 
+fn light6(v: &Vertex) -> u32 {
+    (v.packed >> 23) & 0x3F
+}
+
 /// Sampler over a computed skylight band, for the skylight unit tests.
 struct TestSky {
     band: Box<[u8]>,
@@ -735,6 +739,48 @@ fn ao_exact_at_concave_step_corner() {
     // The two corners on the open -X edge (x == 8): no occluder -> ao == 3.
     assert_eq!(ao_at(8.0, 8.0), 3, "open -X corner is fully lit");
     assert_eq!(ao_at(8.0, 9.0), 3, "open -X corner is fully lit");
+}
+
+#[test]
+fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
+    let pos = crate::chunk::SectionPos::new(0, 0, 0);
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::OakStairs);
+    section.set_stair_facing(8, 8, 8, crate::furnace::Facing::East);
+
+    let mesh = super::build_section_mesh(
+        &section,
+        pos,
+        |wx, wy, wz| {
+            if (wx, wy, wz) == (8, 8, 8) {
+                Block::OakStairs.id()
+            } else {
+                Block::Air.id()
+            }
+        },
+        |_, _, _| 0,
+        |_, _| 0,
+        |wx, wy, wz| {
+            if wy == 7 && (wx, wz) != (8, 8) {
+                SKY_FULL
+            } else {
+                0
+            }
+        },
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    let bottom = mesh
+        .opaque
+        .iter()
+        .filter(|v| shade_idx(v) == 3 && (v.pos[1] - 8.0).abs() < 1.0e-3)
+        .collect::<Vec<_>>();
+    assert!(!bottom.is_empty(), "stair should emit bottom-face vertices");
+    assert!(
+        bottom.iter().all(|v| light6(v) == 0),
+        "a stair's solid bottom must not show skylight from adjacent below cells"
+    );
 }
 
 /// Parallel mesh building (World::tick_mesh_budget on native) must produce

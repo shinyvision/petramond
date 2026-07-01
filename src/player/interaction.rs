@@ -69,6 +69,13 @@ impl Player {
                     max: base + Vec3::from(mx),
                 };
             }
+        } else if hit_block.render_shape() == RenderShape::Stair {
+            hit.outline = SelectionShape::TwoBoxes {
+                boxes: crate::stair::world_boxes(
+                    hit.block,
+                    world.stair_facing_at(hit.block.x, hit.block.y, hit.block.z),
+                ),
+            };
         }
         Some((hit, dist))
     }
@@ -139,7 +146,10 @@ impl Player {
                 // custom-shaped block (the inset chest, the thin/tilted torch pole)
                 // only registers when the ray actually crosses its shape — otherwise
                 // the ray sees past the empty parts of its cell.
-                if block.visual_aabb().is_none() && block != Block::Torch {
+                if block.visual_aabb().is_none()
+                    && block != Block::Torch
+                    && block.render_shape() != RenderShape::Stair
+                {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
                 if let Some(t) = shape_hit(eye, dir, pos, block) {
@@ -264,6 +274,21 @@ fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &Wor
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
+    }
+    if block.render_shape() == RenderShape::Stair {
+        let facing = world.stair_facing_at(pos.x, pos.y, pos.z);
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return crate::stair::boxes(facing)
+            .iter()
+            .filter_map(|b| {
+                ray_vs_aabb(
+                    eye,
+                    dir,
+                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
+                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                )
+            })
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     }
     // Any other custom-shaped solid (the chest) tests its inset visual box.
     let (mn, mx) = block.visual_aabb()?;

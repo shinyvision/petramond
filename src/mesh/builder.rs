@@ -25,6 +25,18 @@ fn facing_face(facing: Facing) -> Face {
         Facing::East => Face::PosX,
     }
 }
+
+#[inline]
+fn opposite_face(face: Face) -> Face {
+    match face {
+        Face::PosX => Face::NegX,
+        Face::NegX => Face::PosX,
+        Face::PosY => Face::NegY,
+        Face::NegY => Face::PosY,
+        Face::PosZ => Face::NegZ,
+        Face::NegZ => Face::PosZ,
+    }
+}
 use super::vertex::{pack_vertex, ChunkMesh, Vertex};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -329,6 +341,25 @@ fn section_geometry(
                     continue;
                 }
 
+                if block.render_shape() == RenderShape::Stair {
+                    let [tile_top, tile_bot, tile_side] = block.tiles();
+                    let tint_for = |tile| tint_tile(tile_tint(tile), ci);
+                    emit_stair_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        section.stair_facing(lx, ly, lz),
+                        [tile_top, tile_bot, tile_side],
+                        &tint_for,
+                        &block_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
+                    );
+                    continue;
+                }
+
                 let is_water = block == Block::Water;
                 let [tile_top, tile_bot, tile_side] = block.tiles();
                 let furnace_faces = (block == Block::Furnace).then(|| {
@@ -452,6 +483,7 @@ fn section_geometry(
                         fz,
                         f_l,
                         f_bl,
+                        true,
                         &block_at,
                         &neighbour_light,
                         &neighbour_blocklight,
@@ -700,6 +732,28 @@ fn chunk_geometry(
                     continue;
                 }
 
+                if block.render_shape() == RenderShape::Stair {
+                    let [tile_top, tile_bot, tile_side] = block.tiles();
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let ci = z * CHUNK_SX + x;
+                    let tint_for = |tile| tints.tile(tile_tint(tile), ci);
+                    emit_stair_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        y as i32,
+                        wz,
+                        crate::block_model::DEFAULT_MODEL_FACING,
+                        [tile_top, tile_bot, tile_side],
+                        &tint_for,
+                        &block_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
+                    );
+                    continue;
+                }
+
                 // Only water is alpha-blended; leaves render in the OPAQUE pass
                 // (crisp/cutout, no see-through ghosting) per the "fully opaque" rule.
                 let is_water = block == Block::Water;
@@ -907,6 +961,7 @@ fn chunk_geometry(
                         fz,
                         f_l,
                         f_bl,
+                        true,
                         &block_at,
                         &neighbour_light,
                         &neighbour_blocklight,
@@ -987,6 +1042,153 @@ fn emit_model_block(
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
 }
 
+#[allow(clippy::too_many_arguments)]
+fn emit_stair_block<B, L, K, T>(
+    opaque: &mut Vec<Vertex>,
+    opaque_idx: &mut Vec<u32>,
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    facing: Facing,
+    tiles: [Tile; 3],
+    tint_for: &T,
+    block_at: &B,
+    neighbour_light: &L,
+    neighbour_blocklight: &K,
+) where
+    B: Fn(i32, i32, i32) -> Block,
+    L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> u8,
+    T: Fn(Tile) -> [f32; 3],
+{
+    let front = facing_face(facing);
+    let internal_low_back = opposite_face(front);
+    let boxes = crate::stair::boxes(facing);
+    let low = boxes[0];
+    let high = boxes[1];
+
+    for face in FACES {
+        if face != internal_low_back {
+            emit_stair_face(
+                opaque,
+                opaque_idx,
+                wx,
+                wy,
+                wz,
+                low.min,
+                low.max,
+                face,
+                tiles,
+                tint_for,
+                block_at,
+                neighbour_light,
+                neighbour_blocklight,
+            );
+        }
+
+        let mut min = high.min;
+        let max = high.max;
+        if face == front {
+            min[1] = low.max[1];
+        }
+        emit_stair_face(
+            opaque,
+            opaque_idx,
+            wx,
+            wy,
+            wz,
+            min,
+            max,
+            face,
+            tiles,
+            tint_for,
+            block_at,
+            neighbour_light,
+            neighbour_blocklight,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_stair_face<B, L, K, T>(
+    opaque: &mut Vec<Vertex>,
+    opaque_idx: &mut Vec<u32>,
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    min: [f32; 3],
+    max: [f32; 3],
+    face: Face,
+    tiles: [Tile; 3],
+    tint_for: &T,
+    block_at: &B,
+    neighbour_light: &L,
+    neighbour_blocklight: &K,
+) where
+    B: Fn(i32, i32, i32) -> Block,
+    L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> u8,
+    T: Fn(Tile) -> [f32; 3],
+{
+    if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
+        return;
+    }
+    let boundary = face_on_cell_boundary(face, min, max);
+    let (dx, dy, dz) = face.dir();
+    let (fx, fy, fz) = if boundary {
+        (wx + dx, wy + dy, wz + dz)
+    } else {
+        (wx, wy, wz)
+    };
+    if boundary && block_at(fx, fy, fz).is_opaque() {
+        return;
+    }
+
+    let tile = match face {
+        Face::PosY => tiles[0],
+        Face::NegY => tiles[1],
+        _ => tiles[2],
+    };
+    let world_min = [wx as f32 + min[0], wy as f32 + min[1], wz as f32 + min[2]];
+    let world_max = [wx as f32 + max[0], wy as f32 + max[1], wz as f32 + max[2]];
+    let corners = face.quad_box(world_min, world_max);
+    // The underside is a closed face: if the cell below is dark, adjacent sky-lit
+    // cells must not smooth light onto it.
+    let smooth_light = face != Face::NegY;
+    emit_cube_face(
+        opaque,
+        opaque_idx,
+        corners,
+        tile,
+        0,
+        false,
+        tint_for(tile),
+        face,
+        fx,
+        fy,
+        fz,
+        neighbour_light(fx, fy, fz) as u32,
+        neighbour_blocklight(fx, fy, fz) as u32,
+        smooth_light,
+        block_at,
+        neighbour_light,
+        neighbour_blocklight,
+    );
+}
+
+#[inline]
+fn face_on_cell_boundary(face: Face, min: [f32; 3], max: [f32; 3]) -> bool {
+    const EPS: f32 = 1.0e-6;
+    match face {
+        Face::PosX => (max[0] - 1.0).abs() <= EPS,
+        Face::NegX => min[0].abs() <= EPS,
+        Face::PosY => (max[1] - 1.0).abs() <= EPS,
+        Face::NegY => min[1].abs() <= EPS,
+        Face::PosZ => (max[2] - 1.0).abs() <= EPS,
+        Face::NegZ => min[2].abs() <= EPS,
+    }
+}
+
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into the packed
 /// 6-bit brightness and a 0..1 warm amount. `sum_sky`/`sum_block` are x2-scale
 /// sums over `denom = cnt * SKY_FULL` cells (`cnt = 1`, `denom = SKY_FULL` for a
@@ -1020,6 +1222,7 @@ fn vertex_ao_and_light<B, L, K>(
     fz: i32,
     f_l: u32,
     f_bl: u32,
+    smooth_light: bool,
     block_at: &B,
     neighbour_light: &L,
     neighbour_blocklight: &K,
@@ -1043,6 +1246,10 @@ where
     let b2 = block_at(e2x, e2y, e2z);
     let bd = block_at(dxx, dyy, dzz);
     let ao = vertex_ao(b1.occludes_ao(), b2.occludes_ao(), bd.occludes_ao());
+    if !smooth_light {
+        let (light6, warm) = fold_light(f_l, f_bl, SKY_FULL as u32);
+        return (ao, light6, warm);
+    }
 
     // Smooth skylight AND block-light: mean over F + the surround cells that carry
     // light (anything not fully opaque -- leaves included, since they transmit
@@ -1095,6 +1302,7 @@ fn emit_cube_face<B, L, K>(
     fz: i32,
     f_l: u32,
     f_bl: u32,
+    smooth_light: bool,
     block_at: &B,
     neighbour_light: &L,
     neighbour_blocklight: &K,
@@ -1116,6 +1324,7 @@ where
             fz,
             f_l,
             f_bl,
+            smooth_light,
             block_at,
             neighbour_light,
             neighbour_blocklight,

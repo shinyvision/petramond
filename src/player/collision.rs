@@ -94,6 +94,25 @@ impl Player {
             && (cell_min(min.y)..=cell_max(max.y)).contains(&b.y)
             && (cell_min(min.z)..=cell_max(max.z)).contains(&b.z)
     }
+
+    /// True if the player's AABB overlaps any supplied cell-local collision box at
+    /// cell `b`. Used by placement of oriented partial blocks so the player can place
+    /// into the cell's empty cut-out but not into the stair's solid halves.
+    pub fn intersects_block_boxes(&self, b: IVec3, boxes: &[Aabb]) -> bool {
+        let amin = self.aabb_min();
+        let amax = self.aabb_max();
+        let cell = glam::Vec3::new(b.x as f32, b.y as f32, b.z as f32);
+        boxes.iter().any(|bx| {
+            let bmin = cell + glam::Vec3::new(bx.min[0], bx.min[1], bx.min[2]);
+            let bmax = cell + glam::Vec3::new(bx.max[0], bx.max[1], bx.max[2]);
+            amin.x < bmax.x - EPS as f32
+                && bmin.x < amax.x - EPS as f32
+                && amin.y < bmax.y - EPS as f32
+                && bmin.y < amax.y - EPS as f32
+                && amin.z < bmax.z - EPS as f32
+                && bmin.z < amax.z - EPS as f32
+        })
+    }
 }
 
 #[inline]

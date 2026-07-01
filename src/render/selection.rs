@@ -1,7 +1,7 @@
 use crate::mathh::{IVec3, Mat4, SelectionShape, Vec3};
 use crate::torch::{POLE_HALF, POLE_HEIGHT};
 
-pub(super) const MAX_OUTLINE_VERTICES: usize = 24;
+pub(super) const MAX_OUTLINE_VERTICES: usize = 48;
 
 pub(super) struct OutlineVertices {
     pub vertices: [[f32; 3]; MAX_OUTLINE_VERTICES],
@@ -20,6 +20,7 @@ pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
             v_max,
         } => cross_outline_vertices(origin, u_min, u_max, v_min, v_max),
         SelectionShape::Torch { origin, transform } => torch_outline_vertices(origin, transform),
+        SelectionShape::TwoBoxes { boxes } => two_box_outline_vertices(boxes),
     }
 }
 
@@ -28,10 +29,29 @@ pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
 /// block surface and pass the LessEqual depth test (no z-fighting); back edges
 /// remain occluded by the block itself.
 fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
+    let mut out = OutlineVertices {
+        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
+        count: 0,
+    };
+    push_box_edges(&mut out, min, max);
+    out
+}
+
+fn two_box_outline_vertices(boxes: [(Vec3, Vec3); 2]) -> OutlineVertices {
+    let mut out = OutlineVertices {
+        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
+        count: 0,
+    };
+    for (min, max) in boxes {
+        push_box_edges(&mut out, min, max);
+    }
+    out
+}
+
+fn push_box_edges(out: &mut OutlineVertices, min: Vec3, max: Vec3) {
     const INFLATE: f32 = 0.003;
     let lo = [min.x - INFLATE, min.y - INFLATE, min.z - INFLATE];
     let hi = [max.x + INFLATE, max.y + INFLATE, max.z + INFLATE];
-    // 8 corners indexed by (x_hi?, y_hi?, z_hi?).
     let c = |xh: bool, yh: bool, zh: bool| {
         [
             if xh { hi[0] } else { lo[0] },
@@ -47,15 +67,21 @@ fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
     let c101 = c(true, false, true);
     let c011 = c(false, true, true);
     let c111 = c(true, true, true);
-    let vertices = [
-        // bottom rectangle (y = lo)
-        c000, c100, c100, c101, c101, c001, c001, c000, // top rectangle (y = hi)
-        c010, c110, c110, c111, c111, c011, c011, c010, // four vertical edges
-        c000, c010, c100, c110, c101, c111, c001, c011,
-    ];
-    OutlineVertices {
-        vertices,
-        count: MAX_OUTLINE_VERTICES as u32,
+    for (a, b) in [
+        (c000, c100),
+        (c100, c101),
+        (c101, c001),
+        (c001, c000),
+        (c010, c110),
+        (c110, c111),
+        (c111, c011),
+        (c011, c010),
+        (c000, c010),
+        (c100, c110),
+        (c101, c111),
+        (c001, c011),
+    ] {
+        push_line(out, a, b);
     }
 }
 
@@ -92,16 +118,27 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
     let c101 = c(true, false, true);
     let c011 = c(false, true, true);
     let c111 = c(true, true, true);
-    let vertices = [
-        // bottom rectangle (local y = lo)
-        c000, c100, c100, c101, c101, c001, c001, c000, // top rectangle (local y = hi)
-        c010, c110, c110, c111, c111, c011, c011, c010, // four vertical edges
-        c000, c010, c100, c110, c101, c111, c001, c011,
-    ];
-    OutlineVertices {
-        vertices,
-        count: MAX_OUTLINE_VERTICES as u32,
+    let mut out = OutlineVertices {
+        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
+        count: 0,
+    };
+    for (a, b) in [
+        (c000, c100),
+        (c100, c101),
+        (c101, c001),
+        (c001, c000),
+        (c010, c110),
+        (c110, c111),
+        (c111, c011),
+        (c011, c010),
+        (c000, c010),
+        (c100, c110),
+        (c101, c111),
+        (c001, c011),
+    ] {
+        push_line(&mut out, a, b);
     }
+    out
 }
 
 fn cross_outline_vertices(

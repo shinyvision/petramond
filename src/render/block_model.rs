@@ -306,11 +306,89 @@ pub(super) fn push_block_item_cube_lit(
     skylight: u8,
 ) {
     let faces = block_icon_faces(block);
-    if block == Block::Cactus {
+    if block.render_shape() == crate::block::RenderShape::Stair {
+        push_stair_item_lit(verts, indices, faces, origin, size, skylight);
+    } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
         push_cactus_faces_lit(verts, indices, faces, origin, max, skylight);
     } else {
         push_cube_faces_lit(verts, indices, faces, origin, size, skylight);
+    }
+}
+
+fn push_stair_item_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    origin: Vec3,
+    size: f32,
+    skylight: u8,
+) {
+    let facing = crate::furnace::Facing::South;
+    let front = match facing {
+        crate::furnace::Facing::North => Face::NegZ,
+        crate::furnace::Facing::South => Face::PosZ,
+        crate::furnace::Facing::West => Face::NegX,
+        crate::furnace::Facing::East => Face::PosX,
+    };
+    let internal_low_back = opposite_face(front);
+    let boxes = crate::stair::boxes(facing);
+    let low = boxes[0];
+    let high = boxes[1];
+    for face in Face::ALL {
+        if face != internal_low_back {
+            push_stair_item_face(
+                verts, indices, faces, origin, size, low.min, low.max, face, skylight,
+            );
+        }
+        let mut min = high.min;
+        let max = high.max;
+        if face == front {
+            min[1] = low.max[1];
+        }
+        push_stair_item_face(
+            verts, indices, faces, origin, size, min, max, face, skylight,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_stair_item_face(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    origin: Vec3,
+    size: f32,
+    min: [f32; 3],
+    max: [f32; 3],
+    face: Face,
+    skylight: u8,
+) {
+    if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
+        return;
+    }
+    let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
+    let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
+    let tile = faces[face as usize];
+    let mat = foliage_tint::face_material(tile);
+    push_quad(
+        verts,
+        indices,
+        face.quad_box(mn.to_array(), mx.to_array()),
+        mat.tint,
+        face_bits_textured_lit(mat, face, skylight),
+    );
+}
+
+#[inline]
+fn opposite_face(face: Face) -> Face {
+    match face {
+        Face::PosX => Face::NegX,
+        Face::NegX => Face::PosX,
+        Face::PosY => Face::NegY,
+        Face::NegY => Face::PosY,
+        Face::PosZ => Face::NegZ,
+        Face::NegZ => Face::PosZ,
     }
 }
 

@@ -1,0 +1,77 @@
+use crate::block::{Block, BlockLightShape};
+use crate::furnace::Facing;
+
+use super::{nbhd_idx, NBHD_VOLUME};
+
+pub(super) enum SparseCellState {
+    Stair { idx: usize, facing: Facing },
+}
+
+#[derive(Default)]
+pub(super) struct ShapeStateSnapshot {
+    stair_facings: Option<Box<[u8]>>,
+}
+
+impl ShapeStateSnapshot {
+    pub(super) fn from_sparse(states: &[SparseCellState]) -> Self {
+        let mut stair_facings: Option<Box<[u8]>> = None;
+        for state in states {
+            match *state {
+                SparseCellState::Stair { idx, facing } => {
+                    if idx >= NBHD_VOLUME {
+                        continue;
+                    }
+                    let facings = stair_facings.get_or_insert_with(|| {
+                        vec![Facing::North.to_u8(); NBHD_VOLUME].into_boxed_slice()
+                    });
+                    facings[idx] = facing.to_u8();
+                }
+            }
+        }
+        Self { stair_facings }
+    }
+
+    fn stair_facing(&self, idx: usize) -> Facing {
+        self.stair_facings
+            .as_ref()
+            .and_then(|f| f.get(idx).copied())
+            .map(Facing::from_u8)
+            .unwrap_or(Facing::North)
+    }
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct LightCells<'a> {
+    blocks: &'a [u8],
+    states: &'a ShapeStateSnapshot,
+}
+
+impl<'a> LightCells<'a> {
+    pub(super) fn new(blocks: &'a [u8], states: &'a ShapeStateSnapshot) -> Self {
+        Self { blocks, states }
+    }
+
+    pub(super) fn can_cross(
+        self,
+        from: (usize, usize, usize),
+        to: (usize, usize, usize),
+        dir: (i32, i32, i32),
+    ) -> bool {
+        let fi = nbhd_idx(from.0, from.1, from.2);
+        let ti = nbhd_idx(to.0, to.1, to.2);
+        let from_mask = self.side_aperture(fi, dir);
+        let to_mask = self.side_aperture(ti, (-dir.0, -dir.1, -dir.2));
+        from_mask & to_mask != 0
+    }
+
+    fn side_aperture(self, idx: usize, dir: (i32, i32, i32)) -> u8 {
+        let block = Block::from_id(self.blocks[idx]);
+        match block.light_shape() {
+            BlockLightShape::OpaqueCube => 0,
+            BlockLightShape::Open => 0b1111,
+            BlockLightShape::Stair => {
+                crate::stair::light_side_mask(self.states.stair_facing(idx), dir.0, dir.1, dir.2)
+            }
+        }
+    }
+}

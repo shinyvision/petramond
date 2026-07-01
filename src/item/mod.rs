@@ -181,6 +181,20 @@ pub enum ItemType {
     RedwoodLeaves,
     RedwoodPlanks,
     RedwoodDoor,
+    // --- Stairs update: block-items for directional stair blocks. Appended at the
+    // END (ids NOT equal to their block ids) and mapped explicitly below. ---
+    OakStairs,
+    SpruceStairs,
+    BirchStairs,
+    JungleStairs,
+    AcaciaStairs,
+    DarkOakStairs,
+    CherryStairs,
+    MangroveStairs,
+    RedwoodStairs,
+    CobblestoneStairs,
+    StoneStairs,
+    DirtStairs,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -416,6 +430,18 @@ impl ItemType {
             Block::RedwoodLeaves => ItemType::RedwoodLeaves,
             Block::RedwoodPlanks => ItemType::RedwoodPlanks,
             Block::RedwoodDoor => ItemType::RedwoodDoor,
+            Block::OakStairs => ItemType::OakStairs,
+            Block::SpruceStairs => ItemType::SpruceStairs,
+            Block::BirchStairs => ItemType::BirchStairs,
+            Block::JungleStairs => ItemType::JungleStairs,
+            Block::AcaciaStairs => ItemType::AcaciaStairs,
+            Block::DarkOakStairs => ItemType::DarkOakStairs,
+            Block::CherryStairs => ItemType::CherryStairs,
+            Block::MangroveStairs => ItemType::MangroveStairs,
+            Block::RedwoodStairs => ItemType::RedwoodStairs,
+            Block::CobblestoneStairs => ItemType::CobblestoneStairs,
+            Block::StoneStairs => ItemType::StoneStairs,
+            Block::DirtStairs => ItemType::DirtStairs,
             _ => Self::from_id(b.id()),
         }
     }
@@ -450,6 +476,18 @@ impl ItemType {
             ItemType::RedwoodLeaves => Some(Block::RedwoodLeaves),
             ItemType::RedwoodPlanks => Some(Block::RedwoodPlanks),
             ItemType::RedwoodDoor => Some(Block::RedwoodDoor),
+            ItemType::OakStairs => Some(Block::OakStairs),
+            ItemType::SpruceStairs => Some(Block::SpruceStairs),
+            ItemType::BirchStairs => Some(Block::BirchStairs),
+            ItemType::JungleStairs => Some(Block::JungleStairs),
+            ItemType::AcaciaStairs => Some(Block::AcaciaStairs),
+            ItemType::DarkOakStairs => Some(Block::DarkOakStairs),
+            ItemType::CherryStairs => Some(Block::CherryStairs),
+            ItemType::MangroveStairs => Some(Block::MangroveStairs),
+            ItemType::RedwoodStairs => Some(Block::RedwoodStairs),
+            ItemType::CobblestoneStairs => Some(Block::CobblestoneStairs),
+            ItemType::StoneStairs => Some(Block::StoneStairs),
+            ItemType::DirtStairs => Some(Block::DirtStairs),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }
@@ -550,6 +588,7 @@ impl ItemType {
         match self.as_block() {
             Some(block) => match block.render_shape() {
                 RenderShape::Cube => ItemRenderKind::BlockCube(block),
+                RenderShape::Stair => ItemRenderKind::BlockCube(block),
                 RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
                 // A torch isn't a cube; it shows the full torch sprite as a flat
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
@@ -876,6 +915,13 @@ mod tests {
             let item = ItemType::from_block(block);
             match block.render_shape() {
                 RenderShape::Cube => {
+                    assert_eq!(
+                        item.render_kind(),
+                        ItemRenderKind::BlockCube(block),
+                        "{block:?}"
+                    );
+                }
+                RenderShape::Stair => {
                     assert_eq!(
                         item.render_kind(),
                         ItemRenderKind::BlockCube(block),

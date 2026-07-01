@@ -87,6 +87,9 @@ pub struct Section {
     /// Door state (facing + open + which-half) of each door cell, keyed by
     /// section-local index.
     doors: HashMap<u16, DoorState>,
+    /// Facing of each placed stair, keyed by section-local index. Absent stairs use
+    /// the default north-facing shape, so old saves remain loadable.
+    stair_facings: HashMap<u16, Facing>,
     pub dirty: bool,
     /// Set true by runtime edits, never by generation, so only player-touched
     /// sections are written to disk.
@@ -144,6 +147,7 @@ impl Section {
             model_facings: HashMap::new(),
             sapling_stages: HashMap::new(),
             doors: HashMap::new(),
+            stair_facings: HashMap::new(),
             dirty: true,
             modified: false,
             skylight: None,
@@ -196,6 +200,7 @@ impl Section {
         self.clear_model_cell(i);
         self.clear_sapling_stage(i);
         self.clear_door(i);
+        self.clear_stair_facing(i);
         self.dirty = true;
         self.mark_light_dirty();
     }
@@ -595,6 +600,32 @@ impl Section {
     }
 
     #[inline]
+    pub fn stair_facing(&self, x: usize, y: usize, z: usize) -> Facing {
+        self.stair_facings
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn set_stair_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
+        self.stair_facings
+            .insert(Self::block_entity_key(x, y, z), facing);
+        self.modified = true;
+    }
+
+    #[inline]
+    fn clear_stair_facing(&mut self, i: usize) {
+        if !self.stair_facings.is_empty() {
+            self.stair_facings.remove(&(i as u16));
+        }
+    }
+
+    #[inline]
+    pub fn stair_facings(&self) -> &HashMap<u16, Facing> {
+        &self.stair_facings
+    }
+
+    #[inline]
     pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
         self.furnaces.get(&Self::block_entity_key(x, y, z))
     }
@@ -737,6 +768,7 @@ impl Section {
         model_facings: HashMap<u16, Facing>,
         sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
+        stair_facings: HashMap<u16, Facing>,
     ) -> Self {
         let mut s = Self {
             cx,
@@ -751,6 +783,7 @@ impl Section {
             model_facings,
             sapling_stages,
             doors,
+            stair_facings,
             dirty: true,
             modified: false,
             skylight: None,

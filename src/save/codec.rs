@@ -37,6 +37,7 @@ const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 /// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
 const FLAG2_HAS_SAPLINGS: u8 = 0x01;
 const FLAG2_HAS_DOORS: u8 = 0x02;
+const FLAG2_HAS_STAIRS: u8 = 0x04;
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -73,6 +74,9 @@ pub struct SectionSnapshot {
     /// placed door reloads on the same edge and in the same open/closed pose. Empty for
     /// the common section. See `Section::doors` / [`crate::door`].
     pub doors: HashMap<u16, DoorState>,
+    /// Facing of placed stairs, keyed by section-local index, so a stair reloads
+    /// with the same low/open side.
+    pub stair_facings: HashMap<u16, Facing>,
     /// Mobs resting in this section, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Section`, so the world save paths set this from the live mob set. Empty for the
@@ -97,6 +101,7 @@ impl SectionSnapshot {
             model_facings: s.model_facings().clone(),
             sapling_stages: s.sapling_stages().clone(),
             doors: s.doors().clone(),
+            stair_facings: s.stair_facings().clone(),
             mobs: Vec::new(),
         }
     }
@@ -283,6 +288,9 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.doors.is_empty() {
         flags2 |= FLAG2_HAS_DOORS;
     }
+    if !s.stair_facings.is_empty() {
+        flags2 |= FLAG2_HAS_STAIRS;
+    }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
     payload.extend_from_slice(&s.blocks);
@@ -327,6 +335,11 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
         // Each record is the cell's 1-byte packed door state (idx written by put_indexed).
         put_indexed(&mut payload, &s.doors, 1, |buf, state| {
             put_u8(buf, state.encode());
+        });
+    }
+    if !s.stair_facings.is_empty() {
+        put_indexed(&mut payload, &s.stair_facings, 1, |buf, facing| {
+            put_u8(buf, facing.to_u8());
         });
     }
     deflate(&payload)
@@ -398,6 +411,11 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
+    let stair_facings = if flags2 & FLAG2_HAS_STAIRS != 0 {
+        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
+    } else {
+        HashMap::new()
+    };
     Some((
         Section::from_saved(
             pos.cx,
@@ -412,6 +430,7 @@ pub fn decode_section(
             model_facings,
             sapling_stages,
             doors,
+            stair_facings,
         ),
         entities,
         mobs,
@@ -687,6 +706,25 @@ mod tests {
         );
         // A non-door cell carries no door state.
         assert_eq!(back.door_state(0, 0, 0), None);
+    }
+
+    #[test]
+    fn section_record_roundtrips_stair_facings() {
+        let mut s = sec(7, 4, 1);
+        s.set_block(2, 0, 3, Block::OakStairs);
+        s.set_stair_facing(2, 0, 3, Facing::West);
+        s.set_block(9, 5, 1, Block::StoneStairs);
+        s.set_stair_facing(9, 5, 1, Facing::South);
+
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(7, 4, 1), &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(2, 0, 3), Block::OakStairs.id());
+        assert_eq!(back.stair_facing(2, 0, 3), Facing::West);
+        assert_eq!(back.block_raw(9, 5, 1), Block::StoneStairs.id());
+        assert_eq!(back.stair_facing(9, 5, 1), Facing::South);
+        assert_eq!(back.stair_facing(0, 0, 0), Facing::North);
     }
 
     #[test]

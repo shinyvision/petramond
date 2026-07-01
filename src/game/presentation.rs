@@ -25,6 +25,8 @@ pub struct BreakOverlayView {
     pub block: IVec3,
     /// The cell-local visual box the crack hugs. `None` means an ordinary full cube.
     pub visual_box: Option<([f32; 3], [f32; 3])>,
+    /// Cell-local visual boxes for two-box partial blocks such as stairs.
+    pub visual_boxes: Option<[([f32; 3], [f32; 3]); 2]>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
@@ -262,13 +264,23 @@ fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
             )),
             _ => None,
         };
+        let block_type = Block::from_id(game.world.chunk_block(block.x, block.y, block.z));
+        let visual_boxes = if block_type.render_shape() == RenderShape::Stair {
+            let facing = game.world.stair_facing_at(block.x, block.y, block.z);
+            Some(crate::stair::boxes(facing).map(|b| (b.min, b.max)))
+        } else {
+            None
+        };
         BreakOverlayView {
             block,
             visual_box: if model.is_some() {
                 None
+            } else if visual_boxes.is_some() {
+                None
             } else {
                 game.world.selection_box_at(block.x, block.y, block.z)
             },
+            visual_boxes,
             model,
             stage,
         }

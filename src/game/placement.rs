@@ -193,6 +193,21 @@ impl Game {
             return false;
         }
 
+        if block.render_shape() == RenderShape::Stair {
+            let facing = facing_from_forward(self.cam.forward());
+            if !self.world.placement_cell_open(p) {
+                return false;
+            }
+            let boxes = crate::stair::boxes(facing);
+            let blocked = self.player.intersects_block_boxes(p, boxes)
+                || self.world.mobs().any_overlapping_boxes(p, boxes);
+            if !blocked && self.world.place_stair(p, block, facing) {
+                self.player.inventory.decrement_selected();
+                return true;
+            }
+            return false;
+        }
+
         // Substrate gate: a block that roots in a particular ground — a flower in soil, a
         // cactus in sand, a mushroom on soil or stone — places only when the cell directly
         // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost

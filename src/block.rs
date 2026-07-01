@@ -143,6 +143,21 @@ pub enum Block {
     RedwoodLeaves,
     RedwoodPlanks,
     RedwoodDoor,
+    // --- Stairs update: atlas-textured directional half-step blocks. Appended at
+    // the end so every id above stays frozen. Facing state lives in the section's
+    // stair-facing map; collision and meshing read `crate::stair`. ---
+    OakStairs,
+    SpruceStairs,
+    BirchStairs,
+    JungleStairs,
+    AcaciaStairs,
+    DarkOakStairs,
+    CherryStairs,
+    MangroveStairs,
+    RedwoodStairs,
+    CobblestoneStairs,
+    StoneStairs,
+    DirtStairs,
 }
 
 /// Secondary-use capability declared by a block's data row. This answers only
@@ -230,6 +245,11 @@ pub enum RenderShape {
     Cube,
     Cross,
     Torch,
+    /// A chunk-meshed directional stair: two cell-local boxes, with the low side
+    /// facing the player when placed. Its per-cell facing lives in the section's
+    /// stair-facing map; collision, selection, and meshing resolve through
+    /// `crate::stair`.
+    Stair,
     Model(BlockModelKind),
     /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT
     /// chunk-meshed — it is drawn each frame as a dynamic hinged model (see
@@ -238,6 +258,16 @@ pub enum RenderShape {
     /// selection boxes are resolved position-aware in `world::door` from that state
     /// (see [`crate::door`]). The mesher skips a door cell, exactly like a chest.
     Door,
+}
+
+/// How a block participates in light propagation. This is the render/collision-neutral
+/// shape category that `world::light` consumes; per-cell state, such as stair facing,
+/// still lives in the section and is interpreted by the lighting shape layer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BlockLightShape {
+    Open,
+    OpaqueCube,
+    Stair,
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -262,6 +292,17 @@ impl Block {
         self.def().shape
     }
 
+    #[inline]
+    pub(crate) fn light_shape(self) -> BlockLightShape {
+        if self.is_opaque() {
+            return BlockLightShape::OpaqueCube;
+        }
+        match self.def().shape {
+            RenderShape::Stair => BlockLightShape::Stair,
+            _ => BlockLightShape::Open,
+        }
+    }
+
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
     /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
     /// and the torch (selectable by its custom pole shape yet stepped through — see
@@ -279,6 +320,9 @@ impl Block {
         // which knows the cell's offset.
         if let RenderShape::Model(kind) = self.def().shape {
             return crate::block_model::collision_boxes(kind, [0, 0, 0]);
+        }
+        if self.def().shape == RenderShape::Stair {
+            return crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING);
         }
         self.def().collision
     }

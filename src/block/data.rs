@@ -51,6 +51,10 @@ const CACTUS_FLAGS: BlockFlags = BlockFlags::SOLID.with(BlockFlags::AO_OCCLUDER)
 // selection come from the chunk door state (facing + open), not the data row — see
 // `crate::door` / `world::door`.
 const DOOR_FLAGS: BlockFlags = BlockFlags::SOLID;
+// Stair: SOLID (collision/build target) but NOT opaque and NOT an AO occluder. It is
+// chunk-meshed from two boxes whose facing is per-cell metadata, so neighbours keep faces
+// toward its cut-out half and light treats it like a partial block.
+const STAIR_FLAGS: BlockFlags = BlockFlags::SOLID;
 
 // Collision shapes the rows below point at. `NO_BOXES` = no collision (air, water,
 // walk-through plants, and the torch — selectable by its shape but stepped through);
@@ -73,6 +77,26 @@ const CACTUS_BOXES: &[Aabb] = &[Aabb {
     min: [1.0 / 16.0, 0.0, 1.0 / 16.0],
     max: [15.0 / 16.0, 1.0, 15.0 / 16.0],
 }];
+
+macro_rules! stair_def {
+    ($block:ident, $item:ident, $tile:ident, $material:ident, $tier:expr, $hardness:expr) => {
+        BlockDef {
+            block: Block::$block,
+            shape: RenderShape::Stair,
+            collision: NO_BOXES,
+            emission: 0,
+            tags: &[BlockTag::NoGrassDecay],
+            behavior: &behavior::INERT,
+            interaction: BlockInteraction::None,
+            flags: STAIR_FLAGS,
+            tiles: [Tile::$tile, Tile::$tile, Tile::$tile],
+            material: BlockMaterial::$material,
+            harvest_tier: $tier,
+            hardness: $hardness,
+            drop: drops_self!($item),
+        }
+    };
+}
 
 pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::Air,
@@ -180,6 +204,18 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::RedwoodLeaves,
     Block::RedwoodPlanks,
     Block::RedwoodDoor,
+    Block::OakStairs,
+    Block::SpruceStairs,
+    Block::BirchStairs,
+    Block::JungleStairs,
+    Block::AcaciaStairs,
+    Block::DarkOakStairs,
+    Block::CherryStairs,
+    Block::MangroveStairs,
+    Block::RedwoodStairs,
+    Block::CobblestoneStairs,
+    Block::StoneStairs,
+    Block::DirtStairs,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -2041,6 +2077,25 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
         hardness: 3.0,
         drop: drops_self!(RedwoodDoor),
     },
+    stair_def!(OakStairs, OakStairs, OakPlanks, Wood, 0, 2.0),
+    stair_def!(SpruceStairs, SpruceStairs, SprucePlanks, Wood, 0, 2.0),
+    stair_def!(BirchStairs, BirchStairs, BirchPlanks, Wood, 0, 2.0),
+    stair_def!(JungleStairs, JungleStairs, JunglePlanks, Wood, 0, 2.0),
+    stair_def!(AcaciaStairs, AcaciaStairs, AcaciaPlanks, Wood, 0, 2.0),
+    stair_def!(DarkOakStairs, DarkOakStairs, DarkOakPlanks, Wood, 0, 2.0),
+    stair_def!(CherryStairs, CherryStairs, CherryPlanks, Wood, 0, 2.0),
+    stair_def!(MangroveStairs, MangroveStairs, MangrovePlanks, Wood, 0, 2.0),
+    stair_def!(RedwoodStairs, RedwoodStairs, RedwoodPlanks, Wood, 0, 2.0),
+    stair_def!(
+        CobblestoneStairs,
+        CobblestoneStairs,
+        Cobblestone,
+        Stone,
+        1,
+        2.0
+    ),
+    stair_def!(StoneStairs, StoneStairs, Stone, Stone, 1, 1.5),
+    stair_def!(DirtStairs, DirtStairs, Dirt, Dirt, 0, 0.5),
 ];
 
 #[inline]

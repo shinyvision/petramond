@@ -3,6 +3,9 @@ use crate::player::{self, Input, Player};
 
 use super::{Game, GameInput};
 
+const STEP_CAMERA_SETTLE_SPEED: f32 = 12.0;
+const STEP_CAMERA_EPS: f32 = 0.001;
+
 impl Game {
     pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
         if !input.gameplay_enabled {
@@ -14,9 +17,8 @@ impl Game {
         }
         const SENS: f32 = 0.0025;
         self.player.rotate(-dx * SENS, -dy * SENS);
-        // Mirror the player's look onto the camera now (before this tick's
-        // movement + raycast read `cam.forward()`), the same way `tick_player`
-        // mirrors `player.eye()` onto `cam.pos`.
+        // Mirror the player's look onto the camera now, before this tick's
+        // movement and raycast read `cam.forward()`.
         self.cam.yaw = self.player.yaw;
         self.cam.pitch = self.player.pitch;
     }
@@ -76,7 +78,7 @@ impl Game {
             }
         }
 
-        self.cam.pos = self.player.eye();
+        self.sync_camera_to_player_eye(dt);
     }
 
     /// Push the player out of any mob it overlaps, per frame. The mobs sit at their
@@ -93,8 +95,32 @@ impl Game {
         let push = self.world.mobs().push_on_player(body);
         if push != Vec3::ZERO {
             self.player.shove(push * dt, &self.world);
+            self.sync_camera_to_player_eye(dt);
         }
-        self.cam.pos = self.player.eye();
+    }
+
+    pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
+        let target = self.player.eye();
+        let eye_dy = target.y - self.last_player_eye_y;
+        if self.player.is_spectator() {
+            self.camera_step_y_offset = 0.0;
+        } else if self.player.on_ground
+            && self.player.vel.y.abs() <= STEP_CAMERA_EPS
+            && eye_dy > STEP_CAMERA_EPS
+            && eye_dy <= crate::collision::STEP_HEIGHT + STEP_CAMERA_EPS
+        {
+            let max_lag = crate::collision::STEP_HEIGHT * 1.5;
+            self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).max(-max_lag);
+        }
+
+        let settle = 1.0 - (-STEP_CAMERA_SETTLE_SPEED * dt.max(0.0)).exp();
+        self.camera_step_y_offset += (0.0 - self.camera_step_y_offset) * settle;
+        if self.camera_step_y_offset.abs() <= STEP_CAMERA_EPS {
+            self.camera_step_y_offset = 0.0;
+        }
+
+        self.cam.pos = Vec3::new(target.x, target.y + self.camera_step_y_offset, target.z);
+        self.last_player_eye_y = target.y;
     }
 
     pub(super) fn tick_world(&mut self) {

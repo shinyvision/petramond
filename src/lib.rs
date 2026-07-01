@@ -36,6 +36,7 @@ mod player;
 mod render;
 mod save;
 mod section;
+mod stair;
 mod texture_mips;
 pub mod tooling;
 mod torch;

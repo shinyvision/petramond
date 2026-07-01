@@ -90,9 +90,8 @@ pub fn build_break_overlay(
             );
         }
     } else {
-        match view.visual_box {
-            // A non-full-cube block (the chest) cracks over its inset visual box.
-            Some((mn, mx)) => {
+        if let Some(boxes) = view.visual_boxes {
+            for (mn, mx) in boxes {
                 let min = base + Vec3::new(mn[0], mn[1], mn[2]);
                 let max = base + Vec3::new(mx[0], mx[1], mx[2]);
                 push_box_faces_lit(
@@ -104,7 +103,23 @@ pub fn build_break_overlay(
                     super::lighting::FULL_SKYLIGHT,
                 );
             }
-            None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
+        } else {
+            match view.visual_box {
+                // A non-full-cube block (the chest) cracks over its inset visual box.
+                Some((mn, mx)) => {
+                    let min = base + Vec3::new(mn[0], mn[1], mn[2]);
+                    let max = base + Vec3::new(mx[0], mx[1], mx[2]);
+                    push_box_faces_lit(
+                        verts,
+                        indices,
+                        [tile; 6],
+                        min,
+                        max,
+                        super::lighting::FULL_SKYLIGHT,
+                    );
+                }
+                None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
+            }
         }
     }
     indices.len() as u32
@@ -148,6 +163,7 @@ mod tests {
             block: IVec3::new(3, 64, -7),
             // A full cube (Stone) has no special visual box, so the crack spans the cell.
             visual_box: None,
+            visual_boxes: None,
             model: None,
             stage: 4,
         };
@@ -204,6 +220,7 @@ mod tests {
         let view = BreakOverlayView {
             block,
             visual_box: None,
+            visual_boxes: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
@@ -462,6 +479,7 @@ mod tests {
         let view = BreakOverlayView {
             block: IVec3::ZERO,
             visual_box: None,
+            visual_boxes: None,
             model: None,
             stage: 0,
         };

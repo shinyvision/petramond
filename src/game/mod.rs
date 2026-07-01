@@ -55,6 +55,10 @@ const ATTACK_COOLDOWN_TICKS: u32 = 6;
 
 pub struct Game {
     cam: Camera,
+    /// Visual-only vertical lag after grounded auto-step movement. The player
+    /// feet and collision state update immediately; only the camera eases upward.
+    camera_step_y_offset: f32,
+    last_player_eye_y: f32,
     world: World,
     fallback_world: SurfaceDensitySystem,
     player: Player,

@@ -17,7 +17,7 @@ use crate::worldgen::driver::ChunkGenerator;
 use crate::worldgen::driver::ColumnGen;
 
 use super::entities::DroppedItems;
-use super::light_queue::LightBakeQueue;
+use super::light::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
 use super::tick::TickState;
 
