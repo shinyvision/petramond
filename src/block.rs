@@ -445,7 +445,7 @@ impl Block {
     }
 
     /// Whether this block receives random ticks — a shortcut for
-    /// `self.behavior().has_random_tick()`, read by the per-chunk random-tick gate
+    /// `self.behavior().has_random_tick()`, read by the per-section random-tick gate
     /// and the dispatch in `world::tick`.
     #[inline]
     pub fn has_random_tick(self) -> bool {

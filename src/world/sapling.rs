@@ -204,8 +204,9 @@ mod tests {
     use super::super::store::LoadTarget;
 
     /// A world with a 3×3 of loaded chunks around the origin, the player centred on
-    /// it (so its column is random-tickable), and a dirt floor under the centre — so
-    /// a sapling at (8,64,8) is supported and any tree it grows stays in loaded chunks.
+    /// it (so its sections are eligible for random ticks), and a dirt floor under the
+    /// centre — so a sapling at (8,64,8) is supported and any tree it grows stays in
+    /// loaded chunks.
     fn world_with_grove() -> World {
         let mut w = World::new(1, 4);
         for cz in -1..=1 {

@@ -26,9 +26,9 @@
 //!   scheduled, so simultaneous flows advance as wavefronts instead of in
 //!   coordinate order.
 //! - **Random ticks**: each tick, [`RANDOM_TICK_SPEED`] uniformly-random cells in
-//!   every loaded column near the player get a probabilistic behaviour callback
-//!   (leaf decay today). Air picks are skipped on the spot and columns with
-//!   nothing random-tickable are skipped wholesale via a per-chunk counter.
+//!   every loaded 16³ section near the player get a probabilistic behaviour
+//!   callback. Air picks are skipped on the spot and sections with nothing
+//!   random-tickable are skipped wholesale via a per-section counter.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet, VecDeque};
@@ -53,11 +53,8 @@ pub(super) const NEIGHBORS: [IVec3; 6] = [
 /// One pending scheduled tick, min-heap ordered: `(due tick, schedule order, x, y, z)`.
 type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
 
-const RANDOM_TICK_SPEED: u32 = 48;
-/// Random-tick draws per loaded 16³ section per tick. `RANDOM_TICK_SPEED / 16`
-/// keeps the same per-volume rate the column generator used (≈3 per section, the
-/// reference rate), now that the section is the iteration unit.
-const RANDOM_TICK_PER_SECTION: u32 = RANDOM_TICK_SPEED / 16;
+/// Random-tick draws per loaded 16³ section per tick.
+const RANDOM_TICK_SPEED: u32 = 3;
 
 /// Per-world tick/update/schedule bookkeeping.
 #[derive(Default)]
@@ -167,10 +164,10 @@ impl World {
         // 3. Smelt every loaded furnace one tick (chunk-owned; cheap when none).
         self.tick_furnaces(recipes);
 
-        // 4. Random block ticks: a few random cells per nearby column get a
+        // 4. Random block ticks: a few random cells per nearby section get a
         //    probabilistic behaviour callback (today: leaf decay). Cheapest of all
-        //    when nothing is tickable — empty columns are skipped by their counter.
-        self.random_tick_chunks();
+        //    when nothing is tickable — empty sections are skipped by their counter.
+        self.random_tick_sections();
     }
 
     /// Announce that the block at `(wx, wy, wz)` changed: schedule the light
@@ -278,27 +275,27 @@ impl World {
         block.behavior().scheduled_tick(self, pos);
     }
 
-    /// Random block ticks: for each loaded column near the player that holds any
-    /// random-tickable block, pick [`RANDOM_TICK_SPEED`] cells uniformly from the
-    /// whole 16×16×256 column and run each one's behaviour. Air — the vast bulk of
-    /// any column — is skipped on the spot, and a column with nothing tickable is
-    /// skipped wholesale via its chunk counter, so the cost is a few RNG draws and
-    /// array reads per column.
+    /// Random block ticks: for each loaded 16³ section near the player that holds
+    /// any random-tickable block, pick [`RANDOM_TICK_SPEED`] cells uniformly from
+    /// that section and run each one's behaviour. Air — the vast bulk of many
+    /// sections — is skipped on the spot, and a section with nothing tickable is
+    /// skipped wholesale via its counter, so the cost is a few RNG draws and array
+    /// reads per section.
     ///
     /// Eligibility is a disc of `render_dist - 2` chunks around the player, so a
-    /// ticked column's neighbours are loaded (the leaf-decay flood reaches a few
-    /// blocks across borders). A cell that is *still* unloaded is treated as
-    /// support, so nothing decays on missing information.
-    fn random_tick_chunks(&mut self) {
+    /// ticked section's horizontal neighbours are loaded (the leaf-decay flood
+    /// reaches a few blocks across borders). A cell that is *still* unloaded is
+    /// treated as support, so nothing decays on missing information.
+    fn random_tick_sections(&mut self) {
         let Some(target) = self.last_load_target else {
             return;
         };
         let center = target.center;
         let r = (target.render_dist - 2).max(0);
 
-        // Gather phase: choose the cells to tick WITHOUT holding a chunk borrow
-        // across the dispatch (which mutates the world). `self.sim` and
-        // `self.chunks` are disjoint fields, so the RNG draw and the block reads
+        // Gather phase: choose the cells to tick WITHOUT holding a section-map
+        // borrow across the dispatch (which mutates the world). `self.sim` and
+        // `self.sections` are disjoint fields, so the RNG draw and the block reads
         // borrow side by side.
         let mut due: Vec<IVec3> = Vec::new();
         for dz in -r..=r {
@@ -317,7 +314,7 @@ impl World {
                     }
                     let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
                     let blocks = section.blocks_slice();
-                    for _ in 0..RANDOM_TICK_PER_SECTION {
+                    for _ in 0..RANDOM_TICK_SPEED {
                         let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
                         let id = blocks[i];
                         if id == 0 {
@@ -336,7 +333,7 @@ impl World {
             }
         }
 
-        // Dispatch phase: the chunk-map borrow is released, so each behaviour is
+        // Dispatch phase: the section-map borrow is released, so each behaviour is
         // free to edit the world (a decaying leaf sets air, which relights/remeshes).
         for pos in due {
             self.run_random_tick(pos);
@@ -361,7 +358,7 @@ mod tests {
     use super::super::store::LoadTarget;
 
     /// A world with one empty loaded column at (0,0) (every section present, all air)
-    /// and the player centred on it, so the column is eligible for random ticks.
+    /// and the player centred on it, so its sections are eligible for random ticks.
     fn world_with_centered_chunk() -> World {
         let mut world = World::new(1, 4);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
@@ -441,7 +438,7 @@ mod tests {
     fn game_tick_eventually_decays_isolated_leaf() {
         // End-to-end: the random-tick loop inside game_tick selects and decays an
         // isolated leaf. Deterministic for the fixed seed; the cap sits far above
-        // the ~22k expected ticks (3 picks of 65536 cells per tick).
+        // the ~1.4k expected ticks (3 picks of 4096 cells per tick in its section).
         let mut world = world_with_centered_chunk();
         let p = IVec3::new(8, 70, 8);
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);

@@ -44,9 +44,9 @@ pub use leaves::LEAVES;
 /// which the gen and light worker threads read — so `dyn BlockBehavior` (and the
 /// table holding it) is shareable across threads.
 pub trait BlockBehavior: Sync {
-    /// Whether this block receives random ticks — the probabilistic per-column
+    /// Whether this block receives random ticks — the probabilistic per-section
     /// callback the world fires at a few random cells each game tick (see
-    /// `world::tick`). Gates both the dispatch and the per-chunk skip counter.
+    /// `world::tick`). Gates both the dispatch and the per-section skip counter.
     fn has_random_tick(&self) -> bool {
         false
     }
