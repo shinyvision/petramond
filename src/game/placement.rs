@@ -13,6 +13,13 @@ impl Game {
         if !std::mem::take(&mut self.pending_place) {
             return;
         }
+        // Using the held item ON the targeted mob (shears on a sheep) comes first:
+        // while a mob is targeted `self.look` is None, so the block paths below
+        // would no-op anyway.
+        if self.try_shear_mob() {
+            events.used_item = true;
+            return;
+        }
         let interacted = !self.intent_sneak && self.try_open_interactable();
         if !interacted {
             // The held item's own use (a bucket) comes before block placement; an

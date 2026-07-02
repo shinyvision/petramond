@@ -20,8 +20,10 @@ use crate::section::Section;
 
 /// Total worker nanoseconds and jobs spent building section meshes — temporary
 /// perf-session diagnostics read by the out-of-tree streaming profiler.
-pub(crate) static MESH_STAGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub(crate) static MESH_STAGE_JOBS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static MESH_STAGE_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) static MESH_STAGE_JOBS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
 /// face — all the mesher's face-culling / AO / smooth-light sampling ever reaches.

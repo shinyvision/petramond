@@ -16,9 +16,10 @@
 //! - Face UVs are divided by the texture's `uv_width`/`uv_height` so they index the
 //!   embedded sheet in `[0,1]`; the RAW corner order is kept (Blockbench encodes a
 //!   per-face flip by reversing the rect), so flips reproduce on render.
-//! - Bone/cube pivots are absolute model-space points; a bone's animated transform
-//!   is `T(pivot)·R·T(-pivot)`, composed parent-before-child down the hierarchy —
-//!   exactly Blockbench's nesting.
+//! - Bone/cube pivots are absolute model-space points; a bone's transform is
+//!   `T(pivot)·R·T(-pivot)`, composed parent-before-child down the hierarchy —
+//!   exactly Blockbench's nesting. Bone rotation from edit mode is the rest pose;
+//!   animation rotations are applied on top of that rest rotation.
 //!
 //! Rotation order: euler angles are applied XYZ. Every rotation in the bundled owl
 //! (static cube tilts and the walk keyframes) is single-axis, so the order is exact
@@ -37,6 +38,10 @@ use crate::mesh::face::Face;
 /// per-face UV rect (in `Face::ALL` order; `None` = the face is omitted).
 #[derive(Serialize, Deserialize)]
 pub struct Cube {
+    /// The authored Blockbench element name. Names carry gameplay meaning for some
+    /// models — a sheep's fleece cubes are all named `wool` so the renderer can hide
+    /// them while the sheep is shorn.
+    pub name: String,
     pub from: Vec3,
     pub to: Vec3,
     /// Pivot for this cube's STATIC `rotation` (the modelled tilt).
@@ -56,6 +61,8 @@ pub struct Cube {
 pub struct Bone {
     pub name: String,
     pub pivot: Vec3,
+    /// Static Blockbench group rotation in degrees. This is the bone's rest pose.
+    pub rotation: Vec3,
     pub parent: Option<usize>,
 }
 
@@ -135,23 +142,40 @@ impl Model {
 
     /// Overwrite the `head` bone's posed transform with an AI head-look rotation
     /// (`yaw` about the model's up axis, `pitch` about its right axis) about the
-    /// head's pivot, composed under the head's parent. Call AFTER posing, only when
-    /// the active animation isn't itself driving the head.
+    /// head's pivot, composed under the head's parent, and carry that same override
+    /// through all descendant bones. Call AFTER posing, only when the active animation
+    /// isn't itself driving the head.
     pub fn apply_head_look(&self, pose: &mut [Mat4], head_bone: usize, yaw: f32, pitch: f32) {
         let Some(bone) = self.bones.get(head_bone) else {
+            return;
+        };
+        let Some(old_head) = pose.get(head_bone).copied() else {
             return;
         };
         let parent_world = bone
             .parent
             .and_then(|p| pose.get(p).copied())
             .unwrap_or(Mat4::IDENTITY);
-        let local = Mat4::from_translation(bone.pivot)
-            * Mat4::from_rotation_y(yaw)
-            * Mat4::from_rotation_x(pitch)
-            * Mat4::from_translation(-bone.pivot);
-        if let Some(slot) = pose.get_mut(head_bone) {
-            *slot = parent_world * local;
+        let new_head = parent_world * head_look_transform(bone, yaw, pitch);
+        let delta = new_head * old_head.inverse();
+        for i in 0..pose.len().min(self.bones.len()) {
+            if i == head_bone || self.is_descendant_of(i, head_bone) {
+                pose[i] = delta * pose[i];
+            }
         }
+    }
+
+    fn is_descendant_of(&self, mut child: usize, ancestor: usize) -> bool {
+        while let Some(parent) = self.bones.get(child).and_then(|b| b.parent) {
+            if parent == ancestor {
+                return true;
+            }
+            if parent == child {
+                return false;
+            }
+            child = parent;
+        }
+        false
     }
 
     /// Parse a `.bbmodel` (JSON) string into a [`Model`].
@@ -176,6 +200,7 @@ impl Model {
                     .unwrap_or("")
                     .to_string();
                 let pivot = arr3(g.get("origin")).unwrap_or(Vec3::ZERO);
+                let rotation = arr3(g.get("rotation")).unwrap_or(Vec3::ZERO);
                 let name = g
                     .get("name")
                     .and_then(Value::as_str)
@@ -185,6 +210,7 @@ impl Model {
                 bones.push(Bone {
                     name,
                     pivot,
+                    rotation,
                     parent: None,
                 });
             }
@@ -198,6 +224,11 @@ impl Model {
                 if e.get("type").and_then(Value::as_str).unwrap_or("cube") != "cube" {
                     continue;
                 }
+                let name = e
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let from = arr3(e.get("from")).unwrap_or(Vec3::ZERO);
                 let to = arr3(e.get("to")).unwrap_or(Vec3::ZERO);
                 let origin = arr3(e.get("origin")).unwrap_or(from);
@@ -210,6 +241,7 @@ impl Model {
                     .to_string();
                 cube_by_uuid.insert(uuid, cubes.len());
                 cubes.push(Cube {
+                    name,
                     from,
                     to,
                     origin,
@@ -242,6 +274,7 @@ impl Model {
             bones.push(Bone {
                 name: "<root>".into(),
                 pivot: Vec3::ZERO,
+                rotation: Vec3::ZERO,
                 parent: None,
             });
             for c in cubes.iter_mut().filter(|c| c.bone == usize::MAX) {
@@ -269,11 +302,16 @@ impl Model {
         })
     }
 
-    /// The rest pose: identity per bone (no animation applied). Cubes render at
-    /// their modelled positions + static tilts — for the owl, legs straight down — so
-    /// an idle mob shows a natural neutral stance without any per-animation tuning.
+    /// The rest pose: the authored Blockbench group rotations composed down the bone
+    /// hierarchy. Cubes render at their modelled positions + static tilts, with any
+    /// rotated groups (ears, tails, etc.) included.
     pub fn rest_pose(&self) -> Vec<Mat4> {
-        vec![Mat4::IDENTITY; self.bones.len()]
+        let local: Vec<Mat4> = self
+            .bones
+            .iter()
+            .map(|b| bone_transform(b, Vec3::ZERO))
+            .collect();
+        self.resolve_pose(&local)
     }
 
     /// Per-bone world-within-model transforms posed by `anim` at `time` seconds
@@ -290,7 +328,8 @@ impl Model {
             // final frame instead of wrapping back to the start.
             time.clamp(0.0, anim.length)
         };
-        // Each bone's LOCAL transform: rotate about its pivot by the sampled euler.
+        // Each bone's LOCAL transform: rotate about its pivot by the authored rest
+        // euler plus the sampled animation euler.
         let local: Vec<Mat4> = self
             .bones
             .iter()
@@ -301,14 +340,14 @@ impl Model {
                     .get(&i)
                     .map(|kfs| sample_track(kfs, t))
                     .unwrap_or(Vec3::ZERO);
-                let q = euler_quat(rot);
-                Mat4::from_translation(b.pivot)
-                    * Mat4::from_quat(q)
-                    * Mat4::from_translation(-b.pivot)
+                bone_transform(b, rot)
             })
             .collect();
 
-        // Compose parent-before-child (resolve each bone's chain to the root).
+        self.resolve_pose(&local)
+    }
+
+    fn resolve_pose(&self, local: &[Mat4]) -> Vec<Mat4> {
         let mut world: Vec<Option<Mat4>> = vec![None; self.bones.len()];
         for i in 0..self.bones.len() {
             self.resolve_world(i, &local, &mut world);
@@ -336,9 +375,10 @@ impl CompiledAsset for Model {
     /// `LLMOB` — the compiled mob/entity model container (one file holds geometry, bones,
     /// animations and the decoded texture).
     const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
-    /// v1: bones + cubes (per-face UV) + named rotation animations + the RGBA texture.
+    /// v3: bones (including rest rotations) + cubes (per-face UV, element name) +
+    /// named rotation animations + the RGBA texture.
     /// Bump on any change to these fields or to [`Model::load`]'s output.
-    const FORMAT_VERSION: u32 = 1;
+    const FORMAT_VERSION: u32 = 3;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 
@@ -519,6 +559,20 @@ pub(crate) fn euler_quat(deg: Vec3) -> Quat {
     )
 }
 
+fn bone_transform(bone: &Bone, anim_rot: Vec3) -> Mat4 {
+    Mat4::from_translation(bone.pivot)
+        * Mat4::from_quat(euler_quat(bone.rotation + anim_rot))
+        * Mat4::from_translation(-bone.pivot)
+}
+
+fn head_look_transform(bone: &Bone, yaw: f32, pitch: f32) -> Mat4 {
+    Mat4::from_translation(bone.pivot)
+        * Mat4::from_rotation_y(yaw)
+        * Mat4::from_rotation_x(pitch)
+        * Mat4::from_quat(euler_quat(bone.rotation))
+        * Mat4::from_translation(-bone.pivot)
+}
+
 /// The UV divisor `(width, height)`: the texture's `uv_width`/`uv_height`, falling
 /// back to the project `resolution`, then 16.
 fn uv_resolution(root: &Value) -> (f32, f32) {
@@ -632,6 +686,14 @@ mod tests {
         Model::load(src).expect("owl.bbmodel parses")
     }
 
+    fn sheep() -> Model {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/sheep.bbmodel"
+        ));
+        Model::load(src).expect("sheep.bbmodel parses")
+    }
+
     /// The compiled `.llmob` payload round-trips the model with full fidelity: same
     /// geometry, same texture and — crucially — the same posed animation. Pins the
     /// serialization *contract* (every field survives), compared against the original, so
@@ -674,6 +736,21 @@ mod tests {
         // Embedded 32x32 texture decodes to RGBA.
         assert_eq!((m.tex_w, m.tex_h), (32, 32));
         assert_eq!(m.texture_rgba.len(), 32 * 32 * 4);
+    }
+
+    #[test]
+    fn cube_names_are_parsed_and_survive_the_compiled_roundtrip() {
+        // Cube names carry gameplay meaning (a sheep's fleece cubes are all named
+        // `wool` so the renderer can hide them while shorn), so the loader must keep
+        // them and the compiled `.llmob` must round-trip them.
+        let m = sheep();
+        let wool = m.cubes.iter().filter(|c| c.name == "wool").count();
+        assert!(wool > 0, "the sheep fixture authors `wool` cubes");
+
+        let bytes = bincode::serialize(&m).expect("model serializes");
+        let m2: Model = bincode::deserialize(&bytes).expect("model deserializes");
+        let names = |m: &Model| -> Vec<String> { m.cubes.iter().map(|c| c.name.clone()).collect() };
+        assert_eq!(names(&m), names(&m2), "cube names survive the round-trip");
     }
 
     #[test]
@@ -779,6 +856,60 @@ mod tests {
         assert!(
             m.idle_animation(999).is_none(),
             "out-of-range idle index is None"
+        );
+    }
+
+    #[test]
+    fn rest_pose_includes_static_group_rotations() {
+        let m = sheep();
+        let ear = m
+            .bones
+            .iter()
+            .position(|b| b.name == "ear_left")
+            .expect("sheep has a rotated ear bone");
+        assert!(
+            m.bones[ear].rotation.length_squared() > 0.0,
+            "fixture must exercise authored group rotation"
+        );
+
+        let rest = m.rest_pose();
+        let pivot = m.bones[ear].pivot;
+        let marker = pivot + Vec3::X;
+        assert!(
+            !rest[ear].transform_point3(marker).abs_diff_eq(marker, 1e-5),
+            "rest pose applies the authored bone rotation"
+        );
+        assert!(
+            rest[ear].transform_point3(pivot).abs_diff_eq(pivot, 1e-5),
+            "bone rotation is about the authored pivot"
+        );
+    }
+
+    #[test]
+    fn head_look_propagates_to_child_bones() {
+        let m = sheep();
+        let head = m.head_bone().expect("sheep has a head bone");
+        let ear = m
+            .bones
+            .iter()
+            .position(|b| b.name == "ear_left")
+            .expect("sheep has a child ear bone");
+        assert!(
+            m.is_descendant_of(ear, head),
+            "the ear is authored under the head"
+        );
+
+        let mut pose = m.rest_pose();
+        let ear_before = pose[ear];
+        m.apply_head_look(&mut pose, head, 0.7, 0.2);
+
+        assert!(
+            !pose[head].abs_diff_eq(Mat4::IDENTITY, 1e-5),
+            "head-look changes the head pose"
+        );
+        assert!(
+            !pose[ear].abs_diff_eq(ear_before, 1e-5),
+            "head-look carries through descendant bones"
         );
     }
 

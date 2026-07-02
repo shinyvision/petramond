@@ -360,7 +360,10 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
     let mut manifest_columns: HashMap<ChunkPos, Vec<i32>> = HashMap::new();
     for sp in &manifest {
-        manifest_columns.entry(sp.chunk_pos()).or_default().push(sp.cy);
+        manifest_columns
+            .entry(sp.chunk_pos())
+            .or_default()
+            .push(sp.cy);
     }
 
     Ok(OpenedWorld {
@@ -640,6 +643,7 @@ mod tests {
             kind: crate::mob::Mob::Owl,
             pos: Vec3::new(-100.5, 65.0, 56.5),
             yaw: 0.5,
+            shear_regrow: 0,
         });
         opened.save.save_sections(vec![snap]);
         assert!(

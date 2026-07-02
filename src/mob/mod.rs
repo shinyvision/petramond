@@ -1,10 +1,10 @@
 //! Mobs: a data-driven creature registry plus the live entity manager + AI.
 //!
 //! Each species is a `#[repr(u8)]` [`Mob`] key indexing a [`MOB_DEFS`] row. A row
-//! carries the species' model asset, render scale, body
-//! size, movement stats, and a `make_brain` constructor for its composable AI. So
+//! carries the species' model asset, render scale, body size, movement stats,
+//! spawn pack size, and a `make_brain` constructor for its composable AI. So
 //! **adding an animal is: add a `Mob` variant, add a `MobDef` row, write its
-//! behavior** — no edits to the game loop, the scene, or the renderer (which both
+//! behavior** -- no edits to the game loop, the scene, or the renderer (which both
 //! iterate this table generically).
 //!
 //! Layering: `path` (pure A*), `brain` + `behavior` (composable per-tick AI), `nav`
@@ -28,7 +28,7 @@ mod spawn;
 pub use brain::Brain;
 pub use instance::Instance;
 pub use loot::{load_loot, LootTables};
-pub use manager::{DeathDrop, Mobs};
+pub use manager::{DeathDrop, Mobs, ShearDrop};
 pub use push::Body;
 
 use std::sync::LazyLock;
@@ -36,6 +36,7 @@ use std::sync::LazyLock;
 use crate::bbmodel::Model;
 use crate::biome::Biome;
 use crate::block::Block;
+use crate::item::ItemType;
 use crate::mathh::Vec3;
 
 /// A mob species — the stable key into [`MOB_DEFS`] (like `Block` into the block
@@ -44,6 +45,7 @@ use crate::mathh::Vec3;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Mob {
     Owl,
+    Sheep,
 }
 
 /// The population group a species belongs to. Natural spawning caps each group
@@ -97,6 +99,35 @@ impl SpawnRule {
     }
 }
 
+/// How many individuals a successful natural spawn attempt tries to place near the
+/// first valid site. Singleton species use `1..=1`; herd animals can request a
+/// larger bounded group.
+#[derive(Copy, Clone, Debug)]
+pub struct SpawnGroup {
+    pub min: u8,
+    pub max: u8,
+}
+
+impl SpawnGroup {
+    pub const fn singleton() -> Self {
+        Self { min: 1, max: 1 }
+    }
+
+    pub const fn new(min: u8, max: u8) -> Self {
+        Self { min, max }
+    }
+
+    pub fn min_count(self) -> u32 {
+        self.min.min(self.max).max(1) as u32
+    }
+
+    pub fn roll(self, rng: &mut MobRng) -> u32 {
+        let lo = self.min.min(self.max).max(1) as i32;
+        let hi = self.min.max(self.max).max(1) as i32;
+        rng.next_range(lo, hi) as u32
+    }
+}
+
 /// A species' biome affinity while idly wandering (distinct from where it *spawns*).
 /// The wander AI never targets an `avoid` biome — save a bounded escape hatch so a
 /// mob hemmed in by avoided terrain still moves — and, among the rest, leans toward
@@ -106,6 +137,34 @@ pub struct Habitat {
     pub avoid: &'static [Biome],
     /// Biomes the wander AI is drawn to when one is in reach.
     pub prefer: &'static [Biome],
+}
+
+/// Optional group preference for idle wandering. When present, a mob that has a
+/// companion of `companion` inside the configured search radius will only choose
+/// destinations that also keep one within its wander radius.
+#[derive(Copy, Clone, Debug)]
+pub struct WanderCohesion {
+    pub companion: Mob,
+    /// How many wander radii out to search before treating this mob as already
+    /// lonely. Destinations still need a companion within one wander radius.
+    pub search_radius_multiplier: u8,
+}
+
+impl WanderCohesion {
+    pub fn search_radius(self, wander_radius: i32) -> i32 {
+        let multiplier = i32::from(self.search_radius_multiplier.max(1));
+        wander_radius.saturating_mul(multiplier)
+    }
+}
+
+/// Data that controls idle wander cadence, range, and optional group preference. The
+/// biome/water filters live beside it on [`MobDef`] because they are reused by spawn
+/// and habitat-facing code.
+#[derive(Copy, Clone, Debug)]
+pub struct WanderTuning {
+    pub chance_per_tick: f32,
+    pub radius: i32,
+    pub cohesion: Option<WanderCohesion>,
 }
 
 /// A mob's collision/render footprint: a centred AABB `half_width` across and
@@ -125,17 +184,34 @@ impl MobSize {
     }
 }
 
+/// What shearing a species yields, when it can be shorn at all: the item dropped, the
+/// per-shear count range, and how long (game ticks) the coat takes to grow back —
+/// during which the mob renders without its coat and can't be shorn again. Row data on
+/// [`MobDef`], so a new shearable species is a data edit, not new code.
+#[derive(Copy, Clone, Debug)]
+pub struct ShearSpec {
+    pub drop: ItemType,
+    /// Inclusive drop-count range rolled per shear.
+    pub min: u8,
+    pub max: u8,
+    /// Inclusive regrow-duration range (game ticks) rolled per shear.
+    pub regrow_min: u32,
+    pub regrow_max: u32,
+}
+
 /// A mob in its persisted form: just what survives a save — the species, where it
-/// stands, and which way it faces. A live [`Instance`] projects to this when its chunk
-/// unloads (so it rides that chunk's save record, like a dropped item) and is rebuilt
-/// from it on reload with a fresh brain. Transient AI/physics state (velocity, health,
-/// animation, the despawn timer) is deliberately *not* saved: a reloaded mob simply
-/// resumes wandering.
+/// stands, which way it faces, and how many ticks of coat regrowth remain (`0` = fully
+/// coated). A live [`Instance`] projects to this when its chunk unloads (so it rides
+/// that chunk's save record, like a dropped item) and is rebuilt from it on reload with
+/// a fresh brain. Transient AI/physics state (velocity, health, animation, the despawn
+/// timer) is deliberately *not* saved: a reloaded mob simply resumes wandering. The
+/// shear-regrow counter IS saved — a shorn sheep must not reload with its wool back.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SavedMob {
     pub kind: Mob,
     pub pos: Vec3,
     pub yaw: f32,
+    pub shear_regrow: u32,
 }
 
 impl SavedMob {
@@ -145,6 +221,7 @@ impl SavedMob {
             kind: inst.kind,
             pos: inst.pos,
             yaw: inst.yaw,
+            shear_regrow: inst.shear_regrow(),
         }
     }
 }
@@ -183,6 +260,10 @@ pub struct MobDef {
     pub cap: u32,
     /// Where this species spawns naturally (biome + the block it stands on).
     pub spawn: SpawnRule,
+    /// Number of nearby individuals produced by one successful natural spawn attempt.
+    pub spawn_group: SpawnGroup,
+    /// Idle wander cadence, radius, and optional group preference.
+    pub wander: WanderTuning,
     /// Biome affinity for idle wandering (avoid / prefer) — see [`Habitat`].
     pub habitat: Habitat,
     /// Whether the wander AI steers destinations away from water (it still re-rolls a
@@ -190,52 +271,143 @@ pub struct MobDef {
     /// behavior). Crossing water en route is always allowed; this is only about where
     /// the mob chooses to head.
     pub avoid_water: bool,
+    /// What shearing this species yields, or `None` for species that can't be shorn.
+    pub shear: Option<ShearSpec>,
     /// Constructs this species' AI brain on spawn (its composed behaviors), reading
     /// whatever it needs (e.g. its [`Habitat`]) off the row.
     pub make_brain: fn(&'static MobDef) -> Brain,
 }
 
 /// The id-ordered registry table (one row per [`Mob`], indexed by `Mob as u8`).
-pub static MOB_DEFS: &[MobDef] = &[MobDef {
-    mob: Mob::Owl,
-    key: "owl",
-    model_src: include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/models/owl.bbmodel"
-    )),
-    scale: 0.25,
-    size: MobSize {
-        half_width: 0.22,
-        height: 0.7,
+pub static MOB_DEFS: &[MobDef] = &[
+    MobDef {
+        mob: Mob::Owl,
+        key: "owl",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/owl.bbmodel"
+        )),
+        scale: 0.25,
+        size: MobSize {
+            half_width: 0.22,
+            height: 0.7,
+        },
+        max_health: 4.0,
+        walk_speed: 2.4,
+        jump_speed: 7.2,
+        turn_rate: 7.0,
+        walk_anim_rate: 1.2,
+        category: MobCategory::Passive,
+        cap: 8,
+        spawn: SpawnRule {
+            // Owls settle in wooded country, perched on the canopy or down on grass.
+            biomes: &[Biome::Forest, Biome::RedwoodForest],
+            ground: &[Block::OakLeaves, Block::BirchLeaves, Block::Grass],
+        },
+        spawn_group: SpawnGroup::singleton(),
+        wander: WanderTuning {
+            // A new stroll every few seconds of standing around.
+            chance_per_tick: 1.0 / 80.0,
+            radius: 8,
+            cohesion: None,
+        },
+        habitat: Habitat {
+            // Open / arid / watery country an owl won't wander into.
+            avoid: &[
+                Biome::Savanna,
+                Biome::Ocean,
+                Biome::DeepOcean,
+                Biome::Beach,
+                Biome::Plains,
+                Biome::Desert,
+            ],
+            // Drawn back to forest, so a strayed owl drifts home.
+            prefer: &[Biome::Forest, Biome::RedwoodForest],
+        },
+        avoid_water: true,
+        shear: None,
+        make_brain: behavior::owl_brain,
     },
-    max_health: 4.0,
-    walk_speed: 2.4,
-    jump_speed: 7.2,
-    turn_rate: 7.0,
-    walk_anim_rate: 1.2,
-    category: MobCategory::Passive,
-    cap: 8,
-    spawn: SpawnRule {
-        // Owls settle in wooded country, perched on the canopy or down on grass.
-        biomes: &[Biome::Forest, Biome::RedwoodForest],
-        ground: &[Block::OakLeaves, Block::BirchLeaves, Block::Grass],
+    MobDef {
+        mob: Mob::Sheep,
+        key: "sheep",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/sheep.bbmodel"
+        )),
+        scale: 0.0625,
+        size: MobSize {
+            half_width: 0.45,
+            height: 1.3,
+        },
+        max_health: 8.0,
+        walk_speed: 1.5,
+        jump_speed: 7.2,
+        turn_rate: 5.5,
+        walk_anim_rate: 1.25,
+        category: MobCategory::Passive,
+        cap: 18,
+        spawn: SpawnRule {
+            biomes: SHEEP_TEMPERATE_BIOMES,
+            ground: &[Block::Grass, Block::Podzol, Block::Dirt],
+        },
+        spawn_group: SpawnGroup::new(2, 5),
+        wander: WanderTuning {
+            // Sheep browse less restlessly than owls, but range a little farther as a herd.
+            chance_per_tick: 1.0 / 100.0,
+            radius: 10,
+            cohesion: Some(WanderCohesion {
+                companion: Mob::Sheep,
+                search_radius_multiplier: 2,
+            }),
+        },
+        habitat: Habitat {
+            avoid: SHEEP_AVOID_BIOMES,
+            prefer: SHEEP_TEMPERATE_BIOMES,
+        },
+        avoid_water: true,
+        shear: Some(ShearSpec {
+            drop: ItemType::Wool,
+            min: 1,
+            max: 3,
+            regrow_min: 1200,
+            regrow_max: 6000,
+        }),
+        make_brain: behavior::sheep_brain,
     },
-    habitat: Habitat {
-        // Open / arid / watery country an owl won't wander into.
-        avoid: &[
-            Biome::Savanna,
-            Biome::Ocean,
-            Biome::DeepOcean,
-            Biome::Beach,
-            Biome::Plains,
-            Biome::Desert,
-        ],
-        // Drawn back to forest, so a strayed owl drifts home.
-        prefer: &[Biome::Forest, Biome::RedwoodForest],
-    },
-    avoid_water: true,
-    make_brain: behavior::owl_brain,
-}];
+];
+
+const SHEEP_TEMPERATE_BIOMES: &[Biome] = &[
+    Biome::Plains,
+    Biome::Savanna,
+    Biome::Forest,
+    Biome::Swamp,
+    Biome::Taiga,
+    Biome::Foothills,
+    Biome::Wetland,
+    Biome::RedwoodForest,
+    Biome::OldGrowthTaiga,
+    Biome::CherryGrove,
+    Biome::Meadow,
+    Biome::WindsweptHills,
+    Biome::WoodedHills,
+    Biome::MountainEdge,
+];
+
+const SHEEP_AVOID_BIOMES: &[Biome] = &[
+    Biome::Ocean,
+    Biome::DeepOcean,
+    Biome::Beach,
+    Biome::River,
+    Biome::Desert,
+    Biome::DesertLakes,
+    Biome::SnowyTundra,
+    Biome::SnowyTaiga,
+    Biome::SnowyPeaks,
+    Biome::Grove,
+    Biome::SnowySlopes,
+    Biome::StonyPeaks,
+];
 
 #[inline]
 pub fn from_id(id: u8) -> Mob {
@@ -337,8 +509,23 @@ mod tests {
 
     #[test]
     fn def_round_trips_through_id() {
-        assert_eq!(def(Mob::Owl).mob, Mob::Owl);
-        assert_eq!(from_id(Mob::Owl as u8), Mob::Owl);
+        for d in MOB_DEFS {
+            assert_eq!(def(d.mob).mob, d.mob);
+            assert_eq!(from_id(d.mob as u8), d.mob);
+        }
         assert_eq!(from_id(u8::MAX), Mob::Owl, "out-of-range falls back to Owl");
+    }
+
+    #[test]
+    fn all_mob_model_sources_parse() {
+        for d in MOB_DEFS {
+            let model = Model::load(d.model_src)
+                .unwrap_or_else(|e| panic!("{} model should parse: {e}", d.key));
+            assert!(
+                !model.cubes.is_empty(),
+                "{} model should have renderable geometry",
+                d.key
+            );
+        }
     }
 }

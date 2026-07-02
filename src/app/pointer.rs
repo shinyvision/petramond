@@ -179,8 +179,7 @@ impl App {
     }
 
     pub(super) fn recenter_pointer_if_pending(&mut self, screen_size: (u32, u32)) {
-        if self.pointer.recenter_if_pending(screen_size) {
-        }
+        if self.pointer.recenter_if_pending(screen_size) {}
     }
 
     pub(super) fn take_game_input(&mut self) -> GameInput {

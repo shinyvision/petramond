@@ -58,6 +58,9 @@
     { "type": "shaped", "pattern": ["DD", "DS", " S"], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
     { "type": "shaped", "pattern": ["DD", "SD", "S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
 
+    { "type": "shaped", "pattern": ["I ", " I"], "key": { "I": "iron_ingot" }, "result": "shears", "count": 1 },
+    { "type": "shaped", "pattern": [" I", "I "], "key": { "I": "iron_ingot" }, "result": "shears", "count": 1 },
+
     { "type": "shaped", "pattern": ["CCC", "C C", "CKC"], "key": { "C": "cobblestone", "K": "coal" }, "result": "furnace", "count": 1 },
 
     { "type": "shaped", "pattern": ["PPP", "P P", "PPP"], "key": { "P": "#planks" }, "result": "chest", "count": 1 },

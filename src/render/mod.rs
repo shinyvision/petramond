@@ -123,10 +123,13 @@ pub struct MobRenderInstance {
     /// Hurt-flash intensity in `[0, 1]`: tints the mob red after a non-lethal hit,
     /// fading out. `0` for an unhurt or dead mob.
     pub hurt: f32,
-    /// When the mob is dying, its per-bone ragdoll pose — `(pivot position, orientation)`
-    /// per bone in model space, already interpolated for this frame — used in place of
-    /// the animation pose. `None` for a live mob. `Arc` so cloning a visible instance
-    /// into its per-species batch stays cheap.
+    /// Whether the mob is currently shorn: the bake skips the model's coat cubes
+    /// (the ones named `wool`) so the fleece disappears until it regrows.
+    pub shorn: bool,
+    /// When the mob is dying, its per-bone ragdoll pose — `(rest-pivot position,
+    /// rotation delta)` per bone in model space, already interpolated for this frame —
+    /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
+    /// visible instance into its per-species batch stays cheap.
     pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
 }
 

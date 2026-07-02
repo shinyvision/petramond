@@ -8,7 +8,9 @@
 //! corners hit the ground at different times, a bone that lands rotates — the body topples
 //! onto its side instead of sinking flat. A light joint constraint then slides each bone
 //! so its pivot meets the matching spot on its parent, keeping the skeleton connected
-//! while each bone still tumbles on its own.
+//! while each bone still tumbles on its own. Each joint also has a swing limit: a limb
+//! sags under gravity relative to its parent only up to [`MAX_JOINT_SWING`], so legs
+//! droop like dead weight but never fold through the body.
 //!
 //! Everything is in the model's own units, so a sim-computed per-bone pose
 //! `(pivot position, orientation)` drops straight into the render bake
@@ -37,6 +39,15 @@ const GROUND_PROBE: f32 = 0.1;
 const ITERS: usize = 8;
 /// Polar-decomposition iterations to extract a rotation from the corner cloud.
 const POLAR_ITERS: usize = 4;
+/// Maximum recovered angular speed for one ragdoll body. Shape matching can otherwise
+/// turn a noisy corner contact into an implausible full-body spin, especially for compact
+/// models with many constrained child bodies.
+const MAX_ANGULAR_SPEED: f32 = 24.0;
+/// Maximum rotation (radians) a child bone may deviate from its rest orientation
+/// *relative to its parent* — a joint swing limit. Gravity still drags a limb down (its
+/// corners fall like everything else), but it sags onto this limit instead of folding
+/// through the body.
+const MAX_JOINT_SWING: f32 = 0.8;
 /// Seconds the corpse ragdolls before it despawns.
 const LIFETIME: f32 = 1.8;
 /// Upward pop (model-units/s) given on death — a small base lurch before the collapse.
@@ -51,7 +62,7 @@ const LAUNCH_UP: f32 = 1.5;
 /// always dominates the spin — every corner's net motion is *away*, never toward the
 /// attacker — while still giving a clear somersault. Scaling the spin to the launch this
 /// way keeps that guarantee no matter how `LAUNCH_SPEED` is tuned.
-const SPIN_FRACTION: f32 = 0.5;
+const SPIN_FRACTION: f32 = 0.25;
 /// Per-corner velocity spread (model-units/s) seeded on death, so bones don't move
 /// perfectly rigidly — a little natural variation on top of the coherent tumble.
 const CORNER_SPIN: f32 = 1.5;
@@ -295,8 +306,9 @@ impl Ragdoll {
             // Shape-match each bone: recover its rigid centroid + rotation from the corner
             // cloud, then snap the corners back onto that rigid shape. The corners' motion
             // (gravity + collisions) becomes the bone's rotation.
+            let max_rot = MAX_ANGULAR_SPEED * dt;
             for b in &mut self.bones {
-                b.shape_match();
+                b.shape_match(max_rot);
             }
             // Collision: resolve every corner against the voxels (from its start-of-tick
             // position, which is collision-free), so the rigid shape doesn't sink into a
@@ -306,13 +318,24 @@ impl Ragdoll {
                     b.nodes[k] = resolve(b.nodes_old[k], b.nodes[k]);
                 }
             }
-            // Joints (last, so the connection stays exact at render): slide each child so
-            // its pivot meets the spot on its parent it attaches to (root-first order).
+            // Joints (last, so the connection stays exact at render): clamp each child's
+            // rotation to a bounded swing about its rest orientation relative to its
+            // parent (legs sag under gravity but can't fold into the body), then slide it
+            // so its pivot meets the spot on its parent it attaches to (root-first order).
             for i in 0..self.bones.len() {
                 let Some(p) = self.bones[i].parent else {
                     continue;
                 };
                 let (pc, pr, pc0) = (self.bones[p].c, self.bones[p].rot, self.bones[p].c0);
+                let rel = (pr.inverse() * self.bones[i].rot).normalize();
+                let lim = clamp_rotation(Quat::IDENTITY, rel, MAX_JOINT_SWING);
+                if lim.angle_between(rel) > EPS {
+                    let b = &mut self.bones[i];
+                    b.rot = (pr * lim).normalize();
+                    for k in 0..8 {
+                        b.nodes[k] = b.c + b.rot * b.rest[k];
+                    }
+                }
                 let rp = self.bones[i].rest_pivot;
                 let target = pc + pr * (rp - pc0);
                 let cur = self.bones[i].c + self.bones[i].rot * (rp - self.bones[i].c0);
@@ -367,13 +390,13 @@ impl RagBone {
     /// matching), then snap the corners back onto the rigid shape. The recovered rotation
     /// is the bone's physical orientation; snapping keeps it rigid while the corners'
     /// gravity/ground motion drives that rotation.
-    fn shape_match(&mut self) {
+    fn shape_match(&mut self, max_rot: f32) {
         let c = self.nodes.iter().copied().sum::<Vec3>() / 8.0;
         let mut a = Mat3::ZERO;
         for k in 0..8 {
             a += outer(self.nodes[k] - c, self.rest[k]);
         }
-        let rot = extract_rotation(a, self.rot);
+        let rot = clamp_rotation(self.prev_rot, extract_rotation(a, self.rot), max_rot);
         self.c = c;
         self.rot = rot;
         for k in 0..8 {
@@ -412,29 +435,45 @@ fn outer(u: Vec3, v: Vec3) -> Mat3 {
     Mat3::from_cols(u * v.x, u * v.y, u * v.z)
 }
 
-/// Extract the rotation from a cross-covariance matrix by polar decomposition
-/// (iterative averaging with the inverse-transpose). Falls back to `prev` if the matrix
-/// is degenerate or the result isn't a proper rotation.
+/// Extract the rotation (polar factor) from a cross-covariance matrix by warm-started
+/// incremental extraction (Müller et al., "A Robust Method to Extract the Rotational Part
+/// of Deformations"): rotate `prev` by the torque-like residual until it aligns with the
+/// matrix. Unlike a fixed-count Higham iteration this is scale-invariant — the matrix's
+/// magnitude (which grows with the model's box sizes) cancels in the `omega` quotient —
+/// and it always yields a proper rotation, never a reflection.
 fn extract_rotation(a: Mat3, prev: Quat) -> Quat {
-    let det = a.determinant();
-    if !det.is_finite() || det.abs() < EPS {
+    if !(a.x_axis.is_finite() && a.y_axis.is_finite() && a.z_axis.is_finite()) {
         return prev;
     }
-    let mut q = a;
+    let mut q = prev;
     for _ in 0..POLAR_ITERS {
-        let inv_t = q.inverse().transpose();
-        q = (q + inv_t) * 0.5;
+        let r = Mat3::from_quat(q);
+        let numer =
+            r.x_axis.cross(a.x_axis) + r.y_axis.cross(a.y_axis) + r.z_axis.cross(a.z_axis);
+        let denom = r.x_axis.dot(a.x_axis) + r.y_axis.dot(a.y_axis) + r.z_axis.dot(a.z_axis);
+        let omega = numer / (denom.abs() + EPS);
+        let angle = omega.length();
+        if !angle.is_finite() || angle < 1e-7 {
+            break;
+        }
+        q = (Quat::from_axis_angle(omega / angle, angle) * q).normalize();
     }
-    if !q.determinant().is_finite() || q.determinant() <= 0.0 {
-        return prev;
+    q
+}
+
+fn clamp_rotation(from: Quat, to: Quat, max_angle: f32) -> Quat {
+    let angle = from.angle_between(to);
+    if !angle.is_finite() || angle <= max_angle.max(0.0) {
+        return to;
     }
-    Quat::from_mat3(&q).normalize()
+    from.slerp(to, max_angle / angle).normalize()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mob::model_meta::SkBone;
+    use crate::bbmodel::Model;
+    use crate::mob::model_meta::{self, SkBone};
 
     fn boxed(pivot: Vec3, min: Vec3, max: Vec3, parent: Option<usize>) -> SkBone {
         SkBone {
@@ -468,6 +507,15 @@ mod tests {
                 ),
             ],
         }
+    }
+
+    fn sheep_skeleton() -> Skeleton {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/sheep.bbmodel"
+        ));
+        let model = Model::load(src).expect("sheep.bbmodel parses");
+        model_meta::skeleton(&model)
     }
 
     #[test]
@@ -659,6 +707,93 @@ mod tests {
             "corpse drops off the unsupported edge: lowest {}",
             rag.lowest_node_y()
         );
+    }
+
+    #[test]
+    fn sheep_scale_ragdoll_goes_limp_and_does_not_spin() {
+        // The real sheep skeleton at its in-game scale, simulated for its full lifetime.
+        // A corpse must tumble briefly and settle limp: bounded per-tick rotation is not
+        // enough — the tornado bug span at the per-tick clamp EVERY tick (26+ rad total
+        // per bone over the lifetime), so also bound each bone's CUMULATIVE rotation.
+        let skel = sheep_skeleton();
+        let mut rag = Ragdoll::pending(11, Vec3::X);
+        rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
+
+        let mut prev = rag.pose(1.0);
+        let mut total = vec![0.0f32; skel.bones.len()];
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 0.0625, Vec3::ZERO, 0.0, &floor);
+            let pose = rag.pose(1.0);
+            for (i, ((pos, rot), (_, old_rot))) in pose.iter().zip(&prev).enumerate() {
+                assert!(pos.is_finite(), "ragdoll positions stay finite");
+                assert!(rot.is_finite(), "ragdoll rotations stay finite");
+                let turn = rot.angle_between(*old_rot);
+                assert!(
+                    turn < 1.5,
+                    "ragdoll rotation is bounded per tick, not a tornado: {turn}"
+                );
+                total[i] += turn;
+            }
+            prev = pose;
+        }
+        for (i, t) in total.iter().enumerate() {
+            assert!(
+                *t < 10.0,
+                "bone {i} settles instead of spinning: {t} rad total over the lifetime"
+            );
+        }
+    }
+
+    #[test]
+    fn limbs_never_swing_past_the_joint_limit() {
+        // The real sheep at its in-game scale, over its full lifetime: every child bone's
+        // orientation relative to its parent stays within the joint swing limit — legs sag
+        // with gravity but never fold into the body.
+        let skel = sheep_skeleton();
+        let mut rag = Ragdoll::pending(11, Vec3::X);
+        rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
+        let mut max_swing = 0.0f32;
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 0.0625, Vec3::ZERO, 0.0, &floor);
+            let pose = rag.pose(1.0);
+            for (i, b) in skel.bones.iter().enumerate() {
+                let Some(p) = b.parent else { continue };
+                let rel = (pose[p].1.inverse() * pose[i].1).normalize();
+                let swing = rel.angle_between(Quat::IDENTITY);
+                assert!(
+                    swing <= MAX_JOINT_SWING + 0.05,
+                    "bone {i} stays within the joint swing limit: {swing}"
+                );
+                max_swing = max_swing.max(swing);
+            }
+        }
+        // The joints are limp within the limit, not welded: some limb visibly sags.
+        assert!(
+            max_swing > 0.2,
+            "limbs still swing under gravity within the limit: max {max_swing}"
+        );
+    }
+
+    #[test]
+    fn rotation_extraction_is_exact_regardless_of_box_size() {
+        // A perfectly rigid rotation must be recovered accurately even for a LARGE box
+        // (a fine-grid model like the sheep, 16 units/m): the cross-covariance magnitude
+        // grows with box size, and a scale-sensitive polar iteration returns garbage for
+        // big boxes — the cause of the corpse-tornado bug. Cold start (identity) is the
+        // worst case; in the sim it warm-starts from last tick's rotation.
+        for half in [0.5f32, 2.0, 7.5] {
+            let b = corners(Vec3::splat(-half), Vec3::new(half, half * 0.9, half * 1.5));
+            let r = Quat::from_rotation_y(0.3) * Quat::from_rotation_x(0.2);
+            let mut a = Mat3::ZERO;
+            for q in b {
+                a += outer(r * q, q);
+            }
+            let err = extract_rotation(a, Quat::IDENTITY).angle_between(r);
+            assert!(
+                err < 0.02,
+                "rigid rotation recovered for box half-extent {half}: error {err} rad"
+            );
+        }
     }
 
     #[test]

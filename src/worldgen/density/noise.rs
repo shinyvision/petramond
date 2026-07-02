@@ -465,8 +465,8 @@ impl ShiftedClimateField {
     /// The domain warp at a quart cell, memoized per thread (direct-mapped).
     fn warp(&self, qx: f64, qz: f64) -> (f64, f64) {
         let (qxb, qzb) = (qx.to_bits(), qz.to_bits());
-        let hash = (qxb ^ qzb.rotate_left(32) ^ self.world_seed)
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let hash =
+            (qxb ^ qzb.rotate_left(32) ^ self.world_seed).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let idx = (hash >> (64 - WARP_MEMO_ENTRIES.trailing_zeros())) as usize;
         WARP_MEMO.with(|memo| {
             let mut memo = memo.borrow_mut();

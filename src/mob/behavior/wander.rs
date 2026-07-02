@@ -1,12 +1,13 @@
 //! Wander: the idle-roaming behavior.
 //!
 //! Each game tick, while the mob has no active path, there's a small chance it picks
-//! a new random destination — a standable foothold within a radius — and hands it to
-//! the navigator. While the navigator is still walking the mob there, wander simply
-//! keeps requesting that same destination (so the brain doesn't repath every tick).
-//! When the mob arrives (or the navigator gives up), wander goes quiet until its next
-//! random roll. The destination is always a real foothold, so the navigator can
-//! actually path to it (or to the closest reachable cell).
+//! a new random destination — a standable navigation foothold within a radius — and
+//! hands it to the navigator. While the navigator is still walking the mob there,
+//! wander simply keeps requesting that same destination (so the brain doesn't repath
+//! every tick). When the mob arrives (or the navigator gives up), wander goes quiet
+//! until its next random roll. Water-averse mobs that are already in water skip the
+//! random roll and immediately look for a dry exit, falling back to water-surface
+//! wandering if no dry destination is sampled.
 //!
 //! Destinations are filtered by the species' [`Habitat`]: avoided biomes are never
 //! targeted (bar a bounded escape hatch so a hemmed-in mob still moves), and among
@@ -14,11 +15,11 @@
 //! toward it after straying.
 
 use crate::biome::Biome;
-use crate::mathh::IVec3;
+use crate::mathh::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
-use super::super::path::is_foothold;
-use super::super::Habitat;
+use super::super::path::{body_or_floor_touches, is_navigation_foothold, PathParams};
+use super::super::{Habitat, WanderCohesion, WanderTuning};
 
 /// How many random offsets to try when picking a destination before giving up for
 /// this tick (keeps the search cheap; it only runs on the occasional roll).
@@ -35,8 +36,7 @@ const AVOID_ESCAPE: u32 = 5;
 const WATER_ESCAPE: u32 = 3;
 
 pub struct WanderAi {
-    chance_per_tick: f32,
-    radius: i32,
+    tuning: WanderTuning,
     /// The species' biome affinity, consulted when choosing a destination.
     habitat: &'static Habitat,
     /// Whether to steer destinations away from water (with the bounded re-roll above).
@@ -46,15 +46,9 @@ pub struct WanderAi {
 }
 
 impl WanderAi {
-    pub fn new(
-        chance_per_tick: f32,
-        radius: i32,
-        habitat: &'static Habitat,
-        avoid_water: bool,
-    ) -> Self {
+    pub fn new(tuning: WanderTuning, habitat: &'static Habitat, avoid_water: bool) -> Self {
         WanderAi {
-            chance_per_tick,
-            radius,
+            tuning,
             habitat,
             avoid_water,
             current: None,
@@ -71,8 +65,9 @@ impl AiBehavior for WanderAi {
             // Idle (arrived / gave up / never had one): drop the old target, and on
             // the occasional roll pick a fresh standable destination.
             self.current = None;
-            if ctx.rng.next_f32() < self.chance_per_tick {
-                self.current = pick_destination(ctx, self.radius, self.habitat, self.avoid_water);
+            let escape_water = self.avoid_water && ctx.in_water;
+            if escape_water || ctx.rng.next_f32() < self.tuning.chance_per_tick {
+                self.current = pick_destination(ctx, self.tuning, self.habitat, self.avoid_water);
             }
             self.current
         };
@@ -90,14 +85,24 @@ impl AiBehavior for WanderAi {
 /// column nearest the mob's level.
 fn pick_destination(
     ctx: &mut AiCtx,
-    radius: i32,
+    tuning: WanderTuning,
     habitat: &Habitat,
     avoid_water: bool,
 ) -> Option<IVec3> {
     let solid = |c: IVec3| ctx.world.blocks_movement_at(c.x, c.y, c.z);
     let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
+    let radius = tuning.radius;
     let r2 = radius * radius;
+    let path_params = PathParams::for_body(ctx.head, ctx.half_width);
+    let cohesion = tuning.cohesion.map(|rule| {
+        (
+            rule,
+            companion_within(ctx, rule, ctx.pos, rule.search_radius(radius)),
+        )
+    });
+    let escape_water = avoid_water && ctx.in_water;
     let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+    let mut wet_fallback = None;
     for _ in 0..PICK_ATTEMPTS {
         let dx = ctx.rng.next_range(-radius, radius);
         let dz = ctx.rng.next_range(-radius, radius);
@@ -116,42 +121,93 @@ fn pick_destination(
         if picker.reject_avoided(fit) {
             continue;
         }
-        let Some(y) = nearest_foothold_y(x, z, ctx.cell.y, radius, ctx.head, &solid) else {
+        let Some(y) =
+            nearest_navigation_foothold_y(x, z, ctx.cell.y, radius, path_params, &solid, &water)
+        else {
             continue;
         };
         let dest = IVec3::new(x, y, z);
-        // For a water-averse species, re-roll a destination that sits in water — up to
-        // the escape hatch, after which a wet spot is accepted rather than refusing.
-        if avoid_water && picker.reject_water(water(dest)) {
-            continue;
+        let wet = body_or_floor_touches(dest, path_params, &water);
+        if avoid_water {
+            if escape_water && wet {
+                wet_fallback.get_or_insert(dest);
+                continue;
+            }
+            // For a water-averse species, re-roll a destination that sits in water —
+            // up to the escape hatch, after which a wet spot is accepted rather than
+            // refusing.
+            if picker.reject_water(wet) {
+                continue;
+            }
+        }
+        if let Some((rule, origin_has_companion)) = cohesion {
+            if reject_for_cohesion(ctx, rule, origin_has_companion, dest, radius) {
+                continue;
+            }
         }
         if let Some(dest) = picker.offer(dest, fit) {
             return Some(dest);
         }
     }
     // No preferred foothold turned up: fall back to the first allowed one we saw (a
-    // neutral biome, or — once an escape hatch tripped — an avoided / wet one).
-    picker.into_fallback()
+    // neutral biome, or — once an escape hatch tripped — an avoided / wet one). If
+    // the mob is actively escaping water and sampled no dry target, use the first
+    // wet surface so it still swims instead of idling in place.
+    picker.into_fallback().or(wet_fallback)
 }
 
-/// The foothold Y in column `(x, z)` closest to `y0`, scanning outward up to
-/// `radius` cells either way, or `None` if the column has no foothold in range.
-fn nearest_foothold_y(
+/// The navigation foothold Y in column `(x, z)` closest to `y0`, scanning outward
+/// up to `radius` cells either way, or `None` if the column has no foothold in
+/// range. Water surface cells count here, matching the pathfinder.
+fn nearest_navigation_foothold_y(
     x: i32,
     z: i32,
     y0: i32,
     radius: i32,
-    head: i32,
+    params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
 ) -> Option<i32> {
     for d in 0..=radius {
         for y in [y0 - d, y0 + d] {
-            if is_foothold(IVec3::new(x, y, z), head, solid) {
+            if is_navigation_foothold(IVec3::new(x, y, z), params, solid, water) {
                 return Some(y);
             }
         }
     }
     None
+}
+
+fn companion_within_cell(ctx: &AiCtx, rule: WanderCohesion, cell: IVec3, radius: i32) -> bool {
+    companion_within(
+        ctx,
+        rule,
+        Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5),
+        radius,
+    )
+}
+
+fn reject_for_cohesion(
+    ctx: &AiCtx,
+    rule: WanderCohesion,
+    origin_has_companion: bool,
+    dest: IVec3,
+    radius: i32,
+) -> bool {
+    origin_has_companion && !companion_within_cell(ctx, rule, dest, radius)
+}
+
+fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: Vec3, radius: i32) -> bool {
+    let r = radius.max(0) as f32;
+    let r2 = r * r;
+    ctx.mobs.iter().enumerate().any(|(i, mob)| {
+        if i == ctx.mob_index || !mob.active || mob.kind != rule.companion {
+            return false;
+        }
+        let dx = mob.pos.x - pos.x;
+        let dz = mob.pos.z - pos.z;
+        dx * dx + dz * dz <= r2
+    })
 }
 
 /// How a candidate column's biome sits with the species' [`Habitat`].
@@ -245,12 +301,69 @@ impl Picker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use crate::mob::brain::AiMob;
+    use crate::mob::{Mob, MobRng};
+    use crate::world::World;
 
     fn habitat() -> Habitat {
         Habitat {
             avoid: &[Biome::Plains, Biome::Desert],
             prefer: &[Biome::Forest],
         }
+    }
+
+    fn make_ctx<'a>(
+        world: &'a World,
+        rng: &'a mut MobRng,
+        mobs: &'a [AiMob],
+        mob_index: usize,
+        pos: Vec3,
+    ) -> AiCtx<'a> {
+        AiCtx {
+            pos,
+            cell: IVec3::new(
+                pos.x.floor() as i32,
+                pos.y.floor() as i32,
+                pos.z.floor() as i32,
+            ),
+            yaw: 0.0,
+            head_height: 1.0,
+            half_width: 0.45,
+            world,
+            player_pos: Vec3::ZERO,
+            nav_idle: true,
+            in_water: false,
+            head: 2,
+            idle_anims: &[],
+            mob_index,
+            mobs,
+            rng,
+        }
+    }
+
+    fn flat_grass_world(extra: impl FnOnce(&mut Chunk)) -> World {
+        let mut world = World::new(0, 1);
+        let mut chunk = Chunk::new(0, 0);
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                chunk.set_block(x, 64, z, Block::Grass);
+                chunk.set_biome(x, z, Biome::Plains.id());
+            }
+        }
+        extra(&mut chunk);
+        world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+        world
+    }
+
+    static PLAINS_HABITAT: Habitat = Habitat {
+        avoid: &[],
+        prefer: &[Biome::Plains],
+    };
+
+    fn plains_habitat() -> &'static Habitat {
+        &PLAINS_HABITAT
     }
 
     #[test]
@@ -320,6 +433,129 @@ mod tests {
     }
 
     #[test]
+    fn companion_search_requires_another_active_desired_mob() {
+        let world = World::new(0, 1);
+        let mut rng = MobRng::new(1);
+        let rule = WanderCohesion {
+            companion: Mob::Sheep,
+            search_radius_multiplier: 2,
+        };
+        let mobs = [
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(0.5, 64.0, 0.5),
+                active: true,
+            },
+            AiMob {
+                kind: Mob::Owl,
+                pos: Vec3::new(2.5, 64.0, 0.5),
+                active: true,
+            },
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(3.5, 64.0, 0.5),
+                active: false,
+            },
+        ];
+        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        assert!(
+            !companion_within(&ctx, rule, mobs[0].pos, 5),
+            "self, wrong kind, and inactive mobs do not count"
+        );
+
+        let mobs = [
+            mobs[0],
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(4.5, 64.0, 0.5),
+                active: true,
+            },
+        ];
+        let mut rng = MobRng::new(1);
+        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        assert!(
+            companion_within(&ctx, rule, mobs[0].pos, 5),
+            "an active desired mob inside the wander radius counts"
+        );
+    }
+
+    #[test]
+    fn cohesion_rejects_only_when_the_mob_started_grouped() {
+        let world = World::new(0, 1);
+        let mut rng = MobRng::new(1);
+        let rule = WanderCohesion {
+            companion: Mob::Sheep,
+            search_radius_multiplier: 2,
+        };
+        let mobs = [
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(0.5, 64.0, 0.5),
+                active: true,
+            },
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(2.5, 64.0, 0.5),
+                active: true,
+            },
+        ];
+        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+
+        assert!(
+            reject_for_cohesion(&ctx, rule, true, IVec3::new(20, 64, 0), 5),
+            "a grouped mob rejects destinations away from companions"
+        );
+        assert!(
+            !reject_for_cohesion(&ctx, rule, true, IVec3::new(2, 64, 0), 5),
+            "a grouped mob accepts destinations near companions"
+        );
+        assert!(
+            !reject_for_cohesion(&ctx, rule, false, IVec3::new(20, 64, 0), 5),
+            "an already-lonely mob does not spend extra work enforcing cohesion"
+        );
+    }
+
+    #[test]
+    fn cohesion_can_notice_a_herd_out_to_the_search_radius() {
+        let world = World::new(0, 1);
+        let mut rng = MobRng::new(1);
+        let rule = WanderCohesion {
+            companion: Mob::Sheep,
+            search_radius_multiplier: 2,
+        };
+        let mobs = [
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(0.5, 64.0, 0.5),
+                active: true,
+            },
+            AiMob {
+                kind: Mob::Sheep,
+                pos: Vec3::new(15.5, 64.0, 0.5),
+                active: true,
+            },
+        ];
+        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+
+        assert!(
+            !companion_within(&ctx, rule, mobs[0].pos, 10),
+            "the companion is outside one wander radius"
+        );
+        assert!(
+            companion_within(&ctx, rule, mobs[0].pos, rule.search_radius(10)),
+            "the companion is still close enough to recover as herd"
+        );
+        assert!(
+            reject_for_cohesion(&ctx, rule, true, IVec3::new(-9, 64, 0), 10),
+            "a recovery wander rejects moving farther from that companion"
+        );
+        assert!(
+            !reject_for_cohesion(&ctx, rule, true, IVec3::new(7, 64, 0), 10),
+            "a recovery wander accepts moving back within one wander radius"
+        );
+    }
+
+    #[test]
     fn picker_rejects_water_until_the_escape_hatch_lifts_it() {
         let mut p = Picker::new(AVOID_ESCAPE, 3);
         // The first 3 wet candidates are rejected (counting toward the hatch)...
@@ -341,5 +577,63 @@ mod tests {
     fn picker_never_rejects_a_dry_candidate() {
         let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
         assert!(!p.reject_water(false));
+    }
+
+    #[test]
+    fn water_averse_mob_in_water_picks_without_waiting_for_wander_roll() {
+        let world = flat_grass_world(|chunk| {
+            chunk.set_water(8, 65, 8, Block::Water, 0);
+        });
+        let mut rng = MobRng::new(1);
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
+        ctx.cell = IVec3::new(8, 66, 8);
+        ctx.in_water = true;
+        let mut ai = WanderAi::new(
+            WanderTuning {
+                chance_per_tick: 0.0,
+                radius: 4,
+                cohesion: None,
+            },
+            plains_habitat(),
+            true,
+        );
+
+        let goal = ai.tick(&mut ctx).goal.expect("water escape goal");
+        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        assert!(
+            !body_or_floor_touches(goal, PathParams::for_body(ctx.head, ctx.half_width), &water),
+            "dry land is preferred when it is available: {goal:?}"
+        );
+    }
+
+    #[test]
+    fn water_escape_falls_back_to_swimming_when_no_dry_target_is_sampled() {
+        let world = flat_grass_world(|chunk| {
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.set_water(x, 65, z, Block::Water, 0);
+                }
+            }
+        });
+        let mut rng = MobRng::new(1);
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
+        ctx.cell = IVec3::new(8, 66, 8);
+        ctx.in_water = true;
+        let mut ai = WanderAi::new(
+            WanderTuning {
+                chance_per_tick: 0.0,
+                radius: 4,
+                cohesion: None,
+            },
+            plains_habitat(),
+            true,
+        );
+
+        let goal = ai.tick(&mut ctx).goal.expect("water-surface fallback");
+        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        assert!(
+            body_or_floor_touches(goal, PathParams::for_body(ctx.head, ctx.half_width), &water),
+            "without dry land, the mob should still swim to another water surface: {goal:?}"
+        );
     }
 }

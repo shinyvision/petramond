@@ -1,7 +1,7 @@
-// mob: in-world animated entity models (the owl).
+// mob: in-world animated entity models.
 //
 // Draws CPU-baked, world-space, skeletally-posed geometry (see
-// render::owl_model::build_owls) with the shared world `view_proj` at group(0)
+// render::mob_model::build_mob_instances) with the shared world `view_proj` at group(0)
 // and a DEDICATED entity texture (NOT the block atlas) at group(1). Vertices are
 // the explicit-per-vertex `ItemVertex` (pos, uv, shade, tint) used by the item3d
 // pipeline, so the model's arbitrary sub-rectangle UVs sample the entity sheet
@@ -10,9 +10,9 @@
 // Full lighting is baked into `shade` on the CPU (face directional shade × the
 // instance's sampled world skylight), matching item_model. Alpha-cutout so the
 // texture's transparent texels (and zero-area faces of flat sub-cubes) drop out;
-// depth-tested + written in its own world pass so the owl occludes and is occluded
-// by terrain. Double-sided (the pipeline disables back-face culling) so the owl's
-// flat 2D sub-cubes — legs, tail — show from both sides.
+// depth-tested + written in its own world pass so mobs occlude and are occluded
+// by terrain. Double-sided (the pipeline disables back-face culling) so flat
+// sub-cubes such as legs and tails show from both sides.
 
 // Mirror of `render::uniforms::Uniforms`. Matches block.wgsl's layout.
 struct Uniforms {

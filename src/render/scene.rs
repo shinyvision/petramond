@@ -150,6 +150,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
         skylight: m.skylight,
         hurt: m.hurt_flash,
+        shorn: m.shorn,
         ragdoll: m.ragdoll_pose.clone(),
     }));
 }

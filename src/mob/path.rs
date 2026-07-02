@@ -5,7 +5,7 @@
 //! [`PathParams::max_drop`].
 //!
 //! Pure and world-agnostic: the search takes a `solid(cell)` closure (does this
-//! cell block movement?) plus the mob's headroom, so it is fully unit-testable
+//! cell block movement?) plus the mob's body footprint, so it is fully unit-testable
 //! against a stub world. [`find_path`] returns the foothold cells from the start
 //! toward the goal; if the goal is unreachable it returns the path to the reachable
 //! cell that gets **closest** to the goal (a best-effort partial path), so a mob
@@ -31,12 +31,13 @@ const COST_DIAG: u32 = 14;
 const COST_DROP_PER_BLOCK: u32 = 1;
 
 /// Tuning for [`find_path`]. `head` is the mob's vertical clearance in whole cells
-/// (how many cells above the floor its body needs); `max_drop` caps how far a
-/// descent may fall; `max_nodes` bounds the search so one pathfind can't stall the
-/// tick.
+/// (how many cells above the floor its body needs); `half_width` is its horizontal
+/// body radius from centre to side; `max_drop` caps how far a descent may fall;
+/// `max_nodes` bounds the search so one pathfind can't stall the tick.
 #[derive(Copy, Clone, Debug)]
 pub struct PathParams {
     pub head: i32,
+    pub half_width: f32,
     pub max_drop: i32,
     pub max_nodes: usize,
 }
@@ -45,18 +46,52 @@ impl Default for PathParams {
     fn default() -> Self {
         PathParams {
             head: 1,
-            max_drop: 4,
+            half_width: 0.25,
+            max_drop: 3,
             max_nodes: 4000,
         }
     }
 }
 
+impl PathParams {
+    pub fn for_body(head: i32, half_width: f32) -> Self {
+        PathParams {
+            head: head.max(1),
+            half_width: half_width.max(0.0),
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    fn head_cells(self) -> i32 {
+        self.head.max(1)
+    }
+
+    #[inline]
+    fn body_half_width(self) -> f32 {
+        self.half_width.max(0.0)
+    }
+}
+
 /// Is `cell` a foothold — a cell a mob can stand in? Its floor (the cell below)
-/// blocks movement, and the `head` cells from `cell` upward are clear for the body.
+/// blocks movement under the whole body footprint, and the `head` cells from `cell`
+/// upward are clear for that footprint.
 /// Shared by the pathfinder, the navigator, and wander destination picking so they
 /// all agree on what "standable" means.
-pub fn is_foothold(cell: IVec3, head: i32, solid: &impl Fn(IVec3) -> bool) -> bool {
-    solid(cell - IVec3::Y) && (0..head).all(|i| !solid(cell + IVec3::Y * i))
+pub fn is_foothold(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bool) -> bool {
+    supported_foothold(cell, params, solid, solid)
+}
+
+/// Is `cell` a navigation foothold when water may support the body? Water support
+/// only counts at the surface: submerged cells are passable, not standable waypoints.
+pub fn is_navigation_foothold(
+    cell: IVec3,
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> bool {
+    let support = |p: IVec3| solid(p) || water(p);
+    supported_foothold(cell, params, &support, solid) && body_layer_clear(cell, params, water)
 }
 
 /// Find the foothold cell a mob is standing in, given its feet position `pos` and
@@ -74,9 +109,10 @@ pub fn standing_cell(
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
 ) -> Option<IVec3> {
+    let params = PathParams::for_body(head, half_width);
     let feet_y = pos.y.floor() as i32;
     let centre = IVec3::new(pos.x.floor() as i32, feet_y, pos.z.floor() as i32);
-    if is_foothold(centre, head, solid) {
+    if is_foothold(centre, params, solid) {
         return Some(centre);
     }
     // The centre overhangs — pick the footprint-corner foothold nearest the centre.
@@ -88,7 +124,7 @@ pub fn standing_cell(
                 feet_y,
                 (pos.z + sz).floor() as i32,
             );
-            if c == centre || !is_foothold(c, head, solid) {
+            if c == centre || !is_foothold(c, params, solid) {
                 continue;
             }
             let (dx, dz) = (c.x as f32 + 0.5 - pos.x, c.z as f32 + 0.5 - pos.z);
@@ -99,6 +135,118 @@ pub fn standing_cell(
         }
     }
     best.map(|(c, _)| c)
+}
+
+/// Find the water-surface navigation cell near a swimming mob. This deliberately
+/// searches upward from the feet: underwater cells are not path waypoints, but the
+/// surface just above them can be.
+pub fn swimming_cell(
+    pos: Vec3,
+    half_width: f32,
+    head: i32,
+    solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> Option<IVec3> {
+    let params = PathParams::for_body(head, half_width);
+    let feet_y = pos.y.floor() as i32;
+    let x = pos.x.floor() as i32;
+    let z = pos.z.floor() as i32;
+    for dy in 0..=params.head_cells() + 4 {
+        let c = IVec3::new(x, feet_y + dy, z);
+        if is_navigation_foothold(c, params, solid, water) {
+            return Some(c);
+        }
+    }
+    None
+}
+
+/// The cell a mob paths from: its standing foothold on dry ground, or — while its
+/// body is in water — the water-surface navigation cell above its feet. The two must
+/// not be conflated: in one-deep water the solid bed sits directly below the feet, so
+/// the solid-only standing probe would claim the *submerged* feet cell, which
+/// [`find_path`] rejects as a start (water cells are passable, not standable) —
+/// leaving the mob goalless, bobbing in place forever.
+pub fn navigation_cell(
+    pos: Vec3,
+    half_width: f32,
+    head: i32,
+    in_water: bool,
+    solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> Option<IVec3> {
+    if in_water {
+        swimming_cell(pos, half_width, head, solid, water)
+    } else {
+        standing_cell(pos, half_width, head, solid)
+    }
+}
+
+/// Keep exact boundary contact from claiming the neighbouring cell. Collision uses
+/// strict overlap too, so a half-width of exactly 0.5 still fits one cell wide.
+const FOOTPRINT_EPS: f32 = 1e-4;
+
+fn footprint_range(half_width: f32) -> std::ops::RangeInclusive<i32> {
+    let hw = half_width.max(0.0);
+    let min = (0.5 - hw + FOOTPRINT_EPS).floor() as i32;
+    let max = (0.5 + hw - FOOTPRINT_EPS).floor() as i32;
+    min..=max
+}
+
+fn body_layer_touches(cell: IVec3, params: PathParams, occupied: &impl Fn(IVec3) -> bool) -> bool {
+    let range = footprint_range(params.body_half_width());
+    for dx in range.clone() {
+        for dz in range.clone() {
+            if occupied(cell + IVec3::new(dx, 0, dz)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn body_layer_clear(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bool) -> bool {
+    !body_layer_touches(cell, params, solid)
+}
+
+/// True when every cell occupied by the mob's body footprint from `cell` upward is
+/// clear of the supplied occupancy predicate.
+pub fn body_clear(cell: IVec3, params: PathParams, occupied: &impl Fn(IVec3) -> bool) -> bool {
+    (0..params.head_cells()).all(|dy| body_layer_clear(cell + IVec3::Y * dy, params, occupied))
+}
+
+/// True when the occupied predicate touches the body footprint or the floor/support
+/// footprint under it. Useful for classifying "wet" destinations: a water-surface
+/// waypoint has dry body clearance but water under the feet.
+pub fn body_or_floor_touches(
+    cell: IVec3,
+    params: PathParams,
+    occupied: &impl Fn(IVec3) -> bool,
+) -> bool {
+    body_layer_touches(cell - IVec3::Y, params, occupied)
+        || (0..params.head_cells())
+            .any(|dy| body_layer_touches(cell + IVec3::Y * dy, params, occupied))
+}
+
+fn footprint_supported(cell: IVec3, params: PathParams, support: &impl Fn(IVec3) -> bool) -> bool {
+    let floor = cell - IVec3::Y;
+    let range = footprint_range(params.body_half_width());
+    for dx in range.clone() {
+        for dz in range.clone() {
+            if !support(floor + IVec3::new(dx, 0, dz)) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn supported_foothold(
+    cell: IVec3,
+    params: PathParams,
+    support: &impl Fn(IVec3) -> bool,
+    solid: &impl Fn(IVec3) -> bool,
+) -> bool {
+    footprint_supported(cell, params, support) && body_clear(cell, params, solid)
 }
 
 /// Find a walkable path of foothold cells from `start` toward `goal`.
@@ -120,14 +268,10 @@ pub fn find_path(
     solid: impl Fn(IVec3) -> bool,
     water: impl Fn(IVec3) -> bool,
 ) -> Vec<IVec3> {
-    let passable_col = |c: IVec3| (0..params.head).all(|i| !solid(c + IVec3::Y * i));
-    // A cell is a foothold if its floor *supports* it (solid ground or water to swim
-    // on) and the body fits above. Floor support widens to include water; clearance
-    // stays solid-only so a head submerged in water doesn't block standing.
-    let foothold = |c: IVec3| {
-        let floor = c - IVec3::Y;
-        (solid(floor) || water(floor)) && (0..params.head).all(|i| !solid(c + IVec3::Y * i))
-    };
+    let passable_col = |c: IVec3| body_clear(c, params, &solid);
+    // A cell is a foothold if its floor *supports* it (solid ground or water surface)
+    // and the body fits above. Submerged water cells are passable, not footholds.
+    let foothold = |c: IVec3| is_navigation_foothold(c, params, &solid, &water);
 
     if !foothold(start) {
         return Vec::new();
@@ -212,7 +356,7 @@ fn neighbors(
         // above the mob's head at the start to rise. (If the higher cell is a
         // foothold, `side` itself is solid, so a flat step is impossible anyway.)
         let up = side + IVec3::Y;
-        if foothold(up) && !solid(a + IVec3::Y * params.head) {
+        if foothold(up) && body_layer_clear(a + IVec3::Y * params.head_cells(), *params, solid) {
             out.push((up, COST_JUMP));
             continue;
         }
@@ -418,16 +562,16 @@ mod tests {
 
     #[test]
     fn avoids_a_drop_greater_than_the_limit() {
-        // High floor (top y==6) for x<2; a deep pit (top y==1) for x>=2 — a 5-block
-        // cliff, > max_drop 4, so the near edge is a dead end downward.
-        let solid = |c: IVec3| if c.x >= 2 { c.y < 1 } else { c.y < 6 };
-        let start = IVec3::new(0, 6, 0);
+        // High floor (top y==5) for x<2; a pit (top y==1) for x>=2 — a 4-block
+        // cliff, > max_drop 3, so the near edge is a dead end downward.
+        let solid = |c: IVec3| if c.x >= 2 { c.y < 1 } else { c.y < 5 };
+        let start = IVec3::new(0, 5, 0);
         let goal = IVec3::new(3, 1, 0);
         let path = find_path(start, goal, params(), solid, |_| false);
-        // 6 - 1 = 5 block drop > 4: must NOT step off into the pit.
+        // 5 - 1 = 4 block drop > 3: must NOT step off into the pit.
         assert!(
             path.last().unwrap().x < 2,
-            "must not take a >4 drop: {:?}",
+            "must not take a 4-block drop: {:?}",
             path.last()
         );
     }
@@ -461,6 +605,63 @@ mod tests {
         assert!(
             path.iter().all(|c| c.y == 1),
             "crosses at the surface level: {path:?}"
+        );
+    }
+
+    #[test]
+    fn submerged_water_cells_are_not_navigation_footholds() {
+        let solid = |c: IVec3| c.y <= -1;
+        let water = |c: IVec3| (0..=3).contains(&c.y);
+        let underwater = IVec3::new(0, 2, 0);
+        let surface = IVec3::new(0, 4, 0);
+
+        assert!(
+            !is_navigation_foothold(underwater, params(), &solid, &water),
+            "underwater cells are passable water, not path waypoints"
+        );
+        assert!(
+            is_navigation_foothold(surface, params(), &solid, &water),
+            "the cell just above the water surface remains pathable"
+        );
+    }
+
+    #[test]
+    fn swimming_cell_snaps_to_the_water_surface() {
+        let solid = |c: IVec3| c.y <= -1;
+        let water = |c: IVec3| (0..=3).contains(&c.y);
+        let cell = swimming_cell(Vec3::new(0.5, 1.2, 0.5), 0.25, 1, &solid, &water);
+        assert_eq!(
+            cell,
+            Some(IVec3::new(0, 4, 0)),
+            "a swimming mob paths from the surface, not its submerged feet cell"
+        );
+    }
+
+    #[test]
+    fn a_wading_mob_in_one_deep_water_paths_from_the_water_surface_cell() {
+        // One-deep water: bed top at y==0, water filling the y==0 layer for x<=2, dry
+        // land (foothold y==1) at x>=3. The wading mob's feet cell has the solid bed
+        // directly beneath it, so a solid-only standing probe would claim that
+        // submerged cell — which is NOT a valid path start. The navigation cell must
+        // be the surface cell above, from which the dry shore is reachable.
+        let solid = |c: IVec3| c.y < 0 || (c.x >= 3 && c.y == 0);
+        let water = |c: IVec3| c.x <= 2 && c.y == 0;
+        let wading = Vec3::new(1.5, 0.3, 0.5);
+
+        let feet = IVec3::new(1, 0, 0);
+        assert!(
+            find_path(feet, IVec3::new(4, 1, 0), params(), solid, water).is_empty(),
+            "the submerged feet cell is rejected as a path start"
+        );
+
+        let cell = navigation_cell(wading, 0.25, 1, true, &solid, &water)
+            .expect("a wading mob still has a navigation cell");
+        assert_eq!(cell, IVec3::new(1, 1, 0), "starts at the water surface");
+        let path = find_path(cell, IVec3::new(4, 1, 0), params(), solid, water);
+        assert_eq!(
+            path.last(),
+            Some(&IVec3::new(4, 1, 0)),
+            "the shore is reachable from the surface cell: {path:?}"
         );
     }
 
@@ -561,6 +762,25 @@ mod tests {
         assert!(
             path.iter().all(|c| !w.solid_at(*c)),
             "path never enters a solid cell"
+        );
+    }
+
+    #[test]
+    fn wide_body_does_not_fit_through_a_one_cell_gap() {
+        // Infinite wall at x=2 with a single open centre cell. A point-sized/normal
+        // body could pass through z=0, but a body wider than one cell overlaps the
+        // wall cells beside the gap and must treat it as blocked.
+        let solid = |c: IVec3| c.y < 1 || (c.x == 2 && (c.y == 1 || c.y == 2) && c.z != 0);
+        let start = IVec3::new(0, 1, 0);
+        let goal = IVec3::new(4, 1, 0);
+        let path = find_path(start, goal, PathParams::for_body(1, 0.55), solid, |_| false);
+        assert!(
+            path.last().unwrap().x < 2,
+            "wide body must not squeeze through the one-cell gap: {path:?}"
+        );
+        assert!(
+            !path.contains(&IVec3::new(2, 1, 0)),
+            "the gap cell itself is not a valid wide-body foothold: {path:?}"
         );
     }
 }

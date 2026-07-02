@@ -14,7 +14,11 @@ fn holding(item: ItemType) -> Inventory {
 
 /// Aim the camera straight down from two blocks above the top face of `cell`.
 fn aim_down_at(game: &mut Game, cell: IVec3) {
-    game.cam.pos = Vec3::new(cell.x as f32 + 0.5, cell.y as f32 + 3.0, cell.z as f32 + 0.5);
+    game.cam.pos = Vec3::new(
+        cell.x as f32 + 0.5,
+        cell.y as f32 + 3.0,
+        cell.z as f32 + 0.5,
+    );
     game.cam.pitch = -std::f32::consts::FRAC_PI_2;
 }
 
@@ -87,7 +91,8 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
     // acts on flow, and never searches the body for a source.
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.world.set_block_world(src.x, src.y, src.z, Block::Water);
+    game.world
+        .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
     assert_eq!(
@@ -123,7 +128,8 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
     // at a shallow angle — the ray must pass the ring cells and scoop the source.
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.world.set_block_world(src.x, src.y, src.z, Block::Water);
+    game.world
+        .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     assert!(!game.world.is_water_source_world(src + IVec3::X));
     assert!(!game.world.is_water_source_world(src + IVec3::X * 2));
@@ -136,7 +142,10 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
 
     let events = right_click(&mut game);
 
-    assert!(events.used_item, "the source behind the flow must be scooped");
+    assert!(
+        events.used_item,
+        "the source behind the flow must be scooped"
+    );
     assert_eq!(
         Block::from_id(game.world.chunk_block(src.x, src.y, src.z)),
         Block::Air
@@ -208,7 +217,8 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
 
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.world.set_block_world(src.x, src.y, src.z, Block::Water);
+    game.world
+        .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
     assert!(!game.world.is_water_source_world(flow));
@@ -268,5 +278,65 @@ fn pouring_with_nothing_in_reach_keeps_the_water() {
         game.player.inventory.selected().unwrap().item,
         ItemType::WaterBucket,
         "a refused pour must keep the water in the bucket"
+    );
+}
+
+#[test]
+fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.inventory = holding(ItemType::Shears);
+    assert!(game
+        .world
+        .mobs_mut()
+        .spawn(crate::mob::Mob::Sheep, Vec3::new(8.0, 64.0, 8.0), 0.0));
+    game.targeted_mob = Some(0);
+
+    let events = right_click(&mut game);
+
+    assert!(events.used_item, "shearing reports an item use");
+    assert!(
+        game.world.mobs().instances()[0].is_shorn(),
+        "the sheep is shorn"
+    );
+    let spec = crate::mob::def(crate::mob::Mob::Sheep)
+        .shear
+        .expect("sheep are shearable");
+    let wool: Vec<_> = game
+        .world
+        .item_entities()
+        .iter()
+        .filter(|d| d.stack.item == ItemType::Wool)
+        .collect();
+    assert_eq!(wool.len(), 1, "one wool stack pops at the sheep");
+    assert!(
+        (spec.min..=spec.max).contains(&wool[0].stack.count),
+        "count is rolled from the spec range: {}",
+        wool[0].stack.count
+    );
+
+    // A shorn sheep refuses a second shear until the coat regrows.
+    game.targeted_mob = Some(0);
+    let events = right_click(&mut game);
+    assert!(!events.used_item, "no double-shear while shorn");
+}
+
+#[test]
+fn shearing_needs_the_shears_in_hand() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.inventory = holding(ItemType::Dirt);
+    assert!(game
+        .world
+        .mobs_mut()
+        .spawn(crate::mob::Mob::Sheep, Vec3::new(8.0, 64.0, 8.0), 0.0));
+    game.targeted_mob = Some(0);
+
+    let events = right_click(&mut game);
+
+    assert!(!events.used_item);
+    assert!(
+        !game.world.mobs().instances()[0].is_shorn(),
+        "a bare right-click leaves the coat alone"
     );
 }

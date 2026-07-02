@@ -254,6 +254,11 @@ const TILES: &[(&str, &str)] = &[
     ("dark_oak_door_item", "dark_oak_door_item.png"),
     ("cherry_door_item", "cherry_door_item.png"),
     ("mangrove_door_item", "mangrove_door_item.png"),
+    // Shears update: the shears tool and the wool a shorn sheep drops. Flat item
+    // sprites referenced by `ItemType::item_sprite`. Appended last so every
+    // preceding tile id stays stable.
+    ("shears", "shears.png"),
+    ("wool", "wool.png"),
 ];
 
 /// Animated flipbook tiles (name, file). The source PNG is a vertical strip of

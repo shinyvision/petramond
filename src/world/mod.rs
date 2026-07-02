@@ -20,9 +20,9 @@ pub(crate) mod sapling;
 mod stair;
 mod store;
 mod stream;
-mod visibility;
 mod tick;
 mod torch;
+mod visibility;
 pub(crate) mod water;
 
 #[cfg(test)]

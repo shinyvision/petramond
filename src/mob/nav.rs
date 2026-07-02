@@ -12,13 +12,20 @@ use crate::world::World;
 
 use super::path::{self, PathParams};
 
-/// Horizontal distance (m) within which a waypoint counts as reached.
-const ARRIVE_XZ: f32 = 0.3;
+/// Largest horizontal distance (m) within which a waypoint counts as reached. The
+/// actual threshold tightens for wide mobs so they don't turn before their body has
+/// cleared a corner.
+const MAX_ARRIVE_XZ: f32 = 0.3;
+/// Never require perfect centre hits; discrete tick movement can step over a waypoint
+/// by a few centimetres.
+const MIN_ARRIVE_XZ: f32 = 0.04;
 /// Vertical distance (m) within which the mob is "on the waypoint's level" — so a
 /// descent waypoint isn't marked reached until the mob has actually fallen to it.
 const ARRIVE_Y: f32 = 1.1;
-/// Begin a jump once this close (horizontally) to a step the mob must climb.
-const JUMP_TRIGGER_XZ: f32 = 0.9;
+/// Begin a jump once the body's leading edge is this close to the higher waypoint's
+/// centre. The actual centre-distance threshold is `half_width + this`: wider mobs
+/// reach a ledge with their body before their centre gets near it.
+const JUMP_TRIGGER_FRONT_XZ: f32 = 0.7;
 /// Ticks of negligible movement before the path is abandoned (~2 s at 20 TPS).
 const STUCK_TICKS: u32 = 40;
 /// Squared per-tick displacement below which the mob counts as "not progressing".
@@ -38,6 +45,7 @@ pub struct Navigator {
     index: usize,
     goal: Option<IVec3>,
     params: PathParams,
+    half_width: f32,
     stuck: u32,
     last_pos: Vec3,
     /// Ticks since the current path was computed; at [`REPATH_TICKS`] the held goal is
@@ -46,15 +54,13 @@ pub struct Navigator {
 }
 
 impl Navigator {
-    pub fn new(head: i32) -> Self {
+    pub fn new(head: i32, half_width: f32) -> Self {
         Navigator {
             path: Vec::new(),
             index: 0,
             goal: None,
-            params: PathParams {
-                head,
-                ..Default::default()
-            },
+            params: PathParams::for_body(head, half_width),
+            half_width,
             stuck: 0,
             last_pos: Vec3::ZERO,
             since_path: 0,
@@ -85,7 +91,17 @@ impl Navigator {
     /// (resetting progress + the stuck tally); the *same* goal held across ticks costs
     /// nothing until [`REPATH_TICKS`] elapse, then it is re-pathed to refresh a route
     /// the changing world may have invalidated or shortened. `None` clears the path.
-    pub fn update_goal(&mut self, goal: Option<IVec3>, start: IVec3, world: &World) {
+    ///
+    /// Periodic and new-goal pathfinding is paused while `can_repath` is false. A
+    /// falling mob keeps following its existing route instead of recomputing from
+    /// transient mid-air cells.
+    pub fn update_goal_when_supported(
+        &mut self,
+        goal: Option<IVec3>,
+        start: IVec3,
+        world: &World,
+        can_repath: bool,
+    ) {
         match goal {
             None => {
                 if self.goal.is_some() {
@@ -93,6 +109,9 @@ impl Navigator {
                 }
             }
             Some(g) => {
+                if !can_repath {
+                    return;
+                }
                 if self.goal != Some(g) {
                     // A new goal: path to it afresh and reset the stuck tally — this is a
                     // deliberate new destination, not the same one re-evaluated.
@@ -131,6 +150,7 @@ impl Navigator {
     /// waypoint, and whether to jump. Consumes waypoints as they're reached and
     /// abandons the path if the mob stalls.
     pub fn follow(&mut self, pos: Vec3, on_ground: bool) -> (Vec3, bool) {
+        let arrive_xz = self.arrive_xz();
         while self.index < self.path.len() {
             let wp = self.path[self.index];
             let (tx, tz) = (wp.x as f32 + 0.5, wp.z as f32 + 0.5);
@@ -138,13 +158,15 @@ impl Navigator {
             let horiz = (dx * dx + dz * dz).sqrt();
             let dy = (pos.y - wp.y as f32).abs();
 
-            if horiz <= ARRIVE_XZ && dy <= ARRIVE_Y {
+            if horiz <= arrive_xz && dy <= ARRIVE_Y {
                 self.index += 1;
                 continue; // reached this waypoint; aim at the next
             }
 
             // Progress / stuck tracking.
-            if (pos - self.last_pos).length_squared() < STUCK_EPS_SQ {
+            let progress_dx = pos.x - self.last_pos.x;
+            let progress_dz = pos.z - self.last_pos.z;
+            if progress_dx * progress_dx + progress_dz * progress_dz < STUCK_EPS_SQ {
                 self.stuck += 1;
             } else {
                 self.stuck = 0;
@@ -163,13 +185,17 @@ impl Navigator {
             // Jump when the next waypoint is a step up and we're grounded + close to
             // the edge, so forward speed carries the mob onto the higher block.
             let step_up = wp.y as f32 > pos.y + 0.5;
-            let jump = on_ground && step_up && horiz <= JUMP_TRIGGER_XZ;
+            let jump = on_ground && step_up && horiz <= self.half_width + JUMP_TRIGGER_FRONT_XZ;
             return (dir, jump);
         }
 
         // Path exhausted — arrived. Going idle lets the brain choose what's next.
         self.clear();
         (Vec3::ZERO, false)
+    }
+
+    fn arrive_xz(&self) -> f32 {
+        MAX_ARRIVE_XZ.min((0.5 - self.half_width).max(MIN_ARRIVE_XZ))
     }
 }
 
@@ -185,13 +211,13 @@ mod tests {
 
     #[test]
     fn idle_until_given_a_goal() {
-        let nav = Navigator::new(1);
+        let nav = Navigator::new(1, 0.25);
         assert!(nav.is_idle());
     }
 
     #[test]
     fn arriving_consumes_waypoints_then_goes_idle() {
-        let mut nav = Navigator::new(1);
+        let mut nav = Navigator::new(1, 0.25);
         // Hand-build a 2-step path so we don't need a World: start (0,1,0) -> (1,1,0).
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 1, 0)];
         nav.index = 1;
@@ -206,7 +232,7 @@ mod tests {
 
     #[test]
     fn steers_toward_a_distant_waypoint() {
-        let mut nav = Navigator::new(1);
+        let mut nav = Navigator::new(1, 0.25);
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(5, 1, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(5, 1, 0));
@@ -217,7 +243,7 @@ mod tests {
 
     #[test]
     fn jumps_when_close_to_a_step_up() {
-        let mut nav = Navigator::new(1);
+        let mut nav = Navigator::new(1, 0.22);
         // Waypoint one block up and just ahead.
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
         nav.index = 1;
@@ -227,6 +253,66 @@ mod tests {
         // But not while airborne.
         let (_w2, jump_air) = nav.follow(Vec3::new(0.7, 1.0, 0.5), false);
         assert!(!jump_air, "no jump while off the ground");
+    }
+
+    #[test]
+    fn vertical_bobbing_does_not_count_as_navigation_progress() {
+        let mut nav = Navigator::new(1, 0.25);
+        nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(5, 1, 0)];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(5, 1, 0));
+        nav.last_pos = Vec3::new(0.5, 1.0, 0.5);
+
+        for tick in 0..STUCK_TICKS {
+            let y = 1.0 + if tick % 2 == 0 { 0.2 } else { -0.2 };
+            let (wish, _jump) = nav.follow(Vec3::new(0.5, y, 0.5), false);
+            if tick + 1 < STUCK_TICKS {
+                assert!(wish.x > 0.9, "still trying to move horizontally");
+                assert!(!nav.is_idle(), "not abandoned before the stuck limit");
+            }
+        }
+
+        assert!(
+            nav.is_idle(),
+            "bobbing in place should abandon the bad route so wander can choose again"
+        );
+    }
+
+    #[test]
+    fn jump_trigger_accounts_for_body_width() {
+        let mut nav = Navigator::new(1, 0.45);
+        // Waypoint one block up in the adjacent cell. A wide mob standing in the lower
+        // cell is already close to the ledge with its front edge even though its centre
+        // is still a full block from the target centre.
+        nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(1, 2, 0));
+        let (_wish, jump) = nav.follow(Vec3::new(0.5, 1.0, 0.5), true);
+        assert!(
+            jump,
+            "wider bodies jump before colliding with the step face"
+        );
+    }
+
+    #[test]
+    fn wide_mob_does_not_turn_before_clearing_a_corner() {
+        let mut nav = Navigator::new(1, 0.45);
+        // The route turns north at (1,1,0). A sheep-width body at x=1.25 would still
+        // clip a block in the inner corner if it started the turn, so it must keep
+        // steering east until much closer to the waypoint centre.
+        nav.path = vec![
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+            IVec3::new(1, 1, 1),
+        ];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(1, 1, 1));
+        let (wish, jump) = nav.follow(Vec3::new(1.25, 1.0, 0.5), true);
+        assert!(
+            wish.x > 0.9 && wish.z.abs() < 0.1,
+            "wide mob should keep clearing the corner before turning: {wish:?}"
+        );
+        assert!(!jump);
     }
 
     /// A single chunk with a solid grass floor at `y = 63`, so footholds sit at
@@ -251,10 +337,10 @@ mod tests {
         let mut world = flat_world();
         let start = IVec3::new(1, 64, 1);
         let goal = IVec3::new(8, 64, 1);
-        let mut nav = Navigator::new(1);
+        let mut nav = Navigator::new(1, 0.25);
 
         // Initial path: a straight run along z = 1, passing through (4, 64, 1).
-        nav.update_goal(Some(goal), start, &world);
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
         let stale: Vec<IVec3> = nav.path().to_vec();
         let blocked = IVec3::new(4, 64, 1);
         assert!(
@@ -270,7 +356,7 @@ mod tests {
         // For the first REPATH_TICKS-1 held ticks the stale route is kept verbatim (no
         // per-tick re-pathing — holding a goal stays cheap).
         for _ in 0..REPATH_TICKS - 1 {
-            nav.update_goal(Some(goal), start, &world);
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
             assert_eq!(
                 nav.path(),
                 stale.as_slice(),
@@ -279,7 +365,7 @@ mod tests {
         }
 
         // The REPATH_TICKS-th held tick refreshes the route, which now avoids the wall.
-        nav.update_goal(Some(goal), start, &world);
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
         assert_ne!(
             nav.path(),
             stale.as_slice(),
@@ -293,6 +379,38 @@ mod tests {
     }
 
     #[test]
+    fn held_goal_does_not_repath_while_airborne() {
+        let mut world = flat_world();
+        let start = IVec3::new(1, 64, 1);
+        let goal = IVec3::new(8, 64, 1);
+        let mut nav = Navigator::new(1, 0.25);
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        let stale: Vec<IVec3> = nav.path().to_vec();
+        let blocked = IVec3::new(4, 64, 1);
+        assert!(stale.contains(&blocked));
+
+        world.set_block_world(blocked.x, blocked.y, blocked.z, Block::Stone);
+        world.set_block_world(blocked.x, blocked.y + 1, blocked.z, Block::Stone);
+
+        for _ in 0..REPATH_TICKS - 1 {
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
+        }
+        assert_eq!(nav.path(), stale.as_slice());
+
+        for _ in 0..5 {
+            nav.update_goal_when_supported(Some(goal), start, &world, false);
+            assert_eq!(nav.path(), stale.as_slice(), "mid-air repath is paused");
+        }
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_ne!(
+            nav.path(),
+            stale.as_slice(),
+            "repath resumes once the mob is supported again"
+        );
+    }
+
+    #[test]
     fn re_path_does_not_reset_the_stuck_tally() {
         // A mob that never moves stays stuck across re-paths: the stuck counter must keep
         // climbing through a refresh (not reset to zero each interval), so a wedged mob
@@ -300,15 +418,15 @@ mod tests {
         let world = flat_world();
         let start = IVec3::new(1, 64, 1);
         let goal = IVec3::new(8, 64, 1);
-        let mut nav = Navigator::new(1);
-        nav.update_goal(Some(goal), start, &world);
+        let mut nav = Navigator::new(1, 0.25);
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
 
         // Drive enough held ticks to cross several re-path intervals AND the stuck limit,
         // following from a fixed position each tick so no progress is ever made.
         let wedged = Vec3::new(1.5, 64.0, 1.5);
         let mut gave_up = false;
         for _ in 0..STUCK_TICKS + REPATH_TICKS {
-            nav.update_goal(Some(goal), start, &world);
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
             nav.follow(wedged, true);
             if nav.is_idle() {
                 gave_up = true;

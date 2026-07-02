@@ -204,6 +204,10 @@ pub enum ItemType {
     // the held bucket into this; pouring converts it back (see `game`'s item use).
     // Not craftable — only ever obtained by filling. ---
     WaterBucket,
+    // --- Shears update: the shears (a durable non-mining tool — used on a sheep,
+    // not a block; see `game`'s shear use) and the wool a shorn sheep drops. ---
+    Shears,
+    Wool,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -567,10 +571,11 @@ impl ItemType {
     /// slot) — that limit is a CONSEQUENCE of durability, not of being a "tool".
     /// Durability isn't consumed yet, but the model is correct: a future durable
     /// non-tool item would also not stack, for the same reason. Every mining
-    /// [`tool`](Self::tool) (the pickaxes, axes + shovels) is durable; nothing else is.
+    /// [`tool`](Self::tool) (the pickaxes, axes + shovels) is durable, and so are
+    /// the shears (a durable tool that isn't a *mining* tool — it acts on a mob).
     #[inline]
     pub fn is_durable(self) -> bool {
-        self.tool().is_some()
+        self.tool().is_some() || self == ItemType::Shears
     }
 
     /// Stable snake_case identity recipes reference (e.g. `oak_planks`), read from
@@ -666,6 +671,8 @@ impl ItemType {
             GoldIngot => Tile::GoldIngot,
             Diamond => Tile::Diamond,
             LapisLazuli => Tile::LapisLazuli,
+            Shears => Tile::Shears,
+            Wool => Tile::Wool,
             // Block-items (incl. Furnace) resolve via `as_block`; never reach here.
             _ => Tile::Stick,
         }

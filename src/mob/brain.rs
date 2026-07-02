@@ -18,7 +18,7 @@ use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
 use super::model_meta::IdleAnimMeta;
-use super::MobRng;
+use super::{Mob, MobRng};
 
 /// Priority of wander — the lowest, so any deliberate locomotion overrides it.
 pub const PRIORITY_WANDER: u8 = 0;
@@ -35,6 +35,15 @@ pub struct HeadLook {
     pub pitch: f32,
 }
 
+/// Read-only mob state captured at the start of a mob tick for AI decisions that need
+/// nearby companions without borrowing the live [`Mobs`](super::Mobs) container.
+#[derive(Copy, Clone, Debug)]
+pub struct AiMob {
+    pub kind: Mob,
+    pub pos: Vec3,
+    pub active: bool,
+}
+
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors
 /// mutate only their own state + the shared [`MobRng`]; the world is read-only.
 pub struct AiCtx<'a> {
@@ -46,6 +55,8 @@ pub struct AiCtx<'a> {
     pub yaw: f32,
     /// Height of the mob's head above its feet (m) — for the look-at-player pitch.
     pub head_height: f32,
+    /// Horizontal body radius from centre to side, for standable/pathing probes.
+    pub half_width: f32,
     /// Read-only world, for sampling standable destinations / line-of-sight.
     pub world: &'a World,
     /// Player body-centre — for head-look (and future flee / attack).
@@ -61,6 +72,11 @@ pub struct AiCtx<'a> {
     /// This species' `idle_*` animations (length + loop mode), so the idle-animation
     /// behavior only picks valid ones and plays a one-shot for its actual length.
     pub idle_anims: &'a [IdleAnimMeta],
+    /// Index of this mob in [`mobs`](Self::mobs), so companion-aware behaviors can
+    /// ignore the mob making the decision.
+    pub mob_index: usize,
+    /// Snapshot of live mobs at the start of this tick.
+    pub mobs: &'a [AiMob],
     /// Deterministic per-mob RNG (no `rand` crate; reproducible).
     pub rng: &'a mut MobRng,
 }
@@ -166,12 +182,15 @@ mod tests {
             cell: IVec3::ZERO,
             yaw: 0.0,
             head_height: 0.7,
+            half_width: 0.25,
             world,
             player_pos: Vec3::ZERO,
             nav_idle: true,
             in_water: false,
             head: 1,
             idle_anims: &[],
+            mob_index: 0,
+            mobs: &[],
             rng,
         }
     }

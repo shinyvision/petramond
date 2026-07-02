@@ -16,6 +16,7 @@ use crate::chunk::SectionPos;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
+use super::brain::AiMob;
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
 use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, MOB_DEFS};
 
@@ -24,6 +25,17 @@ use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, MOB_DEFS};
 #[derive(Copy, Clone, Debug)]
 pub struct DeathDrop {
     pub kind: Mob,
+    pub pos: Vec3,
+    pub skylight: u8,
+}
+
+/// What a successful shear yields, so `Game` can spawn the drop (like [`DeathDrop`],
+/// the manager can't spawn item entities itself). The count is already rolled from the
+/// mob's own deterministic RNG.
+#[derive(Copy, Clone, Debug)]
+pub struct ShearDrop {
+    pub item: crate::item::ItemType,
+    pub count: u8,
     pub pos: Vec3,
     pub skylight: u8,
 }
@@ -131,12 +143,29 @@ impl Mobs {
         player_body: Option<push::Body>,
         freeze_unloaded: bool,
     ) {
-        for mob in &mut self.list {
+        let ai_mobs: Vec<AiMob> = self
+            .list
+            .iter()
+            .map(|m| AiMob {
+                kind: m.kind,
+                pos: m.pos,
+                active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
+            })
+            .collect();
+        for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !chunk_loaded_at(world, mob) {
                 continue;
             }
             let meta = &MOB_META[mob.kind as usize];
-            mob.tick(dt, world, player_pos, &meta.idle_anims, &meta.skeleton);
+            mob.tick(
+                dt,
+                world,
+                player_pos,
+                i,
+                &ai_mobs,
+                &meta.idle_anims,
+                &meta.skeleton,
+            );
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
         }
@@ -225,6 +254,21 @@ impl Mobs {
         }
     }
 
+    /// Shear the mob at `index`: `Some` drop when it is a coated shearable species
+    /// (its coat is hidden and the regrow countdown starts), else `None`. Keeps
+    /// `list` private, like [`hurt_mob`](Self::hurt_mob).
+    pub fn shear_mob(&mut self, index: usize) -> Option<ShearDrop> {
+        let mob = self.list.get_mut(index)?;
+        let spec = super::def(mob.kind).shear?;
+        let count = mob.shear()?;
+        Some(ShearDrop {
+            item: spec.drop,
+            count,
+            pos: mob.pos,
+            skylight: mob.skylight,
+        })
+    }
+
     /// Run one natural-spawn step: a single spawn attempt at a random loaded position.
     /// Called once per game tick by `Game`, after [`tick`](Self::tick).
     ///
@@ -236,10 +280,12 @@ impl Mobs {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
         let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
-            spawn::has_room(list, kind)
+            spawn::room_for(list, kind)
         });
-        if let Some(s) = chosen {
-            self.spawn(s.kind, s.pos, s.yaw);
+        if let Some(spawns) = chosen {
+            for s in spawns {
+                self.spawn(s.kind, s.pos, s.yaw);
+            }
         }
     }
 
@@ -284,10 +330,15 @@ impl Mobs {
 
     /// Re-spawn mobs read back from a section's save record now that its section has
     /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
-    /// is subject to the mob cap like any spawn.
+    /// is subject to the mob cap like any spawn. The saved shear-regrow counter carries
+    /// over, so a shorn sheep reloads shorn.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
-            self.spawn(m.kind, m.pos, m.yaw);
+            if self.spawn(m.kind, m.pos, m.yaw) {
+                if let Some(inst) = self.list.last_mut() {
+                    inst.set_shear_regrow(m.shear_regrow);
+                }
+            }
         }
     }
 
@@ -390,11 +441,13 @@ mod tests {
                 kind: Mob::Owl,
                 pos: Vec3::new(8.5, 70.0, 8.5),
                 yaw: 1.25,
+                shear_regrow: 0,
             },
             SavedMob {
-                kind: Mob::Owl,
+                kind: Mob::Sheep,
                 pos: Vec3::new(9.5, 70.0, 8.5),
                 yaw: -0.5,
+                shear_regrow: 500,
             },
         ]);
         assert_eq!(mobs.len(), 2);
@@ -406,6 +459,67 @@ mod tests {
         assert!(
             poses.contains(&(Vec3::new(9.5, 70.0, 8.5), -0.5)),
             "second mob restored in place"
+        );
+        let shorn: Vec<bool> = mobs.instances().iter().map(Instance::is_shorn).collect();
+        assert!(
+            shorn.contains(&true) && shorn.contains(&false),
+            "a saved regrow counter carries over on restore: {shorn:?}"
+        );
+    }
+
+    #[test]
+    fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
+        let world = World::new(0, 1);
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
+        let spec = crate::mob::def(Mob::Sheep).shear.expect("sheep are shearable");
+
+        let drop = mobs.shear_mob(0).expect("a coated sheep shears");
+        assert_eq!(drop.item, spec.drop);
+        assert!(
+            (spec.min..=spec.max).contains(&drop.count),
+            "count rolled inside the spec range: {}",
+            drop.count
+        );
+        assert!(mobs.instances()[0].is_shorn());
+        assert!(mobs.shear_mob(0).is_none(), "no double-shear while shorn");
+
+        // The coat regrows on the tick, within the spec's rolled range.
+        let mut ticks: u32 = 0;
+        while mobs.instances()[0].is_shorn() {
+            mobs.tick(0.05, &world, far(), None, false);
+            ticks += 1;
+            assert!(
+                ticks <= spec.regrow_max,
+                "the coat must be back within the max regrow duration"
+            );
+        }
+        assert!(
+            ticks >= spec.regrow_min,
+            "the coat can't regrow before the min duration: {ticks}"
+        );
+        assert!(
+            mobs.shear_mob(0).is_some(),
+            "a regrown sheep can be shorn again"
+        );
+    }
+
+    #[test]
+    fn a_species_without_a_shear_spec_cannot_be_shorn() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
+        assert!(mobs.shear_mob(0).is_none());
+        assert!(!mobs.instances()[0].is_shorn());
+    }
+
+    #[test]
+    fn a_corpse_cannot_be_shorn() {
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
+        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(5.0, 64.0, 8.5)).is_some());
+        assert!(
+            mobs.shear_mob(0).is_none(),
+            "a ragdolling corpse keeps its coat"
         );
     }
 

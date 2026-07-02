@@ -23,7 +23,8 @@ use crate::torch::TorchPlacement;
 /// Current section-record version. Flag-gated payloads are appended at the end, so a
 /// new one that fits a free flag bit needs no version bump. The cubic format starts
 /// fresh at `1` (the column-era chunk records are not migrated — saves regenerate).
-const SECTION_REC_VERSION: u8 = 1;
+/// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`).
+const SECTION_REC_VERSION: u8 = 2;
 /// Oldest section-record version this build can still read.
 const SECTION_REC_MIN_VERSION: u8 = 1;
 const FLAG_HAS_WATER: u8 = 0x01;
@@ -387,7 +388,7 @@ pub fn decode_section(
         HashMap::new()
     };
     let mobs = if flags & FLAG_HAS_MOBS != 0 {
-        super::mobs::get_mobs(&mut r)?
+        super::mobs::get_mobs(&mut r, version)?
     } else {
         Vec::new()
     };
@@ -503,6 +504,7 @@ mod tests {
             kind: crate::mob::Mob::Owl,
             pos: Vec3::new(-12.5, 65.0, 72.25),
             yaw: 1.75,
+            shear_regrow: 0,
         });
 
         let blob = encode_snapshot(&snap);

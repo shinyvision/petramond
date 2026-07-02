@@ -95,12 +95,15 @@ mod tests {
                     cell: IVec3::ZERO,
                     yaw: 0.0,
                     head_height: 0.7,
+                    half_width: 0.25,
                     world: &world,
                     player_pos: Vec3::ZERO,
                     nav_idle: true,
                     in_water: false,
                     head: 1,
                     idle_anims: idle,
+                    mob_index: 0,
+                    mobs: &[],
                     rng: &mut rng,
                 };
                 ai.tick(&mut ctx)
@@ -157,12 +160,15 @@ mod tests {
                 cell: IVec3::ZERO,
                 yaw: 0.0,
                 head_height: 0.7,
+                half_width: 0.25,
                 world: &world,
                 player_pos: Vec3::ZERO,
                 nav_idle: true,
                 in_water: true,
                 head: 1,
                 idle_anims: &idle,
+                mob_index: 0,
+                mobs: &[],
                 rng: &mut rng,
             };
             assert!(

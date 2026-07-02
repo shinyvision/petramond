@@ -123,8 +123,10 @@ thread_local! {
 
 /// Total worker nanoseconds and jobs spent on light bakes — temporary perf-session
 /// diagnostics read by the out-of-tree streaming profiler.
-pub(crate) static LIGHT_STAGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub(crate) static LIGHT_STAGE_JOBS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static LIGHT_STAGE_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) static LIGHT_STAGE_JOBS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     let t_stage = std::time::Instant::now();

@@ -1,11 +1,14 @@
 //! Item-driven right-click actions — using the HELD ITEM on the world (the
-//! buckets), as opposed to placing a block or using a clicked block's own
-//! capability. Runs on the fixed tick, dispatched from `tick_place` after block
-//! interaction and before placement.
+//! buckets) or on the targeted mob (the shears), as opposed to placing a block or
+//! using a clicked block's own capability. Runs on the fixed tick, dispatched from
+//! `tick_place` after block interaction and before placement.
 
 use super::Game;
 use crate::block::Block;
+use crate::entity::DroppedItem;
 use crate::item::{ItemStack, ItemType};
+use crate::mathh::Vec3;
+use crate::mob::ShearDrop;
 use crate::player::Player;
 
 impl Game {
@@ -17,6 +20,35 @@ impl Game {
             Some(ItemType::WaterBucket) => self.try_pour_bucket(),
             _ => false,
         }
+    }
+
+    /// Shear the targeted mob with the held shears: the mob's coat comes off (and
+    /// starts regrowing) and its rolled drop pops at its body, like death loot.
+    /// Returns `true` when the click was consumed. `targeted_mob` is already
+    /// reach-limited by the per-frame target refresh, exactly like an attack.
+    pub(super) fn try_shear_mob(&mut self) -> bool {
+        if self.selected_item() != Some(ItemType::Shears) {
+            return false;
+        }
+        let Some(idx) = self.targeted_mob else {
+            return false;
+        };
+        let Some(ShearDrop {
+            item,
+            count,
+            pos,
+            skylight,
+        }) = self.world.mobs_mut().shear_mob(idx)
+        else {
+            return false;
+        };
+        // Pop from roughly the mob's body centre, like death loot.
+        let centre = pos + Vec3::new(0.0, 0.3, 0.0);
+        self.spawn_counter = self.spawn_counter.wrapping_add(1);
+        let mut drop = DroppedItem::new(centre, ItemStack::new(item, count), self.spawn_counter);
+        drop.skylight = skylight;
+        self.world.spawn_item(drop);
+        true
     }
 
     /// Scoop water into the held empty bucket. The rule: the ray hits a water

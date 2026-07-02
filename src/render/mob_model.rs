@@ -28,6 +28,9 @@ use crate::mesh::SHADES;
 /// White: mobs are textured directly (no foliage tint), so the shader's
 /// `tex.rgb * shade * tint` reduces to `tex.rgb * shade`.
 const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
+/// The authored name of a model's shearable-coat cubes (a sheep's fleece): every cube
+/// with this element name is skipped while the instance is `shorn`.
+const COAT_CUBE_NAME: &str = "wool";
 /// The multiply tint a fully-hurt mob flashes — dims green/blue toward red (a multiply
 /// can't brighten, so this reads as a red cast rather than an additive glow).
 const HURT_RED: [f32; 3] = [1.0, 0.25, 0.25];
@@ -61,22 +64,25 @@ pub fn build_mob_instances(
     let head_bone = model.head_bone();
     let walk = model.animation("walk");
     for inst in instances {
-        // Pose each bone. A dying mob uses its physics-ragdoll pose — a free-body
-        // transform per bone, `T(pos)·R(rot)·T(-pivot)`, dropping straight into the same
-        // `bone` slot the animation would fill. A live mob uses its animation (walk,
-        // a playing idle_*, else rest) plus AI head-look.
+        // Pose each bone. A dying mob uses a physics delta over the authored rest pose,
+        // so static Blockbench group rotations are still present as it goes limp. A live
+        // mob uses its animation (walk, a playing idle_*, else rest) plus AI head-look.
         let pose: Vec<Mat4> = if let Some(bones) = &inst.ragdoll {
+            let rest = model.rest_pose();
             model
                 .bones
                 .iter()
                 .enumerate()
                 .map(|(b, bone)| match bones.get(b) {
                     Some(&(pos, rot)) => {
+                        let rest_bone = rest.get(b).copied().unwrap_or(Mat4::IDENTITY);
+                        let rest_pivot = rest_bone.transform_point3(bone.pivot);
                         Mat4::from_translation(pos)
                             * Mat4::from_quat(rot)
-                            * Mat4::from_translation(-bone.pivot)
+                            * Mat4::from_translation(-rest_pivot)
+                            * rest_bone
                     }
-                    None => Mat4::IDENTITY,
+                    None => rest.get(b).copied().unwrap_or(Mat4::IDENTITY),
                 })
                 .collect()
         } else {
@@ -112,6 +118,9 @@ pub fn build_mob_instances(
         let tint = hurt_tint(inst.hurt);
 
         for cube in &model.cubes {
+            if inst.shorn && cube.name == COAT_CUBE_NAME {
+                continue;
+            }
             let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
             let s_cube = Mat4::from_translation(cube.origin)
                 * Mat4::from_quat(euler_quat(cube.rotation))
@@ -196,6 +205,7 @@ mod tests {
             head_pitch: 0.0,
             skylight: 63,
             hurt: 0.0,
+            shorn: false,
             ragdoll: None,
         }
     }
@@ -285,6 +295,48 @@ mod tests {
         assert!(
             rest_a.iter().zip(&rest_b).all(|(a, b)| a.pos == b.pos),
             "idle mob ignores anim_time (always the rest pose)"
+        );
+    }
+
+    #[test]
+    fn shorn_hides_exactly_the_wool_named_cubes() {
+        // A shorn sheep bakes without its `wool` cubes; a model with no wool-named
+        // cubes (the owl) bakes identically shorn or not — proving the skip keys on
+        // the authored cube name, not on the shorn flag alone.
+        let sheep = Model::load(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/sheep.bbmodel"
+        )))
+        .expect("sheep model");
+        assert!(
+            sheep.cubes.iter().any(|c| c.name == COAT_CUBE_NAME),
+            "fixture must author its fleece as `wool` cubes"
+        );
+        let bake = |model: &Model, kind: Mob, shorn: bool| {
+            let mut inst = instance(0.0, false);
+            inst.kind = kind;
+            inst.shorn = shorn;
+            let (mut v, mut i) = (Vec::new(), Vec::new());
+            build_mob_instances(model, 0.0625, std::slice::from_ref(&inst), &mut v, &mut i);
+            v
+        };
+        let coated = bake(&sheep, Mob::Sheep, false);
+        let shorn = bake(&sheep, Mob::Sheep, true);
+        assert!(
+            shorn.len() < coated.len(),
+            "hiding the fleece removes geometry: {} -> {}",
+            coated.len(),
+            shorn.len()
+        );
+
+        let owl = owl_model();
+        assert!(owl.cubes.iter().all(|c| c.name != COAT_CUBE_NAME));
+        let owl_plain = bake(&owl, Mob::Owl, false);
+        let owl_shorn = bake(&owl, Mob::Owl, true);
+        assert_eq!(
+            owl_plain.len(),
+            owl_shorn.len(),
+            "a model without wool cubes is unaffected by shorn"
         );
     }
 

@@ -13,7 +13,7 @@ use std::f32::consts::{PI, TAU};
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
-use super::brain::{AiCtx, BehaviorOutput, Brain};
+use super::brain::{AiCtx, AiMob, BehaviorOutput, Brain};
 use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
@@ -51,6 +51,9 @@ const SWIM_PROBE_FRAC: f32 = 1.0 / 3.0;
 /// can climb onto — enough to crest the waterline and land on the block instead of
 /// hugging its base forever. Mirrors the player's `SWIM_CLIMB`.
 const SWIM_CLIMB: f32 = 4.5;
+/// Highest ledge top (metres above current feet) that the swim-climb boost treats as
+/// reachable. A ledge much above the current waterline is a wall until the mob swims up.
+const SWIM_CLIMB_MAX_LEDGE_DELTA: f32 = 1.25;
 /// Target horizontal drift speed (m/s) imparted by flowing water — matched to the
 /// player's so a mob and the player ride the same current at the same pace. Below walk
 /// speed, so a current carries an idle mob but never overpowers a mob that's swimming.
@@ -114,6 +117,10 @@ pub struct Instance {
     /// Kept separate from `vel` for the same reason as `knockback`: the wish-velocity
     /// overwrite would otherwise wipe it.
     push: Vec3,
+    /// Game ticks of coat regrowth remaining after a shear: while non-zero the mob is
+    /// shorn (its coat cubes are hidden and it can't be shorn again); it counts down on
+    /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
+    shear_regrow: u32,
     /// `Some` once the mob has died — the physics ragdoll that plays before it
     /// despawns. While set, the mob runs no AI and takes no further damage.
     death: Option<Ragdoll>,
@@ -160,10 +167,11 @@ impl Instance {
             hurt_timer: 0.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
+            shear_regrow: 0,
             death: None,
             anim_kind: AnimKind::Rest,
             brain: (d.make_brain)(d),
-            nav: Navigator::new(d.size.head_cells()),
+            nav: Navigator::new(d.size.head_cells(), d.size.half_width),
             rng: MobRng::new(seed),
         }
     }
@@ -243,6 +251,41 @@ impl Instance {
         self.death.is_some()
     }
 
+    /// Is the mob currently shorn (its coat still regrowing)? The renderer hides the
+    /// model's coat cubes while this holds.
+    #[inline]
+    pub fn is_shorn(&self) -> bool {
+        self.shear_regrow > 0
+    }
+
+    /// Ticks of coat regrowth remaining (`0` = fully coated), for the save record.
+    #[inline]
+    pub(super) fn shear_regrow(&self) -> u32 {
+        self.shear_regrow
+    }
+
+    /// Restore a saved regrow counter onto a freshly respawned mob (reload path).
+    #[inline]
+    pub(super) fn set_shear_regrow(&mut self, ticks: u32) {
+        self.shear_regrow = ticks;
+    }
+
+    /// Shear this mob: roll how many of its [`ShearSpec`](super::ShearSpec) drop it
+    /// yields and start the regrow countdown. `None` when the species can't be shorn,
+    /// the coat is still regrowing, or the mob is dead.
+    pub(super) fn shear(&mut self) -> Option<u8> {
+        let spec = def(self.kind).shear?;
+        if self.death.is_some() || self.shear_regrow > 0 {
+            return None;
+        }
+        let count = self.rng.next_range(spec.min.min(spec.max) as i32, spec.max as i32) as u8;
+        self.shear_regrow = self
+            .rng
+            .next_range(spec.regrow_min.min(spec.regrow_max) as i32, spec.regrow_max as i32)
+            as u32;
+        Some(count)
+    }
+
     /// Has the death ragdoll finished, so the corpse should be removed from the world?
     #[inline]
     pub fn is_despawned(&self) -> bool {
@@ -286,6 +329,8 @@ impl Instance {
         dt: f32,
         world: &World,
         player_pos: Vec3,
+        mob_index: usize,
+        mobs: &[AiMob],
         idle_anims: &[IdleAnimMeta],
         skeleton: &Skeleton,
     ) {
@@ -313,6 +358,11 @@ impl Instance {
             self.hurt_timer = (self.hurt_timer - dt).max(0.0);
         }
 
+        // Shear regrowth counts down on the tick; at zero the coat is back. Pauses
+        // with the rest of the sim while the mob's chunk is unloaded (this tick is
+        // simply not run), like the dropped-item timers.
+        self.shear_regrow = self.shear_regrow.saturating_sub(1);
+
         // Distance-despawn: a hostile mob tallies ticks spent beyond its cull radius
         // from the player; once the tally reaches the threshold the manager removes it.
         // A passive species has no radius, so its timer never moves and it persists.
@@ -326,34 +376,46 @@ impl Instance {
         // cell-based `solid` above still drives navigation (foothold/pathfinding/ledge).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        // The foothold cell the mob is standing in — robust to standing at a block
-        // edge, where the cell under its centre overhangs into air. Without this the
-        // start wouldn't be a foothold and pathfinding would bail, freezing the mob.
-        let cell = path::standing_cell(self.pos, d.size.half_width, d.size.head_cells(), &solid)
-            .unwrap_or_else(|| voxel_at(self.pos));
-        let nav_idle = self.nav.is_idle();
         // On or in water — feet submerged, or resting on the surface (water just
         // below). Stays true while the mob floats at the surface; drives idle-animation
-        // suppression.
+        // suppression and allows path refreshes while swimming.
         let feet_cell = voxel_at(self.pos);
         let in_water = water(feet_cell) || water(feet_cell - IVec3::Y);
+        // The cell navigation starts from: the standing foothold on land (robust to
+        // standing at a block edge, where the cell under the centre overhangs into
+        // air), or the water-surface cell while in water — see `navigation_cell` for
+        // why a mob in water must never path from its (submerged) standing cell.
+        let cell = path::navigation_cell(
+            self.pos,
+            d.size.half_width,
+            d.size.head_cells(),
+            in_water,
+            &solid,
+            &water,
+        )
+        .unwrap_or_else(|| voxel_at(self.pos));
+        let nav_idle = self.nav.is_idle();
         let decision = {
             let mut ctx = AiCtx {
                 pos: self.pos,
                 cell,
                 yaw: self.yaw,
                 head_height: d.size.height,
+                half_width: d.size.half_width,
                 world,
                 player_pos,
                 nav_idle,
                 in_water,
                 head: d.size.head_cells(),
                 idle_anims,
+                mob_index,
+                mobs,
                 rng: &mut self.rng,
             };
             self.brain.decide(&mut ctx)
         };
-        self.nav.update_goal(decision.goal, cell, world);
+        self.nav
+            .update_goal_when_supported(decision.goal, cell, world, self.on_ground || in_water);
         let (wish, jump) = self.nav.follow(self.pos, self.on_ground);
         let water_flow = |c: IVec3| world.water_flow_dir_at(c.x, c.y, c.z);
         self.integrate_with_flow(dt, d, wish, jump, &boxes, &solid, &water, &water_flow);
@@ -572,7 +634,12 @@ impl Instance {
         let base = self.pos.y.floor() as i32;
         // A step at feet level, or one block above (so the boost engages from ~a block
         // below the ledge top, giving runway to crest it).
-        let step_at = |y: i32| solid(IVec3::new(fx, y, fz)) && !solid(IVec3::new(fx, y + 1, fz));
+        let step_at = |y: i32| {
+            let top = (y + 1) as f32;
+            top <= self.pos.y + SWIM_CLIMB_MAX_LEDGE_DELTA
+                && solid(IVec3::new(fx, y, fz))
+                && !solid(IVec3::new(fx, y + 1, fz))
+        };
         step_at(base) || step_at(base + 1)
     }
 
@@ -1132,6 +1199,35 @@ mod tests {
             owl.pos.x + half > SHORE,
             "climbed past the shore onto the land: x {}",
             owl.pos.x
+        );
+    }
+
+    #[test]
+    fn swim_climb_does_not_boost_toward_a_ledge_above_reach() {
+        const SURFACE: i32 = 4;
+        // Land top is one block above the waterline. From the submerged start pose this
+        // is not yet reachable; the mob must swim up first instead of getting a cliff
+        // boost from below.
+        let solid = |c: IVec3| c.y < 0 || (c.x >= 1 && c.y < SURFACE + 1);
+        let water = |c: IVec3| c.x <= 0 && (0..SURFACE).contains(&c.y);
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, SURFACE as f32 - 0.7, 0.5), 0.0, 1);
+        assert!(
+            !owl.ledge_ahead(Vec3::new(1.0, 0.0, 0.0), owl_def().size.half_width, &solid),
+            "ledge top is too far above the mob's current feet"
+        );
+        let y0 = owl.pos.y;
+        owl.integrate(
+            0.05,
+            owl_def(),
+            Vec3::new(1.0, 0.0, 0.0),
+            false,
+            &solid,
+            &water,
+        );
+        assert!(
+            owl.pos.y < y0 + 0.1,
+            "uses normal swim rise, not the ledge boost: {y0} -> {}",
+            owl.pos.y
         );
     }
 
