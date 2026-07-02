@@ -260,6 +260,51 @@ fn rooted_plants_place_only_on_their_required_ground() {
     );
 }
 
+/// A model block's data row picks how it turns to meet the player: LeftToRight spans
+/// the authored X axis across the view (workbench), FrontToBack runs it away from the
+/// player with the clicked cell at the near end (bed: foot first, headboard far).
+#[test]
+fn model_placement_orientation_spans_across_or_away() {
+    // The default camera (yaw 0) looks south (+Z).
+    let place = |item: ItemType, target: IVec3| -> Game {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(item, 1));
+        game.player.inventory = inv;
+        game.player.inventory.set_active(0);
+        game.look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
+        assert!(game.try_place(), "{item:?} should place");
+        game
+    };
+    let at = |game: &Game, p: IVec3| Block::from_id(game.world.chunk_block(p.x, p.y, p.z));
+
+    // FrontToBack: the bed occupies the clicked cell and the cell BEYOND it (south,
+    // away from the player) — never the cells beside it.
+    let p = IVec3::new(4, 64, 4);
+    let bed = place(ItemType::Bed, p);
+    assert_eq!(at(&bed, p), Block::Bed, "near (foot) end at the clicked cell");
+    assert_eq!(
+        at(&bed, p + IVec3::new(0, 0, 1)),
+        Block::Bed,
+        "far (head) end grows away from the player"
+    );
+    assert_eq!(at(&bed, p + IVec3::new(1, 0, 0)), Block::Air);
+    assert_eq!(at(&bed, p - IVec3::new(1, 0, 0)), Block::Air);
+
+    // LeftToRight: the workbench spans sideways (east-west) across the same view.
+    let wb = place(ItemType::FurnitureWorkbench, p);
+    assert_eq!(at(&wb, p), Block::FurnitureWorkbench);
+    assert_eq!(
+        at(&wb, p - IVec3::new(1, 0, 0)),
+        Block::FurnitureWorkbench,
+        "second column beside the clicked cell"
+    );
+    assert_eq!(at(&wb, p + IVec3::new(0, 0, 1)), Block::Air);
+    assert_eq!(at(&wb, p - IVec3::new(0, 0, 1)), Block::Air);
+}
+
 #[test]
 fn furnace_front_faces_the_player_on_placement() {
     // The front points opposite the look direction (back toward the player).

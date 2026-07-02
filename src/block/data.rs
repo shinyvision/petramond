@@ -216,6 +216,8 @@ pub(super) const ALL_BLOCKS: &[Block] = &[
     Block::CobblestoneStairs,
     Block::StoneStairs,
     Block::DirtStairs,
+    Block::BedFrame,
+    Block::Bed,
 ];
 
 pub(super) const BLOCK_DEFS: &[BlockDef] = &[
@@ -2096,6 +2098,39 @@ pub(super) const BLOCK_DEFS: &[BlockDef] = &[
     ),
     stair_def!(StoneStairs, StoneStairs, Stone, Stone, 1, 1.5),
     stair_def!(DirtStairs, DirtStairs, Dirt, Dirt, 0, 0.5),
+    BlockDef {
+        block: Block::BedFrame,
+        shape: RenderShape::Model(BlockModelKind::BedFrame),
+        // Collision is model-driven per cell, like every bbmodel block.
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[],
+        behavior: &behavior::INERT,
+        interaction: BlockInteraction::None,
+        flags: MODEL_FLAGS.with(BlockFlags::DIRECTIONAL_VIEW),
+        // [top, bottom, side] is unused for model blocks (icon/held draw the model);
+        // plank tiles as the stand-in.
+        tiles: [Tile::OakPlanks, Tile::OakPlanks, Tile::OakPlanks],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 2.0,
+        drop: drops_self!(BedFrame),
+    },
+    BlockDef {
+        block: Block::Bed,
+        shape: RenderShape::Model(BlockModelKind::Bed),
+        collision: NO_BOXES,
+        emission: 0,
+        tags: &[],
+        behavior: &behavior::INERT,
+        interaction: BlockInteraction::None,
+        flags: MODEL_FLAGS.with(BlockFlags::DIRECTIONAL_VIEW),
+        tiles: [Tile::OakPlanks, Tile::OakPlanks, Tile::OakPlanks],
+        material: BlockMaterial::Wood,
+        harvest_tier: 0,
+        hardness: 1.0,
+        drop: drops_self!(Bed),
+    },
 ];
 
 #[inline]

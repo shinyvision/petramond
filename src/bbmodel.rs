@@ -182,12 +182,12 @@ impl Model {
     pub fn load(src: &str) -> Result<Self, String> {
         let root: Value = serde_json::from_str(src).map_err(|e| format!("json: {e}"))?;
 
-        // UV divisor: the model-space UV resolution. Prefer the texture's
-        // uv_width/uv_height, falling back to the project resolution.
-        let (uv_w, uv_h) = uv_resolution(&root);
-
-        // Texture: the first texture's embedded data URI -> RGBA bytes.
-        let (texture_rgba, tex_w, tex_h) = decode_first_texture(&root)?;
+        // Textures: EVERY embedded texture decoded and stacked vertically into one
+        // sheet, each face's UVs remapped through its own texture's band (a model may
+        // paint different elements from different textures — the bed's wood vs its
+        // sheets). A single-texture model reduces to the identity rect, so the sheet
+        // IS that texture.
+        let sheet = TextureSheet::decode(&root)?;
 
         // Bones from `groups`, indexed by uuid for the outliner walk + animators.
         let mut bones = Vec::new();
@@ -233,7 +233,7 @@ impl Model {
                 let to = arr3(e.get("to")).unwrap_or(Vec3::ZERO);
                 let origin = arr3(e.get("origin")).unwrap_or(from);
                 let rotation = arr3(e.get("rotation")).unwrap_or(Vec3::ZERO);
-                let faces = parse_faces(e.get("faces"), uv_w, uv_h);
+                let faces = parse_faces(e.get("faces"), &sheet);
                 let uuid = e
                     .get("uuid")
                     .and_then(Value::as_str)
@@ -296,9 +296,9 @@ impl Model {
             cubes,
             animations,
             idle_anim_names,
-            texture_rgba,
-            tex_w,
-            tex_h,
+            texture_rgba: sheet.rgba,
+            tex_w: sheet.w,
+            tex_h: sheet.h,
         })
     }
 
@@ -375,10 +375,11 @@ impl CompiledAsset for Model {
     /// `LLMOB` — the compiled mob/entity model container (one file holds geometry, bones,
     /// animations and the decoded texture).
     const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
-    /// v3: bones (including rest rotations) + cubes (per-face UV, element name) +
-    /// named rotation animations + the RGBA texture.
+    /// v4: bones (including rest rotations) + cubes (per-face UV, element name) +
+    /// named rotation animations + the RGBA texture — since v4 the texture is the
+    /// combined multi-texture sheet with face UVs remapped into it.
     /// Bump on any change to these fields or to [`Model::load`]'s output.
-    const FORMAT_VERSION: u32 = 3;
+    const FORMAT_VERSION: u32 = 4;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 
@@ -423,8 +424,9 @@ fn walk_outliner(
     }
 }
 
-/// Parse one element's `faces` map into the `Face::ALL`-ordered UV array.
-fn parse_faces(faces: Option<&Value>, uv_w: f32, uv_h: f32) -> [Option<[f32; 4]>; 6] {
+/// Parse one element's `faces` map into the `Face::ALL`-ordered UV array, each
+/// face's UVs normalized into its referenced texture's band of the sheet.
+fn parse_faces(faces: Option<&Value>, sheet: &TextureSheet) -> [Option<[f32; 4]>; 6] {
     // Blockbench face name -> our `Face::ALL` slot (PosX, NegX, PosY, NegY, PosZ, NegZ).
     const NAMES: [(&str, usize); 6] = [
         ("east", 0),  // +X
@@ -437,17 +439,23 @@ fn parse_faces(faces: Option<&Value>, uv_w: f32, uv_h: f32) -> [Option<[f32; 4]>
     let mut out = [None; 6];
     let Some(faces) = faces else { return out };
     for (name, slot) in NAMES {
-        if let Some(uv) = faces
-            .get(name)
-            .and_then(|f| f.get("uv"))
-            .and_then(Value::as_array)
-        {
+        let Some(face) = faces.get(name) else { continue };
+        if let Some(uv) = face.get("uv").and_then(Value::as_array) {
             if uv.len() == 4 {
                 let v: Vec<f32> = uv.iter().filter_map(num).collect();
                 if v.len() == 4 {
-                    // Normalize to [0,1]; keep raw corner order so per-face flips
-                    // (a reversed rect) reproduce on render.
-                    out[slot] = Some([v[0] / uv_w, v[1] / uv_h, v[2] / uv_w, v[3] / uv_h]);
+                    let tex = face
+                        .get("texture")
+                        .and_then(Value::as_u64)
+                        .map(|i| i as usize);
+                    if let Some(r) = sheet.rect(tex) {
+                        // Normalize into the texture's sheet band; keep raw corner
+                        // order so per-face flips (a reversed rect) reproduce on
+                        // render.
+                        let (u0, v0) = r.remap(v[0], v[1]);
+                        let (u1, v1) = r.remap(v[2], v[3]);
+                        out[slot] = Some([u0, v0, u1, v1]);
+                    }
                 }
             }
         }
@@ -573,22 +581,9 @@ fn head_look_transform(bone: &Bone, yaw: f32, pitch: f32) -> Mat4 {
         * Mat4::from_translation(-bone.pivot)
 }
 
-/// The UV divisor `(width, height)`: the texture's `uv_width`/`uv_height`, falling
-/// back to the project `resolution`, then 16.
-fn uv_resolution(root: &Value) -> (f32, f32) {
-    if let Some(tex) = root
-        .get("textures")
-        .and_then(Value::as_array)
-        .and_then(|t| t.first())
-    {
-        let w = tex.get("uv_width").and_then(Value::as_f64);
-        let h = tex.get("uv_height").and_then(Value::as_f64);
-        if let (Some(w), Some(h)) = (w, h) {
-            if w > 0.0 && h > 0.0 {
-                return (w as f32, h as f32);
-            }
-        }
-    }
+/// The project `resolution` `(width, height)` — the UV divisor for a texture that
+/// carries no `uv_width`/`uv_height` of its own. Falls back to 16.
+fn project_resolution(root: &Value) -> (f32, f32) {
     if let Some(res) = root.get("resolution") {
         let w = res.get("width").and_then(Value::as_f64).unwrap_or(16.0);
         let h = res.get("height").and_then(Value::as_f64).unwrap_or(16.0);
@@ -599,23 +594,114 @@ fn uv_resolution(root: &Value) -> (f32, f32) {
     (16.0, 16.0)
 }
 
-/// Decode the first texture's embedded `data:` URI into `(rgba, w, h)`.
-fn decode_first_texture(root: &Value) -> Result<(Vec<u8>, u32, u32), String> {
-    let src = root
-        .get("textures")
-        .and_then(Value::as_array)
-        .and_then(|t| t.first())
-        .and_then(|t| t.get("source"))
-        .and_then(Value::as_str)
-        .ok_or("no embedded texture source")?;
-    // data:image/png;base64,<payload>
-    let payload = src.split_once(',').map(|(_, b)| b).unwrap_or(src);
-    let bytes = base64_decode(payload).ok_or("texture base64 decode failed")?;
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| format!("texture decode: {e}"))?
-        .to_rgba8();
-    let (w, h) = (img.width(), img.height());
-    Ok((img.into_raw(), w, h))
+/// One texture's slot in the combined sheet: its own UV divisor plus the
+/// normalized offset/scale of its band, so a face UV remaps in one step.
+struct TexRect {
+    uv_w: f32,
+    uv_h: f32,
+    u_off: f32,
+    v_off: f32,
+    u_scale: f32,
+    v_scale: f32,
+}
+
+impl TexRect {
+    /// A raw face UV coordinate (in this texture's own UV units) → the sheet.
+    fn remap(&self, u: f32, v: f32) -> (f32, f32) {
+        (
+            self.u_off + u / self.uv_w * self.u_scale,
+            self.v_off + v / self.uv_h * self.v_scale,
+        )
+    }
+}
+
+/// Every embedded texture decoded and stacked vertically into one RGBA sheet.
+/// Faces reference textures by array index; `rects` is index-aligned with the
+/// authored `textures` array (`None` = that entry had no decodable source).
+struct TextureSheet {
+    rgba: Vec<u8>,
+    w: u32,
+    h: u32,
+    rects: Vec<Option<TexRect>>,
+}
+
+impl TextureSheet {
+    /// The rect for a face's texture reference: its own entry when it decoded,
+    /// else the first decoded texture (the old first-texture-only behavior).
+    fn rect(&self, index: Option<usize>) -> Option<&TexRect> {
+        index
+            .and_then(|i| self.rects.get(i))
+            .and_then(Option::as_ref)
+            .or_else(|| self.rects.iter().flatten().next())
+    }
+
+    fn decode(root: &Value) -> Result<TextureSheet, String> {
+        let (res_w, res_h) = project_resolution(root);
+        let empty = Vec::new();
+        let texs = root
+            .get("textures")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty);
+
+        // Decode each entry's `data:image/png;base64,<payload>` source; an entry
+        // without one (or that fails to decode) stays `None` so indices keep lining
+        // up with face references.
+        let images: Vec<Option<(Vec<u8>, u32, u32, f32, f32)>> = texs
+            .iter()
+            .map(|t| {
+                let src = t.get("source").and_then(Value::as_str)?;
+                let payload = src.split_once(',').map(|(_, b)| b).unwrap_or(src);
+                let bytes = base64_decode(payload)?;
+                let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
+                let (w, h) = (img.width(), img.height());
+                let uv_w = t.get("uv_width").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let uv_h = t.get("uv_height").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let (uv_w, uv_h) = if uv_w > 0.0 && uv_h > 0.0 {
+                    (uv_w, uv_h)
+                } else {
+                    (res_w, res_h)
+                };
+                Some((img.into_raw(), w, h, uv_w, uv_h))
+            })
+            .collect();
+
+        let sheet_w = images.iter().flatten().map(|i| i.1).max().unwrap_or(0);
+        let sheet_h: u32 = images.iter().flatten().map(|i| i.2).sum();
+        if sheet_w == 0 || sheet_h == 0 {
+            return Err("no embedded texture source".into());
+        }
+
+        let mut rgba = vec![0u8; (sheet_w * sheet_h * 4) as usize];
+        let mut rects = Vec::with_capacity(images.len());
+        let mut y_off = 0u32;
+        for img in images {
+            let Some((tex, w, h, uv_w, uv_h)) = img else {
+                rects.push(None);
+                continue;
+            };
+            for row in 0..h {
+                let src = (row * w * 4) as usize;
+                let dst = (((y_off + row) * sheet_w) * 4) as usize;
+                rgba[dst..dst + (w * 4) as usize].copy_from_slice(&tex[src..src + (w * 4) as usize]);
+            }
+            rects.push(Some(TexRect {
+                uv_w,
+                uv_h,
+                u_off: 0.0,
+                v_off: y_off as f32 / sheet_h as f32,
+                u_scale: w as f32 / sheet_w as f32,
+                v_scale: h as f32 / sheet_h as f32,
+            }));
+            y_off += h;
+        }
+
+        Ok(TextureSheet {
+            rgba,
+            w: sheet_w,
+            h: sheet_h,
+            rects,
+        })
+    }
 }
 
 /// Minimal standard-alphabet base64 decoder (skips `=` padding + whitespace). Kept
@@ -722,6 +808,74 @@ mod tests {
                 assert!(a.abs_diff_eq(*b, 1e-6), "posed transforms match at t={t}");
             }
         }
+    }
+
+    /// Base64-encode (standard alphabet, padded) — test-only counterpart of
+    /// [`base64_decode`], for building synthetic embedded textures.
+    fn base64_encode(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    /// A 1×1 PNG of one solid colour as a Blockbench `source` data URI.
+    fn one_pixel_texture(rgba: [u8; 4]) -> String {
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("png encodes");
+        format!("data:image/png;base64,{}", base64_encode(&png.into_inner()))
+    }
+
+    /// A model whose elements paint from DIFFERENT textures must keep every element
+    /// visible: all textures land in one stacked sheet and each face's UVs remap into
+    /// its own texture's band. (Regression: only the first texture was decoded, so
+    /// every other texture's elements sampled transparent texels and vanished.)
+    #[test]
+    fn multi_texture_faces_remap_into_stacked_sheet() {
+        let red = one_pixel_texture([255, 0, 0, 255]);
+        let blue = one_pixel_texture([0, 0, 255, 255]);
+        let src = format!(
+            r#"{{
+                "resolution": {{ "width": 16, "height": 16 }},
+                "textures": [
+                    {{ "uv_width": 16, "uv_height": 16, "source": "{red}" }},
+                    {{ "uv_width": 16, "uv_height": 16, "source": "{blue}" }}
+                ],
+                "elements": [
+                    {{ "uuid": "a", "type": "cube", "from": [0,0,0], "to": [1,1,1],
+                       "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }},
+                    {{ "uuid": "b", "type": "cube", "from": [2,0,0], "to": [3,1,1],
+                       "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 1 }} }} }}
+                ],
+                "outliner": ["a", "b"]
+            }}"#
+        );
+        let m = Model::load(&src).expect("two-texture model parses");
+
+        // Both 1×1 textures stack into a 1×2 sheet, red band above blue.
+        assert_eq!((m.tex_w, m.tex_h), (1, 2));
+        assert_eq!(&m.texture_rgba[0..4], &[255, 0, 0, 255], "row 0 is red");
+        assert_eq!(&m.texture_rgba[4..8], &[0, 0, 255, 255], "row 1 is blue");
+
+        // Cube a's face spans the top (red) half, cube b's the bottom (blue) half.
+        let uv_a = m.cubes[0].faces[2].expect("cube a up face");
+        let uv_b = m.cubes[1].faces[2].expect("cube b up face");
+        assert_eq!(uv_a, [0.0, 0.0, 1.0, 0.5]);
+        assert_eq!(uv_b, [0.0, 0.5, 1.0, 1.0]);
     }
 
     #[test]

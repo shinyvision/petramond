@@ -96,23 +96,25 @@ pub(crate) fn iso_icon_mvp(screen: (u32, u32), r: SlotRect) -> Mat4 {
         * rot
 }
 
-/// Minecraft's GUI base orientation: composed with a model's authored Blockbench
-/// `display.gui` rotation it reproduces Blockbench's GUI preview in our icon camera.
-/// Minecraft renders a GUI item by applying the `gui` display pose under a fixed base
-/// (a flip + orient) we don't otherwise have, so the raw pose aims the model the wrong
-/// way. This base is CALIBRATED so the workbench's authored pose (`[-160, 45, -180]`)
-/// lands at the verified view (`[-30, 330, 0]`); thereafter the icon is DATA-DRIVEN —
-/// editing the `gui` pose in Blockbench (then recompiling, which re-bakes the `.llblock`)
-/// moves the icon with no code change. The horizontal mirror to match Blockbench's
-/// handedness is applied separately in [`icon_mvp_for_rot`] (the negative X scale).
-fn gui_base() -> glam::Quat {
-    let target = crate::bbmodel::euler_quat(Vec3::new(-30.0, 320.0, 0.0));
-    let reference = crate::bbmodel::euler_quat(Vec3::new(-160.0, 45.0, -180.0));
-    target * reference.inverse()
+/// The GUI icon orientation for an authored Blockbench `display.gui` rotation, exactly
+/// as Blockbench's GUI preview shows it. Blockbench display eulers act in a frame that
+/// is horizontally MIRRORED relative to ours, so the authored rotation converts by
+/// negating Y and Z; the preview camera then differs from our icon camera by a plain
+/// 180° yaw. Verified against Blockbench per-model with the preview harness
+/// ([`render_model_icon_preview`](tests::render_model_icon_preview)) — the icon is
+/// DATA-DRIVEN: editing the `gui` pose in Blockbench (then recompiling, which re-bakes
+/// the `.llblock`) moves the icon with no code change. The horizontal mirror to match
+/// Blockbench's handedness is applied separately in [`icon_mvp_for_rot`] (the negative
+/// X scale). NOTE: the first-person hand context does NOT mirror its euler — see
+/// `render::hand::held_model`.
+fn gui_rotation(kind: crate::block_model::BlockModelKind) -> glam::Quat {
+    let r = crate::block_model::display(kind).gui.rotation;
+    glam::Quat::from_rotation_y(std::f32::consts::PI)
+        * crate::bbmodel::euler_quat(Vec3::new(r[0], -r[1], -r[2]))
 }
 
 /// Icon MVP for a bbmodel block: the authored Blockbench `display.gui` pose mapped through
-/// the [`gui_base`] into our icon camera, auto-framed to fill ~0.9 of the slot (square on
+/// [`gui_rotation`] into our icon camera, auto-framed to fill ~0.9 of the slot (square on
 /// screen at any aspect, like [`iso_icon_mvp`]). `build_block_model_icon` bakes it into
 /// the geometry; the model-icon pass depth-tests so panels/drawers order correctly.
 /// Called by the one-time icon-atlas bake (with a 64×64 square cell `r`).
@@ -121,8 +123,7 @@ pub(crate) fn model_icon_mvp(
     r: SlotRect,
     kind: crate::block_model::BlockModelKind,
 ) -> Mat4 {
-    let gui = crate::block_model::display(kind).gui.rotation_quat();
-    icon_mvp_for_rot(screen, r, kind, gui_base() * gui)
+    icon_mvp_for_rot(screen, r, kind, gui_rotation(kind))
 }
 
 /// [`model_icon_mvp`] with an explicit orientation quaternion (factored out so the visual
@@ -315,22 +316,27 @@ mod tests {
         use crate::block_model::{self, BlockModelKind};
         use glam::Quat;
 
-        let kind = BlockModelKind::FurnitureWorkbench;
         let (atlas_rgba, aw, ah) = block_model::atlas().texture();
 
-        // Can the AUTHORED `gui` pose be made right by composing it with Minecraft's GUI
-        // base orientation (a Y-flip / 180° turn the display rotation is relative to)? If
-        // so the icon stays data-driven. Compare against the hand-found target angle.
-        // yaw 330 (drawers right, like #4); find the pitch that hides the underside lip
-        // while keeping the board notes readable.
-        // The SHIPPED production rotation: the authored `gui` pose mapped through the GUI
-        // base. `icon_mvp_for_rot` adds the horizontal mirror, so this preview matches the
-        // in-game icon AND Blockbench. (Editing the `gui` pose in Blockbench moves it.)
-        let production = gui_base() * block_model::display(kind).gui.rotation_quat();
-        let candidates: &[(&str, Quat)] = &[("production", production)];
+        // The SHIPPED production rotation per BLOCK kind (item-only kinds have no gui
+        // pose worth previewing): the authored `gui` pose mapped through
+        // `gui_rotation`. `icon_mvp_for_rot` adds the horizontal mirror, so this
+        // preview matches the in-game icon AND Blockbench's GUI display preview.
+        // (Editing the `gui` pose in Blockbench moves it.) To compare CANDIDATE
+        // mappings (e.g. when calibrating the hand pass — the icon shows
+        // std(RotY180 · rot), so preview a hand rotation Q by passing
+        // rot = RotY180 · Q), swap the quats below.
+        let candidates: Vec<(String, BlockModelKind, Quat)> = [
+            BlockModelKind::FurnitureWorkbench,
+            BlockModelKind::BedFrame,
+            BlockModelKind::Bed,
+        ]
+        .into_iter()
+        .map(|kind| (format!("{kind:?}"), kind, gui_rotation(kind)))
+        .collect();
 
         const CELL: usize = 460;
-        let cols = 1usize;
+        let cols = 3usize;
         let rows = candidates.len().div_ceil(cols);
         let (gw, gh) = (cols * CELL, rows * CELL);
         let bg = [38u8, 38, 46];
@@ -339,7 +345,8 @@ mod tests {
             px.copy_from_slice(&bg);
         }
 
-        for (i, (label, q)) in candidates.iter().enumerate() {
+        for (i, (label, kind, q)) in candidates.iter().enumerate() {
+            let kind = *kind;
             let (cx, cy) = ((i % cols) * CELL, (i / cols) * CELL);
             let r = SlotRect {
                 x: 0.0,

@@ -208,6 +208,11 @@ pub enum ItemType {
     // not a block; see `game`'s shear use) and the wool a shorn sheep drops. ---
     Shears,
     Wool,
+    // --- Bed update: the block-items for the bed frame and the bed. Appended at the
+    // END (ids NOT equal to their block ids) and mapped explicitly in `from_block` /
+    // `as_block`, like the other late block-items. ---
+    BedFrame,
+    Bed,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -455,6 +460,8 @@ impl ItemType {
             Block::CobblestoneStairs => ItemType::CobblestoneStairs,
             Block::StoneStairs => ItemType::StoneStairs,
             Block::DirtStairs => ItemType::DirtStairs,
+            Block::BedFrame => ItemType::BedFrame,
+            Block::Bed => ItemType::Bed,
             _ => Self::from_id(b.id()),
         }
     }
@@ -501,6 +508,8 @@ impl ItemType {
             ItemType::CobblestoneStairs => Some(Block::CobblestoneStairs),
             ItemType::StoneStairs => Some(Block::StoneStairs),
             ItemType::DirtStairs => Some(Block::DirtStairs),
+            ItemType::BedFrame => Some(Block::BedFrame),
+            ItemType::Bed => Some(Block::Bed),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             _ => None,
         }

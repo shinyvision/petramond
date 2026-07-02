@@ -201,13 +201,26 @@ pub fn held_model(
     let ItemRenderKind::Model(kind) = item.render_kind() else {
         return None;
     };
-    // Orient the held model by the AUTHORED Blockbench `firstperson_righthand` pose (its
-    // rotation), seated in our hand anchor + fit scale (the baker centres it to a unit
-    // cube). So the workbench is held exactly as designed in Blockbench, not at a
-    // hardcoded angle.
+    // Orient the held model by the AUTHORED Blockbench `firstperson_righthand` pose,
+    // seated in our hand anchor, so it is held exactly as designed in Blockbench:
+    //   * rotation: composed under a 180° yaw base. Unlike the GUI icon (which must
+    //     also mirror its euler — see `ui::icon::gui_rotation`), the first-person
+    //     context takes the RAW euler; vanilla's first-person path carries its own
+    //     mirror that cancels the display-frame difference. Verified against the
+    //     Blockbench first-person preview via the icon preview harness.
+    //   * scale: the authored multiplier is relative to the model's REAL size, but the
+    //     baker centres the model to a unit cube (divides by its largest footprint
+    //     axis), so multiply the span back in. 1.25 calibrates the whole product so
+    //     the workbench (span 2, authored scale 0.22) keeps its original 0.55 fit.
+    //   * translation stays engine-fixed (the shared held anchor).
     let pose = crate::block_model::display(kind).firstperson_righthand;
-    let base_model =
-        Mat4::from_scale_rotation_translation(Vec3::splat(0.55), pose.rotation_quat(), Vec3::ZERO);
+    let span = {
+        let fp = crate::block_model::footprint(kind);
+        fp.iter().copied().max().unwrap_or(1).max(1) as f32
+    };
+    let scale = 1.25 * span * pose.scale[0].max(0.01);
+    let rot = Quat::from_rotation_y(std::f32::consts::PI) * pose.rotation_quat();
+    let base_model = Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, Vec3::ZERO);
     Some((
         kind,
         hand_view_proj(aspect) * held_item_placement(view, aspect) * base_model,

@@ -69,6 +69,8 @@
 
     { "type": "shaped", "pattern": ["P P", " P "], "key": { "P": "#planks" }, "result": "wooden_bucket", "count": 1 },
 
+    { "type": "shaped", "pattern": ["WWW", "WBW", "WWW"], "key": { "W": "wool", "B": "bed_frame" }, "result": "bed", "count": 1 },
+
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
     { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" },
@@ -82,6 +84,16 @@
     { "type": "furniture", "input": "dark_oak_planks", "result": "dark_oak_door", "cost": 1 },
     { "type": "furniture", "input": "cherry_planks", "result": "cherry_door", "cost": 1 },
     { "type": "furniture", "input": "mangrove_planks", "result": "mangrove_door", "cost": 1 },
-    { "type": "furniture", "input": "redwood_planks", "result": "redwood_door", "cost": 1 }
+    { "type": "furniture", "input": "redwood_planks", "result": "redwood_door", "cost": 1 },
+
+    { "type": "furniture", "input": "oak_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "spruce_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "birch_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "jungle_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "acacia_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "dark_oak_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "cherry_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "mangrove_planks", "result": "bed_frame", "cost": 5 },
+    { "type": "furniture", "input": "redwood_planks", "result": "bed_frame", "cost": 5 }
   ]
 }

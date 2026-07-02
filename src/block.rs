@@ -158,6 +158,12 @@ pub enum Block {
     CobblestoneStairs,
     StoneStairs,
     DirtStairs,
+    // --- Bed update: the bed frame (bare wood, crafted at the furniture workbench)
+    // and the finished bed (frame + wool). Both are 2×1×1 bbmodel blocks like the
+    // workbench (chunk-meshed from their `.bbmodel`, footprint auto-split, placed
+    // facing the player). Appended at the end so every id above stays frozen. ---
+    BedFrame,
+    Bed,
 }
 
 /// Secondary-use capability declared by a block's data row. This answers only

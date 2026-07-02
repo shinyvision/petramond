@@ -144,12 +144,14 @@ impl Game {
         // occupied cell must be loaded + replaceable AND clear of the player/mobs, or the
         // placement fails as a unit (nothing placed, the held item kept). Multi-cell
         // models, and models marked directionalView, are oriented from the player's
-        // facing; `p` is the front-left bottom anchor from the player's view.
+        // facing through the model's own placement orientation (the workbench spans
+        // left-to-right across the view, the bed runs front-to-back away from it);
+        // `p` is the front-left bottom anchor from the player's view.
         if let RenderShape::Model(kind) = block.render_shape() {
             let player_facing = facing_from_forward(self.cam.forward());
             let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
             let facing = if block.directional_view() || multi_cell {
-                player_facing
+                crate::block_model::def(kind).orientation.apply(player_facing)
             } else {
                 crate::block_model::DEFAULT_MODEL_FACING
             };

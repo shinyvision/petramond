@@ -166,6 +166,8 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::WaterBucket,
     ItemType::Shears,
     ItemType::Wool,
+    ItemType::BedFrame,
+    ItemType::Bed,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -1320,6 +1322,22 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         item: ItemType::Wool,
         key: "wool",
         name: "Wool",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::BedFrame,
+        key: "bed_frame",
+        name: "Bed Frame",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::Bed,
+        key: "bed",
+        name: "Bed",
         max_stack_size: STACK,
         held_pose: HeldPose::DEFAULT,
         tags: &[],

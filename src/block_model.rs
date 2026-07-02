@@ -249,10 +249,10 @@ impl CompiledAsset for BlockModel {
     /// `LLBLK` — the compiled bbmodel-block container (geometry + texture + baked
     /// collision/bounds), distinct from the mob `LLMOB` so the two never alias.
     const MAGIC: [u8; 8] = *b"LLBLK\0\0\0";
-    /// v3: model-space cubes (per-face UV) + RGBA texture + baked per-cube collision +
+    /// v4: model-space cubes (per-face UV) + RGBA texture + baked per-cube collision +
     /// bounding box + the Blockbench `display` poses. (v1 had no collision/bounds; v2 no
-    /// display; each bump rebuilds stale caches.)
-    const FORMAT_VERSION: u32 = 3;
+    /// display; v3 predates the multi-texture sheet; each bump rebuilds stale caches.)
+    const FORMAT_VERSION: u32 = 4;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 
@@ -285,6 +285,8 @@ pub enum BlockModelKind {
     FurnitureWorkbench = 0,
     Bucket = 1,
     WaterBucket = 2,
+    BedFrame = 3,
+    Bed = 4,
 }
 
 /// Every bbmodel kind in id order — the precache + registry-order oracle.
@@ -292,6 +294,8 @@ pub const ALL: &[BlockModelKind] = &[
     BlockModelKind::FurnitureWorkbench,
     BlockModelKind::Bucket,
     BlockModelKind::WaterBucket,
+    BlockModelKind::BedFrame,
+    BlockModelKind::Bed,
 ];
 
 /// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
@@ -300,6 +304,39 @@ pub const ALL: &[BlockModelKind] = &[
 pub enum CollisionSpec {
     /// Auto: the model's footprint bounds, split per cell (the default).
     FromModel,
+}
+
+/// How a placed model orients its authored X axis relative to the placing player
+/// (multi-cell models and `DIRECTIONAL_VIEW` blocks orient on placement — see
+/// `game::placement`).
+#[derive(Copy, Clone)]
+pub enum PlacementOrientation {
+    /// Authored X spans LEFT-TO-RIGHT across the player's view; the authored front
+    /// (−Z) faces the player. Furniture you stand in front of (the workbench).
+    LeftToRight,
+    /// Quarter-turned from [`LeftToRight`](Self::LeftToRight): authored X runs
+    /// FRONT-TO-BACK along the player's view, with the clicked cell at the near,
+    /// authored-max-X end and authored −X growing away — a bed placed foot-first,
+    /// headboard at the far end.
+    FrontToBack,
+}
+
+impl PlacementOrientation {
+    /// The stored facing for a model placed by a player whose facing (front toward
+    /// the player, from `facing_from_forward`) is `player_facing`.
+    pub fn apply(self, player_facing: Facing) -> Facing {
+        match self {
+            PlacementOrientation::LeftToRight => player_facing,
+            // The quarter turn that sends the authored −X (far) end away from the
+            // player: N→W, W→S, S→E, E→N.
+            PlacementOrientation::FrontToBack => match player_facing {
+                Facing::North => Facing::West,
+                Facing::West => Facing::South,
+                Facing::South => Facing::East,
+                Facing::East => Facing::North,
+            },
+        }
+    }
 }
 
 /// The data row for one bbmodel block: its cache key, embedded source, cell footprint,
@@ -312,6 +349,9 @@ pub struct BlockModelDef {
     /// cell box and split across it. `(1, 1, 1)` is an ordinary single-cell block.
     pub cells: [u8; 3],
     pub collision: CollisionSpec,
+    /// How the model turns to meet the placing player (workbench across the view,
+    /// bed away from it).
+    pub orientation: PlacementOrientation,
 }
 
 /// The id-ordered registry (one row per [`BlockModelKind`], indexed by `kind as u8`).
@@ -325,6 +365,7 @@ pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
         // Authored 2 wide (X), 2 tall (Y), 1 long (Z).
         cells: [2, 2, 1],
         collision: CollisionSpec::FromModel,
+        orientation: PlacementOrientation::LeftToRight,
     },
     BlockModelDef {
         key: "bucket",
@@ -334,6 +375,7 @@ pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
         )),
         cells: [1, 1, 1],
         collision: CollisionSpec::FromModel,
+        orientation: PlacementOrientation::LeftToRight,
     },
     BlockModelDef {
         key: "water_bucket",
@@ -343,6 +385,28 @@ pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
         )),
         cells: [1, 1, 1],
         collision: CollisionSpec::FromModel,
+        orientation: PlacementOrientation::LeftToRight,
+    },
+    BlockModelDef {
+        key: "bed_frame",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/blocks/bed_frame.bbmodel"
+        )),
+        // Authored 2 long (X), 1 tall (Y, headboard posts), 1 wide (Z).
+        cells: [2, 1, 1],
+        collision: CollisionSpec::FromModel,
+        orientation: PlacementOrientation::FrontToBack,
+    },
+    BlockModelDef {
+        key: "bed",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/blocks/bed.bbmodel"
+        )),
+        cells: [2, 1, 1],
+        collision: CollisionSpec::FromModel,
+        orientation: PlacementOrientation::FrontToBack,
     },
 ];
 
@@ -1121,22 +1185,38 @@ pub fn outline_bounds(kind: BlockModelKind) -> ([f32; 3], [f32; 3]) {
 // ---------------------------------------------------------------------------------
 
 /// First-crossing distance of the ray through the model's SOLID, NON-TRANSPARENT
-/// surface — every posed cube tested as a box, then the entry face alpha-tested
-/// against the model texture so a hit registers only on an opaque texel. The ray is
-/// in FOOTPRINT space (1 unit = 1 world cell; the caller subtracts the footprint-
-/// origin world cell), matching [`ModelInstance::cubes`]. `None` on a clean miss — so
-/// aiming through the gap between the legs, under the top, or at a cut-out texel does
-/// NOT select the block (this is what makes picking pixel-perfect rather than a coarse
-/// per-cell box). Flat/degenerate decoration cubes (a plane, a locator) are skipped.
+/// surface — every posed cube face is tested, and each candidate face is alpha-tested
+/// against the model texture so a hit registers only on an opaque texel. Transparent
+/// texels do NOT make the whole cube vanish from picking: the ray continues to later
+/// faces, matching the renderer's double-sided alpha-cutout model pass. The ray is in
+/// FOOTPRINT space (1 unit = 1 world cell; the caller subtracts the footprint-origin
+/// world cell), matching [`ModelInstance::cubes`]. `None` on a clean miss — so aiming
+/// through the gap between the legs, under the top, or through fully transparent model
+/// texels does NOT select the block. Flat/degenerate decoration cubes (a plane, a
+/// locator) are skipped.
 pub fn ray_vs_model(eye: Vec3, dir: Vec3, kind: BlockModelKind) -> Option<f32> {
     let inst = instance(kind);
     let at = atlas();
+    ray_vs_model_cubes(eye, dir, &inst.cubes, |cube, face, mn, mx, hit| {
+        face_texel_opaque(cube, face, mn, mx, hit, at)
+    })
+}
+
+fn ray_vs_model_cubes<F>(
+    eye: Vec3,
+    dir: Vec3,
+    cubes: &[ModelCube],
+    mut face_opaque: F,
+) -> Option<f32>
+where
+    F: FnMut(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
+{
     let mut best = f32::INFINITY;
-    for cube in &inst.cubes {
+    for cube in cubes {
         let mn = cube.from.min(cube.to);
         let mx = cube.from.max(cube.to);
         // Skip degenerate (flat plane / zero-extent locator) cubes — decoration, not a
-        // pick target, and a zero-thickness slab can't be entered cleanly anyway.
+        // pick target, and a zero-thickness slab can't be crossed cleanly anyway.
         if (mx - mn).min_element() <= 1e-4 {
             continue;
         }
@@ -1148,70 +1228,55 @@ pub fn ray_vs_model(eye: Vec3, dir: Vec3, kind: BlockModelKind) -> Option<f32> {
         let inv = tilt.inverse();
         let ol = inv.transform_point3(eye);
         let dl = inv.transform_vector3(dir);
-        let Some((t, face)) = ray_box_enter(ol, dl, mn, mx) else {
-            continue;
-        };
-        if t >= best {
-            continue;
-        }
-        // Pixel-perfect: only an OPAQUE texel of the entry face counts.
-        if face_texel_opaque(cube, face, mn, mx, ol + dl * t, at) {
-            best = t;
+
+        for face in Face::ALL {
+            let Some((t, hit)) = ray_box_face_hit(ol, dl, mn, mx, face) else {
+                continue;
+            };
+            if t >= best {
+                continue;
+            }
+            // Pixel-perfect: only an OPAQUE texel of this visible face counts. If the
+            // nearer face is cut out here, a later face may still be the first rendered
+            // pixel along the ray.
+            if face_opaque(cube, face, mn, mx, hit) {
+                best = t;
+            }
         }
     }
     best.is_finite().then_some(best)
 }
 
-/// Ray vs the local axis-aligned box `[mn, mx]`: the entry distance plus the FACE the
-/// ray enters through (its outward normal points back toward the ray origin). `None` if
-/// the ray misses or the box lies entirely behind it. Slab method like
-/// `player::interaction::ray_vs_aabb`, but it also reports the entry face so the caller
-/// can alpha-test that face's texel.
-fn ray_box_enter(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3) -> Option<(f32, Face)> {
-    let (o, d, lo, hi) = (o.to_array(), d.to_array(), mn.to_array(), mx.to_array());
-    let mut t_near = f32::NEG_INFINITY;
-    let mut t_far = f32::INFINITY;
-    let mut axis = 0usize;
-    let mut entry_low = true; // ray crosses the low (-axis) face first
+/// Ray vs one face of the local axis-aligned box `[mn, mx]`: the crossing distance plus
+/// the local hit point. Faces are treated as double-sided because the model pass disables
+/// culling; alpha still decides whether that face contributes a visible/pickable pixel.
+fn ray_box_face_hit(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3, face: Face) -> Option<(f32, Vec3)> {
+    let (axis, plane) = match face {
+        Face::PosX => (0, mx.x),
+        Face::NegX => (0, mn.x),
+        Face::PosY => (1, mx.y),
+        Face::NegY => (1, mn.y),
+        Face::PosZ => (2, mx.z),
+        Face::NegZ => (2, mn.z),
+    };
+    if d[axis].abs() < 1e-9 {
+        return None;
+    }
+    let t = (plane - o[axis]) / d[axis];
+    if t < -1e-6 {
+        return None;
+    }
+    let t = t.max(0.0);
+    let hit = o + d * t;
     for i in 0..3 {
-        if d[i].abs() < 1e-9 {
-            // Parallel to this slab: a miss unless the origin is already within it.
-            if o[i] < lo[i] || o[i] > hi[i] {
-                return None;
-            }
+        if i == axis {
             continue;
         }
-        let inv = 1.0 / d[i];
-        let mut t1 = (lo[i] - o[i]) * inv;
-        let mut t2 = (hi[i] - o[i]) * inv;
-        let mut low = true;
-        if t1 > t2 {
-            std::mem::swap(&mut t1, &mut t2);
-            low = false;
-        }
-        if t1 > t_near {
-            t_near = t1;
-            axis = i;
-            entry_low = low;
-        }
-        t_far = t_far.min(t2);
-        if t_near > t_far {
+        if hit[i] < mn[i] - 1e-5 || hit[i] > mx[i] + 1e-5 {
             return None;
         }
     }
-    if t_far < 0.0 {
-        return None;
-    }
-    // Entry face: the low side of `axis` is its negative face, the high side its positive.
-    let face = match (axis, entry_low) {
-        (0, true) => Face::NegX,
-        (0, false) => Face::PosX,
-        (1, true) => Face::NegY,
-        (1, false) => Face::PosY,
-        (2, true) => Face::NegZ,
-        _ => Face::PosZ,
-    };
-    Some((t_near.max(0.0), face))
+    Some((t, hit))
 }
 
 /// Is the texel where the ray meets `cube`'s `face` opaque in the model texture? Solves
@@ -1703,6 +1768,30 @@ mod tests {
         assert!(
             hits < total,
             "some rays must pass through the model's gaps (not a solid box): {hits}/{total}"
+        );
+    }
+
+    #[test]
+    fn ray_pick_continues_past_transparent_near_face() {
+        let cube = ModelCube {
+            from: Vec3::ZERO,
+            to: Vec3::ONE,
+            origin: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        };
+
+        let hit = ray_vs_model_cubes(
+            Vec3::new(0.5, 2.0, 0.5),
+            Vec3::NEG_Y,
+            std::slice::from_ref(&cube),
+            |_, face, _, _, _| face == Face::NegY,
+        )
+        .expect("bottom face should be pickable through transparent top");
+
+        assert!(
+            (hit - 2.0).abs() < 1e-5,
+            "ray should hit the later opaque face, got {hit}"
         );
     }
 
