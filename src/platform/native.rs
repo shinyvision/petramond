@@ -23,13 +23,6 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 const TARGET_FPS: u64 = 60;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
-/// Idle update cadence. The sim is decoupled from drawing: when nothing is animating
-/// and no input is pending, the host still wakes this often to run `App::update` (so
-/// the world keeps ticking at 20 TPS) but skips the draw. Input wakes it sooner.
-const IDLE_TICK: Duration = Duration::from_millis(50);
-/// Redraw at least this often even when fully idle, so slow continuous changes (sky /
-/// fog drift) and any untracked state never stay stale — a cheap on-demand-draw backstop.
-const KEEPALIVE: Duration = Duration::from_millis(250);
 
 pub fn run() {
     env_logger::init();
@@ -59,17 +52,12 @@ struct NativeHost {
     app: Option<App>,
     seed: u32,
     render_dist: i32,
-    /// When the next `App::update` (sim + input) is due — `now + FRAME` while active,
-    /// `now + IDLE_TICK` while idle. Drives the decoupled sim/render cadences.
+    /// When the next frame (`App::update` + redraw) is due — the 60 FPS frame cap.
     next_update: Instant,
-    /// When the last frame was requested, for the frame-rate cap and keep-alive.
-    last_draw: Instant,
-    /// Per-second updates/redraws counters logged to stderr when `LLAMACRAFT_PERF` is
-    /// set — shows the decoupled rates (e.g. idle ≈ sim updates with few redraws).
+    /// Per-second update/render counters logged to stderr when `LLAMACRAFT_PERF` is set.
     perf_log: bool,
     perf_since: Instant,
     perf_updates: u32,
-    perf_redraws: u32,
     perf_renders: u32,
     perf_update_total: Duration,
     perf_update_max: Duration,
@@ -90,11 +78,9 @@ impl NativeHost {
             seed,
             render_dist,
             next_update: Instant::now(),
-            last_draw: Instant::now(),
             perf_log: std::env::var_os("LLAMACRAFT_PERF").is_some(),
             perf_since: Instant::now(),
             perf_updates: 0,
-            perf_redraws: 0,
             perf_renders: 0,
             perf_update_total: Duration::ZERO,
             perf_update_max: Duration::ZERO,
@@ -255,8 +241,8 @@ impl ApplicationHandler for NativeHost {
             },
             WindowEvent::RedrawRequested => {
                 apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
-                // The host requests this only when `App::update` (or the keep-alive)
-                // asked for it; the simulation itself advances in `about_to_wait`.
+                // The host requests this once per `App::update`; the simulation itself
+                // advances in `about_to_wait`.
                 let render_start = Instant::now();
                 app.render(renderer);
                 if self.perf_log {
@@ -295,15 +281,11 @@ impl ApplicationHandler for NativeHost {
             return;
         };
         let now = Instant::now();
-        // Advance the simulation + input on its own clock, decoupled from drawing, and
-        // request a draw only when the frame would actually differ. Pending input pulls
-        // an update forward — but never sooner than the frame cap, so interaction stays
-        // responsive without uncapping the frame rate.
-        let frame_ready = now.saturating_duration_since(self.last_draw) >= FRAME;
-        let due = now >= self.next_update || (app.wants_redraw() && frame_ready);
-        if due {
+        // Fixed frame-capped loop: every wake runs one `App::update` and draws it.
+        // `Game::tick`'s fixed-step accumulator holds the sim at 20 TPS regardless.
+        if now >= self.next_update {
             let update_start = Instant::now();
-            let need_render = app.update(renderer);
+            app.update(renderer);
             if app.take_quit_requested() {
                 event_loop.exit();
                 return;
@@ -314,26 +296,17 @@ impl ApplicationHandler for NativeHost {
                 self.perf_update_max = self.perf_update_max.max(dt);
             }
             self.perf_updates += 1;
-            let keepalive = now.saturating_duration_since(self.last_draw) >= KEEPALIVE;
-            if need_render || keepalive {
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
-                self.last_draw = now;
-                self.next_update = now + FRAME;
-                self.perf_redraws += 1;
-            } else {
-                // Idle: keep ticking the sim, but don't draw.
-                self.next_update = now + IDLE_TICK;
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
             }
+            self.next_update = now + FRAME;
         }
         if self.perf_log && now.saturating_duration_since(self.perf_since).as_secs() >= 1 {
             let avg_update = avg_ms(self.perf_update_total, self.perf_updates);
             let avg_render = avg_ms(self.perf_render_total, self.perf_renders);
             eprintln!(
-                "perf: {} updates/s, {} redraws/s, {} renders/s, update avg/max {:.2}/{:.2} ms, render avg/max {:.2}/{:.2} ms",
+                "perf: {} updates/s, {} renders/s, update avg/max {:.2}/{:.2} ms, render avg/max {:.2}/{:.2} ms",
                 self.perf_updates,
-                self.perf_redraws,
                 self.perf_renders,
                 avg_update,
                 ms(self.perf_update_max),
@@ -341,7 +314,6 @@ impl ApplicationHandler for NativeHost {
                 ms(self.perf_render_max),
             );
             self.perf_updates = 0;
-            self.perf_redraws = 0;
             self.perf_renders = 0;
             self.perf_update_total = Duration::ZERO;
             self.perf_update_max = Duration::ZERO;
@@ -349,14 +321,7 @@ impl ApplicationHandler for NativeHost {
             self.perf_render_max = Duration::ZERO;
             self.perf_since = now;
         }
-        // Wake at the next scheduled update; if input is pending but frame-capped, wake
-        // at the cap instead so it's served within a frame.
-        let wake = if app.wants_redraw() {
-            self.next_update.min(self.last_draw + FRAME)
-        } else {
-            self.next_update
-        };
-        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_update));
     }
 
     /// Tear down the GPU + window state here, while winit still holds the live

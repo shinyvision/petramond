@@ -1,18 +1,11 @@
 use super::{now_seconds, App};
-use crate::game::CameraPose;
 use crate::render::Renderer;
 
 impl App {
-    /// Advance input and the simulation for this wake, and report whether the frame
-    /// must be redrawn. The sim is decoupled from drawing: the host calls this every
-    /// wake (at least at the tick rate) whether or not it then draws, so
-    /// [`Game::tick`](crate::game::Game::tick)'s fixed-step accumulator holds the world
-    /// at 20 TPS regardless of frame rate. A redraw is needed when input changed
-    /// something ([`dirty`](Self::dirty)), the view moved, a hand action fired or is
-    /// still animating, terrain is (re)meshing, or anything on screen is animating
-    /// (from the game client-frame read model). Slow sky drift is left to the host's
-    /// keep-alive redraw.
-    pub fn update(&mut self, renderer: &Renderer) -> bool {
+    /// Advance input and the simulation for this frame. The host calls this once per
+    /// frame wake and then draws; [`Game::tick`](crate::game::Game::tick)'s fixed-step
+    /// accumulator holds the world at 20 TPS regardless of frame rate.
+    pub fn update(&mut self, renderer: &Renderer) {
         let now = now_seconds();
         let dt = (now - self.last) as f32;
         self.last = now;
@@ -35,18 +28,8 @@ impl App {
         if self.screen.shell_open() || self.game.is_none() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();
-            return std::mem::take(&mut self.dirty);
+            return;
         }
-
-        // Sampled BEFORE the tick: `game.tick` runs the mesh budget, which drains the
-        // dirty-mesh queue into built-but-unuploaded meshes that `render` uploads. Reading
-        // it here keeps build + upload in the same frame, so a changed chunk can never
-        // settle without being drawn.
-        let frame_before_tick = self
-            .game
-            .as_ref()
-            .expect("game exists after shell/no-game guard")
-            .client_frame_before_tick();
 
         let game_input = self.take_game_input();
         let events = self
@@ -55,43 +38,18 @@ impl App {
             .expect("game exists after shell/no-game guard")
             .tick(dt, &game_input);
         self.handle_open_screen_events(&events);
-        let mining_audio_held = self.screen.gameplay_enabled() && game_input.break_held;
-        let (mining_block, camera_pose, visually_active) = {
-            let frame = self
-                .game
-                .as_ref()
-                .expect("game exists after shell/no-game guard")
-                .client_frame(now);
-            (
-                mining_audio_held
-                    .then_some(frame.held_item.mining_block)
-                    .flatten(),
-                frame.camera_pose,
-                frame.activity.visually_active,
-            )
-        };
+        let mining_block = (self.screen.gameplay_enabled() && game_input.break_held)
+            .then(|| {
+                self.game
+                    .as_ref()
+                    .expect("game exists after shell/no-game guard")
+                    .client_frame(now)
+                    .held_item
+                    .mining_block
+            })
+            .flatten();
         self.play_game_event_sounds(&events, mining_block, now);
         self.pointer.clear_edges();
-        let event_presentation = self.latch_game_event_hand_triggers(&events);
-        // `dirty` is peeked-and-cleared here: a redraw consumes the pending-input flag.
-        std::mem::take(&mut self.dirty)
-            || event_presentation.acted
-            || renderer.hand_animation_active()
-            || frame_before_tick.mesh_pending
-            || self.camera_moved(camera_pose)
-            || self
-                .game
-                .as_ref()
-                .expect("game exists after shell/no-game guard")
-                .player_health()
-                != self.last_health
-            || visually_active
-    }
-
-    /// Whether the camera pose changed since the last [`render`](Self::render). At rest
-    /// on the ground the pose is reproduced bit-for-bit, so this is `false` when idle;
-    /// `None` (before the first draw) counts as moved so the opening frame is drawn.
-    fn camera_moved(&self, pose: CameraPose) -> bool {
-        self.last_pose != Some(pose)
+        self.latch_game_event_hand_triggers(&events);
     }
 }

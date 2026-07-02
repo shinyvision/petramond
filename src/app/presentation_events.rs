@@ -3,10 +3,6 @@ use crate::audio::Sound;
 use crate::block::{Block, BlockSoundAction};
 use crate::game::GameEvents;
 
-pub(super) struct GameEventPresentation {
-    pub(super) acted: bool,
-}
-
 impl App {
     pub(super) fn play_game_event_sounds(
         &mut self,
@@ -46,10 +42,7 @@ impl App {
         }
     }
 
-    pub(super) fn latch_game_event_hand_triggers(
-        &mut self,
-        events: &GameEvents,
-    ) -> GameEventPresentation {
+    pub(super) fn latch_game_event_hand_triggers(&mut self, events: &GameEvents) {
         let opened_interactable = opened_interactable(events);
 
         self.hand.broke |= events.broke_block.is_some();
@@ -58,15 +51,6 @@ impl App {
             || events.used_item
             || opened_interactable;
         self.hand.swung |= events.swung_hand;
-
-        GameEventPresentation {
-            acted: events.broke_block.is_some()
-                || events.placed_block.is_some()
-                || events.threw_item
-                || events.used_item
-                || events.swung_hand
-                || opened_interactable,
-        }
     }
 }
 

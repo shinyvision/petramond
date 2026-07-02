@@ -157,35 +157,29 @@ impl PointerState {
 impl App {
     pub fn add_pointer_motion(&mut self, dx: f32, dy: f32) {
         self.pointer.add_motion(dx, dy);
-        self.dirty = true;
     }
 
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.pointer.set_cursor_position(x, y);
-        self.dirty = true;
     }
 
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
         self.pointer.set_button(button, down);
-        self.dirty = true;
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
         if !self.adjust_world_scroll(delta) {
             self.pointer.add_scroll_delta(delta);
         }
-        self.dirty = true;
     }
 
     pub fn release_pointer_buttons(&mut self) {
         self.pointer.release_buttons();
         self.audio.set_loop(None, super::now_seconds());
-        self.dirty = true;
     }
 
     pub(super) fn recenter_pointer_if_pending(&mut self, screen_size: (u32, u32)) {
         if self.pointer.recenter_if_pending(screen_size) {
-            self.dirty = true;
         }
     }
 

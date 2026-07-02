@@ -181,6 +181,7 @@ impl ParticleSystem {
         self.particles.len()
     }
 
+    #[cfg(test)]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.particles.is_empty()

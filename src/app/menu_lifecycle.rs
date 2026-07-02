@@ -111,17 +111,14 @@ impl App {
         } else if matches!(self.screen, AppScreen::CreateWorld) {
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
-            self.dirty = true;
             true
         } else if matches!(self.screen, AppScreen::DeleteWorld) {
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
-            self.dirty = true;
             true
         } else if matches!(self.screen, AppScreen::WorldSelect) {
             self.screen = AppScreen::Title;
             self.pointer.release_for_menu();
-            self.dirty = true;
             true
         } else {
             false

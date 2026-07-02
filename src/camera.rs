@@ -132,16 +132,20 @@ impl Camera {
         Vec3::Y
     }
 
+    pub fn proj(&self) -> Mat4 {
+        Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
+    }
+
+    /// Absolute (non-camera-relative) view matrix; live rendering uses the
+    /// camera-relative equivalent in the renderer instead.
+    #[cfg(test)]
     pub fn view(&self) -> Mat4 {
         let fwd = self.forward();
         let target = self.pos + fwd;
         Mat4::look_at_rh(self.pos, target, Vec3::Y)
     }
 
-    pub fn proj(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
-    }
-
+    #[cfg(test)]
     pub fn view_proj(&self) -> Mat4 {
         self.proj() * self.view()
     }

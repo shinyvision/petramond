@@ -26,7 +26,7 @@ use crate::audio::Audio;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers};
 use crate::game::presentation::GamePresentationScratch;
-use crate::game::{CameraPose, Game};
+use crate::game::Game;
 use crate::render::Scene;
 
 pub struct App {
@@ -50,22 +50,9 @@ pub struct App {
     /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
     /// drop whole stack, Shift = inventory quick-move).
     modifiers: Modifiers,
-    /// Set whenever input or a state change means the next frame would differ from
-    /// the last drawn one. Drives redraw-on-demand: the host draws only when this (or
-    /// camera motion / client-frame activity) holds, instead of every frame.
-    /// Consumed (peeked-and-cleared) by [`update`](Self::update).
-    dirty: bool,
-    /// `now_seconds` of the last [`render`](Self::render). Render runs on demand, not
-    /// once per update, so the held-item animation advances by its own delta.
+    /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
+    /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
-    /// Camera pose at the last render, to detect a moved view (the dominant redraw
-    /// trigger) without redrawing an unchanged one. Standing still reproduces
-    /// bit-identical values, so equality means "view unchanged".
-    last_pose: Option<CameraPose>,
-    /// Player health at the last render, so a change (fall damage) forces a redraw even
-    /// when the view is otherwise idle — the hearts settle a tick or two after landing,
-    /// once the camera has already stopped moving.
-    last_health: Option<crate::gui::HealthView>,
     /// First-person hand-animation triggers latched since the last render, so a
     /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
     hand: HandTriggers,
@@ -105,11 +92,7 @@ impl App {
             gui_router: GuiRouter::default(),
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
-            // Draw the first frame unconditionally (also forced by `last_pose: None`).
-            dirty: true,
             last_render: now_seconds(),
-            last_pose: None,
-            last_health: None,
             hand: HandTriggers::default(),
             worlds: Vec::new(),
             selected_world: None,
@@ -152,15 +135,11 @@ impl App {
         if let Some(game) = self.game.as_mut() {
             game.set_aspect(aspect);
         }
-        self.dirty = true;
     }
 
     /// Apply a shared control event. Returns false only when the app did not
     /// consume the control, e.g. Escape with no screen open on native.
     pub fn handle_control(&mut self, control: Control, down: bool) -> bool {
-        // Any control edge (move, look-bind, hotbar, menu toggle, …) changes what the
-        // next frame shows, so force a redraw; movement is also caught by camera motion.
-        self.dirty = true;
         let Some(event) = self.input.set_control(control, down) else {
             return true;
         };
@@ -207,14 +186,6 @@ impl App {
     /// Sprint/Sneak controls.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
-        self.dirty = true;
-    }
-
-    /// Does pending input want a frame? Peeked (not cleared) by the host between updates
-    /// to serve input promptly without busy-waiting; [`update`](Self::update) clears it.
-    #[inline]
-    pub fn wants_redraw(&self) -> bool {
-        self.dirty
     }
 }
 

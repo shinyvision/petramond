@@ -22,12 +22,6 @@ impl World {
             || self.mesh_jobs_in_flight > 0
     }
 
-    /// Does terrain work require the app to keep drawing? This includes CPU mesh/light
-    /// work plus finished CPU meshes that still need their render-side GPU upload.
-    pub fn has_terrain_frame_work(&self) -> bool {
-        self.has_dirty_meshes() || !self.mesh_upload_dirty_columns.is_empty()
-    }
-
     /// Number of loaded sections — a diagnostic for streaming/perf tooling.
     pub fn loaded_section_count(&self) -> usize {
         self.sections.len()

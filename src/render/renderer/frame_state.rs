@@ -93,14 +93,6 @@ impl Renderer {
         self.crosshair_visible = visible;
     }
 
-    /// Whether the renderer-owned first-person hand animation is still moving.
-    /// The app uses this to keep redraw-on-demand alive for one-shot place/break/
-    /// attack swings after the sim event frame has already passed.
-    #[inline]
-    pub fn hand_animation_active(&self) -> bool {
-        self.held_item_anim.is_active()
-    }
-
     /// Store the combined light + warm-tint amount to apply to the first-person hand
     /// / held item (so it brightens AND warms near torches/furnaces).
     pub fn set_held_item_light(&mut self, skylight: u8, warm: u8) {

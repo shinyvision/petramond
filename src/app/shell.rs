@@ -104,7 +104,6 @@ impl App {
         for (field, rect) in layout.inputs {
             if rect.contains(cursor.0, cursor.1) {
                 self.focused_create_field = Some(field);
-                self.dirty = true;
                 return true;
             }
         }
@@ -113,7 +112,6 @@ impl App {
             if rect.contains(cursor.0, cursor.1) {
                 let double = self.shell_clicks.register_world(world, now);
                 self.selected_world = Some(world);
-                self.dirty = true;
                 if double {
                     self.play_selected_world();
                 }
@@ -126,7 +124,6 @@ impl App {
                 self.world_scroll =
                     scroll_from_track_click(cursor.1, scroll.track, scroll.total, scroll.visible);
                 self.shell_clicks.reset();
-                self.dirty = true;
                 return true;
             }
         }
@@ -142,7 +139,6 @@ impl App {
 
         if matches!(self.screen, AppScreen::CreateWorld) {
             self.focused_create_field = None;
-            self.dirty = true;
         }
         true
     }
@@ -182,7 +178,6 @@ impl App {
             }
         }
         let changed = target.len() != before;
-        self.dirty |= changed;
         changed
     }
 
@@ -197,7 +192,6 @@ impl App {
         self.screen = AppScreen::Pause;
         self.pointer.release_for_menu();
         self.shell_clicks.reset();
-        self.dirty = true;
         self.audio.set_loop(None, now_seconds());
     }
 
@@ -210,7 +204,6 @@ impl App {
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.shell_clicks.reset();
-        self.dirty = true;
     }
 
     pub(super) fn save_and_quit_to_title(&mut self) {
@@ -223,11 +216,8 @@ impl App {
         self.audio.set_loop(None, now_seconds());
         self.scene.clear();
         self.hand = HandTriggers::default();
-        self.last_pose = None;
-        self.last_health = None;
         self.renderer_world_clear_pending = true;
         self.refresh_worlds();
-        self.dirty = true;
     }
 
     pub(super) fn adjust_world_scroll(&mut self, delta: f32) -> bool {
@@ -248,7 +238,6 @@ impl App {
         } else {
             self.world_scroll = self.world_scroll.saturating_sub((-step) as usize);
         }
-        self.dirty = true;
         true
     }
 
@@ -292,7 +281,6 @@ impl App {
             ShellButtonId::PauseSaveQuit => self.save_and_quit_to_title(),
         }
         self.shell_clicks.reset();
-        self.dirty = true;
     }
 
     fn play_selected_world(&mut self) {
@@ -370,10 +358,7 @@ impl App {
         self.gui_router.reset_click_streak();
         self.shell_clicks.reset();
         self.hand = HandTriggers::default();
-        self.last_pose = None;
-        self.last_health = None;
         self.renderer_world_clear_pending = false;
-        self.dirty = true;
     }
 
     fn can_create_world(&self) -> bool {
@@ -390,7 +375,6 @@ impl App {
                         CreateField::Seed => &mut self.create_world_seed,
                     };
                     target.pop();
-                    self.dirty = true;
                 }
                 true
             }
@@ -400,7 +384,6 @@ impl App {
                         CreateField::Name => self.create_world_name.clear(),
                         CreateField::Seed => self.create_world_seed.clear(),
                     }
-                    self.dirty = true;
                 }
                 true
             }
@@ -409,7 +392,6 @@ impl App {
                     Some(CreateField::Name) => CreateField::Seed,
                     _ => CreateField::Name,
                 });
-                self.dirty = true;
                 true
             }
             TextKey::Enter => {
@@ -459,7 +441,6 @@ impl App {
             }
         }
         self.clamp_world_scroll();
-        self.dirty = true;
     }
 
     fn handle_delete_world_key(&mut self, key: TextKey) -> bool {

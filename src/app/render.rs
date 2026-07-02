@@ -2,9 +2,8 @@ use super::{now_seconds, ui_snapshot, App};
 use crate::render::{HeldItemFrame, Renderer};
 
 impl App {
-    /// Draw the current frame. The host calls this only when [`update`](Self::update)
-    /// (or its periodic keep-alive) decided the frame would differ from the last one,
-    /// so drawing is fully decoupled from the simulation tick.
+    /// Draw the current frame. The host calls this once per [`update`](Self::update);
+    /// the simulation tick itself runs inside `update`, not here.
     pub fn render(&mut self, renderer: &mut Renderer) {
         let now = now_seconds();
         // The hand animation advances by render time (not sim time); clamp so a long
@@ -38,7 +37,7 @@ impl App {
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
         renderer.set_hand_visible(!matches!(self.screen, crate::app::AppScreen::Pause));
 
-        let last_pose = {
+        {
             let frame = game.client_frame(now);
             renderer.update_uniforms(
                 frame.camera,
@@ -61,8 +60,7 @@ impl App {
                 swung: hand.swung,
                 dt,
             });
-            frame.camera_pose
-        };
+        }
         // Build the neutral read snapshot, then bake it into render wire structs.
         {
             let presentation = self.presentation.snapshot(game);
@@ -83,10 +81,5 @@ impl App {
             renderer.sync_meshes(&mut terrain);
         }
         renderer.render();
-
-        // Remember the drawn view + health so the next `update` can tell a still, unchanged
-        // frame (idle) from one that moved or lost a heart, and redraw only on change.
-        self.last_pose = Some(last_pose);
-        self.last_health = game.player_health();
     }
 }
