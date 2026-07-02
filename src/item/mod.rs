@@ -195,6 +195,15 @@ pub enum ItemType {
     CobblestoneStairs,
     StoneStairs,
     DirtStairs,
+    // --- Bucket update: the wooden bucket, the first ITEM-ONLY bbmodel item — it
+    // has NO block (`as_block()` = None, nothing to place) but still renders as its
+    // baked 3D model everywhere (see `render_kind` / `item_model`). Appended at the
+    // END so every id above stays frozen. ---
+    WoodenBucket,
+    // --- The filled state of the wooden bucket: scooping a water source converts
+    // the held bucket into this; pouring converts it back (see `game`'s item use).
+    // Not craftable — only ever obtained by filling. ---
+    WaterBucket,
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -582,7 +591,8 @@ impl ItemType {
 
     /// How to draw this item. Block-items follow their block's render shape
     /// (`BlockCube` for full cubes, `Sprite` for cross-model plants); item-only
-    /// items are always flat sprites pulled from [`item_sprite`](Self::item_sprite).
+    /// items are flat sprites pulled from [`item_sprite`](Self::item_sprite),
+    /// unless they carry their own bbmodel ([`item_model`](Self::item_model)).
     #[inline]
     pub fn render_kind(self) -> ItemRenderKind {
         match self.as_block() {
@@ -600,7 +610,10 @@ impl ItemType {
                 // per-half slab tiles the in-world model uses — like the torch.
                 RenderShape::Door => ItemRenderKind::Sprite(self.item_sprite()),
             },
-            None => ItemRenderKind::Sprite(self.item_sprite()),
+            None => match self.item_model() {
+                Some(kind) => ItemRenderKind::Model(kind),
+                None => ItemRenderKind::Sprite(self.item_sprite()),
+            },
         }
     }
 
@@ -655,6 +668,19 @@ impl ItemType {
             LapisLazuli => Tile::LapisLazuli,
             // Block-items (incl. Furnace) resolve via `as_block`; never reach here.
             _ => Tile::Stick,
+        }
+    }
+
+    /// The bbmodel an ITEM-ONLY item renders as — held, dropped, and as its slot
+    /// icon — or `None` for the flat-sprite item-only items. The model counterpart
+    /// of [`item_sprite`](Self::item_sprite); block-items carry their model on
+    /// their block's render shape and never consult this.
+    #[inline]
+    fn item_model(self) -> Option<crate::block_model::BlockModelKind> {
+        match self {
+            ItemType::WoodenBucket => Some(crate::block_model::BlockModelKind::Bucket),
+            ItemType::WaterBucket => Some(crate::block_model::BlockModelKind::WaterBucket),
+            _ => None,
         }
     }
 
@@ -953,6 +979,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn item_only_model_item_renders_as_its_model() {
+        // The bucket has no block, but must NOT fall back to a flat sprite: the
+        // held / dropped / icon paths all key off the Model render kind.
+        assert_eq!(ItemType::WoodenBucket.as_block(), None);
+        assert!(matches!(
+            ItemType::WoodenBucket.render_kind(),
+            ItemRenderKind::Model(_)
+        ));
     }
 
     #[test]

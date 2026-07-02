@@ -19,9 +19,12 @@
 //!   neighbours (across chunk borders) are queued. Each is dispatched once per
 //!   tick so a block type can react to a changed neighbour. Deduped per tick.
 //! - **Scheduled ticks**: a block can ask to run again `delay` ticks later
-//!   (water schedules its flow check 10 ticks after a disturbance). A min-heap
-//!   keyed by tick number, deduped by position so repeated disturbances collapse
-//!   to one pending check.
+//!   (water schedules its flow check `WATER_FLOW_DELAY` ticks after a
+//!   disturbance). A min-heap keyed by (due tick, schedule order), deduped by
+//!   position so repeated disturbances collapse to one pending check — the
+//!   first schedule wins, and ticks due together run in the order they were
+//!   scheduled, so simultaneous flows advance as wavefronts instead of in
+//!   coordinate order.
 //! - **Random ticks**: each tick, [`RANDOM_TICK_SPEED`] uniformly-random cells in
 //!   every loaded column near the player get a probabilistic behaviour callback
 //!   (leaf decay today). Air picks are skipped on the spot and columns with
@@ -47,6 +50,9 @@ pub(super) const NEIGHBORS: [IVec3; 6] = [
     IVec3::new(0, 0, -1),
 ];
 
+/// One pending scheduled tick, min-heap ordered: `(due tick, schedule order, x, y, z)`.
+type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
+
 const RANDOM_TICK_SPEED: u32 = 48;
 /// Random-tick draws per loaded 16³ section per tick. `RANDOM_TICK_SPEED / 16`
 /// keeps the same per-volume rate the column generator used (≈3 per section, the
@@ -61,8 +67,12 @@ pub(super) struct TickState {
     /// Cells whose neighbourhood changed since the last tick, awaiting dispatch.
     update_queue: VecDeque<IVec3>,
     update_set: HashSet<IVec3>,
-    /// Pending scheduled ticks ordered by due tick (min-heap via `Reverse`).
-    scheduled: BinaryHeap<Reverse<(u64, i32, i32, i32)>>,
+    /// Pending scheduled ticks ordered by due tick, then by scheduling order
+    /// (min-heap via `Reverse`); the position rides along in the entry.
+    scheduled: BinaryHeap<ScheduledTick>,
+    /// Monotonic counter that timestamps each schedule, so ticks due on the same
+    /// game tick execute in the order they were scheduled.
+    scheduled_seq: u64,
     /// Positions with a scheduled tick already pending, for dedup.
     scheduled_set: HashSet<IVec3>,
     /// Blocks the simulation itself destroyed this tick (a fragile block losing its
@@ -130,7 +140,7 @@ impl World {
 
         // 1. Run scheduled block ticks whose due time has arrived (EXECUTE phase).
         let mut due: Vec<IVec3> = Vec::new();
-        while let Some(&Reverse((d, x, y, z))) = self.sim.scheduled.peek() {
+        while let Some(&Reverse((d, _, x, y, z))) = self.sim.scheduled.peek() {
             if d > now {
                 break;
             }
@@ -202,7 +212,11 @@ impl World {
     pub(super) fn schedule_block_tick(&mut self, pos: IVec3, delay: u64) {
         if self.sim.scheduled_set.insert(pos) {
             let due = self.sim.tick.wrapping_add(delay);
-            self.sim.scheduled.push(Reverse((due, pos.x, pos.y, pos.z)));
+            let seq = self.sim.scheduled_seq;
+            self.sim.scheduled_seq += 1;
+            self.sim
+                .scheduled
+                .push(Reverse((due, seq, pos.x, pos.y, pos.z)));
         }
     }
 

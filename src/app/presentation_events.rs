@@ -53,14 +53,17 @@ impl App {
         let opened_interactable = opened_interactable(events);
 
         self.hand.broke |= events.broke_block.is_some();
-        self.hand.placed |=
-            events.placed_block.is_some() || events.threw_item || opened_interactable;
+        self.hand.placed |= events.placed_block.is_some()
+            || events.threw_item
+            || events.used_item
+            || opened_interactable;
         self.hand.swung |= events.swung_hand;
 
         GameEventPresentation {
             acted: events.broke_block.is_some()
                 || events.placed_block.is_some()
                 || events.threw_item
+                || events.used_item
                 || events.swung_hand
                 || opened_interactable,
         }

@@ -272,19 +272,27 @@ impl CompiledAsset for BlockModel {
 // Registry
 // ---------------------------------------------------------------------------------
 
-/// A bbmodel block kind — the registry key, one per authored block model (id-ordered,
-/// indexes the registry + [`MODELS`]/[`INSTANCES`]). A [`RenderShape::Model`] block
-/// names its kind here.
+/// A bbmodel kind — the registry key, one per authored model (id-ordered, indexes the
+/// registry + [`MODELS`]/[`INSTANCES`]). A [`RenderShape::Model`] block names its kind
+/// here; an ITEM-ONLY model item (no block, e.g. the bucket) names its kind via
+/// `ItemType::render_kind` instead, so its placement/collision machinery simply never
+/// runs.
 ///
 /// [`RenderShape::Model`]: crate::block::RenderShape::Model
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BlockModelKind {
     FurnitureWorkbench = 0,
+    Bucket = 1,
+    WaterBucket = 2,
 }
 
-/// Every bbmodel block kind in id order — the precache + registry-order oracle.
-pub const ALL: &[BlockModelKind] = &[BlockModelKind::FurnitureWorkbench];
+/// Every bbmodel kind in id order — the precache + registry-order oracle.
+pub const ALL: &[BlockModelKind] = &[
+    BlockModelKind::FurnitureWorkbench,
+    BlockModelKind::Bucket,
+    BlockModelKind::WaterBucket,
+];
 
 /// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
 /// intersects the chosen shape with each occupied cell.
@@ -307,16 +315,36 @@ pub struct BlockModelDef {
 }
 
 /// The id-ordered registry (one row per [`BlockModelKind`], indexed by `kind as u8`).
-pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[BlockModelDef {
-    key: "furniture_workbench",
-    model_src: include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/models/blocks/furniture_workbench.bbmodel"
-    )),
-    // Authored 2 wide (X), 2 tall (Y), 1 long (Z).
-    cells: [2, 2, 1],
-    collision: CollisionSpec::FromModel,
-}];
+pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
+    BlockModelDef {
+        key: "furniture_workbench",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/blocks/furniture_workbench.bbmodel"
+        )),
+        // Authored 2 wide (X), 2 tall (Y), 1 long (Z).
+        cells: [2, 2, 1],
+        collision: CollisionSpec::FromModel,
+    },
+    BlockModelDef {
+        key: "bucket",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/items/bucket.bbmodel"
+        )),
+        cells: [1, 1, 1],
+        collision: CollisionSpec::FromModel,
+    },
+    BlockModelDef {
+        key: "water_bucket",
+        model_src: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/items/water_bucket.bbmodel"
+        )),
+        cells: [1, 1, 1],
+        collision: CollisionSpec::FromModel,
+    },
+];
 
 /// The registry row for `kind`.
 #[inline]
@@ -1449,6 +1477,23 @@ mod tests {
         assert!(!m.cubes.is_empty());
         assert_eq!((m.tex_w, m.tex_h), (128, 128));
         assert_eq!(m.texture_rgba.len(), 128 * 128 * 4);
+    }
+
+    #[test]
+    fn every_registered_model_compiles_with_geometry_and_texture() {
+        // A bad bbmodel export degrades to an EMPTY model at runtime (log +
+        // invisible), so a compile failure must be caught here instead.
+        for &kind in ALL {
+            let m = BlockModel::compile(def(kind).model_src.as_bytes())
+                .unwrap_or_else(|e| panic!("{kind:?} fails to compile: {e}"));
+            assert!(!m.cubes.is_empty(), "{kind:?} has no geometry");
+            assert_eq!(
+                m.texture_rgba.len(),
+                (m.tex_w * m.tex_h * 4) as usize,
+                "{kind:?} texture size mismatch"
+            );
+            assert!(m.tex_w > 0 && m.tex_h > 0, "{kind:?} has no texture");
+        }
     }
 
     #[test]

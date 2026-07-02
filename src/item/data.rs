@@ -162,6 +162,8 @@ pub(super) const ALL_ITEMS: &[ItemType] = &[
     ItemType::CobblestoneStairs,
     ItemType::StoneStairs,
     ItemType::DirtStairs,
+    ItemType::WoodenBucket,
+    ItemType::WaterBucket,
 ];
 
 pub(super) const ITEM_DEFS: &[ItemDef] = &[
@@ -1283,6 +1285,24 @@ pub(super) const ITEM_DEFS: &[ItemDef] = &[
         key: "dirt_stairs",
         name: "Dirt Stairs",
         max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::WoodenBucket,
+        key: "wooden_bucket",
+        name: "Wooden Bucket",
+        max_stack_size: STACK,
+        held_pose: HeldPose::DEFAULT,
+        tags: &[],
+    },
+    ItemDef {
+        item: ItemType::WaterBucket,
+        key: "water_bucket",
+        name: "Water Bucket",
+        // A bucket of water is one unit of water: it never stacks, so filling /
+        // pouring is always a one-for-one held-item swap.
+        max_stack_size: 1,
         held_pose: HeldPose::DEFAULT,
         tags: &[],
     },

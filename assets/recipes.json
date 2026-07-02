@@ -64,6 +64,8 @@
 
     { "type": "shaped", "pattern": ["C", "S"], "key": { "C": "coal", "S": "stick" }, "result": "torch", "count": 4 },
 
+    { "type": "shaped", "pattern": ["P P", " P "], "key": { "P": "#planks" }, "result": "wooden_bucket", "count": 1 },
+
     { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
     { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
     { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" },

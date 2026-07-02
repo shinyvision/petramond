@@ -12,6 +12,7 @@ mod entities;
 mod environment;
 mod frame;
 mod health;
+mod item_use;
 mod local_player;
 mod menu;
 mod placement;

@@ -64,6 +64,9 @@ pub struct GameEvents {
     /// state (after the toggle applied), so the presentation picks the open vs
     /// close sound. `None` = no door toggle this frame.
     pub toggled_door: Option<bool>,
+    /// The held item's own right-click use fired this frame (a bucket scooping
+    /// or pouring water) — plays the same hand jab as placing.
+    pub used_item: bool,
 }
 
 /// What the world-mutating actions did across the fixed tick(s) that ran this frame.
@@ -74,6 +77,7 @@ pub(super) struct TickEvents {
     pub(super) swung_hand: bool,
     pub(super) picked_up_item: bool,
     pub(super) threw_item: bool,
+    pub(super) used_item: bool,
 }
 
 impl Game {
@@ -109,6 +113,7 @@ impl Game {
             open_chest: std::mem::take(&mut self.request_open_chest),
             open_furniture_workbench: std::mem::take(&mut self.request_open_workbench),
             toggled_door: self.toggled_door.take(),
+            used_item: events.used_item,
         }
     }
 

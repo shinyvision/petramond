@@ -15,6 +15,12 @@ impl Game {
         }
         let interacted = !self.intent_sneak && self.try_open_interactable();
         if !interacted {
+            // The held item's own use (a bucket) comes before block placement; an
+            // item with a use has no block to place, so the two never compete.
+            if self.try_use_item() {
+                events.used_item = true;
+                return;
+            }
             // Capture the held block before `try_place` consumes it: on success that is
             // exactly the block placed, which the client maps to a place sound.
             let held = self

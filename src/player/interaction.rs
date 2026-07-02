@@ -81,6 +81,62 @@ impl Player {
         Some((hit, dist))
     }
 
+    /// Like [`raycast_with_dist`](Self::raycast_with_dist), but ANY water cell
+    /// stops the ray too (as a full cube). Normal selection deliberately sees
+    /// THROUGH water; a bucket POUR must target the water surface itself.
+    /// Solids still stop the ray first. The caller inspects the hit cell's real
+    /// block — the hit may be water or any normally selectable block, whichever
+    /// the ray reaches first.
+    pub(crate) fn raycast_including_water(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+    ) -> Option<(RaycastHit, f32)> {
+        Self::raycast_water_stopping(eye, dir, world, |_| true)
+    }
+
+    /// Like [`raycast_including_water`](Self::raycast_including_water), but only
+    /// water SOURCE cells stop the ray — FLOWING water stays transparent even to
+    /// this ray. A bucket FILL only ever acts on a source, so a spread sheet or
+    /// a thin film (both of which can render exactly like still water) must
+    /// never shadow the source beneath or behind it: the ray reads through them
+    /// to the source the player is actually aiming at.
+    pub(crate) fn raycast_water_sources(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+    ) -> Option<(RaycastHit, f32)> {
+        Self::raycast_water_stopping(eye, dir, world, |p| world.is_water_source_world(p))
+    }
+
+    /// Shared water-aware DDA: water cells satisfying `stops` read as full cubes
+    /// (the ray hits them on cell entry), other water reads as air (transparent),
+    /// and every non-water block behaves exactly as in normal selection.
+    fn raycast_water_stopping<W: Fn(IVec3) -> bool>(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+        stops: W,
+    ) -> Option<(RaycastHit, f32)> {
+        Self::raycast_blocks_core(
+            eye,
+            dir,
+            &|x, y, z| {
+                let b = Block::from_id(world.chunk_block(x, y, z));
+                if b == Block::Water {
+                    if stops(IVec3::new(x, y, z)) {
+                        Block::Stone
+                    } else {
+                        Block::Air
+                    }
+                } else {
+                    b
+                }
+            },
+            &|e, d, pos, block| precise_shape_hit(e, d, pos, block, world),
+        )
+    }
+
     #[cfg(test)]
     pub(super) fn raycast_core<F: Fn(i32, i32, i32) -> bool>(
         eye: Vec3,

@@ -157,12 +157,12 @@ mod tests {
         let mut game = game();
         install_empty_chunk(&mut game);
         let p = IVec3::new(4, 64, 4);
-        set_test_water(&mut game, p, 1); // flowing edge: the thinnest water film
+        set_test_water(&mut game, p, 7); // the flow's leading edge: level 7, the thinnest film
 
         game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
         assert!(!game.environment(0.0).underwater);
 
-        let surface = p.y as f32 + crate::world::water::fluid_height(1, false);
+        let surface = p.y as f32 + crate::world::water::fluid_height(7, false);
         game.cam.pos = Vec3::new(
             p.x as f32 + 0.5,
             surface - UNDERWATER_SURFACE_MARGIN - 0.01,

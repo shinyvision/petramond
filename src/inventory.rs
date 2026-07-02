@@ -128,6 +128,31 @@ impl Inventory {
             }
         }
     }
+    /// Swap ONE of the selected stack for `replacement` — a bucket filling or
+    /// emptying in the hand. A single item swaps in place (keeping its slot);
+    /// one of a larger stack converts, with the replacement going to any open
+    /// slot. Refuses (returning `false`, changing nothing) when the selected
+    /// slot is empty or the replacement has nowhere to go — all-or-nothing, so
+    /// the world mutation it accompanies can be gated on it.
+    pub fn replace_selected_one(&mut self, replacement: ItemStack) -> bool {
+        let i = self.active as usize;
+        let Some(stack) = self.slots[i].as_mut() else {
+            return false;
+        };
+        if stack.count <= 1 {
+            self.slots[i] = Some(replacement);
+            return true;
+        }
+        stack.count -= 1;
+        if self.add(replacement).is_some() {
+            // No room for the replacement anywhere: restore and refuse.
+            if let Some(stack) = self.slots[i].as_mut() {
+                stack.count += 1;
+            }
+            return false;
+        }
+        true
+    }
     #[inline]
     pub fn cursor(&self) -> Option<&ItemStack> {
         self.cursor.as_ref()
@@ -378,6 +403,49 @@ mod tests {
         assert_eq!(inv.selected().unwrap().item, ItemType::Grass);
         inv.set_active(2);
         assert_eq!(inv.selected().unwrap().item, ItemType::Stone);
+    }
+
+    #[test]
+    fn replace_selected_one_swaps_in_place_and_splits_stacks() {
+        // A single-count stack swaps type in its own slot (keeps hotbar position).
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::WoodenBucket, 1));
+        assert!(inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
+        assert_eq!(inv.selected().unwrap().item, ItemType::WaterBucket);
+        assert_eq!(inv.selected().unwrap().count, 1);
+
+        // One of a larger stack converts; the rest stays selected and the
+        // replacement lands in another slot.
+        let mut inv = empty_inv();
+        inv.slots[0] = Some(item(ItemType::WoodenBucket, 3));
+        assert!(inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
+        assert_eq!(inv.selected().unwrap().item, ItemType::WoodenBucket);
+        assert_eq!(inv.selected().unwrap().count, 2);
+        let water: u32 = (0..TOTAL_SLOTS)
+            .filter_map(|i| inv.slot(i))
+            .filter(|s| s.item == ItemType::WaterBucket)
+            .map(|s| s.count as u32)
+            .sum();
+        assert_eq!(water, 1);
+    }
+
+    #[test]
+    fn replace_selected_one_refuses_when_replacement_has_no_room() {
+        // Every other slot full and a >1 selected stack: the conversion has
+        // nowhere to put the replacement, so NOTHING may change.
+        let mut inv = empty_inv();
+        for i in 1..TOTAL_SLOTS {
+            inv.slots[i] = Some(item(ItemType::Stone, 64));
+        }
+        inv.slots[0] = Some(item(ItemType::WoodenBucket, 2));
+        assert!(!inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
+        assert_eq!(inv.selected().unwrap().item, ItemType::WoodenBucket);
+        assert_eq!(inv.selected().unwrap().count, 2);
+
+        // An empty hand has nothing to swap.
+        let mut inv = empty_inv();
+        assert!(!inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
+        assert!(inv.selected().is_none());
     }
 
     #[test]
