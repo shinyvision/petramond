@@ -54,6 +54,7 @@ const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const TEXT_DISABLED: [f32; 4] = [0.62, 0.62, 0.62, 1.0];
 const TEXT_PLACEHOLDER: [f32; 4] = [0.50, 0.56, 0.56, 1.0];
 const INPUT_ACTIVE: [f32; 4] = [0.72, 0.67, 0.62, 1.0];
+const INPUT_SELECTION: [f32; 4] = [0.34, 0.58, 0.96, 0.58];
 
 /// Slot interior side (logical px) — the textured icon area. The drag cursor
 /// sizes the held item to this; slot rects themselves come from the manifest.
@@ -427,8 +428,9 @@ fn push_button(build: &mut UiBuild, screen: (u32, u32), button: &ShellButton, sc
 }
 
 fn push_input(build: &mut UiBuild, screen: (u32, u32), input: &ShellInput, scale: f32) {
+    let cell = scale.max(1.0);
     if input.active {
-        let line = scale.max(1.0);
+        let line = cell;
         push_solid(
             &mut build.counts,
             screen,
@@ -444,26 +446,49 @@ fn push_input(build: &mut UiBuild, screen: (u32, u32), input: &ShellInput, scale
     } else {
         input.text.as_str()
     };
-    let mut rendered = text.to_string();
+    let text_rect = gui_layout::shell_input_text_rect(input.rect, scale);
     if input.active {
-        rendered.push('_');
+        let glyph_h = crate::render::ui_text::TEXT_GLYPH_H as f32 * cell;
+        let y = text_rect.y + (text_rect.h - glyph_h).max(0.0) * 0.5;
+        if let Some((start, end)) = input.selection {
+            let start = start.min(end);
+            let end = end.max(start);
+            if end > start {
+                let advance = crate::render::ui_text::TEXT_GLYPH_ADVANCE as f32 * cell;
+                push_solid(
+                    &mut build.counts,
+                    screen,
+                    text_rect.x + start as f32 * advance,
+                    y - cell,
+                    (end - start) as f32 * advance,
+                    glyph_h + cell * 2.0,
+                    INPUT_SELECTION,
+                );
+            }
+        }
+        if input.show_cursor {
+            let advance = crate::render::ui_text::TEXT_GLYPH_ADVANCE as f32 * cell;
+            let cursor_w = cell.max(1.0);
+            push_solid(
+                &mut build.counts,
+                screen,
+                text_rect.x + input.cursor as f32 * advance,
+                y,
+                cursor_w,
+                glyph_h,
+                WHITE,
+            );
+        }
     }
-    let pad = 5.0 * scale;
-    let text_rect = SlotRect {
-        x: input.rect.x + pad,
-        y: input.rect.y,
-        w: (input.rect.w - pad * 2.0).max(0.0),
-        h: input.rect.h,
-    };
     let text = ShellText {
         rect: text_rect,
-        text: rendered,
+        text: text.to_string(),
         color: if input.text.is_empty() {
             TEXT_PLACEHOLDER
         } else {
             WHITE
         },
-        cell_px: scale.max(1.0),
+        cell_px: cell,
         align: ShellTextAlign::Left,
     };
     push_shell_text_run(build, &text, TextMode::Glyphs, true);
@@ -1019,6 +1044,9 @@ mod tests {
             text: "World".to_string(),
             placeholder: "My World".to_string(),
             active: true,
+            cursor: 5,
+            selection: None,
+            show_cursor: true,
         });
 
         let mut b = UiBuild::default();
@@ -1033,7 +1061,7 @@ mod tests {
         );
 
         assert_eq!(b.glyph_text_runs.len(), 1);
-        assert_eq!(b.glyph_text_runs[0].text, "World_");
+        assert_eq!(b.glyph_text_runs[0].text, "World");
         assert!(b.raster_text_runs.is_empty());
         assert!(!b.counts.is_empty(), "active input underline stays solid");
     }

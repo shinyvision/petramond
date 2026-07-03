@@ -86,9 +86,16 @@ impl AppScreen {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CursorIcon {
+    Default,
+    Text,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CursorPolicy {
     pub grabbed: bool,
     pub visible: bool,
+    pub icon: CursorIcon,
 }
 
 impl CursorPolicy {
@@ -97,6 +104,7 @@ impl CursorPolicy {
         Self {
             grabbed,
             visible: !grabbed,
+            icon: CursorIcon::Default,
         }
     }
 }

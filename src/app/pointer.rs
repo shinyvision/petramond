@@ -75,6 +75,10 @@ impl PointerState {
         self.right_click
     }
 
+    pub(super) fn left_held(&self) -> bool {
+        self.left_held
+    }
+
     pub(super) fn clear_left_click(&mut self) {
         self.left_click = false;
     }

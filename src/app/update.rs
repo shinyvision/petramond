@@ -24,6 +24,11 @@ impl App {
         if self.pointer.left_clicked() && self.route_shell_click(screen_size, now) {
             self.pointer.clear_left_click();
         }
+        if self.pointer.left_held() {
+            self.route_shell_drag(screen_size, now);
+        } else {
+            self.clear_shell_drag();
+        }
 
         if self.screen.shell_open() || self.game.is_none() {
             self.audio.set_loop(None, now);

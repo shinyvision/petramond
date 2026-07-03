@@ -13,15 +13,18 @@ mod presentation_events;
 mod render;
 mod screen;
 mod shell;
+mod text_input;
 mod ui_snapshot;
 mod update;
 
 use screen::AppScreen;
-pub use screen::CursorPolicy;
+pub use screen::{CursorIcon, CursorPolicy};
+pub(crate) use text_input::TextClipboard;
 
 use crate::app::gui_router::GuiRouter;
 use crate::app::input::{ControlEvent, InputController};
 use crate::app::pointer::PointerState;
+use crate::app::text_input::TextInput;
 use crate::audio::Audio;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers};
@@ -59,9 +62,10 @@ pub struct App {
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     world_scroll: usize,
-    create_world_name: String,
-    create_world_seed: String,
+    create_world_name: TextInput,
+    create_world_seed: TextInput,
     focused_create_field: Option<shell::CreateField>,
+    dragged_create_field: Option<(shell::CreateField, usize)>,
     shell_clicks: shell::ShellClickStreak,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
@@ -97,9 +101,10 @@ impl App {
             worlds: Vec::new(),
             selected_world: None,
             world_scroll: 0,
-            create_world_name: String::new(),
-            create_world_seed: String::new(),
+            create_world_name: TextInput::new(48),
+            create_world_seed: TextInput::new(48),
             focused_create_field: None,
+            dragged_create_field: None,
             shell_clicks: shell::ShellClickStreak::default(),
             quit_requested: false,
             renderer_world_clear_pending: true,
@@ -125,8 +130,12 @@ impl App {
     }
 
     #[inline]
-    pub fn cursor_policy(&self) -> CursorPolicy {
-        CursorPolicy::for_screen(self.screen)
+    pub fn cursor_policy(&self, screen_size: (u32, u32)) -> CursorPolicy {
+        let mut policy = CursorPolicy::for_screen(self.screen);
+        if policy.visible && self.shell_text_cursor_hovered(screen_size) {
+            policy.icon = CursorIcon::Text;
+        }
+        policy
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

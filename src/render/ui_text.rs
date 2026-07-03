@@ -92,18 +92,13 @@ pub fn for_each_lit_cell(n: u32, mut f: impl FnMut(u32, u32)) {
     }
 }
 
-pub const TEXT_GLYPH_W: u32 = 5;
-pub const TEXT_GLYPH_H: u32 = 7;
-pub const TEXT_GLYPH_ADVANCE: u32 = TEXT_GLYPH_W + 1;
+pub const TEXT_GLYPH_W: u32 = crate::gui::TEXT_GLYPH_W;
+pub const TEXT_GLYPH_H: u32 = crate::gui::TEXT_GLYPH_H;
+pub const TEXT_GLYPH_ADVANCE: u32 = crate::gui::TEXT_GLYPH_ADVANCE;
 
 #[inline]
 pub fn text_width(s: &str) -> u32 {
-    let chars = s.chars().count() as u32;
-    if chars == 0 {
-        0
-    } else {
-        chars * TEXT_GLYPH_ADVANCE - 1
-    }
+    crate::gui::shell_text_width_chars(s.chars().count())
 }
 
 pub fn for_each_text_lit_cell(s: &str, mut f: impl FnMut(u32, u32)) {
@@ -183,10 +178,16 @@ fn text_glyph(ch: char) -> [u8; TEXT_GLYPH_H as usize] {
         '+' => [0, 4, 4, 31, 4, 4, 0],
         '=' => [0, 0, 31, 0, 31, 0, 0],
         '*' => [0, 21, 14, 31, 14, 21, 0],
+        '$' => [4, 15, 20, 14, 5, 30, 4],
         '#' => [10, 31, 10, 10, 31, 10, 0],
+        '@' => [14, 17, 23, 21, 23, 16, 14],
         '%' => [17, 1, 2, 4, 8, 16, 17],
         '&' => [12, 18, 20, 8, 21, 18, 13],
         '|' => [4, 4, 4, 4, 4, 4, 4],
+        '^' => [4, 10, 17, 0, 0, 0, 0],
+        '{' => [2, 4, 4, 8, 4, 4, 2],
+        '}' => [8, 4, 4, 2, 4, 4, 8],
+        '`' => [8, 4, 2, 0, 0, 0, 0],
         '~' => [0, 0, 8, 21, 2, 0, 0],
         _ => [14, 17, 1, 2, 4, 0, 4],
     }

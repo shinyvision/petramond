@@ -59,6 +59,8 @@ rodio = { version = "0.22", default-features = false, features = ["playback", "v
 mimalloc = "0.1.52"
 # Per-thread scheduling priority (setpriority/gettid) for background worker pools.
 libc = "0.2"
+# Native desktop clipboard access for text fields.
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
 [profile.release]
 opt-level = 3

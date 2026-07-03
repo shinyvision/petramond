@@ -146,6 +146,40 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     by_h.min(by_w).clamp(1, 4) as f32
 }
 
+pub(crate) const TEXT_GLYPH_W: u32 = 5;
+pub(crate) const TEXT_GLYPH_H: u32 = 7;
+pub(crate) const TEXT_GLYPH_ADVANCE: u32 = TEXT_GLYPH_W + 1;
+
+#[inline]
+pub(crate) fn shell_text_width_chars(chars: usize) -> u32 {
+    if chars == 0 {
+        0
+    } else {
+        chars as u32 * TEXT_GLYPH_ADVANCE - 1
+    }
+}
+
+pub(crate) fn shell_input_text_rect(rect: SlotRect, scale: f32) -> SlotRect {
+    let pad = 5.0 * scale;
+    SlotRect {
+        x: rect.x + pad,
+        y: rect.y,
+        w: (rect.w - pad * 2.0).max(0.0),
+        h: rect.h,
+    }
+}
+
+pub(crate) fn shell_input_visible_chars(rect: SlotRect, scale: f32) -> usize {
+    let cell = scale.max(1.0);
+    let text_rect = shell_input_text_rect(rect, scale);
+    let units = (text_rect.w / cell).floor();
+    if units < TEXT_GLYPH_W as f32 {
+        0
+    } else {
+        ((units + 1.0) / TEXT_GLYPH_ADVANCE as f32).floor() as usize
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum HoverFit {
     Stretch,
@@ -348,6 +382,9 @@ pub struct ShellInput {
     pub text: String,
     pub placeholder: String,
     pub active: bool,
+    pub cursor: usize,
+    pub selection: Option<(usize, usize)>,
+    pub show_cursor: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

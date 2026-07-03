@@ -1,9 +1,11 @@
+use super::text_input::{TextClipboard, TextInput};
 use super::{now_seconds, App, AppScreen, HandTriggers};
 use crate::camera::Camera;
-use crate::controls::TextKey;
+use crate::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 use crate::gui::{
-    gui_scale, shell_def, ShellButton, ShellDef, ShellInput, ShellKind, ShellListRow, ShellQuad,
-    ShellRole, ShellScrollbar, ShellText, ShellTextAlign, ShellUiSnapshot, SlotRect,
+    gui_scale, shell_def, shell_input_visible_chars, ShellButton, ShellDef, ShellInput, ShellKind,
+    ShellListRow, ShellQuad, ShellRole, ShellScrollbar, ShellText, ShellTextAlign, ShellUiSnapshot,
+    SlotRect,
 };
 use crate::mathh::Vec3;
 use crate::save::WorldInfo;
@@ -58,9 +60,17 @@ impl ShellClickStreak {
 struct ShellLayout {
     snapshot: ShellUiSnapshot,
     buttons: Vec<(ShellButtonId, SlotRect, bool)>,
-    inputs: Vec<(CreateField, SlotRect)>,
+    inputs: Vec<ShellInputHit>,
     rows: Vec<(usize, SlotRect)>,
     scroll_tracks: Vec<ShellScrollTrack>,
+}
+
+#[derive(Copy, Clone)]
+struct ShellInputHit {
+    field: CreateField,
+    rect: SlotRect,
+    scale: f32,
+    visible_chars: usize,
 }
 
 struct ShellScrollTrack {
@@ -91,7 +101,8 @@ impl App {
         screen_size: (u32, u32),
         cursor: (f32, f32),
     ) -> ShellUiSnapshot {
-        self.shell_layout(screen_size, cursor).snapshot
+        self.shell_layout(screen_size, cursor, now_seconds())
+            .snapshot
     }
 
     pub(super) fn route_shell_click(&mut self, screen_size: (u32, u32), now: f64) -> bool {
@@ -100,10 +111,20 @@ impl App {
         }
 
         let cursor = self.pointer.cursor();
-        let layout = self.shell_layout(screen_size, cursor);
-        for (field, rect) in layout.inputs {
-            if rect.contains(cursor.0, cursor.1) {
-                self.focused_create_field = Some(field);
+        let layout = self.shell_layout(screen_size, cursor, now);
+        for input in layout.inputs {
+            if input.rect.contains(cursor.0, cursor.1) {
+                self.focus_create_field(input.field, now);
+                let index = self.create_input(input.field).cursor_index_for_x(
+                    cursor.0,
+                    input.rect,
+                    input.scale,
+                    input.visible_chars,
+                );
+                let anchor =
+                    self.create_input_mut(input.field)
+                        .begin_drag(index, input.visible_chars, now);
+                self.dragged_create_field = Some((input.field, anchor));
                 return true;
             }
         }
@@ -138,14 +159,58 @@ impl App {
         }
 
         if matches!(self.screen, AppScreen::CreateWorld) {
-            self.focused_create_field = None;
+            self.clear_create_focus();
         }
         true
     }
 
-    pub fn handle_text_key(&mut self, key: TextKey) -> bool {
+    pub(super) fn route_shell_drag(&mut self, screen_size: (u32, u32), now: f64) -> bool {
+        let Some((field, anchor)) = self.dragged_create_field else {
+            return false;
+        };
+        if !matches!(self.screen, AppScreen::CreateWorld) {
+            self.dragged_create_field = None;
+            return false;
+        }
+
+        let cursor = self.pointer.cursor();
+        let layout = self.shell_layout(screen_size, cursor, now);
+        let Some(input) = layout.inputs.into_iter().find(|input| input.field == field) else {
+            self.dragged_create_field = None;
+            return false;
+        };
+        let index = self.create_input(field).cursor_index_for_x(
+            cursor.0,
+            input.rect,
+            input.scale,
+            input.visible_chars,
+        );
+        self.create_input_mut(field)
+            .drag_to(anchor, index, input.visible_chars, now);
+        true
+    }
+
+    pub(super) fn clear_shell_drag(&mut self) {
+        self.dragged_create_field = None;
+    }
+
+    pub(super) fn shell_text_cursor_hovered(&self, screen_size: (u32, u32)) -> bool {
+        if !matches!(self.screen, AppScreen::CreateWorld) {
+            return false;
+        }
+        if self.dragged_create_field.is_some() {
+            return true;
+        }
+        let cursor = self.pointer.cursor();
+        self.shell_layout(screen_size, cursor, now_seconds())
+            .inputs
+            .into_iter()
+            .any(|input| input.rect.contains(cursor.0, cursor.1))
+    }
+
+    pub fn handle_text_key(&mut self, key: TextKey, screen_size: (u32, u32)) -> bool {
         match self.screen {
-            AppScreen::CreateWorld => self.handle_create_world_key(key),
+            AppScreen::CreateWorld => self.handle_create_world_key(key, screen_size),
             AppScreen::WorldSelect => self.handle_world_select_key(key),
             AppScreen::DeleteWorld => self.handle_delete_world_key(key),
             AppScreen::Pause => {
@@ -160,25 +225,65 @@ impl App {
         }
     }
 
-    pub fn handle_text_input(&mut self, text: &str) -> bool {
+    pub fn handle_text_shortcut_code(
+        &mut self,
+        code: winit::keyboard::KeyCode,
+        clipboard: &mut dyn TextClipboard,
+        screen_size: (u32, u32),
+    ) -> bool {
+        let Some(shortcut) = text_shortcut_from_key_code(code, self.modifiers) else {
+            return false;
+        };
+        self.handle_text_shortcut(shortcut, clipboard, screen_size)
+    }
+
+    pub fn handle_text_shortcut(
+        &mut self,
+        shortcut: TextShortcut,
+        clipboard: &mut dyn TextClipboard,
+        screen_size: (u32, u32),
+    ) -> bool {
         if !matches!(self.screen, AppScreen::CreateWorld) {
             return false;
         }
         let Some(field) = self.focused_create_field else {
             return false;
         };
-        let target = match field {
-            CreateField::Name => &mut self.create_world_name,
-            CreateField::Seed => &mut self.create_world_seed,
-        };
-        let before = target.len();
-        for ch in text.chars() {
-            if is_text_char(ch) && target.chars().count() < 48 {
-                target.push(ch);
+        let visible_chars = self.create_field_visible_chars(field, screen_size);
+        let now = now_seconds();
+        match shortcut {
+            TextShortcut::SelectAll => {
+                self.create_input_mut(field).select_all(visible_chars, now);
+                true
+            }
+            TextShortcut::Cut => {
+                self.create_input_mut(field)
+                    .cut_selection(clipboard, visible_chars, now);
+                true
+            }
+            TextShortcut::Copy => {
+                self.create_input(field).copy_selection(clipboard);
+                true
+            }
+            TextShortcut::Paste => {
+                self.create_input_mut(field)
+                    .paste(clipboard, visible_chars, now);
+                true
             }
         }
-        let changed = target.len() != before;
-        changed
+    }
+
+    pub fn handle_text_input(&mut self, text: &str, screen_size: (u32, u32)) -> bool {
+        if !matches!(self.screen, AppScreen::CreateWorld) {
+            return false;
+        }
+        let Some(field) = self.focused_create_field else {
+            return false;
+        };
+        let visible_chars = self.create_field_visible_chars(field, screen_size);
+        let now = now_seconds();
+        self.create_input_mut(field)
+            .insert_text(text, visible_chars, now)
     }
 
     pub fn take_quit_requested(&mut self) -> bool {
@@ -255,9 +360,11 @@ impl App {
             }
             ShellButtonId::WorldPlay => self.play_selected_world(),
             ShellButtonId::WorldCreate => {
-                self.create_world_name.clear();
-                self.create_world_seed.clear();
+                let now = now_seconds();
+                self.create_world_name.clear(now);
+                self.create_world_seed.clear(now);
                 self.focused_create_field = Some(CreateField::Name);
+                self.create_world_name.focus(now);
                 self.screen = AppScreen::CreateWorld;
                 self.pointer.release_for_menu();
             }
@@ -269,7 +376,7 @@ impl App {
             ShellButtonId::CreateCreate => self.create_world_from_form(),
             ShellButtonId::CreateCancel => {
                 self.screen = AppScreen::WorldSelect;
-                self.focused_create_field = None;
+                self.clear_create_focus();
                 self.pointer.release_for_menu();
             }
             ShellButtonId::DeleteWorldConfirm => self.delete_selected_world(),
@@ -327,17 +434,17 @@ impl App {
     }
 
     fn create_world_from_form(&mut self) {
-        let name = self.create_world_name.trim().to_string();
+        let name = self.create_world_name.text().trim().to_string();
         if !self.can_create_world() {
             return;
         }
         if let Err(e) = crate::save::write_world_metadata(&name) {
             log::warn!("could not write world metadata for '{name}': {e}");
         }
-        let seed = if self.create_world_seed.trim().is_empty() {
+        let seed = if self.create_world_seed.text().trim().is_empty() {
             crate::save::random_seed()
         } else {
-            crate::save::seed_from_text(&self.create_world_seed)
+            crate::save::seed_from_text(self.create_world_seed.text())
         };
         self.start_game(&name, seed);
     }
@@ -353,6 +460,7 @@ impl App {
             seed,
             self.render_dist,
         ));
+        self.clear_create_focus();
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();
@@ -362,41 +470,61 @@ impl App {
     }
 
     fn can_create_world(&self) -> bool {
-        let name = self.create_world_name.trim();
+        let name = self.create_world_name.text().trim();
         !name.is_empty() && !crate::save::world_exists(name)
     }
 
-    fn handle_create_world_key(&mut self, key: TextKey) -> bool {
+    fn handle_create_world_key(&mut self, key: TextKey, screen_size: (u32, u32)) -> bool {
+        let now = now_seconds();
         match key {
             TextKey::Backspace => {
                 if let Some(field) = self.focused_create_field {
-                    let target = match field {
-                        CreateField::Name => &mut self.create_world_name,
-                        CreateField::Seed => &mut self.create_world_seed,
-                    };
-                    target.pop();
+                    let visible_chars = self.create_field_visible_chars(field, screen_size);
+                    self.create_input_mut(field).backspace(visible_chars, now);
                 }
                 true
             }
             TextKey::Delete => {
                 if let Some(field) = self.focused_create_field {
-                    match field {
-                        CreateField::Name => self.create_world_name.clear(),
-                        CreateField::Seed => self.create_world_seed.clear(),
-                    }
+                    let visible_chars = self.create_field_visible_chars(field, screen_size);
+                    self.create_input_mut(field)
+                        .delete_forward(visible_chars, now);
                 }
                 true
             }
             TextKey::Tab => {
-                self.focused_create_field = Some(match self.focused_create_field {
+                let field = match self.focused_create_field {
                     Some(CreateField::Name) => CreateField::Seed,
                     _ => CreateField::Name,
-                });
+                };
+                self.focus_create_field(field, now);
                 true
             }
             TextKey::Enter => {
                 self.create_world_from_form();
                 true
+            }
+            TextKey::ArrowLeft => {
+                if let Some(field) = self.focused_create_field {
+                    let visible_chars = self.create_field_visible_chars(field, screen_size);
+                    let shift = self.modifiers.shift;
+                    self.create_input_mut(field)
+                        .move_left(shift, visible_chars, now);
+                    true
+                } else {
+                    false
+                }
+            }
+            TextKey::ArrowRight => {
+                if let Some(field) = self.focused_create_field {
+                    let visible_chars = self.create_field_visible_chars(field, screen_size);
+                    let shift = self.modifiers.shift;
+                    self.create_input_mut(field)
+                        .move_right(shift, visible_chars, now);
+                    true
+                } else {
+                    false
+                }
             }
             TextKey::ArrowUp | TextKey::ArrowDown => false,
         }
@@ -466,7 +594,7 @@ impl App {
             .max(1)
     }
 
-    fn shell_layout(&self, screen: (u32, u32), cursor: (f32, f32)) -> ShellLayout {
+    fn shell_layout(&self, screen: (u32, u32), cursor: (f32, f32), now: f64) -> ShellLayout {
         match self.screen {
             AppScreen::Title => title_layout(screen, cursor),
             AppScreen::WorldSelect => world_select_layout(
@@ -483,7 +611,8 @@ impl App {
                 &self.create_world_seed,
                 self.focused_create_field,
                 self.can_create_world(),
-                crate::save::world_exists(self.create_world_name.trim()),
+                crate::save::world_exists(self.create_world_name.text().trim()),
+                now,
             ),
             AppScreen::DeleteWorld => delete_world_layout(
                 screen,
@@ -493,6 +622,49 @@ impl App {
             AppScreen::Pause => pause_layout(screen, cursor),
             _ => empty_layout(),
         }
+    }
+
+    fn create_input(&self, field: CreateField) -> &TextInput {
+        match field {
+            CreateField::Name => &self.create_world_name,
+            CreateField::Seed => &self.create_world_seed,
+        }
+    }
+
+    fn create_input_mut(&mut self, field: CreateField) -> &mut TextInput {
+        match field {
+            CreateField::Name => &mut self.create_world_name,
+            CreateField::Seed => &mut self.create_world_seed,
+        }
+    }
+
+    fn focus_create_field(&mut self, field: CreateField, now: f64) {
+        if self.focused_create_field != Some(field) {
+            if let Some(old) = self.focused_create_field {
+                self.create_input_mut(old).blur();
+            }
+        }
+        self.focused_create_field = Some(field);
+        self.create_input_mut(field).focus(now);
+    }
+
+    pub(super) fn clear_create_focus(&mut self) {
+        if let Some(field) = self.focused_create_field.take() {
+            self.create_input_mut(field).blur();
+        }
+        self.dragged_create_field = None;
+    }
+
+    fn create_field_visible_chars(&self, field: CreateField, screen: (u32, u32)) -> usize {
+        let def = required_shell_def(ShellKind::CreateWorld);
+        let s = gui_scale(screen);
+        let panel = def.panel_rect(screen);
+        let (name_rect, seed_rect) = create_input_rects(screen, panel, s, def);
+        let rect = match field {
+            CreateField::Name => name_rect,
+            CreateField::Seed => seed_rect,
+        };
+        shell_input_visible_chars(rect, s)
     }
 }
 
@@ -744,11 +916,12 @@ fn delete_world_skin_layout(
 fn create_world_layout(
     screen: (u32, u32),
     cursor: (f32, f32),
-    name: &str,
-    seed: &str,
+    name: &TextInput,
+    seed: &TextInput,
     focused: Option<CreateField>,
     can_create: bool,
     duplicate: bool,
+    now: f64,
 ) -> ShellLayout {
     create_world_skin_layout(
         screen,
@@ -758,6 +931,7 @@ fn create_world_layout(
         focused,
         can_create,
         duplicate,
+        now,
         required_shell_def(ShellKind::CreateWorld),
     )
 }
@@ -765,11 +939,12 @@ fn create_world_layout(
 fn create_world_skin_layout(
     screen: (u32, u32),
     cursor: (f32, f32),
-    name: &str,
-    seed: &str,
+    name: &TextInput,
+    seed: &TextInput,
     focused: Option<CreateField>,
     can_create: bool,
     duplicate: bool,
+    now: f64,
     def: &ShellDef,
 ) -> ShellLayout {
     let s = gui_scale(screen);
@@ -782,22 +957,7 @@ fn create_world_skin_layout(
         ShellTextAlign::Center,
     ));
 
-    let name_rect = def
-        .role_rect(ShellRole::CreateNameInput, screen)
-        .unwrap_or(rect(
-            panel.x + 16.0 * s,
-            panel.y + 50.0 * s,
-            panel.w - 32.0 * s,
-            20.0 * s,
-        ));
-    let seed_rect = def
-        .role_rect(ShellRole::CreateSeedInput, screen)
-        .unwrap_or(rect(
-            panel.x + 16.0 * s,
-            panel.y + 88.0 * s,
-            panel.w - 32.0 * s,
-            20.0 * s,
-        ));
+    let (name_rect, seed_rect) = create_input_rects(screen, panel, s, def);
     layout.snapshot.texts.push(text(
         rect(name_rect.x, name_rect.y - 12.0 * s, name_rect.w, 10.0 * s),
         "World Name",
@@ -817,6 +977,8 @@ fn create_world_skin_layout(
         name,
         "My World",
         focused == Some(CreateField::Name),
+        s,
+        now,
     );
     push_input(
         &mut layout,
@@ -825,8 +987,10 @@ fn create_world_skin_layout(
         seed,
         "Blank = random",
         focused == Some(CreateField::Seed),
+        s,
+        now,
     );
-    if duplicate && !name.trim().is_empty() {
+    if duplicate && !name.text().trim().is_empty() {
         layout.snapshot.texts.push(ShellText {
             rect: rect(seed_rect.x, seed_rect.y + 24.0 * s, seed_rect.w, 10.0 * s),
             text: "Name already exists".to_string(),
@@ -960,17 +1124,29 @@ fn push_input(
     layout: &mut ShellLayout,
     field: CreateField,
     rect: SlotRect,
-    value: &str,
+    value: &TextInput,
     placeholder: &str,
     active: bool,
+    scale: f32,
+    now: f64,
 ) {
+    let visible_chars = shell_input_visible_chars(rect, scale);
+    let rendered = value.render(visible_chars, active, now);
     layout.snapshot.inputs.push(ShellInput {
         rect,
-        text: value.to_string(),
+        text: rendered.text,
         placeholder: placeholder.to_string(),
         active,
+        cursor: rendered.cursor,
+        selection: rendered.selection,
+        show_cursor: rendered.show_cursor,
     });
-    layout.inputs.push((field, rect));
+    layout.inputs.push(ShellInputHit {
+        field,
+        rect,
+        scale,
+        visible_chars,
+    });
 }
 
 fn text(rect: SlotRect, label: &str, cell_px: f32, align: ShellTextAlign) -> ShellText {
@@ -1038,10 +1214,31 @@ fn rows_bounds(rows: &[SlotRect]) -> Option<SlotRect> {
     Some(rect(min_x, min_y, max_x - min_x, max_y - min_y))
 }
 
-fn rect(x: f32, y: f32, w: f32, h: f32) -> SlotRect {
-    SlotRect { x, y, w, h }
+fn create_input_rects(
+    screen: (u32, u32),
+    panel: SlotRect,
+    scale: f32,
+    def: &ShellDef,
+) -> (SlotRect, SlotRect) {
+    let name_rect = def
+        .role_rect(ShellRole::CreateNameInput, screen)
+        .unwrap_or(rect(
+            panel.x + 16.0 * scale,
+            panel.y + 50.0 * scale,
+            panel.w - 32.0 * scale,
+            20.0 * scale,
+        ));
+    let seed_rect = def
+        .role_rect(ShellRole::CreateSeedInput, screen)
+        .unwrap_or(rect(
+            panel.x + 16.0 * scale,
+            panel.y + 88.0 * scale,
+            panel.w - 32.0 * scale,
+            20.0 * scale,
+        ));
+    (name_rect, seed_rect)
 }
 
-fn is_text_char(ch: char) -> bool {
-    ch.is_ascii_graphic() || ch == ' '
+fn rect(x: f32, y: f32, w: f32, h: f32) -> SlotRect {
+    SlotRect { x, y, w, h }
 }

@@ -1,7 +1,8 @@
 use super::app;
-use crate::app::{App, CursorPolicy};
+use crate::app::TextClipboard;
+use crate::app::{App, CursorIcon, CursorPolicy};
 use crate::camera::Camera;
-use crate::controls::{Control, PointerButton};
+use crate::controls::{Control, Modifiers, PointerButton, TextKey};
 use crate::mathh::Vec3;
 use crate::player::PlayerMode;
 use crate::save::WorldInfo;
@@ -13,10 +14,11 @@ fn app_starts_on_title_without_loading_a_game() {
     assert_eq!(app.screen, crate::app::AppScreen::Title);
     assert!(app.game.is_none(), "title screen does not preload a world");
     assert_eq!(
-        app.cursor_policy(),
+        app.cursor_policy((1280, 720)),
         CursorPolicy {
             grabbed: false,
             visible: true,
+            icon: CursorIcon::Default,
         }
     );
 }
@@ -112,6 +114,71 @@ fn delete_world_confirmation_cancel_returns_to_world_select() {
 
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
     assert_eq!(app.selected_world, Some(0));
+}
+
+#[test]
+fn create_world_text_input_moves_selects_and_replaces() {
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    app.screen = crate::app::AppScreen::WorldSelect;
+    let screen = (1280, 720);
+    click_shell_button(&mut app, screen, "Create New World");
+
+    assert!(app.handle_text_input("abcdef", screen));
+    app.handle_text_key(TextKey::ArrowLeft, screen);
+    app.handle_text_key(TextKey::ArrowLeft, screen);
+    app.set_modifiers(Modifiers {
+        ctrl: false,
+        shift: true,
+    });
+    app.handle_text_key(TextKey::ArrowLeft, screen);
+    app.handle_text_key(TextKey::ArrowLeft, screen);
+    app.set_modifiers(Modifiers::default());
+
+    assert!(app.handle_text_input("XY", screen));
+
+    assert_eq!(app.create_world_name.text(), "abXYef");
+}
+
+#[test]
+fn create_world_text_shortcuts_use_clipboard() {
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    app.screen = crate::app::AppScreen::WorldSelect;
+    let screen = (1280, 720);
+    click_shell_button(&mut app, screen, "Create New World");
+    app.handle_text_input("Copied World", screen);
+    app.set_modifiers(Modifiers {
+        ctrl: true,
+        shift: false,
+    });
+    let mut clipboard = MemoryClipboard::default();
+
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyA, &mut clipboard, screen));
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyC, &mut clipboard, screen));
+    assert_eq!(clipboard.text.as_deref(), Some("Copied World"));
+
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyX, &mut clipboard, screen));
+    assert_eq!(app.create_world_name.text(), "");
+
+    clipboard.text = Some("Pasted $#@!^{}".to_string());
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyV, &mut clipboard, screen));
+    assert_eq!(app.create_world_name.text(), "Pasted $#@!^{}");
+}
+
+#[test]
+fn create_world_input_hover_uses_text_cursor_icon() {
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    app.screen = crate::app::AppScreen::WorldSelect;
+    let screen = (1280, 720);
+    click_shell_button(&mut app, screen, "Create New World");
+    let input = app
+        .shell_ui_snapshot(screen, (0.0, 0.0))
+        .inputs
+        .into_iter()
+        .next()
+        .expect("create world has an input");
+    app.set_cursor_position(input.rect.x + 2.0, input.rect.y + 2.0);
+
+    assert_eq!(app.cursor_policy(screen).icon, CursorIcon::Text);
 }
 
 #[test]
@@ -284,4 +351,20 @@ fn click_shell_button(app: &mut App, screen: (u32, u32), label: &str) {
     };
     app.set_cursor_position(x, y);
     assert!(app.route_shell_click(screen, 0.0));
+}
+
+#[derive(Default)]
+struct MemoryClipboard {
+    text: Option<String>,
+}
+
+impl TextClipboard for MemoryClipboard {
+    fn get_text(&mut self) -> Option<String> {
+        self.text.clone()
+    }
+
+    fn set_text(&mut self, text: &str) -> bool {
+        self.text = Some(text.to_string());
+        true
+    }
 }

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::{App, CursorPolicy};
+use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy, TextClipboard};
 use crate::camera::Camera;
 use crate::controls::{
     control_from_key_code, text_key_from_named, Control, Modifiers, PointerButton,
@@ -18,8 +18,8 @@ use winit::event::{
     DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::keyboard::{Key, KeyCode, PhysicalKey};
+use winit::window::{CursorGrabMode, CursorIcon as WinitCursorIcon, Window, WindowId};
 
 const TARGET_FPS: u64 = 60;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
@@ -67,6 +67,8 @@ struct NativeHost {
     /// only when screens open/close; reapplying it every redraw sends compositor work
     /// through the hot mouse-look path.
     cursor_policy: Option<CursorPolicy>,
+    clipboard: NativeClipboard,
+    modifiers: Modifiers,
 }
 
 impl NativeHost {
@@ -87,8 +89,23 @@ impl NativeHost {
             perf_render_total: Duration::ZERO,
             perf_render_max: Duration::ZERO,
             cursor_policy: None,
+            clipboard: NativeClipboard::new(),
+            modifiers: Modifiers::default(),
         }
     }
+}
+
+fn modifiers_after_key_event(
+    mut modifiers: Modifiers,
+    code: KeyCode,
+    down: bool,
+) -> Option<Modifiers> {
+    match code {
+        KeyCode::ControlLeft | KeyCode::ControlRight => modifiers.ctrl = down,
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => modifiers.shift = down,
+        _ => return None,
+    }
+    Some(modifiers)
 }
 
 fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, cursor: CursorPolicy) {
@@ -106,7 +123,64 @@ fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, curs
     if applied.is_none_or(|p| p.visible != cursor.visible) {
         window.set_cursor_visible(cursor.visible);
     }
+    if applied.is_none_or(|p| p.icon != cursor.icon) {
+        window.set_cursor(match cursor.icon {
+            AppCursorIcon::Default => WinitCursorIcon::Default,
+            AppCursorIcon::Text => WinitCursorIcon::Text,
+        });
+    }
     *applied = Some(cursor);
+}
+
+struct NativeClipboard {
+    inner: Option<arboard::Clipboard>,
+}
+
+impl NativeClipboard {
+    fn new() -> Self {
+        Self {
+            inner: match arboard::Clipboard::new() {
+                Ok(clipboard) => Some(clipboard),
+                Err(e) => {
+                    log::warn!("could not initialize clipboard: {e}");
+                    None
+                }
+            },
+        }
+    }
+
+    fn inner(&mut self) -> Option<&mut arboard::Clipboard> {
+        if self.inner.is_none() {
+            self.inner = arboard::Clipboard::new().ok();
+        }
+        self.inner.as_mut()
+    }
+}
+
+impl TextClipboard for NativeClipboard {
+    fn get_text(&mut self) -> Option<String> {
+        let clipboard = self.inner()?;
+        match clipboard.get_text() {
+            Ok(text) => Some(text),
+            Err(e) => {
+                log::warn!("could not read clipboard text: {e}");
+                None
+            }
+        }
+    }
+
+    fn set_text(&mut self, text: &str) -> bool {
+        let Some(clipboard) = self.inner() else {
+            return false;
+        };
+        match clipboard.set_text(text.to_string()) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("could not write clipboard text: {e}");
+                false
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for NativeHost {
@@ -139,7 +213,10 @@ impl ApplicationHandler for NativeHost {
         apply_cursor_policy(
             self.window.as_ref().unwrap(),
             &mut self.cursor_policy,
-            self.app.as_ref().unwrap().cursor_policy(),
+            self.app
+                .as_ref()
+                .unwrap()
+                .cursor_policy((size.width, size.height)),
         );
     }
 
@@ -176,16 +253,30 @@ impl ApplicationHandler for NativeHost {
                     ..
                 } = event;
                 let down = state == ElementState::Pressed;
-                if down {
-                    if let Key::Named(named) = &logical_key {
-                        if let Some(key) = text_key_from_named(named) {
-                            app.handle_text_key(key);
-                        }
+                let screen_size = renderer.screen_size();
+                if let PhysicalKey::Code(code) = physical_key {
+                    if let Some(modifiers) = modifiers_after_key_event(self.modifiers, code, down) {
+                        self.modifiers = modifiers;
+                        app.set_modifiers(modifiers);
                     }
-                    if !app.take_quit_requested() {
-                        if let Some(text) = text.as_ref() {
-                            if !app.handle_text_input(text.as_str()) {
-                                // Text entry is opportunistic; non-text screens ignore it.
+                }
+                if down {
+                    let mut handled_shortcut = false;
+                    if let PhysicalKey::Code(code) = physical_key {
+                        handled_shortcut =
+                            app.handle_text_shortcut_code(code, &mut self.clipboard, screen_size);
+                    }
+                    if !handled_shortcut {
+                        if let Key::Named(named) = &logical_key {
+                            if let Some(key) = text_key_from_named(named) {
+                                app.handle_text_key(key, screen_size);
+                            }
+                        }
+                        if !app.take_quit_requested() {
+                            if let Some(text) = text.as_ref() {
+                                if !app.handle_text_input(text.as_str(), screen_size) {
+                                    // Text entry is opportunistic; non-text screens ignore it.
+                                }
                             }
                         }
                     }
@@ -210,12 +301,15 @@ impl ApplicationHandler for NativeHost {
                 // Physical Ctrl/Shift state, tracked apart from the rebindable
                 // Sprint/Sneak controls so UI modifiers don't follow a rebind.
                 let state = mods.state();
-                app.set_modifiers(Modifiers {
+                self.modifiers = Modifiers {
                     ctrl: state.control_key(),
                     shift: state.shift_key(),
-                });
+                };
+                app.set_modifiers(self.modifiers);
             }
             WindowEvent::Focused(false) => {
+                self.modifiers = Modifiers::default();
+                app.set_modifiers(self.modifiers);
                 app.release_pointer_buttons();
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -240,7 +334,11 @@ impl ApplicationHandler for NativeHost {
                 _ => {}
             },
             WindowEvent::RedrawRequested => {
-                apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
+                apply_cursor_policy(
+                    window,
+                    &mut self.cursor_policy,
+                    app.cursor_policy(renderer.screen_size()),
+                );
                 // The host requests this once per `App::update`; the simulation itself
                 // advances in `about_to_wait`.
                 let render_start = Instant::now();
