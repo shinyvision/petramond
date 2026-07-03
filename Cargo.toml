@@ -67,8 +67,17 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Day-to-day playtest profile (`make run`): release-grade opt-level but with
+# incremental compilation, parallel codegen units and no LTO, so a one-file
+# change rebuilds in seconds instead of recompiling the whole crate as one LTO
+# unit (~48s measured). CGU count / LTO do not change float semantics (genparity
+# COMBINED verified identical to release); keep `release` for shipped builds.
+[profile.playtest]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+strip = false
+
 [profile.dev]
 opt-level = 1
-
-[build-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }

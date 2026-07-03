@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn extruded_item_has_front_back_and_walls() {
         let mut out = Vec::new();
-        let n = build_extruded_item(Tile::Poppy, &mut out);
+        let n = build_extruded_item(Tile::named("poppy"), &mut out);
         assert_eq!(n as usize, out.len());
         // Front (6) + back (6) at minimum; a real flower sprite has a non-trivial
         // silhouette so there must be many side-wall verts on top.
@@ -437,8 +437,8 @@ mod tests {
     #[test]
     fn front_and_back_faces_use_full_tile_uv() {
         let mut out = Vec::new();
-        build_extruded_item(Tile::Poppy, &mut out);
-        let [u0, v0, u1, v1] = tile_uv(Tile::Poppy);
+        build_extruded_item(Tile::named("poppy"), &mut out);
+        let [u0, v0, u1, v1] = tile_uv(Tile::named("poppy"));
         // First 6 verts = front face; they must span the full tile rect corners.
         let front = &out[..6];
         let us: Vec<f32> = front.iter().map(|v| v.uv[0]).collect();
@@ -452,10 +452,10 @@ mod tests {
     #[test]
     fn rebuild_reuses_capacity() {
         let mut out = Vec::new();
-        build_extruded_item(Tile::Poppy, &mut out);
+        build_extruded_item(Tile::named("poppy"), &mut out);
         let cap = out.capacity();
         // Same tile -> identical vert count -> capacity unchanged.
-        build_extruded_item(Tile::Poppy, &mut out);
+        build_extruded_item(Tile::named("poppy"), &mut out);
         assert_eq!(
             out.capacity(),
             cap,
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn lit_extruded_item_scales_shades() {
         let mut out = Vec::new();
-        build_extruded_item_lit(Tile::Poppy, 0, &mut out);
+        build_extruded_item_lit(Tile::named("poppy"), 0, &mut out);
 
         assert_eq!(out[0].shade, SHADE_FRONT * lighting::sky_light_factor(0));
         assert!(out[0].shade < SHADE_FRONT);
@@ -477,7 +477,7 @@ mod tests {
         // A fully-opaque tile (Stone) extrudes to front + back + a wall on each of
         // the 4 outer borders only (16 texels per border edge): no interior walls.
         let mut out = Vec::new();
-        build_extruded_item(Tile::Stone, &mut out);
+        build_extruded_item(Tile::named("stone"), &mut out);
         // 2 faces * 6 + 4 borders * 16 texels * 6 verts = 12 + 384 = 396.
         assert_eq!(out.len(), 12 + 4 * GRID * 6);
     }

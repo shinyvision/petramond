@@ -1,4 +1,4 @@
-use crate::atlas::{tile_uv, Tile, TILE_COUNT};
+use crate::atlas::{tile_uv, Tile};
 use crate::mesh::Vertex;
 
 use std::num::NonZeroU64;
@@ -350,10 +350,12 @@ pub(super) fn create_pipeline_resources(
     // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
     // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
     // on every backend. Never updated after creation.
-    const _: () = assert!(TILE_COUNT <= UV_RECTS_LEN);
+    // The atlas loader caps the tile count at 256 (the packed vertex's 8-bit
+    // tile-id field); this guards the table size against a cap drift.
+    assert!(Tile::count() <= UV_RECTS_LEN);
     let mut uv_rects = [[0f32; 4]; UV_RECTS_LEN];
-    for &t in Tile::ALL {
-        uv_rects[t as usize] = tile_uv(t);
+    for t in Tile::all() {
+        uv_rects[t.index()] = tile_uv(t);
     }
     let uv_rects_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uv_rects"),
@@ -1479,8 +1481,9 @@ mod gpu_validation {
 
         let err = pollster::block_on(device.pop_error_scope());
         assert!(err.is_none(), "real-pipeline validation error: {err:?}");
-        // Confirm the assumption baked into the packing: tile ids fit in 8 bits.
-        const { assert!(TILE_COUNT <= 256) };
+        // Confirm the assumption baked into the packing: tile ids fit in 8 bits
+        // (also enforced by the atlas loader at composition time).
+        assert!(Tile::count() <= 256);
         // Stride sanity: the compressed block vertex is exactly 28 bytes.
         assert_eq!(std::mem::size_of::<Vertex>(), 28);
         // item3d vertex stride must match its declared attribute layout

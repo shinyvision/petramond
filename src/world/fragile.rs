@@ -30,6 +30,10 @@ const FRAGILE_BREAK_DELAY: u64 = 1;
 pub struct Fragile;
 
 impl BlockBehavior for Fragile {
+    fn key(&self) -> &'static str {
+        "fragile"
+    }
+
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // Dispatch already read this cell as the fragile block; re-read to learn which
         // one (a torch derives its support sideways, a plant from the block below).

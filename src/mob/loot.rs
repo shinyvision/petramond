@@ -8,7 +8,6 @@
 //! than aborting the world load.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -100,50 +99,45 @@ impl LootTables {
     }
 }
 
-/// Load loot tables, preferring an on-disk `assets/loot_tables.json` and falling back
-/// to the embedded copy.
+/// Load loot tables from every `loot_tables.json` layer (base + mod packs; a
+/// later layer REPLACES a mob's whole table by its key), falling back to the
+/// embedded copy when nothing on disk provides one.
 pub fn load_loot() -> LootTables {
-    parse(&read_loot_text())
-}
-
-fn read_loot_text() -> String {
-    for path in candidate_paths() {
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            log::info!("loaded loot tables from {}", path.display());
-            return s;
+    let layers = crate::assets::read_layers("loot_tables.json");
+    let texts: Vec<String> = if layers.is_empty() {
+        log::info!("loot tables: no on-disk loot_tables.json found, using embedded defaults");
+        vec![EMBEDDED.to_string()]
+    } else {
+        for (_, path) in &layers {
+            log::info!("loot tables layer: {}", path.display());
+        }
+        layers.into_iter().map(|(s, _)| s).collect()
+    };
+    let mut merged: HashMap<String, Vec<RawDrop>> = HashMap::new();
+    for text in &texts {
+        match serde_json::from_str::<RawFile>(text) {
+            Ok(file) => merged.extend(file.tables),
+            Err(e) => log::error!("loot_tables.json layer is not valid JSON (skipped): {e}"),
         }
     }
-    log::info!("loot tables: no on-disk loot_tables.json found, using embedded defaults");
-    EMBEDDED.to_string()
+    convert(merged)
 }
 
-/// Candidate locations, in priority order: an env override, the working-directory
-/// `assets/`, then alongside the executable. Mirrors the recipe loader.
-fn candidate_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Ok(dir) = std::env::var("LLAMACRAFT_ASSETS") {
-        paths.push(PathBuf::from(dir).join("loot_tables.json"));
-    }
-    paths.push(PathBuf::from("assets/loot_tables.json"));
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("assets/loot_tables.json"));
-            paths.push(dir.join("loot_tables.json"));
-        }
-    }
-    paths
-}
-
+/// Test shim: one layer, straight through the merge-free path.
+#[cfg(test)]
 fn parse(text: &str) -> LootTables {
-    let file: RawFile = match serde_json::from_str(text) {
-        Ok(f) => f,
+    match serde_json::from_str::<RawFile>(text) {
+        Ok(f) => convert(f.tables),
         Err(e) => {
             log::error!("loot_tables.json is not valid JSON: {e}");
-            return LootTables::default();
+            LootTables::default()
         }
-    };
+    }
+}
+
+fn convert(tables: HashMap<String, Vec<RawDrop>>) -> LootTables {
     let mut by_key = HashMap::new();
-    for (mob, drops) in file.tables {
+    for (mob, drops) in tables {
         let mut entries = Vec::new();
         for (i, d) in drops.into_iter().enumerate() {
             match resolve(d) {

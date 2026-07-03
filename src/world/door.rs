@@ -43,6 +43,10 @@ fn door_support(floor: Block) -> bool {
 pub struct Door;
 
 impl BlockBehavior for Door {
+    fn key(&self) -> &'static str {
+        "door"
+    }
+
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         if !world.door_supported(pos) {
             world.schedule_block_tick(pos, DOOR_BREAK_DELAY);

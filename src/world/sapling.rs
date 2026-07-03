@@ -50,6 +50,10 @@ const ADVANCE_CHANCE: f32 = 0.5;
 pub struct Sapling;
 
 impl BlockBehavior for Sapling {
+    fn key(&self) -> &'static str {
+        "sapling"
+    }
+
     fn has_random_tick(&self) -> bool {
         true
     }

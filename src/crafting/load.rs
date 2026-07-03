@@ -7,7 +7,6 @@
 //! `#name` reference is a tag.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -73,40 +72,34 @@ fn one() -> u8 {
     1
 }
 
-/// Load the recipe set, preferring an on-disk `assets/recipes.json` and falling
-/// back to the embedded copy. Malformed individual recipes are logged and
-/// skipped rather than aborting the world load.
+/// Load the recipe set from every `recipes.json` layer (base + mod packs —
+/// recipes have no identity key, so pack layers APPEND recipes), falling back
+/// to the embedded copy when nothing on disk provides one. Malformed
+/// individual recipes are logged and skipped rather than aborting the world
+/// load.
 pub fn load_recipes() -> Recipes {
-    let (grid, smelting, furniture) = parse(&read_recipes_text());
+    let mut grid = Vec::new();
+    let mut smelting = Vec::new();
+    let mut furniture = Vec::new();
+    for text in read_recipes_layers() {
+        let (g, s, f) = parse(&text);
+        grid.extend(g);
+        smelting.extend(s);
+        furniture.extend(f);
+    }
     Recipes::new(grid, smelting, furniture)
 }
 
-fn read_recipes_text() -> String {
-    for path in candidate_paths() {
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            log::info!("loaded crafting recipes from {}", path.display());
-            return s;
-        }
+fn read_recipes_layers() -> Vec<String> {
+    let layers = crate::assets::read_layers("recipes.json");
+    if layers.is_empty() {
+        log::info!("crafting recipes: no on-disk recipes.json found, using embedded defaults");
+        return vec![EMBEDDED.to_string()];
     }
-    log::info!("crafting recipes: no on-disk recipes.json found, using embedded defaults");
-    EMBEDDED.to_string()
-}
-
-/// Candidate locations, in priority order: an env override, the working-directory
-/// `assets/`, then alongside the executable.
-fn candidate_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Ok(dir) = std::env::var("LLAMACRAFT_ASSETS") {
-        paths.push(PathBuf::from(dir).join("recipes.json"));
+    for (_, path) in &layers {
+        log::info!("crafting recipes layer: {}", path.display());
     }
-    paths.push(PathBuf::from("assets/recipes.json"));
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("assets/recipes.json"));
-            paths.push(dir.join("recipes.json"));
-        }
-    }
-    paths
+    layers.into_iter().map(|(s, _)| s).collect()
 }
 
 fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {

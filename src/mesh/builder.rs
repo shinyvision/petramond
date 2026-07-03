@@ -15,7 +15,7 @@ use crate::section::Section;
 use crate::torch::{warm_amount, warm_tint};
 
 use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
-use super::tint::{self, tile_tint};
+use super::tint;
 use super::vertex::{
     pack_vertex, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE, UV_MODE_SHIFT, UV_MODE_STAIR_NEG_X,
     UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X, UV_MODE_STAIR_POS_Z, UV_MODE_STAIR_TOP,
@@ -585,7 +585,7 @@ fn section_geometry(
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
                     let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    let tint = warm_tint(tint_tile(tile_tint(tile), ci), warm);
+                    let tint = warm_tint(tint_tile(tile.world_tint(), ci), warm);
                     emit_cross(
                         &mut opaque,
                         &mut opaque_idx,
@@ -643,7 +643,7 @@ fn section_geometry(
 
                 if shape == RenderShape::Stair {
                     let [tile_top, tile_bot, tile_side] = block.tiles();
-                    let tint_for = |tile| tint_tile(tile_tint(tile), ci);
+                    let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
                     let facing = section.stair_facing(lx, ly, lz);
                     let mask = crate::stair::resolved_mask(IVec3::new(wx, wy, wz), facing, |p| {
                         crate::stair::is_stair(block_at(p.x, p.y, p.z))
@@ -669,9 +669,9 @@ fn section_geometry(
                 let [tile_top, tile_bot, tile_side] = block.tiles();
                 let furnace_faces = (block == Block::Furnace).then(|| {
                     let front = if section.is_furnace_lit(lx, ly, lz) {
-                        Tile::FurnaceFrontOn
+                        crate::atlas::engine().furnace_front_on
                     } else {
-                        Tile::FurnaceFront
+                        crate::atlas::engine().furnace_front
                     };
                     (facing_face(section.furnace_facing(lx, ly, lz)), front)
                 });
@@ -696,7 +696,10 @@ fn section_geometry(
                             let (base_tile, overlay_tile, tint) = if block == Block::Grass
                                 && is_side
                             {
-                                (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass(ci))
+                                {
+                                let e = crate::atlas::engine();
+                                (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
+                            }
                             } else {
                                 let t = match face {
                                     Face::PosY => tile_top,
@@ -705,11 +708,11 @@ fn section_geometry(
                                         Some((front_face, front_tile)) if face == front_face => {
                                             front_tile
                                         }
-                                        Some(_) => Tile::FurnaceSide,
+                                        Some(_) => crate::atlas::engine().furnace_side,
                                         None => tile_side,
                                     },
                                 };
-                                let tint = tint_tile(tile_tint(t), ci);
+                                let tint = tint_tile(t.world_tint(), ci);
                                 (t, None, tint)
                             };
                             let corners = quad_for(face, base_x, base_y, base_z);
@@ -723,7 +726,7 @@ fn section_geometry(
                             let f_l = pad.skylight[fpi] as u32;
                             let f_bl = pad.blocklight[fpi] as u32;
                             let (overlay, has_overlay) = match overlay_tile {
-                                Some(o) => (o as u32, true),
+                                Some(o) => (o.index() as u32, true),
                                 None => (0, false),
                             };
                             let (ao, light6, warm) =
@@ -746,7 +749,7 @@ fn section_geometry(
                                 let fi = face_index(face);
                                 greedy.faces[fi * SECTION_VOLUME + cell] = FlatFace {
                                     gen: greedy_gen,
-                                    tile: base_tile as u32,
+                                    tile: base_tile.index() as u32,
                                     ao: ao[0],
                                     light6: light6[0],
                                     tint: final_tint,
@@ -810,23 +813,26 @@ fn section_geometry(
                     let (base_tile, overlay_tile, tint) = if let Some(ws) = &water_surface {
                         let t = match face {
                             Face::PosY => ws.top_tile(),
-                            Face::NegY => Tile::WaterStill,
-                            _ => Tile::WaterFlow,
+                            Face::NegY => crate::atlas::engine().water_still,
+                            _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tint_water(ci))
                     } else if block == Block::Grass && is_side {
-                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tint_grass(ci))
+                        {
+                                let e = crate::atlas::engine();
+                                (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
+                            }
                     } else {
                         let t = match face {
                             Face::PosY => tile_top,
                             Face::NegY => tile_bot,
                             _ => match furnace_faces {
                                 Some((front_face, front_tile)) if face == front_face => front_tile,
-                                Some(_) => Tile::FurnaceSide,
+                                Some(_) => crate::atlas::engine().furnace_side,
                                 None => tile_side,
                             },
                         };
-                        let tint = tint_tile(tile_tint(t), ci);
+                        let tint = tint_tile(t.world_tint(), ci);
                         (t, None, tint)
                     };
 
@@ -854,7 +860,7 @@ fn section_geometry(
                         _ => 0,
                     };
                     let (overlay, has_overlay) = match overlay_tile {
-                        Some(o) => (o as u32, true),
+                        Some(o) => (o.index() as u32, true),
                         None => (water_ov, false),
                     };
 
@@ -892,7 +898,7 @@ fn section_geometry(
                         let fi = face_index(face);
                         greedy.faces[fi * SECTION_VOLUME + section_idx(lx, ly, lz)] = FlatFace {
                             gen: greedy_gen,
-                            tile: base_tile as u32,
+                            tile: base_tile.index() as u32,
                             ao: ao[0],
                             light6: light6[0],
                             tint: final_tint,
@@ -1099,7 +1105,7 @@ fn chunk_geometry(
                     let l = neighbour_light(wx, y as i32, wz) as u32;
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
                     let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    let tint = warm_tint(tints.tile(tile_tint(tile), ci), warm);
+                    let tint = warm_tint(tints.tile(tile.world_tint(), ci), warm);
                     emit_cross(
                         &mut opaque,
                         &mut opaque_idx,
@@ -1175,7 +1181,7 @@ fn chunk_geometry(
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
                     let ci = z * CHUNK_SX + x;
-                    let tint_for = |tile| tints.tile(tile_tint(tile), ci);
+                    let tint_for = |tile: Tile| tints.tile(tile.world_tint(), ci);
                     let mask = crate::stair::mask(crate::block_model::DEFAULT_MODEL_FACING);
                     emit_stair_block(
                         &mut opaque,
@@ -1205,9 +1211,9 @@ fn chunk_geometry(
                 // never affects cross-border culling).
                 let furnace_faces = (block == Block::Furnace).then(|| {
                     let front = if chunk.is_furnace_lit(x, y, z) {
-                        Tile::FurnaceFrontOn
+                        crate::atlas::engine().furnace_front_on
                     } else {
-                        Tile::FurnaceFront
+                        crate::atlas::engine().furnace_front
                     };
                     (facing_face(chunk.furnace_facing(x, y, z)), front)
                 });
@@ -1313,23 +1319,24 @@ fn chunk_geometry(
                     let (base_tile, overlay_tile, tint) = if let Some(ws) = &water_surface {
                         let t = match face {
                             Face::PosY => ws.top_tile(),
-                            Face::NegY => Tile::WaterStill,
-                            _ => Tile::WaterFlow,
+                            Face::NegY => crate::atlas::engine().water_still,
+                            _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tints.water[ci])
                     } else if block == Block::Grass && is_side {
-                        (Tile::Dirt, Some(Tile::GrassSideOverlay), tints.grass[ci])
+                        let e = crate::atlas::engine();
+                        (e.dirt, Some(e.grass_side_overlay), tints.grass[ci])
                     } else {
                         let t = match face {
                             Face::PosY => tile_top,
                             Face::NegY => tile_bot,
                             _ => match furnace_faces {
                                 Some((front_face, front_tile)) if face == front_face => front_tile,
-                                Some(_) => Tile::FurnaceSide,
+                                Some(_) => crate::atlas::engine().furnace_side,
                                 None => tile_side,
                             },
                         };
-                        let tint = tints.tile(tile_tint(t), ci);
+                        let tint = tints.tile(t.world_tint(), ci);
                         (t, None, tint)
                     };
 
@@ -1376,7 +1383,7 @@ fn chunk_geometry(
                         _ => 0,
                     };
                     let (overlay, has_overlay) = match overlay_tile {
-                        Some(o) => (o as u32, true),
+                        Some(o) => (o.index() as u32, true),
                         None => (water_ov, false),
                     };
 
@@ -1944,7 +1951,7 @@ fn push_cube_face(
                 warm_tint(tint, warm[corner])
             },
             packed: pack_vertex(
-                base_tile as u32,
+                base_tile.index() as u32,
                 corner as u32,
                 shade_idx,
                 overlay,
@@ -2226,7 +2233,7 @@ fn emit_cross(
             opaque.push(Vertex {
                 pos: p,
                 tint,
-                packed: pack_vertex(tile as u32, corner as u32, 0, 0, false, 3, sky6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
             });
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

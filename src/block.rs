@@ -10,6 +10,7 @@ use crate::item::{DropSpec, ItemType, ToolKind};
 pub mod behavior;
 mod data;
 mod definition;
+mod load;
 mod sounds;
 
 pub use behavior::BlockBehavior;
@@ -17,7 +18,8 @@ pub(crate) use definition::BlockMaterial;
 pub use sounds::BlockSoundAction;
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Block {
     Air = 0,
     Grass,
@@ -169,7 +171,8 @@ pub enum Block {
 /// Secondary-use capability declared by a block's data row. This answers only
 /// "what use action is available"; the tick-side gameplay code still applies the
 /// concrete world mutation or menu request.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BlockInteraction {
     None,
     OpenCraftingTable,
@@ -185,7 +188,8 @@ pub enum BlockInteraction {
 /// [`Block::has_tag`]; keeping membership in the data means a block joins a
 /// category by editing its row, never a `match` in this file. Tags answer "what
 /// *is* this block" (categorisation); [`behavior`] answers "what does it *do*".
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BlockTag {
     /// Any tree-leaves block: takes random ticks and decays when cut off, and
     /// counts as the support that keeps an adjacent leaf alive.
@@ -246,7 +250,8 @@ pub enum BlockTag {
 /// (like the chest it is drawn each frame as a placed model, see
 /// `render::placed_model`), with its own texture, collision and selection baked from
 /// the `.bbmodel` (see [`crate::block_model`]).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RenderShape {
     Cube,
     Cross,

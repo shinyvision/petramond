@@ -55,6 +55,10 @@ pub(super) const WATER_FLOW_DELAY: u64 = 5;
 pub struct Water;
 
 impl BlockBehavior for Water {
+    fn key(&self) -> &'static str {
+        "water"
+    }
+
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // A neighbour changed: schedule the flow check `WATER_FLOW_DELAY` ticks out
         // so the disturbance settles before water re-levels.

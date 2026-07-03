@@ -32,6 +32,10 @@ const FACE_OFFSETS: [IVec3; 6] = [
 pub struct Leaves;
 
 impl BlockBehavior for Leaves {
+    fn key(&self) -> &'static str {
+        "leaves"
+    }
+
     fn has_random_tick(&self) -> bool {
         true
     }

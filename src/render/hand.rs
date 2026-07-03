@@ -424,7 +424,7 @@ mod tests {
             swing_scale: 1.0,
         };
         let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
-        assert_eq!(tile as u8, crate::atlas::Tile::Poppy as u8);
+        assert_eq!(tile, crate::atlas::Tile::named("poppy"));
         assert!(mvp.to_cols_array().iter().all(|f| f.is_finite()));
         // Bare hand + held block return None (they go through build_hand).
         let bare = HeldItemView {

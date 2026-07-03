@@ -63,10 +63,10 @@ const ALL_FACES: [Face; 6] = Face::ALL;
 #[inline]
 fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
     let (ov_tile, ov_flag) = match mat.overlay_tile {
-        Some(o) => (o as u32, 1u32),
+        Some(o) => (o.index() as u32, 1u32),
         None => (0, 0),
     };
-    (mat.base_tile as u32)
+    (mat.base_tile.index() as u32)
         | (face.shade_idx() << 10)
         | (ov_tile << 12)
         | (ov_flag << 20)
@@ -149,8 +149,8 @@ pub(super) fn block_icon_faces(block: Block) -> [Tile; 6] {
     // Index 4 = PosZ, one of the two side faces the isometric icon presents, so a
     // directional block shows its front there instead of repeating the side art.
     match block {
-        Block::Furnace => faces[4] = Tile::FurnaceFront,
-        Block::Chest => faces[4] = Tile::ChestFront,
+        Block::Furnace => faces[4] = crate::atlas::engine().furnace_front,
+        Block::Chest => faces[4] = crate::atlas::engine().chest_front,
         _ => {}
     }
     faces
@@ -474,7 +474,7 @@ pub(super) fn push_billboard_world_lit(
     // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
     // short-grass sprites get the fixed grass tint (flowers stay untinted).
     let tint = foliage_tint::face_material(tile).tint;
-    let base = (tile as u32)
+    let base = (tile.index() as u32)
         | (Face::PosY.shade_idx() << 10)
         | FULL_AO
         | lighting::skylight_bits(skylight);
@@ -513,7 +513,7 @@ pub fn push_billboard_quad(
     // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
     // short-grass sprites get the fixed grass tint (flowers stay untinted).
     let tint = foliage_tint::face_material(tile).tint;
-    let base = (tile as u32)
+    let base = (tile.index() as u32)
         | (Face::PosY.shade_idx() << 10)
         | FULL_AO
         | lighting::skylight_bits(lighting::FULL_SKYLIGHT);
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn cube_textured_has_24_verts_36_indices() {
         let (v, i) = cube_textured(
-            [Tile::OakLogTop, Tile::OakLogTop, Tile::OakLogSide],
+            [Tile::named("oak_log_top"), Tile::named("oak_log_top"), Tile::named("oak_log_side")],
             Vec3::ZERO,
             1.0,
         );
@@ -554,20 +554,20 @@ mod tests {
     #[test]
     fn cube_textured_uses_per_face_tiles() {
         // Distinct top/bottom/side so we can check each face samples the right tile.
-        let tiles = [Tile::GrassTop, Tile::Dirt, Tile::Stone];
+        let tiles = [Tile::named("grass_top"), Tile::named("dirt"), Tile::named("stone")];
         let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
         // 4 verts per face; the tile id is bits 0..8 of `packed`.
         let face_tile = |face_idx: usize| (v[face_idx * 4].packed & 0xFF) as u8;
         // PosX (side), NegX (side)
-        assert_eq!(face_tile(0), Tile::Stone as u8);
-        assert_eq!(face_tile(1), Tile::Stone as u8);
+        assert_eq!(face_tile(0), Tile::named("stone").index() as u8);
+        assert_eq!(face_tile(1), Tile::named("stone").index() as u8);
         // PosY (top), NegY (bottom)
-        assert_eq!(face_tile(2), Tile::GrassTop as u8);
-        assert_eq!(face_tile(3), Tile::Dirt as u8);
+        assert_eq!(face_tile(2), Tile::named("grass_top").index() as u8);
+        assert_eq!(face_tile(3), Tile::named("dirt").index() as u8);
         // PosZ (side), NegZ (side)
-        assert_eq!(face_tile(4), Tile::Stone as u8);
-        assert_eq!(face_tile(5), Tile::Stone as u8);
+        assert_eq!(face_tile(4), Tile::named("stone").index() as u8);
+        assert_eq!(face_tile(5), Tile::named("stone").index() as u8);
     }
 
     #[test]
@@ -583,18 +583,18 @@ mod tests {
         // The reported bug was four fronts; the item must show the front once, with
         // furnace_side on the other three horizontal faces (top/bottom are the top).
         let faces = block_icon_faces(Block::Furnace);
-        assert_eq!(faces[2], Tile::FurnaceTop, "PosY top");
-        assert_eq!(faces[3], Tile::FurnaceTop, "NegY bottom");
+        assert_eq!(faces[2], Tile::named("furnace_top"), "PosY top");
+        assert_eq!(faces[3], Tile::named("furnace_top"), "NegY bottom");
         assert_eq!(
             faces[4],
-            Tile::FurnaceFront,
+            Tile::named("furnace_front"),
             "front on PosZ (visible in the icon)"
         );
         for i in [0usize, 1, 5] {
-            assert_eq!(faces[i], Tile::FurnaceSide, "face {i} is a plain side");
+            assert_eq!(faces[i], Tile::named("furnace_side"), "face {i} is a plain side");
         }
         assert_eq!(
-            faces.iter().filter(|&&t| t == Tile::FurnaceFront).count(),
+            faces.iter().filter(|&&t| t == Tile::named("furnace_front")).count(),
             1,
             "exactly one front face, not four"
         );
@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn cube_textured_is_full_bright() {
-        let (v, _) = cube_textured([Tile::Stone; 3], Vec3::ZERO, 1.0);
+        let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         for vert in &v {
             // skylight (bits 23..29) is full (63).
             assert_eq!((vert.packed >> 23) & 0x3F, 63);
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn cube_textured_face_shade_indices_match_mesher() {
-        let (v, _) = cube_textured([Tile::Stone; 3], Vec3::ZERO, 1.0);
+        let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         let shade = |face_idx: usize| (v[face_idx * 4].packed >> 10) & 0x3;
         assert_eq!(shade(0), 2); // PosX
         assert_eq!(shade(1), 2); // NegX
@@ -642,11 +642,11 @@ mod tests {
 
     #[test]
     fn billboard_quad_is_double_sided() {
-        let (v, i) = billboard_quad(Tile::Poppy, Vec3::ZERO, 1.0);
+        let (v, i) = billboard_quad(Tile::named("poppy"), Vec3::ZERO, 1.0);
         assert_eq!(v.len(), 8); // two quads (front + back)
         assert_eq!(i.len(), 12);
         for vert in &v {
-            assert_eq!((vert.packed & 0xFF) as u8, Tile::Poppy as u8);
+            assert_eq!((vert.packed & 0xFF) as u8, Tile::named("poppy").index() as u8);
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
         }
     }
@@ -655,7 +655,7 @@ mod tests {
     fn cube_textured_tints_grass_top_and_overlays_sides() {
         // Block::Grass tiles = [GrassTop, Dirt, GrassSide].
         let (v, _) = cube_textured(
-            [Tile::GrassTop, Tile::Dirt, Tile::GrassSide],
+            [Tile::named("grass_top"), Tile::named("dirt"), Tile::named("grass_side")],
             Vec3::ZERO,
             1.0,
         );
@@ -663,7 +663,7 @@ mod tests {
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
         // Top face (PosY = index 2): GrassTop tinted green, no overlay.
         let top = &v[2 * 4];
-        assert_eq!((top.packed & 0xFF) as u8, Tile::GrassTop as u8);
+        assert_eq!((top.packed & 0xFF) as u8, Tile::named("grass_top").index() as u8);
         assert_eq!(top.tint, grass);
         assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
 
@@ -673,7 +673,7 @@ mod tests {
             let s = &v[idx * 4];
             assert_eq!(
                 (s.packed & 0xFF) as u8,
-                Tile::Dirt as u8,
+                Tile::named("dirt").index() as u8,
                 "side base = dirt"
             );
             // Bit 20 (overlay flag) set; overlay tile = GrassSideOverlay.
@@ -684,7 +684,7 @@ mod tests {
             );
             assert_eq!(
                 ((s.packed >> 12) & 0xFF) as u8,
-                Tile::GrassSideOverlay as u8,
+                Tile::named("grass_side_overlay").index() as u8,
                 "side overlay tile = grass-side overlay"
             );
             assert_eq!(s.tint, grass, "side overlay tinted green");
@@ -692,17 +692,17 @@ mod tests {
 
         // Bottom face (NegY = index 3): plain dirt, untinted, no overlay.
         let bot = &v[3 * 4];
-        assert_eq!((bot.packed & 0xFF) as u8, Tile::Dirt as u8);
+        assert_eq!((bot.packed & 0xFF) as u8, Tile::named("dirt").index() as u8);
         assert_eq!(bot.tint, foliage_tint::NO_TINT);
         assert_eq!(bot.packed & SOLID_COLOR_FLAG, 0);
     }
 
     #[test]
     fn cube_textured_leaves_use_foliage_tint() {
-        let (v, _) = cube_textured([Tile::OakLeaves; 3], Vec3::ZERO, 1.0);
+        let (v, _) = cube_textured([Tile::named("oak_leaves"); 3], Vec3::ZERO, 1.0);
         let foliage = foliage_tint::default_foliage_color();
         for vert in &v {
-            assert_eq!((vert.packed & 0xFF) as u8, Tile::OakLeaves as u8);
+            assert_eq!((vert.packed & 0xFF) as u8, Tile::named("oak_leaves").index() as u8);
             assert_eq!(vert.tint, foliage);
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");
         }
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn flower_billboard_stays_untinted() {
-        let (v, _) = billboard_quad(Tile::Poppy, Vec3::ZERO, 1.0);
+        let (v, _) = billboard_quad(Tile::named("poppy"), Vec3::ZERO, 1.0);
         for vert in &v {
             assert_eq!(
                 vert.tint,
@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn fern_billboard_gets_grass_tint() {
-        let (v, _) = billboard_quad(Tile::Fern, Vec3::ZERO, 1.0);
+        let (v, _) = billboard_quad(Tile::named("fern"), Vec3::ZERO, 1.0);
         let grass = foliage_tint::default_grass_color();
         for vert in &v {
             assert_eq!(vert.tint, grass, "ferns tint with the grass colour");

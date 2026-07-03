@@ -10,6 +10,7 @@
 
 mod chest;
 mod codec;
+mod palette;
 pub mod entities;
 mod furnace;
 pub mod level;
@@ -331,6 +332,10 @@ pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
 pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let region_dir = dir.join("region");
     std::fs::create_dir_all(&region_dir)?;
+
+    // Pin (or load) the save's block/item name palette BEFORE any record is
+    // read or written: the codec maps every id through it (see `palette`).
+    palette::activate(&dir)?;
 
     let level = std::fs::read(dir.join("level.dat"))
         .ok()

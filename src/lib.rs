@@ -13,6 +13,7 @@ static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod app;
 mod asset_cache;
+mod assets;
 mod atlas;
 mod audio;
 mod bbmodel;

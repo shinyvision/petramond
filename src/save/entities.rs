@@ -29,7 +29,7 @@ pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem]) {
         put_f32(buf, it.vel.x);
         put_f32(buf, it.vel.y);
         put_f32(buf, it.vel.z);
-        put_u8(buf, it.stack.item.id());
+        put_u8(buf, super::palette::active().item_to_disk(it.stack.item.id()));
         put_u8(buf, it.stack.count);
         put_u32(buf, it.ticks_lived);
         put_f32(buf, it.spin);
@@ -45,7 +45,7 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
     for _ in 0..n {
         let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let vel = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
-        let id = r.u8()?;
+        let id = super::palette::active().item_from_disk(r.u8()?);
         let count = r.u8()?;
         let ticks_lived = r.u32()?;
         let spin = r.f32()?;

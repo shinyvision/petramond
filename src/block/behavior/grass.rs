@@ -17,6 +17,10 @@ use super::BlockBehavior;
 pub struct Grass;
 
 impl BlockBehavior for Grass {
+    fn key(&self) -> &'static str {
+        "grass"
+    }
+
     fn has_random_tick(&self) -> bool {
         true
     }

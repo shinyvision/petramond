@@ -86,11 +86,6 @@ const WEST_OPEN: &[Aabb] = slab!(z, 0.0, THICKNESS); //  -Z edge
 const EAST_CLOSED: &[Aabb] = slab!(x, FAR, 1.0); // +X edge
 const EAST_OPEN: &[Aabb] = slab!(z, FAR, 1.0); //  +Z edge
 
-/// The position-LESS default a door's [`BlockDef`](crate::block) row points at:
-/// a closed slab on the south edge. Real per-cell collision is resolved from the
-/// chunk door state via [`collision_boxes`].
-pub const DEFAULT_BOXES: &[Aabb] = SOUTH_CLOSED;
-
 /// The cell-local collision boxes for a door cell in `state` — one thin full-height
 /// slab on the closed edge, or on the swung-open edge when `open`.
 #[inline]

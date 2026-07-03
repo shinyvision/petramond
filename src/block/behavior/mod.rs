@@ -44,6 +44,11 @@ pub use leaves::LEAVES;
 /// which the gen and light worker threads read — so `dyn BlockBehavior` (and the
 /// table holding it) is shareable across threads.
 pub trait BlockBehavior: Sync {
+    /// The stable data-file name of this behaviour (`"inert"`, `"leaves"`, …) —
+    /// what a block row's `behavior` field in `blocks.json` references. Each
+    /// singleton returns its own literal; [`by_name`] is the inverse.
+    fn key(&self) -> &'static str;
+
     /// Whether this block receives random ticks — the probabilistic per-section
     /// callback the world fires at a few random cells each game tick (see
     /// `world::tick`). Gates both the dispatch and the per-section skip counter.
@@ -71,5 +76,39 @@ pub trait BlockBehavior: Sync {
     /// flow check here.)
     fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
         let _ = (world, pos);
+    }
+}
+
+/// Resolve a behaviour's data-file name (a `blocks.json` row's `behavior` field)
+/// to its singleton — the inverse of [`BlockBehavior::key`]. One arm per
+/// registered behaviour above; a new behaviour joins the data files by adding
+/// its arm here.
+pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {
+    Some(match name {
+        "inert" => &INERT,
+        "grass" => &GRASS,
+        "dirt" => &DIRT,
+        "leaves" => &LEAVES,
+        "water" => &WATER,
+        "fragile" => &FRAGILE,
+        "sapling" => &SAPLING,
+        "door" => &DOOR,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn behavior_names_round_trip() {
+        for name in [
+            "inert", "grass", "dirt", "leaves", "water", "fragile", "sapling", "door",
+        ] {
+            let b = by_name(name).unwrap_or_else(|| panic!("unregistered behavior '{name}'"));
+            assert_eq!(b.key(), name, "key() must be the inverse of by_name()");
+        }
+        assert!(by_name("bogus").is_none());
     }
 }

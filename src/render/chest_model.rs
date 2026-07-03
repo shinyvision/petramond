@@ -55,26 +55,34 @@ const ITEM_LIFT: f32 = (1.0 - 14.0 / 16.0) * 0.5;
 /// Per-face tiles (`ALL_FACES` order: PosX, NegX, PosY, NegY, PosZ, NegZ) for the
 /// body box. Front (`+Z`) carries the chest-front art; the top is the interior (seen
 /// when the lid opens; hidden by the lid when closed).
-const BODY_FACES: [Tile; 6] = [
-    Tile::ChestSide,   // PosX
-    Tile::ChestSide,   // NegX
-    Tile::ChestInside, // PosY (covered by the lid when closed; interior when open)
-    Tile::ChestSide,   // NegY (bottom, unseen)
-    Tile::ChestFront,  // PosZ (front)
-    Tile::ChestSide,   // NegZ (back)
-];
+fn body_faces() -> [Tile; 6] {
+    let e = crate::atlas::engine();
+    [
+        e.chest_side,   // PosX
+        e.chest_side,   // NegX
+        e.chest_inside, // PosY (covered by the lid when closed; interior when open)
+        e.chest_side,   // NegY (bottom, unseen)
+        e.chest_front,  // PosZ (front)
+        e.chest_side,   // NegZ (back)
+    ]
+}
 /// Per-face tiles for the lid box. Top is the chest's visible top; the underside is
 /// the interior, seen when the lid opens.
-const LID_FACES: [Tile; 6] = [
-    Tile::ChestLidSide,  // PosX
-    Tile::ChestLidSide,  // NegX
-    Tile::ChestTop,      // PosY (the chest's top surface)
-    Tile::ChestInside,   // NegY (lid underside / interior)
-    Tile::ChestLidFront, // PosZ (front)
-    Tile::ChestLidSide,  // NegZ (back)
-];
+fn lid_faces() -> [Tile; 6] {
+    let e = crate::atlas::engine();
+    [
+        e.chest_lid_side,  // PosX
+        e.chest_lid_side,  // NegX
+        e.chest_top,       // PosY (the chest's top surface)
+        e.chest_inside,    // NegY (lid underside / interior)
+        e.chest_lid_front, // PosZ (front)
+        e.chest_lid_side,  // NegZ (back)
+    ]
+}
 /// The latch knob is small; the metallic latch tile reads fine on every face.
-const LATCH_FACES: [Tile; 6] = [Tile::ChestLatch; 6];
+fn latch_faces() -> [Tile; 6] {
+    [crate::atlas::engine().chest_latch; 6]
+}
 
 /// Bake all `instances` into `verts`/`indices` (cleared first, capacity reused) and
 /// return the index count. The caller frustum-culls instances before calling.
@@ -96,13 +104,13 @@ pub fn build_chests(
 fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &ChestInstance) {
     let sky = inst.skylight;
     let start = verts.len();
-    push_box_faces_lit(verts, indices, BODY_FACES, BODY_MIN, BODY_MAX, sky);
+    push_box_faces_lit(verts, indices, body_faces(), BODY_MIN, BODY_MAX, sky);
 
     // Lid + latch hinge together about the rear-bottom seam edge: append both, then
     // rotate that range by the open angle so the front edge swings up and back.
     let lid_start = verts.len();
-    push_box_faces_lit(verts, indices, LID_FACES, LID_MIN, LID_MAX, sky);
-    push_box_faces_lit(verts, indices, LATCH_FACES, LATCH_MIN, LATCH_MAX, sky);
+    push_box_faces_lit(verts, indices, lid_faces(), LID_MIN, LID_MAX, sky);
+    push_box_faces_lit(verts, indices, latch_faces(), LATCH_MIN, LATCH_MAX, sky);
     let angle = inst.lid01.clamp(0.0, 1.0) * LID_OPEN_RADIANS;
     if angle != 0.0 {
         let (s, c) = angle.sin_cos();
@@ -148,7 +156,7 @@ pub(super) fn push_chest_item(
     push_box_faces_lit(
         verts,
         indices,
-        BODY_FACES,
+        body_faces(),
         map(BODY_MIN),
         map(BODY_MAX),
         skylight,
@@ -156,7 +164,7 @@ pub(super) fn push_chest_item(
     push_box_faces_lit(
         verts,
         indices,
-        LID_FACES,
+        lid_faces(),
         map(LID_MIN),
         map(LID_MAX),
         skylight,
@@ -164,7 +172,7 @@ pub(super) fn push_chest_item(
     push_box_faces_lit(
         verts,
         indices,
-        LATCH_FACES,
+        latch_faces(),
         map(LATCH_MIN),
         map(LATCH_MAX),
         skylight,

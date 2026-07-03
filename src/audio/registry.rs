@@ -60,16 +60,18 @@ pub enum SoundCategory {
     Ui,
 }
 
-/// One row of the sound table: a sound's embedded source bytes + default playback
-/// parameters. The bytes are decoded once at startup (see [`crate::audio::Audio`]);
-/// this is just the static description.
+/// One row of the sound table: a sound's clip files + default playback
+/// parameters. Clips are read through the asset roots (so a mod pack can
+/// override one by shipping the same relative path) and decoded once at
+/// startup (see [`crate::audio::Audio`]); this is just the static description.
 pub(crate) struct SoundDef {
     pub sound: Sound,
-    /// One or more interchangeable source clips (OGG/Vorbis), embedded at compile
-    /// time (like every other asset, e.g. `crate::mob::loot`). A random variant is
-    /// chosen each play — on top of the per-play pitch jitter — so a repeated sound
-    /// never sounds identical. Order is irrelevant; add or remove clips freely.
-    pub variants: &'static [&'static [u8]],
+    /// One or more interchangeable source clips (OGG/Vorbis), as asset-relative
+    /// paths (`sounds/...`) resolved through [`crate::assets`] at startup. A random
+    /// variant is chosen each play — on top of the per-play pitch jitter — so a
+    /// repeated sound never sounds identical. Order is irrelevant; add or remove
+    /// clips freely.
+    pub variants: &'static [&'static str],
     /// Base linear gain on top of the category/master gain (`1.0` = unit).
     pub gain: f32,
     /// Per-play pitch jitter as a ± fraction of unit playback speed: each play picks
@@ -85,18 +87,9 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     SoundDef {
         sound: Sound::WoodPunch,
         variants: &[
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/wood_punch_1.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/wood_punch_2.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/wood_punch_3.ogg"
-            )),
+            "sounds/wood_punch_1.ogg",
+            "sounds/wood_punch_2.ogg",
+            "sounds/wood_punch_3.ogg",
         ],
         gain: 1.0,
         // ±12% speed: a clearly audible but natural variation, in the Minecraft range.
@@ -105,70 +98,49 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     },
     SoundDef {
         sound: Sound::WoodPlace,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/wood_place.ogg"
-        ))],
+        variants: &["sounds/wood_place.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::WoodBreak,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/wood_break.ogg"
-        ))],
+        variants: &["sounds/wood_break.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::ItemPickup,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/item_pickup.ogg"
-        ))],
+        variants: &["sounds/item_pickup.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Ui,
     },
     SoundDef {
         sound: Sound::DoorOpen,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/door_open.ogg"
-        ))],
+        variants: &["sounds/door_open.ogg"],
         gain: 1.0,
         pitch_variation: 0.08,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::DoorClose,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/door_close.ogg"
-        ))],
+        variants: &["sounds/door_close.ogg"],
         gain: 1.0,
         pitch_variation: 0.08,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::ChestOpen,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/chest_open.ogg"
-        ))],
+        variants: &["sounds/chest_open.ogg"],
         gain: 1.0,
         pitch_variation: 0.08,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::ChestClose,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/chest_close.ogg"
-        ))],
+        variants: &["sounds/chest_close.ogg"],
         gain: 1.0,
         pitch_variation: 0.08,
         category: SoundCategory::Block,
@@ -176,18 +148,9 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     SoundDef {
         sound: Sound::StonePunch,
         variants: &[
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/stone_punch_1.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/stone_punch_2.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/stone_punch_3.ogg"
-            )),
+            "sounds/stone_punch_1.ogg",
+            "sounds/stone_punch_2.ogg",
+            "sounds/stone_punch_3.ogg",
         ],
         gain: 1.0,
         pitch_variation: 0.12,
@@ -195,20 +158,14 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     },
     SoundDef {
         sound: Sound::StoneBreak,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/stone_break.ogg"
-        ))],
+        variants: &["sounds/stone_break.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::StonePlace,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/stone_place.ogg"
-        ))],
+        variants: &["sounds/stone_place.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,
@@ -216,18 +173,9 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     SoundDef {
         sound: Sound::DirtPunch,
         variants: &[
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/dirt_punch_1.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/dirt_punch_2.ogg"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/sounds/dirt_punch_3.ogg"
-            )),
+            "sounds/dirt_punch_1.ogg",
+            "sounds/dirt_punch_2.ogg",
+            "sounds/dirt_punch_3.ogg",
         ],
         gain: 1.0,
         pitch_variation: 0.12,
@@ -235,20 +183,14 @@ pub(crate) static SOUND_DEFS: &[SoundDef] = &[
     },
     SoundDef {
         sound: Sound::DirtBreak,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/dirt_break.ogg"
-        ))],
+        variants: &["sounds/dirt_break.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,
     },
     SoundDef {
         sound: Sound::DirtPlace,
-        variants: &[include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/sounds/dirt_place.ogg"
-        ))],
+        variants: &["sounds/dirt_place.ogg"],
         gain: 1.0,
         pitch_variation: 0.12,
         category: SoundCategory::Block,

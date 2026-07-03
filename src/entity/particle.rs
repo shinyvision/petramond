@@ -21,31 +21,22 @@ use super::hash01;
 /// White (no tint): the multiply identity for a fleck cut from an untinted tile.
 const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 
-/// Foliage tint for a fleck cut from `tile`, mirroring the chunk mesher's tile
-/// classification so a fleck of grass-top / short-grass / fern reads green and a
-/// fleck of any `*Leaves` reads foliage-green; every other tile (dirt, stone, the
-/// pre-baked grass-block *side*, logs, ...) stays untinted (white = no change
-/// under the particle shader's multiply).
+/// Foliage tint for a fleck cut from `tile`, mirroring the out-of-world tile
+/// classification (the atlas manifest's `icon_tint`, defaulting to its in-world
+/// `tint`) so a fleck of grass-top / short-grass / fern reads green and a fleck
+/// of any leaf tile reads foliage-green; every other tile (dirt, stone, the
+/// pre-baked grass-block *side*, logs, water, ...) stays untinted (white = no
+/// change under the particle shader's multiply).
 ///
-/// Render-agnostic on purpose: this is the tiny duplicate of the render-side
-/// `foliage_tint::face_material` classification, kept here so `entity` never
-/// imports `crate::render` (see the module-level rule). It uses only the
-/// low-level [`Tile`] / [`Biome`] data, and — like the icon/held-item path — picks
-/// the fixed temperate Plains colours since a fleck has no biome context.
+/// Render-agnostic on purpose: it uses only the low-level [`Tile`] / [`Biome`]
+/// data — never `crate::render` (see the module-level rule) — and, like the
+/// icon/held-item path, picks the fixed temperate Plains colours since a fleck
+/// has no biome context.
 #[inline]
 fn tile_tint(tile: Tile) -> [f32; 3] {
-    match tile {
-        Tile::GrassTop | Tile::ShortGrass | Tile::Fern => Biome::Plains.grass_color(),
-        Tile::OakLeaves
-        | Tile::AcaciaLeaves
-        | Tile::BirchLeaves
-        | Tile::DarkOakLeaves
-        | Tile::JungleLeaves
-        | Tile::MangroveLeaves
-        | Tile::SpruceLeaves
-        | Tile::RedwoodLeaves
-        | Tile::CherryLeaves
-        | Tile::AzaleaLeaves => Biome::Plains.foliage_color(),
+    match tile.icon_tint() {
+        Some(atlas::TileTint::Grass) => Biome::Plains.grass_color(),
+        Some(atlas::TileTint::Foliage) => Biome::Plains.foliage_color(),
         _ => NO_TINT,
     }
 }
@@ -509,7 +500,7 @@ fn model_fleck(
         warm,
         // `tile` is unused for a model fleck (the model atlas is sampled); a placeholder
         // keeps the field populated.
-        tile: Tile::ALL[0],
+        tile: Tile::from_name("grass_top").unwrap(),
         model: Some(kind),
         uv_min,
         uv_size,
@@ -537,7 +528,7 @@ mod tests {
 
     #[test]
     fn atlas_uv_maps_into_the_tile_rect() {
-        let tile = Tile::ALL[1]; // any non-trivial tile
+        let tile = Tile::from_name("stone").unwrap(); // any non-trivial tile
         let [u0, v0, u1, v1] = atlas::tile_uv(tile);
         let p = Particle {
             pos: Vec3::ZERO,
@@ -571,7 +562,7 @@ mod tests {
             vel: Vec3::ZERO,
             skylight: 63,
             warm: 0,
-            tile: Tile::ALL[0],
+            tile: Tile::from_name("grass_top").unwrap(),
             model: None,
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
@@ -600,7 +591,7 @@ mod tests {
             vel: Vec3::ZERO,
             skylight: 63,
             warm: 0,
-            tile: Tile::ALL[0],
+            tile: Tile::from_name("grass_top").unwrap(),
             model: None,
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
@@ -669,7 +660,7 @@ mod tests {
             vel,
             skylight: 63,
             warm: 0,
-            tile: Tile::ALL[0],
+            tile: Tile::from_name("grass_top").unwrap(),
             model: None,
             uv_min: [0.0; 2],
             uv_size: 0.1,
@@ -709,14 +700,14 @@ mod tests {
         sys.spawn_mining(IVec3::new(0, 64, 0), IVec3::Y, Block::Grass);
         assert!(!sys.is_empty());
         for p in sys.particles() {
-            assert_eq!(p.tile, Tile::GrassTop);
+            assert_eq!(p.tile, Tile::from_name("grass_top").unwrap());
             assert_eq!(p.tint, grass, "grass-top dust must be tinted green");
         }
         // Mining a grass-block SIDE samples the pre-baked GrassSide tile -> no tint.
         let mut side = ParticleSystem::new();
         side.spawn_mining(IVec3::new(0, 64, 0), IVec3::new(1, 0, 0), Block::Grass);
         for p in side.particles() {
-            assert_eq!(p.tile, Tile::GrassSide);
+            assert_eq!(p.tile, Tile::from_name("grass_side").unwrap());
             assert_eq!(p.tint, NO_TINT, "grass-block side dust stays untinted");
         }
         // A plain non-foliage block is never tinted on any face.

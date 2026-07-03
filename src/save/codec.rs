@@ -174,7 +174,7 @@ pub(crate) fn put_f32(buf: &mut Vec<u8>, v: f32) {
 pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
     match slot {
         Some(s) if !s.is_empty() => {
-            put_u8(buf, s.item.id());
+            put_u8(buf, super::palette::active().item_to_disk(s.item.id()));
             put_u8(buf, s.count);
         }
         _ => {
@@ -192,6 +192,7 @@ pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
     if id == 0 || count == 0 {
         Some(None)
     } else {
+        let id = super::palette::active().item_from_disk(id);
         Some(Some(ItemStack::new(ItemType::from_id(id), count)))
     }
 }
@@ -294,7 +295,10 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
-    payload.extend_from_slice(&s.blocks);
+    // Block ids are stored as the SAVE's ids (see `super::palette`), so a
+    // future registry renumbering can't corrupt old worlds.
+    let pal = super::palette::active();
+    payload.extend(s.blocks.iter().map(|&b| pal.block_to_disk(b)));
     if let Some(w) = &s.water {
         payload.extend_from_slice(w);
     }
@@ -361,7 +365,12 @@ pub fn decode_section(
     }
     let flags = r.u8()?;
     let flags2 = r.u8()?;
-    let blocks = r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice();
+    let pal = super::palette::active();
+    let blocks: Box<[u8]> = r
+        .bytes(SECTION_VOLUME)?
+        .iter()
+        .map(|&b| pal.block_from_disk(b))
+        .collect();
     let water = if flags & FLAG_HAS_WATER != 0 {
         Some(r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice())
     } else {

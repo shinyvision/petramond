@@ -280,7 +280,8 @@ impl CompiledAsset for BlockModel {
 ///
 /// [`RenderShape::Model`]: crate::block::RenderShape::Model
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BlockModelKind {
     FurnitureWorkbench = 0,
     Bucket = 1,
@@ -339,12 +340,13 @@ impl PlacementOrientation {
     }
 }
 
-/// The data row for one bbmodel block: its cache key, embedded source, cell footprint,
-/// and collision policy. The geometry/texture come from `model_src`; this row carries
-/// only what the source can't express.
+/// The data row for one bbmodel block: its cache key, source file, cell footprint,
+/// and collision policy. The geometry/texture come from `model_file` (read through
+/// the asset roots, so a mod pack can override the art); this row carries only what
+/// the source can't express.
 pub struct BlockModelDef {
     pub key: &'static str,
-    pub model_src: &'static str,
+    pub model_file: &'static str,
     /// The block's footprint in CELLS `(sx, sy, sz)` — the model is fitted into this
     /// cell box and split across it. `(1, 1, 1)` is an ordinary single-cell block.
     pub cells: [u8; 3],
@@ -358,10 +360,7 @@ pub struct BlockModelDef {
 pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
     BlockModelDef {
         key: "furniture_workbench",
-        model_src: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/blocks/furniture_workbench.bbmodel"
-        )),
+        model_file: "models/blocks/furniture_workbench.bbmodel",
         // Authored 2 wide (X), 2 tall (Y), 1 long (Z).
         cells: [2, 2, 1],
         collision: CollisionSpec::FromModel,
@@ -369,30 +368,21 @@ pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
     },
     BlockModelDef {
         key: "bucket",
-        model_src: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/items/bucket.bbmodel"
-        )),
+        model_file: "models/items/bucket.bbmodel",
         cells: [1, 1, 1],
         collision: CollisionSpec::FromModel,
         orientation: PlacementOrientation::LeftToRight,
     },
     BlockModelDef {
         key: "water_bucket",
-        model_src: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/items/water_bucket.bbmodel"
-        )),
+        model_file: "models/items/water_bucket.bbmodel",
         cells: [1, 1, 1],
         collision: CollisionSpec::FromModel,
         orientation: PlacementOrientation::LeftToRight,
     },
     BlockModelDef {
         key: "bed_frame",
-        model_src: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/blocks/bed_frame.bbmodel"
-        )),
+        model_file: "models/blocks/bed_frame.bbmodel",
         // Authored 2 long (X), 1 tall (Y, headboard posts), 1 wide (Z).
         cells: [2, 1, 1],
         collision: CollisionSpec::FromModel,
@@ -400,10 +390,7 @@ pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
     },
     BlockModelDef {
         key: "bed",
-        model_src: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/blocks/bed.bbmodel"
-        )),
+        model_file: "models/blocks/bed.bbmodel",
         cells: [2, 1, 1],
         collision: CollisionSpec::FromModel,
         orientation: PlacementOrientation::FrontToBack,
@@ -423,11 +410,14 @@ static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
     ALL.iter()
         .map(|&k| {
             let d = def(k);
-            crate::asset_cache::load_or_compile::<BlockModel>(d.key, d.model_src.as_bytes())
-                .unwrap_or_else(|e| {
-                    log::error!("block model precache failed for {k:?}: {e}");
-                    BlockModel::empty()
-                })
+            let Some((src, _)) = crate::assets::read_bytes(d.model_file) else {
+                log::error!("block model '{}' not found in the asset roots", d.model_file);
+                return BlockModel::empty();
+            };
+            crate::asset_cache::load_or_compile::<BlockModel>(d.key, &src).unwrap_or_else(|e| {
+                log::error!("block model precache failed for {k:?}: {e}");
+                BlockModel::empty()
+            })
         })
         .collect()
 });
@@ -1532,13 +1522,21 @@ fn clip_to_cell(b: &Aabb, offset: Vec3) -> Option<Aabb> {
 
 #[cfg(test)]
 mod tests {
+    /// Test helper: a kind's .bbmodel source read through the asset roots.
+    fn model_bytes(kind: BlockModelKind) -> Vec<u8> {
+        let file = def(kind).model_file;
+        crate::assets::read_bytes(file)
+            .unwrap_or_else(|| panic!("bbmodel '{file}' not found"))
+            .0
+    }
+
     use super::*;
 
     const WB: BlockModelKind = BlockModelKind::FurnitureWorkbench;
 
     #[test]
     fn workbench_compiles_with_geometry_and_texture() {
-        let m = BlockModel::compile(def(WB).model_src.as_bytes()).expect("compiles");
+        let m = BlockModel::compile(&model_bytes(WB)).expect("compiles");
         assert!(!m.cubes.is_empty());
         assert_eq!((m.tex_w, m.tex_h), (128, 128));
         assert_eq!(m.texture_rgba.len(), 128 * 128 * 4);
@@ -1549,7 +1547,7 @@ mod tests {
         // A bad bbmodel export degrades to an EMPTY model at runtime (log +
         // invisible), so a compile failure must be caught here instead.
         for &kind in ALL {
-            let m = BlockModel::compile(def(kind).model_src.as_bytes())
+            let m = BlockModel::compile(&model_bytes(kind))
                 .unwrap_or_else(|e| panic!("{kind:?} fails to compile: {e}"));
             assert!(!m.cubes.is_empty(), "{kind:?} has no geometry");
             assert_eq!(
@@ -1799,7 +1797,7 @@ mod tests {
     fn display_poses_are_parsed_and_cached() {
         // The workbench authors a full `display` block; the compile must capture the gui +
         // first-person poses (so the icon/held item pose as designed) rather than identity.
-        let m = BlockModel::compile(def(WB).model_src.as_bytes()).expect("compiles");
+        let m = BlockModel::compile(&model_bytes(WB)).expect("compiles");
         let gui = m.display.gui;
         let fp = m.display.firstperson_righthand;
         // Non-identity rotations were authored for both contexts.

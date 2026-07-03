@@ -7,8 +7,8 @@
 //! `None` and they render as flat sprites. Both enums stay append-only.
 //!
 //! Per-item static data (`key`, `name`, `max_stack_size`) lives in an id-ordered
-//! table (`data::ITEM_DEFS`), mirroring `block/data.rs`. The `key` is the stable
-//! recipe identity; `name` is display-only. Behaviour derivable from the
+//! table loaded from `assets/items.json`, mirroring `block/data.rs`. The `key` is
+//! the stable recipe identity; `name` is display-only. Behaviour derivable from the
 //! underlying `Block` (`render_kind` for block-items) is computed via `Block`;
 //! item-only sprites + pickaxe tiers are small matches, not table columns.
 
@@ -17,12 +17,14 @@ use crate::block::{Block, RenderShape};
 
 mod data;
 mod definition;
+mod load;
 
 /// One variant per non-`Air` block-item, in the SAME order and with the SAME
 /// names as [`Block`] (which also starts at `Air = 0`). Append-only: never
 /// reorder or remove variants — ids are persisted-adjacent to block ids.
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ItemType {
     Air = 0,
     Grass,
@@ -249,7 +251,8 @@ impl DropSpec {
 /// item whether it carries the tag (see [`ItemType::has_tag`]). Keeping membership
 /// in item data (not the recipe loader) means a new item joins a group by editing
 /// its data row, never any recipe code.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ItemTag {
     /// Any wood-type planks (mirrors Minecraft's `#planks`).
     Planks,
@@ -377,7 +380,7 @@ pub enum ItemRenderKind {
 /// before it's seated in the hand (see [`crate::render`]'s `held_sprite`). A long
 /// tool is laid diagonally like a swung handle (`roll != 0`); a small item stands
 /// upright (`roll == 0`). Per-item so each item can declare how it's held.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HeldPose {
     pub pitch: f32,
     pub yaw: f32,
@@ -617,7 +620,7 @@ impl ItemType {
                 // A torch isn't a cube; it shows the full torch sprite as a flat
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
                 // the cropped per-face tiles the in-world pole uses.
-                RenderShape::Torch => ItemRenderKind::Sprite(Tile::Torch),
+                RenderShape::Torch => ItemRenderKind::Sprite(self.item_sprite()),
                 // A bbmodel block renders its actual baked model everywhere it's shown.
                 RenderShape::Model(kind) => ItemRenderKind::Model(kind),
                 // A door shows its flat door icon (the `_door_item` art), not the
@@ -642,49 +645,16 @@ impl ItemType {
     }
 
     /// The flat atlas sprite for an item drawn as a billboard — item-only items
-    /// (tools + raw drops) and the doors (which place a block but show a flat icon,
-    /// like the torch). Cube/cross/model block-items get their icon from the block
-    /// and never call this.
+    /// (tools + raw drops) and the doors/torch (which place a block but show a
+    /// flat icon). Read from the item's data row (`sprite` in `items.json`).
+    /// Cube/cross/model block-items get their icon from the block and never call
+    /// this; the stick fallback mirrors the old defensive default for a row that
+    /// should carry a sprite but doesn't.
     #[inline]
     fn item_sprite(self) -> Tile {
-        use ItemType::*;
-        match self {
-            OakDoor => Tile::OakDoorItem,
-            SpruceDoor => Tile::SpruceDoorItem,
-            BirchDoor => Tile::BirchDoorItem,
-            JungleDoor => Tile::JungleDoorItem,
-            AcaciaDoor => Tile::AcaciaDoorItem,
-            DarkOakDoor => Tile::DarkOakDoorItem,
-            CherryDoor => Tile::CherryDoorItem,
-            MangroveDoor => Tile::MangroveDoorItem,
-            RedwoodDoor => Tile::RedwoodDoorItem,
-            Stick => Tile::Stick,
-            WoodenPickaxe => Tile::WoodenPickaxe,
-            StonePickaxe => Tile::StonePickaxe,
-            IronPickaxe => Tile::IronPickaxe,
-            DiamondPickaxe => Tile::DiamondPickaxe,
-            WoodenAxe => Tile::WoodenAxe,
-            StoneAxe => Tile::StoneAxe,
-            IronAxe => Tile::IronAxe,
-            DiamondAxe => Tile::DiamondAxe,
-            WoodenShovel => Tile::WoodenShovel,
-            StoneShovel => Tile::StoneShovel,
-            IronShovel => Tile::IronShovel,
-            DiamondShovel => Tile::DiamondShovel,
-            RawIron => Tile::RawIron,
-            RawCopper => Tile::RawCopper,
-            RawGold => Tile::RawGold,
-            Coal => Tile::Coal,
-            IronIngot => Tile::IronIngot,
-            CopperIngot => Tile::CopperIngot,
-            GoldIngot => Tile::GoldIngot,
-            Diamond => Tile::Diamond,
-            LapisLazuli => Tile::LapisLazuli,
-            Shears => Tile::Shears,
-            Wool => Tile::Wool,
-            // Block-items (incl. Furnace) resolve via `as_block`; never reach here.
-            _ => Tile::Stick,
-        }
+        self.def()
+            .sprite
+            .unwrap_or_else(|| Tile::from_name("stick").expect("atlas has a 'stick' tile"))
     }
 
     /// The bbmodel an ITEM-ONLY item renders as — held, dropped, and as its slot
@@ -980,7 +950,7 @@ mod tests {
                 RenderShape::Torch => {
                     assert_eq!(
                         item.render_kind(),
-                        ItemRenderKind::Sprite(Tile::Torch),
+                        ItemRenderKind::Sprite(Tile::named("torch")),
                         "{block:?}"
                     );
                 }

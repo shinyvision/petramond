@@ -29,12 +29,14 @@
 use super::{gui_scale, GuiKind, HoverFit, HoverFitJson, MenuSlot, Role, SlotRect};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// Where baked GUIs live. Absolute (baked at compile from the crate root) so the
-/// game finds them no matter the CWD; the gui-builder bakes into this folder.
-const BAKED_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/textures/gui/baked");
+/// Where baked GUIs live, relative to the asset roots (the gui-builder bakes
+/// into the dev tree's copy). Resolved through [`crate::assets`], so a shipped
+/// install finds them beside the executable and a mod pack can shadow one by
+/// baking a manifest of the same file name.
+const BAKED_DIR: &str = "textures/gui/baked";
 
 /// The closed-HUD hotbar's gap from the screen bottom (logical px), scaled by
 /// `gui_scale`. Matches the classic 1px lift so the held-item hand clears it.
@@ -52,16 +54,32 @@ struct Loaded {
 }
 
 fn load_baked() -> Vec<Loaded> {
-    let dir = Path::new(BAKED_DIR);
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return out; // no baked dir => no GUIs at all.
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+    // Overlay the baked dirs (base + packs) by manifest FILE NAME: the
+    // highest-priority copy of a name wins, new names add. Each manifest's art
+    // resolves beside the manifest itself, so a pack GUI is self-contained.
+    let mut manifests: Vec<(String, PathBuf, PathBuf)> = Vec::new(); // (file name, json, dir)
+    for dir in crate::assets::layer_dirs(BAKED_DIR) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            match manifests.iter_mut().find(|(n, _, _)| *n == name) {
+                Some(slot) => *slot = (name, path, dir.clone()),
+                None => manifests.push((name, path, dir.clone())),
+            }
         }
+    }
+    // Deterministic registry order regardless of directory iteration order.
+    manifests.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = Vec::new();
+    for (_, path, dir) in manifests {
+        let dir = dir.as_path();
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };

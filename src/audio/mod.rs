@@ -95,14 +95,20 @@ impl Audio {
             .map(|def| {
                 def.variants
                     .iter()
-                    .filter_map(|&bytes| match decode(bytes) {
-                        Ok(d) => Some(d),
-                        Err(e) => {
-                            log::warn!(
-                                "sound {:?} variant failed to decode (skipped): {e}",
-                                def.sound
-                            );
-                            None
+                    .filter_map(|&rel| {
+                        let Some((bytes, _)) = crate::assets::read_bytes(rel) else {
+                            log::warn!("sound {:?} clip '{rel}' not found (skipped)", def.sound);
+                            return None;
+                        };
+                        match decode(bytes) {
+                            Ok(d) => Some(d),
+                            Err(e) => {
+                                log::warn!(
+                                    "sound {:?} variant failed to decode (skipped): {e}",
+                                    def.sound
+                                );
+                                None
+                            }
                         }
                     })
                     .collect()
@@ -218,7 +224,7 @@ fn category_gain(category: SoundCategory) -> f32 {
 
 /// Decode OGG/Vorbis `bytes` into an in-memory PCM buffer (f32 samples + format).
 /// Device-free and split out so it is unit-testable without an audio device.
-fn decode(bytes: &'static [u8]) -> Result<DecodedSound, String> {
+fn decode(bytes: Vec<u8>) -> Result<DecodedSound, String> {
     let decoder =
         rodio::Decoder::try_from(Cursor::new(bytes)).map_err(|e| format!("decode init: {e}"))?;
     let channels = decoder.channels();
@@ -267,8 +273,9 @@ mod tests {
         // A variant decodes to real PCM with no audio device involved — proving the
         // embed + decode path. Format isn't pinned (freely-edited asset data): we
         // only require a sane, playable buffer with a real duration.
-        let d = decode(SOUND_DEFS[Sound::WoodPunch as usize].variants[0])
-            .expect("wood_punch variant should decode");
+        let rel = SOUND_DEFS[Sound::WoodPunch as usize].variants[0];
+        let bytes = crate::assets::read_bytes(rel).expect("clip file exists").0;
+        let d = decode(bytes).expect("wood_punch variant should decode");
         assert!(!d.samples.is_empty(), "decoded to some samples");
         assert!(d.sample_rate.get() > 0);
         assert!(d.channels.get() >= 1);

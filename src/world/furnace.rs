@@ -122,7 +122,7 @@ mod tests {
     fn count_tile(mesh: &ChunkMesh, tile: Tile) -> usize {
         mesh.opaque
             .iter()
-            .filter(|v| v.packed & 0xFF == tile as u32)
+            .filter(|v| v.packed & 0xFF == tile.index() as u32)
             .count()
     }
 
@@ -151,8 +151,8 @@ mod tests {
         world.insert_section_for_test(spos, section);
         world.mesh_section_blocking_for_test(spos);
         let mesh = world.meshes.get(&spos).expect("initial mesh built");
-        assert_eq!(count_tile(mesh, Tile::FurnaceFront), 4);
-        assert_eq!(count_tile(mesh, Tile::FurnaceFrontOn), 0);
+        assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 4);
+        assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 0);
 
         world.game_tick(&furnace_recipes());
         // A lit furnace now emits block light, so the lit-flip re-dirties this section's
@@ -163,8 +163,8 @@ mod tests {
         world.mesh_section_blocking_for_test(spos);
 
         let mesh = world.meshes.get(&spos).expect("relit mesh rebuilt");
-        assert_eq!(count_tile(mesh, Tile::FurnaceFront), 0);
-        assert_eq!(count_tile(mesh, Tile::FurnaceFrontOn), 4);
+        assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 0);
+        assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 4);
     }
 
     #[test]

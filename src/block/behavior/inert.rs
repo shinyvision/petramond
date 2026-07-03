@@ -6,7 +6,11 @@ use super::BlockBehavior;
 /// instance ([`INERT`]) serves every ordinary block.
 pub struct Inert;
 
-impl BlockBehavior for Inert {}
+impl BlockBehavior for Inert {
+    fn key(&self) -> &'static str {
+        "inert"
+    }
+}
 
 /// The shared inert singleton a row points at (`behavior: &behavior::INERT`) when
 /// the block does nothing on its own — the overwhelming majority of blocks.

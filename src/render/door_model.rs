@@ -146,9 +146,9 @@ mod tests {
             pos: Vec3::new(10.0, 64.0, -5.0),
             facing,
             open01,
-            bottom_tile: Tile::OakDoorBottom,
-            top_tile: Tile::OakDoorTop,
-            side_tile: Tile::OakPlanks,
+            bottom_tile: Tile::named("oak_door_bottom"),
+            top_tile: Tile::named("oak_door_top"),
+            side_tile: Tile::named("oak_planks"),
             skylight: super::super::lighting::FULL_SKYLIGHT,
         }
     }

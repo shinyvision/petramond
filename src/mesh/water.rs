@@ -73,11 +73,11 @@ impl WaterSurface {
 
         // Flow vector from the surface gradient: shared with entity physics so the
         // current push matches the texture heading.
-        let mut top_tile = Tile::WaterStill;
+        let mut top_tile = crate::atlas::engine().water_still;
         let mut top_angle = 0u32;
         let flow = crate::world::water::surface_flow_dir(wx, wy, wz, block_at, fluid_at);
         if flow.length_squared() > 0.0 {
-            top_tile = Tile::WaterFlow;
+            top_tile = crate::atlas::engine().water_flow;
             // Continuous flow heading: the shader rotates the flow tile by this
             // angle so a cell streaming into a corner points diagonally, not snapped
             // to a cardinal. atan2(x, z) keeps +Z=0/-X=-90/+X=+90/-Z=180 so the

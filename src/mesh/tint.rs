@@ -5,7 +5,7 @@
 //! (the same window Minecraft uses). The blend is precomputed once per section in
 //! [`biome_window`]; the per-face loop then just looks the column up.
 
-use crate::atlas::Tile;
+use crate::atlas::TileTint;
 use crate::biome::Biome;
 use crate::chunk::{CHUNK_SX, CHUNK_SZ};
 
@@ -19,37 +19,6 @@ const SUM_X: usize = BIOME_PAD_X + 1;
 const SUM_Z: usize = BIOME_PAD_Z + 1;
 const SUM_CHANNELS: usize = 9;
 const INV_BLEND_AREA: f32 = 1.0 / (BLEND_DIAMETER * BLEND_DIAMETER) as f32;
-
-/// Which biome-colour a tile tints with, or `None` for an untinted tile.
-#[derive(Copy, Clone)]
-pub(super) enum TintKind {
-    Grass,
-    Foliage,
-    Water,
-}
-
-/// Classify a tile's biome-tint kind. Grass tops / short grass / fern take the
-/// grass colour; all leaves take the foliage colour; water takes the water colour;
-/// everything else is untinted.
-pub(super) fn tile_tint(tile: Tile) -> Option<TintKind> {
-    match tile {
-        Tile::GrassTop => Some(TintKind::Grass),
-        Tile::ShortGrass => Some(TintKind::Grass),
-        Tile::Fern => Some(TintKind::Grass),
-        Tile::Water => Some(TintKind::Water),
-        Tile::WaterStill => Some(TintKind::Water),
-        Tile::WaterFlow => Some(TintKind::Water),
-        Tile::OakLeaves => Some(TintKind::Foliage),
-        Tile::AcaciaLeaves => Some(TintKind::Foliage),
-        Tile::BirchLeaves => Some(TintKind::Foliage),
-        Tile::DarkOakLeaves => Some(TintKind::Foliage),
-        Tile::JungleLeaves => Some(TintKind::Foliage),
-        Tile::MangroveLeaves => Some(TintKind::Foliage),
-        Tile::SpruceLeaves => Some(TintKind::Foliage),
-        Tile::RedwoodLeaves => Some(TintKind::Foliage),
-        _ => None,
-    }
-}
 
 /// The untinted (white) tint used for tiles with no biome colour.
 pub(super) const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
@@ -72,14 +41,16 @@ impl BiomeTints {
         }
     }
 
-    /// The blended tint for a tile at column `ci`, by its [`TintKind`] (untinted
-    /// tiles get [`NO_TINT`]).
+    /// The blended tint for a tile at column `ci`, by its
+    /// [`world_tint`](crate::atlas::Tile::world_tint) class (untinted tiles get
+    /// [`NO_TINT`]). The classification is atlas-manifest data, so a modded
+    /// texture joins a tint class by declaring it — never a code edit here.
     #[inline]
-    pub(super) fn tile(&self, kind: Option<TintKind>, ci: usize) -> [f32; 3] {
+    pub(super) fn tile(&self, kind: Option<TileTint>, ci: usize) -> [f32; 3] {
         match kind {
-            Some(TintKind::Grass) => self.grass[ci],
-            Some(TintKind::Foliage) => self.foliage[ci],
-            Some(TintKind::Water) => self.water[ci],
+            Some(TileTint::Grass) => self.grass[ci],
+            Some(TileTint::Foliage) => self.foliage[ci],
+            Some(TileTint::Water) => self.water[ci],
             None => NO_TINT,
         }
     }

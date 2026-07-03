@@ -56,7 +56,7 @@ pub(super) fn emit_torch(
                 pos: [wp.x, wp.y, wp.z],
                 tint,
                 // Flat-lit (shade index 0, AO 3) like a cross-plant: no overlay.
-                packed: pack_vertex(tile as u32, corner as u32, 0, 0, false, 3, light6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, light6),
             });
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

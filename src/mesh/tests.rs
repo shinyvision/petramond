@@ -106,8 +106,8 @@ fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
 fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     use crate::atlas::Tile;
 
-    let still_id = Tile::WaterStill as u32;
-    let flow_id = Tile::WaterFlow as u32;
+    let still_id = Tile::named("water_still").index() as u32;
+    let flow_id = Tile::named("water_flow").index() as u32;
 
     // A 5x5 pool of sources on a stone floor at y=64, plus one explicitly
     // flowing cell (falloff 4) at the east rim that opens onto air.
@@ -1044,25 +1044,25 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     let count = |mesh: &ChunkMesh, tile: Tile| {
         mesh.opaque
             .iter()
-            .filter(|v| v.packed & 0xFF == tile as u32)
+            .filter(|v| v.packed & 0xFF == tile.index() as u32)
             .count()
     };
 
     // Unlit: 6 faces × 4 verts — 1 front, 3 sides, 2 top/bottom.
     let m = build_mesh(&chunk, air, biome0, light);
     assert_eq!(
-        count(&m, Tile::FurnaceFront),
+        count(&m, Tile::named("furnace_front")),
         4,
         "front on exactly the facing face"
     );
     assert_eq!(
-        count(&m, Tile::FurnaceSide),
+        count(&m, Tile::named("furnace_side")),
         12,
         "side on the other three faces"
     );
-    assert_eq!(count(&m, Tile::FurnaceTop), 8, "top + bottom");
+    assert_eq!(count(&m, Tile::named("furnace_top")), 8, "top + bottom");
     assert_eq!(
-        count(&m, Tile::FurnaceFrontOn),
+        count(&m, Tile::named("furnace_front_on")),
         0,
         "no lit front while unlit"
     );
@@ -1072,12 +1072,12 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     chunk.dirty = true;
     let lit = build_mesh(&chunk, air, biome0, light);
     assert_eq!(
-        count(&lit, Tile::FurnaceFrontOn),
+        count(&lit, Tile::named("furnace_front_on")),
         4,
         "lit front on the facing face only"
     );
-    assert_eq!(count(&lit, Tile::FurnaceFront), 0);
-    assert_eq!(count(&lit, Tile::FurnaceSide), 12, "sides never glow");
+    assert_eq!(count(&lit, Tile::named("furnace_front")), 0);
+    assert_eq!(count(&lit, Tile::named("furnace_side")), 12, "sides never glow");
 }
 
 /// Greedy meshing collapses a flat, uniformly-lit region of identical opaque faces into a

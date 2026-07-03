@@ -23,6 +23,10 @@ const SPREAD_RADIUS: i32 = 2;
 pub struct Dirt;
 
 impl BlockBehavior for Dirt {
+    fn key(&self) -> &'static str {
+        "dirt"
+    }
+
     fn has_random_tick(&self) -> bool {
         true
     }

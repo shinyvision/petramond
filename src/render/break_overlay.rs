@@ -2,7 +2,7 @@
 //!
 //! From a [`BreakOverlayView`] (target block + crack stage 0..9), builds the six
 //! faces of that block's **exact** unit cube, each textured with the matching
-//! `Tile::DestroyStage{stage}`. The cube is built at the block's integer world
+//! the stage's `destroy_stage_{stage}` tile. The cube is built at the block's integer world
 //! coordinates with no inflation, so every face is *coincident* with the chunk
 //! mesh's face for that block — same `quad_for` corners, same world positions.
 //! The dedicated `break_overlay.wgsl` pipeline draws it depth `LessEqual` /
@@ -33,10 +33,7 @@ const MIN_CRACK_EXTENT: f32 = 1.0;
 /// The destroy tile for crack `stage` (clamped 0..=9), as a [`Tile`].
 #[inline]
 fn destroy_tile(stage: u8) -> Tile {
-    // `Tile::DestroyStage0..9` are contiguous and id-ordered, so the tile id is
-    // `DestroyStage0 + stage`; `Tile::ALL` is id-ordered, so index it directly.
-    let idx = Tile::DestroyStage0 as usize + stage.min(9) as usize;
-    Tile::ALL[idx]
+    crate::atlas::engine().destroy_stages[stage.min(9) as usize]
 }
 
 /// Build the crack overlay cube for `view` into `verts` / `indices` (cleared
@@ -149,10 +146,10 @@ mod tests {
 
     #[test]
     fn destroy_tile_maps_stage_and_clamps() {
-        assert_eq!(destroy_tile(0), Tile::DestroyStage0);
-        assert_eq!(destroy_tile(9), Tile::DestroyStage9);
+        assert_eq!(destroy_tile(0), Tile::from_name("destroy_stage_0").unwrap());
+        assert_eq!(destroy_tile(9), Tile::from_name("destroy_stage_9").unwrap());
         // Out-of-range stages clamp to the last stage.
-        assert_eq!(destroy_tile(42), Tile::DestroyStage9);
+        assert_eq!(destroy_tile(42), Tile::from_name("destroy_stage_9").unwrap());
     }
 
     #[test]
@@ -171,7 +168,7 @@ mod tests {
         assert_eq!(v.len(), 24);
         assert_eq!(n, 36);
         // Every face uses DestroyStage4 (tile id in bits 0..8 of packed).
-        let want = Tile::DestroyStage4 as u8;
+        let want = Tile::from_name("destroy_stage_4").unwrap().index() as u8;
         for vert in &v {
             assert_eq!((vert.packed & 0xFF) as u8, want);
         }
