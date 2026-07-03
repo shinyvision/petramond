@@ -39,16 +39,18 @@ pub(in crate::world) struct LightBakeResult {
 }
 
 impl LightBakeQueue {
-    pub fn new() -> Self {
+    pub fn new(pool: std::sync::Arc<crate::worker::JobPool>) -> Self {
         Self {
-            backend: Backend::new(),
+            backend: Backend::new(pool),
             pending: HashMap::new(),
             next_id: 1,
         }
     }
 
+    /// `key` is the shared-pool distance priority (lower = sooner).
     pub fn request(
         &mut self,
+        key: i64,
         pos: SectionPos,
         sections: &HashMap<SectionPos, Arc<Section>>,
         columns: &HashMap<ChunkPos, Column>,
@@ -75,7 +77,7 @@ impl LightBakeQueue {
             .then(|| neighborhood::gather(pos, sections));
 
         self.pending.insert(pos, PendingLightBake { id });
-        self.backend.submit(LightBakeJob {
+        self.backend.submit(key, LightBakeJob {
             id,
             pos,
             revision,
@@ -184,52 +186,29 @@ fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     })
 }
 
+/// Light-stage adapter over the shared [`crate::worker::JobPool`]: `submit` queues a
+/// bake at a distance priority, `try_recv` drains finished cubes on the main thread.
 struct Backend {
-    tx_req: std::sync::mpsc::Sender<LightBakeJob>,
+    pool: std::sync::Arc<crate::worker::JobPool>,
+    tx_res: std::sync::mpsc::Sender<LightBakeResult>,
     rx_res: std::sync::mpsc::Receiver<LightBakeResult>,
-    _handles: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Backend {
-    fn new() -> Self {
-        let (tx_req, rx_req) = std::sync::mpsc::channel::<LightBakeJob>();
+    fn new(pool: std::sync::Arc<crate::worker::JobPool>) -> Self {
         let (tx_res, rx_res) = std::sync::mpsc::channel::<LightBakeResult>();
-
-        let rx_req = std::sync::Arc::new(std::sync::Mutex::new(rx_req));
-        let (_, n, _) = crate::worker::background_thread_counts();
-        let mut handles = Vec::with_capacity(n);
-        for _ in 0..n {
-            let rx_req = rx_req.clone();
-            let tx_res = tx_res.clone();
-            let h = std::thread::Builder::new()
-                .name("llamacraft-light".to_string())
-                .spawn(move || loop {
-                    let job = {
-                        let g = rx_req.lock().unwrap();
-                        g.recv()
-                    };
-                    match job {
-                        Ok(job) => {
-                            let res = run_light_bake(job);
-                            if tx_res.send(res).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                })
-                .expect("spawn light worker");
-            handles.push(h);
-        }
         Self {
-            tx_req,
+            pool,
+            tx_res,
             rx_res,
-            _handles: handles,
         }
     }
 
-    fn submit(&self, job: LightBakeJob) {
-        let _ = self.tx_req.send(job);
+    fn submit(&self, key: i64, job: LightBakeJob) {
+        let tx = self.tx_res.clone();
+        self.pool.submit(key, move || {
+            let _ = tx.send(run_light_bake(job));
+        });
     }
 
     fn try_recv(&mut self) -> Option<LightBakeResult> {

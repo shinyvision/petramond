@@ -239,6 +239,14 @@ impl Section {
         self.blocklight.clone()
     }
 
+    /// Whether a light bake has ever landed on this section (`set_skylight`).
+    /// Distinguishes "stale light" (`light_dirty` after an edit) from "never lit",
+    /// which the streamer defers differently.
+    #[inline]
+    pub fn has_baked_light(&self) -> bool {
+        self.skylight.is_some()
+    }
+
     // --- Water ------------------------------------------------------------------
 
     /// Water-flow metadata at a local voxel (0 where not flowing water).

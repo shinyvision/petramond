@@ -25,13 +25,19 @@ use crate::column::Column;
 const SURFACE_WINDOW_BELOW: i32 = 2;
 const SURFACE_WINDOW_ABOVE: i32 = 1;
 const HORIZONTAL_KEEP_SLACK: i32 = 2;
-/// Keep worldgen useful under fast flight by not filling the worker channel with far
-/// columns that the player may outrun before they finish.
-const MAX_PENDING_COLUMN_GEN_JOBS: usize = 48;
-const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 16;
-/// Drain enough finished worldgen to keep throughput high, but not so much that one
-/// frame installs a whole flight burst and starves rendering.
-const MAX_GEN_DRAIN_PER_POLL: usize = 128;
+/// Keep worldgen useful under fast flight by bounding queued-but-unstarted column
+/// jobs. The shared pool is priority-ordered (nearest first), so — unlike the old
+/// FIFO channel these caps were sized for — far columns can no longer delay near
+/// ones; the caps now only bound wasted work on columns the player outruns
+/// (pruned from `pending`, their results discarded on drain).
+const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
+const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
+/// Drain finished worldgen by TIME with a count floor: installs are cheap (map
+/// insert + classify), so a fixed count frame-quantized big bursts (a whole r=20
+/// disc took ~100 frames just to drain at 128/frame), while the budget still keeps
+/// one frame from installing an unbounded burst and starving rendering.
+const GEN_DRAIN_MIN_PER_POLL: usize = 128;
+const GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_000);
 
 /// A saved section read back from disk, awaiting overlay over its generated column:
 /// the decoded `Section` plus the item entities and mobs that rode in its record.
@@ -230,11 +236,14 @@ impl World {
             }
         }
         missing.sort_by_key(|(priority, _)| *priority);
-        for (_, pos) in missing.into_iter().take(submit_limit) {
-            self.worker.submit(GenJob::Column {
-                pos,
-                seed: self.seed,
-            });
+        for (priority, pos) in missing.into_iter().take(submit_limit) {
+            self.worker.submit(
+                priority,
+                GenJob::Column {
+                    pos,
+                    seed: self.seed,
+                },
+            );
             self.pending.insert(pos, ());
         }
     }
@@ -301,8 +310,8 @@ impl World {
             }
         }
         wanted.sort_by_key(|(priority, _, _)| *priority);
-        for (_, sp, col) in wanted {
-            self.submit_section_job(sp, col);
+        for (priority, sp, col) in wanted {
+            self.submit_section_job(priority, sp, col);
         }
     }
 
@@ -333,8 +342,8 @@ impl World {
             }
         }
         wanted.sort_by_key(|(priority, _, _)| *priority);
-        for (_, sp, col) in wanted {
-            self.submit_section_job(sp, col);
+        for (priority, sp, col) in wanted {
+            self.submit_section_job(priority, sp, col);
         }
     }
 
@@ -345,7 +354,7 @@ impl World {
         let Some(col) = self.column_gen.get(&pos).cloned() else {
             return;
         };
-        let mut wanted: Vec<(i32, SectionPos)> = Vec::new();
+        let mut wanted: Vec<(i64, SectionPos)> = Vec::new();
         let content_top = col.content_top();
         for cy in self.wanted_section_cys_for_column(pos, &col, target.center_cy, 0) {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
@@ -355,12 +364,13 @@ impl World {
             if self.skip_empty_sky_section(sp, content_top) {
                 continue;
             }
-            let dcy = cy - target.center_cy;
-            wanted.push((dcy * dcy, sp));
+            // The full 3D key (not just dcy²): these compete in the shared pool
+            // against other columns' sections, so the key must be globally comparable.
+            wanted.push((target.section_priority_key(sp), sp));
         }
-        wanted.sort_by_key(|(d2, _)| *d2);
-        for (_, sp) in wanted {
-            self.submit_section_job(sp, col.clone());
+        wanted.sort_by_key(|(key, _)| *key);
+        for (key, sp) in wanted {
+            self.submit_section_job(key, sp, col.clone());
         }
     }
 
@@ -378,12 +388,15 @@ impl World {
     /// Queue one section's gen job and, paired with it, ask the save thread for that
     /// section's saved (player-modified) record if one exists — so the disk overlay
     /// lands after the generated base and wins (`apply_pending_overlays`).
-    fn submit_section_job(&mut self, sp: SectionPos, col: Arc<ColumnGen>) {
-        self.worker.submit(GenJob::Section {
-            sp,
-            col,
-            seed: self.seed,
-        });
+    fn submit_section_job(&mut self, key: i64, sp: SectionPos, col: Arc<ColumnGen>) {
+        self.worker.submit(
+            key,
+            GenJob::Section {
+                sp,
+                col,
+                seed: self.seed,
+            },
+        );
         self.pending_sections.insert(sp);
         if let Some(save) = self.save.as_ref() {
             if save.manifest_contains(sp) {
@@ -508,8 +521,9 @@ impl World {
         //    Budgeted so a big burst (e.g. a vertical move that re-streams a whole disc
         //    layer) spreads its main-thread install/mark cost over a few frames instead of
         //    one giant spike; the rest stays buffered in the channel for next poll.
+        let drain_start = std::time::Instant::now();
         let mut drained = 0usize;
-        while drained < MAX_GEN_DRAIN_PER_POLL {
+        while drained < GEN_DRAIN_MIN_PER_POLL || drain_start.elapsed() < GEN_DRAIN_TIME_BUDGET {
             let Some(out) = self.worker.try_recv() else {
                 break;
             };
@@ -536,7 +550,7 @@ impl World {
                     {
                         continue;
                     }
-                    self.sections.insert(sp, Arc::new(section));
+                    self.sections.insert(sp, section);
                     self.classify_deep_on_install(sp);
                     ingested.push(sp);
                 }
@@ -572,6 +586,9 @@ impl World {
         }
 
         if ingested.is_empty() {
+            // Deferred first-time sections can become ready without a fresh ingest
+            // (e.g. a target move re-shaped the wanted set), so always re-check.
+            self.flush_settled_deferred(target);
             self.request_missing_columns(target);
             return new_columns;
         }
@@ -614,14 +631,95 @@ impl World {
             if self.clear_mesh_if_section_produces_no_mesh(sp) {
                 continue;
             }
-            self.mark_light_dirty_pos(sp);
-            self.queue_dirty_mesh(sp);
+            // A section that already produced output (a baked light cube or an installed
+            // mesh) is genuinely stale — relight/remesh it now. One that has produced
+            // NOTHING yet is deferred until its generation neighbourhood settles, so its
+            // FIRST bake and mesh run exactly once instead of once per landing neighbour
+            // (the bulk of streaming's rebake/remesh churn came from this marking).
+            let built = self.meshes.contains_key(&sp)
+                || self.sections.get(&sp).is_some_and(|s| s.has_baked_light());
+            if built {
+                self.mark_light_dirty_pos(sp);
+                self.queue_dirty_mesh(sp);
+            } else if self.sections.contains_key(&sp) {
+                // Invalidate (and unqueue) any bake taken from the pre-landing
+                // neighbourhood so the settled re-request isn't dedup-dropped.
+                self.mark_light_dirty_pos(sp);
+                self.light_bakes.cancel(sp);
+                self.light_deferred.insert(sp);
+            }
         }
+        self.flush_settled_deferred(target);
 
         // 7. Kick generated/overlaid water that now has somewhere to flow.
         self.queue_loaded_section_water_updates(&ingested);
         self.request_missing_columns(target);
         new_columns
+    }
+
+    /// Whether everything the FIRST light/mesh of `sp` could read has landed: each
+    /// 3×3×3 neighbour is loaded, or is provably not coming under `target` — outside
+    /// the wanted shape, deliberately skipped by its landed column (sky / outside the
+    /// vertical+surface window), or out of world range — so absent-as-air is its final
+    /// state. A neighbour still pending (or whose column is pending or wanted but not
+    /// yet landed) means a bake now would just be redone when it arrives.
+    fn gen_neighborhood_settled(&self, sp: SectionPos, target: LoadTarget) -> bool {
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    if dx == 0 && dy == 0 && dz == 0 {
+                        continue;
+                    }
+                    let n = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
+                    if !SectionPos::cy_in_range(n.cy) || self.sections.contains_key(&n) {
+                        continue;
+                    }
+                    if self.pending_sections.contains(&n) {
+                        return false;
+                    }
+                    let cp = n.chunk_pos();
+                    if self.column_gen.contains_key(&cp) {
+                        continue;
+                    }
+                    if self.pending.contains_key(&cp) || Self::column_wanted(target, cp) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Flush deferred first-time sections whose generation neighbourhood has settled:
+    /// request the single light bake and queue the single first mesh. Sections whose
+    /// saved overlay is still buffered stay parked so the bake reads the saved blocks,
+    /// not the generated base it is about to replace.
+    fn flush_settled_deferred(&mut self, target: LoadTarget) {
+        if self.light_deferred.is_empty() {
+            return;
+        }
+        let ready: Vec<SectionPos> = self
+            .light_deferred
+            .iter()
+            .copied()
+            .filter(|sp| {
+                !self.pending_overlays.contains_key(sp) && self.gen_neighborhood_settled(*sp, target)
+            })
+            .collect();
+        for sp in ready {
+            self.light_deferred.remove(&sp);
+            let Some(section) = self.sections.get(&sp) else {
+                continue;
+            };
+            // Fully-opaque sections skip baking on both sides of the mesh pump's
+            // light gate (their faces cull against solid cells and never sample light).
+            if !section.all_opaque() {
+                let key = target.section_priority_key(sp);
+                self.light_bakes
+                    .request(key, sp, &self.sections, &self.columns);
+            }
+            self.queue_dirty_mesh(sp);
+        }
     }
 
     /// Overlay every buffered saved section whose generated section is present: replace
@@ -907,6 +1005,61 @@ mod tests {
             target.column_priority_key(ChunkPos::new(6, 0))
                 < target.column_priority_key(ChunkPos::new(0, 6)),
             "outside the safety ring, same-distance work in the forward cone wins"
+        );
+    }
+
+    #[test]
+    fn first_bake_defers_until_generation_neighborhood_settles() {
+        use std::sync::Arc;
+
+        let mut world = World::new(0x51EED, 4);
+        let target = LoadTarget::new(0, 4, 0, 4);
+        world.last_load_target = Some(target);
+        let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let cp = ChunkPos::new(dx, dz);
+                world
+                    .column_gen
+                    .insert(cp, Arc::new(generator.generate_column_gen(dx, dz)));
+                world.ensure_column(cp);
+            }
+        }
+
+        // A fresh, never-lit section whose neighbour above is still generating.
+        let sp = SectionPos::new(0, 4, 0);
+        let mut section = Section::new(0, 4, 0);
+        section.set_block(0, 0, 0, Block::Stone);
+        world.sections.insert(sp, Arc::new(section));
+        let generating = SectionPos::new(0, 5, 0);
+        world.pending_sections.insert(generating);
+        world.light_deferred.insert(sp);
+
+        world.flush_settled_deferred(target);
+        assert!(
+            world.light_deferred.contains(&sp),
+            "a neighbour's gen is in flight: the first bake must wait"
+        );
+        assert!(
+            !world.light_bakes.has_pending(),
+            "no bake may be requested from a half-landed neighbourhood"
+        );
+
+        // The neighbour lands (or is discarded): the neighbourhood is now settled —
+        // every other absent neighbour belongs to a landed column that skipped it.
+        world.pending_sections.remove(&generating);
+        world.flush_settled_deferred(target);
+        assert!(
+            !world.light_deferred.contains(&sp),
+            "settled sections leave the deferred set"
+        );
+        assert!(
+            world.light_bakes.has_pending(),
+            "the single first bake fires on settle"
+        );
+        assert!(
+            !world.dirty_meshes.is_empty(),
+            "the first mesh queues alongside the first bake"
         );
     }
 

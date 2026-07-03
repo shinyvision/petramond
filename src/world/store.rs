@@ -12,7 +12,7 @@ use crate::mesh::ChunkMesh;
 use crate::mob::{Mobs, SavedMob};
 use crate::save::{SectionSnapshot, WorldSave};
 use crate::section::{Section, SectionSummary};
-use crate::worker::WorkerPool;
+use crate::worker::{JobPool, WorkerPool};
 use crate::worldgen::driver::ChunkGenerator;
 use crate::worldgen::driver::ColumnGen;
 
@@ -195,6 +195,12 @@ pub struct World {
     /// Dirty meshes parked while async light bakes their sampling neighbourhood.
     /// They re-enter `dirty_meshes` only once the 3×3×3 light dependency set is clean.
     pub(super) light_blocked_meshes: HashSet<SectionPos>,
+    /// Freshly streamed sections that have never produced light or a mesh, parked
+    /// until their generation neighbourhood settles (`gen_neighborhood_settled`) so
+    /// their FIRST bake and mesh run once, not once per landing neighbour. Without
+    /// this, contiguous streaming rebaked/remeshed each section many times (each
+    /// ingest dirtied its whole 3×3×3).
+    pub(super) light_deferred: HashSet<SectionPos>,
     pub(super) last_load_target: Option<LoadTarget>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
@@ -208,6 +214,9 @@ pub struct World {
 
 impl World {
     pub fn new(seed: u32, render_dist: i32) -> Self {
+        // ONE background pool shared by every streaming stage; the per-stage adapters
+        // below each hold a handle and compete purely on distance priority.
+        let jobs = std::sync::Arc::new(JobPool::new(JobPool::default_threads()));
         Self {
             seed,
             sections: HashMap::new(),
@@ -215,15 +224,15 @@ impl World {
             meshes: HashMap::new(),
             mesh_columns: HashSet::new(),
             mesh_upload_dirty_columns: HashSet::new(),
-            worker: WorkerPool::new(seed),
+            worker: WorkerPool::new(jobs.clone()),
             column_gen: HashMap::new(),
             pending: HashMap::new(),
             pending_sections: HashSet::new(),
             pending_overlays: HashMap::new(),
             render_dist,
             lighting_revision: 0,
-            light_bakes: LightBakeQueue::new(),
-            mesh_pool: super::mesh_pool::MeshPool::new(crate::worker::background_thread_counts().2),
+            light_bakes: LightBakeQueue::new(jobs.clone()),
+            mesh_pool: super::mesh_pool::MeshPool::new(jobs),
             mesh_jobs_in_flight: 0,
             dirty_meshes: DirtyMeshQueue::default(),
             deep_sections: HashSet::new(),
@@ -231,6 +240,7 @@ impl World {
             hidden_parked: HashSet::new(),
             vis_dirty: false,
             light_blocked_meshes: HashSet::new(),
+            light_deferred: HashSet::new(),
             last_load_target: None,
             sim: TickState::new(seed),
             save: None,
@@ -743,6 +753,7 @@ impl World {
         }
         self.dirty_meshes.remove(pos);
         self.light_blocked_meshes.remove(&pos);
+        self.light_deferred.remove(&pos);
         self.deep_sections.remove(&pos);
         self.visible_deep.remove(&pos);
         self.hidden_parked.remove(&pos);
@@ -760,6 +771,7 @@ impl World {
             self.meshes.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
+            self.light_deferred.remove(&sp);
             self.deep_sections.remove(&sp);
             self.visible_deep.remove(&sp);
             self.hidden_parked.remove(&sp);
@@ -786,6 +798,7 @@ impl World {
         self.mesh_columns.clear();
         self.mesh_upload_dirty_columns.clear();
         self.light_blocked_meshes.clear();
+        self.light_deferred.clear();
         self.pending.clear();
         self.pending_sections.clear();
         self.pending_overlays.clear();

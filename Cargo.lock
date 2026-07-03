@@ -1170,6 +1170,7 @@ dependencies = [
  "flate2",
  "glam",
  "image",
+ "libc",
  "log",
  "mimalloc",
  "noise",

@@ -2,18 +2,18 @@
 //!
 //! The render thread must never build a section mesh: doing it inline (a blocking
 //! `rayon` batch) makes the frame stall while streaming. Instead the world hands each
-//! dirty section to this pool as an owned snapshot — the section itself plus a
-//! one-block-padded shell of its neighbours for voxel/light reads, plus the wider
-//! XZ biome halo needed by tint blending — and the pool returns a finished [`ChunkMesh`]
-//! the world installs on a later frame.
+//! dirty section to the shared [`JobPool`] as an owned snapshot — the section itself
+//! plus a one-block-padded shell of its neighbours for voxel/light reads, plus the
+//! wider XZ biome halo needed by tint blending — and drains back a finished
+//! [`ChunkMesh`] to install on a later frame.
 //! Each job carries the section's `mesh_revision`; a result whose section has since
 //! changed (re-edited, re-lit) is discarded, so stale snapshots never reach the GPU.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
+use crate::worker::JobPool;
 use crate::furnace::Facing;
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
@@ -106,50 +106,29 @@ pub(super) struct MeshDone {
     pub mesh: ChunkMesh,
 }
 
+/// Mesh-stage adapter over the shared [`JobPool`]: `submit` queues a snapshot build
+/// at a distance priority, `try_recv` drains finished meshes on the main thread.
 pub(super) struct MeshPool {
-    tx: Sender<MeshJob>,
+    pool: Arc<JobPool>,
+    tx: Sender<MeshDone>,
     rx: Mutex<Receiver<MeshDone>>,
-    _handles: Vec<thread::JoinHandle<()>>,
 }
 
 impl MeshPool {
-    pub fn new(threads: usize) -> Self {
-        let (tx, rx_job) = channel::<MeshJob>();
-        let (tx_done, rx) = channel::<MeshDone>();
-        let rx_job = Arc::new(Mutex::new(rx_job));
-        let mut handles = Vec::with_capacity(threads);
-        for _ in 0..threads.max(1) {
-            let rx_job = rx_job.clone();
-            let tx_done = tx_done.clone();
-            let h = thread::Builder::new()
-                .name("llamacraft-mesh".to_string())
-                .spawn(move || loop {
-                    let job = {
-                        let g = rx_job.lock().unwrap();
-                        g.recv()
-                    };
-                    match job {
-                        Ok(job) => {
-                            let done = build(job);
-                            if tx_done.send(done).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                })
-                .expect("spawn mesh worker");
-            handles.push(h);
-        }
+    pub fn new(pool: Arc<JobPool>) -> Self {
+        let (tx, rx) = channel::<MeshDone>();
         Self {
+            pool,
             tx,
             rx: Mutex::new(rx),
-            _handles: handles,
         }
     }
 
-    pub fn submit(&self, job: MeshJob) -> bool {
-        self.tx.send(job).is_ok()
+    pub fn submit(&self, key: i64, job: MeshJob) {
+        let tx = self.tx.clone();
+        self.pool.submit(key, move || {
+            let _ = tx.send(build(job));
+        });
     }
 
     pub fn try_recv(&self) -> Option<MeshDone> {

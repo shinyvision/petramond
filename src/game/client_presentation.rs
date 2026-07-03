@@ -104,7 +104,10 @@ impl Game {
     }
 
     pub(super) fn tick_mesh_budget(&mut self) {
-        const MESH_BUDGET: usize = 4;
+        // Generous count — the pump's own time budget (MESH_SUBMIT_TIME_BUDGET) is
+        // what actually protects the frame; a small count here just frame-quantized
+        // streaming bursts into a multi-second trickle.
+        const MESH_BUDGET: usize = 64;
         self.world.tick_mesh_budget(MESH_BUDGET);
     }
 }

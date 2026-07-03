@@ -18,6 +18,7 @@ impl World {
     pub fn has_dirty_meshes(&self) -> bool {
         !self.dirty_meshes.is_empty()
             || !self.light_blocked_meshes.is_empty()
+            || !self.light_deferred.is_empty()
             || self.light_bakes.has_pending()
             || self.mesh_jobs_in_flight > 0
     }

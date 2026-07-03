@@ -8,24 +8,27 @@ use super::store::{LoadTarget, World};
 /// to 1, a literal one-section budget makes the cubic streamer visibly crawl; this keeps
 /// the tiny budget useful without multiplying larger diagnostic/tooling budgets.
 const MIN_MESH_JOBS_PER_PUMP: usize = 16;
-/// Scan past sections that are stale, no-mesh, or waiting on light so a low budget still
-/// launches useful work whenever any nearby section is ready.
+/// Scan past sections that are stale, no-mesh, or waiting on light so the budget still
+/// launches useful work whenever any nearby section is ready. During streaming most
+/// popped candidates PARK (light in flight / hidden deep) rather than submit, so the
+/// scan must run well ahead of the submit count or parking throttles discovery to a
+/// frame-quantized trickle. The submit time budget bounds the scan's real cost.
 const CANDIDATE_SCAN_PER_MESH_JOB: usize = 4;
-/// Bound result drains so a burst of finished background work cannot monopolize the frame.
-const MAX_LIGHT_RESULTS_PER_PUMP: usize = 24;
-const MAX_MESH_RESULTS_PER_PUMP: usize = 24;
-/// Cap on mesh jobs queued in the pool's FIFO channel. The pool has only a few worker
-/// threads, so under a heavy (or debug-slow) load, submitting a fixed budget every frame
-/// without this cap grows the channel without bound — and because the channel is FIFO, a
-/// newly-dirtied section (e.g. a block the player just placed) queues behind the ENTIRE
-/// backlog and takes seconds to remesh. Bounding in-flight keeps the channel shallow so the
-/// backlog stays in `dirty_meshes` (re-sorted NEAREST-FIRST every frame), and a fresh edit is
-/// serviced within ~cap/workers jobs. Comfortably exceeds the worker count (≤6), so workers
-/// never starve; in release the pump is submit-bound and this never binds.
-const MAX_MESH_JOBS_IN_FLIGHT: usize = 48;
+/// Bound result drains by TIME, not count: installs are cheap (Arc swaps + map
+/// inserts), so a fixed small count needlessly frame-quantized streaming bursts
+/// (24/frame = seconds of trickle for a flight burst the pool finished long ago).
+/// The floor guarantees progress regardless of clock behaviour.
+const RESULT_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(700);
+const RESULT_DRAIN_MIN: usize = 24;
+/// Cap on mesh jobs in flight in the shared pool. The pool queue is priority-ordered
+/// (nearest first), so a fresh edit no longer queues behind the streaming backlog the
+/// way it did with the old FIFO channel — this cap only bounds snapshot memory held
+/// by queued jobs. The backlog beyond it stays in `dirty_meshes`, re-sorted
+/// NEAREST-FIRST every frame.
+const MAX_MESH_JOBS_IN_FLIGHT: usize = 32;
 /// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
 /// always allowed; after that, the pump yields to rendering once it burns this much CPU.
-const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_000);
+const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_000);
 
 /// Set of sections awaiting a remesh. With `World`'s section map private, every
 /// path that dirties a section pushes here and `remove_section` pulls it back out —
@@ -91,8 +94,8 @@ impl World {
     /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
-        self.drain_finished_light_bakes(MAX_LIGHT_RESULTS_PER_PUMP);
-        self.drain_finished_meshes(MAX_MESH_RESULTS_PER_PUMP);
+        self.drain_finished_light_bakes();
+        self.drain_finished_meshes();
         if max_per_frame == 0 {
             return;
         }
@@ -106,11 +109,7 @@ impl World {
         let target_jobs = max_per_frame
             .max(MIN_MESH_JOBS_PER_PUMP)
             .min(in_flight_room);
-        let candidate_cap = if max_per_frame < MIN_MESH_JOBS_PER_PUMP {
-            target_jobs.saturating_mul(CANDIDATE_SCAN_PER_MESH_JOB)
-        } else {
-            target_jobs
-        };
+        let candidate_cap = target_jobs.saturating_mul(CANDIDATE_SCAN_PER_MESH_JOB);
         if self.vis_dirty {
             self.refresh_deep_visibility();
         }
@@ -157,19 +156,17 @@ impl World {
                 continue;
             }
             if let Some(job) = self.build_mesh_job(pos) {
-                if self.mesh_pool.submit(job) {
-                    self.mesh_jobs_in_flight += 1;
-                    submitted += 1;
-                    if submitted >= target_jobs
-                        || (submitted > 0 && start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
-                    {
-                        for &rest in &candidates[i + 1..] {
-                            self.dirty_meshes.push(rest);
-                        }
-                        break;
+                let key = target.map_or(0, |t| t.section_priority_key(pos));
+                self.mesh_pool.submit(key, job);
+                self.mesh_jobs_in_flight += 1;
+                submitted += 1;
+                if submitted >= target_jobs
+                    || (submitted > 0 && start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
+                {
+                    for &rest in &candidates[i + 1..] {
+                        self.dirty_meshes.push(rest);
                     }
-                } else {
-                    self.dirty_meshes.push(pos);
+                    break;
                 }
             }
         }
@@ -262,9 +259,10 @@ impl World {
 
     /// Install meshes the pool finished, dropping any whose section has since changed
     /// (re-edited or re-lit, so its `mesh_revision` moved) or unloaded.
-    fn drain_finished_meshes(&mut self, max: usize) {
+    fn drain_finished_meshes(&mut self) {
+        let start = std::time::Instant::now();
         let mut drained = 0usize;
-        while drained < max {
+        while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
             let Some(done) = self.mesh_pool.try_recv() else {
                 break;
             };
@@ -366,9 +364,10 @@ impl World {
         })
     }
 
-    fn drain_finished_light_bakes(&mut self, max: usize) {
+    fn drain_finished_light_bakes(&mut self) {
+        let start = std::time::Instant::now();
         let mut drained = 0usize;
-        while drained < max {
+        while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
             let Some(res) = self.light_bakes.try_recv() else {
                 break;
             };
@@ -412,7 +411,17 @@ impl World {
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                     {
-                        self.light_bakes.request(p, &self.sections, &self.columns);
+                        // A deferred neighbour's first bake fires when its own
+                        // neighbourhood settles (`flush_settled_deferred`); requesting
+                        // it here would bake a half-landed neighbourhood and be
+                        // immediately redone. Still wait on it.
+                        if !self.light_deferred.contains(&p) {
+                            let key = self
+                                .last_load_target
+                                .map_or(0, |t| t.section_priority_key(p));
+                            self.light_bakes
+                                .request(key, p, &self.sections, &self.columns);
+                        }
                         waiting = true;
                     }
                 }

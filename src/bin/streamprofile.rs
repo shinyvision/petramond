@@ -12,11 +12,18 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let r: i32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(12);
     let seed = 0x1234_5678u32;
+    // argv[3] = "conc": skip the split phases and run ONLY the game-like concurrent
+    // load, so thermal preheating from the earlier phases doesn't confound it.
+    let concurrent_only = args.get(3).is_some_and(|s| s == "conc");
 
     // Default camera section cy 8 (world y ~128) loads the surface band from above;
     // pass argv[2]=4 for a grounded player whose window reaches below-surface depth.
-    let mut world = World::new(seed, r);
     let cam_cy: i32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8);
+    if concurrent_only {
+        run_concurrent(seed, r, cam_cy);
+        return;
+    }
+    let mut world = World::new(seed, r);
 
     // --- Phase 1: GENERATION (poll-only, no meshing). ---
     let t_gen = Instant::now();
@@ -125,4 +132,57 @@ fn main() {
     time_call(&mut world, "(vertical +1)", 2, cam_cy + 1, 0);
     time_call(&mut world, "(vertical -1)", 2, cam_cy, 0);
     time_call(&mut world, "(same target)", 2, cam_cy, 0);
+    drop(world);
+    run_concurrent(seed, r, cam_cy);
+}
+
+/// GAME-LIKE CONCURRENT LOAD — gen + light + mesh pumped together, frame-paced at
+/// ~60 fps like the real game loop, on a fresh world. This is the number the player
+/// feels on a fresh spawn / long flight; the split phases isolate per-stage costs
+/// but hide cross-stage churn and per-frame cap effects.
+fn run_concurrent(seed: u32, r: i32, cam_cy: i32) {
+    let (mesh_ns0, mesh_jobs0, light_ns0, light_jobs0) = stage_stats();
+    let mut world = World::new(seed, r);
+    world.update_load(0, cam_cy, 0);
+    let t_conc = Instant::now();
+    let mut frames = 0u64;
+    let mut idle = 0;
+    let mut last = (0usize, 0usize);
+    let mut settle_ms = 0.0f64;
+    loop {
+        world.poll();
+        world.tick_mesh_budget(64); // the game-loop budget
+        frames += 1;
+        let now = (world.loaded_section_count(), world.iter_meshes().count());
+        if now == last && now.0 > 0 && !world.has_dirty_meshes() {
+            idle += 1;
+            if idle == 1 {
+                settle_ms = t_conc.elapsed().as_secs_f64() * 1e3;
+            }
+            if idle >= 20 {
+                break;
+            }
+        } else {
+            idle = 0;
+            last = now;
+        }
+        std::thread::sleep(Duration::from_micros(16_600));
+        if t_conc.elapsed() > Duration::from_secs(180) {
+            eprintln!("concurrent phase timed out");
+            break;
+        }
+    }
+    let (mesh_ns1, mesh_jobs1, light_ns1, light_jobs1) = stage_stats();
+    println!(
+        "CONCURRENT @60fps          : {settle_ms:>8.1} ms wall to settled ({} frames, {} meshes)",
+        frames,
+        world.iter_meshes().count()
+    );
+    println!(
+        "  mesh  jobs {:>6}  {:>8.1} ms CPU   light jobs {:>6}  {:>8.1} ms CPU",
+        mesh_jobs1 - mesh_jobs0,
+        (mesh_ns1 - mesh_ns0) as f64 / 1e6,
+        light_jobs1 - light_jobs0,
+        (light_ns1 - light_ns0) as f64 / 1e6,
+    );
 }
