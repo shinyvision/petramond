@@ -35,5 +35,17 @@
       "w": 116,
       "h": 20
     }
-  ]
+  ],
+  "hover": {
+    "image": "create_world_hover.png",
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  }
 }

@@ -21,5 +21,17 @@
       "w": 176,
       "h": 20
     }
-  ]
+  ],
+  "hover": {
+    "image": "pause_hover.png",
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  }
 }
