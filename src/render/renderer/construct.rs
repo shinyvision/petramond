@@ -331,6 +331,10 @@ async fn new_renderer_inner(
     let ui_shell_vbuf = new_ui_quad_vbuf("ui shell vbuf");
     let ui_shell_scroll_thumb_vbuf = new_ui_quad_vbuf("ui shell scroll thumb vbuf");
     let ui_hearts_vbuf = new_ui_quad_vbuf("ui hearts vbuf");
+    let ui_static_text_vbuf = new_ui_quad_vbuf("ui static text vbuf");
+    let ui_glyph_text_vbuf = new_ui_quad_vbuf("ui glyph text vbuf");
+    let static_text_atlas = StaticTextAtlas::new(&device, &queue, &pipelines.atlas_bgl);
+    let glyph_text_atlas = GlyphTextAtlas::new(&device, &queue, &pipelines.atlas_bgl);
 
     Renderer {
         surface,
@@ -454,6 +458,7 @@ async fn new_renderer_inner(
         mobs: Vec::new(),
         particle_verts: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
+        ui_texture_bgl: pipelines.atlas_bgl.clone(),
         gui_textures,
         ui_solid_vbuf: pipelines.ui_vbuf,
         ui_dim_vertex_count: 0,
@@ -471,6 +476,14 @@ async fn new_renderer_inner(
         ui_shell_scroll_thumb_vertex_count: 0,
         ui_hearts_vbuf,
         ui_hearts_vertex_count: 0,
+        static_text_atlas,
+        ui_static_text_vbuf,
+        ui_static_text_vertex_count: 0,
+        static_text_verts: Vec::new(),
+        glyph_text_atlas,
+        ui_glyph_text_vbuf,
+        ui_glyph_text_vertex_count: 0,
+        glyph_text_verts: Vec::new(),
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),

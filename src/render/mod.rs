@@ -18,6 +18,7 @@ mod renderer;
 mod resources;
 mod scene;
 mod selection;
+mod text_atlas;
 mod ui;
 mod ui_text;
 mod uniforms;

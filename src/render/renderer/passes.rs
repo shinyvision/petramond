@@ -646,6 +646,8 @@ impl Renderer {
         // UI OVERLAY / DRAG PASS: stack counts, then the cursor-held icon, then its
         // count — keeping the whole dragged stack front-most.
         if self.ui_count_vertex_count > 0
+            || self.ui_static_text_vertex_count > 0
+            || self.ui_glyph_text_vertex_count > 0
             || self.drag_icon_quad_vertex_count > 0
             || self.ui_drag_count_vertex_count > 0
         {
@@ -664,6 +666,16 @@ impl Renderer {
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
                 pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
                 pass.draw(start..start + self.ui_count_vertex_count, 0..1);
+            }
+            if self.ui_static_text_vertex_count > 0 {
+                pass.set_bind_group(0, self.static_text_atlas.bind(), &[]);
+                pass.set_vertex_buffer(0, self.ui_static_text_vbuf.slice(..));
+                pass.draw(0..self.ui_static_text_vertex_count, 0..1);
+            }
+            if self.ui_glyph_text_vertex_count > 0 {
+                pass.set_bind_group(0, self.glyph_text_atlas.bind(), &[]);
+                pass.set_vertex_buffer(0, self.ui_glyph_text_vbuf.slice(..));
+                pass.draw(0..self.ui_glyph_text_vertex_count, 0..1);
             }
             // Cursor-held icon, appended after the normal icons.
             if self.drag_icon_quad_vertex_count > 0 {

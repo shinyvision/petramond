@@ -212,9 +212,9 @@ pub(super) const MAX_CHEST_INDICES: u64 = 36864;
 pub(super) const MAX_DOOR_VERTICES: u64 = 24576;
 /// Max indices in the door dynamic ibuf (72 per door), matching [`MAX_DOOR_VERTICES`].
 pub(super) const MAX_DOOR_INDICES: u64 = 36864;
-/// Max vertices in the reusable UI dynamic vbuf (gui quads + digit cells). The
-/// open inventory is ~40 slots + a 176×166 panel; digits are a few quads each.
-/// 6 verts/quad; 16384 covers the full open inventory with comfortable headroom.
+/// Max vertices in each reusable UI dynamic vbuf (gui quads, stack-count digits,
+/// icon quads, and text quads). Shell labels are drawn from runtime text atlases,
+/// so this no longer needs to cover one solid quad per text bitmap cell.
 pub(super) const MAX_UI_VERTICES: u64 = 16384;
 
 pub(super) struct PipelineResources {

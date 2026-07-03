@@ -39,6 +39,7 @@ use super::resources::{
     upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
+use super::text_atlas::{GlyphTextAtlas, StaticTextAtlas};
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
@@ -311,6 +312,9 @@ pub struct Renderer {
     /// UI pipeline (2D HUD / inventory). Every UI quad is drawn with it; group(0)
     /// binds whichever baked texture (or the icon atlas) the quad samples.
     ui_pipe: wgpu::RenderPipeline,
+    /// Texture+sampler bind layout used by every UI texture, including runtime text
+    /// atlases.
+    ui_texture_bgl: wgpu::BindGroupLayout,
     /// Every baked GUI texture (panel / hover / overlay) as its own bind group,
     /// keyed by [`GuiTexId`]. Loaded from disk at init; the UI pass looks each up
     /// by the open kind. See `crate::gui`.
@@ -342,6 +346,16 @@ pub struct Renderer {
     /// [`GuiTexId::Hearts`] atlas; empty for a spectator or behind an open menu.
     ui_hearts_vbuf: wgpu::Buffer,
     ui_hearts_vertex_count: u32,
+    /// Runtime atlas of rasterized static shell text runs.
+    static_text_atlas: StaticTextAtlas,
+    ui_static_text_vbuf: wgpu::Buffer,
+    ui_static_text_vertex_count: u32,
+    static_text_verts: Vec<UiVertex>,
+    /// Runtime glyph atlas for editable/dynamic shell text.
+    glyph_text_atlas: GlyphTextAtlas,
+    ui_glyph_text_vbuf: wgpu::Buffer,
+    ui_glyph_text_vertex_count: u32,
+    glyph_text_verts: Vec<UiVertex>,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.

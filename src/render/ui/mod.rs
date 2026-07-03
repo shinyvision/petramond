@@ -53,7 +53,6 @@ pub(super) const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const TEXT_DISABLED: [f32; 4] = [0.62, 0.62, 0.62, 1.0];
 const TEXT_PLACEHOLDER: [f32; 4] = [0.50, 0.56, 0.56, 1.0];
-const SHADOW: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const INPUT_ACTIVE: [f32; 4] = [0.72, 0.67, 0.62, 1.0];
 
 /// Slot interior side (logical px) — the textured icon area. The drag cursor
@@ -78,6 +77,26 @@ pub struct OverlaySpan {
     pub count: u32,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextMode {
+    /// Rarely-changing labels: rasterize the fitted whole run into the text atlas,
+    /// then draw it as one quad.
+    Rasterized,
+    /// Editable text: draw one textured glyph quad per character from the dynamic
+    /// glyph atlas.
+    Glyphs,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextRun {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub cell_px: f32,
+    pub color: [f32; 4],
+    pub shadow: bool,
+}
+
 /// The CPU-built UI for this frame, in paint order. Buffers are reused across
 /// frames (cleared, capacity retained) per the no-per-frame-allocation rule.
 #[derive(Default)]
@@ -100,6 +119,11 @@ pub struct UiBuild {
     /// HUD heart quads (bottom-left health bar), sampling the heart atlas. Empty for a
     /// spectator or behind an open menu.
     pub hearts: Vec<UiVertex>,
+    /// Whole-run rasterized shell labels. The renderer packs these into a runtime
+    /// text atlas and draws one textured quad per label.
+    pub raster_text_runs: Vec<TextRun>,
+    /// Editable shell text. The renderer draws these from a compiled glyph atlas.
+    pub glyph_text_runs: Vec<TextRun>,
     /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
     /// pre-baked icon-atlas cell and emits a textured quad.
     pub icon_quads: Vec<(ItemType, SlotRect)>,
@@ -129,6 +153,8 @@ impl UiBuild {
         self.shell_skin.clear();
         self.shell_scroll_thumb.clear();
         self.hearts.clear();
+        self.raster_text_runs.clear();
+        self.glyph_text_runs.clear();
         self.icon_quads.clear();
         self.dim_icon_quads.clear();
         self.counts.clear();
@@ -331,9 +357,12 @@ fn framed_text_rect(r: SlotRect, scale: f32) -> SlotRect {
     inset_rect(r, inset)
 }
 
-fn push_shell_text(out: &mut Vec<UiVertex>, screen: (u32, u32), text: &ShellText) {
+fn push_shell_text_run(build: &mut UiBuild, text: &ShellText, mode: TextMode, shadow: bool) {
     let cell = text.cell_px.max(1.0);
     let fitted = fit_text(&text.text, text.rect.w, cell);
+    if fitted.is_empty() {
+        return;
+    }
     let width = crate::render::ui_text::text_width(&fitted) as f32 * cell;
     let height = crate::render::ui_text::TEXT_GLYPH_H as f32 * cell;
     let x = match text.align {
@@ -341,36 +370,18 @@ fn push_shell_text(out: &mut Vec<UiVertex>, screen: (u32, u32), text: &ShellText
         ShellTextAlign::Center => text.rect.x + (text.rect.w - width).max(0.0) * 0.5,
     };
     let y = text.rect.y + (text.rect.h - height).max(0.0) * 0.5;
-    push_text_at(out, screen, &fitted, x, y, cell, text.color, true);
-}
-
-fn push_text_at(
-    out: &mut Vec<UiVertex>,
-    screen: (u32, u32),
-    text: &str,
-    x: f32,
-    y: f32,
-    cell: f32,
-    color: [f32; 4],
-    shadow: bool,
-) {
-    let emit = |out: &mut Vec<UiVertex>, dx: f32, dy: f32, color| {
-        crate::render::ui_text::for_each_text_lit_cell(text, |px, py| {
-            push_solid(
-                out,
-                screen,
-                x + dx + px as f32 * cell,
-                y + dy + py as f32 * cell,
-                cell,
-                cell,
-                color,
-            );
-        });
+    let run = TextRun {
+        text: fitted,
+        x,
+        y,
+        cell_px: cell,
+        color: text.color,
+        shadow,
     };
-    if shadow {
-        emit(out, cell, cell, SHADOW);
+    match mode {
+        TextMode::Rasterized => build.raster_text_runs.push(run),
+        TextMode::Glyphs => build.glyph_text_runs.push(run),
     }
-    emit(out, 0.0, 0.0, color);
 }
 
 fn fit_text(text: &str, max_width: f32, cell: f32) -> String {
@@ -396,9 +407,14 @@ fn fit_text(text: &str, max_width: f32, cell: f32) -> String {
     out
 }
 
-fn push_button(fg: &mut Vec<UiVertex>, screen: (u32, u32), button: &ShellButton, scale: f32) {
+fn push_button(build: &mut UiBuild, screen: (u32, u32), button: &ShellButton, scale: f32) {
     if !button.enabled {
-        push_shell_box(fg, screen, button.rect, [0.0, 0.0, 0.0, 0.36]);
+        push_shell_box(
+            &mut build.counts,
+            screen,
+            button.rect,
+            [0.0, 0.0, 0.0, 0.36],
+        );
     }
     let text = ShellText {
         rect: framed_text_rect(button.rect, scale),
@@ -407,14 +423,14 @@ fn push_button(fg: &mut Vec<UiVertex>, screen: (u32, u32), button: &ShellButton,
         cell_px: scale.max(1.0),
         align: ShellTextAlign::Center,
     };
-    push_shell_text(fg, screen, &text);
+    push_shell_text_run(build, &text, TextMode::Rasterized, true);
 }
 
-fn push_input(fg: &mut Vec<UiVertex>, screen: (u32, u32), input: &ShellInput, scale: f32) {
+fn push_input(build: &mut UiBuild, screen: (u32, u32), input: &ShellInput, scale: f32) {
     if input.active {
         let line = scale.max(1.0);
         push_solid(
-            fg,
+            &mut build.counts,
             screen,
             input.rect.x + line,
             input.rect.y + line,
@@ -450,12 +466,12 @@ fn push_input(fg: &mut Vec<UiVertex>, screen: (u32, u32), input: &ShellInput, sc
         cell_px: scale.max(1.0),
         align: ShellTextAlign::Left,
     };
-    push_shell_text(fg, screen, &text);
+    push_shell_text_run(build, &text, TextMode::Glyphs, true);
 }
 
-fn push_row(fg: &mut Vec<UiVertex>, screen: (u32, u32), row: &ShellListRow, scale: f32) {
+fn push_row(build: &mut UiBuild, screen: (u32, u32), row: &ShellListRow, scale: f32) {
     if row.selected {
-        push_shell_box(fg, screen, row.rect, [0.75, 0.95, 1.0, 0.18]);
+        push_shell_box(&mut build.counts, screen, row.rect, [0.75, 0.95, 1.0, 0.18]);
     }
     let text = ShellText {
         rect: SlotRect {
@@ -469,7 +485,7 @@ fn push_row(fg: &mut Vec<UiVertex>, screen: (u32, u32), row: &ShellListRow, scal
         cell_px: scale.max(1.0),
         align: ShellTextAlign::Left,
     };
-    push_shell_text(fg, screen, &text);
+    push_shell_text_run(build, &text, TextMode::Rasterized, true);
 }
 
 fn push_scrollbar_thumb(
@@ -559,16 +575,16 @@ fn push_shell_ui(ui: &UiSnapshot, build: &mut UiBuild, scale: f32) {
         }
     }
     for row in &ui.shell.rows {
-        push_row(&mut build.counts, screen, row, scale);
+        push_row(build, screen, row, scale);
     }
     for input in &ui.shell.inputs {
-        push_input(&mut build.counts, screen, input, scale);
+        push_input(build, screen, input, scale);
     }
     for button in &ui.shell.buttons {
-        push_button(&mut build.counts, screen, button, scale);
+        push_button(build, screen, button, scale);
     }
     for text in &ui.shell.texts {
-        push_shell_text(&mut build.counts, screen, text);
+        push_shell_text_run(build, text, TextMode::Rasterized, true);
     }
 }
 
@@ -900,6 +916,126 @@ mod tests {
         assert!(!b.panel.is_empty());
         assert_eq!(b.drag_icon_quads.len(), 1);
         assert!(!b.drag_counts.is_empty(), "drag count > 1 drawn");
+    }
+
+    #[test]
+    fn world_select_shell_text_uses_runtime_raster_runs() {
+        let screen = (1280, 720);
+        let scale = gui_scale(screen);
+        let def = gui_layout::shell_def(ShellKind::WorldSelect).expect("world select shell def");
+        let panel = def.panel_rect(screen);
+        let long_name = "A Very Long Saved World Name That Should Clip In The Row";
+        let mut shell = crate::gui::ShellUiSnapshot {
+            active: true,
+            skin: Some(ShellKind::WorldSelect),
+            ..Default::default()
+        };
+        shell.texts.push(ShellText {
+            rect: SlotRect {
+                x: panel.x,
+                y: panel.y + 10.0 * scale,
+                w: panel.w,
+                h: 12.0 * scale,
+            },
+            text: "Select World".to_string(),
+            color: WHITE,
+            cell_px: 1.3 * scale,
+            align: ShellTextAlign::Center,
+        });
+        for (i, rect) in def
+            .role_rects(crate::gui::ShellRole::WorldRow, screen)
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            shell.rows.push(ShellListRow {
+                rect,
+                label: format!("{long_name} {i}"),
+                selected: i == 0,
+                hovered: false,
+            });
+        }
+        for (role, label, enabled) in [
+            (crate::gui::ShellRole::WorldPlay, "Play", true),
+            (crate::gui::ShellRole::WorldCreate, "Create New World", true),
+            (crate::gui::ShellRole::WorldDelete, "Delete World", true),
+            (crate::gui::ShellRole::WorldBack, "Back", true),
+        ] {
+            if let Some(rect) = def.role_rect(role, screen) {
+                shell.buttons.push(ShellButton {
+                    rect,
+                    label: label.to_string(),
+                    enabled,
+                    hovered: false,
+                });
+            }
+        }
+
+        let mut b = UiBuild::default();
+        build_ui(
+            &UiSnapshot {
+                kind: GuiKind::Other,
+                screen,
+                shell,
+                ..Default::default()
+            },
+            &mut b,
+        );
+
+        let cap = crate::render::pipeline::MAX_UI_VERTICES as usize;
+        assert_eq!(b.shell_kind, Some(ShellKind::WorldSelect));
+        assert!(!b.shell_skin.is_empty(), "world-select skin drawn");
+        assert_eq!(
+            b.raster_text_runs.len(),
+            10,
+            "title, five rows, and four buttons are whole-run text"
+        );
+        assert!(
+            b.glyph_text_runs.is_empty(),
+            "world-select has no editable text"
+        );
+        assert!(
+            b.counts.len() <= cap,
+            "solid UI vertices should no longer include shell text cells: {} > {cap}",
+            b.counts.len()
+        );
+    }
+
+    #[test]
+    fn shell_inputs_use_dynamic_glyph_runs() {
+        let screen = (1280, 720);
+        let mut shell = crate::gui::ShellUiSnapshot {
+            active: true,
+            skin: Some(ShellKind::CreateWorld),
+            ..Default::default()
+        };
+        shell.inputs.push(ShellInput {
+            rect: SlotRect {
+                x: 320.0,
+                y: 240.0,
+                w: 240.0,
+                h: 32.0,
+            },
+            text: "World".to_string(),
+            placeholder: "My World".to_string(),
+            active: true,
+        });
+
+        let mut b = UiBuild::default();
+        build_ui(
+            &UiSnapshot {
+                kind: GuiKind::Other,
+                screen,
+                shell,
+                ..Default::default()
+            },
+            &mut b,
+        );
+
+        assert_eq!(b.glyph_text_runs.len(), 1);
+        assert_eq!(b.glyph_text_runs[0].text, "World_");
+        assert!(b.raster_text_runs.is_empty());
+        assert!(!b.counts.is_empty(), "active input underline stays solid");
     }
 
     #[test]
