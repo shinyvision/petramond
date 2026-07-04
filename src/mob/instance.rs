@@ -13,7 +13,7 @@ use std::f32::consts::{PI, TAU};
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
-use super::brain::{AiCtx, AiMob, BehaviorOutput, Brain};
+use super::brain::{AiCtx, AiMob, AttackIntent, BehaviorOutput, Brain};
 use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
@@ -62,16 +62,19 @@ const WATER_CURRENT_SPEED: f32 = 0.75;
 /// head pans rather than snaps.
 const HEAD_TURN_RATE: f32 = 4.0;
 
-/// How many consecutive game ticks a hostile mob must spend beyond its category's
-/// [`despawn_radius`](super::MobCategory::despawn_radius) from the player before it is
-/// culled. A short window (1 s at 20 TPS) so a strayed mob vanishes promptly while a
-/// momentary excursion doesn't. Tunable; passive mobs (no despawn radius) ignore it.
+/// How many consecutive game ticks a mob with a row-level despawn radius must spend
+/// beyond that radius from the player before it is culled. A short window (1 s at
+/// 20 TPS) so a strayed hostile mob vanishes promptly while a momentary excursion
+/// doesn't. Passive mobs default to no despawn radius and ignore it.
 const HOSTILE_DESPAWN_TICKS: u32 = 20;
 
 /// A live mob. Render-facing fields (`pos`/`yaw`/`anim_time`/`moving`/`skylight` and
 /// their `prev_*` snapshots) are public for the scene adapter; the AI/physics state
 /// is private.
 pub struct Instance {
+    /// Stable session identity for this live mob. Unlike its storage index,
+    /// this does not change when `Mobs::remove` uses `swap_remove`.
+    id: u64,
     pub kind: Mob,
     pub pos: Vec3,
     pub yaw: f32,
@@ -87,6 +90,8 @@ pub struct Instance {
     pub head_yaw: f32,
     pub head_pitch: f32,
     pub skylight: u8,
+    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
+    pub blocklight: u8,
     /// Previous-tick pose, for render interpolation.
     pub prev_pos: Vec3,
     pub prev_yaw: f32,
@@ -100,8 +105,8 @@ pub struct Instance {
     on_ground: bool,
     /// Current health; at `0` the mob dies and `death` becomes `Some`.
     health: f32,
-    /// Consecutive game ticks spent beyond the despawn radius from the player. Only a
-    /// hostile species advances it (passive mobs have no despawn radius); at
+    /// Consecutive game ticks spent beyond the row-level despawn radius from the player.
+    /// Species with no resolved radius leave it at zero; at
     /// [`HOSTILE_DESPAWN_TICKS`] the manager culls the mob. Reset whenever a player is
     /// near, and never persisted — a reloaded mob re-accumulates from zero.
     despawn_timer: u32,
@@ -121,11 +126,19 @@ pub struct Instance {
     /// shorn (its coat cubes are hidden and it can't be shorn again); it counts down on
     /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
     shear_regrow: u32,
+    /// Per-mob mod KV (`mod_id:key` → bytes) — opaque to the engine, written
+    /// by mod HostCalls on the tick, persisted with the mob's save record
+    /// (see [`super::SavedMob`]). BTreeMap so the save encoding is deterministic.
+    mod_kv: std::collections::BTreeMap<String, Vec<u8>>,
     /// `Some` once the mob has died — the physics ragdoll that plays before it
     /// despawns. While set, the mob runs no AI and takes no further damage.
     death: Option<Ragdoll>,
     /// The animation kind playing last tick, to detect changes (and reset `anim_time`).
     anim_kind: AnimKind,
+    /// A melee strike the brain wants landed on the player THIS tick — latched during
+    /// [`tick`](Self::tick), drained by the manager into a
+    /// [`MobAttack`](super::MobAttack). Never persisted; cleared every tick.
+    attack: Option<AttackIntent>,
     brain: Brain,
     nav: Navigator,
     rng: MobRng,
@@ -145,6 +158,7 @@ impl Instance {
     pub fn new(kind: Mob, pos: Vec3, yaw: f32, seed: u64) -> Self {
         let d = def(kind);
         Instance {
+            id: seed,
             kind,
             pos,
             yaw,
@@ -154,6 +168,7 @@ impl Instance {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
+            blocklight: 0,
             prev_pos: pos,
             prev_yaw: yaw,
             prev_anim_time: 0.0,
@@ -168,12 +183,29 @@ impl Instance {
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             shear_regrow: 0,
+            mod_kv: std::collections::BTreeMap::new(),
             death: None,
             anim_kind: AnimKind::Rest,
-            brain: (d.make_brain)(d),
+            attack: None,
+            brain: super::build_brain(d),
             nav: Navigator::new(d.size.head_cells(), d.size.half_width),
             rng: MobRng::new(seed),
         }
+    }
+
+    /// Stable session identity for this live mob. This is the value exposed to
+    /// mods; storage indices remain tick-local.
+    #[inline]
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Take the melee strike the brain latched this tick, if any — the manager
+    /// drains it right after [`tick`](Self::tick) into a
+    /// [`MobAttack`](super::MobAttack) for `Game` to apply.
+    #[inline]
+    pub(super) fn take_attack(&mut self) -> Option<AttackIntent> {
+        self.attack.take()
     }
 
     /// Apply `amount` damage from a point `from` (the attacker). Returns `true` if this
@@ -270,6 +302,25 @@ impl Instance {
         self.shear_regrow = ticks;
     }
 
+    /// Current health (`0` = dead), for mod `MobsInRadius` snapshots.
+    #[inline]
+    pub fn health(&self) -> f32 {
+        self.health
+    }
+
+    /// The mob's mod KV entries (see the field docs).
+    #[inline]
+    pub fn mod_kv(&self) -> &std::collections::BTreeMap<String, Vec<u8>> {
+        &self.mod_kv
+    }
+
+    /// Mutable mod KV access, for the manager's KV HostCall entry points and
+    /// the save-restore path.
+    #[inline]
+    pub(super) fn mod_kv_mut(&mut self) -> &mut std::collections::BTreeMap<String, Vec<u8>> {
+        &mut self.mod_kv
+    }
+
     /// Shear this mob: roll how many of its [`ShearSpec`](super::ShearSpec) drop it
     /// yields and start the regrow countdown. `None` when the species can't be shorn,
     /// the coat is still regrowing, or the mob is dead.
@@ -278,11 +329,13 @@ impl Instance {
         if self.death.is_some() || self.shear_regrow > 0 {
             return None;
         }
-        let count = self.rng.next_range(spec.min.min(spec.max) as i32, spec.max as i32) as u8;
-        self.shear_regrow = self
+        let count = self
             .rng
-            .next_range(spec.regrow_min.min(spec.regrow_max) as i32, spec.regrow_max as i32)
-            as u32;
+            .next_range(spec.min.min(spec.max) as i32, spec.max as i32) as u8;
+        self.shear_regrow = self.rng.next_range(
+            spec.regrow_min.min(spec.regrow_max) as i32,
+            spec.regrow_max as i32,
+        ) as u32;
         Some(count)
     }
 
@@ -340,6 +393,9 @@ impl Instance {
         self.prev_head_yaw = self.head_yaw;
         self.prev_head_pitch = self.head_pitch;
         self.prev_hurt = self.hurt_timer;
+        // The attack latch is strictly this-tick state: clear before any early
+        // return so a mob that died mid-swing can't land a stale strike.
+        self.attack = None;
 
         let d = def(self.kind);
 
@@ -363,10 +419,10 @@ impl Instance {
         // simply not run), like the dropped-item timers.
         self.shear_regrow = self.shear_regrow.saturating_sub(1);
 
-        // Distance-despawn: a hostile mob tallies ticks spent beyond its cull radius
+        // Distance-despawn: a mob with a row-level radius tallies ticks spent beyond it
         // from the player; once the tally reaches the threshold the manager removes it.
-        // A passive species has no radius, so its timer never moves and it persists.
-        if let Some(radius) = d.category.despawn_radius() {
+        // Species with no radius never advance this timer and persist while loaded.
+        if let Some(radius) = d.despawn_radius {
             let far = (self.pos - player_pos).length_squared() >= radius * radius;
             self.despawn_timer = next_despawn_timer(self.despawn_timer, far);
         }
@@ -414,11 +470,28 @@ impl Instance {
             };
             self.brain.decide(&mut ctx)
         };
+        self.attack = decision.attack;
+        let can_repath = self.on_ground || in_water;
+        let can_steer = route_steering_supported(self.on_ground, in_water, self.vel.y);
         self.nav
-            .update_goal_when_supported(decision.goal, cell, world, self.on_ground || in_water);
-        let (wish, jump) = self.nav.follow(self.pos, self.on_ground);
+            .update_goal_when_supported(decision.goal, cell, world, can_repath);
+        let (wish, jump) = if can_steer {
+            self.nav.follow(self.pos, self.on_ground)
+        } else {
+            (Vec3::ZERO, false)
+        };
         let water_flow = |c: IVec3| world.water_flow_dir_at(c.x, c.y, c.z);
-        self.integrate_with_flow(dt, d, wish, jump, &boxes, &solid, &water, &water_flow);
+        self.integrate_with_flow(
+            dt,
+            d,
+            wish,
+            jump,
+            can_steer,
+            &boxes,
+            &solid,
+            &water,
+            &water_flow,
+        );
         self.apply_expression(dt, d, &decision);
     }
 
@@ -444,15 +517,19 @@ impl Instance {
 
     /// Integrate one tick's kinematics: jump impulse, horizontal wish-velocity, water
     /// current, gravity, collision, and facing/anim. Takes `solid`/`water`/`water_flow`
-    /// closures (not the world) so it's directly unit-testable against a stub. The mob
-    /// faces its **wish** direction — where it wants to go — so it keeps facing forward
-    /// even when pressed against a wall (where its actual velocity would be zero).
+    /// closures (not the world) so it's directly unit-testable against a stub. While
+    /// unsupported and falling, path steering is suspended and existing horizontal
+    /// velocity carries through the fall; the upward phase of a navigation jump keeps
+    /// steering so the mob can clear a one-block ledge. The mob faces its **wish**
+    /// direction — where it wants to go — so it keeps facing forward even when pressed
+    /// against a wall (where its actual velocity would be zero).
     fn integrate_with_flow(
         &mut self,
         dt: f32,
         d: &MobDef,
         wish: Vec3,
         jump: bool,
+        can_steer: bool,
         boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
@@ -472,10 +549,18 @@ impl Instance {
             self.knockback *= KNOCKBACK_DAMP;
             self.moving = false;
         } else {
-            self.vel.x = wish.x * d.walk_speed;
-            self.vel.z = wish.z * d.walk_speed;
-            self.moving = wish.length_squared() > 1e-6;
+            if can_steer {
+                self.vel.x = wish.x * d.walk_speed;
+                self.vel.z = wish.z * d.walk_speed;
+                self.moving = wish.length_squared() > 1e-6;
+            } else {
+                self.moving = false;
+            }
         }
+        let preserve_air_carry = self.hurt_timer <= 0.0 && !can_steer;
+        let carried_x = self.vel.x;
+        let carried_z = self.vel.z;
+
         // Soft entity push: a velocity from being jostled by overlapping entities,
         // layered on top of locomotion (or knockback) so a crowded mob drifts apart
         // smoothly. Consumed each tick — the push pass re-derives it from the live
@@ -506,6 +591,7 @@ impl Instance {
             // not already falling back), a firm boost crests the waterline and lands it
             // on the block instead of hugging the shore forever — else the swim bob.
             let climbing_out = self.vel.y >= 0.0
+                && can_steer
                 && wish.length_squared() > 1e-12
                 && self.ledge_ahead(wish, d.size.half_width, solid);
             if climbing_out {
@@ -544,6 +630,14 @@ impl Instance {
         if hit[2] {
             self.vel.z = 0.0;
         }
+        if preserve_air_carry {
+            if !hit[0] {
+                self.vel.x = carried_x;
+            }
+            if !hit[2] {
+                self.vel.z = carried_z;
+            }
+        }
         self.on_ground = grounded;
         if grounded && self.vel.y < 0.0 {
             self.vel.y = 0.0;
@@ -567,9 +661,17 @@ impl Instance {
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
     ) {
-        self.integrate_with_flow(dt, d, wish, jump, &boxes_of(solid), solid, water, &|_| {
-            Vec3::ZERO
-        });
+        self.integrate_with_flow(
+            dt,
+            d,
+            wish,
+            jump,
+            true,
+            &boxes_of(solid),
+            solid,
+            water,
+            &|_| Vec3::ZERO,
+        );
     }
 
     /// Apply the tick's expressive decision: choose + advance the active animation
@@ -684,6 +786,10 @@ fn next_despawn_timer(prev: u32, far: bool) -> u32 {
     }
 }
 
+fn route_steering_supported(on_ground: bool, in_water: bool, vertical_velocity: f32) -> bool {
+    on_ground || in_water || vertical_velocity > 0.0
+}
+
 /// The water-flow direction acting on a mob whose feet are at `pos`: the current at the
 /// swim probe (a fraction up the body, where the mob is submerged enough to swim), else
 /// the current at the feet cell (so a mob wading in a shallow flowing film is still
@@ -775,6 +881,10 @@ mod tests {
         def(Mob::Owl)
     }
 
+    fn sheep_def() -> &'static MobDef {
+        def(Mob::Sheep)
+    }
+
     #[test]
     fn gravity_settles_the_mob_on_the_floor() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
@@ -820,6 +930,7 @@ mod tests {
                 owl_def(),
                 Vec3::ZERO,
                 false,
+                true,
                 &boxes,
                 &solid,
                 &dry,
@@ -861,6 +972,7 @@ mod tests {
                 owl_def(),
                 wish,
                 false,
+                true,
                 &half_step,
                 &solid,
                 &dry,
@@ -872,6 +984,65 @@ mod tests {
             owl.pos.y > 1.4,
             "mob rises onto the 0.5 ledge top: y={}",
             owl.pos.y
+        );
+    }
+
+    #[test]
+    fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
+        // A one-block navigation jump has an airborne phase where the body is still below
+        // the ledge top and colliding with the block side. The mob must keep applying the
+        // current route wish while rising, otherwise that side hit zeros horizontal
+        // velocity and the jump stalls at the face.
+        let solid = |c: IVec3| c.y < 1 || (c.x >= 1 && c.y < 2);
+        let dry = |_: IVec3| false;
+        let still = |_: IVec3| Vec3::ZERO;
+        let wish = Vec3::new(1.0, 0.0, 0.0);
+        let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
+
+        sheep.integrate_with_flow(
+            0.05,
+            sheep_def(),
+            Vec3::ZERO,
+            false,
+            true,
+            &boxes_of(&solid),
+            &solid,
+            &dry,
+            &still,
+        );
+        assert!(sheep.on_ground(), "test starts from the lower floor");
+
+        let mut left_ground = false;
+        for _ in 0..80 {
+            let can_steer = route_steering_supported(sheep.on_ground, false, sheep.vel.y);
+            let jump = sheep.on_ground && sheep.pos.y < 1.5;
+            sheep.integrate_with_flow(
+                0.05,
+                sheep_def(),
+                wish,
+                jump,
+                can_steer,
+                &boxes_of(&solid),
+                &solid,
+                &dry,
+                &still,
+            );
+            left_ground |= !sheep.on_ground();
+            if sheep.on_ground() && sheep.pos.y > 1.9 {
+                break;
+            }
+        }
+
+        assert!(left_ground, "the mob actually performed an airborne jump");
+        assert!(
+            sheep.on_ground() && sheep.pos.y > 1.9,
+            "mob should land on the one-block step, pos {:?}",
+            sheep.pos
+        );
+        assert!(
+            sheep.pos.x + sheep_def().size.half_width > 1.0,
+            "mob footprint should cross onto the step, pos {:?}",
+            sheep.pos
         );
     }
 
@@ -910,6 +1081,42 @@ mod tests {
             (wrap_angle(owl.yaw - (-PI / 2.0))).abs() < 0.2,
             "turns to face travel: {}",
             owl.yaw
+        );
+    }
+
+    #[test]
+    fn airborne_sheep_carries_velocity_without_walk_steering() {
+        let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [crate::block::Aabb] { &[] };
+        let dry = |_: IVec3| false;
+        let still = |_: IVec3| Vec3::ZERO;
+        let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+        sheep.vel.x = 1.0;
+
+        sheep.integrate_with_flow(
+            1.0 / 60.0,
+            sheep_def(),
+            Vec3::new(-1.0, 0.0, 0.0),
+            false,
+            false,
+            &empty_boxes,
+            &dry,
+            &dry,
+            &still,
+        );
+
+        assert!(
+            sheep.pos.x > 0.5,
+            "falling should carry prior +X velocity instead of steering left: x {}",
+            sheep.pos.x
+        );
+        assert!(
+            sheep.vel.x > 0.0,
+            "airborne walk wish must not overwrite carried velocity: vx {}",
+            sheep.vel.x
+        );
+        assert!(
+            !sheep.moving,
+            "unsupported falling should not play the walk animation"
         );
     }
 
@@ -1247,6 +1454,7 @@ mod tests {
                 owl_def(),
                 Vec3::ZERO,
                 false,
+                true,
                 &boxes_of(&solid),
                 &solid,
                 &water,
@@ -1269,6 +1477,7 @@ mod tests {
                 owl_def(),
                 Vec3::ZERO,
                 false,
+                true,
                 &boxes_of(&solid),
                 &solid,
                 &water,

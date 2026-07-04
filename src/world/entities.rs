@@ -107,7 +107,8 @@ impl DroppedItems {
             it.tick(dt, world, magnet);
             let after = voxel_at(it.pos);
             if before != after {
-                it.skylight = world.combined_light6_at_world(after.x, after.y, after.z);
+                it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
+                it.blocklight = world.blocklight6_at_world(after.x, after.y, after.z);
             }
         }
     }
@@ -240,7 +241,8 @@ impl DroppedItems {
     pub fn refresh_lights(&mut self, world: &World) {
         for it in &mut self.items {
             let c = voxel_at(it.pos);
-            it.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
+            it.skylight = world.skylight6_at_world(c.x, c.y, c.z);
+            it.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
         }
     }
 

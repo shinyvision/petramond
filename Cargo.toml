@@ -7,10 +7,13 @@ description = "A noise-based voxel world biomes + features."
 license = "MIT"
 
 [workspace]
-members = ["."]
+members = [".", "mod-api"]
 # The GUI builder (./gui-builder) is a standalone tool crate with its own deps;
 # keep it out of the game's workspace so it doesn't affect the game build.
-exclude = ["gui-builder"]
+# mod-sdk is guest-side only (linked into mods, never the engine) and mods-src
+# is its own wasm32 workspace built by `make mods` — both stay out for the same
+# reason.
+exclude = ["gui-builder", "mod-sdk", "mods-src"]
 resolver = "2"
 
 [lib]
@@ -61,6 +64,19 @@ mimalloc = "0.1.52"
 libc = "0.2"
 # Native desktop clipboard access for text fields.
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+# --- Modding host (WIKI/modding.md Phase 2b) ---
+# Shared engine↔mod ABI types (postcard enums).
+mod-api = { path = "mod-api" }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+# WASM runtime for mod logic. Deliberately minimal features: core modules only —
+# no wasi, no component model, no async, no gc, no wat parsing, no parallel
+# compilation — to keep compile time and binary size down.
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+
+[dev-dependencies]
+# Tests hand-build hostile guest modules from WAT text (trap/registration-window
+# contracts); the shipped binary never parses wat.
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "wat"] }
 
 [profile.release]
 opt-level = 3

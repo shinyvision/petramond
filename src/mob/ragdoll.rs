@@ -448,8 +448,7 @@ fn extract_rotation(a: Mat3, prev: Quat) -> Quat {
     let mut q = prev;
     for _ in 0..POLAR_ITERS {
         let r = Mat3::from_quat(q);
-        let numer =
-            r.x_axis.cross(a.x_axis) + r.y_axis.cross(a.y_axis) + r.z_axis.cross(a.z_axis);
+        let numer = r.x_axis.cross(a.x_axis) + r.y_axis.cross(a.y_axis) + r.z_axis.cross(a.z_axis);
         let denom = r.x_axis.dot(a.x_axis) + r.y_axis.dot(a.y_axis) + r.z_axis.dot(a.z_axis);
         let omega = numer / (denom.abs() + EPS);
         let angle = omega.length();

@@ -107,10 +107,37 @@ impl Player {
         }
     }
 
+    /// Add a knockback impulse to the velocity — a mob strike's shove (and, later,
+    /// a mod HostCall). Call on the tick; the per-frame physics then integrates it
+    /// like any other velocity (friction bleeds the horizontal part, gravity the
+    /// vertical). Spectators float free of the world and take none — mirroring how
+    /// they take no damage.
+    pub fn apply_knockback(&mut self, impulse: Vec3) {
+        if self.is_spectator() {
+            return;
+        }
+        self.vel += impulse;
+        // An upward pop must read as a launch, not be swallowed by the grounded
+        // state (mirrors a mob's knockback clearing its own on_ground).
+        if impulse.y > 0.0 {
+            self.on_ground = false;
+            self.jumping = false;
+        }
+    }
+
     /// Take and clear the pending fall distance (blocks) latched by the last landing,
     /// for the tick to convert into damage. Returns `0.0` when there was no landing.
     pub(crate) fn take_fall_distance(&mut self) -> f32 {
         std::mem::replace(&mut self.fall_distance, 0.0)
+    }
+
+    /// Move the feet to `pos` (a mod `Teleport` HostCall), clearing the fall
+    /// bookkeeping — re-anchoring the peak and dropping any pending landing —
+    /// so a teleport can never be measured as a fall. Velocity is kept.
+    pub fn teleport(&mut self, pos: Vec3) {
+        self.pos = pos;
+        self.fall_peak_y = pos.y;
+        self.fall_distance = 0.0;
     }
 
     /// Update the fall bookkeeping after a physics sub-step has resolved `on_ground`

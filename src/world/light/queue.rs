@@ -77,14 +77,17 @@ impl LightBakeQueue {
             .then(|| neighborhood::gather(pos, sections));
 
         self.pending.insert(pos, PendingLightBake { id });
-        self.backend.submit(key, LightBakeJob {
-            id,
-            pos,
-            revision,
-            sky,
-            nbhd,
-            emitters,
-        });
+        self.backend.submit(
+            key,
+            LightBakeJob {
+                id,
+                pos,
+                revision,
+                sky,
+                nbhd,
+                emitters,
+            },
+        );
     }
 
     pub fn cancel(&mut self, pos: SectionPos) {

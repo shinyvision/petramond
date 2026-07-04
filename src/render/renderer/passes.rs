@@ -175,8 +175,9 @@ impl Renderer {
         any_transparent_visible: bool,
     ) {
         let cc = self.clear_color;
-        // SKY PASS: full-screen background triangle. The ONLY pass that CLEARS
-        // color (to the fog colour); no depth attachment.
+        // SKY PASS: full-screen background triangle. The sky shader owns
+        // celestials and any day/night colour. The ONLY pass that CLEARS color
+        // (to the fog colour).
         {
             let mut pass = color_depth_pass(
                 enc,
@@ -193,6 +194,7 @@ impl Renderer {
             );
             pass.set_pipeline(&self.sky_pipe);
             pass.set_bind_group(0, &self.sky_bind, &[]);
+            pass.set_bind_group(1, &self.sky_texture_bind, &[]);
             pass.draw(0..3, 0..1);
         }
         // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. CLEARS the
@@ -597,15 +599,15 @@ impl Renderer {
                     pass.draw(0..self.ui_panel_vertex_count, 0..1);
                 }
             }
-            // 4) Dynamic overlays (furnace gauges): one draw per tagged span, each
-            //    bound to its own overlay texture.
+            // 4) Dynamic overlays (furnace/mod gauges) + mod widget art: one
+            //    draw per sprite span, each bound to its own texture.
             if self.ui_overlay_vertex_count > 0 {
                 pass.set_vertex_buffer(0, self.ui_overlay_vbuf.slice(..));
                 let mut start = 0u32;
                 for span in &self.ui_build.overlay_spans {
                     let end = start + span.count;
                     if let Some(bind) =
-                        kind.and_then(|k| self.gui_textures.get(&GuiTexId::Overlay(k, span.tag)))
+                        kind.and_then(|k| self.gui_textures.get(&GuiTexId::Sprite(k, span.tex)))
                     {
                         pass.set_bind_group(0, bind, &[]);
                         pass.draw(start..end, 0..1);

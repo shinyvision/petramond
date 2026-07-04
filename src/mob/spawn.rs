@@ -21,7 +21,7 @@ use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
 use super::path::{body_clear, is_foothold, PathParams};
-use super::{def, Instance, Mob, MobRng, MOB_DEFS};
+use super::{def, defs, Instance, Mob, MobRng};
 
 /// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
 const MIN_PLAYER_DIST: f32 = 50.0;
@@ -57,7 +57,7 @@ pub(super) fn attempt(
     let r = (render_dist - 1).max(0);
 
     // Pick a species that still has room; the site is then judged for *that* species.
-    let kind = choose_kind(rng, &room_for)?;
+    let kind = choose_kind(rng, &room_for, world.disabled_mods())?;
     let d = def(kind);
     let want = d.spawn_group.roll(rng).min(room_for(kind));
 
@@ -206,11 +206,23 @@ fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32
 
 /// Pick one species uniformly among those with population room, or `None` if none
 /// has room. Reservoir sampling — uniform without allocating a candidate list.
-fn choose_kind(rng: &mut MobRng, room_for: &impl Fn(Mob) -> u32) -> Option<Mob> {
+/// A species whose spawn rule can't admit any site (empty biome/ground list — a
+/// programmatic-spawn-only mob, e.g. a mod's own night spawner) is never a
+/// candidate, so it can't eat the tick's single attempt. Species namespaced to
+/// a mod the world disabled (`disabled` — per-world `settings.json`) are never
+/// candidates either: no new disabled-mod content enters the world.
+fn choose_kind(
+    rng: &mut MobRng,
+    room_for: &impl Fn(Mob) -> u32,
+    disabled: &std::collections::BTreeSet<String>,
+) -> Option<Mob> {
     let mut chosen = None;
     let mut seen = 0i32;
-    for m in MOB_DEFS.iter().map(|d| d.mob) {
-        if room_for(m) < def(m).spawn_group.min_count() {
+    for m in defs().iter().map(|d| d.mob) {
+        if !def(m).spawn.is_spawnable() || room_for(m) < def(m).spawn_group.min_count() {
+            continue;
+        }
+        if crate::registry::namespace(def(m).name).is_some_and(|ns| disabled.contains(ns)) {
             continue;
         }
         seen += 1;

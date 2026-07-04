@@ -1,7 +1,9 @@
 use crate::block::{Block, RenderShape};
 use crate::entity::DroppedItem;
+use crate::events::{BlockBreakPre, Outcome, PostEvent};
 use crate::item::ItemStack;
 use crate::mathh::{IVec3, Vec3};
+use crate::mining::BreakEvent;
 use crate::world::World;
 
 use super::{
@@ -26,63 +28,7 @@ impl Game {
             &self.world,
             tool,
         ) {
-            events.broke_block = Some(event.block);
-            let hit_normal = self
-                .look
-                .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
-                .map(|h| h.normal);
-            let (light, warm) = break_light(&self.world, event.pos, hit_normal);
-            // A bbmodel block breaks as a whole: removing any cell clears every footprint
-            // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
-            if matches!(event.block.render_shape(), RenderShape::Model(_)) {
-                self.world.remove_model_block(event.pos);
-            } else if event.block.render_shape() == RenderShape::Door {
-                // A door breaks as a whole: removing either cell clears both halves and
-                // drops one door item (the `spawn_drops` below). Forget any swing too.
-                if let Some(lower) =
-                    self.world
-                        .door_lower_cell(event.pos.x, event.pos.y, event.pos.z)
-                {
-                    self.door_swings.remove(&lower);
-                }
-                self.world.remove_door(event.pos);
-            } else {
-                self.world
-                    .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
-            }
-            // A broken furnace scatters whatever it held, regardless of tool (the
-            // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
-            if event.block == Block::Furnace {
-                if let Some(f) = self.world.take_furnace(event.pos) {
-                    for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
-                        self.spawn_item_stack(event.pos, stack, light);
-                    }
-                }
-            } else if event.block == Block::Chest {
-                // A broken chest scatters its whole contents, regardless of tool.
-                if let Some(chest) = self.world.take_chest(event.pos) {
-                    for stack in chest.slots.into_iter().flatten() {
-                        self.spawn_item_stack(event.pos, stack, light);
-                    }
-                }
-            } else if event.block == Block::Torch {
-                // A torch has no contents — just forget its recorded orientation so
-                // the freed cell carries no stale block-entity state.
-                self.world.take_torch(event.pos);
-            }
-            // A bbmodel block has no block-atlas tile, so its burst samples its own
-            // texture (the model atlas); every other block uses its face tiles.
-            match event.block.render_shape() {
-                RenderShape::Model(kind) => self
-                    .particles
-                    .spawn_break_burst_model(event.pos, kind, light, warm),
-                _ => self
-                    .particles
-                    .spawn_break_burst_lit(event.pos, event.block, light, warm),
-            }
-            if event.harvested {
-                self.spawn_drops(event.pos, event.block, light);
-            }
+            self.finish_player_break(event, events);
         }
 
         // A small dust fleck every MINING_DUST_INTERVAL while actively breaking.
@@ -94,20 +40,105 @@ impl Game {
                     let block =
                         Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
                     let cell = h.block + h.normal;
-                    let (light, warm) = self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
+                    let (sky, blk, warm) =
+                        self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
                     match block.render_shape() {
                         RenderShape::Model(kind) => self
                             .particles
-                            .spawn_mining_model(h.block, h.normal, kind, light, warm),
+                            .spawn_mining_model(h.block, h.normal, kind, sky, blk, warm),
                         _ => self
                             .particles
-                            .spawn_mining_lit(h.block, h.normal, block, light, warm),
+                            .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm),
                     }
                 }
             }
         } else {
             self.mining_dust_t = 0.0;
         }
+    }
+
+    /// Apply a finished player break: announce `block_break_pre` (cancel =
+    /// unbreakable — the block stays; the spent mining progress is the cost), then
+    /// clear the block, scatter block-entity contents + harvested drops, spawn the
+    /// burst, and queue `block_broken`.
+    fn finish_player_break(&mut self, event: BreakEvent, events: &mut TickEvents) {
+        {
+            let mut pre = BlockBreakPre {
+                pos: event.pos,
+                block: event.block,
+                harvested: event.harvested,
+            };
+            if self
+                .bus
+                .block_break_pre(&mut self.world, &mut self.player, events, &mut pre)
+                == Outcome::Cancel
+            {
+                return;
+            }
+        }
+        events.broke_block = Some(event.block);
+        let hit_normal = self
+            .look
+            .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
+            .map(|h| h.normal);
+        let (sky, blk, warm) = break_light(&self.world, event.pos, hit_normal);
+        // A bbmodel block breaks as a whole: removing any cell clears every footprint
+        // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
+        if matches!(event.block.render_shape(), RenderShape::Model(_)) {
+            self.world.remove_model_block(event.pos);
+        } else if event.block.render_shape() == RenderShape::Door {
+            // A door breaks as a whole: removing either cell clears both halves and
+            // drops one door item (the `spawn_drops` below). Forget any swing too.
+            if let Some(lower) = self
+                .world
+                .door_lower_cell(event.pos.x, event.pos.y, event.pos.z)
+            {
+                self.door_swings.remove(&lower);
+            }
+            self.world.remove_door(event.pos);
+        } else {
+            self.world
+                .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
+        }
+        // A broken furnace scatters whatever it held, regardless of tool (the
+        // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
+        if event.block == Block::Furnace {
+            if let Some(f) = self.world.take_furnace(event.pos) {
+                for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
+                    self.spawn_item_stack(event.pos, stack, (sky, blk));
+                }
+            }
+        } else if event.block == Block::Chest {
+            // A broken chest scatters its whole contents, regardless of tool.
+            if let Some(chest) = self.world.take_chest(event.pos) {
+                for stack in chest.slots.into_iter().flatten() {
+                    self.spawn_item_stack(event.pos, stack, (sky, blk));
+                }
+            }
+        } else if event.block == Block::Torch {
+            // A torch has no contents — just forget its recorded orientation so
+            // the freed cell carries no stale block-entity state.
+            self.world.take_torch(event.pos);
+        }
+        // A bbmodel block has no block-atlas tile, so its burst samples its own
+        // texture (the model atlas); every other block uses its face tiles.
+        match event.block.render_shape() {
+            RenderShape::Model(kind) => self
+                .particles
+                .spawn_break_burst_model(event.pos, kind, sky, blk, warm),
+            _ => self
+                .particles
+                .spawn_break_burst_lit(event.pos, event.block, sky, blk, warm),
+        }
+        if event.harvested {
+            self.spawn_drops(event.pos, event.block, (sky, blk));
+        }
+        self.bus.emit(PostEvent::BlockBroken {
+            pos: event.pos,
+            block: event.block,
+            harvested: event.harvested,
+            natural: false,
+        });
     }
 
     /// Drain the blocks the world simulation destroyed this tick (fragile blocks that
@@ -119,22 +150,30 @@ impl Game {
     /// what the burst should glow with.
     pub(super) fn process_natural_breaks(&mut self) {
         for (pos, block) in self.world.take_natural_breaks() {
-            let (light, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
+            let (sky, blk, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
             match block.render_shape() {
                 RenderShape::Model(kind) => self
                     .particles
-                    .spawn_break_burst_model(pos, kind, light, warm),
+                    .spawn_break_burst_model(pos, kind, sky, blk, warm),
                 _ => self
                     .particles
-                    .spawn_break_burst_lit(pos, block, light, warm),
+                    .spawn_break_burst_lit(pos, block, sky, blk, warm),
             }
             // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
             // hand-break would (short grass yields nothing, a flower/torch yields itself).
-            self.spawn_drops(pos, block, light);
+            self.spawn_drops(pos, block, (sky, blk));
+            // Sim-destroyed blocks are not cancellable (no pre event) in Phase 1;
+            // observers still hear about them.
+            self.bus.emit(PostEvent::BlockBroken {
+                pos,
+                block,
+                harvested: true,
+                natural: true,
+            });
         }
     }
 
-    pub(super) fn spawn_drops(&mut self, pos: IVec3, block: Block, skylight: u8) {
+    pub(super) fn spawn_drops(&mut self, pos: IVec3, block: Block, (sky, blk): (u8, u8)) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
@@ -159,29 +198,32 @@ impl Game {
             }
             let stack = ItemStack::new(d.item, count);
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-            drop.skylight = skylight;
+            drop.skylight = sky;
+            drop.blocklight = blk;
             self.world.spawn_item(drop);
         }
     }
 
     /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
     /// furnace scattering its contents). No-op for an empty stack.
-    fn spawn_item_stack(&mut self, pos: IVec3, stack: ItemStack, skylight: u8) {
+    fn spawn_item_stack(&mut self, pos: IVec3, stack: ItemStack, (sky, blk): (u8, u8)) {
         if stack.is_empty() {
             return;
         }
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-        drop.skylight = skylight;
+        drop.skylight = sky;
+        drop.blocklight = blk;
         self.world.spawn_item(drop);
     }
 }
 
-/// Combined light + warm at the lit face of a just-broken block, for its break
-/// particles: the mined face's `(combined, warm)`, or the brightest neighbour when
-/// the face is unknown.
-fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8) {
+/// Two-channel light + warm at the lit face of a just-broken block, for its break
+/// particles: the mined face's `(sky6, block6, warm)`, or the brightest neighbour
+/// (by combined `max(sky, block)`, matching the old single-channel pick) when the
+/// face is unknown.
+fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8, u8) {
     let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
         return at(pos + n);
@@ -197,6 +239,6 @@ fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8) {
     ]
     .into_iter()
     .map(|n| at(pos + n))
-    .max_by_key(|(combined, _)| *combined)
-    .unwrap_or((63, 0))
+    .max_by_key(|&(sky, block, _)| sky.max(block))
+    .unwrap_or((63, 0, 0))
 }

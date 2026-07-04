@@ -272,32 +272,76 @@ impl CompiledAsset for BlockModel {
 // Registry
 // ---------------------------------------------------------------------------------
 
-/// A bbmodel kind — the registry key, one per authored model (id-ordered, indexes the
-/// registry + [`MODELS`]/[`INSTANCES`]). A [`RenderShape::Model`] block names its kind
-/// here; an ITEM-ONLY model item (no block, e.g. the bucket) names its kind via
-/// `ItemType::render_kind` instead, so its placement/collision machinery simply never
-/// runs.
+/// A bbmodel kind — the registry key, one per authored model (an opaque runtime
+/// id indexing the loaded def table + [`MODELS`]/[`INSTANCES`]). Engine kinds own
+/// the low ids in the frozen const order below; mod packs register additional
+/// kinds through namespaced `models.json` rows (see [`crate::registry`]) and
+/// reference them from a block row's `shape` field. A [`RenderShape::Model`]
+/// block names its kind; an ITEM-ONLY model item (no block, e.g. the bucket)
+/// names its kind via `ItemType::render_kind` instead, so its
+/// placement/collision machinery simply never runs.
+///
+/// Serde carries a kind as its registry KEY string (`furniture_workbench`).
 ///
 /// [`RenderShape::Model`]: crate::block::RenderShape::Model
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockModelKind {
-    FurnitureWorkbench = 0,
-    Bucket = 1,
-    WaterBucket = 2,
-    BedFrame = 3,
-    Bed = 4,
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BlockModelKind(pub u8);
+
+/// Engine model-kind consts, named like the enum variants they replaced.
+#[allow(non_upper_case_globals)]
+impl BlockModelKind {
+    pub const FurnitureWorkbench: BlockModelKind = BlockModelKind(0);
+    pub const Bucket: BlockModelKind = BlockModelKind(1);
+    pub const WaterBucket: BlockModelKind = BlockModelKind(2);
+    pub const BedFrame: BlockModelKind = BlockModelKind(3);
+    pub const Bed: BlockModelKind = BlockModelKind(4);
 }
 
-/// Every bbmodel kind in id order — the precache + registry-order oracle.
-pub const ALL: &[BlockModelKind] = &[
-    BlockModelKind::FurnitureWorkbench,
-    BlockModelKind::Bucket,
-    BlockModelKind::WaterBucket,
-    BlockModelKind::BedFrame,
-    BlockModelKind::Bed,
+/// Engine model keys in frozen id order — the completeness oracle
+/// `models.json` is validated against.
+const ENGINE_MODEL_KEYS: &[&str] = &[
+    "furniture_workbench",
+    "bucket",
+    "water_bucket",
+    "bed_frame",
+    "bed",
 ];
+
+impl std::fmt::Debug for BlockModelKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match ENGINE_MODEL_KEYS.get(self.0 as usize) {
+            Some(key) => write!(f, "BlockModelKind({key})"),
+            None => write!(f, "BlockModelKind(#{})", self.0),
+        }
+    }
+}
+
+impl Serialize for BlockModelKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(def(*self).key)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockModelKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let key = std::borrow::Cow::<str>::deserialize(d)?;
+        defs()
+            .iter()
+            .position(|m| m.key == key)
+            .map(|i| BlockModelKind(i as u8))
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown block model '{key}'")))
+    }
+}
+
+/// Every registered kind in id order (engine + pack-registered).
+pub fn all() -> &'static [BlockModelKind] {
+    static ALL: LazyLock<Vec<BlockModelKind>> = LazyLock::new(|| {
+        (0..defs().len())
+            .map(|id| BlockModelKind(id as u8))
+            .collect()
+    });
+    &ALL
+}
 
 /// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
 /// intersects the chosen shape with each occupied cell.
@@ -310,7 +354,8 @@ pub enum CollisionSpec {
 /// How a placed model orients its authored X axis relative to the placing player
 /// (multi-cell models and `DIRECTIONAL_VIEW` blocks orient on placement — see
 /// `game::placement`).
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlacementOrientation {
     /// Authored X spans LEFT-TO-RIGHT across the player's view; the authored front
     /// (−Z) faces the player. Furniture you stand in front of (the workbench).
@@ -343,7 +388,9 @@ impl PlacementOrientation {
 /// The data row for one bbmodel block: its cache key, source file, cell footprint,
 /// and collision policy. The geometry/texture come from `model_file` (read through
 /// the asset roots, so a mod pack can override the art); this row carries only what
-/// the source can't express.
+/// the source can't express. Rows live in `models.json` (a layered catalog like
+/// `blocks.json`): a bare engine key overrides, a namespaced key registers a new
+/// kind, a new bare key errors.
 pub struct BlockModelDef {
     pub key: &'static str,
     pub model_file: &'static str,
@@ -356,62 +403,104 @@ pub struct BlockModelDef {
     pub orientation: PlacementOrientation,
 }
 
-/// The id-ordered registry (one row per [`BlockModelKind`], indexed by `kind as u8`).
-pub static BLOCK_MODEL_DEFS: &[BlockModelDef] = &[
-    BlockModelDef {
-        key: "furniture_workbench",
-        model_file: "models/blocks/furniture_workbench.bbmodel",
-        // Authored 2 wide (X), 2 tall (Y), 1 long (Z).
-        cells: [2, 2, 1],
-        collision: CollisionSpec::FromModel,
-        orientation: PlacementOrientation::LeftToRight,
-    },
-    BlockModelDef {
-        key: "bucket",
-        model_file: "models/items/bucket.bbmodel",
-        cells: [1, 1, 1],
-        collision: CollisionSpec::FromModel,
-        orientation: PlacementOrientation::LeftToRight,
-    },
-    BlockModelDef {
-        key: "water_bucket",
-        model_file: "models/items/water_bucket.bbmodel",
-        cells: [1, 1, 1],
-        collision: CollisionSpec::FromModel,
-        orientation: PlacementOrientation::LeftToRight,
-    },
-    BlockModelDef {
-        key: "bed_frame",
-        model_file: "models/blocks/bed_frame.bbmodel",
-        // Authored 2 long (X), 1 tall (Y, headboard posts), 1 wide (Z).
-        cells: [2, 1, 1],
-        collision: CollisionSpec::FromModel,
-        orientation: PlacementOrientation::FrontToBack,
-    },
-    BlockModelDef {
-        key: "bed",
-        model_file: "models/blocks/bed.bbmodel",
-        cells: [2, 1, 1],
-        collision: CollisionSpec::FromModel,
-        orientation: PlacementOrientation::FrontToBack,
-    },
-];
+/// One model row as written in `models.json`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawModelDef {
+    key: String,
+    model_file: String,
+    cells: [u8; 3],
+    orientation: PlacementOrientation,
+}
+
+#[derive(Deserialize)]
+struct RawModelFile {
+    models: Vec<RawModelDef>,
+}
+
+/// The loaded, id-ordered model def table. Loads exactly once; a missing or
+/// inconsistent `models.json` fails loudly at startup.
+fn defs() -> &'static [BlockModelDef] {
+    static DEFS: LazyLock<&'static [BlockModelDef]> = LazyLock::new(|| {
+        let layers = crate::assets::read_layers("models.json");
+        if layers.is_empty() {
+            panic!(
+                "models.json not found (searched {:?}); the game cannot run without its model table",
+                crate::assets::candidate_paths("models.json")
+            );
+        }
+        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
+        Box::leak(
+            parse_layers(&texts)
+                .unwrap_or_else(|e| panic!("models.json: {e}"))
+                .into_boxed_slice(),
+        )
+    });
+    &DEFS
+}
+
+fn parse_layers(texts: &[&str]) -> Result<Vec<BlockModelDef>, String> {
+    // Same catalog contract as blocks/items/sounds: merge rows by key, engine
+    // keys keep their frozen ids, namespaced keys register fresh ids.
+    let mut merged: Vec<RawModelDef> = Vec::new();
+    let mut layer_keys: Vec<Vec<String>> = Vec::new();
+    for (li, text) in texts.iter().enumerate() {
+        let raw: RawModelFile =
+            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
+        layer_keys.push(raw.models.iter().map(|r| r.key.clone()).collect());
+        for r in raw.models {
+            match merged.iter_mut().find(|m| m.key == r.key) {
+                Some(slot) => *slot = r,
+                None => merged.push(r),
+            }
+        }
+    }
+    let names = crate::registry::NameTable::build(ENGINE_MODEL_KEYS, &layer_keys, "block model")?;
+    let mut rows: Vec<Option<BlockModelDef>> = (0..names.len()).map(|_| None).collect();
+    for r in merged {
+        let id = names
+            .id(&r.key)
+            .ok_or_else(|| format!("unregistered block model '{}'", r.key))?;
+        rows[id as usize] = Some(BlockModelDef {
+            key: Box::leak(r.key.into_boxed_str()),
+            model_file: Box::leak(r.model_file.into_boxed_str()),
+            cells: r.cells,
+            collision: CollisionSpec::FromModel,
+            orientation: r.orientation,
+        });
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(id, row)| {
+            row.ok_or_else(|| {
+                format!(
+                    "missing row for block model '{}'",
+                    names.name(id as u8).unwrap_or("?")
+                )
+            })
+        })
+        .collect()
+}
 
 /// The registry row for `kind`.
 #[inline]
 pub fn def(kind: BlockModelKind) -> &'static BlockModelDef {
-    &BLOCK_MODEL_DEFS[kind as usize]
+    &defs()[kind.0 as usize]
 }
 
-/// Every kind's compiled [`BlockModel`], indexed by `kind as usize` — the cached parse,
+/// Every kind's compiled [`BlockModel`], indexed by raw kind id — the cached parse,
 /// precached once on first use (compiling each `.bbmodel` → `.llblock` on a miss, else
 /// fast-loading the `.llblock`).
 static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
-    ALL.iter()
+    all()
+        .iter()
         .map(|&k| {
             let d = def(k);
             let Some((src, _)) = crate::assets::read_bytes(d.model_file) else {
-                log::error!("block model '{}' not found in the asset roots", d.model_file);
+                log::error!(
+                    "block model '{}' not found in the asset roots",
+                    d.model_file
+                );
                 return BlockModel::empty();
             };
             crate::asset_cache::load_or_compile::<BlockModel>(d.key, &src).unwrap_or_else(|e| {
@@ -483,7 +572,7 @@ impl ModelAtlas {
     /// sheet's UV space.
     #[inline]
     pub fn remap(&self, kind: BlockModelKind, uv: [f32; 2]) -> [f32; 2] {
-        let [uo, vo, us, vs] = self.xform[kind as usize];
+        let [uo, vo, us, vs] = self.xform[kind.0 as usize];
         [uo + uv[0] * us, vo + uv[1] * vs]
     }
 
@@ -520,11 +609,11 @@ struct ParticlePatches {
 }
 
 static PATCHES: LazyLock<Vec<ParticlePatches>> =
-    LazyLock::new(|| ALL.iter().map(|&k| ParticlePatches::scan(k)).collect());
+    LazyLock::new(|| all().iter().map(|&k| ParticlePatches::scan(k)).collect());
 
 impl ParticlePatches {
     fn scan(kind: BlockModelKind) -> Self {
-        let m = &MODELS[kind as usize];
+        let m = &MODELS[kind.0 as usize];
         let (tw, th) = (m.tex_w.max(1), m.tex_h.max(1));
         // A 4-texel fleck patch, stepped across the sheet on the same stride.
         let patch = 4u32.min(tw).min(th);
@@ -554,7 +643,7 @@ impl ParticlePatches {
 /// flecks read as its own texture; falls back to the whole sheet if nothing scanned
 /// opaque. Shared by [`crate::entity::ParticleSystem`]'s model spawn paths.
 pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], f32) {
-    let p = &PATCHES[kind as usize];
+    let p = &PATCHES[kind.0 as usize];
     let at = atlas();
     let min_local = if p.mins.is_empty() {
         [0.0, 0.0]
@@ -677,7 +766,7 @@ impl ModelInstance {
     }
 
     fn build(kind: BlockModelKind) -> Self {
-        let m = &MODELS[kind as usize];
+        let m = &MODELS[kind.0 as usize];
         let d = def(kind);
         let footprint = d.cells.map(|c| c.max(1));
         let at = atlas();
@@ -1082,12 +1171,12 @@ pub fn transform_footprint_point(p: Vec3, footprint: [u8; 3], facing: Facing) ->
 
 /// Every kind's runtime [`ModelInstance`], indexed by `kind as usize`.
 static INSTANCES: LazyLock<Vec<ModelInstance>> =
-    LazyLock::new(|| ALL.iter().map(|&k| ModelInstance::build(k)).collect());
+    LazyLock::new(|| all().iter().map(|&k| ModelInstance::build(k)).collect());
 
 /// This kind's runtime instance (footprint + per-cell geometry/collision/selection).
 #[inline]
 pub fn instance(kind: BlockModelKind) -> &'static ModelInstance {
-    &INSTANCES[kind as usize]
+    &INSTANCES[kind.0 as usize]
 }
 
 /// The block's footprint in cells `(sx, sy, sz)`.
@@ -1100,7 +1189,7 @@ pub fn footprint(kind: BlockModelKind) -> [u8; 3] {
 /// reads `firstperson_righthand`, the inventory icon reads `gui`.
 #[inline]
 pub fn display(kind: BlockModelKind) -> &'static BlockDisplay {
-    &MODELS[kind as usize].display
+    &MODELS[kind.0 as usize].display
 }
 
 /// The cell-local player-collision boxes for the cell at `offset` within the footprint.
@@ -1546,7 +1635,7 @@ mod tests {
     fn every_registered_model_compiles_with_geometry_and_texture() {
         // A bad bbmodel export degrades to an EMPTY model at runtime (log +
         // invisible), so a compile failure must be caught here instead.
-        for &kind in ALL {
+        for &kind in all() {
             let m = BlockModel::compile(&model_bytes(kind))
                 .unwrap_or_else(|e| panic!("{kind:?} fails to compile: {e}"));
             assert!(!m.cubes.is_empty(), "{kind:?} has no geometry");

@@ -18,14 +18,39 @@ enum ShellButtonId {
     TitleQuit,
     WorldPlay,
     WorldCreate,
-    WorldDelete,
+    /// Opens the per-world World Settings screen (replaced the old per-world
+    /// Delete button; deleting lives on the settings screen now).
+    WorldSettings,
     WorldBack,
+    SettingsBack,
+    SettingsDeleteWorld,
     CreateCreate,
     CreateCancel,
     DeleteWorldConfirm,
     DeleteWorldCancel,
     PauseResume,
     PauseSaveQuit,
+}
+
+/// One World Settings row: an installed pack. Content-only packs (no `id`)
+/// are listed but not toggleable — disable semantics are namespace-based and
+/// they have none (their bare-key overrides are process-wide).
+pub(super) struct ModPackRow {
+    name: String,
+    id: Option<String>,
+    version: Option<String>,
+}
+
+/// The open World Settings screen's state: which world, the installed pack
+/// rows, and the world's disabled set (mirrors `settings.json`; every toggle
+/// writes the file immediately).
+pub(super) struct WorldSettingsSession {
+    dir_name: String,
+    world_name: String,
+    rows: Vec<ModPackRow>,
+    settings: crate::save::settings::WorldSettings,
+    selected: usize,
+    scroll: usize,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -129,12 +154,17 @@ impl App {
             }
         }
 
-        for (world, rect) in layout.rows {
+        for (row, rect) in layout.rows {
             if rect.contains(cursor.0, cursor.1) {
-                let double = self.shell_clicks.register_world(world, now);
-                self.selected_world = Some(world);
-                if double {
-                    self.play_selected_world();
+                match self.screen {
+                    AppScreen::WorldSettings => self.toggle_world_settings_row(row),
+                    _ => {
+                        let double = self.shell_clicks.register_world(row, now);
+                        self.selected_world = Some(row);
+                        if double {
+                            self.play_selected_world();
+                        }
+                    }
                 }
                 return true;
             }
@@ -142,8 +172,12 @@ impl App {
 
         for scroll in layout.scroll_tracks {
             if scroll.track.contains(cursor.0, cursor.1) {
-                self.world_scroll =
+                let target =
                     scroll_from_track_click(cursor.1, scroll.track, scroll.total, scroll.visible);
+                match (self.screen, self.world_settings.as_mut()) {
+                    (AppScreen::WorldSettings, Some(session)) => session.scroll = target,
+                    _ => self.world_scroll = target,
+                }
                 self.shell_clicks.reset();
                 return true;
             }
@@ -212,6 +246,7 @@ impl App {
         match self.screen {
             AppScreen::CreateWorld => self.handle_create_world_key(key, screen_size),
             AppScreen::WorldSelect => self.handle_world_select_key(key),
+            AppScreen::WorldSettings => self.handle_world_settings_key(key),
             AppScreen::DeleteWorld => self.handle_delete_world_key(key),
             AppScreen::Pause => {
                 if matches!(key, TextKey::Enter) {
@@ -326,24 +361,27 @@ impl App {
     }
 
     pub(super) fn adjust_world_scroll(&mut self, delta: f32) -> bool {
-        if !matches!(self.screen, AppScreen::WorldSelect) || self.worlds.is_empty() {
-            return false;
-        }
         let step = delta.round() as i32;
-        if step == 0 {
-            return true;
+        match self.screen {
+            AppScreen::WorldSelect if !self.worlds.is_empty() => {
+                if step == 0 {
+                    return true;
+                }
+                let visible = self.visible_world_rows_for_screen();
+                let max_scroll = max_world_scroll(self.worlds.len(), visible);
+                self.world_scroll = step_scroll(self.world_scroll, step, max_scroll);
+                true
+            }
+            AppScreen::WorldSettings => {
+                let visible = visible_mod_rows_for_screen();
+                if let Some(session) = self.world_settings.as_mut() {
+                    let max_scroll = max_world_scroll(session.rows.len(), visible);
+                    session.scroll = step_scroll(session.scroll, step, max_scroll);
+                }
+                true
+            }
+            _ => false,
         }
-        let visible = self.visible_world_rows_for_screen();
-        let max_scroll = max_world_scroll(self.worlds.len(), visible);
-        if step > 0 {
-            self.world_scroll = self
-                .world_scroll
-                .saturating_add(step as usize)
-                .min(max_scroll);
-        } else {
-            self.world_scroll = self.world_scroll.saturating_sub((-step) as usize);
-        }
-        true
     }
 
     fn apply_shell_button(&mut self, id: ShellButtonId) {
@@ -368,10 +406,19 @@ impl App {
                 self.screen = AppScreen::CreateWorld;
                 self.pointer.release_for_menu();
             }
-            ShellButtonId::WorldDelete => self.open_delete_world_confirm(),
+            ShellButtonId::WorldSettings => self.open_world_settings(),
             ShellButtonId::WorldBack => {
                 self.screen = AppScreen::Title;
                 self.pointer.release_for_menu();
+            }
+            ShellButtonId::SettingsBack => {
+                self.world_settings = None;
+                self.screen = AppScreen::WorldSelect;
+                self.pointer.release_for_menu();
+            }
+            ShellButtonId::SettingsDeleteWorld => {
+                self.world_settings = None;
+                self.open_delete_world_confirm();
             }
             ShellButtonId::CreateCreate => self.create_world_from_form(),
             ShellButtonId::CreateCancel => {
@@ -411,6 +458,103 @@ impl App {
         }
         self.screen = AppScreen::DeleteWorld;
         self.pointer.release_for_menu();
+    }
+
+    /// Open the World Settings screen for the selected world: the installed
+    /// pack list (from pack discovery) plus the world's `settings.json`.
+    fn open_world_settings(&mut self) {
+        let Some(world) = self.selected_world.and_then(|index| self.worlds.get(index)) else {
+            return;
+        };
+        let rows = crate::assets::packs()
+            .iter()
+            .map(|p| ModPackRow {
+                name: p.name.clone(),
+                id: p.id.clone(),
+                version: p.version.clone(),
+            })
+            .collect();
+        self.world_settings = Some(WorldSettingsSession {
+            dir_name: world.dir_name.clone(),
+            world_name: world.name.clone(),
+            rows,
+            settings: crate::save::read_world_settings(&world.dir_name),
+            selected: 0,
+            scroll: 0,
+        });
+        self.screen = AppScreen::WorldSettings;
+        self.pointer.release_for_menu();
+    }
+
+    /// Flip one pack's enabled state for the open World Settings world and
+    /// write `settings.json` immediately (a crash can't lose toggles; there
+    /// is no unsaved state). Content-only packs (no id) are not toggleable.
+    /// Takes effect the next time the world is OPENED — never live.
+    fn toggle_world_settings_row(&mut self, row: usize) {
+        let Some(session) = self.world_settings.as_mut() else {
+            return;
+        };
+        let Some(pack) = session.rows.get(row) else {
+            return;
+        };
+        session.selected = row;
+        let Some(id) = pack.id.clone() else {
+            return; // content-only packs are always on
+        };
+        if !session.settings.disabled_mods.remove(&id) {
+            session.settings.disabled_mods.insert(id);
+        }
+        if let Err(e) = crate::save::write_world_settings(&session.dir_name, &session.settings) {
+            log::warn!(
+                "could not write settings.json for world '{}': {e}",
+                session.world_name
+            );
+        }
+    }
+
+    fn handle_world_settings_key(&mut self, key: TextKey) -> bool {
+        match key {
+            TextKey::Enter => {
+                if let Some(row) = self.world_settings.as_ref().map(|s| s.selected) {
+                    self.toggle_world_settings_row(row);
+                }
+                true
+            }
+            TextKey::Delete => {
+                self.world_settings = None;
+                self.open_delete_world_confirm();
+                true
+            }
+            TextKey::ArrowUp => {
+                self.move_world_settings_selection(-1);
+                true
+            }
+            TextKey::ArrowDown => {
+                self.move_world_settings_selection(1);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn move_world_settings_selection(&mut self, step: i32) {
+        let visible = visible_mod_rows_for_screen();
+        let Some(session) = self.world_settings.as_mut() else {
+            return;
+        };
+        if session.rows.is_empty() {
+            return;
+        }
+        let next = (session.selected as i32 + step).clamp(0, session.rows.len() as i32 - 1);
+        session.selected = next as usize;
+        if session.selected < session.scroll {
+            session.scroll = session.selected;
+        } else if visible > 0 && session.selected >= session.scroll + visible {
+            session.scroll = session.selected + 1 - visible;
+        }
+        session.scroll = session
+            .scroll
+            .min(max_world_scroll(session.rows.len(), visible));
     }
 
     fn delete_selected_world(&mut self) {
@@ -536,8 +680,10 @@ impl App {
                 self.play_selected_world();
                 true
             }
+            // Delete follows the button it mirrors: the per-world action is
+            // now World Settings (deleting lives on that screen).
             TextKey::Delete => {
-                self.open_delete_world_confirm();
+                self.open_world_settings();
                 true
             }
             TextKey::ArrowUp => {
@@ -604,6 +750,10 @@ impl App {
                 self.selected_world,
                 self.world_scroll,
             ),
+            AppScreen::WorldSettings => match self.world_settings.as_ref() {
+                Some(session) => world_settings_layout(screen, cursor, session),
+                None => empty_layout(),
+            },
             AppScreen::CreateWorld => create_world_layout(
                 screen,
                 cursor,
@@ -816,8 +966,8 @@ fn world_select_skin_layout(
         def,
         screen,
         ShellRole::WorldDelete,
-        ShellButtonId::WorldDelete,
-        "Delete World",
+        ShellButtonId::WorldSettings,
+        "World Settings",
         has_selection,
         cursor,
     );
@@ -832,6 +982,137 @@ fn world_select_skin_layout(
         cursor,
     );
     layout
+}
+
+fn world_settings_layout(
+    screen: (u32, u32),
+    cursor: (f32, f32),
+    session: &WorldSettingsSession,
+) -> ShellLayout {
+    world_settings_skin_layout(
+        screen,
+        cursor,
+        session,
+        required_shell_def(ShellKind::WorldSettings),
+    )
+}
+
+fn world_settings_skin_layout(
+    screen: (u32, u32),
+    cursor: (f32, f32),
+    session: &WorldSettingsSession,
+    def: &ShellDef,
+) -> ShellLayout {
+    let s = gui_scale(screen);
+    let mut layout = skin_layout(ShellKind::WorldSettings);
+    let panel = def.panel_rect(screen);
+    layout.snapshot.texts.push(text(
+        rect(panel.x, panel.y + 10.0 * s, panel.w, 12.0 * s),
+        "World Settings",
+        1.3 * s,
+        ShellTextAlign::Center,
+    ));
+    layout.snapshot.texts.push(text(
+        rect(panel.x, panel.y + 24.0 * s, panel.w, 10.0 * s),
+        &session.world_name,
+        0.9 * s,
+        ShellTextAlign::Center,
+    ));
+
+    let rows = def.role_rects(ShellRole::ModRow, screen);
+    let visible = rows.len().max(1);
+    let start = session
+        .scroll
+        .min(max_world_scroll(session.rows.len(), visible));
+    for (row_i, row) in rows.iter().copied().enumerate() {
+        let Some((pack_i, pack)) = session.rows.iter().enumerate().skip(start).nth(row_i) else {
+            continue;
+        };
+        layout.snapshot.rows.push(ShellListRow {
+            rect: row,
+            label: mod_row_label(pack, &session.settings),
+            selected: session.selected == pack_i,
+            hovered: row.contains(cursor.0, cursor.1),
+        });
+        layout.rows.push((pack_i, row));
+    }
+    if session.rows.is_empty() {
+        let r = rows_bounds(&rows).unwrap_or(panel);
+        layout
+            .snapshot
+            .texts
+            .push(text(r, "No mod packs installed", s, ShellTextAlign::Center));
+    }
+    if let Some(track) = def.role_rect(ShellRole::ModScrollTrack, screen) {
+        if let Some(thumb) = scrollbar_thumb_rect(track, session.rows.len(), visible, start) {
+            layout
+                .snapshot
+                .scrollbars
+                .push(ShellScrollbar { track, thumb });
+            layout.scroll_tracks.push(ShellScrollTrack {
+                track,
+                total: session.rows.len(),
+                visible,
+            });
+        }
+    }
+
+    push_skin_button(
+        &mut layout,
+        def,
+        screen,
+        ShellRole::SettingsBack,
+        ShellButtonId::SettingsBack,
+        "Back",
+        true,
+        cursor,
+    );
+    push_skin_button(
+        &mut layout,
+        def,
+        screen,
+        ShellRole::SettingsDeleteWorld,
+        ShellButtonId::SettingsDeleteWorld,
+        "Delete World",
+        true,
+        cursor,
+    );
+    layout
+}
+
+/// A World Settings row label: `[x]`/`[ ]` = enabled/disabled for this world;
+/// content-only packs carry no checkbox (nothing namespaced to gate).
+fn mod_row_label(pack: &ModPackRow, settings: &crate::save::settings::WorldSettings) -> String {
+    match &pack.id {
+        Some(id) => {
+            let mark = if settings.disabled_mods.contains(id) {
+                "[ ]"
+            } else {
+                "[x]"
+            };
+            match pack.version.as_deref() {
+                Some(v) if !v.is_empty() => format!("{mark} {} ({id} v{v})", pack.name),
+                _ => format!("{mark} {} ({id})", pack.name),
+            }
+        }
+        None => format!("{} (content pack, always on)", pack.name),
+    }
+}
+
+fn visible_mod_rows_for_screen() -> usize {
+    required_shell_def(ShellKind::WorldSettings)
+        .role_rects(ShellRole::ModRow, (1280, 720))
+        .len()
+        .max(1)
+}
+
+/// Apply a signed scroll-wheel step to a scroll offset, clamped to `max`.
+fn step_scroll(current: usize, step: i32, max: usize) -> usize {
+    if step > 0 {
+        current.saturating_add(step as usize).min(max)
+    } else {
+        current.saturating_sub((-step) as usize)
+    }
 }
 
 fn delete_world_layout(

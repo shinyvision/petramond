@@ -1,9 +1,11 @@
 //! The data-driven GUI model: every screen (hotbar HUD, inventory, crafting
-//! table, furnace, chest) is a baked PNG panel + a JSON manifest of typed slots,
-//! authored in the `gui-builder` tool. This module owns the parsed model and ALL
-//! of its layout math; both the renderer UI builder and the App's
-//! click hit-test read the SAME [`GuiDef`] so what's drawn and what's clicked can
-//! never diverge.
+//! table, furnace, chest — and mod-defined GUIs) is a baked PNG panel + a JSON
+//! manifest of typed slots and widgets. Engine manifests are authored in the
+//! `gui-builder` tool; mod GUI manifests are hand-authored JSON (the builder
+//! does not know the Phase 5 widget schema yet — see WIKI/gui.md). This module
+//! owns the parsed model and ALL of its layout math; both the renderer UI
+//! builder and the App's click hit-test read the SAME [`GuiDef`] so what's
+//! drawn and what's clicked can never diverge.
 //!
 //! Baked GUIs are loaded from a directory at RUNTIME (not embedded) so re-baking
 //! from the gui-builder + restarting picks them up with no recompile, and so the
@@ -12,11 +14,13 @@
 //! works regardless of the working directory.
 //!
 //! The model is generic over [`GuiKind`] and slot [`Role`]: a [`GuiDef`] holds
-//! the logical panel size, per-role slot rects, an optional hover highlight, and
-//! optional dynamic [`OverlayTag`] overlays (the furnace's smelt arrow / burn
-//! flame). Manifest coordinates are baked-canvas pixels (authoring scale); they're
-//! converted once to *logical* pixels so the game applies its own integer
-//! `gui_scale` on top — every screen scales identically.
+//! the logical panel size, per-role slot rects, an optional hover highlight,
+//! optional dynamic string-tagged overlays (the furnace's smelt arrow / burn
+//! flame; mod gauges), and — for mod kinds — the Phase 5 widgets
+//! (`label`/`image`/`button`/`rotimage`). Manifest coordinates are baked-canvas
+//! pixels (authoring scale); they're converted once to *logical* pixels so the
+//! game applies its own integer `gui_scale` on top — every screen scales
+//! identically.
 //!
 //! ## The role→index contract
 //! A manifest lists a role's slots in a stable order; the i-th slot of a role maps
@@ -25,8 +29,16 @@
 //! order MUST be row-major. [`GuiDef::validate`] enforces both the per-kind slot
 //! counts and the row-major ordering at load, so a future re-bake can never
 //! silently mis-route a click.
+//!
+//! ## Mod GUI kinds
+//! A manifest may declare `"type": "mod_id:name"`; the kind registers in the
+//! runtime kind registry ([`super::kind`]) and MUST carry the namespace of the
+//! pack that ships the manifest (foreign-namespace manifests are skipped, like
+//! foreign catalog keys disable a pack). Mod kinds carry NO role slots in
+//! Phase 5 — widgets only; [`GuiDef::validate`] validates the widgets instead
+//! of slot counts.
 
-use super::{gui_scale, GuiKind, HoverFit, HoverFitJson, MenuSlot, Role, SlotRect};
+use super::{gui_scale, GuiKind, HoverFit, HoverFitJson, MenuSlot, Role, SlotRect, WidgetId};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,21 +56,32 @@ const HOTBAR_BOTTOM_MARGIN: f32 = 1.0;
 
 static REGISTRY: OnceLock<Vec<Loaded>> = OnceLock::new();
 
+/// A GUI texture's key within its kind: the interned image FILE NAME an
+/// overlay or widget names. The renderer binds one texture per (kind, key).
+pub(crate) type SpriteKey = &'static str;
+
 /// One baked GUI: its parsed def plus the resolved on-disk paths the renderer
-/// loads its panel / hover / overlay textures from.
+/// loads its panel / hover / sprite textures from.
 struct Loaded {
     def: GuiDef,
     panel_path: PathBuf,
     hover_path: Option<PathBuf>,
-    overlay_paths: Vec<(OverlayTag, PathBuf)>,
+    /// Every overlay/widget image beside the manifest, keyed by file name.
+    sprite_paths: Vec<(SpriteKey, PathBuf)>,
 }
 
 fn load_baked() -> Vec<Loaded> {
     // Overlay the baked dirs (base + packs) by manifest FILE NAME: the
     // highest-priority copy of a name wins, new names add. Each manifest's art
     // resolves beside the manifest itself, so a pack GUI is self-contained.
-    let mut manifests: Vec<(String, PathBuf, PathBuf)> = Vec::new(); // (file name, json, dir)
-    for dir in crate::assets::layer_dirs(BAKED_DIR) {
+    // The owning pack id rides along for the mod-kind namespace check.
+    struct Found {
+        json: PathBuf,
+        dir: PathBuf,
+        pack_id: Option<String>,
+    }
+    let mut manifests: Vec<(String, Found)> = Vec::new();
+    for (dir, pack_id) in crate::assets::layer_dirs_with_ids(BAKED_DIR) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -68,9 +91,14 @@ fn load_baked() -> Vec<Loaded> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
-            match manifests.iter_mut().find(|(n, _, _)| *n == name) {
-                Some(slot) => *slot = (name, path, dir.clone()),
-                None => manifests.push((name, path, dir.clone())),
+            let found = Found {
+                json: path,
+                dir: dir.clone(),
+                pack_id: pack_id.clone(),
+            };
+            match manifests.iter_mut().find(|(n, _)| *n == name) {
+                Some(slot) => slot.1 = found,
+                None => manifests.push((name, found)),
             }
         }
     }
@@ -78,15 +106,19 @@ fn load_baked() -> Vec<Loaded> {
     manifests.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut out = Vec::new();
-    for (_, path, dir) in manifests {
-        let dir = dir.as_path();
+    for (_, found) in manifests {
+        let (path, dir) = (found.json, found.dir.as_path());
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Some(mut def) = GuiDef::from_manifest(&text) else {
+        let Some(def) = GuiDef::from_manifest(&text) else {
             eprintln!("gui: ignoring unparseable manifest {}", path.display());
             continue;
         };
+        if let Err(e) = kind_permitted(def.kind, found.pack_id.as_deref()) {
+            eprintln!("gui: ignoring {} — {e}", path.display());
+            continue;
+        }
         if let Err(e) = def.validate() {
             eprintln!("gui: ignoring {} — {e}", path.display());
             continue;
@@ -100,6 +132,7 @@ fn load_baked() -> Vec<Loaded> {
             );
             continue;
         }
+        let mut def = def;
         let hover_path = def
             .hover
             .as_ref()
@@ -110,22 +143,50 @@ fn load_baked() -> Vec<Loaded> {
                 hover.image_size = (w, h);
             }
         }
-        let overlay_paths = def
-            .overlays
-            .iter()
-            .filter_map(|o| {
-                let p = dir.join(&o.image);
-                p.exists().then_some((o.tag, p))
-            })
-            .collect();
+        let mut sprite_paths: Vec<(SpriteKey, PathBuf)> = Vec::new();
+        for key in def.sprite_keys() {
+            if sprite_paths.iter().any(|(k, _)| *k == key) {
+                continue;
+            }
+            let p = dir.join(key);
+            if p.exists() {
+                sprite_paths.push((key, p));
+            } else {
+                eprintln!(
+                    "gui: {} names missing art {key}; the quad will not draw",
+                    path.display()
+                );
+            }
+        }
         out.push(Loaded {
             def,
             panel_path,
             hover_path,
-            overlay_paths,
+            sprite_paths,
         });
     }
     out
+}
+
+/// The mod-kind ownership rule: a namespaced manifest kind must carry the id
+/// of the pack that ships the manifest (base dirs ship no namespace). Engine
+/// kinds are always permitted (a pack may re-skin the furnace).
+fn kind_permitted(kind: GuiKind, pack_id: Option<&str>) -> Result<(), String> {
+    if !kind.is_mod() {
+        return Ok(());
+    }
+    let key = super::kind_key(kind).unwrap_or("?");
+    let owner = key.split_once(':').map(|(ns, _)| ns).unwrap_or("");
+    match pack_id {
+        Some(id) if id == owner => Ok(()),
+        Some(id) => Err(format!(
+            "kind '{key}' does not belong to pack '{id}' (namespaced kinds must use the \
+             shipping pack's own id)"
+        )),
+        None => Err(format!(
+            "kind '{key}' is namespaced but the manifest ships outside any pack"
+        )),
+    }
 }
 
 fn registry() -> &'static [Loaded] {
@@ -157,22 +218,28 @@ pub(crate) fn baked_hovers() -> Vec<(GuiKind, PathBuf)> {
         .collect()
 }
 
-/// (kind, tag, overlay PNG path) for every baked dynamic overlay (furnace gauges).
-pub(crate) fn baked_overlays() -> Vec<(GuiKind, OverlayTag, PathBuf)> {
+/// (kind, sprite key, PNG path) for every overlay/widget image a baked GUI
+/// names (furnace gauges, mod widget art).
+pub(crate) fn baked_sprites() -> Vec<(GuiKind, SpriteKey, PathBuf)> {
     registry()
         .iter()
         .flat_map(|l| {
-            l.overlay_paths
+            l.sprite_paths
                 .iter()
-                .map(move |(t, p)| (l.def.kind, *t, p.clone()))
+                .map(move |(k, p)| (l.def.kind, *k, p.clone()))
         })
         .collect()
 }
 
 /// The logical slot under the cursor in `kind`'s layout. `None` if the cursor is
-/// over no slot (or `kind` has no baked manifest).
+/// over no slot (or `kind` has no baked manifest). Buttons hit-test like slots:
+/// a `button` widget resolves to [`MenuSlot::Widget`].
 pub(crate) fn hit(kind: GuiKind, screen: (u32, u32), cursor: (f32, f32)) -> Option<MenuSlot> {
-    let (role, i) = def(kind)?.role_at_any(screen, cursor)?;
+    let def = def(kind)?;
+    if let Some(id) = def.button_at(screen, cursor) {
+        return Some(MenuSlot::Widget(id));
+    }
+    let (role, i) = def.role_at_any(screen, cursor)?;
     role.menu_slot(i)
 }
 
@@ -182,32 +249,39 @@ pub(crate) fn panel_contains(kind: GuiKind, screen: (u32, u32), cursor: (f32, f3
     def(kind).is_some_and(|d| d.panel_rect(screen).contains(cursor.0, cursor.1))
 }
 
-// ---- manifest JSON (the gui-builder bake format) --------------------------
+// ---- manifest JSON (the gui-builder bake format + Phase 5 widgets) ---------
 
-/// A dynamic overlay drawn over the panel and clipped at runtime by game state —
-/// the furnace's smelt arrow (fills with cook progress) and burn flame (depletes
-/// with remaining fuel). Matches the gui-builder's tagged-layer `tag` field.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+/// How a dynamic overlay clips against its `0..=1` fraction. The two modes are
+/// the (previously furnace-hardcoded) fill directions, now declared per
+/// overlay row; the legacy furnace tags default their historical mode so
+/// existing bakes render identically without a re-bake.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum OverlayTag {
-    FurnaceArrow,
-    FurnaceFlame,
-    #[serde(other)]
-    Other,
+pub(crate) enum OverlayMode {
+    /// Grows left→right with the fraction (the smelt arrow).
+    GrowLr,
+    /// Depletes top→down: the bottom `frac` stays visible (the burn flame).
+    DepleteTd,
 }
 
 #[derive(Deserialize)]
 struct Manifest {
+    /// The kind key: an engine name (`"furnace"`) or a namespaced mod kind
+    /// (`"wheel:wheel"`). Resolved (and, for namespaced keys, registered)
+    /// against the runtime kind registry.
     #[serde(rename = "type")]
-    kind: GuiKind,
+    kind: String,
     canvas: CanvasJson,
     scale: u32,
     image: String,
+    #[serde(default)]
     slots: Vec<SlotJson>,
     #[serde(default)]
     hover: Option<HoverJson>,
     #[serde(default)]
     tagged: Vec<TaggedJson>,
+    #[serde(default)]
+    widgets: Vec<WidgetJson>,
 }
 
 #[derive(Deserialize)]
@@ -237,12 +311,85 @@ struct HoverJson {
 
 #[derive(Deserialize)]
 struct TaggedJson {
-    tag: OverlayTag,
+    tag: String,
     image: String,
     x: i32,
     y: i32,
     w: i32,
     h: i32,
+    /// Absent in legacy bakes: the furnace tags default their historical
+    /// direction (`furnace_arrow` grows, `furnace_flame` depletes); anything
+    /// else defaults to `grow_lr`.
+    #[serde(default)]
+    mode: Option<OverlayMode>,
+}
+
+/// Phase 5 widget rows (mod GUIs). Coordinates are canvas px like slots.
+#[derive(Deserialize)]
+#[serde(tag = "widget", rename_all = "snake_case")]
+enum WidgetJson {
+    /// Text via the runtime text pipeline: `state_key` reads the GUI state map
+    /// (dynamic), `text` is the static fallback when the key is absent.
+    Label {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        state_key: Option<String>,
+        #[serde(default)]
+        align: Option<LabelAlign>,
+        #[serde(default)]
+        color: Option<[f32; 4]>,
+    },
+    /// A static PNG beside the manifest.
+    Image {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        image: String,
+    },
+    /// A hit-testable rect; a click latches [`MenuSlot::Widget`] and the tick
+    /// dispatches it to the kind's owning mod. `image` is optional decoration
+    /// (the button may be baked into the panel art); `hover_image` replaces
+    /// the shared hover highlight while the cursor is over the button.
+    Button {
+        id: String,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        #[serde(default)]
+        image: Option<String>,
+        #[serde(default)]
+        hover_image: Option<String>,
+    },
+    /// A textured quad rotated at draw time by the angle (radians) read from
+    /// the GUI state map at `state_key`. `pivot` is canvas px relative to the
+    /// widget rect's top-left; absent = the rect centre.
+    Rotimage {
+        #[serde(default)]
+        #[allow(dead_code)] // reserved: rotimages are not hit-testable in Phase 5
+        id: Option<String>,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        image: String,
+        #[serde(default)]
+        pivot: Option<[f32; 2]>,
+        state_key: String,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LabelAlign {
+    Left,
+    Center,
 }
 
 fn default_opacity() -> f32 {
@@ -260,13 +407,44 @@ pub(crate) struct HoverDef {
     image: String,
 }
 
-/// A dynamic overlay's placement: its tag (how the game clips it) + logical rect.
-struct OverlayDef {
-    tag: OverlayTag,
+/// A dynamic overlay's placement: its tag (the fraction source — FurnaceView
+/// for the furnace tags, the GUI state map otherwise), clip mode, art, and
+/// logical rect.
+pub(crate) struct OverlayDef {
+    pub tag: &'static str,
+    pub mode: OverlayMode,
+    /// The interned image file name — the renderer's sprite bind key.
+    pub image: SpriteKey,
     /// `[x, y, w, h]` in logical px (canvas px ÷ authoring scale).
     base: [f32; 4],
-    /// Panel-relative PNG filename (resolved to a path in [`load_baked`]).
-    image: String,
+}
+
+/// A parsed Phase 5 widget in logical px.
+pub(crate) enum WidgetDef {
+    Label {
+        base: [f32; 4],
+        text: Option<String>,
+        state_key: Option<String>,
+        align: LabelAlign,
+        color: [f32; 4],
+    },
+    Image {
+        base: [f32; 4],
+        image: SpriteKey,
+    },
+    Button {
+        base: [f32; 4],
+        id: WidgetId,
+        image: Option<SpriteKey>,
+        hover_image: Option<SpriteKey>,
+    },
+    Rotimage {
+        base: [f32; 4],
+        image: SpriteKey,
+        /// Logical px from the rect's top-left; `None` = rect centre.
+        pivot: Option<[f32; 2]>,
+        state_key: String,
+    },
 }
 
 /// How a panel is anchored on screen. Menus centre; the hotbar HUD pins to the
@@ -286,6 +464,7 @@ pub(crate) struct GuiDef {
     logical_h: f32,
     roles: HashMap<Role, Vec<[f32; 4]>>,
     overlays: Vec<OverlayDef>,
+    widgets: Vec<WidgetDef>,
     /// Panel PNG filename (resolved to a path in [`load_baked`]).
     image: String,
     hover: Option<HoverDef>,
@@ -294,26 +473,88 @@ pub(crate) struct GuiDef {
 impl GuiDef {
     fn from_manifest(s: &str) -> Option<GuiDef> {
         let m: Manifest = serde_json::from_str(s).ok()?;
+        // Engine name or namespaced mod kind (registered on first sight); an
+        // unknown bare name resolves to Other and is rejected by validate().
+        let kind = super::intern_kind(&m.kind).unwrap_or(GuiKind::Other);
         let scale = m.scale.max(1) as f32;
         let logical = |x: i32| x as f32 / scale;
         // Manifest coords are baked-canvas pixels (authoring scale); convert to
         // logical/base pixels so the game applies its own gui_scale on top.
+        let rect =
+            |x: i32, y: i32, w: i32, h: i32| [logical(x), logical(y), logical(w), logical(h)];
         let mut roles: HashMap<Role, Vec<[f32; 4]>> = HashMap::new();
         for s in &m.slots {
-            roles.entry(s.role).or_default().push([
-                logical(s.x),
-                logical(s.y),
-                logical(s.w),
-                logical(s.h),
-            ]);
+            roles
+                .entry(s.role)
+                .or_default()
+                .push(rect(s.x, s.y, s.w, s.h));
         }
         let overlays = m
             .tagged
             .into_iter()
             .map(|t| OverlayDef {
-                tag: t.tag,
-                base: [logical(t.x), logical(t.y), logical(t.w), logical(t.h)],
-                image: t.image,
+                mode: t.mode.unwrap_or(match t.tag.as_str() {
+                    "furnace_flame" => OverlayMode::DepleteTd,
+                    _ => OverlayMode::GrowLr,
+                }),
+                tag: super::intern_str(&t.tag),
+                image: super::intern_str(&t.image),
+                base: rect(t.x, t.y, t.w, t.h),
+            })
+            .collect();
+        let widgets = m
+            .widgets
+            .into_iter()
+            .map(|w| match w {
+                WidgetJson::Label {
+                    x,
+                    y,
+                    w,
+                    h,
+                    text,
+                    state_key,
+                    align,
+                    color,
+                } => WidgetDef::Label {
+                    base: rect(x, y, w, h),
+                    text,
+                    state_key,
+                    align: align.unwrap_or(LabelAlign::Left),
+                    color: color.unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                },
+                WidgetJson::Image { x, y, w, h, image } => WidgetDef::Image {
+                    base: rect(x, y, w, h),
+                    image: super::intern_str(&image),
+                },
+                WidgetJson::Button {
+                    id,
+                    x,
+                    y,
+                    w,
+                    h,
+                    image,
+                    hover_image,
+                } => WidgetDef::Button {
+                    base: rect(x, y, w, h),
+                    id: super::intern_str(&id),
+                    image: image.as_deref().map(super::intern_str),
+                    hover_image: hover_image.as_deref().map(super::intern_str),
+                },
+                WidgetJson::Rotimage {
+                    id: _,
+                    x,
+                    y,
+                    w,
+                    h,
+                    image,
+                    pivot,
+                    state_key,
+                } => WidgetDef::Rotimage {
+                    base: rect(x, y, w, h),
+                    image: super::intern_str(&image),
+                    pivot: pivot.map(|p| [p[0] / scale, p[1] / scale]),
+                    state_key,
+                },
             })
             .collect();
         let hover = m.hover.map(|h| HoverDef {
@@ -324,20 +565,26 @@ impl GuiDef {
             image: h.image,
         });
         Some(GuiDef {
-            kind: m.kind,
+            kind,
             logical_w: m.canvas.w as f32 / scale,
             logical_h: m.canvas.h as f32 / scale,
             roles,
             overlays,
+            widgets,
             image: m.image,
             hover,
         })
     }
 
-    /// Enforce the role→index contract: the expected per-role slot counts for this
-    /// kind, and row-major ordering of every multi-slot role. A mismatch means a
-    /// bad bake; the caller skips the manifest rather than silently mis-routing.
+    /// Enforce the load contracts. Engine kinds: the role→index contract (the
+    /// expected per-role slot counts and row-major ordering — a mismatch means
+    /// a bad bake; the caller skips the manifest rather than silently
+    /// mis-routing). Mod kinds carry NO role slots in Phase 5; their widgets
+    /// are validated instead.
     fn validate(&self) -> Result<(), String> {
+        if self.kind.is_mod() {
+            return self.validate_mod_widgets();
+        }
         let n = |r: Role| self.role_slots(r).len();
         let want: &[(Role, usize)] = match self.kind {
             GuiKind::Chest => &[
@@ -371,7 +618,7 @@ impl GuiDef {
                 (Role::WorkbenchInput, 1),
                 (Role::WorkbenchResult, 21),
             ],
-            GuiKind::Other => return Err("unknown gui type".to_string()),
+            _ => return Err("unknown gui type".to_string()),
         };
         for &(role, count) in want {
             if n(role) != count {
@@ -391,6 +638,42 @@ impl GuiDef {
             Role::WorkbenchResult,
         ] {
             check_row_major(role, self.role_slots(role))?;
+        }
+        Ok(())
+    }
+
+    /// The Phase 5 mod-kind contract: no role slots (widgets only), unique
+    /// non-empty button ids, and every state-bound widget names its source.
+    fn validate_mod_widgets(&self) -> Result<(), String> {
+        if !self.roles.is_empty() {
+            return Err("mod GUI kinds carry no role slots (widgets only in Phase 5)".into());
+        }
+        let mut button_ids: Vec<WidgetId> = Vec::new();
+        for w in &self.widgets {
+            match w {
+                WidgetDef::Button { id, .. } => {
+                    if id.is_empty() {
+                        return Err("button widget with an empty id".into());
+                    }
+                    if button_ids.contains(id) {
+                        return Err(format!("duplicate button id '{id}'"));
+                    }
+                    button_ids.push(id);
+                }
+                WidgetDef::Label {
+                    text, state_key, ..
+                } => {
+                    if text.is_none() && state_key.is_none() {
+                        return Err("label widget needs 'text' or 'state_key'".into());
+                    }
+                }
+                WidgetDef::Rotimage { state_key, .. } => {
+                    if state_key.is_empty() {
+                        return Err("rotimage widget with an empty state_key".into());
+                    }
+                }
+                WidgetDef::Image { .. } => {}
+            }
         }
         Ok(())
     }
@@ -441,12 +724,73 @@ impl GuiDef {
         self.role_slots(role).get(i).map(|b| self.rect(*b, screen))
     }
 
+    /// Visit every dynamic overlay with its screen rect, in manifest order.
+    pub(crate) fn for_each_overlay(
+        &self,
+        screen: (u32, u32),
+        mut f: impl FnMut(&OverlayDef, SlotRect),
+    ) {
+        for o in &self.overlays {
+            f(o, self.rect(o.base, screen));
+        }
+    }
+
     /// Screen rect of the dynamic overlay `tag`, or `None` if this GUI has none.
-    pub(crate) fn overlay_rect(&self, tag: OverlayTag, screen: (u32, u32)) -> Option<SlotRect> {
+    #[cfg(test)]
+    pub(crate) fn overlay_rect(&self, tag: &str, screen: (u32, u32)) -> Option<SlotRect> {
         self.overlays
             .iter()
             .find(|o| o.tag == tag)
             .map(|o| self.rect(o.base, screen))
+    }
+
+    /// Visit every Phase 5 widget with its screen rect, in manifest order.
+    pub(crate) fn for_each_widget(
+        &self,
+        screen: (u32, u32),
+        mut f: impl FnMut(&WidgetDef, SlotRect),
+    ) {
+        for w in &self.widgets {
+            let base = match w {
+                WidgetDef::Label { base, .. }
+                | WidgetDef::Image { base, .. }
+                | WidgetDef::Button { base, .. }
+                | WidgetDef::Rotimage { base, .. } => *base,
+            };
+            f(w, self.rect(base, screen));
+        }
+    }
+
+    /// The button widget under the cursor, if any.
+    pub(crate) fn button_at(&self, screen: (u32, u32), cursor: (f32, f32)) -> Option<WidgetId> {
+        for w in &self.widgets {
+            if let WidgetDef::Button { base, id, .. } = w {
+                if self.rect(*base, screen).contains(cursor.0, cursor.1) {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Every image file name this GUI's overlays/widgets reference.
+    fn sprite_keys(&self) -> Vec<SpriteKey> {
+        let mut keys: Vec<SpriteKey> = self.overlays.iter().map(|o| o.image).collect();
+        for w in &self.widgets {
+            match w {
+                WidgetDef::Image { image, .. } | WidgetDef::Rotimage { image, .. } => {
+                    keys.push(image)
+                }
+                WidgetDef::Button {
+                    image, hover_image, ..
+                } => {
+                    keys.extend(image.iter().copied());
+                    keys.extend(hover_image.iter().copied());
+                }
+                WidgetDef::Label { .. } => {}
+            }
+        }
+        keys
     }
 
     /// Visit every slot of every role with its screen rect (for emitting icons).
@@ -544,6 +888,21 @@ mod tests {
         }"#
     }
 
+    fn mod_gui() -> &'static str {
+        r#"{
+            "type": "layouttest:wheel",
+            "canvas": { "w": 96, "h": 64 },
+            "scale": 1,
+            "image": "panel.png",
+            "widgets": [
+                { "widget": "label", "x": 8, "y": 4, "w": 80, "h": 10, "text": "Spin!", "state_key": "layouttest:result", "align": "center" },
+                { "widget": "image", "x": 4, "y": 4, "w": 8, "h": 8, "image": "deco.png" },
+                { "widget": "button", "id": "spin", "x": 32, "y": 44, "w": 32, "h": 14, "image": "btn.png", "hover_image": "btn_h.png" },
+                { "widget": "rotimage", "x": 32, "y": 16, "w": 32, "h": 32, "image": "wheel.png", "pivot": [16, 16], "state_key": "layouttest:angle" }
+            ]
+        }"#
+    }
+
     #[test]
     fn manifest_parses_roles_and_logical_size() {
         let def = GuiDef::from_manifest(CHEST).unwrap();
@@ -563,16 +922,98 @@ mod tests {
     }
 
     #[test]
-    fn tagged_overlays_parse_to_logical_rects() {
+    fn tagged_overlays_parse_to_logical_rects_with_legacy_modes() {
         let def = GuiDef::from_manifest(furnace_with_overlays()).unwrap();
         let screen = (1280, 720);
         // furnace_arrow (205,62,24,16) at scale 2 -> logical (102.5,31,12,8).
-        let r = def.overlay_rect(OverlayTag::FurnaceArrow, screen).unwrap();
+        let r = def.overlay_rect("furnace_arrow", screen).unwrap();
         let (ox, oy, s) = def.placement(screen);
         assert!((r.x - (ox + 102.5 * s)).abs() < 0.01);
         assert!((r.y - (oy + 31.0 * s)).abs() < 0.01);
         assert!((r.w - 12.0 * s).abs() < 0.01);
-        assert!(def.overlay_rect(OverlayTag::FurnaceFlame, screen).is_some());
+        assert!(def.overlay_rect("furnace_flame", screen).is_some());
+        // A legacy bake (no "mode" field) keeps the furnace's historical fill
+        // directions — this is what keeps existing furnace visuals identical.
+        let modes: Vec<(&str, OverlayMode)> =
+            def.overlays.iter().map(|o| (o.tag, o.mode)).collect();
+        assert_eq!(
+            modes,
+            vec![
+                ("furnace_arrow", OverlayMode::GrowLr),
+                ("furnace_flame", OverlayMode::DepleteTd),
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_kind_manifest_parses_widgets_and_validates() {
+        let def = GuiDef::from_manifest(mod_gui()).unwrap();
+        assert!(def.kind.is_mod());
+        assert_eq!(crate::gui::kind_key(def.kind), Some("layouttest:wheel"));
+        def.validate().expect("widgets-only mod manifest validates");
+        assert_eq!(def.widgets.len(), 4);
+        // Button hit-test resolves to the widget id; off-button misses.
+        let screen = (1280, 720);
+        let (ox, oy, s) = def.placement(screen);
+        let center = (ox + (32.0 + 16.0) * s, oy + (44.0 + 7.0) * s);
+        assert_eq!(def.button_at(screen, center), Some("spin"));
+        assert_eq!(def.button_at(screen, (ox - 5.0, oy - 5.0)), None);
+        // Sprite keys gather every referenced image once.
+        let mut keys = def.sprite_keys();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["btn.png", "btn_h.png", "deco.png", "wheel.png"]);
+    }
+
+    #[test]
+    fn mod_kind_rejects_role_slots_and_bad_widgets() {
+        // Role slots on a mod kind are refused (widgets only in Phase 5).
+        let with_slots = r#"{
+            "type": "layouttest:slotted", "canvas": { "w": 32, "h": 32 }, "scale": 1, "image": "p.png",
+            "slots": [ { "role": "hotbar", "x": 0, "y": 0, "w": 16, "h": 16 } ]
+        }"#;
+        let def = GuiDef::from_manifest(with_slots).unwrap();
+        assert!(def.validate().unwrap_err().contains("no role slots"));
+
+        // Duplicate button ids are refused.
+        let dup = r#"{
+            "type": "layouttest:dup", "canvas": { "w": 32, "h": 32 }, "scale": 1, "image": "p.png",
+            "widgets": [
+                { "widget": "button", "id": "a", "x": 0, "y": 0, "w": 8, "h": 8 },
+                { "widget": "button", "id": "a", "x": 8, "y": 0, "w": 8, "h": 8 }
+            ]
+        }"#;
+        let def = GuiDef::from_manifest(dup).unwrap();
+        assert!(def.validate().unwrap_err().contains("duplicate button id"));
+
+        // A label bound to nothing is refused.
+        let blank = r#"{
+            "type": "layouttest:blank", "canvas": { "w": 32, "h": 32 }, "scale": 1, "image": "p.png",
+            "widgets": [ { "widget": "label", "x": 0, "y": 0, "w": 8, "h": 8 } ]
+        }"#;
+        let def = GuiDef::from_manifest(blank).unwrap();
+        assert!(def.validate().unwrap_err().contains("label"));
+    }
+
+    #[test]
+    fn foreign_namespace_kinds_are_rejected_per_pack() {
+        let kind = crate::gui::intern_kind("layouttest:owned").unwrap();
+        assert!(kind_permitted(kind, Some("layouttest")).is_ok());
+        assert!(kind_permitted(kind, Some("otherpack")).is_err());
+        assert!(
+            kind_permitted(kind, None).is_err(),
+            "base dirs own no namespace"
+        );
+        // Engine kinds may ship from anywhere (base bakes, re-skin packs).
+        assert!(kind_permitted(GuiKind::Furnace, None).is_ok());
+        assert!(kind_permitted(GuiKind::Furnace, Some("anypack")).is_ok());
+    }
+
+    #[test]
+    fn unknown_bare_kind_fails_validation() {
+        let json = r#"{ "type": "bogus_kind", "canvas": { "w": 32, "h": 32 }, "scale": 1, "image": "p.png" }"#;
+        let def = GuiDef::from_manifest(json).unwrap();
+        assert_eq!(def.kind, GuiKind::Other);
+        assert!(def.validate().unwrap_err().contains("unknown gui type"));
     }
 
     #[test]

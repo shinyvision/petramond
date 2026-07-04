@@ -1,0 +1,28 @@
+{
+  "type": "smoke:panel",
+  "canvas": { "w": 96, "h": 64 },
+  "scale": 1,
+  "image": "smoke_panel.png",
+  "widgets": [
+    {
+      "widget": "label",
+      "x": 8,
+      "y": 8,
+      "w": 80,
+      "h": 10,
+      "text": "clicks: 0",
+      "state_key": "smoke:count_text",
+      "align": "center"
+    },
+    {
+      "widget": "button",
+      "id": "bump",
+      "x": 32,
+      "y": 40,
+      "w": 32,
+      "h": 14,
+      "image": "smoke_button.png",
+      "hover_image": "smoke_button_hover.png"
+    }
+  ]
+}

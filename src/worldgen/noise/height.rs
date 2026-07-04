@@ -71,7 +71,8 @@ impl CaveLattice {
         let tz = z.rem_euclid(LATTICE_STEP) as f64 / LATTICE_STEP_F;
         debug_assert!(cx + 1 < self.nx && cy + 1 < self.ny && cz + 1 < self.nz);
 
-        let i = |dx: usize, dy: usize, dz: usize| ((cy + dy) * self.nz + cz + dz) * self.nx + cx + dx;
+        let i =
+            |dx: usize, dy: usize, dz: usize| ((cy + dy) * self.nz + cz + dz) * self.nx + cx + dx;
         let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
         let x00 = lerp(field[i(0, 0, 0)], field[i(1, 0, 0)], tx);
         let x01 = lerp(field[i(0, 0, 1)], field[i(1, 0, 1)], tx);
@@ -306,7 +307,12 @@ impl CaveField {
         let mut carved = false;
 
         let y0 = CAVE_MIN_Y.max(0);
-        let y1 = surf.iter().copied().max().unwrap_or(0).min(CHUNK_SY as i32 - 1);
+        let y1 = surf
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+            .min(CHUNK_SY as i32 - 1);
         if y0 > y1 {
             return;
         }

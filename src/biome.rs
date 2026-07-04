@@ -108,6 +108,14 @@ impl Biome {
         data::from_id(id)
     }
 
+    /// Resolve a biome by its stable snake_case name (`"forest"`), for data-driven
+    /// catalogs (e.g. mob spawn rules in `mobs.json`) that reference biomes by name.
+    pub fn from_name(name: &str) -> Option<Biome> {
+        (1..=BIOME_COUNT as u8)
+            .map(Biome::from_id)
+            .find(|b| b.name() == name)
+    }
+
     #[inline]
     pub fn id(self) -> u8 {
         self as u8

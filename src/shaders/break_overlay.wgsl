@@ -8,7 +8,8 @@
 // the shared uv_rects table (binding 1) — the SAME bind group as the block
 // pipeline. group(1) is the block atlas (the destroy tiles live in it).
 //
-// Vertex format is the shared 28-byte mesh::Vertex. We only need uv reconstruction
+// Vertex format is the shared 32-byte mesh::Vertex (packed2 is unused here — the
+// crack needs no light). We only need uv reconstruction
 // (SELECT from uv_rects — never recompute), so this is a trimmed copy of the block
 // vertex stage. The crack cube is coincident with the block faces; the pipeline
 // draws it depth LessEqual / no-write with a small polygon offset toward the camera

@@ -14,9 +14,42 @@ pub(super) fn create_gui_panel(
     let img = image::load_from_memory(png)
         .expect("decode gui panel png")
         .to_rgba8();
+    create_rgba_nearest(device, queue, &img, "gui panel")
+}
+
+/// Upload one pack sky texture for a shader texture slot.
+pub(super) fn create_sky_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    bytes: &[u8],
+) -> Option<(wgpu::Texture, wgpu::TextureView, wgpu::Sampler)> {
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    Some(create_rgba_nearest(device, queue, &img, "sky texture"))
+}
+
+/// Upload a single fallback pixel for fixed bind slots whose pack texture is
+/// absent or invalid.
+pub(super) fn create_solid_rgba_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    rgba: [u8; 4],
+    label: &str,
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+    let img = image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba));
+    create_rgba_nearest(device, queue, &img, label)
+}
+
+/// Shared single-mip sRGB upload + nearest ClampToEdge sampler for arbitrary
+/// standalone RGBA images.
+fn create_rgba_nearest(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    img: &image::RgbaImage,
+    label: &str,
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
     let (w, h) = (img.width(), img.height());
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("gui panel"),
+        label: Some(label),
         size: wgpu::Extent3d {
             width: w,
             height: h,
@@ -50,7 +83,7 @@ pub(super) fn create_gui_panel(
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("gui panel sampler"),
+        label: Some(label),
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,

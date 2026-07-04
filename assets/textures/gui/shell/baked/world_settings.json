@@ -1,0 +1,96 @@
+{
+  "type": "world_settings",
+  "canvas": {
+    "w": 276,
+    "h": 188
+  },
+  "scale": 1,
+  "image": "world_settings.png",
+  "slots": [
+    {
+      "role": "mod_row",
+      "x": 18,
+      "y": 37,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "mod_row",
+      "x": 18,
+      "y": 55,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "mod_row",
+      "x": 18,
+      "y": 73,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "mod_row",
+      "x": 18,
+      "y": 91,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "mod_row",
+      "x": 18,
+      "y": 109,
+      "w": 222,
+      "h": 16
+    },
+    {
+      "role": "mod_scroll_track",
+      "x": 246,
+      "y": 37,
+      "w": 10,
+      "h": 88
+    },
+    {
+      "role": "settings_back",
+      "x": 12,
+      "y": 158,
+      "w": 84,
+      "h": 20
+    },
+    {
+      "role": "settings_delete_world",
+      "x": 102,
+      "y": 158,
+      "w": 162,
+      "h": 20
+    }
+  ],
+  "hover": {
+    "image": "world_select_hover.png",
+    "margin": 0,
+    "fit": {
+      "mode": "nine_slice",
+      "l": 4,
+      "r": 4,
+      "t": 4,
+      "b": 4
+    },
+    "opacity": 1.0
+  },
+  "tagged": [
+    {
+      "tag": "world_scroll_thumb",
+      "image": "world_select_world_scroll_thumb.png",
+      "x": 246,
+      "y": 37,
+      "w": 10,
+      "h": 28,
+      "fit": {
+        "mode": "nine_slice",
+        "l": 4,
+        "r": 4,
+        "t": 4,
+        "b": 4
+      }
+    }
+  ]
+}

@@ -72,17 +72,29 @@ fn one() -> u8 {
     1
 }
 
+/// [`load_recipes_for`] with nothing disabled — the test convenience.
+#[cfg(test)]
+pub fn load_recipes() -> Recipes {
+    load_recipes_for(&std::collections::BTreeSet::new())
+}
+
 /// Load the recipe set from every `recipes.json` layer (base + mod packs —
 /// recipes have no identity key, so pack layers APPEND recipes), falling back
 /// to the embedded copy when nothing on disk provides one. Malformed
 /// individual recipes are logged and skipped rather than aborting the world
 /// load.
-pub fn load_recipes() -> Recipes {
+///
+/// Recipes whose result or ingredients reference content namespaced to a mod
+/// id in `disabled` (per-world `settings.json`) are dropped: a disabled mod's
+/// items must not be craftable INTO or FROM. Filtering is by the raw key
+/// strings, before item resolution — the items themselves stay registered
+/// process-wide.
+pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Recipes {
     let mut grid = Vec::new();
     let mut smelting = Vec::new();
     let mut furniture = Vec::new();
     for text in read_recipes_layers() {
-        let (g, s, f) = parse(&text);
+        let (g, s, f) = parse_for(&text, disabled);
         grid.extend(g);
         smelting.extend(s);
         furniture.extend(f);
@@ -102,7 +114,15 @@ fn read_recipes_layers() -> Vec<String> {
     layers.into_iter().map(|(s, _)| s).collect()
 }
 
+#[cfg(test)]
 fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {
+    parse_for(text, &std::collections::BTreeSet::new())
+}
+
+fn parse_for(
+    text: &str,
+    disabled: &std::collections::BTreeSet<String>,
+) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {
     let file: RawFile = match serde_json::from_str(text) {
         Ok(f) => f,
         Err(e) => {
@@ -114,6 +134,10 @@ fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>)
     let mut smelting = Vec::new();
     let mut furniture = Vec::new();
     for (i, raw) in file.recipes.into_iter().enumerate() {
+        if let Some(ns) = disabled_namespace_in(&raw, disabled) {
+            log::info!("skipping recipe #{i}: it references content of the disabled mod '{ns}'");
+            continue;
+        }
         match convert(raw) {
             Ok(Converted::Grid(r)) => grid.push(r),
             Ok(Converted::Smelt(r)) => smelting.push(r),
@@ -122,6 +146,37 @@ fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>)
         }
     }
     (grid, smelting, furniture)
+}
+
+/// The first disabled mod id `raw`'s result or ingredient keys reference, or
+/// `None` when the recipe is clean. `#tag` references check the tag key the
+/// same way (engine tags are bare, so they never match).
+fn disabled_namespace_in<'a>(
+    raw: &RawRecipe,
+    disabled: &'a std::collections::BTreeSet<String>,
+) -> Option<&'a str> {
+    let hit = |s: &str| -> Option<&'a str> {
+        let key = s.strip_prefix('#').unwrap_or(s);
+        let ns = crate::registry::namespace(key)?;
+        disabled.get(ns).map(String::as_str)
+    };
+    match raw {
+        RawRecipe::Shapeless {
+            ingredients,
+            result,
+            ..
+        } => ingredients
+            .iter()
+            .find_map(|s| hit(s))
+            .or_else(|| hit(result)),
+        RawRecipe::Shaped { key, result, .. } => {
+            key.values().find_map(|s| hit(s)).or_else(|| hit(result))
+        }
+        RawRecipe::Smelting {
+            ingredient, result, ..
+        } => hit(ingredient).or_else(|| hit(result)),
+        RawRecipe::Furniture { input, result, .. } => hit(input).or_else(|| hit(result)),
+    }
 }
 
 fn convert(raw: RawRecipe) -> Result<Converted, String> {
@@ -244,7 +299,7 @@ fn item_stack(key: &str, count: u8) -> Result<ItemStack, String> {
 /// Resolve a recipe's snake_case [`key`](ItemType::key) (e.g. `oak_planks`) to its
 /// item — matched against each item's explicit stable key, not its display name.
 fn item_from_key(key: &str) -> Option<ItemType> {
-    ItemType::ALL.iter().copied().find(|it| it.key() == key)
+    ItemType::all().iter().copied().find(|it| it.key() == key)
 }
 
 #[cfg(test)]
@@ -319,6 +374,103 @@ mod tests {
         ));
         assert!(parse_ingredient("#bogus").is_err());
         assert!(parse_ingredient("bogus_item").is_err());
+    }
+
+    /// A mod pack's shaped recipe (stick plus around a `#logs` centre → the
+    /// pack's own dynamic item) resolves through the ENGINE recipe matcher:
+    /// pack recipes.json layers append, `#tag` ingredients resolve, and the
+    /// namespaced result key finds the dynamically registered item. Pack
+    /// registration needs the fixture in the registry, so the assertions run
+    /// in a child process (the established `LLAMACRAFT_MODS` re-spawn
+    /// pattern, staged by `modding::tests`).
+    #[test]
+    fn wheel_mod_shaped_recipe_resolves_through_the_engine_matcher() {
+        let Some(root) = crate::modding::tests::stage_mods_fixture("wheel-recipe", &["wheel"])
+        else {
+            return;
+        };
+        crate::modding::tests::run_child_test(&root, "crafting::load::tests::wheel_recipe_inner");
+    }
+
+    /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+    /// pointing at the fixture pack before first registry touch).
+    #[test]
+    #[ignore = "spawned by wheel_mod_shaped_recipe_resolves_through_the_engine_matcher with a fixture pack env"]
+    fn wheel_recipe_inner() {
+        let wheel = item_from_key("wheel:wheel_of_fortune")
+            .expect("wheel item registered from the fixture pack");
+        let recipes = load_recipes();
+
+        let grid = |cells: [Option<ItemType>; 9]| -> Vec<Option<ItemStack>> {
+            cells
+                .iter()
+                .map(|o| o.map(|i| ItemStack::new(i, 1)))
+                .collect()
+        };
+        let (s, log) = (Some(ItemType::Stick), Some(ItemType::BirchLog));
+
+        // The plus arrangement: sticks NESW around any `#logs` centre.
+        let plus = grid([None, s, None, s, log, s, None, s, None]);
+        assert_eq!(
+            recipes.find(&plus, 3),
+            Some(ItemStack::new(wheel, 1)),
+            "stick plus around a log crafts the wheel"
+        );
+        // A wrong arrangement (diagonal sticks) matches nothing.
+        let x_shape = grid([s, None, s, None, log, None, s, None, s]);
+        assert_eq!(
+            recipes.find(&x_shape, 3),
+            None,
+            "the X arrangement is not the wheel recipe"
+        );
+
+        // Per-world disable: with the wheel mod disabled, the same session's
+        // recipe build drops the recipe even though the item stays registered.
+        let disabled: std::collections::BTreeSet<String> = ["wheel".to_owned()].into();
+        let filtered = load_recipes_for(&disabled);
+        assert_eq!(
+            filtered.find(&plus, 3),
+            None,
+            "a disabled mod's recipe is not offered"
+        );
+        assert!(
+            filtered.len() < recipes.len(),
+            "only the wheel recipe was dropped"
+        );
+    }
+
+    /// Per-world disabled mods: a recipe is dropped when its RESULT or any
+    /// INGREDIENT (shaped key, shapeless list, smelt input, furniture input —
+    /// `#tag` keys included) is namespaced to a disabled mod id; engine-bare
+    /// keys and other namespaces pass.
+    #[test]
+    fn recipes_touching_a_disabled_namespace_are_filtered() {
+        let disabled: std::collections::BTreeSet<String> = ["wheel".to_owned()].into();
+        let raw = |json: &str| serde_json::from_str::<RawRecipe>(json).expect("recipe json");
+
+        let hits = [
+            r##"{ "type": "shaped", "pattern": ["L"], "key": {"L": "#logs"}, "result": "wheel:wheel_of_fortune" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "stick" }"##,
+            r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "stick" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "stick" }"##,
+            r##"{ "type": "smelting", "ingredient": "wheel:wheel_of_fortune", "result": "coal" }"##,
+            r##"{ "type": "furniture", "input": "oak_planks", "result": "wheel:wheel_of_fortune" }"##,
+        ];
+        for json in hits {
+            assert_eq!(
+                disabled_namespace_in(&raw(json), &disabled),
+                Some("wheel"),
+                "{json}"
+            );
+        }
+
+        let passes = [
+            r#"{ "type": "shapeless", "ingredients": ["oak_log"], "result": "oak_planks" }"#,
+            r#"{ "type": "shapeless", "ingredients": ["othermod:gear"], "result": "stick" }"#,
+        ];
+        for json in passes {
+            assert_eq!(disabled_namespace_in(&raw(json), &disabled), None, "{json}");
+        }
     }
 
     #[test]

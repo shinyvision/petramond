@@ -14,11 +14,13 @@ use crate::mathh::Vec3;
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
 use super::face::Face;
-use super::vertex::{pack_vertex, Vertex};
+use super::vertex::{pack_vertex, pack_vertex2, Vertex};
 
 /// Append the torch pole at the cell whose world origin is `(bx, by, bz)`, oriented
 /// by `placement`, textured with `side_tile` (body) + `top_tile` (flame), tinted by
-/// `tint`, and flat-lit at the packed 6-bit `light6`.
+/// `tint`, and flat-lit at the packed 6-bit channels: `sky6` (cell skylight, dims
+/// with the environment sky scale) and `block6` (the torch's own emission — night-
+/// invariant, so the pole keeps glowing in a dark cave / at night).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_torch(
     opaque: &mut Vec<Vertex>,
@@ -30,7 +32,8 @@ pub(super) fn emit_torch(
     side_tile: Tile,
     top_tile: Tile,
     tint: [f32; 3],
-    light6: u32,
+    sky6: u32,
+    block6: u32,
 ) {
     // Local model box: base at the origin, ±POLE_HALF across, POLE_HEIGHT tall. The
     // placement transform maps it into cell space; the cell's world origin is added
@@ -56,7 +59,8 @@ pub(super) fn emit_torch(
                 pos: [wp.x, wp.y, wp.z],
                 tint,
                 // Flat-lit (shade index 0, AO 3) like a cross-plant: no overlay.
-                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, light6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
+                packed2: pack_vertex2(block6),
             });
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

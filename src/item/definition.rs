@@ -5,8 +5,9 @@
 //! `def(item)` / `from_id(id)`.
 
 use crate::atlas::Tile;
+use crate::block::Block;
 
-use super::{HeldPose, ItemTag, ItemType};
+use super::{HeldPose, ItemTag, ItemType, ItemUse};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct ItemDef {
@@ -32,4 +33,12 @@ pub(super) struct ItemDef {
     /// [`ItemType::has_tag`](super::ItemType::has_tag). Most items carry none
     /// (`&[]`); a member lists each tag it belongs to.
     pub tags: &'static [ItemTag],
+    /// The block a PACK-registered item places (`"block"` in `items.json`) —
+    /// the data-side counterpart of the compiled `from_block`/`as_block`
+    /// mapping engine rows keep. `None` for every engine row and for dynamic
+    /// item-only items.
+    pub block: Option<Block>,
+    /// The engine use handler this item's row declares (`"use"` in
+    /// `items.json`) — see [`ItemUse`]. `None` = no use of its own.
+    pub item_use: Option<ItemUse>,
 }

@@ -6,6 +6,16 @@
 use super::*;
 
 impl Renderer {
+    /// The frame's CPU lighting environment (sky scale + colour), mirroring the
+    /// shader uniform lanes for the explicit-shade dynamic bakes.
+    #[inline]
+    fn light_env(&self) -> crate::render::lighting::LightEnv {
+        crate::render::lighting::LightEnv {
+            sky_scale: self.sky_scale,
+            sky_color: self.sky_color,
+        }
+    }
+
     /// Refresh the crosshair + selection-outline vertex buffers when their
     /// inputs changed (resize / new target). Extracted from `render`'s prologue.
     pub(super) fn refresh_overlay_buffers(&mut self) {
@@ -74,7 +84,10 @@ impl Renderer {
             let mvp = build_hand_lit(
                 &self.held_item,
                 aspect,
-                self.held_item_skylight,
+                crate::render::lighting::DynLight {
+                    sky: self.held_item_skylight,
+                    block: self.held_item_blocklight,
+                },
                 self.held_item_warm,
                 &mut hv,
                 &mut hi,
@@ -121,7 +134,11 @@ impl Renderer {
                 crate::render::item_model::build_block_model_item(
                     kind,
                     glam::Mat4::IDENTITY,
-                    self.held_item_skylight,
+                    crate::render::lighting::DynLight {
+                        sky: self.held_item_skylight,
+                        block: self.held_item_blocklight,
+                    },
+                    self.light_env(),
                     self.held_item_warm,
                     None,
                     &mut tv,
@@ -149,7 +166,11 @@ impl Renderer {
                 let mut iv = std::mem::take(&mut self.item3d_verts);
                 let count = crate::render::item_model::build_extruded_item_lit(
                     tile,
-                    self.held_item_skylight,
+                    crate::render::lighting::DynLight {
+                        sky: self.held_item_skylight,
+                        block: self.held_item_blocklight,
+                    },
+                    self.light_env(),
                     &mut iv,
                 );
                 // Warm the extruded held sprite by the block-light at the player, to
@@ -217,12 +238,13 @@ impl Renderer {
         );
         // Dropped bbmodel items (their own model atlas), baked from the same visible set.
         let visible = &self.item_entity_visible;
+        let env = self.light_env();
         self.item_model_entity_draw.bake(
             &self.queue,
             &mut self.item_model_entity_verts,
             &mut self.item_model_entity_indices,
             |verts, indices| {
-                crate::render::item_entity::build_item_model_entities(visible, verts, indices)
+                crate::render::item_entity::build_item_model_entities(visible, env, verts, indices)
             },
         );
 
@@ -284,7 +306,9 @@ impl Renderer {
             let min = inst.pos - pad;
             let max = inst.pos + pad;
             if visible_world_aabb(min, max) {
-                self.mob_gpu[inst.kind as usize].visible.push(inst.clone());
+                self.mob_gpu[inst.kind.0 as usize]
+                    .visible
+                    .push(inst.clone());
             }
         }
         let queue = &self.queue;
@@ -294,7 +318,7 @@ impl Renderer {
             let visible = &g.visible;
             g.draw
                 .bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
-                    build_mob_instances(model, scale, visible, verts, indices)
+                    build_mob_instances(model, scale, env, visible, verts, indices)
                 });
         }
 
@@ -322,7 +346,7 @@ impl Renderer {
         let mut block_v = 0u32;
         self.particle_draw
             .bake(&self.queue, &mut self.particle_verts, |verts| {
-                let (total, nb) = build_particles_split(particles, model_particles, verts);
+                let (total, nb) = build_particles_split(particles, model_particles, env, verts);
                 block_v = nb;
                 total
             });

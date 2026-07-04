@@ -1,0 +1,10 @@
+[package]
+name = "mod-api"
+version = "0.1.0"
+edition = "2021"
+description = "Llamacraft mod ABI: the shared postcard-serialized types both the engine host and guest mods speak."
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }

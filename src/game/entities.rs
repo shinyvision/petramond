@@ -1,10 +1,16 @@
 use crate::entity::DroppedItem;
+use crate::events::{DamageSource, MobHurtPre, Outcome, PostEvent};
 use crate::item::ItemStack;
-use crate::mathh::{voxel_at, IVec3, Vec3};
-use crate::mob::DeathDrop;
+use crate::mathh::{voxel_at, Vec3};
+use crate::mob::{DeathDrop, MobAttack};
 use crate::world::World;
 
 use super::{tick::TickEvents, Game, ATTACK_COOLDOWN_TICKS};
+
+/// Upward pop of a mob strike's knockback, as a fraction of its horizontal strength —
+/// mirrors the mob-side knockback feel (`KNOCKBACK_UP / KNOCKBACK_SPEED` ≈ 0.65 in
+/// `mob::instance`), so the player is launched like a mob is when hit.
+const MOB_ATTACK_UP_RATIO: f32 = 0.65;
 
 impl Game {
     /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
@@ -22,7 +28,7 @@ impl Game {
         if !std::mem::take(&mut self.pending_attack) || self.attack_cooldown != 0 {
             return;
         }
-        if self.resolve_attack() {
+        if self.resolve_attack(events) {
             self.attack_cooldown = ATTACK_COOLDOWN_TICKS;
             events.swung_hand = true;
         }
@@ -33,19 +39,79 @@ impl Game {
     /// Returns whether the hand swung (a mob hit or an air punch); a click on a block
     /// doesn't swing (mining is the held action). Reads the `targeted_mob` / `look`
     /// sampled this frame, before any mob tick has shifted indices.
-    fn resolve_attack(&mut self) -> bool {
+    fn resolve_attack(&mut self, events: &mut TickEvents) -> bool {
         if let Some(idx) = self.targeted_mob {
             let (lo, hi) = crate::item::attack_damage(self.selected_item());
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             let damage = lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo);
             let from = self.player.body_center();
-            if let Some(death) = self.world.mobs_mut().hurt_mob(idx, damage, from) {
-                self.spawn_mob_loot(death);
-            }
+            // The pipeline may cancel the damage; the swing still happened and
+            // still arms the cooldown.
+            self.hurt_mob_through_pipeline(idx, damage, from, events);
             true
         } else {
             // No mob: a punch swing only when looking at nothing.
             self.look.is_none()
+        }
+    }
+
+    /// THE mob-hurt pipeline, shared by player attacks and mod `HurtMob`
+    /// actions: dispatch `mob_hurt_pre` (mutable amount, cancellable), apply
+    /// what survives through [`Mobs::hurt_mob`](crate::mob::Mobs::hurt_mob),
+    /// and on a kill queue `mob_died` + roll the loot. Returns whether damage
+    /// was applied (false = no such mob or a handler cancelled).
+    pub(super) fn hurt_mob_through_pipeline(
+        &mut self,
+        idx: usize,
+        amount: f32,
+        from: Vec3,
+        events: &mut TickEvents,
+    ) -> bool {
+        let Some(kind) = self.world.mobs().instances().get(idx).map(|m| m.kind) else {
+            return false;
+        };
+        let mut pre = MobHurtPre {
+            mob: idx,
+            kind,
+            amount,
+            source: from,
+        };
+        if self
+            .bus
+            .mob_hurt_pre(&mut self.world, &mut self.player, events, &mut pre)
+            == Outcome::Cancel
+        {
+            return false;
+        }
+        if let Some(death) = self.world.mobs_mut().hurt_mob(idx, pre.amount, from) {
+            self.bus.emit(PostEvent::MobDied {
+                kind: death.kind,
+                pos: death.pos,
+            });
+            self.spawn_mob_loot(death);
+        }
+        true
+    }
+
+    /// Apply the melee strikes the mobs landed this tick (drained from
+    /// `World::tick_mobs`): each runs through the single [`damage_player`] funnel —
+    /// so `player_damage_pre` handlers (i-frames) see it and a cancel drops BOTH the
+    /// damage and the knockback — and an applied strike shoves the player away from
+    /// the attacker with an upward pop, mirroring the mob-side knockback feel.
+    /// Spectators have no body to hit: strikes are dropped whole.
+    ///
+    /// [`damage_player`]: Game::damage_player
+    pub(super) fn apply_mob_attacks(&mut self, attacks: Vec<MobAttack>, events: &mut TickEvents) {
+        for a in attacks {
+            if self.player.is_spectator() {
+                continue;
+            }
+            let amount = a.damage.max(0.0).round() as i32;
+            if self.damage_player(amount, DamageSource::Mob(a.mob), events) {
+                let impulse = a.knockback_dir * a.knockback
+                    + Vec3::new(0.0, a.knockback * MOB_ATTACK_UP_RATIO, 0.0);
+                self.player.apply_knockback(impulse);
+            }
         }
     }
 
@@ -64,6 +130,7 @@ impl Game {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
             drop.skylight = death.skylight;
+            drop.blocklight = death.blocklight;
             self.world.spawn_item(drop);
         }
     }
@@ -126,13 +193,13 @@ impl Game {
     }
 }
 
-/// The 6-bit light level for dynamic geometry at a world position — the brighter of
-/// skylight and torch block-light, so the held item, particles, and dropped items
-/// are lit by torches just like the static blocks around them.
-pub(super) fn light6_at_pos(world: &World, pos: Vec3) -> u8 {
-    light6_at_block(world, voxel_at(pos))
-}
-
-fn light6_at_block(world: &World, pos: IVec3) -> u8 {
-    world.combined_light6_at_world(pos.x, pos.y, pos.z)
+/// The two 6-bit light channels `(sky6, block6)` for dynamic geometry at a world
+/// position, so the held item, particles, and dropped items are lit by torches
+/// just like the static blocks around them (and torch light survives the night).
+pub(super) fn light_at_pos(world: &World, pos: Vec3) -> (u8, u8) {
+    let c = voxel_at(pos);
+    (
+        world.skylight6_at_world(c.x, c.y, c.z),
+        world.blocklight6_at_world(c.x, c.y, c.z),
+    )
 }

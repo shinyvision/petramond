@@ -38,12 +38,17 @@ const STUCK_EPS_SQ: f32 = 0.015 * 0.015;
 /// stuck tally (above) carries across the refresh, so a mob wedged the whole time still
 /// eventually gives up rather than re-pathing into the same wall indefinitely.
 const REPATH_TICKS: u32 = 20;
+/// Longest same-goal retry interval after repeated partial/failed searches.
+const MAX_REPATH_BACKOFF_TICKS: u32 = 200;
 
 pub struct Navigator {
     path: Vec<IVec3>,
     /// Index of the next waypoint to walk to.
     index: usize,
     goal: Option<IVec3>,
+    /// Whether the current path reaches `goal`. Failed searches still keep a
+    /// best-effort partial path, but same-goal refreshes back off.
+    path_reaches_goal: bool,
     params: PathParams,
     half_width: f32,
     stuck: u32,
@@ -51,6 +56,11 @@ pub struct Navigator {
     /// Ticks since the current path was computed; at [`REPATH_TICKS`] the held goal is
     /// re-pathed to refresh a route gone stale (see the constant).
     since_path: u32,
+    /// Current same-goal retry interval. Successful routes and goal changes reset this
+    /// to [`REPATH_TICKS`]; repeated partial searches double it up to the cap.
+    repath_interval: u32,
+    #[cfg(test)]
+    recomputes: u32,
 }
 
 impl Navigator {
@@ -59,11 +69,15 @@ impl Navigator {
             path: Vec::new(),
             index: 0,
             goal: None,
+            path_reaches_goal: false,
             params: PathParams::for_body(head, half_width),
             half_width,
             stuck: 0,
             last_pos: Vec3::ZERO,
             since_path: 0,
+            repath_interval: REPATH_TICKS,
+            #[cfg(test)]
+            recomputes: 0,
         }
     }
 
@@ -79,12 +93,19 @@ impl Navigator {
         &self.path
     }
 
+    #[cfg(test)]
+    pub(super) fn recomputes(&self) -> u32 {
+        self.recomputes
+    }
+
     fn clear(&mut self) {
         self.path.clear();
         self.index = 0;
         self.goal = None;
+        self.path_reaches_goal = false;
         self.stuck = 0;
         self.since_path = 0;
+        self.repath_interval = REPATH_TICKS;
     }
 
     /// Set the navigation goal and keep the path fresh. A *new* goal is pathed at once
@@ -114,17 +135,22 @@ impl Navigator {
                 }
                 if self.goal != Some(g) {
                     // A new goal: path to it afresh and reset the stuck tally — this is a
-                    // deliberate new destination, not the same one re-evaluated.
-                    self.recompute(start, g, world);
+                    // deliberate new destination, not the same one re-evaluated. It also
+                    // drops any unreachable-goal backoff from the previous cell.
+                    self.repath_interval = REPATH_TICKS;
+                    self.recompute(start, g, world, true);
                     self.goal = Some(g);
                     self.stuck = 0;
                 } else {
-                    // Same goal held: refresh the route every REPATH_TICKS. The stuck
-                    // tally is left to keep climbing across refreshes, so a mob wedged the
-                    // whole time still abandons the goal rather than re-pathing forever.
-                    self.since_path += 1;
-                    if self.since_path >= REPATH_TICKS {
-                        self.recompute(start, g, world);
+                    // Same goal held: refresh the route at the current interval. A
+                    // reachable route uses the normal cadence; repeated partial/failed
+                    // routes stretch this interval to avoid exhausting A* every second for
+                    // an unreachable target. The stuck tally is left to keep climbing
+                    // across refreshes, so a mob wedged the whole time still abandons the
+                    // goal rather than re-pathing forever.
+                    self.since_path = self.since_path.saturating_add(1);
+                    if self.since_path >= self.repath_interval {
+                        self.recompute(start, g, world, false);
                     }
                 }
             }
@@ -133,10 +159,15 @@ impl Navigator {
 
     /// (Re)compute the path from `start` to `goal`, resetting the waypoint cursor to the
     /// first step and the repath timer. Shared by a goal change and the periodic refresh.
-    fn recompute(&mut self, start: IVec3, goal: IVec3, world: &World) {
+    fn recompute(&mut self, start: IVec3, goal: IVec3, world: &World, goal_changed: bool) {
         let solid = solid_fn(world);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        self.path = path::find_path(start, goal, self.params, solid, water);
+        let old_waypoint =
+            (!goal_changed && self.index < self.path.len()).then(|| self.path[self.index]);
+        self.path = old_waypoint
+            .and_then(|wp| preserve_waypoint_path(start, wp, goal, self.params, &solid, &water))
+            .unwrap_or_else(|| path::find_path(start, goal, self.params, &solid, &water));
+        self.path_reaches_goal = self.path.last().is_some_and(|&last| last == goal);
         // Index 1 = the first cell to walk to (path[0] is the start).
         self.index = if self.path.len() > 1 {
             1
@@ -144,6 +175,15 @@ impl Navigator {
             self.path.len()
         };
         self.since_path = 0;
+        if self.path_reaches_goal || goal_changed {
+            self.repath_interval = REPATH_TICKS;
+        } else {
+            self.repath_interval = next_repath_backoff(self.repath_interval);
+        }
+        #[cfg(test)]
+        {
+            self.recomputes += 1;
+        }
     }
 
     /// This tick's locomotion: a unit horizontal `wish` direction toward the current
@@ -189,14 +229,55 @@ impl Navigator {
             return (dir, jump);
         }
 
-        // Path exhausted — arrived. Going idle lets the brain choose what's next.
-        self.clear();
+        // Path exhausted. A route that reached the goal has arrived and resets the
+        // navigator. A partial route stays associated with the same goal so held-goal
+        // retries obey the unreachable-goal backoff instead of immediately recomputing.
+        if self.path_reaches_goal {
+            self.clear();
+        } else {
+            self.path.clear();
+            self.index = 0;
+        }
         (Vec3::ZERO, false)
     }
 
     fn arrive_xz(&self) -> f32 {
         MAX_ARRIVE_XZ.min((0.5 - self.half_width).max(MIN_ARRIVE_XZ))
     }
+}
+
+fn preserve_waypoint_path(
+    start: IVec3,
+    waypoint: IVec3,
+    goal: IVec3,
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> Option<Vec<IVec3>> {
+    if waypoint == start {
+        return None;
+    }
+    let step = path::find_path(start, waypoint, params, solid, water);
+    if step.last() != Some(&waypoint) || step.len() > 2 {
+        return None;
+    }
+    if waypoint == goal {
+        return Some(step);
+    }
+    let suffix = path::find_path(waypoint, goal, params, solid, water);
+    if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
+        return None;
+    }
+    let mut stitched = step;
+    stitched.extend_from_slice(&suffix[1..]);
+    Some(stitched)
+}
+
+fn next_repath_backoff(current: u32) -> u32 {
+    current
+        .max(REPATH_TICKS)
+        .saturating_mul(2)
+        .min(MAX_REPATH_BACKOFF_TICKS)
 }
 
 /// `true` if a cell blocks movement (has a collision box), via the world's blocks.
@@ -222,6 +303,7 @@ mod tests {
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 1, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(1, 1, 0));
+        nav.path_reaches_goal = true;
         // Standing on the waypoint: it's consumed and the nav goes idle.
         let on_wp = Vec3::new(1.5, 1.0, 0.5);
         let (wish, jump) = nav.follow(on_wp, true);
@@ -329,6 +411,15 @@ mod tests {
         world
     }
 
+    fn pillar_world() -> (World, IVec3, IVec3) {
+        let mut world = flat_world();
+        let start = IVec3::new(1, 64, 1);
+        let goal = IVec3::new(8, 66, 1);
+        world.set_block_world(goal.x, 64, goal.z, Block::Stone);
+        world.set_block_world(goal.x, 65, goal.z, Block::Stone);
+        (world, start, goal)
+    }
+
     #[test]
     fn re_paths_a_held_goal_when_the_world_changes() {
         // Hold one goal while the world changes underneath: the navigator must keep the
@@ -376,6 +467,144 @@ mod tests {
             "the refreshed route avoids the newly-walled cell: {:?}",
             nav.path()
         );
+    }
+
+    #[test]
+    fn same_goal_repath_preserves_the_current_waypoint_when_still_valid() {
+        // A periodic refresh can find an equally-good path whose first step is a
+        // different lateral cell. The mob should not snap sideways on the refresh tick
+        // if the waypoint it was already walking toward is still a valid immediate step.
+        let world = flat_world();
+        let start = IVec3::new(1, 64, 1);
+        let old_waypoint = IVec3::new(2, 64, 1);
+        let goal = IVec3::new(2, 64, 3);
+        let params = PathParams::for_body(1, 0.25);
+        let direct = path::find_path(
+            start,
+            goal,
+            params,
+            |c| world.blocks_movement_at(c.x, c.y, c.z),
+            |c| world.water_cell_at(c.x, c.y, c.z),
+        );
+        assert_ne!(
+            direct.get(1),
+            Some(&old_waypoint),
+            "fixture must have a direct refresh route that would pick a different first step"
+        );
+
+        let mut nav = Navigator::new(1, 0.25);
+        nav.path = vec![start, old_waypoint, IVec3::new(2, 64, 2), goal];
+        nav.index = 1;
+        nav.goal = Some(goal);
+        nav.path_reaches_goal = true;
+        nav.since_path = REPATH_TICKS - 1;
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_eq!(
+            nav.path().get(1),
+            Some(&old_waypoint),
+            "same-goal refresh keeps steering toward the current valid waypoint"
+        );
+    }
+
+    #[test]
+    fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
+        let (world, start, goal) = pillar_world();
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_eq!(nav.recomputes(), 1);
+        assert_ne!(
+            nav.path().last(),
+            Some(&goal),
+            "the pillar top is unreachable, so the route is partial"
+        );
+
+        for _ in 0..REPATH_TICKS - 1 {
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
+        }
+        assert_eq!(nav.recomputes(), 1, "no retry before the base interval");
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_eq!(
+            nav.recomputes(),
+            2,
+            "first same-goal retry happens at the base interval"
+        );
+
+        for _ in 0..(REPATH_TICKS * 2 - 1) {
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
+        }
+        assert_eq!(
+            nav.recomputes(),
+            2,
+            "a second failed retry waits for the doubled backoff interval"
+        );
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_eq!(
+            nav.recomputes(),
+            3,
+            "the doubled interval eventually permits a retry"
+        );
+    }
+
+    #[test]
+    fn goal_cell_change_resets_unreachable_backoff_immediately() {
+        let (world, start, unreachable) = pillar_world();
+        let reachable = IVec3::new(2, 64, 1);
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(unreachable), start, &world, true);
+        for _ in 0..REPATH_TICKS {
+            nav.update_goal_when_supported(Some(unreachable), start, &world, true);
+        }
+        assert_eq!(
+            nav.recomputes(),
+            2,
+            "the unreachable goal has entered backoff"
+        );
+
+        nav.update_goal_when_supported(Some(reachable), start, &world, true);
+        assert_eq!(
+            nav.recomputes(),
+            3,
+            "a different goal cell is pathed immediately despite the old goal's backoff"
+        );
+        assert_eq!(
+            nav.path().last(),
+            Some(&reachable),
+            "the changed reachable goal gets a complete route"
+        );
+    }
+
+    #[test]
+    fn reachable_goal_keeps_the_base_repath_interval() {
+        let world = flat_world();
+        let start = IVec3::new(1, 64, 1);
+        let goal = IVec3::new(8, 64, 1);
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+        assert_eq!(nav.recomputes(), 1);
+        assert_eq!(nav.path().last(), Some(&goal));
+
+        for expected in 2..=3 {
+            for _ in 0..REPATH_TICKS - 1 {
+                nav.update_goal_when_supported(Some(goal), start, &world, true);
+            }
+            assert_eq!(
+                nav.recomputes(),
+                expected - 1,
+                "no early reachable-goal repath"
+            );
+            nav.update_goal_when_supported(Some(goal), start, &world, true);
+            assert_eq!(
+                nav.recomputes(),
+                expected,
+                "reachable held goals keep the normal cadence"
+            );
+        }
     }
 
     #[test]

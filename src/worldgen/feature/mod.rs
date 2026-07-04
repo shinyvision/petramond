@@ -179,6 +179,18 @@ impl VoxelSink for SectionSink<'_> {
     }
 }
 
+/// Apply a mod worldgen hook's write list (world position, registered block
+/// id) to one section through the SAME clipping sink engine features use —
+/// out-of-section writes drop, in-section writes go through the counted
+/// setter. That clip is the mod-feature seam mechanism: every section
+/// materialises exactly its own slice of a cross-boundary feature.
+pub(crate) fn apply_gen_writes(section: &mut Section, writes: &[([i32; 3], u8)]) {
+    let mut sink = SectionSink::new(section);
+    for &([x, y, z], id) in writes {
+        sink.set(IVec3::new(x, y, z), Block(id));
+    }
+}
+
 /// Bounded voxel writer — the ONLY place imperative feature writes happen. Holds a
 /// `&mut dyn VoxelSink` so one set of placer code targets either a chunk (worldgen)
 /// or the world (growth). The overwrite predicates (`set_leaf` over air/water,

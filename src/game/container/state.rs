@@ -95,6 +95,25 @@ impl ContainerMenu {
         self.workbench_input = None;
     }
 
+    /// Begin a mod GUI session for `kind`, opened from `pos` (`None` for a
+    /// programmatic open). The state map lives on the world; `Game`'s open
+    /// funnel clears it around this call.
+    pub(in crate::game) fn open_mod_gui(
+        &mut self,
+        kind: crate::gui::GuiKind,
+        pos: Option<crate::mathh::IVec3>,
+    ) {
+        self.target = ContainerTarget::ModGui { kind, pos };
+    }
+
+    /// End the mod GUI session (the state map is cleared by `Game`'s close
+    /// funnel, which knows the world).
+    pub(in crate::game) fn close_mod_gui(&mut self) {
+        if matches!(self.target, ContainerTarget::ModGui { .. }) {
+            self.target = ContainerTarget::None;
+        }
+    }
+
     /// End the workbench session: return the input block to the inventory (overflow
     /// thrown into the world via `overflow`), then drop the target — like the crafting
     /// grid, the workbench is a station that holds nothing once closed.

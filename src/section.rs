@@ -8,7 +8,7 @@
 //! water metadata, light, the random-tick gate) but scoped to one 16³ cube and
 //! addressed by [`crate::chunk::section_idx`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::block::{Block, BlockTag};
@@ -90,6 +90,12 @@ pub struct Section {
     /// Facing of each placed stair, keyed by section-local index. Absent stairs use
     /// the default north-facing shape, so old saves remain loadable.
     stair_facings: HashMap<u16, Facing>,
+    /// Sparse per-cell mod KV (`mod_id:key` → bytes), keyed by section-local
+    /// index like the block-entity maps. Opaque to the engine: entries persist
+    /// byte-exact with the section record (unknown keys are never dropped) so
+    /// data written by an absent mod survives. Inner map is a BTreeMap so the
+    /// save encoding is deterministic.
+    cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     pub dirty: bool,
     /// Set true by runtime edits, never by generation, so only player-touched
     /// sections are written to disk.
@@ -154,6 +160,7 @@ impl Section {
             sapling_stages: HashMap::new(),
             doors: HashMap::new(),
             stair_facings: HashMap::new(),
+            cell_kv: HashMap::new(),
             dirty: true,
             modified: false,
             skylight: None,
@@ -710,6 +717,44 @@ impl Section {
     }
 
     #[inline]
+    /// A cell's mod KV entry, or `None` when the cell (or key) has none.
+    pub fn cell_kv_get(&self, x: usize, y: usize, z: usize, key: &str) -> Option<&[u8]> {
+        self.cell_kv
+            .get(&(section_idx(x, y, z) as u16))?
+            .get(key)
+            .map(Vec::as_slice)
+    }
+
+    /// Store a cell mod KV entry. Does NOT set `modified` — the world-level
+    /// wrapper owns that (mirroring the block-entity insert pattern).
+    pub fn cell_kv_set(&mut self, x: usize, y: usize, z: usize, key: String, value: Vec<u8>) {
+        self.cell_kv
+            .entry(section_idx(x, y, z) as u16)
+            .or_default()
+            .insert(key, value);
+    }
+
+    /// Remove a cell mod KV entry; returns whether it was present. An inner
+    /// map emptied by the removal is dropped whole, so the save codec's
+    /// has-cell-kv flag clears once the last entry goes (the stale-record
+    /// guard pattern — see WIKI/save-entities.md).
+    pub fn cell_kv_remove(&mut self, x: usize, y: usize, z: usize, key: &str) -> bool {
+        let idx = section_idx(x, y, z) as u16;
+        let Some(map) = self.cell_kv.get_mut(&idx) else {
+            return false;
+        };
+        let removed = map.remove(key).is_some();
+        if map.is_empty() {
+            self.cell_kv.remove(&idx);
+        }
+        removed
+    }
+
+    /// The whole per-cell mod KV map, for the save codec.
+    pub fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
+        &self.cell_kv
+    }
+
     pub fn stair_facings(&self) -> &HashMap<u16, Facing> {
         &self.stair_facings
     }
@@ -858,6 +903,7 @@ impl Section {
         sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
         stair_facings: HashMap<u16, Facing>,
+        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         let mut s = Self {
             cx,
@@ -873,6 +919,7 @@ impl Section {
             sapling_stages,
             doors,
             stair_facings,
+            cell_kv,
             dirty: true,
             modified: false,
             skylight: None,

@@ -17,8 +17,9 @@ use crate::torch::{warm_amount, warm_tint};
 use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
 use super::tint;
 use super::vertex::{
-    pack_vertex, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE, UV_MODE_SHIFT, UV_MODE_STAIR_NEG_X,
-    UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X, UV_MODE_STAIR_POS_Z, UV_MODE_STAIR_TOP,
+    pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
+    UV_MODE_STAIR_NEG_X, UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X, UV_MODE_STAIR_POS_Z,
+    UV_MODE_STAIR_TOP,
 };
 use super::water::{self, SideVsWater, WaterSurface};
 
@@ -584,7 +585,7 @@ fn section_geometry(
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tint_tile(tile.world_tint(), ci), warm);
                     emit_cross(
                         &mut opaque,
@@ -595,15 +596,21 @@ fn section_geometry(
                         tile,
                         tint,
                         sky6,
+                        block6,
                     );
                     continue;
                 }
 
                 if shape == RenderShape::Torch {
                     let [top_tile, _bottom, side_tile] = block.tiles();
+                    // Sky channel = the cell's skylight; block channel = the torch's own
+                    // emission (self-lit). `max(sky_term, block_term)` in the shader
+                    // equals the old single-channel `max(cell_sky, emission)` fold at
+                    // identity scale, and the emission channel never dims at night.
                     let cell_sky = neighbour_light(wx, wy, wz) as u32;
-                    let lit = cell_sky.max(block.light_emission() as u32);
-                    let light6 = ((lit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let sky6 = ((cell_sky * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let emit = block.light_emission() as u32;
+                    let block6 = ((emit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
                     let placement = section.torch_placement(lx, ly, lz);
                     super::torch::emit_torch(
                         &mut opaque,
@@ -615,7 +622,8 @@ fn section_geometry(
                         side_tile,
                         top_tile,
                         [1.0, 1.0, 1.0],
-                        light6,
+                        sky6,
+                        block6,
                     );
                     continue;
                 }
@@ -625,7 +633,7 @@ fn section_geometry(
                     let facing = section.model_facing(lx, ly, lz);
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (light6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     emit_model_block(
                         &mut model,
                         &mut model_idx,
@@ -635,7 +643,9 @@ fn section_geometry(
                         wx,
                         wy,
                         wz,
-                        light6,
+                        // The explicit-UV model stream bakes light at mesh time; the
+                        // combined max equals the pre-split single channel exactly.
+                        sky6.max(block6),
                         warm,
                     );
                     continue;
@@ -697,9 +707,9 @@ fn section_geometry(
                                 && is_side
                             {
                                 {
-                                let e = crate::atlas::engine();
-                                (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
-                            }
+                                    let e = crate::atlas::engine();
+                                    (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
+                                }
                             } else {
                                 let t = match face {
                                     Face::PosY => tile_top,
@@ -729,7 +739,7 @@ fn section_geometry(
                                 Some(o) => (o.index() as u32, true),
                                 None => (0, false),
                             };
-                            let (ao, light6, warm) =
+                            let (ao, light6, block6, warm) =
                                 cube_face_lighting_pad(pad, face, fxp, fyp, fzp, f_l, f_bl, true);
                             let flat = ao[0] == ao[1]
                                 && ao[1] == ao[2]
@@ -737,6 +747,9 @@ fn section_geometry(
                                 && light6[0] == light6[1]
                                 && light6[1] == light6[2]
                                 && light6[2] == light6[3]
+                                && block6[0] == block6[1]
+                                && block6[1] == block6[2]
+                                && block6[2] == block6[3]
                                 && warm[0] == warm[1]
                                 && warm[1] == warm[2]
                                 && warm[2] == warm[3];
@@ -752,6 +765,7 @@ fn section_geometry(
                                     tile: base_tile.index() as u32,
                                     ao: ao[0],
                                     light6: light6[0],
+                                    block6: block6[0],
                                     tint: final_tint,
                                 };
                                 let s = [lx, ly, lz][face_axes(face).0];
@@ -769,6 +783,7 @@ fn section_geometry(
                                     face,
                                     ao,
                                     light6,
+                                    block6,
                                     warm,
                                 );
                             }
@@ -819,9 +834,9 @@ fn section_geometry(
                         (t, None, tint_water(ci))
                     } else if block == Block::Grass && is_side {
                         {
-                                let e = crate::atlas::engine();
-                                (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
-                            }
+                            let e = crate::atlas::engine();
+                            (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
+                        }
                     } else {
                         let t = match face {
                             Face::PosY => tile_top,
@@ -864,7 +879,7 @@ fn section_geometry(
                         None => (water_ov, false),
                     };
 
-                    let (ao, light6, warm) = cube_face_lighting(
+                    let (ao, light6, block6, warm) = cube_face_lighting(
                         face,
                         fx,
                         fy,
@@ -886,6 +901,9 @@ fn section_geometry(
                         && light6[0] == light6[1]
                         && light6[1] == light6[2]
                         && light6[2] == light6[3]
+                        && block6[0] == block6[1]
+                        && block6[1] == block6[2]
+                        && block6[2] == block6[3]
                         && warm[0] == warm[1]
                         && warm[1] == warm[2]
                         && warm[2] == warm[3];
@@ -901,6 +919,7 @@ fn section_geometry(
                             tile: base_tile.index() as u32,
                             ao: ao[0],
                             light6: light6[0],
+                            block6: block6[0],
                             tint: final_tint,
                         };
                         // Slice index = the cell's coord along this face's normal axis.
@@ -924,6 +943,7 @@ fn section_geometry(
                             face,
                             ao,
                             light6,
+                            block6,
                             warm,
                         );
                         if is_water && matches!(face, Face::PosY) {
@@ -1104,7 +1124,7 @@ fn chunk_geometry(
                     // brightens and takes the same warm tint as the blocks around it.
                     let l = neighbour_light(wx, y as i32, wz) as u32;
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
-                    let (sky6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tints.tile(tile.world_tint(), ci), warm);
                     emit_cross(
                         &mut opaque,
@@ -1115,6 +1135,7 @@ fn chunk_geometry(
                         tile,
                         tint,
                         sky6,
+                        block6,
                     );
                     continue;
                 }
@@ -1128,9 +1149,12 @@ fn chunk_geometry(
                     let [top_tile, _bottom, side_tile] = block.tiles();
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
+                    // Split channels: cell sky vs the torch's own emission (see the
+                    // section-path torch emit for the identity argument).
                     let cell_sky = neighbour_light(wx, y as i32, wz) as u32;
-                    let lit = cell_sky.max(block.light_emission() as u32);
-                    let light6 = ((lit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let sky6 = ((cell_sky * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let emit = block.light_emission() as u32;
+                    let block6 = ((emit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
                     let placement = chunk.torch_placement(x, y, z);
                     super::torch::emit_torch(
                         &mut opaque,
@@ -1142,7 +1166,8 @@ fn chunk_geometry(
                         side_tile,
                         top_tile,
                         [1.0, 1.0, 1.0],
-                        light6,
+                        sky6,
+                        block6,
                     );
                     continue;
                 }
@@ -1160,7 +1185,7 @@ fn chunk_geometry(
                     let facing = chunk.model_facing(x, y, z);
                     let l = neighbour_light(wx, y as i32, wz) as u32;
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
-                    let (light6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     emit_model_block(
                         &mut model,
                         &mut model_idx,
@@ -1170,7 +1195,7 @@ fn chunk_geometry(
                         wx,
                         y as i32,
                         wz,
-                        light6,
+                        sky6.max(block6),
                         warm,
                     );
                     continue;
@@ -1634,15 +1659,22 @@ fn face_on_cell_boundary(face: Face, min: [f32; 3], max: [f32; 3]) -> bool {
     }
 }
 
-/// Fold a cell's (or neighbourhood-summed) skylight + block-light into the packed
-/// 6-bit brightness and a 0..1 warm amount. `sum_sky`/`sum_block` are x2-scale
-/// sums over `denom = cnt * SKY_FULL` cells (`cnt = 1`, `denom = SKY_FULL` for a
-/// single cell). Brightness is the BRIGHTER channel (so a torch lights a sky-dark
-/// cave); warm comes from the shared [`warm_amount`](crate::torch::warm_amount) so
-/// static blocks and dynamic geometry warm identically.
+/// Fold a cell's (or neighbourhood-summed) skylight + block-light into TWO packed
+/// 6-bit brightness channels `(sky6, block6)` plus a 0..1 warm amount.
+/// `sum_sky`/`sum_block` are x2-scale sums over `denom = cnt * SKY_FULL` cells
+/// (`cnt = 1`, `denom = SKY_FULL` for a single cell). The channels stay SEPARATE
+/// in the vertex (`packed` bits 23..29 = sky, `packed2` bits 0..6 = block) so the
+/// shader can dim the sky term without dimming torch light; the shader recombines
+/// with `max(sky_term, block_term)`. Because the per-channel quantizer is monotone
+/// non-decreasing, `max(sky6, block6) == quantize(max(sum_sky, sum_block))` — the
+/// value the single channel used to hold — so at identity scale the final light is
+/// bit-identical to the pre-split output. Warm comes from the shared
+/// [`warm_amount`](crate::torch::warm_amount) so static blocks and dynamic
+/// geometry warm identically.
 #[inline]
-fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
-    let light6 = ((sum_sky.max(sum_block) * 63 + denom / 2) / denom).min(63);
+fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, u32, f32) {
+    let sky6 = ((sum_sky * 63 + denom / 2) / denom).min(63);
+    let block6 = ((sum_block * 63 + denom / 2) / denom).min(63);
     // `warm_amount` is `block01 * (1 - sky01) * strength`, so no block-light means
     // exactly 0.0 warmth — skip its two f32 divisions in the torch-free common case
     // (nearly all daylit terrain). Byte-identical: the multiply by a zero block term
@@ -1655,7 +1687,7 @@ fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
             sum_block as f32 / denom as f32,
         )
     };
-    (light6, warm)
+    (sky6, block6, warm)
 }
 
 /// Like [`fold_light`] but for the per-corner smooth-light mean over `cnt` cells
@@ -1664,15 +1696,26 @@ fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, f32) {
 /// removing the last per-corner division from the emit hot loop. Byte-identical to
 /// `fold_light(sum_sky, sum_block, cnt * SKY_FULL)`.
 #[inline]
-fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, f32) {
-    let v = sum_sky.max(sum_block) * 63;
-    let light6 = match cnt {
-        1 => (v + 15) / 30,
-        2 => (v + 30) / 60,
-        3 => (v + 45) / 90,
-        _ => (v + 60) / 120,
+fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, u32, f32) {
+    #[inline(always)]
+    fn quant(sum: u32, cnt: u32) -> u32 {
+        let v = sum * 63;
+        match cnt {
+            1 => (v + 15) / 30,
+            2 => (v + 30) / 60,
+            3 => (v + 45) / 90,
+            _ => (v + 60) / 120,
+        }
+        .min(63)
     }
-    .min(63);
+    let sky6 = quant(sum_sky, cnt);
+    // The torch-free common case (nearly all terrain) skips the block-channel
+    // divide entirely: a zero sum quantizes to exactly 0.
+    let block6 = if sum_block == 0 {
+        0
+    } else {
+        quant(sum_block, cnt)
+    };
     let warm = if sum_block == 0 {
         0.0
     } else {
@@ -1682,7 +1725,7 @@ fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, f32) {
             sum_block as f32 / denom as f32,
         )
     };
-    (light6, warm)
+    (sky6, block6, warm)
 }
 
 /// Emit one resolved cube face: gather the shared 3×3 tangent-plane ring around the
@@ -1718,7 +1761,7 @@ where
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
 {
-    let (ao, light6, warm) = cube_face_lighting(
+    let (ao, light6, block6, warm) = cube_face_lighting(
         face,
         fx,
         fy,
@@ -1742,6 +1785,7 @@ where
         face,
         ao,
         light6,
+        block6,
         warm,
     )
 }
@@ -1768,7 +1812,7 @@ fn cube_face_lighting<B, L, K>(
     block_at: &B,
     neighbour_light: &L,
     neighbour_blocklight: &K,
-) -> ([u32; 4], [u32; 4], [f32; 4])
+) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
 where
     B: Fn(i32, i32, i32) -> Block,
     L: Fn(i32, i32, i32) -> u8,
@@ -1809,6 +1853,7 @@ where
     let signs = face.ao_signs();
     let mut ao = [3u32; 4];
     let mut light6 = [0u32; 4];
+    let mut block6 = [0u32; 4];
     let mut warm = [0f32; 4];
     let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
     for corner in 0..4 {
@@ -1816,7 +1861,7 @@ where
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
         ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
         if !smooth_light {
-            (light6[corner], warm[corner]) = flat;
+            (light6[corner], block6[corner], warm[corner]) = flat;
             continue;
         }
         let mut sum = f_l;
@@ -1837,9 +1882,9 @@ where
             sum_block += blk[iu][iv];
             cnt += 1;
         }
-        (light6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
+        (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
     }
-    (ao, light6, warm)
+    (ao, light6, block6, warm)
 }
 
 fn cube_face_lighting_pad(
@@ -1851,7 +1896,7 @@ fn cube_face_lighting_pad(
     f_l: u32,
     f_bl: u32,
     smooth_light: bool,
-) -> ([u32; 4], [u32; 4], [f32; 4]) {
+) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4]) {
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
 
@@ -1886,6 +1931,7 @@ fn cube_face_lighting_pad(
     let signs = face.ao_signs();
     let mut ao = [3u32; 4];
     let mut light6 = [0u32; 4];
+    let mut block6 = [0u32; 4];
     let mut warm = [0f32; 4];
     let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
     for corner in 0..4 {
@@ -1893,7 +1939,7 @@ fn cube_face_lighting_pad(
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
         ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
         if !smooth_light {
-            (light6[corner], warm[corner]) = flat;
+            (light6[corner], block6[corner], warm[corner]) = flat;
             continue;
         }
         let mut sum = f_l;
@@ -1914,9 +1960,9 @@ fn cube_face_lighting_pad(
             sum_block += blk[iu][iv];
             cnt += 1;
         }
-        (light6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
+        (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
     }
-    (ao, light6, warm)
+    (ao, light6, block6, warm)
 }
 
 /// Push one resolved cube face's four packed vertices (given precomputed per-corner
@@ -1935,6 +1981,7 @@ fn push_cube_face(
     face: Face,
     ao: [u32; 4],
     light6: [u32; 4],
+    block6: [u32; 4],
     warm: [f32; 4],
 ) -> [u32; 6] {
     let shade_idx = face.shade_idx();
@@ -1959,6 +2006,7 @@ fn push_cube_face(
                 ao[corner],
                 light6[corner],
             ) | (uv_mode << UV_MODE_SHIFT),
+            packed2: pack_vertex2(block6[corner]),
         });
     }
     // Flip the triangulation so the split runs along the darker diagonal -- keeps
@@ -1986,6 +2034,9 @@ struct FlatFace {
     tile: u32,
     ao: u32,
     light6: u32,
+    /// Second light channel (block light) — merges require BOTH channels equal, so
+    /// a merged quad's `packed2` word is exact for every cell it replaces.
+    block6: u32,
     tint: [f32; 3],
 }
 
@@ -1994,6 +2045,7 @@ const FLAT_ABSENT: FlatFace = FlatFace {
     tile: 0,
     ao: 0,
     light6: 0,
+    block6: 0,
     tint: [0.0; 3],
 };
 
@@ -2195,6 +2247,7 @@ fn push_greedy_quad(
                 key.ao,
                 key.light6,
             ) | (UV_MODE_NONE << UV_MODE_SHIFT),
+            packed2: pack_vertex2(key.block6),
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
@@ -2224,9 +2277,10 @@ fn emit_cross(
     tile: Tile,
     tint: [f32; 3],
     sky6: u32,
+    block6: u32,
 ) {
     // Flat-lit: shade index 0 (top, no directional darkening), AO = 3, no overlay;
-    // `pack_vertex` owns the bit layout.
+    // `pack_vertex`/`pack_vertex2` own the bit layouts.
     for plane in cross_quads(bx, y, bz) {
         let start = opaque.len() as u32;
         for (corner, p) in plane.into_iter().enumerate() {
@@ -2234,9 +2288,40 @@ fn emit_cross(
                 pos: p,
                 tint,
                 packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
+                packed2: pack_vertex2(block6),
             });
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
         opaque_idx.extend_from_slice(&[start, start + 2, start + 1, start, start + 3, start + 2]);
+    }
+}
+
+#[cfg(test)]
+mod fold_light_tests {
+    use super::*;
+
+    /// The light-channel split's terrain identity: per-channel quantization is
+    /// monotone, so `max(sky6, block6)` reproduces the pre-split single channel
+    /// (`quantize(max(sums))`) exactly — the shader's `max(sky_term, block_term)`
+    /// at identity scale therefore matches the old fold bit-for-bit. Also pins
+    /// `fold_light_smooth`'s constant-divisor arms to `fold_light` byte parity.
+    #[test]
+    fn split_channels_reproduce_the_max_folded_single_channel() {
+        for cnt in 1u32..=4 {
+            let denom = cnt * SKY_FULL as u32;
+            for sky in 0..=denom {
+                for blk in 0..=denom {
+                    let (s6, b6, warm) = fold_light(sky, blk, denom);
+                    let old = ((sky.max(blk) * 63 + denom / 2) / denom).min(63);
+                    assert_eq!(s6.max(b6), old, "sky={sky} blk={blk} denom={denom}");
+                    let smooth = fold_light_smooth(sky, blk, cnt);
+                    assert_eq!(
+                        smooth,
+                        (s6, b6, warm),
+                        "smooth arm must stay byte-identical at cnt={cnt}"
+                    );
+                }
+            }
+        }
     }
 }

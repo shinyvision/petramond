@@ -2,6 +2,8 @@
 //! (position, velocity, look direction, mode, full inventory), and the
 //! game-tick counter.
 
+use std::collections::BTreeMap;
+
 use crate::inventory::{Inventory, TOTAL_SLOTS};
 use crate::item::ItemStack;
 use crate::mathh::Vec3;
@@ -9,9 +11,9 @@ use crate::player::{Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u64, put_u8, Reader};
 
 /// Bumped to 2 for the player's look direction (yaw/pitch), then 3 for player
-/// health. `decode` still accepts v1/v2; their missing fields default (facing 0,
-/// full health).
-const VERSION: u32 = 3;
+/// health, then 4 for the mod world KV map. `decode` still accepts v1..v3;
+/// their missing fields default (facing 0, full health, empty KV).
+const VERSION: u32 = 4;
 
 /// Decoded `level.dat` contents.
 pub struct LevelData {
@@ -30,9 +32,17 @@ pub struct LevelData {
     /// bytes, so dropping it would change the on-disk save codec.
     #[allow(dead_code)]
     pub tick: u64,
+    /// The mod world KV map (`mod_id:key` → bytes; WIKI/modding.md Phase 3b).
+    /// Defaults empty when loading a pre-v4 save.
+    pub world_kv: BTreeMap<String, Vec<u8>>,
 }
 
-pub fn encode(seed: u32, player: &Player, tick: u64) -> Vec<u8> {
+pub fn encode(
+    seed: u32,
+    player: &Player,
+    tick: u64,
+    world_kv: &BTreeMap<String, Vec<u8>>,
+) -> Vec<u8> {
     let mut b = Vec::new();
     put_u32(&mut b, VERSION);
     put_u32(&mut b, seed);
@@ -55,16 +65,26 @@ pub fn encode(seed: u32, player: &Player, tick: u64) -> Vec<u8> {
     // still decodes (its facing defaults on load — see `decode`).
     put_f32(&mut b, player.yaw);
     put_f32(&mut b, player.pitch);
-    // v3: player health, appended last so v1/v2 saves still decode (health defaults
-    // to full on load).
+    // v3: player health, appended after the look so v1/v2 saves still decode
+    // (health defaults to full on load).
     put_u32(&mut b, player.health() as u32);
+    // v4: the mod world KV map, appended last so v1..v3 saves still decode
+    // (defaults empty on load). BTreeMap iteration is sorted, so identical
+    // maps encode identically.
+    put_u32(&mut b, world_kv.len().min(u32::MAX as usize) as u32);
+    for (key, value) in world_kv {
+        put_u32(&mut b, key.len() as u32);
+        b.extend_from_slice(key.as_bytes());
+        put_u32(&mut b, value.len() as u32);
+        b.extend_from_slice(value);
+    }
     b
 }
 
 pub fn decode(bytes: &[u8]) -> Option<LevelData> {
     let mut r = Reader::new(bytes);
     let version = r.u32()?;
-    if !(1..=3).contains(&version) {
+    if !(1..=4).contains(&version) {
         return None;
     }
     let seed = r.u32()?;
@@ -98,6 +118,17 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
     } else {
         crate::player::MAX_HEALTH
     };
+    // The mod world KV map was appended in v4; older saves load with none.
+    let mut world_kv = BTreeMap::new();
+    if version >= 4 {
+        let n = r.u32()?;
+        for _ in 0..n {
+            let klen = r.u32()? as usize;
+            let key = std::str::from_utf8(r.bytes(klen)?).ok()?.to_owned();
+            let vlen = r.u32()? as usize;
+            world_kv.insert(key, r.bytes(vlen)?.to_vec());
+        }
+    }
 
     Some(LevelData {
         seed,
@@ -109,6 +140,7 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
         player_health,
         inventory,
         tick,
+        world_kv,
     })
 }
 
@@ -135,8 +167,12 @@ mod tests {
         player.pitch = -0.5;
         player.set_health(7);
         player.inventory.set_active(3);
+        let kv = BTreeMap::from([
+            ("daynight:time".to_owned(), vec![0x10, 0x20]),
+            ("zombies:invuln_until".to_owned(), Vec::new()),
+        ]);
 
-        let bytes = encode(0xDEAD_BEEF, &player, 12_345);
+        let bytes = encode(0xDEAD_BEEF, &player, 12_345, &kv);
         let got = decode(&bytes).expect("decodes");
 
         assert_eq!(got.seed, 0xDEAD_BEEF);
@@ -148,6 +184,7 @@ mod tests {
         assert_eq!(got.player_health, 7, "health survives the round-trip");
         assert_eq!(got.tick, 12_345);
         assert_eq!(got.inventory.active_slot(), 3);
+        assert_eq!(got.world_kv, kv, "the mod world KV survives the round-trip");
         // Demo hotbar survives the round-trip.
         assert_eq!(
             got.inventory.selected().map(|s| s.item),
@@ -157,17 +194,18 @@ mod tests {
 
     #[test]
     fn v1_save_without_look_or_health_decodes_with_defaults() {
-        // A pre-look (v1) save must still load: build a current blob, rewrite the
-        // version word to 1, and strip the appended yaw/pitch + health (three trailing
-        // f32/u32 words = 12 bytes). It decodes with the rest intact, the facing
-        // defaulted, and health full.
+        // A pre-look (v1) save must still load: build a current blob (empty KV
+        // so its v4 tail is exactly the 4-byte zero count), rewrite the version
+        // word to 1, and strip the appended yaw/pitch + health + KV count (four
+        // trailing f32/u32 words = 16 bytes). It decodes with the rest intact,
+        // the facing defaulted, and health full.
         let mut player = Player::new(Vec3::new(1.0, 2.0, 3.0));
         player.yaw = 0.9; // present in the bytes, then truncated away below
         player.pitch = 0.3;
         player.set_health(5);
-        let mut bytes = encode(7, &player, 0);
+        let mut bytes = encode(7, &player, 0, &BTreeMap::new());
         bytes[0..4].copy_from_slice(&1u32.to_le_bytes());
-        bytes.truncate(bytes.len() - 12);
+        bytes.truncate(bytes.len() - 16);
 
         let got = decode(&bytes).expect("v1 decodes");
         assert_eq!(got.player_pos, Vec3::new(1.0, 2.0, 3.0));
@@ -178,19 +216,21 @@ mod tests {
             crate::player::MAX_HEALTH,
             "v1 loads at full health"
         );
+        assert!(got.world_kv.is_empty(), "v1 loads with no mod world KV");
     }
 
     #[test]
     fn v2_save_without_health_decodes_at_full_health() {
-        // A v2 save carries the look but predates health: strip only the trailing health
-        // word (4 bytes) and mark it v2. Facing survives; health defaults to full.
+        // A v2 save carries the look but predates health and the KV map: strip
+        // the trailing health + KV-count words (8 bytes) and mark it v2. Facing
+        // survives; health defaults to full.
         let mut player = Player::new(Vec3::new(4.0, 5.0, 6.0));
         player.yaw = 1.1;
         player.pitch = -0.2;
         player.set_health(9);
-        let mut bytes = encode(3, &player, 0);
+        let mut bytes = encode(3, &player, 0, &BTreeMap::new());
         bytes[0..4].copy_from_slice(&2u32.to_le_bytes());
-        bytes.truncate(bytes.len() - 4);
+        bytes.truncate(bytes.len() - 8);
 
         let got = decode(&bytes).expect("v2 decodes");
         assert_eq!(got.player_yaw, 1.1, "v2 keeps the look");
@@ -200,5 +240,22 @@ mod tests {
             crate::player::MAX_HEALTH,
             "v2 loads at full health"
         );
+        assert!(got.world_kv.is_empty(), "v2 loads with no mod world KV");
+    }
+
+    #[test]
+    fn v3_save_without_world_kv_decodes_with_an_empty_map() {
+        // A v3 save (health, no KV) must keep loading: strip the trailing
+        // 4-byte KV count and mark it v3. Everything else is intact and the KV
+        // defaults empty.
+        let mut player = Player::new(Vec3::new(4.0, 5.0, 6.0));
+        player.set_health(9);
+        let mut bytes = encode(3, &player, 0, &BTreeMap::new());
+        bytes[0..4].copy_from_slice(&3u32.to_le_bytes());
+        bytes.truncate(bytes.len() - 4);
+
+        let got = decode(&bytes).expect("v3 decodes");
+        assert_eq!(got.player_health, 9, "v3 keeps its health");
+        assert!(got.world_kv.is_empty(), "v3 loads with no mod world KV");
     }
 }

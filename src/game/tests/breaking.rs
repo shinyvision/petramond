@@ -9,7 +9,7 @@ fn stone_pickaxe_harvests_iron_as_raw_iron() {
     // block's drop spec. Iron ore yields raw iron (here via spawn_drops, which
     // the mining path calls on a harvested break).
     let mut game = game();
-    game.spawn_drops(IVec3::new(0, 64, 0), Block::IronOre, 15);
+    game.spawn_drops(IVec3::new(0, 64, 0), Block::IronOre, (15, 0));
     assert_eq!(game.world.item_entities().len(), 1);
     assert_eq!(game.world.item_entities()[0].stack.item, ItemType::RawIron);
 }
@@ -17,7 +17,7 @@ fn stone_pickaxe_harvests_iron_as_raw_iron() {
 #[test]
 fn copper_ore_drops_two_to_four_raw_copper() {
     let mut game = game();
-    game.spawn_drops(IVec3::new(1, 64, 1), Block::CopperOre, 15);
+    game.spawn_drops(IVec3::new(1, 64, 1), Block::CopperOre, (15, 0));
     let drops = game.world.item_entities();
     assert_eq!(drops.len(), 1);
     assert_eq!(drops[0].stack.item, ItemType::RawCopper);

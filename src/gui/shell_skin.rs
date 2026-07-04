@@ -33,6 +33,9 @@ struct Loaded {
 pub enum ShellKind {
     Title,
     WorldSelect,
+    /// Per-world mod enablement (+ the relocated Delete World button); opened
+    /// from world-select in place of the old per-world Delete button.
+    WorldSettings,
     CreateWorld,
     DeleteWorld,
     Pause,
@@ -42,7 +45,7 @@ impl ShellKind {
     fn default_y(self) -> f32 {
         match self {
             ShellKind::Title => 42.0,
-            ShellKind::WorldSelect => 18.0,
+            ShellKind::WorldSelect | ShellKind::WorldSettings => 18.0,
             ShellKind::CreateWorld => 26.0,
             ShellKind::DeleteWorld => 44.0,
             ShellKind::Pause => 54.0,
@@ -58,10 +61,16 @@ pub enum ShellRole {
     TitleQuit,
     WorldPlay,
     WorldCreate,
+    /// Geometry authored (and still baked) as the world-select Delete button;
+    /// the shell now labels it "World Settings" (the delete flow moved there).
     WorldDelete,
     WorldBack,
     WorldRow,
     WorldScrollTrack,
+    ModRow,
+    ModScrollTrack,
+    SettingsBack,
+    SettingsDeleteWorld,
     CreateNameInput,
     CreateSeedInput,
     CreateCreate,
@@ -220,6 +229,12 @@ impl ShellDef {
                 ShellRole::WorldRow,
                 ShellRole::WorldScrollTrack,
             ],
+            ShellKind::WorldSettings => &[
+                ShellRole::ModRow,
+                ShellRole::ModScrollTrack,
+                ShellRole::SettingsBack,
+                ShellRole::SettingsDeleteWorld,
+            ],
             ShellKind::CreateWorld => &[
                 ShellRole::CreateNameInput,
                 ShellRole::CreateSeedInput,
@@ -236,7 +251,9 @@ impl ShellDef {
                 return Err(format!("{:?} missing {role:?}", self.kind));
             }
         }
-        if self.kind == ShellKind::WorldSelect && self.scroll_thumb.is_none() {
+        if matches!(self.kind, ShellKind::WorldSelect | ShellKind::WorldSettings)
+            && self.scroll_thumb.is_none()
+        {
             return Err(format!("{:?} missing world scroll thumb", self.kind));
         }
         Ok(())
@@ -342,7 +359,9 @@ fn load_baked() -> Vec<Loaded> {
                 thumb.image_size = (w, h);
             }
         }
-        if def.kind == ShellKind::WorldSelect && scroll_thumb_path.is_none() {
+        if matches!(def.kind, ShellKind::WorldSelect | ShellKind::WorldSettings)
+            && scroll_thumb_path.is_none()
+        {
             eprintln!(
                 "shell gui: ignoring {} - missing world scroll thumb art",
                 path.display()

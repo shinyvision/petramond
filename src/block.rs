@@ -14,165 +14,185 @@ mod load;
 mod sounds;
 
 pub use behavior::BlockBehavior;
+pub(crate) use data::ENGINE_BLOCK_NAMES;
 pub(crate) use definition::BlockMaterial;
 pub use sounds::BlockSoundAction;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Block {
-    Air = 0,
-    Grass,
-    Dirt,
-    Stone,
-    Sand,
-    Snow,
-    Water,
-    OakLog,
-    OakLeaves,
-    SpruceLog,
-    BirchLog,
-    JungleLog,
-    AcaciaLog,
-    DarkOakLog,
-    CherryLog,
-    MangroveLog,
-    SpruceLeaves,
-    BirchLeaves,
-    JungleLeaves,
-    AcaciaLeaves,
-    DarkOakLeaves,
-    MangroveLeaves,
-    CherryLeaves,
-    AzaleaLeaves,
-    RedSand,
-    Sandstone,
-    RedSandstone,
-    Terracotta,
-    WhiteTerracotta,
-    OrangeTerracotta,
-    YellowTerracotta,
-    BrownTerracotta,
-    RedTerracotta,
-    LightGrayTerracotta,
-    Podzol,
-    Mycelium,
-    CoarseDirt,
-    Gravel,
-    Clay,
-    Mud,
-    MossBlock,
-    SnowBlock,
-    PackedIce,
-    Ice,
-    Calcite,
-    Granite,
-    Diorite,
-    Andesite,
-    Tuff,
-    CoalOre,
-    IronOre,
-    CopperOre,
-    GoldOre,
-    RedstoneOre,
-    LapisOre,
-    DiamondOre,
-    EmeraldOre,
-    Pumpkin,
-    Melon,
-    Cactus,
-    ShortGrass,
-    Fern,
-    Dandelion,
-    Poppy,
-    Cornflower,
-    Allium,
-    AzureBluet,
-    OxeyeDaisy,
-    RedTulip,
-    DeadBush,
-    BrownMushroom,
-    RedMushroom,
-    // --- Crafting update: crafted / placeable blocks (ids 70..). ---
-    Cobblestone,
-    OakPlanks,
-    SprucePlanks,
-    BirchPlanks,
-    JunglePlanks,
-    AcaciaPlanks,
-    DarkOakPlanks,
-    CherryPlanks,
-    MangrovePlanks,
-    CraftingTable,
-    // --- Furnace update (id 82). ---
-    Furnace,
-    // --- Chest update (id 83). ---
-    Chest,
-    // --- Torch update (id 84). ---
-    Torch,
-    // --- bbmodel block update (id 85): the first data-driven Blockbench block,
-    // rendered from its `.bbmodel` (see `crate::block_model` / `RenderShape::Model`)
-    // rather than the atlas, with collision + selection baked from the model. ---
-    FurnitureWorkbench,
-    // --- Saplings update (ids 86..): cross-plant saplings dropped by leaves and
-    // grown into trees on random ticks (see `behavior::SAPLING`). One per tree
-    // species that has a worldgen feature; mangrove/azalea leaves have no feature,
-    // so no sapling. Appended at the end so every id above stays frozen. ---
-    OakSapling,
-    SpruceSapling,
-    BirchSapling,
-    JungleSapling,
-    AcaciaSapling,
-    DarkOakSapling,
-    CherrySapling,
-    // --- Doors update (ids 93..): per-species wooden doors. A door is a 2-tall thin
-    // slab placed on a cell edge, drawn as a dynamic hinged model (NOT chunk-meshed —
-    // like the chest, see `render::door_model`) so it can swing open/closed. Its
-    // facing + open + which-half state lives in the chunk door map; per-cell collision
-    // and selection are resolved position-aware in `world::door` from that state (see
-    // `crate::door`). Appended at the end so every id above stays frozen. ---
-    OakDoor,
-    SpruceDoor,
-    BirchDoor,
-    JungleDoor,
-    AcaciaDoor,
-    DarkOakDoor,
-    CherryDoor,
-    MangroveDoor,
-    // --- Redwood update (ids 141..): the giant-redwood wood set — log, leaves,
-    // planks, and door. Appended at the end so every id above stays frozen. ---
-    RedwoodLog,
-    RedwoodLeaves,
-    RedwoodPlanks,
-    RedwoodDoor,
-    // --- Stairs update: atlas-textured directional half-step blocks. Appended at
-    // the end so every id above stays frozen. Facing state lives in the section's
-    // stair-facing map; collision and meshing read `crate::stair`. ---
-    OakStairs,
-    SpruceStairs,
-    BirchStairs,
-    JungleStairs,
-    AcaciaStairs,
-    DarkOakStairs,
-    CherryStairs,
-    MangroveStairs,
-    RedwoodStairs,
-    CobblestoneStairs,
-    StoneStairs,
-    DirtStairs,
-    // --- Bed update: the bed frame (bare wood, crafted at the furniture workbench)
-    // and the finished bed (frame + wool). Both are 2×1×1 bbmodel blocks like the
-    // workbench (chunk-meshed from their `.bbmodel`, footprint auto-split, placed
-    // facing the player). Appended at the end so every id above stays frozen. ---
-    BedFrame,
-    Bed,
+/// A registered block, identified by its opaque runtime id. Engine blocks own
+/// the low ids in a compiled, frozen order (the named consts below — worldgen
+/// parity and save palettes depend on those ids never moving); mod packs
+/// register additional ids at load through namespaced `blocks.json` rows (see
+/// [`crate::registry`]). Serde carries a block as its registered NAME string,
+/// so persisted data never depends on numeric ids.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Block(pub u8);
+
+/// Engine block consts, named like the enum variants they replaced so every
+/// existing `Block::OakLog` expression and match pattern keeps compiling
+/// (the derives keep the newtype a structural-match type).
+#[allow(non_upper_case_globals)]
+impl Block {
+    pub const Air: Block = Block(0);
+    pub const Grass: Block = Block(1);
+    pub const Dirt: Block = Block(2);
+    pub const Stone: Block = Block(3);
+    pub const Sand: Block = Block(4);
+    pub const Snow: Block = Block(5);
+    pub const Water: Block = Block(6);
+    pub const OakLog: Block = Block(7);
+    pub const OakLeaves: Block = Block(8);
+    pub const SpruceLog: Block = Block(9);
+    pub const BirchLog: Block = Block(10);
+    pub const JungleLog: Block = Block(11);
+    pub const AcaciaLog: Block = Block(12);
+    pub const DarkOakLog: Block = Block(13);
+    pub const CherryLog: Block = Block(14);
+    pub const MangroveLog: Block = Block(15);
+    pub const SpruceLeaves: Block = Block(16);
+    pub const BirchLeaves: Block = Block(17);
+    pub const JungleLeaves: Block = Block(18);
+    pub const AcaciaLeaves: Block = Block(19);
+    pub const DarkOakLeaves: Block = Block(20);
+    pub const MangroveLeaves: Block = Block(21);
+    pub const CherryLeaves: Block = Block(22);
+    pub const AzaleaLeaves: Block = Block(23);
+    pub const RedSand: Block = Block(24);
+    pub const Sandstone: Block = Block(25);
+    pub const RedSandstone: Block = Block(26);
+    pub const Terracotta: Block = Block(27);
+    pub const WhiteTerracotta: Block = Block(28);
+    pub const OrangeTerracotta: Block = Block(29);
+    pub const YellowTerracotta: Block = Block(30);
+    pub const BrownTerracotta: Block = Block(31);
+    pub const RedTerracotta: Block = Block(32);
+    pub const LightGrayTerracotta: Block = Block(33);
+    pub const Podzol: Block = Block(34);
+    pub const Mycelium: Block = Block(35);
+    pub const CoarseDirt: Block = Block(36);
+    pub const Gravel: Block = Block(37);
+    pub const Clay: Block = Block(38);
+    pub const Mud: Block = Block(39);
+    pub const MossBlock: Block = Block(40);
+    pub const SnowBlock: Block = Block(41);
+    pub const PackedIce: Block = Block(42);
+    pub const Ice: Block = Block(43);
+    pub const Calcite: Block = Block(44);
+    pub const Granite: Block = Block(45);
+    pub const Diorite: Block = Block(46);
+    pub const Andesite: Block = Block(47);
+    pub const Tuff: Block = Block(48);
+    pub const CoalOre: Block = Block(49);
+    pub const IronOre: Block = Block(50);
+    pub const CopperOre: Block = Block(51);
+    pub const GoldOre: Block = Block(52);
+    pub const RedstoneOre: Block = Block(53);
+    pub const LapisOre: Block = Block(54);
+    pub const DiamondOre: Block = Block(55);
+    pub const EmeraldOre: Block = Block(56);
+    pub const Pumpkin: Block = Block(57);
+    pub const Melon: Block = Block(58);
+    pub const Cactus: Block = Block(59);
+    pub const ShortGrass: Block = Block(60);
+    pub const Fern: Block = Block(61);
+    pub const Dandelion: Block = Block(62);
+    pub const Poppy: Block = Block(63);
+    pub const Cornflower: Block = Block(64);
+    pub const Allium: Block = Block(65);
+    pub const AzureBluet: Block = Block(66);
+    pub const OxeyeDaisy: Block = Block(67);
+    pub const RedTulip: Block = Block(68);
+    pub const DeadBush: Block = Block(69);
+    pub const BrownMushroom: Block = Block(70);
+    pub const RedMushroom: Block = Block(71);
+    pub const Cobblestone: Block = Block(72);
+    pub const OakPlanks: Block = Block(73);
+    pub const SprucePlanks: Block = Block(74);
+    pub const BirchPlanks: Block = Block(75);
+    pub const JunglePlanks: Block = Block(76);
+    pub const AcaciaPlanks: Block = Block(77);
+    pub const DarkOakPlanks: Block = Block(78);
+    pub const CherryPlanks: Block = Block(79);
+    pub const MangrovePlanks: Block = Block(80);
+    pub const CraftingTable: Block = Block(81);
+    pub const Furnace: Block = Block(82);
+    pub const Chest: Block = Block(83);
+    pub const Torch: Block = Block(84);
+    pub const FurnitureWorkbench: Block = Block(85);
+    pub const OakSapling: Block = Block(86);
+    pub const SpruceSapling: Block = Block(87);
+    pub const BirchSapling: Block = Block(88);
+    pub const JungleSapling: Block = Block(89);
+    pub const AcaciaSapling: Block = Block(90);
+    pub const DarkOakSapling: Block = Block(91);
+    pub const CherrySapling: Block = Block(92);
+    pub const OakDoor: Block = Block(93);
+    pub const SpruceDoor: Block = Block(94);
+    pub const BirchDoor: Block = Block(95);
+    pub const JungleDoor: Block = Block(96);
+    pub const AcaciaDoor: Block = Block(97);
+    pub const DarkOakDoor: Block = Block(98);
+    pub const CherryDoor: Block = Block(99);
+    pub const MangroveDoor: Block = Block(100);
+    pub const RedwoodLog: Block = Block(101);
+    pub const RedwoodLeaves: Block = Block(102);
+    pub const RedwoodPlanks: Block = Block(103);
+    pub const RedwoodDoor: Block = Block(104);
+    pub const OakStairs: Block = Block(105);
+    pub const SpruceStairs: Block = Block(106);
+    pub const BirchStairs: Block = Block(107);
+    pub const JungleStairs: Block = Block(108);
+    pub const AcaciaStairs: Block = Block(109);
+    pub const DarkOakStairs: Block = Block(110);
+    pub const CherryStairs: Block = Block(111);
+    pub const MangroveStairs: Block = Block(112);
+    pub const RedwoodStairs: Block = Block(113);
+    pub const CobblestoneStairs: Block = Block(114);
+    pub const StoneStairs: Block = Block(115);
+    pub const DirtStairs: Block = Block(116);
+    pub const BedFrame: Block = Block(117);
+    pub const Bed: Block = Block(118);
+}
+
+impl std::fmt::Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Engine names come from the compiled table (never a lazy registry —
+        // Debug must work mid-bootstrap); dynamic ids print numerically.
+        match ENGINE_BLOCK_NAMES.get(self.0 as usize) {
+            Some(name) => write!(f, "Block({name})"),
+            None => write!(f, "Block(#{})", self.0),
+        }
+    }
+}
+
+impl Serialize for Block {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match crate::registry::names().blocks.name(self.0) {
+            Some(name) => s.serialize_str(name),
+            None => Err(serde::ser::Error::custom(format!(
+                "block id {} is not registered",
+                self.0
+            ))),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Block {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let name = std::borrow::Cow::<str>::deserialize(d)?;
+        crate::registry::names()
+            .blocks
+            .id(&name)
+            .map(Block)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown block '{name}'")))
+    }
 }
 
 /// Secondary-use capability declared by a block's data row. This answers only
 /// "what use action is available"; the tick-side gameplay code still applies the
-/// concrete world mutation or menu request.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// concrete world mutation or menu request. Parsed from the row's
+/// `interaction` field: a bare action name, or `{"open_gui": "mod_id:name"}`
+/// for a mod-defined GUI (see `block::load`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BlockInteraction {
     None,
     OpenCraftingTable,
@@ -180,6 +200,8 @@ pub enum BlockInteraction {
     OpenChest,
     OpenFurnitureWorkbench,
     ToggleDoor,
+    /// Right-click opens the mod GUI registered under this kind (Phase 5).
+    OpenModGui(crate::gui::GuiKind),
 }
 
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
@@ -292,7 +314,11 @@ pub struct Aabb {
 }
 
 impl Block {
-    pub const ALL: &'static [Block] = data::ALL_BLOCKS;
+    /// Every registered block — engine first (frozen ids), then pack-registered
+    /// blocks in load order — as an id-ordered slice (`all()[id] == Block(id)`).
+    pub fn all() -> &'static [Block] {
+        data::all()
+    }
 
     /// Mesh geometry kind — cube / cross-plant / torch — a per-row [`BlockDef`]
     /// field (see [`RenderShape`]): cross-model plants render as billboards, a torch
@@ -384,7 +410,7 @@ impl Block {
 
     #[inline]
     pub const fn id(self) -> u8 {
-        self as u8
+        self.0
     }
 
     #[inline]
@@ -672,7 +698,7 @@ mod tests {
     #[test]
     fn door_shaped_blocks_advertise_toggle_interaction() {
         let mut checked_any = false;
-        for &block in Block::ALL {
+        for &block in Block::all() {
             if block.render_shape() != RenderShape::Door {
                 continue;
             }
@@ -688,7 +714,7 @@ mod tests {
 
     #[test]
     fn every_block_has_consistent_metadata() {
-        for &block in Block::ALL {
+        for &block in Block::all() {
             let spec = block.drop_spec();
             // Every dropped item is a real (non-Air) item with a sane count range.
             for d in spec.drops {
@@ -778,7 +804,7 @@ mod tests {
         for &b in &terrain {
             assert!(b.is_terrain_solid(), "{b:?} should be terrain-solid");
         }
-        for &b in Block::ALL {
+        for &b in Block::all() {
             let expected = terrain.contains(&b);
             assert_eq!(b.is_terrain_solid(), expected, "{b:?}");
         }

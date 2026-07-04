@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 
 use super::crosshair::MAX_CROSSHAIR_VERTICES;
 use super::selection::MAX_OUTLINE_VERTICES;
-use super::uniforms::{Uniforms, UV_RECTS_LEN};
+use super::uniforms::{ShaderParams, Uniforms, UV_RECTS_LEN};
 
 /// Size of one MVP slot in the model3d dynamic-offset uniform buffer. A `mat4`
 /// is 64 bytes but dynamic offsets must be a multiple of the device's
@@ -229,6 +229,9 @@ pub(super) struct PipelineResources {
     pub atlas_bgl: wgpu::BindGroupLayout,
     pub sky_pipe: wgpu::RenderPipeline,
     pub sky_bind: wgpu::BindGroup,
+    pub sky_texture_bind: wgpu::BindGroup,
+    pub sky_shader_param_keys: Vec<String>,
+    pub sky_light_param_key: Option<String>,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
     pub outline_pipe: wgpu::RenderPipeline,
@@ -325,9 +328,11 @@ pub(super) struct PipelineResources {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn create_pipeline_resources(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
     sample_count: u32,
     uniform_buf: &wgpu::Buffer,
+    shader_params_buf: &wgpu::Buffer,
     atlas_view: &wgpu::TextureView,
     atlas_sampler: &wgpu::Sampler,
     array_view: &wgpu::TextureView,
@@ -337,10 +342,7 @@ pub(super) fn create_pipeline_resources(
         label: Some("block shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/block.wgsl").into()),
     });
-    let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sky shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
-    });
+    let sky_spec = super::shader_pack::active_sky_shader();
     let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("crosshair shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/crosshair.wgsl").into()),
@@ -490,7 +492,9 @@ pub(super) fn create_pipeline_resources(
         push_constant_ranges: &[],
     });
 
-    // 28-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32).
+    // 32-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32) + packed2 (u32).
+    // Pipelines whose shaders ignore `packed2` (break overlay) share the layout; an
+    // attribute the shader doesn't consume is valid.
     let vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -506,6 +510,11 @@ pub(super) fn create_pipeline_resources(
             format: wgpu::VertexFormat::Uint32,
             offset: 24,
             shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 28,
+            shader_location: 3,
         },
     ];
     let vbuf_layout = wgpu::VertexBufferLayout {
@@ -563,32 +572,125 @@ pub(super) fn create_pipeline_resources(
     );
 
     // --- Sky-background pipeline. ---
-    // Uses its own Uniforms-only bind group because the sky shader does not need
-    // atlas resources or the block pipeline's uv-rect table.
+    // Uses a sky-specific group 0 (frame uniforms + mod shader params) and a
+    // fixed sky-texture group 1. It does not use terrain atlas resources or the
+    // block pipeline's uv-rect table.
     let sky_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sky bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(std::mem::size_of::<ShaderParams>() as u64),
+                },
+                count: None,
+            },
+        ],
     });
     let sky_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("sky bg"),
         layout: &sky_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buf.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: shader_params_buf.as_entire_binding(),
+            },
+        ],
+    });
+    let mut sky_texture_bgl_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
+    for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
+        let binding = (slot * 2) as u32;
+        sky_texture_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        sky_texture_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: binding + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+    let sky_texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sky texture bgl"),
+        entries: &sky_texture_bgl_entries,
+    });
+    let sky_texture_paths: &[String] = sky_spec
+        .as_ref()
+        .map_or(&[], |spec| spec.textures.as_slice());
+    let mut sky_texture_slots = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS);
+    for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
+        let loaded = sky_texture_paths.get(slot).and_then(|rel| {
+            let Some((bytes, path)) = crate::assets::read_bytes(rel) else {
+                log::warn!("sky texture slot {slot} asset '{rel}' not found; using blank slot");
+                return None;
+            };
+            match super::resources::create_sky_texture(device, queue, &bytes) {
+                Some(texture) => {
+                    log::info!("sky texture slot {slot} loaded from {}", path.display());
+                    Some(texture)
+                }
+                None => {
+                    log::warn!(
+                        "sky texture slot {slot} asset '{}' is not a decodable PNG; using blank slot",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        });
+        sky_texture_slots.push(loaded.unwrap_or_else(|| {
+            super::resources::create_solid_rgba_texture(
+                device,
+                queue,
+                [0, 0, 0, 0],
+                "blank sky texture",
+            )
+        }));
+    }
+    let mut sky_texture_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
+    for (slot, (_, view, sampler)) in sky_texture_slots.iter().enumerate() {
+        let binding = (slot * 2) as u32;
+        sky_texture_entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        sky_texture_entries.push(wgpu::BindGroupEntry {
+            binding: binding + 1,
+            resource: wgpu::BindingResource::Sampler(sampler),
+        });
+    }
+    let sky_texture_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sky texture bg"),
+        layout: &sky_texture_bgl,
+        entries: &sky_texture_entries,
     });
     let sky_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky layout"),
-        bind_group_layouts: &[&sky_bgl],
+        bind_group_layouts: &[&sky_bgl, &sky_texture_bgl],
         push_constant_ranges: &[],
     });
     let sky_targets = color_target(
@@ -596,19 +698,54 @@ pub(super) fn create_pipeline_resources(
         Some(wgpu::BlendState::REPLACE),
         wgpu::ColorWrites::ALL,
     );
-    let sky_pipe = world_pipeline(
-        device,
-        "sky pipe",
-        &sky_layout,
-        &sky_shader,
-        "vs_sky",
-        "fs_sky",
-        &[],
-        &sky_targets,
-        wgpu::PrimitiveState::default(),
-        None,
-        sample_count,
-    );
+    let builtin_sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("built-in sky shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+    });
+    let sky_pipe_for = |shader: &wgpu::ShaderModule| {
+        world_pipeline(
+            device,
+            "sky pipe",
+            &sky_layout,
+            shader,
+            "vs_sky",
+            "fs_sky",
+            &[],
+            &sky_targets,
+            wgpu::PrimitiveState::default(),
+            None,
+            sample_count,
+        )
+    };
+    let sky_pipe = if let Some(spec) = sky_spec.as_ref() {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let custom = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("pack sky shader"),
+            source: wgpu::ShaderSource::Wgsl(spec.source.clone().into()),
+        });
+        let pipe = sky_pipe_for(&custom);
+        match pollster::block_on(device.pop_error_scope()) {
+            Some(err) => {
+                log::warn!(
+                    "ignoring pack sky shader {}: validation failed: {err}",
+                    spec.path.display()
+                );
+                sky_pipe_for(&builtin_sky_shader)
+            }
+            None => {
+                log::info!("using pack sky shader {}", spec.path.display());
+                pipe
+            }
+        }
+    } else {
+        sky_pipe_for(&builtin_sky_shader)
+    };
+    let sky_shader_param_keys = sky_spec
+        .as_ref()
+        .map_or_else(Vec::new, |spec| spec.params.clone());
+    let sky_light_param_key = sky_spec
+        .as_ref()
+        .and_then(|spec| spec.sky_light_param.clone());
 
     // --- Selection-outline pipeline. ---
     // Its own minimal bind-group layout (Uniforms at binding 0 only) so it
@@ -774,6 +911,18 @@ pub(super) fn create_pipeline_resources(
                 },
                 count: None,
             },
+            // The frame `Uniforms` buffer: model3d reads only fog_color.w (the
+            // sim's sky scale) so the held block dims in step with terrain.
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+                },
+                count: None,
+            },
         ],
     });
     let model3d_mvp_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -798,6 +947,10 @@ pub(super) fn create_pipeline_resources(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: uv_rects_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform_buf.as_entire_binding(),
             },
         ],
     });
@@ -989,13 +1142,13 @@ pub(super) fn create_pipeline_resources(
         sample_count,
     );
     // The mob pipeline is shared across species; each species' own vbuf/ibuf +
-    // bind group + DynamicDraw are built in the renderer by iterating `mob::MOB_DEFS`
+    // bind group + DynamicDraw are built in the renderer by iterating `mob::defs()`
     // (each species has a distinct texture, so geometry can't share one buffer).
 
     // --- Break-overlay pipeline (the destroy crack). ---
     // Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
     // (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
-    // unchanged. Same 28-byte vertex as the block pipe. MULTIPLY-blended; depth
+    // unchanged. Same 32-byte vertex as the block pipe. MULTIPLY-blended; depth
     // LessEqual / no-write; the cube is built coincident with the block faces and a
     // small polygon offset (BREAK_DEPTH_BIAS) wins the depth tie on the surface, so
     // the crack reads cleanly with no inflation and no z-fighting.
@@ -1334,6 +1487,9 @@ pub(super) fn create_pipeline_resources(
         atlas_bgl,
         sky_pipe,
         sky_bind,
+        sky_texture_bind,
+        sky_shader_param_keys,
+        sky_light_param_key,
         opaque_pipe,
         transparent_pipe,
         outline_pipe,
@@ -1400,16 +1556,15 @@ mod gpu_validation {
                     return;
                 }
             };
-        let (device, _queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default().using_alignment(adapter.limits()),
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            }))
-            .expect("device");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default().using_alignment(adapter.limits()),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .expect("device");
 
         // Fabricate the minimal external resources `create_pipeline_resources`
         // binds: a 1x1 Rgba8UnormSrgb texture view for both the block atlas and
@@ -1462,6 +1617,12 @@ mod gpu_validation {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let shader_params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test shader params"),
+            size: std::mem::size_of::<ShaderParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
 
@@ -1470,9 +1631,11 @@ mod gpu_validation {
         // captured validation error below.
         let _resources = create_pipeline_resources(
             &device,
+            &queue,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             1,
             &uniform_buf,
+            &shader_params_buf,
             &atlas_view,
             &sampler,
             &array_view,
@@ -1484,8 +1647,9 @@ mod gpu_validation {
         // Confirm the assumption baked into the packing: tile ids fit in 8 bits
         // (also enforced by the atlas loader at composition time).
         assert!(Tile::count() <= 256);
-        // Stride sanity: the compressed block vertex is exactly 28 bytes.
-        assert_eq!(std::mem::size_of::<Vertex>(), 28);
+        // Stride sanity: the compressed block vertex is exactly 32 bytes
+        // (two packed u32 words since the sky/block light-channel split).
+        assert_eq!(std::mem::size_of::<Vertex>(), 32);
         // item3d vertex stride must match its declared attribute layout
         // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24 = 36 bytes).
         assert_eq!(

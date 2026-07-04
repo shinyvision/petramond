@@ -2,15 +2,14 @@
 //!
 //! Each game tick the brain asks every behavior for a [`BehaviorOutput`] and merges
 //! them **per field by priority** (highest-priority behavior that sets a field wins
-//! it): the navigation `goal`, the desired `head_look`, and any `idle_anim` to play.
-//! So behaviors compose — wander supplies a goal, a head-look behavior supplies head
-//! orientation, an idle-animation behavior supplies an anim — and a future
-//! higher-priority behavior (flee, attack) just overrides the field(s) it cares
-//! about by sitting above the others.
+//! it): the navigation `goal`, the desired `head_look`, any `idle_anim` to play, and
+//! any melee `attack` to land. So behaviors compose — wander supplies a goal, a
+//! head-look behavior supplies head orientation, chase overrides the goal while a
+//! player is near — each just owning the field(s) it cares about at its priority.
 //!
 //! Behaviors hold their own per-instance state, so — unlike the stateless `&'static`
-//! block behaviors — they are owned per mob (`Box<dyn AiBehavior>`), built by the
-//! species' `make_brain` fn.
+//! block behaviors — they are owned per mob (`Box<dyn AiBehavior>`), built per spawn
+//! from the species' data brain rows (see `mob::build_brain` and `mob::behavior`).
 
 use std::cmp::Reverse;
 
@@ -26,6 +25,11 @@ pub const PRIORITY_WANDER: u8 = 0;
 /// don't contend with `goal`, so their exact priority rarely matters — but giving
 /// them a slot keeps the ordering explicit.
 pub const PRIORITY_EXPRESSION: u8 = 10;
+/// Chase locomotion (`chase_player`) — above wander, so hunting overrides roaming.
+pub const PRIORITY_CHASE: u8 = 20;
+/// Attack behaviors (`melee_attack`) — above chase; they own the `attack` field (which
+/// nothing else contends for), and the explicit slot keeps the ordering readable.
+pub const PRIORITY_ATTACK: u8 = 30;
 /// A desired head orientation **relative to the body** (radians): `yaw` swivels the
 /// head left/right, `pitch` tilts it up/down. The renderer applies it to the model's
 /// `head` bone (when the active animation isn't already moving the head).
@@ -81,6 +85,19 @@ pub struct AiCtx<'a> {
     pub rng: &'a mut MobRng,
 }
 
+/// A melee strike a behavior wants to land on the player THIS tick. The instance
+/// latches it, the manager drains it into a [`MobAttack`](super::MobAttack) (deriving
+/// the knockback direction from the live mob→player positions), and `Game` applies it
+/// through the `player_damage_pre` pipeline — so i-frame mods cancel the damage AND the
+/// knockback together. Cooldown state lives on the emitting node, not here.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct AttackIntent {
+    /// Damage in half-heart points (rounded when applied to the player).
+    pub damage: f32,
+    /// Horizontal knockback speed (m/s) imparted away from the mob.
+    pub knockback: f32,
+}
+
 /// One behavior's contribution to a tick. Every field defaults to "no opinion"; the
 /// brain keeps the highest-priority non-`None` value per field.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
@@ -91,6 +108,8 @@ pub struct BehaviorOutput {
     pub head_look: Option<HeadLook>,
     /// An `idle_*` animation index this behavior wants played.
     pub idle_anim: Option<u8>,
+    /// A melee strike on the player this behavior wants landed this tick.
+    pub attack: Option<AttackIntent>,
 }
 
 /// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
@@ -117,13 +136,11 @@ impl Brain {
         }
     }
 
-    /// Add a behavior at `priority` (higher wins), keeping the list sorted so
+    /// Add a (boxed — the AI-node factories return trait objects) behavior at
+    /// `priority` (higher wins), keeping the list sorted so
     /// [`decide`](Self::decide) scans it in order.
-    pub fn with(mut self, priority: u8, behavior: impl AiBehavior + 'static) -> Self {
-        self.entries.push(Entry {
-            priority,
-            behavior: Box::new(behavior),
-        });
+    pub fn with_boxed(mut self, priority: u8, behavior: Box<dyn AiBehavior>) -> Self {
+        self.entries.push(Entry { priority, behavior });
         // Highest priority first; stable so equal-priority behaviors keep insert order.
         self.entries.sort_by_key(|entry| Reverse(entry.priority));
         self
@@ -139,6 +156,7 @@ impl Brain {
             decision.goal = decision.goal.or(out.goal);
             decision.head_look = decision.head_look.or(out.head_look);
             decision.idle_anim = decision.idle_anim.or(out.idle_anim);
+            decision.attack = decision.attack.or(out.attack);
         }
         decision
     }
@@ -207,9 +225,9 @@ mod tests {
         // head-look. The goal comes from the high-priority one; the head-look (set by
         // nobody else) still composes in.
         let mut brain = Brain::new()
-            .with(PRIORITY_WANDER, Goal(IVec3::new(1, 0, 0)))
-            .with(PRIORITY_EXPRESSION, Look(look))
-            .with(100, Goal(IVec3::new(9, 0, 0)));
+            .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(1, 0, 0))))
+            .with_boxed(PRIORITY_EXPRESSION, Box::new(Look(look)))
+            .with_boxed(100, Box::new(Goal(IVec3::new(9, 0, 0))));
         let d = brain.decide(&mut ctx(&world, &mut rng));
         assert_eq!(
             d.goal,
@@ -227,7 +245,7 @@ mod tests {
     fn yielding_behaviors_leave_fields_none() {
         let world = World::new(0, 1);
         let mut rng = MobRng::new(1);
-        let mut brain = Brain::new().with(PRIORITY_WANDER, Yield);
+        let mut brain = Brain::new().with_boxed(PRIORITY_WANDER, Box::new(Yield));
         let d = brain.decide(&mut ctx(&world, &mut rng));
         assert_eq!(d, BehaviorOutput::default());
     }
@@ -238,13 +256,13 @@ mod tests {
         let mut rng = MobRng::new(1);
         // The high-priority behavior only sets head_look; the low one supplies the goal.
         let mut brain = Brain::new()
-            .with(PRIORITY_WANDER, Goal(IVec3::new(2, 0, 0)))
-            .with(
+            .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(2, 0, 0))))
+            .with_boxed(
                 100,
-                Look(HeadLook {
+                Box::new(Look(HeadLook {
                     yaw: 0.0,
                     pitch: 0.0,
-                }),
+                })),
             );
         let d = brain.decide(&mut ctx(&world, &mut rng));
         assert_eq!(

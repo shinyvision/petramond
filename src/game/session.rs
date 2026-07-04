@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::camera::Camera;
-use crate::crafting::load_recipes;
+use crate::crafting::load_recipes_for;
 use crate::entity::ParticleSystem;
 use crate::mathh::Vec3;
 use crate::mining::MiningState;
@@ -18,6 +18,8 @@ use super::Game;
 struct OpenedSession {
     save: Option<WorldSave>,
     level: Option<LevelData>,
+    /// Per-world disabled mod ids (`settings.json`; empty without a save).
+    disabled_mods: BTreeSet<String>,
 }
 
 impl Game {
@@ -26,13 +28,25 @@ impl Game {
         let seed = opened.level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
         let fallback_world = SurfaceDensitySystem::new(seed);
         let player = player_for_session(opened.level.as_ref(), seed);
+        let disabled_mods = opened.disabled_mods;
 
         sync_camera_to_player(&mut cam, &player);
 
         let mut world = World::new(seed, render_dist);
         attach_save(&mut world, opened.save);
+        // Per-world mod enablement: the palette already applied it in
+        // `save::open_at`; the world carries it for the natural spawner and
+        // the mods.json record, and the mod host / recipes below take it.
+        // Editing settings for a world that is NOT open only takes effect on
+        // the next open — nothing re-reads settings.json mid-session.
+        world.set_disabled_mods(disabled_mods.clone());
+        // The mod world KV rides level.dat: restore it BEFORE mod init below,
+        // so init-time HostCalls (a daynight mod re-reading its clock) see it.
+        if let Some(level) = &opened.level {
+            world.set_mod_kv(level.world_kv.clone());
+        }
 
-        Self {
+        let mut game = Self {
             cam,
             camera_step_y_offset: 0.0,
             last_player_eye_y: player.eye().y,
@@ -45,6 +59,7 @@ impl Game {
             dropped_light_revision: 0,
             particles: ParticleSystem::new(),
             spawn_counter: 0,
+            next_mod_sound_handle: 1,
             mining_dust_t: 0.0,
             attack_cooldown: 0,
             intent_break_held: false,
@@ -58,23 +73,53 @@ impl Game {
             door_swings: HashMap::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
-            recipes: load_recipes(),
+            recipes: load_recipes_for(&disabled_mods),
             loot: load_loot(),
             menu: ContainerMenu::new(),
             request_open_table: false,
             request_open_furnace: None,
             request_open_chest: None,
             request_open_workbench: None,
+            request_open_mod_gui: None,
+            request_close_mod_gui: false,
             toggled_door: None,
+            bus: crate::events::EventBus::default(),
+            systems: crate::events::TickSystems::default(),
+            mods: crate::modding::ModHost::load(seed, &disabled_mods),
+        };
+        // Mod init runs AFTER any engine registrations so mods sort behind the
+        // engine at equal priority (the bus ordering contract), and after the
+        // full session state exists so init-time host calls see a real world.
+        {
+            let Self {
+                world,
+                player,
+                bus,
+                systems,
+                mods,
+                next_mod_sound_handle,
+                ..
+            } = &mut game;
+            mods.initialize(world, player, bus, systems, next_mod_sound_handle);
         }
+        game
     }
 
     /// Persist everything: flush modified chunks to the save thread, then write
-    /// `level.dat` (seed + player + inventory). A no-op without an attached save.
+    /// `level.dat` (seed + player + inventory + mod world KV) and the save's
+    /// mod-set record (`mods.json`). A no-op without an attached save.
     pub fn save_all(&mut self) {
         self.world.flush_modified_chunks();
         if let Some(save) = self.world.save() {
-            save.save_level(crate::save::level::encode(self.world.seed, &self.player, 0));
+            save.save_level(crate::save::level::encode(
+                self.world.seed,
+                &self.player,
+                0,
+                self.world.mod_kv(),
+            ));
+            save.save_mods_json(crate::modding::modset::encode_active(
+                self.world.disabled_mods(),
+            ));
         }
     }
 
@@ -96,6 +141,7 @@ fn open_session(world_name: &str) -> OpenedSession {
         return OpenedSession {
             save: None,
             level: None,
+            disabled_mods: BTreeSet::new(),
         };
     }
 
@@ -103,12 +149,14 @@ fn open_session(world_name: &str) -> OpenedSession {
         Ok(opened) => OpenedSession {
             save: Some(opened.save),
             level: opened.level,
+            disabled_mods: opened.disabled_mods,
         },
         Err(e) => {
             log::warn!("save disabled: could not open world '{world_name}': {e}");
             OpenedSession {
                 save: None,
                 level: None,
+                disabled_mods: BTreeSet::new(),
             }
         }
     }

@@ -17,6 +17,7 @@ use glam::{Mat4, Vec3};
 
 use super::block_model::{push_block_item_cube_lit, BillboardBasis};
 use super::item_model::ItemVertex;
+use super::lighting::{DynLight, LightEnv};
 use super::ItemEntityInstance;
 use crate::block::Block;
 use crate::item::ItemRenderKind;
@@ -86,7 +87,7 @@ pub fn build_item_entities(
                         center,
                         ITEM_SPRITE_SIZE,
                         basis,
-                        inst.skylight,
+                        inst_light(inst),
                     );
                 }
             }
@@ -104,6 +105,7 @@ pub fn build_item_entities(
 /// real baked model (spinning + bobbing like any dropped stack), not a stand-in cube.
 pub fn build_item_model_entities(
     instances: &[ItemEntityInstance],
+    env: LightEnv,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
@@ -123,7 +125,8 @@ pub fn build_item_model_entities(
             super::item_model::build_block_model_item(
                 kind,
                 transform,
-                inst.skylight,
+                inst_light(inst),
+                env,
                 0,
                 None,
                 verts,
@@ -132,6 +135,14 @@ pub fn build_item_model_entities(
         }
     }
     indices.len() as u32
+}
+
+#[inline]
+fn inst_light(inst: &ItemEntityInstance) -> DynLight {
+    DynLight {
+        sky: inst.skylight,
+        block: inst.blocklight,
+    }
 }
 
 /// A gentle sinusoidal bob derived from the per-instance spin phase so it needs no
@@ -163,7 +174,7 @@ fn push_spinning_cube(
         block,
         Vec3::splat(-half),
         ITEM_CUBE_SIZE,
-        inst.skylight,
+        inst_light(inst),
     );
     spin_into_world(verts, start, inst, offset);
 }
@@ -183,7 +194,7 @@ fn push_spinning_chest(
         indices,
         Vec3::splat(-half),
         ITEM_CUBE_SIZE,
-        inst.skylight,
+        inst_light(inst),
     );
     spin_into_world(verts, start, inst, offset);
 }
@@ -234,6 +245,7 @@ mod tests {
             count: 1,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         };
         let n = build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
@@ -254,6 +266,7 @@ mod tests {
             count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         };
         let n = build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
         // Camera-facing billboard, emitted double-sided (two windings) so a basis
@@ -272,6 +285,7 @@ mod tests {
             count: 1,
             spin: 0.5,
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         };
         build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
@@ -293,12 +307,14 @@ mod tests {
             count: 1,
             spin: 0.0,
             skylight: 12,
+            blocklight: 7,
         };
 
         build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
 
         for vert in &v {
-            assert_eq!((vert.packed >> 23) & 0x3F, 12);
+            assert_eq!((vert.packed >> 23) & 0x3F, 12, "sky channel in word 1");
+            assert_eq!(vert.packed2 & 0x3F, 7, "block channel in word 2");
         }
     }
 
@@ -313,6 +329,7 @@ mod tests {
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         };
         let n = build_item_entities(std::slice::from_ref(&three), basis(), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");

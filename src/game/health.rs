@@ -1,14 +1,17 @@
-//! Player health: fall damage on the tick, and the HUD read model.
+//! Player health: fall damage on the tick, the damage funnel, and the HUD read model.
 //!
 //! Physics only *measures* a fall (per-frame, for local feel — see
 //! [`crate::player::Player::track_fall`]); the health *mutation* happens here, on the
-//! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG). The
-//! only damage source today is falling; other sources would drain the same latched
-//! path into [`Player::apply_damage`](crate::player::Player::apply_damage).
+//! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG).
+//! Every damage source — falling is today's only one — must route through the single
+//! [`damage_player`](Game::damage_player) funnel so the `player_damage_pre` /
+//! `player_damaged` / `player_died` events fire consistently.
 
+use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
 use crate::gui::HealthView;
 use crate::player::MAX_HEALTH;
 
+use super::tick::TickEvents;
 use super::Game;
 
 /// Blocks you can fall with no damage. Beyond this, each further whole block costs one
@@ -32,12 +35,58 @@ pub(super) fn fall_damage_health(distance: f32) -> i32 {
 impl Game {
     /// Consume the landing the player's physics latched and apply its fall damage on
     /// the tick. Spectators float, so their (absent) fall is drained without harm.
-    pub(super) fn tick_fall_damage(&mut self) {
+    pub(super) fn tick_fall_damage(&mut self, events: &mut TickEvents) {
         let distance = self.player.take_fall_distance();
         if self.player.is_spectator() {
             return;
         }
-        self.player.apply_damage(fall_damage_health(distance));
+        self.damage_player(fall_damage_health(distance), DamageSource::Fall, events);
+    }
+
+    /// The single player-damage funnel: dispatch `player_damage_pre` (mutable
+    /// amount, cancellable — i-frames live here), apply what survives, queue
+    /// `player_damaged`, and fire `player_died` exactly once per >0 → 0 health
+    /// transition. There is NO default death consequence — the event just fires;
+    /// a mod (or future core content) decides what death means.
+    ///
+    /// Returns whether damage was actually applied, so a caller can gate the
+    /// side effects that must die with a cancelled hit (a mob strike's knockback).
+    pub(super) fn damage_player(
+        &mut self,
+        amount: i32,
+        source: DamageSource,
+        events: &mut TickEvents,
+    ) -> bool {
+        // Non-positive damage is a non-event (matching Player::apply_damage's
+        // no-op); the fall drain calls this every tick, so dispatching zeros
+        // would spam handlers 20×/s.
+        if amount <= 0 {
+            return false;
+        }
+        let mut pre = PlayerDamagePre { amount, source };
+        if self
+            .bus
+            .player_damage_pre(&mut self.world, &mut self.player, events, &mut pre)
+            == Outcome::Cancel
+        {
+            return false;
+        }
+        if pre.amount <= 0 {
+            return false;
+        }
+        let was_alive = self.player.health() > 0;
+        self.player.apply_damage(pre.amount);
+        let new_health = self.player.health();
+        self.bus.emit(PostEvent::PlayerDamaged {
+            amount: pre.amount,
+            new_health,
+        });
+        // The transition check keeps this a one-shot: further damage at 0 health
+        // (or the zero-damage fall drain) can never re-fire it.
+        if was_alive && new_health == 0 {
+            self.bus.emit(PostEvent::PlayerDied);
+        }
+        true
     }
 
     /// The player's health for the HUD hearts, or `None` when there is no survival

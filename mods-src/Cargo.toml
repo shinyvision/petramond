@@ -1,0 +1,15 @@
+# The mod source workspace: every crate here builds to a wasm32 core module
+# installed into `mods/<id>/mod.wasm` by `make mods`. Deliberately separate
+# from the engine workspace (different target, different profiles).
+[workspace]
+resolver = "2"
+members = ["daynight", "smoke", "wheel", "zombies"]
+
+# Guests are size-sensitive and must abort (trap) on panic — the host treats a
+# trap as "disable the mod for this session, keep ticking".
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

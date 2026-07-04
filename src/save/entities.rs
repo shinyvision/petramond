@@ -29,7 +29,10 @@ pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem]) {
         put_f32(buf, it.vel.x);
         put_f32(buf, it.vel.y);
         put_f32(buf, it.vel.z);
-        put_u8(buf, super::palette::active().item_to_disk(it.stack.item.id()));
+        put_u8(
+            buf,
+            super::palette::active().item_to_disk(it.stack.item.id()),
+        );
         put_u8(buf, it.stack.count);
         put_u32(buf, it.ticks_lived);
         put_f32(buf, it.spin);

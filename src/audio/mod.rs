@@ -15,18 +15,22 @@ mod registry;
 
 pub use registry::{Sound, SoundCategory};
 
+pub(crate) use registry::by_name as sound_by_name;
+
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use rodio::buffer::SamplesBuffer;
 use rodio::source::Source;
-use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate};
+use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, SpatialPlayer};
 
 use keep_alive::KeepAlive;
-use registry::SOUND_DEFS;
+use registry::defs as sound_defs;
 
 /// Mining punch sounds retrigger at a fixed cadence while held. Each trigger is a
 /// one-shot mixed over any previous trigger, so long clips can overlap naturally.
 const MINING_REPEAT_INTERVAL: f64 = 0.300;
+const EAR_HALF_SPACING: f32 = 0.18;
 
 /// A sound decoded into memory once at startup, replayed by cloning the sample
 /// buffer (a memcpy — far cheaper than re-decoding the OGG on every play).
@@ -47,6 +51,47 @@ impl DecodedSound {
     }
 }
 
+/// Listener state for active spatial sounds, derived by the app from the
+/// current camera every frame.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct SpatialListener {
+    pub(crate) pos: crate::mathh::Vec3,
+    pub(crate) right: crate::mathh::Vec3,
+}
+
+impl SpatialListener {
+    fn audio_space(
+        self,
+        emitter: crate::mathh::Vec3,
+        attenuation_distance: f32,
+    ) -> ([f32; 3], [f32; 3], [f32; 3]) {
+        let scale = attenuation_distance.max(1.0);
+        let emitter = (emitter - self.pos) / scale;
+        let right = self.right.normalize_or_zero() * EAR_HALF_SPACING;
+        (
+            vec3(emitter),
+            vec3(crate::mathh::Vec3::ZERO - right),
+            vec3(crate::mathh::Vec3::ZERO + right),
+        )
+    }
+}
+
+/// Where an active spatial sound gets its emitter position.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum SpatialSoundSource {
+    Fixed(crate::mathh::Vec3),
+    Mob(u64),
+}
+
+struct ActiveSpatialSound {
+    sink: SpatialPlayer,
+    sound: Sound,
+    source: SpatialSoundSource,
+    base_gain: f32,
+    pitch: f32,
+    last_position: crate::mathh::Vec3,
+}
+
 /// The audio engine: owns the output stream and the decoded sound buffers, and
 /// drives at most one repeated sound (e.g. mining). Lives on the client (the `App`);
 /// the simulation never touches it.
@@ -54,8 +99,8 @@ pub struct Audio {
     /// OS output stream + mixer. `None` when no device opened (runs silent). Kept
     /// alive for the lifetime of `Audio`: dropping it stops all playback.
     sink: Option<MixerDeviceSink>,
-    /// Decoded variant buffers per sound, indexed by `sound as usize` (parallel to
-    /// [`SOUND_DEFS`]). Each sound holds a list of interchangeable clips; a play
+    /// Decoded variant buffers per sound, indexed by raw sound id (parallel to
+    /// the loaded sound table). Each sound holds a list of interchangeable clips; a play
     /// picks one at random. An empty list (all variants failed to decode) is silent.
     buffers: Vec<Vec<DecodedSound>>,
     /// Master linear gain over every sound (a future global volume control).
@@ -67,6 +112,7 @@ pub struct Audio {
     /// trigger is due. Driven per-frame by [`set_loop`](Self::set_loop).
     loop_sound: Option<Sound>,
     loop_next: f64,
+    spatial: HashMap<u64, ActiveSpatialSound>,
 }
 
 impl Audio {
@@ -90,7 +136,7 @@ impl Audio {
                 None
             }
         };
-        let buffers = SOUND_DEFS
+        let buffers = sound_defs()
             .iter()
             .map(|def| {
                 def.variants
@@ -121,6 +167,7 @@ impl Audio {
             rng: seed_rng(),
             loop_sound: None,
             loop_next: 0.0,
+            spatial: HashMap::new(),
         }
     }
 
@@ -137,7 +184,7 @@ impl Audio {
             Some(s) => {
                 let changed = self.loop_sound != Some(s);
                 if changed || now >= self.loop_next {
-                    self.emit(s);
+                    self.emit(s, 1.0);
                     self.loop_sound = Some(s);
                     self.loop_next = now + MINING_REPEAT_INTERVAL;
                 }
@@ -148,15 +195,123 @@ impl Audio {
     /// Play a one-shot sound (e.g. a block being placed): a random variant at a random
     /// pitch, fire-and-forget. No-op if audio is disabled or the sound didn't decode.
     pub fn play(&mut self, sound: Sound) {
-        self.emit(sound);
+        self.emit(sound, 1.0);
     }
 
-    /// Play `sound` once with fresh random pitch and its gain. No-op if audio is
-    /// disabled or the sound didn't decode.
-    fn emit(&mut self, sound: Sound) {
+    /// [`play`](Self::play) with an extra linear gain factor on top of the
+    /// sound's own — the distance-attenuation hook for positional (mod-emitted)
+    /// sounds. A non-positive gain skips the play entirely.
+    pub fn play_attenuated(&mut self, sound: Sound, gain: f32) {
+        if gain > 0.0 {
+            self.emit(sound, gain);
+        }
+    }
+
+    /// Start or replace an active spatial sound. No-op when audio is disabled,
+    /// the sound has no decoded variants, or the handle is zero.
+    pub(crate) fn play_spatial(
+        &mut self,
+        handle: u64,
+        sound: Sound,
+        source: SpatialSoundSource,
+        volume: f32,
+        pitch: f32,
+        listener: SpatialListener,
+        initial_position: crate::mathh::Vec3,
+    ) {
+        if handle == 0 || volume <= 0.0 || pitch <= 0.0 {
+            return;
+        }
+        let count = self.buffers.get(sound.0 as usize).map_or(0, Vec::len);
+        if count == 0 {
+            return;
+        }
+        let variant = self.next_index(count);
+        let Some(sink) = self.sink.as_ref() else {
+            return;
+        };
+        let def = sound.def();
+        let base_gain = self.master_gain * category_gain(def.category) * def.gain * volume;
+        let buf = &self.buffers[sound.0 as usize][variant];
+        let (emitter, left_ear, right_ear) =
+            listener.audio_space(initial_position, def.attenuation_distance);
+        let player = SpatialPlayer::connect_new(sink.mixer(), emitter, left_ear, right_ear);
+        player.set_volume(
+            base_gain * sound.distance_gain((initial_position - listener.pos).length()),
+        );
+        player.set_speed(pitch);
+        player.append(SamplesBuffer::new(
+            buf.channels,
+            buf.sample_rate,
+            buf.samples.clone(),
+        ));
+        self.spatial.insert(
+            handle,
+            ActiveSpatialSound {
+                sink: player,
+                sound,
+                source,
+                base_gain,
+                pitch,
+                last_position: initial_position,
+            },
+        );
+    }
+
+    /// Stop a mod-owned spatial sound. Unknown handles are intentionally inert.
+    pub(crate) fn stop_spatial(&mut self, handle: u64) {
+        if let Some(active) = self.spatial.remove(&handle) {
+            active.sink.stop();
+        }
+    }
+
+    pub(crate) fn clear_spatial(&mut self) {
+        for (_, active) in self.spatial.drain() {
+            active.sink.stop();
+        }
+    }
+
+    /// Refresh active spatial sounds from the current camera and the same
+    /// per-frame mob positions the renderer consumes. A mob-pinned sound whose
+    /// mob id is absent keeps its last position and is allowed to finish there.
+    pub(crate) fn update_spatial(
+        &mut self,
+        listener: SpatialListener,
+        mobs: &[(u64, crate::mathh::Vec3)],
+    ) {
+        if self.sink.is_none() {
+            self.spatial.clear();
+            return;
+        }
+        for active in self.spatial.values_mut() {
+            let pos = match active.source {
+                SpatialSoundSource::Fixed(pos) => pos,
+                SpatialSoundSource::Mob(id) => mobs
+                    .iter()
+                    .find(|(mob_id, _)| *mob_id == id)
+                    .map(|(_, pos)| *pos)
+                    .unwrap_or(active.last_position),
+            };
+            active.last_position = pos;
+            let attenuation_distance = active.sound.def().attenuation_distance;
+            let (emitter, left_ear, right_ear) = listener.audio_space(pos, attenuation_distance);
+            active.sink.set_emitter_position(emitter);
+            active.sink.set_left_ear_position(left_ear);
+            active.sink.set_right_ear_position(right_ear);
+            active.sink.set_volume(
+                active.base_gain * active.sound.distance_gain((pos - listener.pos).length()),
+            );
+            active.sink.set_speed(active.pitch);
+        }
+        self.spatial.retain(|_, active| !active.sink.empty());
+    }
+
+    /// Play `sound` once with fresh random pitch and its gain (scaled by
+    /// `extra_gain`). No-op if audio is disabled or the sound didn't decode.
+    fn emit(&mut self, sound: Sound, extra_gain: f32) {
         let def = sound.def();
         // How many decoded variants this sound has (immutable borrow, released here).
-        let count = self.buffers.get(sound as usize).map_or(0, Vec::len);
+        let count = self.buffers.get(sound.0 as usize).map_or(0, Vec::len);
         if count == 0 {
             return;
         }
@@ -165,9 +320,9 @@ impl Audio {
         // same clip) plus the per-play pitch jitter.
         let variant = self.next_index(count);
         let pitch = 1.0 + self.next_jitter() * def.pitch_variation;
-        let gain = self.master_gain * category_gain(def.category) * def.gain;
+        let gain = self.master_gain * category_gain(def.category) * def.gain * extra_gain;
 
-        let buf = &self.buffers[sound as usize][variant];
+        let buf = &self.buffers[sound.0 as usize][variant];
         if let Some(sink) = self.sink.as_ref() {
             // Clone the decoded PCM into a fresh replayable source, shift its pitch
             // and gain, and mix it in. `speed` resamples (pitch + tempo together);
@@ -222,6 +377,10 @@ fn category_gain(category: SoundCategory) -> f32 {
     }
 }
 
+fn vec3(v: crate::mathh::Vec3) -> [f32; 3] {
+    [v.x, v.y, v.z]
+}
+
 /// Decode OGG/Vorbis `bytes` into an in-memory PCM buffer (f32 samples + format).
 /// Device-free and split out so it is unit-testable without an audio device.
 fn decode(bytes: Vec<u8>) -> Result<DecodedSound, String> {
@@ -265,6 +424,7 @@ mod tests {
             rng: seed,
             loop_sound: None,
             loop_next: 0.0,
+            spatial: HashMap::new(),
         }
     }
 
@@ -273,7 +433,7 @@ mod tests {
         // A variant decodes to real PCM with no audio device involved — proving the
         // embed + decode path. Format isn't pinned (freely-edited asset data): we
         // only require a sane, playable buffer with a real duration.
-        let rel = SOUND_DEFS[Sound::WoodPunch as usize].variants[0];
+        let rel = sound_defs()[Sound::WoodPunch.0 as usize].variants[0];
         let bytes = crate::assets::read_bytes(rel).expect("clip file exists").0;
         let d = decode(bytes).expect("wood_punch variant should decode");
         assert!(!d.samples.is_empty(), "decoded to some samples");
@@ -286,7 +446,7 @@ mod tests {
     fn every_sound_has_at_least_one_variant() {
         // A sound with no clips would be silently silent — a data mistake, not a
         // tunable value, so this guards the structure without pinning the count.
-        for def in SOUND_DEFS {
+        for def in sound_defs() {
             assert!(!def.variants.is_empty(), "{:?} has no clips", def.sound);
         }
     }

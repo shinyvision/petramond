@@ -7,7 +7,7 @@
 //! cheaply regenerated, and so are never written here; skylight is recomputed on
 //! load.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
 use crate::chest::Chest;
@@ -23,8 +23,9 @@ use crate::torch::TorchPlacement;
 /// Current section-record version. Flag-gated payloads are appended at the end, so a
 /// new one that fits a free flag bit needs no version bump. The cubic format starts
 /// fresh at `1` (the column-era chunk records are not migrated — saves regenerate).
-/// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`).
-const SECTION_REC_VERSION: u8 = 2;
+/// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`);
+/// v3 widens it again with the per-mob mod KV map (default-empty for older records).
+const SECTION_REC_VERSION: u8 = 3;
 /// Oldest section-record version this build can still read.
 const SECTION_REC_MIN_VERSION: u8 = 1;
 const FLAG_HAS_WATER: u8 = 0x01;
@@ -39,6 +40,7 @@ const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 const FLAG2_HAS_SAPLINGS: u8 = 0x01;
 const FLAG2_HAS_DOORS: u8 = 0x02;
 const FLAG2_HAS_STAIRS: u8 = 0x04;
+const FLAG2_HAS_CELL_KV: u8 = 0x08;
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -78,6 +80,11 @@ pub struct SectionSnapshot {
     /// Facing of placed stairs, keyed by section-local index, so a stair reloads
     /// with the same low/open side.
     pub stair_facings: HashMap<u16, Facing>,
+    /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
+    /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
+    /// unknown keys are never dropped, so an absent mod's data survives. See
+    /// `Section::cell_kv`.
+    pub cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     /// Mobs resting in this section, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Section`, so the world save paths set this from the live mob set. Empty for the
@@ -103,6 +110,7 @@ impl SectionSnapshot {
             sapling_stages: s.sapling_stages().clone(),
             doors: s.doors().clone(),
             stair_facings: s.stair_facings().clone(),
+            cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
         }
     }
@@ -236,6 +244,41 @@ pub(crate) fn get_indexed<T>(
     Some(out)
 }
 
+/// Append a mod KV map: `u16` entry count, then per entry a `u16`-length-
+/// prefixed key + `u32`-length-prefixed value. BTreeMap iteration is sorted,
+/// so identical maps encode identically (the determinism the byte-exact
+/// preservation contract rests on). An entry with an oversized key (> u16 —
+/// the HostCall boundary caps keys far below this) is skipped defensively.
+/// Shared by the per-cell (section) and per-mob KV payloads.
+pub(crate) fn put_kv_map(buf: &mut Vec<u8>, map: &BTreeMap<String, Vec<u8>>) {
+    let entries: Vec<(&String, &Vec<u8>)> = map
+        .iter()
+        .filter(|(k, _)| k.len() <= u16::MAX as usize)
+        .take(u16::MAX as usize)
+        .collect();
+    put_u16(buf, entries.len() as u16);
+    for (k, v) in entries {
+        put_u16(buf, k.len() as u16);
+        buf.extend_from_slice(k.as_bytes());
+        put_u32(buf, v.len() as u32);
+        buf.extend_from_slice(v);
+    }
+}
+
+/// Read a mod KV map written by [`put_kv_map`]; `None` on truncated or
+/// non-UTF-8 input.
+pub(crate) fn get_kv_map(r: &mut Reader) -> Option<BTreeMap<String, Vec<u8>>> {
+    let n = r.u16()? as usize;
+    let mut out = BTreeMap::new();
+    for _ in 0..n {
+        let klen = r.u16()? as usize;
+        let key = std::str::from_utf8(r.bytes(klen)?).ok()?.to_owned();
+        let vlen = r.u32()? as usize;
+        out.insert(key, r.bytes(vlen)?.to_vec());
+    }
+    Some(out)
+}
+
 /// zlib-compress a payload.
 pub fn deflate(payload: &[u8]) -> Vec<u8> {
     let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
@@ -293,6 +336,9 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.stair_facings.is_empty() {
         flags2 |= FLAG2_HAS_STAIRS;
     }
+    if !s.cell_kv.is_empty() {
+        flags2 |= FLAG2_HAS_CELL_KV;
+    }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
@@ -345,6 +391,13 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.stair_facings.is_empty() {
         put_indexed(&mut payload, &s.stair_facings, 1, |buf, facing| {
             put_u8(buf, facing.to_u8());
+        });
+    }
+    if !s.cell_kv.is_empty() {
+        // Each record is the cell's KV map (idx written by put_indexed);
+        // rec_bytes is a reserve hint only — the record body is variable.
+        put_indexed(&mut payload, &s.cell_kv, 16, |buf, map| {
+            put_kv_map(buf, map);
         });
     }
     deflate(&payload)
@@ -426,6 +479,11 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
+    let cell_kv = if flags2 & FLAG2_HAS_CELL_KV != 0 {
+        get_indexed(&mut r, get_kv_map)?
+    } else {
+        HashMap::new()
+    };
     Some((
         Section::from_saved(
             pos.cx,
@@ -441,6 +499,7 @@ pub fn decode_section(
             sapling_stages,
             doors,
             stair_facings,
+            cell_kv,
         ),
         entities,
         mobs,
@@ -514,6 +573,7 @@ mod tests {
             pos: Vec3::new(-12.5, 65.0, 72.25),
             yaw: 1.75,
             shear_regrow: 0,
+            kv: Default::default(),
         });
 
         let blob = encode_snapshot(&snap);
@@ -736,6 +796,70 @@ mod tests {
         assert_eq!(back.block_raw(9, 5, 1), Block::StoneStairs.id());
         assert_eq!(back.stair_facing(9, 5, 1), Facing::South);
         assert_eq!(back.stair_facing(0, 0, 0), Facing::North);
+    }
+
+    #[test]
+    fn section_record_roundtrips_cell_kv() {
+        let mut s = sec(1, 4, 1);
+        s.set_block(2, 3, 4, Block::Stone);
+        s.cell_kv_set(2, 3, 4, "farm:moisture".into(), vec![7]);
+        s.cell_kv_set(0, 0, 0, "othermod:tag".into(), Vec::new());
+
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(1, 4, 1), &blob).expect("decodes");
+
+        assert_eq!(back.cell_kv_get(2, 3, 4, "farm:moisture"), Some(&[7u8][..]));
+        assert_eq!(
+            back.cell_kv_get(0, 0, 0, "othermod:tag"),
+            Some(&[][..]),
+            "empty values are values"
+        );
+        assert_eq!(back.cell_kv_get(2, 3, 4, "farm:missing"), None);
+        assert_eq!(back.cell_kv_get(9, 9, 9, "farm:moisture"), None);
+    }
+
+    /// The preservation contract: a record carrying cell KV nobody reads
+    /// (the owning mod is absent) must survive a load → save cycle BYTE-EXACT —
+    /// unknown keys are never dropped and the encoding is deterministic.
+    #[test]
+    fn cell_kv_is_preserved_byte_exact_through_load_and_save() {
+        let mut s = sec(0, 4, 0);
+        s.set_block(1, 1, 1, Block::Dirt);
+        s.cell_kv_set(1, 1, 1, "ghostmod:data".into(), vec![1, 2, 3, 4]);
+        s.cell_kv_set(1, 1, 1, "ghostmod:aaa".into(), vec![5]);
+        s.cell_kv_set(5, 5, 5, "ghostmod:other".into(), vec![9]);
+
+        let blob1 = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (loaded, _, _) = decode_section(SectionPos::new(0, 4, 0), &blob1).expect("decodes");
+        let blob2 = encode_snapshot(&SectionSnapshot::from_section(&loaded));
+        assert_eq!(blob1, blob2, "an untouched record re-encodes byte-exact");
+    }
+
+    /// The stale-record guard: once the last entry is removed the has-cell-kv
+    /// flag clears, so a re-saved record is indistinguishable from one that
+    /// never carried KV — nothing lingers to resurrect.
+    #[test]
+    fn emptied_cell_kv_clears_its_record_flag() {
+        let clean = {
+            let mut s = sec(2, 4, 2);
+            s.set_block(3, 3, 3, Block::Stone);
+            encode_snapshot(&SectionSnapshot::from_section(&s))
+        };
+        let mut s = sec(2, 4, 2);
+        s.set_block(3, 3, 3, Block::Stone);
+        s.cell_kv_set(3, 3, 3, "farm:moisture".into(), vec![1]);
+        assert_ne!(
+            encode_snapshot(&SectionSnapshot::from_section(&s)),
+            clean,
+            "the tagged record differs"
+        );
+        assert!(s.cell_kv_remove(3, 3, 3, "farm:moisture"));
+        assert_eq!(
+            encode_snapshot(&SectionSnapshot::from_section(&s)),
+            clean,
+            "removing the last entry restores the untagged encoding"
+        );
     }
 
     #[test]

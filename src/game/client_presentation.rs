@@ -96,9 +96,10 @@ impl Game {
         (self.tick_accumulator / tick::TICK_DT).clamp(0.0, 1.0)
     }
 
-    /// Combined light + warm-tint amount at the player's eye, for lighting the
-    /// first-person hand / held item: it brightens AND warms near torches/furnaces.
-    pub(super) fn held_item_light(&self) -> (u8, u8) {
+    /// Two-channel light + warm-tint amount at the player's eye, for lighting the
+    /// first-person hand / held item: it brightens AND warms near torches/furnaces,
+    /// and the torch channel keeps it lit at night.
+    pub(super) fn held_item_light(&self) -> (u8, u8, u8) {
         let c = voxel_at(self.cam.pos);
         self.world.dynamic_light_at_world(c.x, c.y, c.z)
     }

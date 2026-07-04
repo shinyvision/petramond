@@ -1,0 +1,7 @@
+{
+  "name": "Wheel of Fortune",
+  "id": "wheel",
+  "version": "0.1.0",
+  "description": "Proof-of-concept GUI mod: a craftable wheel-of-fortune block whose spin button animates a rotimage on the tick and pays out a seeded random reward (item, sheep party, or instant death).",
+  "wasm": "mod.wasm"
+}

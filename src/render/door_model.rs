@@ -43,7 +43,10 @@ pub fn build_doors(
 /// Append one placed door (lower + upper slab halves) for `inst`, swung by its angle,
 /// oriented to its `facing`, lit by its skylight, at the world lower-cell `pos`.
 fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorInstance) {
-    let sky = inst.skylight;
+    let sky = super::lighting::DynLight {
+        sky: inst.skylight,
+        block: inst.blocklight,
+    };
     let start = verts.len();
     // Per-face tiles in `ALL_FACES` order [PosX, NegX, PosY, NegY, PosZ, NegZ]: the
     // canonical door's front + back are the ±Z faces (the wide faces the player sees),
@@ -150,6 +153,7 @@ mod tests {
             top_tile: Tile::named("oak_door_top"),
             side_tile: Tile::named("oak_planks"),
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         }
     }
 

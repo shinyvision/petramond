@@ -51,7 +51,7 @@ impl World {
     /// every loaded chest to `out` (cleared first). The transient lid open angle is
     /// filled in by the caller (it's client-side animation, not world state). Cheap
     /// for the common chest-free world: each chunk early-outs on an empty chest map.
-    pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8)>) {
+    pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8, u8)>) {
         out.clear();
         for section in self.sections.values() {
             let chests = section.chests();
@@ -65,8 +65,9 @@ impl World {
                 let lz = ((key >> 4) & 0x0F) as i32;
                 let ly = (key >> 8) as i32;
                 let pos = IVec3::new(ox + lx, oy + ly, oz + lz);
-                let sky = self.combined_light6_at_world(pos.x, pos.y, pos.z);
-                out.push((pos, chest.facing, sky));
+                let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
+                let block = self.blocklight6_at_world(pos.x, pos.y, pos.z);
+                out.push((pos, chest.facing, sky, block));
             }
         }
     }

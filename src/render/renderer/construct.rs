@@ -100,14 +100,26 @@ async fn new_renderer_inner(
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_origin: [0.0; 4],
             water_anim: crate::atlas::water_anim_uniform(),
+            // White sky colour at init = identity; the icon-atlas bake reads
+            // this buffer, so baked UI icons stay untinted.
+            sky_color: [1.0, 1.0, 1.0, 0.0],
+        }]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let shader_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("shader params"),
+        contents: bytemuck::cast_slice(&[super::super::uniforms::ShaderParams {
+            values: [[0.0; 4]; super::super::uniforms::SHADER_PARAM_SLOTS],
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let pipelines = create_pipeline_resources(
         &device,
+        &queue,
         format,
         sample_count,
         &uniform_buf,
+        &shader_params_buf,
         &atlas_view,
         &atlas_sampler,
         &atlas_array_view,
@@ -126,9 +138,9 @@ async fn new_renderer_inner(
     // species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
     // texture as a dedicated atlas, build its group(1) bind, and give it its own
     // dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
-    // `mob::MOB_DEFS` — no renderer edit. A model parse failure degrades to an empty
+    // `mobs.json` — no renderer edit. A model parse failure degrades to an empty
     // model (that species just doesn't draw) rather than crashing the renderer.
-    let mob_gpu: Vec<MobGpu> = crate::mob::MOB_DEFS
+    let mob_gpu: Vec<MobGpu> = crate::mob::defs()
         .iter()
         .map(|d| {
             let kind = d.mob;
@@ -245,6 +257,7 @@ async fn new_renderer_inner(
         &pipelines.model_icon_pipe,
         &pipelines.model3d_mvp_bgl,
         &pipelines.uv_rects_buf,
+        &uniform_buf,
     );
     // Reusable dynamic vbuf for the per-frame icon quads (6 UiVertex per filled
     // slot). Sized for the open inventory + craft/chest slots with headroom; grown
@@ -289,9 +302,9 @@ async fn new_renderer_inner(
             gui_textures.insert(GuiTexId::Hover(kind), bind);
         }
     }
-    for (kind, tag, path) in crate::gui::baked_overlays() {
+    for (kind, key, path) in crate::gui::baked_sprites() {
         if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::Overlay(kind, tag), bind);
+            gui_textures.insert(GuiTexId::Sprite(kind, key), bind);
         }
     }
     for (kind, path) in crate::gui::baked_shell_skins() {
@@ -343,6 +356,12 @@ async fn new_renderer_inner(
         config,
         sky_pipe: pipelines.sky_pipe,
         sky_bind: pipelines.sky_bind,
+        sky_texture_bind: pipelines.sky_texture_bind,
+        sky_shader_param_keys: pipelines.sky_shader_param_keys,
+        sky_light_param_key: pipelines.sky_light_param_key,
+        underwater: false,
+        sky_scale: 1.0,
+        sky_color: [1.0, 1.0, 1.0],
         opaque_pipe: pipelines.opaque_pipe,
         transparent_pipe: pipelines.transparent_pipe,
         outline_pipe: pipelines.outline_pipe,
@@ -357,6 +376,7 @@ async fn new_renderer_inner(
         selection: None,
         selection_drawn: None,
         uniform_buf,
+        shader_params_buf,
         uniform_bind: pipelines.uniform_bind,
         atlas_bind: pipelines.atlas_bind,
         atlas_array_bind: pipelines.atlas_array_bind,
@@ -438,6 +458,7 @@ async fn new_renderer_inner(
         hand_visible: false,
         held_item_anim: HeldItemAnimator::default(),
         held_item_skylight: crate::render::lighting::FULL_SKYLIGHT,
+        held_item_blocklight: 0,
         held_item_warm: 0,
         item_entities: Vec::new(),
         particles: Vec::new(),

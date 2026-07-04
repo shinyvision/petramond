@@ -83,7 +83,7 @@ pub fn build_break_overlay(
                 [tile; 6],
                 min,
                 max,
-                super::lighting::FULL_SKYLIGHT,
+                super::lighting::DynLight::FULL,
             );
         }
     } else {
@@ -97,7 +97,7 @@ pub fn build_break_overlay(
                     [tile; 6],
                     min,
                     max,
-                    super::lighting::FULL_SKYLIGHT,
+                    super::lighting::DynLight::FULL,
                 );
             }
         } else {
@@ -112,7 +112,7 @@ pub fn build_break_overlay(
                         [tile; 6],
                         min,
                         max,
-                        super::lighting::FULL_SKYLIGHT,
+                        super::lighting::DynLight::FULL,
                     );
                 }
                 None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
@@ -149,7 +149,10 @@ mod tests {
         assert_eq!(destroy_tile(0), Tile::from_name("destroy_stage_0").unwrap());
         assert_eq!(destroy_tile(9), Tile::from_name("destroy_stage_9").unwrap());
         // Out-of-range stages clamp to the last stage.
-        assert_eq!(destroy_tile(42), Tile::from_name("destroy_stage_9").unwrap());
+        assert_eq!(
+            destroy_tile(42),
+            Tile::from_name("destroy_stage_9").unwrap()
+        );
     }
 
     #[test]

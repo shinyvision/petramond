@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "item": "wheel:wheel_of_fortune",
+      "key": "wheel:wheel_of_fortune",
+      "name": "Wheel of Fortune",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "tags": [],
+      "block": "wheel:wheel_of_fortune"
+    }
+  ]
+}

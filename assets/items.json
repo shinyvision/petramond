@@ -139,9 +139,9 @@
     {"item": "cobblestone_stairs", "key": "cobblestone_stairs", "name": "Cobblestone Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
     {"item": "stone_stairs", "key": "stone_stairs", "name": "Stone Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
     {"item": "dirt_stairs", "key": "dirt_stairs", "name": "Dirt Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "wooden_bucket", "key": "wooden_bucket", "name": "Wooden Bucket", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "water_bucket", "key": "water_bucket", "name": "Water Bucket", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "shears", "key": "shears", "name": "Shears", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "shears", "tags": []},
+    {"item": "wooden_bucket", "key": "wooden_bucket", "name": "Wooden Bucket", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_fill"},
+    {"item": "water_bucket", "key": "water_bucket", "name": "Water Bucket", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_pour"},
+    {"item": "shears", "key": "shears", "name": "Shears", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "shears", "tags": [], "use": "shear"},
     {"item": "wool", "key": "wool", "name": "Wool", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "wool", "tags": []},
     {"item": "bed_frame", "key": "bed_frame", "name": "Bed Frame", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
     {"item": "bed", "key": "bed", "name": "Bed", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}

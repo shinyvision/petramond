@@ -138,6 +138,9 @@ impl ContainerMenu {
                 // Results are take-only: craft the i-th offered recipe (shift -> inv).
                 WorkbenchHit::Result(i) => self.workbench_take_result(inv, recipes, i, shift),
             },
+            // Widget clicks mutate no container: `Game::tick_menu` intercepts
+            // them before this decode and dispatches to the owning mod.
+            MenuSlot::Widget(_) => {}
         }
     }
 

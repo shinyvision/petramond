@@ -1,0 +1,1327 @@
+//! The wasmtime side of the host: engine configuration, module cache, the
+//! `host_dispatch` import, and the per-mod store state (RNG streams, the
+//! registration window, diagnostics counters).
+//!
+//! Engine config is part of the determinism contract (WIKI/modding.md): NaN
+//! canonicalization ON, no threads, no WASI, no relaxed-SIMD, epoch
+//! interruption armed by a background ticker thread so a runaway mod traps out
+//! instead of hanging the tick loop.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
+
+use mod_api::{HostCall, HostRet, MobSnapshot, PlayerSnapshot};
+use wasmtime::{
+    Caller, Config, Engine, Linker, Memory, Module, StoreLimits, StoreLimitsBuilder, TypedFunc,
+};
+
+use crate::block::Block;
+use crate::entity::DroppedItem;
+use crate::events::{ModAction, PostEvent, SimCtx};
+use crate::item::{ItemStack, ItemType};
+use crate::mathh::Vec3;
+
+use super::convert::{to_ivec, to_vec};
+use super::scope;
+
+/// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
+/// Violations are [`HostRet::Error`] — a mod bug, surfaced loudly by the SDK.
+const KV_MAX_KEY_BYTES: usize = 256;
+const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
+
+/// How often the background ticker advances the engine epoch.
+const EPOCH_PERIOD: Duration = Duration::from_millis(50);
+
+/// Epochs a single guest dispatch may span before it traps: a generous ~2 s of
+/// wall time for work that should take microseconds. Hitting it is a mod bug;
+/// the mod is disabled for the session and the tick continues.
+pub(super) const DISPATCH_DEADLINE_EPOCHS: u64 = 40;
+
+/// Linear-memory cap per mod instance (64 MiB) — a leaky mod fails its own
+/// allocations (and traps out) instead of eating the game's address space.
+const GUEST_MEMORY_CAP: usize = 64 << 20;
+
+/// The process-wide wasmtime engine, plus its epoch ticker thread. The ticker
+/// only bumps a counter — it never touches the simulation — so determinism is
+/// unaffected; it exists purely so the deadline can fire while the main thread
+/// is stuck inside a guest.
+pub(super) fn engine() -> &'static Engine {
+    static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
+        let mut config = Config::new();
+        config.cranelift_nan_canonicalization(true);
+        config.wasm_relaxed_simd(false);
+        config.epoch_interruption(true);
+        let engine = Engine::new(&config).expect("wasmtime engine config");
+        let weak = engine.weak();
+        std::thread::Builder::new()
+            .name("mod-epoch".into())
+            .spawn(move || loop {
+                std::thread::sleep(EPOCH_PERIOD);
+                match weak.upgrade() {
+                    Some(engine) => engine.increment_epoch(),
+                    None => break,
+                }
+            })
+            .expect("spawn mod epoch ticker");
+        engine
+    });
+    &ENGINE
+}
+
+/// Compile (or fetch the cached compilation of) the module at `path`. Cached
+/// per path for the process lifetime: tests and repeated `Game::new` calls pay
+/// the cranelift compile once.
+pub(super) fn module_for(path: &Path) -> Result<Module, String> {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Module>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut cache = CACHE.lock().unwrap();
+    if let Some(module) = cache.get(path) {
+        return Ok(module.clone());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let module =
+        Module::new(engine(), &bytes).map_err(|e| format!("compile {}: {e:#}", path.display()))?;
+    cache.insert(path.to_path_buf(), module.clone());
+    Ok(module)
+}
+
+/// Whether the store is inside its registration window (`mod_init`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum Phase {
+    Init,
+    Run,
+}
+
+/// A registration collected during `mod_init`, applied to the bus/scheduler by
+/// [`super::ModHost::initialize`] after the guest call returns.
+pub(super) enum Registration {
+    TickSystem {
+        stage: mod_api::Stage,
+        attach: mod_api::AttachSide,
+        priority: i32,
+        system_id: u32,
+    },
+    EventHandler {
+        event: mod_api::EventKind,
+        priority: i32,
+        handler_id: u32,
+    },
+    WorldgenFeature {
+        stage: mod_api::WorldgenStage,
+        feature_id: u32,
+    },
+    StageReplacement {
+        stage: mod_api::WorldgenStage,
+        callback_id: u32,
+    },
+    Generator {
+        callback_id: u32,
+    },
+}
+
+impl Registration {
+    /// Whether this registration targets the worldgen hook config (recorded by
+    /// the MAIN load; accepted-and-ignored on per-thread gen instances).
+    pub(super) fn is_gen(&self) -> bool {
+        matches!(
+            self,
+            Registration::WorldgenFeature { .. }
+                | Registration::StageReplacement { .. }
+                | Registration::Generator { .. }
+        )
+    }
+}
+
+/// Diagnostics counters (also the observability hooks the contract tests use).
+#[derive(Default, Copy, Clone)]
+pub(crate) struct HostStats {
+    /// `host_dispatch` calls that decoded successfully.
+    pub host_calls: u64,
+    /// Registrations accepted during the init window.
+    pub registered: u64,
+    /// Registration attempts rejected outside the window.
+    pub rejected_registrations: u64,
+}
+
+/// Per-mod store data: everything `host_dispatch` can reach without the
+/// scoped [`SimCtx`](crate::events::SimCtx).
+pub(super) struct ModStoreData {
+    pub mod_id: String,
+    world_seed: u32,
+    pub phase: Phase,
+    pub pending: Vec<Registration>,
+    /// Named deterministic RNG streams: state per key, seeded from
+    /// (world seed, mod id, key) on first use.
+    rng: HashMap<String, u64>,
+    /// Cached handles into the guest, set right after instantiation.
+    pub memory: Option<Memory>,
+    pub alloc: Option<TypedFunc<u32, u32>>,
+    pub limits: StoreLimits,
+    pub stats: HostStats,
+}
+
+impl ModStoreData {
+    pub(super) fn new(mod_id: &str, world_seed: u32) -> Self {
+        Self {
+            mod_id: mod_id.to_owned(),
+            world_seed,
+            phase: Phase::Init,
+            pending: Vec::new(),
+            rng: HashMap::new(),
+            memory: None,
+            alloc: None,
+            limits: StoreLimitsBuilder::new()
+                .memory_size(GUEST_MEMORY_CAP)
+                .build(),
+            stats: HostStats::default(),
+        }
+    }
+
+    fn register(&mut self, reg: Registration) -> HostRet {
+        if self.phase != Phase::Init {
+            self.stats.rejected_registrations += 1;
+            return HostRet::Error(
+                "tick systems and event handlers may only be registered during mod_init".into(),
+            );
+        }
+        self.stats.registered += 1;
+        self.pending.push(reg);
+        HostRet::Unit
+    }
+
+    fn rng_next(&mut self, stream_key: &str) -> u64 {
+        let state = match self.rng.get_mut(stream_key) {
+            Some(state) => state,
+            None => {
+                let seed = stream_seed(self.world_seed, &self.mod_id, stream_key);
+                self.rng.entry(stream_key.to_owned()).or_insert(seed)
+            }
+        };
+        splitmix_next(state)
+    }
+}
+
+/// Intern a mod id so engine-side [`crate::events::DamageSource::Mod`] can
+/// carry it as a `Copy` `&'static str`. Bounded: one leaked entry per distinct
+/// pack id per process, deduplicated across sessions/tests.
+fn intern_mod_id(id: &str) -> &'static str {
+    static IDS: LazyLock<Mutex<HashSet<&'static str>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+    let mut ids = IDS.lock().unwrap();
+    match ids.get(id) {
+        Some(s) => s,
+        None => {
+            let s: &'static str = Box::leak(id.to_owned().into_boxed_str());
+            ids.insert(s);
+            s
+        }
+    }
+}
+
+/// The mod-KV write guard: WRITES (set/delete) must use the calling mod's own
+/// `mod_id:` prefix — reads may cross namespaces (the interop surface) — and
+/// keys/values are size-capped. `Some(err)` rejects the call.
+fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> {
+    if key.len() > KV_MAX_KEY_BYTES {
+        return Some(HostRet::Error(format!(
+            "KV key is {} bytes; the limit is {KV_MAX_KEY_BYTES}",
+            key.len()
+        )));
+    }
+    if value_len > KV_MAX_VALUE_BYTES {
+        return Some(HostRet::Error(format!(
+            "KV value is {value_len} bytes; the limit is {KV_MAX_VALUE_BYTES}"
+        )));
+    }
+    mod_owned_key_guard(mod_id, key)
+}
+
+fn mod_owned_key_guard(mod_id: &str, key: &str) -> Option<HostRet> {
+    let owned = key
+        .strip_prefix(mod_id)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|name| !name.is_empty());
+    if !owned {
+        return Some(HostRet::Error(format!(
+            "mod writes must use this mod's own namespace ('{mod_id}:name'); got '{key}' \
+             (reads may cross namespaces, writes may not)"
+        )));
+    }
+    None
+}
+
+/// Seed for a mod's named RNG stream: FNV-1a over `mod_id NUL key`, mixed with
+/// the world seed. Deterministic per (world, mod, key) and decorrelated between
+/// streams.
+fn stream_seed(world_seed: u32, mod_id: &str, key: &str) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in mod_id.bytes().chain([0u8]).chain(key.bytes()) {
+        h = (h ^ b as u64).wrapping_mul(0x1_0000_0000_01b3);
+    }
+    h ^ (world_seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+/// One SplitMix64 step (the same finalizer as [`crate::entity::hash01`]).
+fn splitmix_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// THE host-call switchboard: one match, room to grow (Phase 3 appends the
+/// world/entity/player surface). Calls that need the live simulation reach it
+/// through [`scope::with_active`]; everything else lives on the store.
+fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
+    data.stats.host_calls += 1;
+    match call {
+        HostCall::Log { msg } => {
+            log::info!("[mod {}] {msg}", data.mod_id);
+            HostRet::Unit
+        }
+        HostCall::CurrentTick => match scope::with_active(|ctx| ctx.world.current_tick()) {
+            Some(tick) => HostRet::U64(tick),
+            None => HostRet::Error("no simulation context is active".into()),
+        },
+        HostCall::RngU64 { stream_key } => HostRet::U64(data.rng_next(&stream_key)),
+        HostCall::RegisterTickSystem {
+            stage,
+            attach,
+            priority,
+            system_id,
+        } => data.register(Registration::TickSystem {
+            stage,
+            attach,
+            priority,
+            system_id,
+        }),
+        HostCall::RegisterEventHandler {
+            event,
+            priority,
+            handler_id,
+        } => data.register(Registration::EventHandler {
+            event,
+            priority,
+            handler_id,
+        }),
+        HostCall::ShaderSetParam { key, value } => match mod_owned_key_guard(&data.mod_id, &key) {
+            Some(e) => e,
+            None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
+        },
+
+        // --- Phase 3b: blocks (all sim-scoped, delegating to World) --------
+        HostCall::GetBlock { pos } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::Block(
+                ctx.world
+                    .block_if_loaded(p.x, p.y, p.z)
+                    .map(|b| mod_api::BlockId(b.id())),
+            )
+        }),
+        HostCall::GetBlocks { positions } => sim_query(|ctx| {
+            HostRet::Blocks(
+                positions
+                    .iter()
+                    .map(|&pos| {
+                        let p = to_ivec(pos);
+                        ctx.world
+                            .block_if_loaded(p.x, p.y, p.z)
+                            .map(|b| mod_api::BlockId(b.id()))
+                    })
+                    .collect(),
+            )
+        }),
+        HostCall::SetBlock { pos, block } => match checked_block(block) {
+            Err(e) => e,
+            Ok(b) => sim_query(|ctx| {
+                let p = to_ivec(pos);
+                HostRet::Bool(ctx.world.set_block_world(p.x, p.y, p.z, b))
+            }),
+        },
+        HostCall::SetBlocks { blocks } => sim_query(|ctx| {
+            let mut set = 0u64;
+            for &(pos, block) in &blocks {
+                let Ok(b) = checked_block(block) else {
+                    return HostRet::Error(format!("SetBlocks: unregistered block id {}", block.0));
+                };
+                let p = to_ivec(pos);
+                if ctx.world.set_block_world(p.x, p.y, p.z, b) {
+                    set += 1;
+                }
+            }
+            HostRet::U64(set)
+        }),
+        HostCall::ScheduleTick { pos, delay } => {
+            sim_call(|ctx| ctx.world.schedule_tick(to_ivec(pos), delay))
+        }
+        HostCall::IsLoaded { pos } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::Bool(ctx.world.section_loaded_at(p.x, p.y, p.z))
+        }),
+        HostCall::LightAt { pos } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::Light {
+                combined: ctx.world.combined_light6_at_world(p.x, p.y, p.z),
+                sky: ctx.world.skylight6_at_world(p.x, p.y, p.z),
+                block: ctx.world.blocklight6_at_world(p.x, p.y, p.z),
+            }
+        }),
+        HostCall::BlockIsFullSpawnSupport { pos } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::Bool(ctx.world.block_is_full_spawn_support(p.x, p.y, p.z))
+        }),
+
+        // --- Phase 3b: entities ---------------------------------------------
+        HostCall::SpawnMob { key, pos, yaw } => match finite3(pos, "SpawnMob.pos") {
+            Err(e) => e,
+            Ok(pos) => sim_query(|ctx| {
+                let Some(kind) = crate::mob::defs()
+                    .iter()
+                    .position(|d| d.name == key)
+                    .map(|i| crate::mob::Mob(i as u8))
+                else {
+                    log::warn!("[mod {}] SpawnMob: unknown species '{key}'", data.mod_id);
+                    return HostRet::Bool(false);
+                };
+                let spawned = ctx.world.spawn_mob(kind, pos, yaw);
+                if spawned {
+                    ctx.queue.emit(PostEvent::MobSpawned { kind, pos });
+                }
+                HostRet::Bool(spawned)
+            }),
+        },
+        HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
+            Err(e) => e,
+            Ok(pos) => sim_query(|ctx| {
+                if !radius.is_finite() {
+                    return HostRet::Error("MobsInRadius: non-finite radius".into());
+                }
+                let r2 = radius * radius;
+                HostRet::Mobs(
+                    ctx.world
+                        .mobs()
+                        .instances()
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| !m.is_dead())
+                        .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
+                        .map(|(i, m)| MobSnapshot {
+                            index: i as u32,
+                            key: crate::mob::def(m.kind).name.to_owned(),
+                            pos: [m.pos.x, m.pos.y, m.pos.z],
+                            health: m.health(),
+                            id: m.id(),
+                        })
+                        .collect(),
+                )
+            }),
+        },
+        HostCall::HurtMob {
+            index,
+            amount,
+            from,
+        } => match finite3(from, "HurtMob.from") {
+            Err(e) => e,
+            Ok(from) => sim_call(|ctx| {
+                ctx.queue.push_action(ModAction::HurtMob {
+                    index: index as usize,
+                    amount,
+                    from,
+                })
+            }),
+        },
+        HostCall::DespawnMob { index } => {
+            sim_query(|ctx| HostRet::Bool(ctx.world.mobs_mut().remove(index as usize)))
+        }
+        HostCall::SpawnItem {
+            item_key,
+            count,
+            pos,
+        } => match finite3(pos, "SpawnItem.pos") {
+            Err(e) => e,
+            Ok(pos) => sim_query(|ctx| {
+                let Some(item) = item_by_key(&item_key) else {
+                    log::warn!("[mod {}] SpawnItem: unknown item '{item_key}'", data.mod_id);
+                    return HostRet::Bool(false);
+                };
+                if count == 0 {
+                    return HostRet::Bool(false);
+                }
+                spawn_item_stacks(ctx, item, count, pos);
+                HostRet::Bool(true)
+            }),
+        },
+
+        // --- Phase 3b: player -------------------------------------------------
+        HostCall::PlayerState => sim_query(|ctx| {
+            let p = &*ctx.player;
+            HostRet::Player(PlayerSnapshot {
+                pos: [p.pos.x, p.pos.y, p.pos.z],
+                vel: [p.vel.x, p.vel.y, p.vel.z],
+                yaw: p.yaw,
+                pitch: p.pitch,
+                health: p.health(),
+                on_ground: p.on_ground,
+                spectator: p.is_spectator(),
+            })
+        }),
+        HostCall::DamagePlayer { amount } => {
+            let mod_id = intern_mod_id(&data.mod_id);
+            sim_call(|ctx| {
+                ctx.queue
+                    .push_action(ModAction::DamagePlayer { amount, mod_id })
+            })
+        }
+        HostCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
+            Err(e) => e,
+            Ok(impulse) => sim_call(|ctx| ctx.player.apply_knockback(impulse)),
+        },
+        HostCall::GiveItem { item_key, count } => sim_query(|ctx| {
+            let Some(item) = item_by_key(&item_key) else {
+                log::warn!("[mod {}] GiveItem: unknown item '{item_key}'", data.mod_id);
+                return HostRet::Bool(false);
+            };
+            give_item(ctx, item, count);
+            HostRet::Bool(true)
+        }),
+        HostCall::KillPlayer => {
+            let mod_id = intern_mod_id(&data.mod_id);
+            sim_call(|ctx| ctx.queue.push_action(ModAction::KillPlayer { mod_id }))
+        }
+        HostCall::SetHealth { value } => sim_call(|ctx| ctx.player.set_health(value)),
+        HostCall::Teleport { pos } => match finite3(pos, "Teleport.pos") {
+            Err(e) => e,
+            Ok(pos) => sim_call(|ctx| ctx.player.teleport(pos)),
+        },
+
+        // --- Phase 3b: sound ----------------------------------------------------
+        HostCall::EmitSound { key, pos } => sim_query(|ctx| {
+            let Some(sound) = crate::audio::sound_by_name(&key) else {
+                log::warn!("[mod {}] EmitSound: unknown sound '{key}'", data.mod_id);
+                return HostRet::Bool(false);
+            };
+            // The sim never touches audio: the sound rides the NON-lossy tick
+            // queue on `TickEvents` and the app layer plays it next frame.
+            ctx.feed.sounds.push(crate::game::ModSound {
+                sound,
+                pos: pos.map(to_vec),
+            });
+            HostRet::Bool(true)
+        }),
+        HostCall::SoundPlayAt {
+            key,
+            pos,
+            volume,
+            pitch,
+        } => sim_query(|ctx| {
+            let Some(sound) = crate::audio::sound_by_name(&key) else {
+                log::warn!("[mod {}] SoundPlayAt: unknown sound '{key}'", data.mod_id);
+                return HostRet::U64(0);
+            };
+            if !spatial_sound_params_ok(pos, volume, pitch) {
+                log::warn!(
+                    "[mod {}] SoundPlayAt: rejected non-finite or negative parameter",
+                    data.mod_id
+                );
+                return HostRet::U64(0);
+            }
+            let handle = ctx.feed.alloc_spatial_sound_handle();
+            ctx.feed
+                .spatial_sounds
+                .push(crate::game::ModSpatialSoundCommand::PlayAt {
+                    handle,
+                    sound,
+                    pos: to_vec(pos),
+                    volume,
+                    pitch,
+                });
+            HostRet::U64(handle)
+        }),
+        HostCall::SoundPlayOnMob {
+            mob_id,
+            key,
+            volume,
+            pitch,
+        } => sim_query(|ctx| {
+            let Some(sound) = crate::audio::sound_by_name(&key) else {
+                log::warn!(
+                    "[mod {}] SoundPlayOnMob: unknown sound '{key}'",
+                    data.mod_id
+                );
+                return HostRet::U64(0);
+            };
+            if !spatial_sound_scalar_params_ok(volume, pitch) {
+                log::warn!(
+                    "[mod {}] SoundPlayOnMob: rejected non-finite or negative parameter",
+                    data.mod_id
+                );
+                return HostRet::U64(0);
+            }
+            let Some(last_pos) = ctx
+                .world
+                .mobs()
+                .instances()
+                .iter()
+                .find(|m| m.id() == mob_id && !m.is_dead())
+                .map(|m| m.pos)
+            else {
+                log::warn!(
+                    "[mod {}] SoundPlayOnMob: no live mob with stable id {mob_id}",
+                    data.mod_id
+                );
+                return HostRet::U64(0);
+            };
+            let handle = ctx.feed.alloc_spatial_sound_handle();
+            ctx.feed
+                .spatial_sounds
+                .push(crate::game::ModSpatialSoundCommand::PlayOnMob {
+                    handle,
+                    sound,
+                    mob_id,
+                    volume,
+                    pitch,
+                    last_pos,
+                });
+            HostRet::U64(handle)
+        }),
+        HostCall::SoundStop { handle } => sim_call(|ctx| {
+            if handle != 0 {
+                ctx.feed
+                    .spatial_sounds
+                    .push(crate::game::ModSpatialSoundCommand::Stop { handle });
+            }
+        }),
+
+        // --- Phase 3b: persistent KV -------------------------------------------
+        HostCall::WorldKvGet { key } => {
+            sim_query(|ctx| HostRet::Bytes(ctx.world.mod_kv_get(&key).map(<[u8]>::to_vec)))
+        }
+        HostCall::WorldKvSet { key, value } => {
+            match kv_write_guard(&data.mod_id, &key, value.len()) {
+                Some(err) => err,
+                None => sim_call(|ctx| ctx.world.mod_kv_set(key, value)),
+            }
+        }
+        HostCall::WorldKvDelete { key } => match kv_write_guard(&data.mod_id, &key, 0) {
+            Some(err) => err,
+            None => sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key))),
+        },
+        HostCall::SectionKvGet { pos, key } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::Bytes(
+                ctx.world
+                    .cell_kv_get(p.x, p.y, p.z, &key)
+                    .map(<[u8]>::to_vec),
+            )
+        }),
+        HostCall::SectionKvSet { pos, key, value } => {
+            match kv_write_guard(&data.mod_id, &key, value.len()) {
+                Some(err) => err,
+                None => sim_query(|ctx| {
+                    let p = to_ivec(pos);
+                    HostRet::Bool(ctx.world.cell_kv_set(p.x, p.y, p.z, key, value))
+                }),
+            }
+        }
+        HostCall::SectionKvDelete { pos, key } => match kv_write_guard(&data.mod_id, &key, 0) {
+            Some(err) => err,
+            None => sim_query(|ctx| {
+                let p = to_ivec(pos);
+                HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
+            }),
+        },
+        HostCall::MobKvGet { mob_index, key } => sim_query(|ctx| {
+            HostRet::Bytes(
+                ctx.world
+                    .mobs()
+                    .mod_kv_get(mob_index as usize, &key)
+                    .map(<[u8]>::to_vec),
+            )
+        }),
+        HostCall::MobKvSet {
+            mob_index,
+            key,
+            value,
+        } => match kv_write_guard(&data.mod_id, &key, value.len()) {
+            Some(err) => err,
+            None => sim_query(|ctx| {
+                HostRet::Bool(
+                    ctx.world
+                        .mobs_mut()
+                        .mod_kv_set(mob_index as usize, key, value),
+                )
+            }),
+        },
+        HostCall::MobKvDelete { mob_index, key } => match kv_write_guard(&data.mod_id, &key, 0) {
+            Some(err) => err,
+            None => sim_query(|ctx| {
+                HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(mob_index as usize, &key))
+            }),
+        },
+
+        // --- Phase 4: worldgen hooks --------------------------------------------
+        // ResolveBlock reads only the process-wide registry, so it is legal on
+        // ANY instance — worldgen worker instances (which never get a SimCtx)
+        // resolve their block ids during their own `mod_init`.
+        HostCall::ResolveBlock { key } => HostRet::Block(
+            crate::registry::names()
+                .blocks
+                .id(&key)
+                .map(mod_api::BlockId),
+        ),
+        HostCall::RegisterWorldgenFeature { feature_id, stage } => {
+            if stage == mod_api::WorldgenStage::Climate {
+                return HostRet::Error(
+                    "worldgen features cannot attach after the climate stage (it is \
+                     column-level, before any blocks exist); use Terrain or later"
+                        .into(),
+                );
+            }
+            data.register(Registration::WorldgenFeature { stage, feature_id })
+        }
+        HostCall::RegisterStageReplacement { stage, callback_id } => {
+            data.register(Registration::StageReplacement { stage, callback_id })
+        }
+        HostCall::RegisterGenerator { callback_id } => {
+            data.register(Registration::Generator { callback_id })
+        }
+
+        // --- Phase 5: mod GUIs ----------------------------------------------------
+        // State keys are mod-local: the map belongs to one GUI session (cleared
+        // on open/close), so unlike the persistent KV no prefix is enforced.
+        HostCall::GuiStateSet { key, value } => sim_call(|ctx| {
+            ctx.world
+                .gui_state_set(key, super::convert::gui_value(value))
+        }),
+        HostCall::GuiStateGet { key } => sim_query(|ctx| {
+            HostRet::GuiValue(
+                ctx.world
+                    .gui_state_get(&key)
+                    .map(super::convert::gui_value_out),
+            )
+        }),
+        HostCall::GuiOpen { kind_key } => {
+            // Resolve WITHOUT registering: opening a kind nothing declared is
+            // a mod bug, reported forgivingly (like an unknown sound key).
+            let Some(kind) = crate::gui::resolve_kind(&kind_key).filter(|k| k.is_mod()) else {
+                log::warn!(
+                    "[mod {}] GuiOpen: unknown or non-mod gui kind '{kind_key}'",
+                    data.mod_id
+                );
+                return HostRet::Bool(false);
+            };
+            sim_query(|ctx| {
+                ctx.queue.push_action(ModAction::OpenGui { kind });
+                HostRet::Bool(true)
+            })
+        }
+        HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(ModAction::CloseGui)),
+    }
+}
+
+/// Run a call that mutates the live simulation, or reject it when no guest
+/// dispatch scope is active (the same gate `CurrentTick` uses).
+fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
+    match scope::with_active(f) {
+        Some(()) => HostRet::Unit,
+        None => HostRet::Error("no simulation context is active".into()),
+    }
+}
+
+/// [`sim_call`] for calls that compute their own reply.
+fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
+    scope::with_active(f)
+        .unwrap_or_else(|| HostRet::Error("no simulation context is active".into()))
+}
+
+/// Validate an ABI block id against the loaded registry — an unregistered id
+/// must never reach world storage.
+fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
+    if (block.0 as usize) < Block::all().len() {
+        Ok(Block(block.0))
+    } else {
+        Err(HostRet::Error(format!(
+            "unregistered block id {} (ids are session-scoped; resolve them from your own \
+             catalog rows, never persist them)",
+            block.0
+        )))
+    }
+}
+
+/// Reject non-finite guest floats before they reach engine state (NaNs are
+/// canonicalized by wasmtime but still NaN; infinities pass through).
+fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
+    if v.iter().all(|c| c.is_finite()) {
+        Ok(to_vec(v))
+    } else {
+        Err(HostRet::Error(format!("{what}: non-finite component")))
+    }
+}
+
+fn spatial_sound_params_ok(pos: [f32; 3], volume: f32, pitch: f32) -> bool {
+    pos.iter().all(|c| c.is_finite()) && spatial_sound_scalar_params_ok(volume, pitch)
+}
+
+fn spatial_sound_scalar_params_ok(volume: f32, pitch: f32) -> bool {
+    volume.is_finite() && volume >= 0.0 && pitch.is_finite() && pitch > 0.0
+}
+
+/// The runtime item registered under `key` (`ItemType::key` — the stable
+/// snake_case identity, `mod_id:name` for pack items).
+fn item_by_key(key: &str) -> Option<ItemType> {
+    ItemType::all().iter().copied().find(|i| i.key() == key)
+}
+
+/// Spawn `count` of `item` as dropped entities at `pos`, splitting oversized
+/// counts into max-stack-size drops. Pop seeds derive from (tick, pos, i) so
+/// the spawn is deterministic without any Game-side counter.
+fn spawn_item_stacks(ctx: &mut SimCtx<'_>, item: ItemType, count: u8, pos: Vec3) {
+    let cell = crate::mathh::voxel_at(pos);
+    let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
+    let block = ctx.world.blocklight6_at_world(cell.x, cell.y, cell.z);
+    let mut remaining = count;
+    let mut i = 0u32;
+    while remaining > 0 {
+        let put = remaining.min(item.max_stack_size());
+        remaining -= put;
+        let seed = drop_seed(ctx.world.current_tick(), pos, i);
+        let mut drop = DroppedItem::new(pos, ItemStack::new(item, put), seed);
+        drop.skylight = sky;
+        drop.blocklight = block;
+        ctx.world.spawn_item(drop);
+        i += 1;
+    }
+}
+
+/// Deterministic per-drop pop seed: a SplitMix64 finalizer over the tick, the
+/// spawn position bits, and the in-call index.
+fn drop_seed(tick: u64, pos: Vec3, i: u32) -> u32 {
+    let mut z = tick
+        ^ ((pos.x.to_bits() as u64) << 32 | pos.z.to_bits() as u64)
+        ^ ((pos.y.to_bits() as u64) << 16)
+        ^ ((i as u64) << 1);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) as u32
+}
+
+/// Give the player `count` of `item` through the normal inventory fill;
+/// whatever does not fit drops at the player's feet like any other overflow.
+fn give_item(ctx: &mut SimCtx<'_>, item: ItemType, count: u8) {
+    let mut remaining = count;
+    while remaining > 0 {
+        let put = remaining.min(item.max_stack_size());
+        remaining -= put;
+        if let Some(leftover) = ctx.player.inventory.add(ItemStack::new(item, put)) {
+            let at = ctx.player.body_center();
+            let seed = drop_seed(ctx.world.current_tick(), at, remaining as u32);
+            let cell = crate::mathh::voxel_at(at);
+            let mut drop = DroppedItem::new(at, leftover, seed);
+            drop.skylight = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
+            drop.blocklight = ctx.world.blocklight6_at_world(cell.x, cell.y, cell.z);
+            ctx.world.spawn_item(drop);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::{ChunkPos, SECTION_VOLUME};
+    use crate::events::PostQueue;
+    use crate::game::TickEvents;
+    use crate::player::Player;
+    use crate::world::World;
+
+    /// Run `f` with a live SimCtx published, as if inside a guest dispatch.
+    fn with_ctx(f: impl FnOnce()) {
+        let mut world = World::new(1, 1);
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, f);
+    }
+
+    /// The KV namespace contract: writes must carry the CALLER's own
+    /// `mod_id:` prefix (foreign and bare keys are rejected with an error),
+    /// while reads may cross namespaces — that asymmetry IS the cross-mod
+    /// interop surface. Size caps reject oversized values.
+    #[test]
+    fn kv_writes_enforce_own_namespace_and_reads_cross() {
+        let mut alpha = ModStoreData::new("alpha", 1);
+        let mut beta = ModStoreData::new("beta", 1);
+        with_ctx(|| {
+            // Own-prefix write lands.
+            assert_eq!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::WorldKvSet {
+                        key: "alpha:x".into(),
+                        value: vec![7],
+                    },
+                ),
+                HostRet::Unit
+            );
+            // A foreign-prefix write is rejected...
+            assert!(matches!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::WorldKvSet {
+                        key: "alpha:x".into(),
+                        value: vec![9],
+                    },
+                ),
+                HostRet::Error(_)
+            ));
+            // ...and so are bare / degenerate keys.
+            for bad in ["x", "alpha:", "alphax:y", "beta"] {
+                assert!(
+                    matches!(
+                        handle_host_call(
+                            &mut beta,
+                            HostCall::WorldKvSet {
+                                key: bad.into(),
+                                value: vec![1],
+                            },
+                        ),
+                        HostRet::Error(_)
+                    ),
+                    "write with key '{bad}' must be rejected"
+                );
+            }
+            // The rejected write changed nothing; a cross-namespace READ works.
+            assert_eq!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::WorldKvGet {
+                        key: "alpha:x".into(),
+                    },
+                ),
+                HostRet::Bytes(Some(vec![7]))
+            );
+            // Deletes are writes: foreign rejected, own applies.
+            assert!(matches!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::WorldKvDelete {
+                        key: "alpha:x".into(),
+                    },
+                ),
+                HostRet::Error(_)
+            ));
+            assert_eq!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::WorldKvDelete {
+                        key: "alpha:x".into(),
+                    },
+                ),
+                HostRet::Bool(true)
+            );
+            // The value size cap holds (same guard on every KV write surface).
+            assert!(matches!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::WorldKvSet {
+                        key: "alpha:big".into(),
+                        value: vec![0; KV_MAX_VALUE_BYTES + 1],
+                    },
+                ),
+                HostRet::Error(_)
+            ));
+        });
+        // Outside any dispatch scope, sim-touching KV calls are rejected.
+        assert!(matches!(
+            handle_host_call(
+                &mut alpha,
+                HostCall::WorldKvGet {
+                    key: "alpha:x".into(),
+                },
+            ),
+            HostRet::Error(_)
+        ));
+    }
+
+    /// Worldgen hook registration is `mod_init`-window-gated like every other
+    /// registration, and `Climate` is not a feature attach point (features
+    /// write blocks; climate is column-level). `ResolveBlock` needs no window
+    /// and no simulation scope — it must work on worldgen instances.
+    #[test]
+    fn gen_registrations_gate_on_the_init_window() {
+        let mut data = ModStoreData::new("alpha", 1);
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::RegisterWorldgenFeature {
+                    feature_id: 1,
+                    stage: mod_api::WorldgenStage::Trees,
+                },
+            ),
+            HostRet::Unit
+        );
+        assert!(matches!(
+            handle_host_call(
+                &mut data,
+                HostCall::RegisterWorldgenFeature {
+                    feature_id: 2,
+                    stage: mod_api::WorldgenStage::Climate,
+                },
+            ),
+            HostRet::Error(_)
+        ));
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::RegisterStageReplacement {
+                    stage: mod_api::WorldgenStage::Terrain,
+                    callback_id: 3,
+                },
+            ),
+            HostRet::Unit
+        );
+        assert_eq!(
+            handle_host_call(&mut data, HostCall::RegisterGenerator { callback_id: 4 }),
+            HostRet::Unit
+        );
+        assert_eq!(data.stats.registered, 3);
+        assert!(data.pending.iter().all(Registration::is_gen));
+
+        // Outside the window every gen registration is rejected...
+        data.phase = Phase::Run;
+        for call in [
+            HostCall::RegisterWorldgenFeature {
+                feature_id: 1,
+                stage: mod_api::WorldgenStage::Trees,
+            },
+            HostCall::RegisterStageReplacement {
+                stage: mod_api::WorldgenStage::Terrain,
+                callback_id: 3,
+            },
+            HostCall::RegisterGenerator { callback_id: 4 },
+        ] {
+            assert!(matches!(
+                handle_host_call(&mut data, call),
+                HostRet::Error(_)
+            ));
+        }
+        assert_eq!(data.stats.rejected_registrations, 3);
+        // ...but ResolveBlock works anywhere, with no SimCtx published.
+        assert_eq!(
+            handle_host_call(&mut data, HostCall::ResolveBlock { key: "air".into() },),
+            HostRet::Block(Some(mod_api::BlockId(0)))
+        );
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ResolveBlock {
+                    key: "no_such:block".into(),
+                },
+            ),
+            HostRet::Block(None)
+        );
+    }
+
+    /// `EmitSound` feeds the NON-lossy tick queue (never audio directly) and
+    /// an unknown key reports failure without disabling anything.
+    #[test]
+    fn emit_sound_rides_the_tick_feed() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::EmitSound {
+                        key: "item_pickup".into(),
+                        pos: Some([1.0, 64.0, 1.0]),
+                    },
+                ),
+                HostRet::Bool(true)
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::EmitSound {
+                        key: "no_such:sound".into(),
+                        pos: None,
+                    },
+                ),
+                HostRet::Bool(false)
+            );
+        });
+        assert_eq!(feed.sounds.len(), 1, "one resolved sound queued");
+        assert_eq!(feed.sounds[0].pos, Some(Vec3::new(1.0, 64.0, 1.0)));
+    }
+
+    #[test]
+    fn spawn_mob_initializes_cached_light_before_first_render_snapshot() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        let section = world
+            .section_at_world_mut_for_test(8, 64, 8)
+            .expect("fixture loads the spawn section");
+        section.set_skylight(vec![0; SECTION_VOLUME].into());
+        section.set_blocklight(vec![0; SECTION_VOLUME].into());
+
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::SpawnMob {
+                        key: "owl".into(),
+                        pos: [8.5, 64.0, 8.5],
+                        yaw: 0.0,
+                    },
+                ),
+                HostRet::Bool(true)
+            );
+        });
+
+        let mob = &world.mobs().instances()[0];
+        assert_eq!(mob.skylight, 0);
+        assert_eq!(mob.blocklight, 0);
+    }
+
+    #[test]
+    fn spatial_sound_calls_queue_resolved_commands_with_deterministic_handles() {
+        fn run_once() -> (u64, u64, Vec<crate::game::ModSpatialSoundCommand>) {
+            let mut data = ModStoreData::new("alpha", 1);
+            let mut world = World::new(1, 1);
+            assert!(world
+                .mobs_mut()
+                .spawn(crate::mob::Mob::Owl, Vec3::new(2.0, 80.0, 3.0), 0.0));
+            let mob_id = world.mobs().instances()[0].id();
+            let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+            let mut feed = TickEvents::default();
+            let mut queue = PostQueue::default();
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut player,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            let mut handles = (0, 0);
+            scope::enter(&mut ctx, || {
+                handles.0 = match handle_host_call(
+                    &mut data,
+                    HostCall::SoundPlayAt {
+                        key: "item_pickup".into(),
+                        pos: [1.0, 81.0, 1.0],
+                        volume: 0.5,
+                        pitch: 1.25,
+                    },
+                ) {
+                    HostRet::U64(handle) => handle,
+                    other => panic!("SoundPlayAt returned {other:?}"),
+                };
+                handles.1 = match handle_host_call(
+                    &mut data,
+                    HostCall::SoundPlayOnMob {
+                        mob_id,
+                        key: "item_pickup".into(),
+                        volume: 0.75,
+                        pitch: 0.9,
+                    },
+                ) {
+                    HostRet::U64(handle) => handle,
+                    other => panic!("SoundPlayOnMob returned {other:?}"),
+                };
+                assert_eq!(
+                    handle_host_call(&mut data, HostCall::SoundStop { handle: handles.0 }),
+                    HostRet::Unit
+                );
+                assert_eq!(
+                    handle_host_call(
+                        &mut data,
+                        HostCall::SoundPlayAt {
+                            key: "no_such:sound".into(),
+                            pos: [0.0, 0.0, 0.0],
+                            volume: 1.0,
+                            pitch: 1.0,
+                        },
+                    ),
+                    HostRet::U64(0),
+                    "unknown sounds do not allocate handles"
+                );
+            });
+            (handles.0, handles.1, feed.spatial_sounds)
+        }
+
+        let first = run_once();
+        let second = run_once();
+        assert_ne!(first.0, 0);
+        assert_ne!(first.0, first.1, "two starts get distinct handles");
+        assert_eq!(
+            first, second,
+            "same session inputs produce the same handles"
+        );
+
+        let sound = crate::audio::sound_by_name("item_pickup").expect("engine sound exists");
+        assert_eq!(first.2.len(), 3);
+        assert_eq!(
+            first.2[0],
+            crate::game::ModSpatialSoundCommand::PlayAt {
+                handle: first.0,
+                sound,
+                pos: Vec3::new(1.0, 81.0, 1.0),
+                volume: 0.5,
+                pitch: 1.25,
+            }
+        );
+        match first.2[1] {
+            crate::game::ModSpatialSoundCommand::PlayOnMob {
+                handle,
+                sound: queued_sound,
+                mob_id,
+                volume,
+                pitch,
+                last_pos,
+            } => {
+                assert_eq!(handle, first.1);
+                assert_eq!(queued_sound, sound);
+                assert_ne!(mob_id, 0);
+                assert_eq!(volume, 0.75);
+                assert_eq!(pitch, 0.9);
+                assert_eq!(last_pos, Vec3::new(2.0, 80.0, 3.0));
+            }
+            other => panic!("expected mob-pinned sound command, got {other:?}"),
+        }
+        assert_eq!(
+            first.2[2],
+            crate::game::ModSpatialSoundCommand::Stop { handle: first.0 }
+        );
+    }
+
+    #[test]
+    fn mob_snapshot_id_survives_unrelated_despawn_index_shift() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        assert!(world
+            .mobs_mut()
+            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+        assert!(world
+            .mobs_mut()
+            .spawn(crate::mob::Mob::Owl, Vec3::new(2.0, 80.0, 2.0), 0.0));
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+
+        scope::enter(&mut ctx, || {
+            let before = match handle_host_call(
+                &mut data,
+                HostCall::MobsInRadius {
+                    pos: [0.0, 80.0, 0.0],
+                    radius: 10.0,
+                },
+            ) {
+                HostRet::Mobs(mobs) => mobs,
+                other => panic!("MobsInRadius returned {other:?}"),
+            };
+            assert_eq!(before.len(), 2);
+            let shifted_id = before[1].id;
+            assert_ne!(before[0].id, shifted_id);
+
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::DespawnMob {
+                        index: before[0].index
+                    }
+                ),
+                HostRet::Bool(true)
+            );
+
+            let after = match handle_host_call(
+                &mut data,
+                HostCall::MobsInRadius {
+                    pos: [0.0, 80.0, 0.0],
+                    radius: 10.0,
+                },
+            ) {
+                HostRet::Mobs(mobs) => mobs,
+                other => panic!("MobsInRadius returned {other:?}"),
+            };
+            assert_eq!(after.len(), 1);
+            assert_eq!(after[0].index, 0, "swap_remove shifted the remaining mob");
+            assert_eq!(after[0].id, shifted_id, "stable id survived the shift");
+            assert_eq!(after[0].pos, [2.0, 80.0, 2.0]);
+        });
+    }
+}
+
+/// Build the linker exposing the single guest import,
+/// `env::host_dispatch(ptr, len) -> u64` (packed reply `ptr << 32 | len`).
+/// Reply buffers are allocated IN the guest via its exported `mod_alloc` —
+/// wasmtime host functions may re-enter the calling instance — and freed by
+/// the guest once decoded.
+pub(super) fn linker() -> Result<Linker<ModStoreData>, String> {
+    let mut linker = Linker::new(engine());
+    linker
+        .func_wrap(
+            "env",
+            "host_dispatch",
+            |mut caller: Caller<'_, ModStoreData>, ptr: u32, len: u32| -> wasmtime::Result<u64> {
+                let memory = caller
+                    .data()
+                    .memory
+                    .ok_or_else(|| wasmtime::Error::msg("host_dispatch during instantiation"))?;
+                // Bounds-check BEFORE sizing the copy so a hostile length
+                // can't balloon a host allocation; a lying guest just traps.
+                if len as usize > memory.data_size(&caller) {
+                    return Err(wasmtime::Error::msg("host call exceeds guest memory"));
+                }
+                let mut buf = vec![0u8; len as usize];
+                memory.read(&caller, ptr as usize, &mut buf)?;
+                // A call the host cannot decode is a broken ABI, not a bad
+                // argument: trap (=> the mod is disabled), don't guess.
+                let call: HostCall = mod_api::decode(&buf)
+                    .map_err(|e| wasmtime::Error::msg(format!("malformed host call: {e}")))?;
+                let ret = handle_host_call(caller.data_mut(), call);
+                let bytes = mod_api::encode(&ret)
+                    .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
+                let alloc =
+                    caller.data().alloc.clone().ok_or_else(|| {
+                        wasmtime::Error::msg("host_dispatch during instantiation")
+                    })?;
+                let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;
+                memory.write(&mut caller, reply_ptr as usize, &bytes)?;
+                Ok(mod_api::pack_ptr_len(reply_ptr, bytes.len() as u32))
+            },
+        )
+        .map_err(|e| format!("define host_dispatch: {e:#}"))?;
+    Ok(linker)
+}

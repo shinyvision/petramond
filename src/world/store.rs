@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -7,7 +7,7 @@ use crate::chunk::{
 };
 use crate::column::{Column, NO_SURFACE};
 use crate::entity::DroppedItem;
-use crate::mathh::Vec3;
+use crate::mathh::{voxel_at, Vec3};
 use crate::mesh::ChunkMesh;
 use crate::mob::{Mobs, SavedMob};
 use crate::save::{SectionSnapshot, WorldSave};
@@ -17,6 +17,7 @@ use crate::worldgen::driver::ChunkGenerator;
 use crate::worldgen::driver::ColumnGen;
 
 use super::entities::DroppedItems;
+use super::environment::WorldEnvironment;
 use super::light::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
 use super::tick::TickState;
@@ -210,6 +211,33 @@ pub struct World {
     pub(super) dropped_items: DroppedItems,
     /// Active mobs in currently-loaded sections.
     pub(super) mobs: Mobs,
+    /// Section installs the per-frame streamer buffered for the tick-side event bus
+    /// (`section_generated` / `section_loaded`); drained by the next game tick.
+    pub(super) stream_events: Vec<super::stream::StreamEvent>,
+    /// Buffer gate, mirroring event-bus listener presence (set once per tick), so
+    /// streaming costs nothing while nothing listens.
+    pub(super) stream_events_enabled: bool,
+    /// Sim-owned visual shader parameters.
+    /// Mutated on the tick only (mod HostCalls); NOT persisted — resets to
+    /// defaults on world open, the owning mod re-applies it (Phase 3 world KV).
+    pub(super) environment: WorldEnvironment,
+    /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
+    /// surface (WIKI/modding.md Phase 3b). BTreeMap so the save encoding (it
+    /// rides `level.dat`) iterates in one deterministic order. Mutated on the
+    /// tick only (mod HostCalls); restored at session open.
+    pub(super) mod_kv: BTreeMap<String, Vec<u8>>,
+    /// Mod pack ids DISABLED for this world (per-world `settings.json`; empty
+    /// = all enabled). Session-fixed, set once at open; the natural spawner
+    /// and the mod-set record consult it. The palette/mod-host gates take it
+    /// separately at session construction.
+    pub(super) disabled_mods: std::collections::BTreeSet<String>,
+    /// The open mod GUI session's state map (WIKI/modding.md Phase 5). Lives
+    /// on the world so `GuiStateSet/Get` HostCalls reach it through `SimCtx`;
+    /// the SESSION lifecycle (cleared on open/close) is driven by the game's
+    /// menu funnel. Behind `Arc` so the per-frame UI snapshot is a refcount
+    /// bump; tick-side writes are copy-on-write ([`std::sync::Arc::make_mut`]
+    /// clones at most once per outstanding snapshot). NOT persisted.
+    pub(super) gui_state: std::sync::Arc<crate::gui::GuiStateMap>,
 }
 
 impl World {
@@ -246,7 +274,35 @@ impl World {
             save: None,
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
+            stream_events: Vec::new(),
+            stream_events_enabled: false,
+            environment: WorldEnvironment::default(),
+            mod_kv: BTreeMap::new(),
+            disabled_mods: std::collections::BTreeSet::new(),
+            gui_state: crate::gui::empty_gui_state(),
         }
+    }
+
+    /// Mod pack ids disabled for this world (per-world `settings.json`).
+    #[inline]
+    pub fn disabled_mods(&self) -> &std::collections::BTreeSet<String> {
+        &self.disabled_mods
+    }
+
+    /// Install the world's disabled-mod set — once, at session open.
+    pub fn set_disabled_mods(&mut self, disabled: std::collections::BTreeSet<String>) {
+        self.disabled_mods = disabled;
+    }
+
+    /// The sim-owned visual shader parameter state (see [`WorldEnvironment`]).
+    pub fn environment(&self) -> &WorldEnvironment {
+        &self.environment
+    }
+
+    /// Set one namespaced visual shader parameter. Tick-side only; not persisted
+    /// by the engine, so the owning mod should re-apply it from its own state.
+    pub fn set_shader_param(&mut self, key: String, value: [f32; 4]) {
+        self.environment.set_shader_param(key, value);
     }
 
     /// Attach an on-disk save: enables section persistence (load-from-disk in the
@@ -440,24 +496,54 @@ impl World {
         &mut self.mobs
     }
 
+    /// Spawn a mob and initialize its cached render light immediately, so a mob
+    /// created after the mob tick does not render full-bright until the next tick.
+    pub fn spawn_mob(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+        let (sky, block) = self.mob_render_light_at(pos);
+        self.mobs.spawn_lit(kind, pos, yaw, sky, block)
+    }
+
+    pub(crate) fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
+        for mob in mobs {
+            let (sky, block) = self.mob_render_light_at(mob.pos);
+            self.mobs.restore_saved_mob_lit(mob, sky, block);
+        }
+    }
+
+    fn mob_render_light_at(&self, pos: Vec3) -> (u8, u8) {
+        let c = voxel_at(pos + Vec3::new(0.0, 0.3, 0.0));
+        let sky = self.skylight6_at_world(c.x, c.y, c.z);
+        let block = self.blocklight6_at_world(c.x, c.y, c.z);
+        (sky, block)
+    }
+
     /// Advance the mobs one fixed game tick against an immutable view of the rest of
     /// the world (the field is moved out so the `&mut Mobs` and `&World` borrows stay
-    /// disjoint).
-    pub fn tick_mobs(&mut self, dt: f32, player_pos: Vec3, player_body: Option<crate::mob::Body>) {
+    /// disjoint). Returns the melee strikes the mobs landed on the player this tick,
+    /// for `Game` to apply through the player damage pipeline.
+    pub fn tick_mobs(
+        &mut self,
+        dt: f32,
+        player_pos: Vec3,
+        player_body: Option<crate::mob::Body>,
+    ) -> Vec<crate::mob::MobAttack> {
         if self.mobs.is_empty() {
-            return;
+            return Vec::new();
         }
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);
-        mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
+        let attacks = mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
         self.mobs = mobs;
+        attacks
     }
 
-    /// Run one natural mob-spawn attempt (one per game tick).
-    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) {
+    /// Run one natural mob-spawn attempt (one per game tick). Returns the mobs
+    /// actually spawned, for the caller to report as `mob_spawned` events.
+    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(crate::mob::Mob, Vec3)> {
         let mut mobs = std::mem::take(&mut self.mobs);
-        mobs.spawn_tick(self, player_pos);
+        let spawned = mobs.spawn_tick(self, player_pos);
         self.mobs = mobs;
+        spawned
     }
 
     #[inline]

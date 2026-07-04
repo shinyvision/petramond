@@ -1,0 +1,12 @@
+{
+  "sounds": [
+    {
+      "sound": "zombies:groan",
+      "variants": ["sounds/zombie_groan.ogg"],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 32.0,
+      "category": "block"
+    }
+  ]
+}

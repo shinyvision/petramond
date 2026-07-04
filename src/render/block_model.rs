@@ -1,4 +1,4 @@
-//! Geometry helpers that build small meshes in the 28-byte [`mesh::Vertex`]
+//! Geometry helpers that build small meshes in the 32-byte [`mesh::Vertex`]
 //! format for the held-item hand, dropped item-entities, and the isometric
 //! inventory icons.
 //!
@@ -8,10 +8,11 @@
 //! variants pack sampled world skylight for hand/items while keeping AO = 3.
 //!
 //! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
-//! The 28-byte vertex packs into one `u32`:
-//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 skylight | 29..32 UV mode`.
-//! For the textured path ([`cube_textured`], [`billboard_quad`]) we set the tile,
-//! corner, shade, AO = 3, skylight = 63.
+//! The vertex packs word 1 as
+//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 SKYlight | 29..32 UV mode`
+//! and word 2 (`packed2`) as `0..6 block light | rest reserved`. For the textured
+//! path ([`cube_textured`], [`billboard_quad`]) we set the tile, corner, shade,
+//! AO = 3, skylight = 63.
 //!
 //! ### Out-of-world foliage tint + grass-side overlay
 //! Icons / held items / dropped cubes have no biome context, so foliage greens
@@ -36,7 +37,7 @@
 //! this convention identical between this module and `model3d.wgsl`.
 
 use super::foliage_tint::{self, FaceMaterial};
-use super::lighting;
+use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
 use crate::mesh::face::Face;
@@ -79,7 +80,8 @@ fn face_bits_solid_lit(face: Face, skylight: u8) -> u32 {
     (face.shade_idx() << 10) | FULL_AO | lighting::skylight_bits(skylight) | SOLID_COLOR_FLAG
 }
 
-/// Append a textured quad (4 verts, 6 indices) to `verts`/`indices`.
+/// Append a textured quad (4 verts, 6 indices) to `verts`/`indices`. `packed2`
+/// carries the second vertex word (block light in bits 0..6).
 #[inline]
 fn push_quad(
     verts: &mut Vec<Vertex>,
@@ -87,6 +89,7 @@ fn push_quad(
     corners: [[f32; 3]; 4],
     tint: [f32; 3],
     base_bits: u32,
+    packed2: u32,
 ) {
     let start = verts.len() as u32;
     for (corner, pos) in corners.into_iter().enumerate() {
@@ -94,6 +97,7 @@ fn push_quad(
             pos,
             tint,
             packed: base_bits | ((corner as u32) << 8),
+            packed2,
         });
     }
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
@@ -116,7 +120,7 @@ pub fn push_cube_textured(
     origin: Vec3,
     size: f32,
 ) {
-    push_cube_textured_lit(verts, indices, tiles, origin, size, lighting::FULL_SKYLIGHT);
+    push_cube_textured_lit(verts, indices, tiles, origin, size, DynLight::FULL);
 }
 
 pub(super) fn push_cube_textured_lit(
@@ -125,9 +129,9 @@ pub(super) fn push_cube_textured_lit(
     tiles: [Tile; 3],
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: DynLight,
 ) {
-    push_cube_faces_lit(verts, indices, expand_tiles(tiles), origin, size, skylight);
+    push_cube_faces_lit(verts, indices, expand_tiles(tiles), origin, size, light);
 }
 
 /// Expand the `[top, bottom, side]` model into the 6 per-face tiles in `ALL_FACES`
@@ -162,10 +166,10 @@ pub(super) fn push_cube_faces_lit(
     faces: [Tile; 6],
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: DynLight,
 ) {
     let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-    push_box_faces_lit(verts, indices, faces, origin, max, skylight);
+    push_box_faces_lit(verts, indices, faces, origin, max, light);
 }
 
 /// Append a textured box spanning `[min, max]` with explicit per-face tiles
@@ -178,7 +182,7 @@ pub(super) fn push_box_faces_lit(
     faces: [Tile; 6],
     min: Vec3,
     max: Vec3,
-    skylight: u8,
+    light: DynLight,
 ) {
     for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
@@ -187,7 +191,8 @@ pub(super) fn push_box_faces_lit(
             indices,
             face.quad_box(min.to_array(), max.to_array()),
             mat.tint,
-            face_bits_textured_lit(mat, face, skylight),
+            face_bits_textured_lit(mat, face, light.sky),
+            lighting::blocklight_word(light.block),
         );
     }
 }
@@ -212,7 +217,7 @@ pub(super) fn push_box_faces_lit_mirrored(
     faces: [Tile; 6],
     min: Vec3,
     max: Vec3,
-    skylight: u8,
+    light: DynLight,
     mirror_u: [bool; 6],
     slice_mode: [u32; 6],
 ) {
@@ -224,11 +229,12 @@ pub(super) fn push_box_faces_lit_mirrored(
     {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(min.to_array(), max.to_array());
-        let bits = face_bits_textured_lit(mat, face, skylight) | (slice << UV_SLICE_SHIFT);
+        let bits = face_bits_textured_lit(mat, face, light.sky) | (slice << UV_SLICE_SHIFT);
+        let word2 = lighting::blocklight_word(light.block);
         if mir {
-            push_quad_uflip(verts, indices, corners, mat.tint, bits);
+            push_quad_uflip(verts, indices, corners, mat.tint, bits, word2);
         } else {
-            push_quad(verts, indices, corners, mat.tint, bits);
+            push_quad(verts, indices, corners, mat.tint, bits, word2);
         }
     }
 }
@@ -243,6 +249,7 @@ fn push_quad_uflip(
     corners: [[f32; 3]; 4],
     tint: [f32; 3],
     base_bits: u32,
+    packed2: u32,
 ) {
     const MIRROR: [u32; 4] = [1, 0, 3, 2];
     let start = verts.len() as u32;
@@ -251,6 +258,7 @@ fn push_quad_uflip(
             pos,
             tint,
             packed: base_bits | (MIRROR[i] << 8),
+            packed2,
         });
     }
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
@@ -265,7 +273,7 @@ fn push_cactus_faces_lit(
     faces: [Tile; 6],
     min: Vec3,
     max: Vec3,
-    skylight: u8,
+    light: DynLight,
 ) {
     for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
@@ -274,7 +282,8 @@ fn push_cactus_faces_lit(
             indices,
             crate::mesh::face::cactus_quad(face, min.to_array(), max.to_array()),
             mat.tint,
-            face_bits_textured_lit(mat, face, skylight),
+            face_bits_textured_lit(mat, face, light.sky),
+            lighting::blocklight_word(light.block),
         );
     }
 }
@@ -289,7 +298,7 @@ pub(super) fn push_block_item_cube(
     origin: Vec3,
     size: f32,
 ) {
-    push_block_item_cube_lit(verts, indices, block, origin, size, lighting::FULL_SKYLIGHT);
+    push_block_item_cube_lit(verts, indices, block, origin, size, DynLight::FULL);
 }
 
 /// As [`push_block_item_cube`] but lit by `skylight` (a held item / dropped stack samples
@@ -302,16 +311,16 @@ pub(super) fn push_block_item_cube_lit(
     block: Block,
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: DynLight,
 ) {
     let faces = block_icon_faces(block);
     if block.render_shape() == crate::block::RenderShape::Stair {
-        push_stair_item_lit(verts, indices, faces, origin, size, skylight);
+        push_stair_item_lit(verts, indices, faces, origin, size, light);
     } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-        push_cactus_faces_lit(verts, indices, faces, origin, max, skylight);
+        push_cactus_faces_lit(verts, indices, faces, origin, max, light);
     } else {
-        push_cube_faces_lit(verts, indices, faces, origin, size, skylight);
+        push_cube_faces_lit(verts, indices, faces, origin, size, light);
     }
 }
 
@@ -321,7 +330,7 @@ fn push_stair_item_lit(
     faces: [Tile; 6],
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: DynLight,
 ) {
     let facing = crate::furnace::Facing::South;
     let mask = crate::stair::mask(facing);
@@ -337,7 +346,7 @@ fn push_stair_item_lit(
                         continue;
                     }
                     push_stair_item_face(
-                        verts, indices, faces, origin, size, min, max, face, skylight,
+                        verts, indices, faces, origin, size, min, max, face, light,
                     );
                 }
             }
@@ -355,7 +364,7 @@ fn push_stair_item_face(
     min: [f32; 3],
     max: [f32; 3],
     face: Face,
-    skylight: u8,
+    light: DynLight,
 ) {
     if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
         return;
@@ -369,7 +378,8 @@ fn push_stair_item_face(
         indices,
         face.quad_box(mn.to_array(), mx.to_array()),
         mat.tint,
-        face_bits_textured_lit(mat, face, skylight),
+        face_bits_textured_lit(mat, face, light.sky),
+        lighting::blocklight_word(light.block),
     );
 }
 
@@ -400,7 +410,7 @@ pub fn push_cube_solid(
     origin: Vec3,
     size: f32,
 ) {
-    push_cube_solid_lit(verts, indices, tint, origin, size, lighting::FULL_SKYLIGHT);
+    push_cube_solid_lit(verts, indices, tint, origin, size, DynLight::FULL);
 }
 
 pub(super) fn push_cube_solid_lit(
@@ -409,7 +419,7 @@ pub(super) fn push_cube_solid_lit(
     tint: [f32; 3],
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: DynLight,
 ) {
     let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
     for face in ALL_FACES {
@@ -418,7 +428,8 @@ pub(super) fn push_cube_solid_lit(
             indices,
             face.quad_box(origin.to_array(), max.to_array()),
             tint,
-            face_bits_solid_lit(face, skylight),
+            face_bits_solid_lit(face, light.sky),
+            lighting::blocklight_word(light.block),
         );
     }
 }
@@ -461,7 +472,7 @@ pub(super) fn push_billboard_world_lit(
     center: Vec3,
     size: f32,
     basis: BillboardBasis,
-    skylight: u8,
+    light: DynLight,
 ) {
     let h = size * 0.5;
     let r = basis.right * h;
@@ -477,11 +488,12 @@ pub(super) fn push_billboard_world_lit(
     let base = (tile.index() as u32)
         | (Face::PosY.shade_idx() << 10)
         | FULL_AO
-        | lighting::skylight_bits(skylight);
+        | lighting::skylight_bits(light.sky);
+    let word2 = lighting::blocklight_word(light.block);
     // Front winding (faces the camera) + reversed winding (faces away), so the
     // sprite never culls from either side.
-    push_quad(verts, indices, [bl, br, tr, tl], tint, base);
-    push_quad(verts, indices, [br, bl, tl, tr], tint, base);
+    push_quad(verts, indices, [bl, br, tr, tl], tint, base, word2);
+    push_quad(verts, indices, [br, bl, tl, tr], tint, base, word2);
 }
 
 /// Append a flat, upright, double-sided billboard quad of one `tile`, centered on
@@ -517,8 +529,8 @@ pub fn push_billboard_quad(
         | (Face::PosY.shade_idx() << 10)
         | FULL_AO
         | lighting::skylight_bits(lighting::FULL_SKYLIGHT);
-    push_quad(verts, indices, front, tint, base);
-    push_quad(verts, indices, back, tint, base);
+    push_quad(verts, indices, front, tint, base, 0);
+    push_quad(verts, indices, back, tint, base, 0);
 }
 
 /// A flat, upright, double-sided billboard quad of one `tile`, centered on
@@ -543,7 +555,11 @@ mod tests {
     #[test]
     fn cube_textured_has_24_verts_36_indices() {
         let (v, i) = cube_textured(
-            [Tile::named("oak_log_top"), Tile::named("oak_log_top"), Tile::named("oak_log_side")],
+            [
+                Tile::named("oak_log_top"),
+                Tile::named("oak_log_top"),
+                Tile::named("oak_log_side"),
+            ],
             Vec3::ZERO,
             1.0,
         );
@@ -554,7 +570,11 @@ mod tests {
     #[test]
     fn cube_textured_uses_per_face_tiles() {
         // Distinct top/bottom/side so we can check each face samples the right tile.
-        let tiles = [Tile::named("grass_top"), Tile::named("dirt"), Tile::named("stone")];
+        let tiles = [
+            Tile::named("grass_top"),
+            Tile::named("dirt"),
+            Tile::named("stone"),
+        ];
         let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
         // 4 verts per face; the tile id is bits 0..8 of `packed`.
@@ -591,10 +611,17 @@ mod tests {
             "front on PosZ (visible in the icon)"
         );
         for i in [0usize, 1, 5] {
-            assert_eq!(faces[i], Tile::named("furnace_side"), "face {i} is a plain side");
+            assert_eq!(
+                faces[i],
+                Tile::named("furnace_side"),
+                "face {i} is a plain side"
+            );
         }
         assert_eq!(
-            faces.iter().filter(|&&t| t == Tile::named("furnace_front")).count(),
+            faces
+                .iter()
+                .filter(|&&t| t == Tile::named("furnace_front"))
+                .count(),
             1,
             "exactly one front face, not four"
         );
@@ -646,7 +673,10 @@ mod tests {
         assert_eq!(v.len(), 8); // two quads (front + back)
         assert_eq!(i.len(), 12);
         for vert in &v {
-            assert_eq!((vert.packed & 0xFF) as u8, Tile::named("poppy").index() as u8);
+            assert_eq!(
+                (vert.packed & 0xFF) as u8,
+                Tile::named("poppy").index() as u8
+            );
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
         }
     }
@@ -655,7 +685,11 @@ mod tests {
     fn cube_textured_tints_grass_top_and_overlays_sides() {
         // Block::Grass tiles = [GrassTop, Dirt, GrassSide].
         let (v, _) = cube_textured(
-            [Tile::named("grass_top"), Tile::named("dirt"), Tile::named("grass_side")],
+            [
+                Tile::named("grass_top"),
+                Tile::named("dirt"),
+                Tile::named("grass_side"),
+            ],
             Vec3::ZERO,
             1.0,
         );
@@ -663,7 +697,10 @@ mod tests {
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
         // Top face (PosY = index 2): GrassTop tinted green, no overlay.
         let top = &v[2 * 4];
-        assert_eq!((top.packed & 0xFF) as u8, Tile::named("grass_top").index() as u8);
+        assert_eq!(
+            (top.packed & 0xFF) as u8,
+            Tile::named("grass_top").index() as u8
+        );
         assert_eq!(top.tint, grass);
         assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
 
@@ -702,7 +739,10 @@ mod tests {
         let (v, _) = cube_textured([Tile::named("oak_leaves"); 3], Vec3::ZERO, 1.0);
         let foliage = foliage_tint::default_foliage_color();
         for vert in &v {
-            assert_eq!((vert.packed & 0xFF) as u8, Tile::named("oak_leaves").index() as u8);
+            assert_eq!(
+                (vert.packed & 0xFF) as u8,
+                Tile::named("oak_leaves").index() as u8
+            );
             assert_eq!(vert.tint, foliage);
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");
         }

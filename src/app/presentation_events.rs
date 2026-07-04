@@ -2,6 +2,7 @@ use super::App;
 use crate::audio::Sound;
 use crate::block::{Block, BlockSoundAction};
 use crate::game::GameEvents;
+use crate::mathh::Vec3;
 
 impl App {
     pub(super) fn play_game_event_sounds(
@@ -12,6 +13,19 @@ impl App {
     ) {
         let mining_sound = mining_block.and_then(|b| b.sound(BlockSoundAction::Dig));
         self.audio.set_loop(mining_sound, now);
+
+        // Mod-emitted sounds (the non-lossy tick queue): each plays once,
+        // attenuated by distance to the player when positional.
+        let listener = self.game.as_ref().map(|g| g.listener_position());
+        for s in &events.mod_sounds {
+            let gain = match (s.pos, listener) {
+                (Some(pos), Some(ear)) => mod_sound_gain(s.sound, pos, ear),
+                _ => 1.0,
+            };
+            self.audio.play_attenuated(s.sound, gain);
+        }
+        self.spatial_sound_commands
+            .extend(events.mod_spatial_sounds.iter().copied());
 
         if let Some(b) = events.placed_block {
             if let Some(s) = b.sound(BlockSoundAction::Place) {
@@ -52,6 +66,11 @@ impl App {
             || opened_interactable;
         self.hand.swung |= events.swung_hand;
     }
+}
+
+fn mod_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
+    let dist = (pos - ear).length();
+    sound.distance_gain(dist)
 }
 
 fn opened_interactable(events: &GameEvents) -> bool {

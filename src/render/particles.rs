@@ -18,7 +18,7 @@
 //! Geometry is capped to a fixed vertex budget so the dynamic buffer never grows;
 //! excess particles in a frame are dropped (transient dust, visually harmless).
 
-use super::lighting;
+use super::lighting::{self, DynLight, LightEnv};
 use super::ParticleInstance;
 use glam::Vec3;
 
@@ -126,7 +126,7 @@ pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleV
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, verts);
+        push_particle_cube(inst, LightEnv::IDENTITY, verts);
     }
     verts.len() as u32
 }
@@ -140,6 +140,7 @@ pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleV
 pub fn build_particles_split(
     block: &[ParticleInstance],
     model: &[ParticleInstance],
+    env: LightEnv,
     verts: &mut Vec<ParticleVertex>,
 ) -> (u32, u32) {
     verts.clear();
@@ -150,7 +151,7 @@ pub fn build_particles_split(
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, verts);
+        push_particle_cube(inst, env, verts);
     }
     let block_verts = verts.len() as u32;
     for inst in model {
@@ -160,7 +161,7 @@ pub fn build_particles_split(
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, verts);
+        push_particle_cube(inst, env, verts);
     }
     (verts.len() as u32, block_verts)
 }
@@ -168,16 +169,28 @@ pub fn build_particles_split(
 /// Append one particle's textured cube (24 verts) to `verts`. Every face samples the
 /// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
 /// shaded per-face. The caller does the capacity + alpha gating.
-fn push_particle_cube(inst: &ParticleInstance, verts: &mut Vec<ParticleVertex>) {
+fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<ParticleVertex>) {
     let h = inst.size * 0.5;
     let c = Vec3::from(inst.pos.to_array());
     let [u0, v0] = inst.uv_min;
     let s = inst.uv_size;
     let u1 = u0 + s;
     let v1 = v0 + s;
-    let tint = inst.tint;
+    // Two-channel RGB light folds into the tint (shade keeps the directional
+    // term), so a fleck drifting through torch light stays lit at night.
+    let rgb = lighting::light_rgb(
+        DynLight {
+            sky: inst.skylight,
+            block: inst.blocklight,
+        },
+        env,
+    );
+    let tint = [
+        inst.tint[0] * rgb[0],
+        inst.tint[1] * rgb[1],
+        inst.tint[2] * rgb[2],
+    ];
     let alpha = inst.alpha;
-    let light = lighting::sky_light_factor(inst.skylight);
     // UV per face: bl=(u0,v1), br=(u1,v1), tr=(u1,v0), tl=(u0,v0) to match the
     // block pipeline (v grows downward in the atlas). The four corners follow
     // the same CCW order as the uv corners: bl, br, tr, tl.
@@ -187,7 +200,7 @@ fn push_particle_cube(inst: &ParticleInstance, verts: &mut Vec<ParticleVertex>) 
         // Offset the face plane outward along its normal (right x up points
         // out) so each face sits on the cube SURFACE, not through the centre.
         let fc = c + face.right.cross(face.up) * h;
-        let shade = face.shade * light;
+        let shade = face.shade;
         let corners = [
             (fc - r - up, [u0, v1]),
             (fc + r - up, [u1, v1]),
@@ -235,6 +248,7 @@ mod tests {
             alpha,
             size: 0.1,
             skylight: lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         }
     }
 
@@ -287,7 +301,9 @@ mod tests {
     }
 
     #[test]
-    fn skylight_scales_particle_face_shades() {
+    fn sampled_light_folds_into_the_particle_tint() {
+        // The two-channel RGB light rides the vertex TINT (shade keeps only the
+        // directional term), so a dark sample dims the tint, not the shade.
         let mut v = Vec::new();
         let dark = ParticleInstance {
             skylight: 0,
@@ -296,14 +312,10 @@ mod tests {
 
         build_particles(std::slice::from_ref(&dark), &mut v);
 
-        assert!(
-            v[2 * 4].shade < 1.0,
-            "top face should no longer be full bright"
-        );
-        assert!(
-            (v[2 * 4].shade - super::lighting::sky_light_factor(0)).abs() < 1e-6,
-            "top face should carry the sampled skylight factor"
-        );
+        assert_eq!(v[2 * 4].shade, 1.0, "shade stays directional-only");
+        let expect = lighting::light_rgb(DynLight { sky: 0, block: 0 }, LightEnv::IDENTITY);
+        assert_eq!(v[2 * 4].tint, expect, "unlit sample dims the tint");
+        assert!(expect[0] < 1.0);
     }
 
     #[test]

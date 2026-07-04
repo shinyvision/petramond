@@ -55,6 +55,7 @@ pub(crate) struct ChestPresentation {
     pub(crate) facing: Facing,
     pub(crate) lid_progress: f32,
     pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -64,6 +65,7 @@ pub(crate) struct DoorPresentation {
     pub(crate) tiles: [Tile; 3],
     pub(crate) swing_progress: f32,
     pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -75,6 +77,7 @@ pub(crate) struct DroppedItemPresentation {
     pub(crate) prev_spin: f32,
     pub(crate) spin: f32,
     pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -94,10 +97,12 @@ pub(crate) struct ParticlePresentation {
     pub(crate) alpha: f32,
     pub(crate) size: f32,
     pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MobPresentation {
+    pub(crate) id: u64,
     pub(crate) kind: Mob,
     pub(crate) prev_pos: Vec3,
     pub(crate) pos: Vec3,
@@ -112,6 +117,7 @@ pub(crate) struct MobPresentation {
     pub(crate) prev_head_pitch: f32,
     pub(crate) head_pitch: f32,
     pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
     pub(crate) hurt_flash: f32,
     pub(crate) shorn: bool,
     pub(crate) ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
@@ -124,7 +130,7 @@ pub(crate) struct GamePresentation<'a> {
     pub(crate) chests: &'a [ChestPresentation],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
-    pub(crate) held_item_light: (u8, u8),
+    pub(crate) held_item_light: (u8, u8, u8),
     pub(crate) break_overlay: Option<BreakOverlayView>,
 }
 
@@ -132,8 +138,8 @@ pub(crate) struct GamePresentation<'a> {
 pub(crate) struct GamePresentationScratch {
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
-    chest_rows: Vec<(IVec3, Facing, u8)>,
-    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8)>,
+    chest_rows: Vec<(IVec3, Facing, u8, u8)>,
+    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
@@ -179,6 +185,7 @@ impl GamePresentationScratch {
                         prev_spin: item.prev_spin,
                         spin: item.spin,
                         skylight: item.skylight,
+                        blocklight: item.blocklight,
                     }),
             );
     }
@@ -202,6 +209,7 @@ impl GamePresentationScratch {
                     alpha: particle.alpha(),
                     size: particle.render_size(),
                     skylight: particle.skylight,
+                    blocklight: particle.blocklight,
                 }
             }));
     }
@@ -209,34 +217,32 @@ impl GamePresentationScratch {
     fn collect_chests(&mut self, game: &Game) {
         game.world.collect_chests(&mut self.chest_rows);
         self.chests.clear();
-        self.chests
-            .extend(
-                self.chest_rows
-                    .iter()
-                    .map(|&(pos, facing, skylight)| ChestPresentation {
-                        pos,
-                        facing,
-                        lid_progress: game.chest_lid_angle(pos),
-                        skylight,
-                    }),
-            );
+        self.chests.extend(
+            self.chest_rows
+                .iter()
+                .map(|&(pos, facing, skylight, blocklight)| ChestPresentation {
+                    pos,
+                    facing,
+                    lid_progress: game.chest_lid_angle(pos),
+                    skylight,
+                    blocklight,
+                }),
+        );
     }
 
     fn collect_doors(&mut self, game: &Game) {
         game.world.collect_doors(&mut self.door_rows);
         self.doors.clear();
-        self.doors
-            .extend(
-                self.door_rows
-                    .iter()
-                    .map(|&(pos, state, tiles, skylight)| DoorPresentation {
-                        pos,
-                        state,
-                        tiles,
-                        swing_progress: game.door_swing_angle(pos),
-                        skylight,
-                    }),
-            );
+        self.doors.extend(self.door_rows.iter().map(
+            |&(pos, state, tiles, skylight, blocklight)| DoorPresentation {
+                pos,
+                state,
+                tiles,
+                swing_progress: game.door_swing_angle(pos),
+                skylight,
+                blocklight,
+            },
+        ));
     }
 
     fn collect_mobs(&mut self, game: &Game, tick_alpha: f32) {
@@ -247,6 +253,7 @@ impl GamePresentationScratch {
                 .instances()
                 .iter()
                 .map(|mob| MobPresentation {
+                    id: mob.id(),
                     kind: mob.kind,
                     prev_pos: mob.prev_pos,
                     pos: mob.pos,
@@ -261,6 +268,7 @@ impl GamePresentationScratch {
                     prev_head_pitch: mob.prev_head_pitch,
                     head_pitch: mob.head_pitch,
                     skylight: mob.skylight,
+                    blocklight: mob.blocklight,
                     hurt_flash: mob.hurt_flash(tick_alpha),
                     shorn: mob.is_shorn(),
                     ragdoll_pose: mob.ragdoll_pose(tick_alpha).map(Into::into),

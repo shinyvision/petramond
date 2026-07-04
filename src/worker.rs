@@ -212,16 +212,19 @@ pub enum GenOutput {
 thread_local! {
     /// Per-worker reused generator. Building a `ChunkGenerator` sets up the full noise
     /// stack, far too heavy per job; per-thread reuse also keeps its column-noise cache
-    /// warm across the jobs of one streaming burst.
-    static GENERATOR: RefCell<Option<(u32, ChunkGenerator)>> = const { RefCell::new(None) };
+    /// warm across the jobs of one streaming burst. Keyed by `(seed, gen-hook epoch)`
+    /// so a session (re)installing mod worldgen hooks evicts generators that captured
+    /// the previous config.
+    static GENERATOR: RefCell<Option<((u32, u64), ChunkGenerator)>> = const { RefCell::new(None) };
 }
 
 fn run_gen_job(job: GenJob) -> GenOutput {
     GENERATOR.with(|slot| {
         let mut slot = slot.borrow_mut();
         let seed = job.seed();
-        if slot.as_ref().is_none_or(|(s, _)| *s != seed) {
-            *slot = Some((seed, ChunkGenerator::new(seed)));
+        let key = (seed, crate::modding::gen::installed_epoch());
+        if slot.as_ref().is_none_or(|(k, _)| *k != key) {
+            *slot = Some((key, ChunkGenerator::new(seed)));
         }
         let (_, generator) = slot.as_mut().expect("generator installed above");
         match job {
@@ -320,6 +323,9 @@ mod tests {
             cv.notify_all();
         }
         done_rx.recv().unwrap();
-        assert_eq!(*order.lock().unwrap(), vec!["near-a", "near-b", "mid", "far"]);
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec!["near-a", "near-b", "mid", "far"]
+        );
     }
 }

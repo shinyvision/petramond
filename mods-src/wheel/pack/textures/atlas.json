@@ -1,0 +1,6 @@
+{
+  "tiles": [
+    { "name": "wheel:wheel_top", "file": "wheel_top.png" },
+    { "name": "wheel:wheel_face", "file": "wheel_face.png" }
+  ]
+}

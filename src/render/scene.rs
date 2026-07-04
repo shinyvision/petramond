@@ -39,9 +39,11 @@ pub(crate) struct Scene {
     doors: Vec<DoorInstance>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
-    /// Combined sky+block light + warm-tint amount for the first-person hand / held
-    /// item, sampled at the camera each frame so it brightens AND warms near torches.
+    /// Two-channel light + warm-tint amount for the first-person hand / held
+    /// item, sampled at the camera each frame so it brightens AND warms near
+    /// torches (and torch light keeps it lit at night).
     held_item_skylight: u8,
+    held_item_blocklight: u8,
     held_item_warm: u8,
 }
 
@@ -58,6 +60,7 @@ impl Scene {
         self.doors.clear();
         self.mobs.clear();
         self.held_item_skylight = 0;
+        self.held_item_blocklight = 0;
         self.held_item_warm = 0;
     }
 
@@ -77,7 +80,11 @@ impl Scene {
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
-        (self.held_item_skylight, self.held_item_warm) = presentation.held_item_light;
+        (
+            self.held_item_skylight,
+            self.held_item_blocklight,
+            self.held_item_warm,
+        ) = presentation.held_item_light;
     }
 
     /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
@@ -94,6 +101,7 @@ impl Scene {
                 facing: chest.facing,
                 lid01,
                 skylight: chest.skylight,
+                blocklight: chest.blocklight,
             });
         }
     }
@@ -117,13 +125,18 @@ impl Scene {
                 top_tile,
                 side_tile,
                 skylight: door.skylight,
+                blocklight: door.blocklight,
             });
         }
     }
 
     /// Hand the baked instances + held-item light to the renderer for this frame.
     pub(crate) fn upload(&self, renderer: &mut Renderer) {
-        renderer.set_held_item_light(self.held_item_skylight, self.held_item_warm);
+        renderer.set_held_item_light(
+            self.held_item_skylight,
+            self.held_item_blocklight,
+            self.held_item_warm,
+        );
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
         renderer.set_doors(&self.doors);
@@ -149,6 +162,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         head_yaw: lerp_angle(m.prev_head_yaw, m.head_yaw, alpha),
         head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
         skylight: m.skylight,
+        blocklight: m.blocklight,
         hurt: m.hurt_flash,
         shorn: m.shorn,
         ragdoll: m.ragdoll_pose.clone(),
@@ -183,6 +197,7 @@ fn bake_item_entities(
         count: d.count,
         spin: lerp_angle(d.prev_spin, d.spin, alpha),
         skylight: d.skylight,
+        blocklight: d.blocklight,
     }));
 }
 
@@ -206,6 +221,7 @@ fn bake_particles(
             alpha: p.alpha,
             size: p.size,
             skylight: p.skylight,
+            blocklight: p.blocklight,
         };
         match p.atlas {
             ParticleAtlas::Block => block_out.push(inst),
@@ -229,6 +245,7 @@ mod tests {
             prev_spin: 0.0,
             spin: 0.0,
             skylight: 0,
+            blocklight: 0,
         }
     }
 
@@ -243,6 +260,7 @@ mod tests {
             alpha: 1.0,
             size: 0.1,
             skylight: 0,
+            blocklight: 0,
         }
     }
 

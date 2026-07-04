@@ -21,8 +21,7 @@
 use glam::{Mat4, Quat, Vec3};
 
 use super::block_model::{push_block_item_cube_lit, push_cube_solid_lit};
-#[cfg(test)]
-use super::lighting;
+use super::lighting::DynLight;
 use super::HeldItemView;
 use crate::atlas::Tile;
 use crate::block::Block;
@@ -60,13 +59,13 @@ pub fn build_hand(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> Mat4 {
-    build_hand_lit(view, aspect, lighting::FULL_SKYLIGHT, 0, verts, indices)
+    build_hand_lit(view, aspect, DynLight::FULL, 0, verts, indices)
 }
 
 pub(super) fn build_hand_lit(
     view: &HeldItemView,
     aspect: f32,
-    skylight: u8,
+    light: DynLight,
     warm: u8,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -84,7 +83,7 @@ pub(super) fn build_hand_lit(
                 SKIN,
                 Vec3::new(-0.5, -0.5, -0.5),
                 1.0,
-                skylight,
+                light,
             );
             Mat4::from_scale(Vec3::new(4.0, 12.0, 4.0))
         }
@@ -99,7 +98,7 @@ pub(super) fn build_hand_lit(
                         indices,
                         Vec3::new(-0.5, -0.5, -0.5),
                         1.0,
-                        skylight,
+                        light,
                     );
                 } else {
                     push_block_item_cube_lit(
@@ -108,7 +107,7 @@ pub(super) fn build_hand_lit(
                         block,
                         Vec3::new(-0.5, -0.5, -0.5),
                         1.0,
-                        skylight,
+                        light,
                     );
                 }
                 Mat4::from_scale_rotation_translation(
@@ -391,11 +390,19 @@ mod tests {
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
 
-        build_hand_lit(&view, 16.0 / 9.0, 9, 0, &mut v, &mut i);
+        build_hand_lit(
+            &view,
+            16.0 / 9.0,
+            DynLight { sky: 9, block: 5 },
+            0,
+            &mut v,
+            &mut i,
+        );
 
         assert!(!v.is_empty());
         for vert in &v {
-            assert_eq!((vert.packed >> 23) & 0x3F, 9);
+            assert_eq!((vert.packed >> 23) & 0x3F, 9, "sky channel in word 1");
+            assert_eq!(vert.packed2 & 0x3F, 5, "block channel in word 2");
         }
     }
 
@@ -768,7 +775,8 @@ mod tests {
             let mut verts = Vec::new();
             crate::render::item_model::build_extruded_item_lit(
                 tile,
-                lighting::FULL_SKYLIGHT,
+                DynLight::FULL,
+                crate::render::lighting::LightEnv::IDENTITY,
                 &mut verts,
             );
             let src = format!("{}/assets/textures/{}", env!("CARGO_MANIFEST_DIR"), file);

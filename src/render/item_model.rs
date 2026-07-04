@@ -17,7 +17,7 @@
 //! reads (front brightest, back dim, side walls mid).
 
 use super::foliage_tint;
-use super::lighting;
+use super::lighting::{self, DynLight, LightEnv};
 use crate::atlas::{tile_alpha_opaque, tile_uv, Tile};
 use crate::bbmodel::face_corners;
 use crate::block_model::{self, BlockModelKind};
@@ -27,8 +27,10 @@ use glam::{Mat4, Vec3};
 
 /// Bake a bbmodel block's baked model into indexed [`ItemVertex`] geometry (sampling the
 /// MODEL atlas, the same sheet the in-world block uses) — the model centred + uniformly
-/// scaled to a unit cube (`±0.5`), then placed by `transform`, lit by `skylight` (× the
-/// per-face directional shade) and warmed by `warm` (0..255). APPENDS (caller clears).
+/// scaled to a unit cube (`±0.5`), then placed by `transform`, lit by the two-channel
+/// `light` under `env` (folded into the vertex TINT as an RGB factor; the vertex `shade`
+/// keeps only the directional term) and warmed by `warm` (0..255). APPENDS (caller
+/// clears).
 /// Shared by the inventory ICON, the first-person HELD item, and the DROPPED item-entity
 /// so all three show the real workbench, not a stand-in cube.
 ///
@@ -38,7 +40,8 @@ use glam::{Mat4, Vec3};
 pub fn build_block_model_item(
     kind: BlockModelKind,
     transform: Mat4,
-    skylight: u8,
+    light: DynLight,
+    env: LightEnv,
     warm: u8,
     view_sort: Option<Vec3>,
     verts: &mut Vec<ItemVertex>,
@@ -56,8 +59,11 @@ pub fn build_block_model_item(
     let span = fp.max_element().max(1.0);
     let map =
         transform * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
-    let light = lighting::sky_light_factor(skylight);
-    let tint = crate::torch::warm_tint([1.0, 1.0, 1.0], warm as f32 / 255.0);
+    // RGB light (sky channel dims/tints with the env; block channel is night-
+    // invariant) folds into the tint; `shade` keeps the directional term only.
+    let rgb = lighting::light_rgb(light, env);
+    let warm = crate::torch::warm_tint([1.0, 1.0, 1.0], warm as f32 / 255.0);
+    let tint = [warm[0] * rgb[0], warm[1] * rgb[1], warm[2] * rgb[2]];
 
     // Draw order (far→near for the depthless icon; natural otherwise).
     let mut order: Vec<usize> = (0..inst.cubes.len()).collect();
@@ -90,7 +96,7 @@ pub fn build_block_model_item(
             if (p[1] - p[0]).cross(p[3] - p[0]).length_squared() < 1e-12 {
                 continue;
             }
-            let shade = SHADES[face.shade_idx() as usize] * light;
+            let shade = SHADES[face.shade_idx() as usize];
             let [u0, v0, u1, v1] = uv;
             let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
             let start = verts.len() as u32;
@@ -130,7 +136,8 @@ pub fn build_block_model_icon(
     // caller's icon MVP — so positions land in clip space.
     let span = fp.max_element().max(1.0);
     let map = mvp * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
-    let light = lighting::sky_light_factor(super::lighting::FULL_SKYLIGHT);
+    // Full-bright, and always at the identity environment: icons are UI, not world.
+    let light = lighting::light_rgb(DynLight::FULL, LightEnv::IDENTITY)[0];
     let tint = [1.0, 1.0, 1.0];
 
     // Collect every face with its mean clip-z, then sort far→near (painter's algorithm).
@@ -295,18 +302,26 @@ fn push_quad(
 /// emitted per alpha-boundary texel edge with that texel's own sub-UV.
 #[cfg(test)]
 pub fn build_extruded_item(tile: Tile, out: &mut Vec<ItemVertex>) -> u32 {
-    build_extruded_item_lit(tile, lighting::FULL_SKYLIGHT, out)
+    build_extruded_item_lit(tile, DynLight::FULL, LightEnv::IDENTITY, out)
 }
 
-pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<ItemVertex>) -> u32 {
+pub(super) fn build_extruded_item_lit(
+    tile: Tile,
+    light: DynLight,
+    env: LightEnv,
+    out: &mut Vec<ItemVertex>,
+) -> u32 {
     out.clear();
 
     // Foliage tint for the whole sprite: grass-green for a held fern / short grass,
     // white (no-op) for flowers / tools / blocks. The fern tile is grayscale and
     // would read gray in-hand without this — matches the dropped-item + icon paths
     // (both via `foliage_tint::face_material`).
-    let tint = foliage_tint::face_material(tile).tint;
-    let light = lighting::sky_light_factor(skylight);
+    // RGB light folds into the tint (see `build_block_model_item`); `shade` keeps
+    // the front/back/side directional terms only.
+    let rgb = lighting::light_rgb(light, env);
+    let base = foliage_tint::face_material(tile).tint;
+    let tint = [base[0] * rgb[0], base[1] * rgb[1], base[2] * rgb[2]];
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
     let [fu0, fv0, fu1, fv1] = tile_uv(tile);
@@ -322,7 +337,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
             [-0.5, 0.5, zf],
         ],
         [[fu0, fv1], [fu1, fv1], [fu1, fv0], [fu0, fv0]],
-        SHADE_FRONT * light,
+        SHADE_FRONT,
         tint,
     );
     // BACK face (-Z), wound the other way so it faces -Z.
@@ -335,7 +350,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
             [0.5, 0.5, zb],
         ],
         [[fu1, fv1], [fu0, fv1], [fu0, fv0], [fu1, fv0]],
-        SHADE_BACK * light,
+        SHADE_BACK,
         tint,
     );
 
@@ -364,7 +379,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     out,
                     [[xl, yb, zb], [xl, yb, zf], [xl, yt, zf], [xl, yt, zb]],
                     [uc, uc, uc, uc],
-                    SHADE_SIDE * light,
+                    SHADE_SIDE,
                     tint,
                 );
             }
@@ -374,7 +389,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     out,
                     [[xr, yb, zf], [xr, yb, zb], [xr, yt, zb], [xr, yt, zf]],
                     [uc, uc, uc, uc],
-                    SHADE_SIDE * light,
+                    SHADE_SIDE,
                     tint,
                 );
             }
@@ -384,7 +399,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     out,
                     [[xl, yt, zf], [xr, yt, zf], [xr, yt, zb], [xl, yt, zb]],
                     [uc, uc, uc, uc],
-                    SHADE_SIDE * light,
+                    SHADE_SIDE,
                     tint,
                 );
             }
@@ -394,7 +409,7 @@ pub(super) fn build_extruded_item_lit(tile: Tile, skylight: u8, out: &mut Vec<It
                     out,
                     [[xl, yb, zb], [xr, yb, zb], [xr, yb, zf], [xl, yb, zf]],
                     [uc, uc, uc, uc],
-                    SHADE_SIDE * light,
+                    SHADE_SIDE,
                     tint,
                 );
             }
@@ -464,12 +479,21 @@ mod tests {
     }
 
     #[test]
-    fn lit_extruded_item_scales_shades() {
+    fn lit_extruded_item_folds_light_into_the_tint() {
+        // The two-channel RGB light rides the vertex TINT (shade keeps only the
+        // directional term), so a dark sample dims the tint, not the shade.
         let mut out = Vec::new();
-        build_extruded_item_lit(Tile::named("poppy"), 0, &mut out);
+        build_extruded_item_lit(
+            Tile::named("poppy"),
+            DynLight { sky: 0, block: 0 },
+            LightEnv::IDENTITY,
+            &mut out,
+        );
 
-        assert_eq!(out[0].shade, SHADE_FRONT * lighting::sky_light_factor(0));
-        assert!(out[0].shade < SHADE_FRONT);
+        assert_eq!(out[0].shade, SHADE_FRONT);
+        let dark = lighting::light_rgb(DynLight { sky: 0, block: 0 }, LightEnv::IDENTITY);
+        assert_eq!(out[0].tint, dark, "unlit sample dims the tint");
+        assert!(dark[0] < 1.0);
     }
 
     #[test]

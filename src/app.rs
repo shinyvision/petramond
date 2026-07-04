@@ -41,6 +41,10 @@ pub struct App {
     /// Render-side translation of neutral per-frame presentation data into the
     /// renderer's wire structs.
     scene: Scene,
+    /// Spatial sound commands emitted by ticks since the last render. They are
+    /// applied alongside the same mob presentation snapshot the renderer uses.
+    spatial_sound_commands: Vec<crate::game::ModSpatialSoundCommand>,
+    spatial_mob_positions: Vec<(u64, crate::mathh::Vec3)>,
     /// Client-side sound engine. Drains the sim's per-tick [`crate::audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
     audio: Audio,
@@ -62,6 +66,9 @@ pub struct App {
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     world_scroll: usize,
+    /// The World Settings session for the selected world (`None` unless the
+    /// screen is open): installed pack rows + the world's disabled set.
+    world_settings: Option<shell::WorldSettingsSession>,
     create_world_name: TextInput,
     create_world_seed: TextInput,
     focused_create_field: Option<shell::CreateField>,
@@ -89,6 +96,8 @@ impl App {
             render_dist,
             presentation: GamePresentationScratch::new(),
             scene: Scene::new(),
+            spatial_sound_commands: Vec::new(),
+            spatial_mob_positions: Vec::new(),
             audio: Audio::new(),
             last: now_seconds(),
             input: InputController::default(),
@@ -101,6 +110,7 @@ impl App {
             worlds: Vec::new(),
             selected_world: None,
             world_scroll: 0,
+            world_settings: None,
             create_world_name: TextInput::new(48),
             create_world_seed: TextInput::new(48),
             focused_create_field: None,

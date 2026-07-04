@@ -1,0 +1,12 @@
+[package]
+name = "smoke"
+version = "0.1.0"
+edition = "2021"
+description = "Phase 2b smoke-test mod: one namespaced block, a tick logger, a block_placed observer."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

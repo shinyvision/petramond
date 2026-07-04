@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "block": "wheel:wheel_of_fortune",
+      "shape": "cube",
+      "flags": ["solid", "opaque", "ao_occluder"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": { "open_gui": "wheel:wheel" },
+      "collision": [{ "min": [0, 0, 0], "max": [1, 1, 1] }],
+      "emission": 0,
+      "tiles": ["wheel:wheel_top", "wheel:wheel_top", "wheel:wheel_face"],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2.0,
+      "drops": [{ "item": "wheel:wheel_of_fortune", "min": 1, "max": 1, "chance": 1.0 }]
+    }
+  ]
+}

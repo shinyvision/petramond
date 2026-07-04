@@ -256,9 +256,9 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
                     }
                 }
                 if log {
-                    block_color(Block::OakLog as u8)
+                    block_color(Block::OakLog.id())
                 } else if leaf {
-                    block_color(Block::OakLeaves as u8)
+                    block_color(Block::OakLeaves.id())
                 } else if terr != 0 {
                     block_color(terr)
                 } else if wy >= 64 {

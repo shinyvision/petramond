@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "block": "smoke:smoke_block",
+      "shape": "cube",
+      "flags": ["solid", "opaque", "ao_occluder"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": { "open_gui": "smoke:panel" },
+      "collision": [{ "min": [0, 0, 0], "max": [1, 1, 1] }],
+      "emission": 0,
+      "tiles": ["stone", "stone", "cobblestone"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [{ "item": "smoke:smoke_block", "min": 1, "max": 1, "chance": 1.0 }]
+    }
+  ]
+}

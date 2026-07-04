@@ -2,6 +2,9 @@
 pub(super) enum AppScreen {
     Title,
     WorldSelect,
+    /// Per-world mod enablement for the selected world (opened from
+    /// world-select; also hosts the relocated Delete World button).
+    WorldSettings,
     CreateWorld,
     DeleteWorld,
     Game,
@@ -16,6 +19,10 @@ pub(super) enum AppScreen {
     /// The furniture-workbench screen (one input block + a grid of craftable results),
     /// opened by right-clicking a placed workbench.
     FurnitureWorkbench,
+    /// A mod-defined GUI screen (widgets-only in Phase 5), opened by a block's
+    /// `open_gui` interaction or a mod's `GuiOpen` call. Carries which
+    /// registered kind it draws.
+    ModGui(crate::gui::GuiKind),
 }
 
 impl AppScreen {
@@ -30,6 +37,7 @@ impl AppScreen {
             self,
             AppScreen::Title
                 | AppScreen::WorldSelect
+                | AppScreen::WorldSettings
                 | AppScreen::CreateWorld
                 | AppScreen::DeleteWorld
                 | AppScreen::Pause
@@ -53,6 +61,7 @@ impl AppScreen {
                 | AppScreen::Furnace
                 | AppScreen::Chest
                 | AppScreen::FurnitureWorkbench
+                | AppScreen::ModGui(_)
         )
     }
 
@@ -69,8 +78,10 @@ impl AppScreen {
             AppScreen::Furnace => GuiKind::Furnace,
             AppScreen::Chest => GuiKind::Chest,
             AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
+            AppScreen::ModGui(kind) => kind,
             AppScreen::Title
             | AppScreen::WorldSelect
+            | AppScreen::WorldSettings
             | AppScreen::CreateWorld
             | AppScreen::DeleteWorld
             | AppScreen::Pause => GuiKind::Other,

@@ -1,0 +1,13 @@
+[package]
+name = "mod-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Llamacraft guest-side mod SDK: allocator/dispatch glue, the Mod trait, and safe host-call wrappers over mod-api."
+license = "MIT"
+
+# Standalone: keep this crate OUT of the engine workspace (it is linked into
+# wasm guests, never the engine). Mods depend on it by path from mods-src/.
+[workspace]
+
+[dependencies]
+mod-api = { path = "../mod-api" }

@@ -13,10 +13,10 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
-use crate::worker::JobPool;
 use crate::furnace::Facing;
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
+use crate::worker::JobPool;
 
 /// Total worker nanoseconds and jobs spent building section meshes — temporary
 /// perf-session diagnostics read by the out-of-tree streaming profiler.

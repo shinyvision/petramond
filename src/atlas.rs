@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn manifest_layers_merge_by_tile_name() {
-        let (base, _) = crate::assets::read_text("textures/atlas.json")
+        let (base, _) = crate::assets::read_base_text("textures/atlas.json")
             .expect("assets/textures/atlas.json must ship");
         // A pack layer retints an existing tile (replacing its row in place)
         // and appends a brand-new tile reusing an existing PNG.

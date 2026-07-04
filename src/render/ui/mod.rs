@@ -14,9 +14,11 @@
 //! order back-to-front:
 //! - `dim`: the fullscreen menu backdrop (solid; menus only).
 //! - `panel`: the baked panel PNG quad (its own texture).
-//! - `overlays`: dynamic [`OverlayTag`] quads clipped by game state (furnace
-//!   gauges), each its own texture — `overlay_spans` records the per-overlay
-//!   `(tag, vertex count)` so the renderer binds the right texture per quad.
+//! - `overlays`: dynamic string-tagged overlay quads clipped by game state
+//!   (furnace gauges; mod overlays clipped by the GUI state map) plus mod
+//!   widget art (`image`/`button`/`rotimage`), each its own texture —
+//!   `overlay_spans` records the per-group `(sprite key, vertex count)` so the
+//!   renderer binds the right texture per quad group.
 //! - `hover`: the hover / selection highlight (its own texture), over the slot
 //!   under the cursor — or, for the hotbar HUD, the active slot.
 //! - `icon_quads`: one `(item, slot rect)` per filled slot (icon atlas).
@@ -28,7 +30,8 @@
 pub(crate) mod icon;
 
 use crate::gui::{
-    self as gui_layout, gui_scale, GuiKind, HoverFit, OverlayTag, Role, ShellKind, SlotRect,
+    self as gui_layout, gui_scale, GuiKind, GuiValue, HoverFit, OverlayMode, Role, ShellKind,
+    SlotRect, SpriteKey, WidgetDef,
 };
 use crate::gui::{
     ShellButton, ShellInput, ShellListRow, ShellScrollbar, ShellText, ShellTextAlign, UiSnapshot,
@@ -70,11 +73,12 @@ const HEART_MARGIN: f32 = 8.0;
 /// One heart atlas cell as a fraction of atlas width — three cells: empty | half | full.
 const HEART_CELL_U: f32 = 1.0 / 3.0;
 
-/// One dynamic-overlay quad's place in [`UiBuild::overlays`]: which texture binds
-/// it ([`OverlayTag`]) and how many vertices it spans (always 6 for one quad).
+/// One dynamic-overlay/widget quad group's place in [`UiBuild::overlays`]:
+/// which sprite texture binds it (the interned image file name) and how many
+/// vertices it spans.
 #[derive(Copy, Clone, Debug)]
 pub struct OverlaySpan {
-    pub tag: OverlayTag,
+    pub tex: SpriteKey,
     pub count: u32,
 }
 
@@ -106,9 +110,11 @@ pub struct UiBuild {
     pub dim: Vec<UiVertex>,
     /// The baked panel PNG quad (textured by its own panel bind group).
     pub panel: Vec<UiVertex>,
-    /// Dynamic overlay quads (furnace gauges) concatenated; each its own texture.
+    /// Dynamic overlay quads (furnace gauges, mod gauges) and mod widget art
+    /// concatenated; each group its own texture.
     pub overlays: Vec<UiVertex>,
-    /// Per-overlay `(tag, vertex count)` describing how to slice + bind `overlays`.
+    /// Per-group `(sprite key, vertex count)` describing how to slice + bind
+    /// `overlays`.
     pub overlay_spans: Vec<OverlaySpan>,
     /// Hover / selection highlight quad (its own texture). Empty when nothing is
     /// highlighted.
@@ -653,28 +659,35 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
     }
 }
 
-/// Emit a dynamic overlay clipped by `frac` (`0..=1`) of game progress, recording
-/// its span so the renderer binds the overlay's own texture. No-op at `frac <= 0`.
-/// The fill direction is the overlay's defining behaviour: the smelt arrow grows
-/// left→right with cook progress; the burn flame depletes top→down (the bottom
-/// `frac` stays lit) as fuel runs out.
+/// Record the sprite span for vertices pushed into `build.overlays` since
+/// `start`, so the renderer binds `tex` for exactly that quad group.
+fn close_sprite_span(build: &mut UiBuild, start: usize, tex: SpriteKey) {
+    let count = (build.overlays.len() - start) as u32;
+    if count > 0 {
+        build.overlay_spans.push(OverlaySpan { tex, count });
+    }
+}
+
+/// Emit a dynamic overlay clipped by `frac` (`0..=1`), recording its sprite
+/// span so the renderer binds the overlay's own texture. No-op at `frac <= 0`.
+/// The fill direction is the overlay row's declared mode: `grow_lr` grows
+/// left→right with the fraction (the smelt arrow); `deplete_td` keeps the
+/// bottom `frac` visible (the burn flame as fuel runs out).
 fn push_overlay(
     build: &mut UiBuild,
-    def: &gui_layout::GuiDef,
     screen: (u32, u32),
-    tag: OverlayTag,
+    r: SlotRect,
+    mode: OverlayMode,
+    tex: SpriteKey,
     frac: f32,
 ) {
     let frac = frac.clamp(0.0, 1.0);
     if frac <= 0.0 {
         return;
     }
-    let Some(r) = def.overlay_rect(tag, screen) else {
-        return;
-    };
     let start = build.overlays.len();
-    match tag {
-        OverlayTag::FurnaceArrow => {
+    match mode {
+        OverlayMode::GrowLr => {
             push_quad_uv(
                 &mut build.overlays,
                 screen,
@@ -687,7 +700,7 @@ fn push_overlay(
                 WHITE,
             );
         }
-        OverlayTag::FurnaceFlame => {
+        OverlayMode::DepleteTd => {
             let lit_h = r.h * frac;
             let top = r.h - lit_h;
             push_quad_uv(
@@ -702,10 +715,204 @@ fn push_overlay(
                 WHITE,
             );
         }
-        OverlayTag::Other => return,
     }
-    let count = (build.overlays.len() - start) as u32;
-    build.overlay_spans.push(OverlaySpan { tag, count });
+    close_sprite_span(build, start, tex);
+}
+
+/// An overlay's `0..=1` fraction: the furnace tags read the live
+/// [`FurnaceView`](crate::gui::FurnaceView) (KEEPING the furnace gauges'
+/// behaviour identical to the pre-Phase-5 hardcode); anything else reads the
+/// GUI state map at the tag key (`F32`; absent = 0, drawn not at all).
+fn overlay_fraction(ui: &UiSnapshot, tag: &str) -> f32 {
+    if let Some(f) = ui.furnace {
+        match tag {
+            "furnace_arrow" => return f.cook01,
+            "furnace_flame" => return f.burn01,
+            _ => {}
+        }
+    }
+    match state_value(ui, tag) {
+        Some(GuiValue::F32(v)) => *v,
+        _ => 0.0,
+    }
+}
+
+/// A GUI state map read for this frame's snapshot, or `None` when no mod GUI
+/// session is up / the key is absent.
+fn state_value<'a>(ui: &'a UiSnapshot, key: &str) -> Option<&'a GuiValue> {
+    ui.gui_state.as_ref()?.get(key)
+}
+
+/// A state value rendered as label text.
+fn state_text(v: &GuiValue) -> String {
+    match v {
+        GuiValue::Str(s) => s.clone(),
+        GuiValue::I32(i) => i.to_string(),
+        GuiValue::F32(f) => format!("{f}"),
+    }
+}
+
+/// The four pixel-space corners of `r` rotated by `angle` radians (clockwise
+/// on screen, y-down) around `pivot` (absolute pixels), in tl/tr/br/bl order.
+fn rotated_quad_corners(r: SlotRect, pivot: (f32, f32), angle: f32) -> [[f32; 2]; 4] {
+    let (sin, cos) = angle.sin_cos();
+    let rot = |x: f32, y: f32| -> [f32; 2] {
+        let (dx, dy) = (x - pivot.0, y - pivot.1);
+        [pivot.0 + dx * cos - dy * sin, pivot.1 + dx * sin + dy * cos]
+    };
+    [
+        rot(r.x, r.y),
+        rot(r.x + r.w, r.y),
+        rot(r.x + r.w, r.y + r.h),
+        rot(r.x, r.y + r.h),
+    ]
+}
+
+/// Push a full-texture quad whose corners are arbitrary pixel-space points
+/// (tl/tr/br/bl) — the rotated `rotimage` draw. Same two-triangle winding as
+/// [`push_quad_uv`].
+fn push_corner_quad(out: &mut Vec<UiVertex>, screen: (u32, u32), c: [[f32; 2]; 4]) {
+    let p = |i: usize| pixel_to_ndc(screen, c[i][0], c[i][1]);
+    let v = |pos: [f32; 2], uv: [f32; 2]| UiVertex {
+        pos,
+        uv,
+        color: WHITE,
+    };
+    let (tl, tr, br, bl) = (p(0), p(1), p(2), p(3));
+    out.push(v(tl, [0.0, 0.0]));
+    out.push(v(bl, [0.0, 1.0]));
+    out.push(v(br, [1.0, 1.0]));
+    out.push(v(tl, [0.0, 0.0]));
+    out.push(v(br, [1.0, 1.0]));
+    out.push(v(tr, [1.0, 0.0]));
+}
+
+/// Draw a mod GUI's widgets: static images and button art into the sprite
+/// spans, `rotimage` quads rotated by their state angle, the button hover
+/// (its own `hover_image`, or the GUI's shared hover highlight), and labels
+/// through the runtime text pipeline (static `text` overridden by the state
+/// map at `state_key`).
+fn push_widgets(
+    ui: &UiSnapshot,
+    build: &mut UiBuild,
+    def: &'static gui_layout::GuiDef,
+    scale: f32,
+) {
+    let screen = ui.screen;
+    def.for_each_widget(screen, |w, r| match w {
+        WidgetDef::Image { image, .. } => {
+            let start = build.overlays.len();
+            push_quad_uv(
+                &mut build.overlays,
+                screen,
+                r.x,
+                r.y,
+                r.w,
+                r.h,
+                [0.0, 0.0],
+                [1.0, 1.0],
+                WHITE,
+            );
+            close_sprite_span(build, start, image);
+        }
+        WidgetDef::Button {
+            image, hover_image, ..
+        } => {
+            let hovered = r.contains(ui.cursor_px.0, ui.cursor_px.1);
+            if let Some(tex) = image {
+                let start = build.overlays.len();
+                push_quad_uv(
+                    &mut build.overlays,
+                    screen,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h,
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    WHITE,
+                );
+                close_sprite_span(build, start, tex);
+            }
+            if hovered {
+                if let Some(tex) = hover_image {
+                    // A dedicated hover skin replaces the shared highlight.
+                    let start = build.overlays.len();
+                    push_quad_uv(
+                        &mut build.overlays,
+                        screen,
+                        r.x,
+                        r.y,
+                        r.w,
+                        r.h,
+                        [0.0, 0.0],
+                        [1.0, 1.0],
+                        WHITE,
+                    );
+                    close_sprite_span(build, start, tex);
+                } else if let Some(h) = def.hover() {
+                    push_shell_hover(
+                        &mut build.hover,
+                        screen,
+                        r,
+                        h.margin as f32 * scale,
+                        h.opacity,
+                        h.fit,
+                        h.image_size,
+                        scale,
+                    );
+                }
+            }
+        }
+        WidgetDef::Rotimage {
+            image,
+            pivot,
+            state_key,
+            ..
+        } => {
+            let angle = match state_value(ui, state_key) {
+                Some(GuiValue::F32(a)) => *a,
+                _ => 0.0,
+            };
+            let pivot = match pivot {
+                Some([px, py]) => (r.x + px * scale, r.y + py * scale),
+                None => (r.x + r.w * 0.5, r.y + r.h * 0.5),
+            };
+            let start = build.overlays.len();
+            push_corner_quad(
+                &mut build.overlays,
+                screen,
+                rotated_quad_corners(r, pivot, angle),
+            );
+            close_sprite_span(build, start, image);
+        }
+        WidgetDef::Label {
+            text,
+            state_key,
+            align,
+            color,
+            ..
+        } => {
+            let dynamic = state_key
+                .as_ref()
+                .and_then(|k| state_value(ui, k))
+                .map(state_text);
+            let Some(content) = dynamic.or_else(|| text.clone()) else {
+                return;
+            };
+            let run = ShellText {
+                rect: r,
+                text: content,
+                color: *color,
+                cell_px: scale.max(1.0),
+                align: match align {
+                    gui_layout::LabelAlign::Center => ShellTextAlign::Center,
+                    gui_layout::LabelAlign::Left => ShellTextAlign::Left,
+                },
+            };
+            push_shell_text_run(build, &run, TextMode::Rasterized, true);
+        }
+    });
 }
 
 /// Emit the bottom-left heart bar for `health` (half-heart points). Every heart gets an
@@ -791,11 +998,22 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
         WHITE,
     );
 
-    // Dynamic overlays (the furnace's smelt arrow + burn flame).
-    if let Some(f) = ui.furnace {
-        push_overlay(build, def, screen, OverlayTag::FurnaceArrow, f.cook01);
-        push_overlay(build, def, screen, OverlayTag::FurnaceFlame, f.burn01);
-    }
+    // Dynamic overlays, in manifest order: the furnace's smelt arrow + burn
+    // flame (fractions from FurnaceView, exactly as before) and mod overlays
+    // (fractions from the GUI state map at the tag key).
+    def.for_each_overlay(screen, |o, r| {
+        push_overlay(
+            build,
+            screen,
+            r,
+            o.mode,
+            o.image,
+            overlay_fraction(ui, o.tag),
+        );
+    });
+
+    // Mod GUI widgets (images, buttons + their hover, rotimages, labels).
+    push_widgets(ui, build, def, scale);
 
     // Hover / selection highlight. The hotbar HUD always highlights the active
     // slot (the held item); every open menu highlights the slot under the cursor.
@@ -1122,6 +1340,39 @@ mod tests {
             WHITE,
         );
         assert_eq!(verts.len(), 9 * 6);
+    }
+
+    #[test]
+    fn rotimage_corners_rotate_around_the_pivot() {
+        let r = SlotRect {
+            x: 10.0,
+            y: 20.0,
+            w: 8.0,
+            h: 4.0,
+        };
+        let pivot = (14.0, 22.0); // rect centre
+                                  // No angle = the axis-aligned rect.
+        let c0 = rotated_quad_corners(r, pivot, 0.0);
+        assert_eq!(c0[0], [10.0, 20.0]);
+        assert_eq!(c0[2], [18.0, 24.0]);
+        // A quarter turn (y-down screen space) maps the top-left corner's
+        // offset (-4, -2) to (2, -4): rotation about the pivot, not the origin.
+        let c90 = rotated_quad_corners(r, pivot, std::f32::consts::FRAC_PI_2);
+        let close =
+            |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4;
+        assert!(close(c90[0], [16.0, 18.0]), "{:?}", c90[0]);
+        assert!(close(c90[2], [12.0, 26.0]), "{:?}", c90[2]);
+        // A full turn returns every corner home.
+        let c360 = rotated_quad_corners(r, pivot, std::f32::consts::TAU);
+        for (a, b) in c360.iter().zip(c0.iter()) {
+            assert!(close(*a, *b));
+        }
+        // The pivot itself is a fixed point wherever it sits.
+        let cp = rotated_quad_corners(r, (10.0, 20.0), 1.234);
+        assert!(
+            close(cp[0], [10.0, 20.0]),
+            "corner at the pivot never moves"
+        );
     }
 
     #[test]

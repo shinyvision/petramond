@@ -33,6 +33,17 @@ impl App {
         if events.open_furniture_workbench.is_some() && self.screen.gameplay_enabled() {
             self.open_furniture_workbench();
         }
+        // A block's `open_gui` interaction or a mod's `GuiOpen` request.
+        if let Some((kind, pos)) = events.open_mod_gui {
+            if self.screen.gameplay_enabled() {
+                self.open_mod_gui(kind, pos);
+            }
+        }
+        // A mod's `GuiClose` closes only an open MOD GUI (engine containers
+        // are not closable from mods).
+        if events.close_mod_gui && matches!(self.screen, AppScreen::ModGui(_)) {
+            self.close_menu();
+        }
     }
 
     fn open_inventory(&mut self) {
@@ -71,6 +82,15 @@ impl App {
         self.enter_menu(AppScreen::FurnitureWorkbench);
         if let Some(game) = self.game.as_mut() {
             game.open_workbench_screen();
+        }
+    }
+
+    /// Open a mod GUI screen (after a block's `open_gui` interaction or a
+    /// mod's `GuiOpen` request). `pos` is the opening block, if any.
+    fn open_mod_gui(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
+        self.enter_menu(AppScreen::ModGui(kind));
+        if let Some(game) = self.game.as_mut() {
+            game.open_mod_gui_screen(kind, pos);
         }
     }
 
@@ -114,6 +134,11 @@ impl App {
             self.pointer.release_for_menu();
             true
         } else if matches!(self.screen, AppScreen::DeleteWorld) {
+            self.screen = AppScreen::WorldSelect;
+            self.pointer.release_for_menu();
+            true
+        } else if matches!(self.screen, AppScreen::WorldSettings) {
+            self.world_settings = None;
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
             true

@@ -439,7 +439,9 @@ fn parse_faces(faces: Option<&Value>, sheet: &TextureSheet) -> [Option<[f32; 4]>
     let mut out = [None; 6];
     let Some(faces) = faces else { return out };
     for (name, slot) in NAMES {
-        let Some(face) = faces.get(name) else { continue };
+        let Some(face) = faces.get(name) else {
+            continue;
+        };
         if let Some(uv) = face.get("uv").and_then(Value::as_array) {
             if uv.len() == 4 {
                 let v: Vec<f32> = uv.iter().filter_map(num).collect();
@@ -682,7 +684,8 @@ impl TextureSheet {
             for row in 0..h {
                 let src = (row * w * 4) as usize;
                 let dst = (((y_off + row) * sheet_w) * 4) as usize;
-                rgba[dst..dst + (w * 4) as usize].copy_from_slice(&tex[src..src + (w * 4) as usize]);
+                rgba[dst..dst + (w * 4) as usize]
+                    .copy_from_slice(&tex[src..src + (w * 4) as usize]);
             }
             rects.push(Some(TexRect {
                 uv_w,
@@ -817,7 +820,11 @@ mod tests {
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut out = String::new();
         for chunk in bytes.chunks(3) {
-            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
             let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
             for i in 0..4 {
                 if i <= chunk.len() {

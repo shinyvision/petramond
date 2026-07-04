@@ -2,7 +2,7 @@ use crate::entity::DroppedItem;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 
-use super::{entities::light6_at_pos, tick::TickEvents, Game};
+use super::{entities::light_at_pos, tick::TickEvents, Game};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct DropQueue {
@@ -163,7 +163,7 @@ impl Game {
         let dir = self.cam.forward();
         let origin = self.cam.pos + dir * 0.3;
         let mut drop = DroppedItem::thrown(origin, stack, dir);
-        drop.skylight = light6_at_pos(&self.world, origin);
+        (drop.skylight, drop.blocklight) = light_at_pos(&self.world, origin);
         self.world.spawn_item(drop);
     }
 }

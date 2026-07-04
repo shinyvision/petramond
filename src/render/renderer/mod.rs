@@ -47,7 +47,7 @@ use super::{
     MobRenderInstance, ParticleInstance,
 };
 use crate::bbmodel::Model;
-use crate::gui::{GuiKind, OverlayTag, ShellKind, UiSnapshot};
+use crate::gui::{GuiKind, ShellKind, SpriteKey, UiSnapshot};
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 
@@ -78,14 +78,15 @@ fn aabb_distance_sq(p: glam::Vec3, min: glam::Vec3, max: glam::Vec3) -> f32 {
 }
 
 /// Key into the renderer's data-driven GUI texture map: every baked PNG a GUI can
-/// draw — its panel, its hover/selection highlight, and each dynamic overlay — has
-/// its own bind group, looked up by (kind, role) so the UI pass binds the right
-/// texture per quad without any per-screen branching.
+/// draw — its panel, its hover/selection highlight, and each dynamic
+/// overlay/widget sprite — has its own bind group, looked up by (kind, key) so
+/// the UI pass binds the right texture per quad without any per-screen branching.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum GuiTexId {
     Panel(GuiKind),
     Hover(GuiKind),
-    Overlay(GuiKind, OverlayTag),
+    /// An overlay/widget image, keyed by its interned file name.
+    Sprite(GuiKind, SpriteKey),
     Shell(ShellKind),
     ShellHover(ShellKind),
     ShellScrollThumb(ShellKind),
@@ -120,7 +121,7 @@ pub(in crate::render) struct VisibleSection {
 }
 
 /// Per-species GPU resources for the mob pipeline, built once at renderer init by
-/// iterating [`crate::mob::MOB_DEFS`] (so the renderer never names a species). Borrows
+/// iterating [`crate::mob::defs()`] (so the renderer never names a species). Borrows
 /// the species' precached [`Model`] + its render scale, the species' own texture/sampler + group(1)
 /// bind, its dynamic draw buffers, and reused per-frame scratch (the visible subset
 /// + the baked `ItemVertex` geometry). The `Vec<MobGpu>` is in `Mob as usize` order.
@@ -143,6 +144,16 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     sky_pipe: wgpu::RenderPipeline,
     sky_bind: wgpu::BindGroup,
+    sky_texture_bind: wgpu::BindGroup,
+    sky_shader_param_keys: Vec<String>,
+    sky_light_param_key: Option<String>,
+    underwater: bool,
+    /// Sim-owned skylight scale (1.0 = identity), mirrored to the CPU lighting
+    /// path (`render::lighting::light_rgb`) for mobs/items/particles.
+    sky_scale: f32,
+    /// Sim-owned sky light colour (white = identity), the CPU mirror of the
+    /// `sky_color` uniform lane — applied to the SKY term only.
+    sky_color: [f32; 3],
     opaque_pipe: wgpu::RenderPipeline,
     transparent_pipe: wgpu::RenderPipeline,
     /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
@@ -162,6 +173,7 @@ pub struct Renderer {
     /// The target whose geometry currently sits in `outline_vbuf`.
     selection_drawn: Option<SelectionShape>,
     uniform_buf: wgpu::Buffer,
+    shader_params_buf: wgpu::Buffer,
     uniform_bind: wgpu::BindGroup,
     atlas_bind: wgpu::BindGroup,
     /// Terrain tile-ARRAY bind (group 1 for the opaque/transparent block pipelines),
@@ -214,7 +226,7 @@ pub struct Renderer {
     /// doors can't make chests vanish).
     door_draw: DynamicDraw,
     /// Per-species mob render resources, indexed by `Mob as usize` (registry id
-    /// order). Built once from `mob::MOB_DEFS`; each frame the visible mobs are
+    /// order). Built once from `mob::defs()`; each frame the visible mobs are
     /// grouped here by species, baked, and drawn in the mob pass.
     mob_gpu: Vec<MobGpu>,
     /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
@@ -273,6 +285,7 @@ pub struct Renderer {
     hand_visible: bool,
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
+    held_item_blocklight: u8,
     held_item_warm: u8,
     /// Dropped item-entities to draw in the world this frame.
     item_entities: Vec<ItemEntityInstance>,

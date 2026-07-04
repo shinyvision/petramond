@@ -1,7 +1,7 @@
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
 pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 
-/// GPU vertex: 28 bytes. `pos` and `tint` stay full `f32` (pos keeps the water
+/// GPU vertex: 32 bytes. `pos` and `tint` stay full `f32` (pos keeps the water
 /// surface Y baked on the CPU; tint must not be quantized -- the sRGB OETF would
 /// shift output levels). `packed` folds the uv tile + corner + shade index + AO
 /// level into one word; the vertex shader reconstructs uv (by SELECTING from a
@@ -13,11 +13,14 @@ pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 pub struct Vertex {
     pub pos: [f32; 3],
     pub tint: [f32; 3],
-    /// Folded tile + corner + shade + overlay + AO + skylight. [`pack_vertex`] is
+    /// Folded tile + corner + shade + overlay + AO + SKY light. [`pack_vertex`] is
     /// the sole owner of this bit layout (see its doc); the vertex shader decodes
     /// it (selecting uv from the CPU-uploaded `tile_uv()` table — never recomputing
     /// — and light from `SHADES * AO`).
     pub packed: u32,
+    /// Second packed word, carrying the light channels the first word has no room
+    /// for. [`pack_vertex2`] is the sole owner of its bit layout.
+    pub packed2: u32,
 }
 
 /// Fold one vertex's attributes into the packed `u32` word — the SINGLE owner of
@@ -29,7 +32,10 @@ pub struct Vertex {
 /// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`):
 ///   0..8 tile id | 8..10 corner (0..3) | 10..12 shade index (into `SHADES`)
 ///   12..20 overlay tile | 20 has-overlay flag | 21..23 AO (0 dark..3 bright)
-///   23..29 skylight (0 dark..63 full sky) | 29..32 UV mode
+///   23..29 SKYLIGHT ONLY (0 dark..63 full sky) | 29..32 UV mode
+///
+/// Torch/block light moved to `packed2` bits 0..6 (see [`pack_vertex2`]) so the
+/// shader can dim the sky term (day/night mods) without dimming torch light.
 ///
 /// `overlay`/`has_overlay` are the raw 12..20 payload and the bit-20 flag: a grass
 /// SIDE sets them to `(GrassSideOverlay, true)`; a flowing-water TOP reuses the
@@ -51,6 +57,19 @@ pub(crate) fn pack_vertex(
         | ((has_overlay as u32) << 20)
         | (ao << 21)
         | (light << 23)
+}
+
+/// Fold the second-word attributes into `Vertex::packed2` — the SINGLE owner of
+/// that word's bit layout (mirrored by hand in `block.wgsl` and `model3d.wgsl`):
+///
+///   0..6 block light (torches/furnaces, 0 dark..63 full) | 6..32 RESERVED (zero)
+///
+/// The block channel is 6 bits like the sky channel so the shader's `block_term`
+/// mirrors the sky curve exactly; the remaining 26 bits are reserved for future
+/// per-vertex data and MUST stay zero until a new owner is documented here.
+#[inline]
+pub(crate) fn pack_vertex2(block_light: u32) -> u32 {
+    block_light & 0x3F
 }
 
 /// Packed UV mode field, shared by `block.wgsl` and dynamic block geometry.

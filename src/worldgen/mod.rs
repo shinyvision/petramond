@@ -38,13 +38,17 @@ use crate::chunk::Chunk;
 /// own generator and call [`generate_chunk_with`] directly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     thread_local! {
-        static CACHED: std::cell::RefCell<Option<(u32, driver::ChunkGenerator)>> =
+        static CACHED: std::cell::RefCell<Option<((u32, u64), driver::ChunkGenerator)>> =
             const { std::cell::RefCell::new(None) };
     }
+    // The cache key carries the installed worldgen-hook epoch alongside the
+    // seed, so a session (re)installing mod hooks evicts generators that
+    // captured the previous config. One atomic load; hookless processes see 0.
+    let key = (seed, crate::modding::gen::installed_epoch());
     CACHED.with(|cell| {
         let mut slot = cell.borrow_mut();
-        if slot.as_ref().map(|(s, _)| *s) != Some(seed) {
-            *slot = Some((seed, driver::ChunkGenerator::new(seed)));
+        if slot.as_ref().map(|(k, _)| *k) != Some(key) {
+            *slot = Some((key, driver::ChunkGenerator::new(seed)));
         }
         generate_chunk_with(&slot.as_ref().unwrap().1, cx, cz)
     })
@@ -54,7 +58,18 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 ///
 /// This preserves `generate_chunk` as the public one-shot API while allowing
 /// hot worker loops to reuse the generator's immutable seed-derived state.
+///
+/// With mod worldgen hooks active, the chunk is assembled from the SAME
+/// per-section path the cubic streamer runs (`generate_section`), so every
+/// hook receives identical inputs per `(seed, section)` on both paths —
+/// column/section parity is structural. With no hooks (the genparity pin),
+/// the classic whole-chunk pipeline below runs untouched.
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
+    if generator.has_gen_hooks() {
+        let mut chunk = generator.generate_chunk_via_sections(cx, cz);
+        chunk.dirty = true;
+        return chunk;
+    }
     let mut chunk = generator.generate_surface(cx, cz);
     generator.carve_caves(&mut chunk);
     generator.place_underground(&mut chunk);

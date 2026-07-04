@@ -168,7 +168,7 @@ fn resolve(d: RawDrop) -> Result<LootEntry, String> {
 /// Resolve a stable snake_case item key (e.g. `stick`) to its [`ItemType`] — matched
 /// against each item's explicit key, like the recipe loader.
 fn item_from_key(key: &str) -> Option<ItemType> {
-    ItemType::ALL.iter().copied().find(|it| it.key() == key)
+    ItemType::all().iter().copied().find(|it| it.key() == key)
 }
 
 #[cfg(test)]

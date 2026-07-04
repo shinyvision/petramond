@@ -1,5 +1,6 @@
 use super::{tick::TickEvents, Game};
 use crate::block::{Block, BlockInteraction, RenderShape};
+use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::furnace::Facing;
 use crate::mathh::{IVec3, Vec3};
 use crate::torch::TorchPlacement;
@@ -20,11 +21,11 @@ impl Game {
             events.used_item = true;
             return;
         }
-        let interacted = !self.intent_sneak && self.try_open_interactable();
+        let interacted = !self.intent_sneak && self.try_open_interactable(events);
         if !interacted {
             // The held item's own use (a bucket) comes before block placement; an
             // item with a use has no block to place, so the two never compete.
-            if self.try_use_item() {
+            if self.try_use_item(events) {
                 events.used_item = true;
                 return;
             }
@@ -35,17 +36,33 @@ impl Game {
                 .inventory
                 .selected()
                 .and_then(|s| s.item.as_block());
-            if self.try_place() {
+            if let Some(pos) = self.try_place(events) {
                 events.placed_block = held;
+                if let Some(block) = held {
+                    self.bus.emit(PostEvent::BlockPlaced { pos, block });
+                }
             }
         }
     }
 
     /// If the look target has a secondary-use capability, apply it and return
     /// `true` (consuming the right-click).
-    fn try_open_interactable(&mut self) -> bool {
+    fn try_open_interactable(&mut self, events: &mut TickEvents) -> bool {
         let Some(h) = self.look else { return false };
         let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        // A handler cancelling `block_interact` consumed the click (this is how mod
+        // blocks will open their own GUIs); the block's built-in capability is skipped.
+        let mut pre = BlockInteract {
+            pos: h.block,
+            block,
+        };
+        if self
+            .bus
+            .block_interact(&mut self.world, &mut self.player, events, &mut pre)
+            == Outcome::Cancel
+        {
+            return true;
+        }
         match block.interaction() {
             BlockInteraction::OpenCraftingTable => {
                 self.request_open_table = true;
@@ -61,6 +78,12 @@ impl Game {
             }
             BlockInteraction::OpenFurnitureWorkbench => {
                 self.request_open_workbench = Some(h.block);
+                true
+            }
+            BlockInteraction::OpenModGui(kind) => {
+                // The clicked block's position rides the session so gui_click
+                // dispatches carry where the GUI was opened from.
+                self.request_open_mod_gui = Some((kind, Some(h.block)));
                 true
             }
             // Right-clicking a door toggles it: the open/closed bit flips on this tick
@@ -88,18 +111,21 @@ impl Game {
         }
     }
 
-    pub(super) fn try_place(&mut self) -> bool {
-        let Some(h) = self.look else { return false };
+    /// Attempt to place the held block; returns the anchor cell it landed in
+    /// (the front-left-bottom cell for multi-cell models, the lower cell for
+    /// doors), or `None` if nothing was placed.
+    pub(super) fn try_place(&mut self, events: &mut TickEvents) -> Option<IVec3> {
+        let h = self.look?;
         if h.normal == IVec3::ZERO {
-            return false;
+            return None;
         }
 
         let block = match self.player.inventory.selected() {
             Some(stack) => match stack.item.as_block() {
                 Some(b) if b != Block::Air => b,
-                _ => return false,
+                _ => return None,
             },
-            None => return false,
+            None => return None,
         };
 
         // Right-clicking a replaceable block (short grass, a fern…) while holding a block
@@ -116,6 +142,25 @@ impl Game {
             h.block + h.normal
         };
 
+        // The placement decision, announced before the shape-specific validity
+        // checks: a cancelled `block_place_pre` refuses the placement outright (the
+        // click does nothing and the held item is kept). `facing` is the raw
+        // player-derived placement input; the shape paths below may orient it further.
+        {
+            let mut pre = BlockPlacePre {
+                pos: p,
+                block,
+                facing: facing_from_forward(self.cam.forward()),
+            };
+            if self
+                .bus
+                .block_place_pre(&mut self.world, &mut self.player, events, &mut pre)
+                == Outcome::Cancel
+            {
+                return None;
+            }
+        }
+
         // A torch only mounts on a floor or wall (never a ceiling) and needs a full solid
         // face to attach to. Resolve that up front so an invalid spot is a no-op (the
         // click neither places nor consumes the torch) rather than leaving a floating one.
@@ -126,14 +171,11 @@ impl Game {
             let tp = if replacing_in_place {
                 TorchPlacement::Floor
             } else {
-                match TorchPlacement::from_place_normal(h.normal) {
-                    Some(tp) => tp,
-                    None => return false,
-                }
+                TorchPlacement::from_place_normal(h.normal)?
             };
             let s = tp.support_cell(p);
             if !self.world.physics_block(s.x, s.y, s.z).is_opaque() {
-                return false;
+                return None;
             }
             Some(tp)
         } else {
@@ -151,7 +193,9 @@ impl Game {
             let player_facing = facing_from_forward(self.cam.forward());
             let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
             let facing = if block.directional_view() || multi_cell {
-                crate::block_model::def(kind).orientation.apply(player_facing)
+                crate::block_model::def(kind)
+                    .orientation
+                    .apply(player_facing)
             } else {
                 crate::block_model::DEFAULT_MODEL_FACING
             };
@@ -161,7 +205,7 @@ impl Game {
                 p
             };
             if !self.world.model_footprint_clear_facing(base, kind, facing) {
-                return false;
+                return None;
             }
             let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
                 .into_iter()
@@ -174,9 +218,9 @@ impl Game {
                 });
             if !blocked && self.world.place_model_block_facing(base, block, facing) {
                 self.player.inventory.decrement_selected();
-                return true;
+                return Some(base);
             }
-            return false;
+            return None;
         }
 
         // A door is a 2-tall thin block: its lower cell is `p`, the upper is the cell
@@ -188,7 +232,7 @@ impl Game {
             let facing = facing_from_forward(self.cam.forward());
             let upper = p + IVec3::new(0, 1, 0);
             if !self.world.door_footprint_clear(p) {
-                return false;
+                return None;
             }
             let closed = |top: bool| {
                 crate::door::collision_boxes(crate::door::DoorState {
@@ -203,24 +247,24 @@ impl Game {
             });
             if !blocked && self.world.place_door(p, block, facing) {
                 self.player.inventory.decrement_selected();
-                return true;
+                return Some(p);
             }
-            return false;
+            return None;
         }
 
         if block.render_shape() == RenderShape::Stair {
             let facing = facing_from_forward(self.cam.forward());
             if !self.world.placement_cell_open(p) {
-                return false;
+                return None;
             }
             let boxes = self.world.resolved_stair_boxes(p, facing);
             let blocked = self.player.intersects_block_boxes(p, boxes)
                 || self.world.mobs().any_overlapping_boxes(p, boxes);
             if !blocked && self.world.place_stair(p, block, facing) {
                 self.player.inventory.decrement_selected();
-                return true;
+                return Some(p);
             }
-            return false;
+            return None;
         }
 
         // Substrate gate: a block that roots in a particular ground — a flower in soil, a
@@ -230,7 +274,7 @@ impl Game {
         // above. Staying put once placed is the separate job of the FRAGILE behaviour.
         let below = self.world.physics_block(p.x, p.y - 1, p.z);
         if !block.can_root_on(below) {
-            return false;
+            return None;
         }
 
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
@@ -263,10 +307,16 @@ impl Game {
                 self.world.insert_torch(p, tp);
             }
             self.player.inventory.decrement_selected();
-            true
+            Some(p)
         } else {
-            false
+            None
         }
+    }
+
+    /// Test-only wrapper keeping the old bool-shaped call for placement tests.
+    #[cfg(test)]
+    pub(super) fn try_place_for_test(&mut self) -> bool {
+        self.try_place(&mut Default::default()).is_some()
     }
 }
 

@@ -10,12 +10,13 @@
 
 mod chest;
 mod codec;
-mod palette;
 pub mod entities;
 mod furnace;
 pub mod level;
 pub mod mobs;
+pub(crate) mod palette;
 mod region;
+pub mod settings;
 mod torch;
 
 pub use codec::SectionSnapshot;
@@ -35,6 +36,7 @@ use crate::section::Section;
 enum IoMsg {
     SaveSections(Vec<SectionSnapshot>),
     SaveLevel(Vec<u8>),
+    SaveModsJson(Vec<u8>),
     Load(SectionPos),
     Shutdown,
 }
@@ -77,6 +79,10 @@ pub struct OpenedWorld {
     pub save: WorldSave,
     /// `Some` if a `level.dat` already existed (a returning world).
     pub level: Option<LevelData>,
+    /// Mod pack ids disabled for THIS world (`settings.json`; empty = all
+    /// enabled). Already applied to the palette here; the session applies it
+    /// to the mod host / recipes / spawner.
+    pub disabled_mods: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,6 +156,12 @@ impl WorldSave {
         let _ = self.tx.send(IoMsg::SaveLevel(bytes));
     }
 
+    /// Record the active mod set (`mods.json`) with the save — compared with a
+    /// loud warning at the next open (`modding::modset`).
+    pub fn save_mods_json(&self, bytes: Vec<u8>) {
+        let _ = self.tx.send(IoMsg::SaveModsJson(bytes));
+    }
+
     /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
     ///
     /// [`poll_loaded`]: Self::poll_loaded
@@ -180,8 +192,9 @@ impl Drop for WorldSave {
 
 /// Base data dir: `~/.local/share/llamacraft` (Linux), `~/Library/Application
 /// Support/llamacraft` (macOS), `%APPDATA%\llamacraft` (Windows). Falls back to
-/// a hidden dir in the cwd if no home dir can be resolved.
-fn base_data_dir() -> PathBuf {
+/// a hidden dir in the cwd if no home dir can be resolved. Also hosts the
+/// user-installed mod pack root (`<data>/mods` — see `crate::assets`).
+pub(crate) fn base_data_dir() -> PathBuf {
     directories::ProjectDirs::from("", "", "llamacraft")
         .map(|d| d.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from(".llamacraft"))
@@ -277,6 +290,30 @@ pub fn delete_world(dir_name: &str) -> std::io::Result<()> {
     delete_world_at(&saves_dir(), dir_name)
 }
 
+/// Read a world's per-world settings by its save-directory name (the
+/// world-select / World Settings screens address worlds this way). An invalid
+/// or absent directory yields defaults (all mods enabled).
+pub fn read_world_settings(dir_name: &str) -> settings::WorldSettings {
+    if !is_single_path_component(dir_name) {
+        return settings::WorldSettings::default();
+    }
+    settings::load(&saves_dir().join(dir_name))
+}
+
+/// Write a world's per-world settings by its save-directory name.
+pub fn write_world_settings(
+    dir_name: &str,
+    settings: &settings::WorldSettings,
+) -> std::io::Result<()> {
+    if !is_single_path_component(dir_name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "world directory must be a single path component",
+        ));
+    }
+    settings::store(&saves_dir().join(dir_name), settings)
+}
+
 fn delete_world_at(saves: &Path, dir_name: &str) -> std::io::Result<()> {
     if !is_single_path_component(dir_name) {
         return Err(std::io::Error::new(
@@ -333,9 +370,18 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let region_dir = dir.join("region");
     std::fs::create_dir_all(&region_dir)?;
 
+    // Per-world mod enablement (`settings.json`; absent = all enabled). Read
+    // BEFORE the palette so disabled-mod content decodes as unknown.
+    let disabled_mods = settings::load(&dir).disabled_mods;
+
     // Pin (or load) the save's block/item name palette BEFORE any record is
     // read or written: the codec maps every id through it (see `palette`).
-    palette::activate(&dir)?;
+    palette::activate(&dir, &disabled_mods)?;
+
+    // Compare the save's recorded mod set with the ENABLED one (loud warning
+    // on any difference; never blocks — content degrades safely via the
+    // palette). Deliberately disabled mods are not a mismatch.
+    crate::modding::modset::warn_on_mismatch(&dir, &disabled_mods);
 
     let level = std::fs::read(dir.join("level.dat"))
         .ok()
@@ -384,6 +430,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             entities_on_disk: HashSet::new(),
         },
         level,
+        disabled_mods,
     })
 }
 
@@ -396,6 +443,9 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedSection>) 
             IoMsg::SaveSections(snaps) => write_sections(&region_dir, snaps),
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
+            }
+            IoMsg::SaveModsJson(bytes) => {
+                let _ = write_atomic(&dir.join("mods.json"), &bytes);
             }
             IoMsg::Load(pos) => {
                 let (section, entities, mobs) = load_section(&region_dir, pos);
@@ -512,7 +562,9 @@ mod tests {
 
             let mut player = Player::new(Vec3::new(80.0, 70.0, -40.0));
             player.inventory.set_active(4);
-            opened.save.save_level(level::encode(0xABCD, &player, 0));
+            opened
+                .save
+                .save_level(level::encode(0xABCD, &player, 0, &Default::default()));
 
             opened.save.shutdown(); // flush queued writes + join the I/O thread
         }
@@ -652,6 +704,7 @@ mod tests {
             pos: Vec3::new(-100.5, 65.0, 56.5),
             yaw: 0.5,
             shear_regrow: 0,
+            kv: Default::default(),
         });
         opened.save.save_sections(vec![snap]);
         assert!(

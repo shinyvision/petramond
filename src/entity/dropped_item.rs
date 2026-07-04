@@ -57,10 +57,12 @@ pub struct DroppedItem {
     pub pos: Vec3,
     pub vel: Vec3,
     pub stack: ItemStack,
-    /// 6-bit skylight used by render handoff. The game refreshes this when a
+    /// 6-bit SKY light used by render handoff. The game refreshes this when a
     /// drop crosses voxel cells, avoiding per-frame world-light lookups for
     /// long-lived item piles.
     pub skylight: u8,
+    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
+    pub blocklight: u8,
     /// Game ticks this item has been alive (advanced once per fixed tick by the
     /// world entity step, paused while its chunk is unloaded). Gates the pickup
     /// delay and drives the despawn timer; persisted with the owning chunk so the
@@ -100,6 +102,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
+            blocklight: 0,
             ticks_lived: 0,
             pickup_requested: false,
             spin,
@@ -126,6 +129,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
+            blocklight: 0,
             ticks_lived: 0,
             pickup_requested: false,
             spin: 0.0,

@@ -1,10 +1,12 @@
 //! Item model: the inventory-space counterpart of `Block`.
 //!
-//! Item ids mirror block ids for the block-items: every `Block` has an `ItemType`
-//! of the SAME id (both start at `Air = 0`), so `from_block` / `as_block` are
-//! plain id conversions over the block range. Beyond that range live the
-//! item-only variants (tools, raw drops) that have NO block — `as_block` returns
-//! `None` and they render as flat sprites. Both enums stay append-only.
+//! Item ids mirror block ids for the original block-items: every early `Block`
+//! has an `ItemType` of the SAME id (both start at `Air = 0`), so `from_block` /
+//! `as_block` are plain id conversions over that range. Beyond it live the
+//! item-only items (tools, raw drops) that have NO block — `as_block` returns
+//! `None` and they render as flat sprites. Engine ids stay append-only; pack
+//! items register past them and link to a block through their row's `block`
+//! field (see [`crate::registry`]).
 //!
 //! Per-item static data (`key`, `name`, `max_stack_size`) lives in an id-ordered
 //! table loaded from `assets/items.json`, mirroring `block/data.rs`. The `key` is
@@ -19,202 +21,238 @@ mod data;
 mod definition;
 mod load;
 
-/// One variant per non-`Air` block-item, in the SAME order and with the SAME
-/// names as [`Block`] (which also starts at `Air = 0`). Append-only: never
-/// reorder or remove variants — ids are persisted-adjacent to block ids.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ItemType {
-    Air = 0,
-    Grass,
-    Dirt,
-    Stone,
-    Sand,
-    Snow,
-    Water,
-    OakLog,
-    OakLeaves,
-    SpruceLog,
-    BirchLog,
-    JungleLog,
-    AcaciaLog,
-    DarkOakLog,
-    CherryLog,
-    MangroveLog,
-    SpruceLeaves,
-    BirchLeaves,
-    JungleLeaves,
-    AcaciaLeaves,
-    DarkOakLeaves,
-    MangroveLeaves,
-    CherryLeaves,
-    AzaleaLeaves,
-    RedSand,
-    Sandstone,
-    RedSandstone,
-    Terracotta,
-    WhiteTerracotta,
-    OrangeTerracotta,
-    YellowTerracotta,
-    BrownTerracotta,
-    RedTerracotta,
-    LightGrayTerracotta,
-    Podzol,
-    Mycelium,
-    CoarseDirt,
-    Gravel,
-    Clay,
-    Mud,
-    MossBlock,
-    SnowBlock,
-    PackedIce,
-    Ice,
-    Calcite,
-    Granite,
-    Diorite,
-    Andesite,
-    Tuff,
-    CoalOre,
-    IronOre,
-    CopperOre,
-    GoldOre,
-    RedstoneOre,
-    LapisOre,
-    DiamondOre,
-    EmeraldOre,
-    Pumpkin,
-    Melon,
-    Cactus,
-    ShortGrass,
-    Fern,
-    Dandelion,
-    Poppy,
-    Cornflower,
-    Allium,
-    AzureBluet,
-    OxeyeDaisy,
-    RedTulip,
-    DeadBush,
-    BrownMushroom,
-    RedMushroom,
-    // --- Crafting update: block-items, mirroring the new Block ids 70..79. ---
-    Cobblestone,
-    OakPlanks,
-    SprucePlanks,
-    BirchPlanks,
-    JunglePlanks,
-    AcaciaPlanks,
-    DarkOakPlanks,
-    CherryPlanks,
-    MangrovePlanks,
-    CraftingTable,
-    // --- Item-only variants (no Block): tools + raw drops. `as_block()` = None. ---
-    Stick,
-    WoodenPickaxe,
-    StonePickaxe,
-    RawIron,
-    RawCopper,
-    Coal,
-    // --- Furnace update: smelted ingots (item-only) and the Furnace block-item.
-    // Appended at the END so every id above stays frozen. Unlike the earlier
-    // block-items, `ItemType::Furnace` does NOT share `Block::Furnace`'s id — the
-    // block↔item mapping is made explicit in `from_block` / `as_block` instead of
-    // assuming id equality (see `LEGACY_BLOCK_ITEMS`). ---
-    IronIngot,
-    CopperIngot,
-    Furnace,
-    // --- Chest update: the Chest block-item. Like the furnace, its item id is
-    // appended (NOT equal to `Block::Chest`'s id) and mapped explicitly below. ---
-    Chest,
-    // --- Torch update: the Torch block-item. Item id appended (NOT equal to
-    // `Block::Torch`'s id) and mapped explicitly in `from_block` / `as_block`. ---
-    Torch,
-    // --- Tools + ores update (item-only, no Block): the new ore drops + smelted
-    // gold, then the iron/diamond pickaxes and the four axe tiers. Appended at the
-    // END so every id above stays frozen. `as_block()` = None for all of them. ---
-    Diamond,
-    LapisLazuli,
-    RawGold,
-    GoldIngot,
-    WoodenAxe,
-    StoneAxe,
-    IronAxe,
-    DiamondAxe,
-    IronPickaxe,
-    DiamondPickaxe,
-    // --- Shovels (item-only, no Block): the four shovel tiers, the dirt/sand
-    // counterpart to the pickaxe (stone) and axe (wood). Appended at the END so
-    // every id above stays frozen. `as_block()` = None for all of them. ---
-    WoodenShovel,
-    StoneShovel,
-    IronShovel,
-    DiamondShovel,
-    // --- bbmodel block update: the FurnitureWorkbench block-item. Appended at the END
-    // (id NOT equal to `Block::FurnitureWorkbench`'s id) and mapped explicitly in
-    // `from_block` / `as_block`, like the furnace/chest/torch block-items. ---
-    FurnitureWorkbench,
-    // --- Saplings update: the block-items for the cross-plant saplings. Appended at
-    // the END (ids NOT equal to their block ids) and mapped explicitly in
-    // `from_block` / `as_block`, like the furnace/chest/torch/workbench block-items. ---
-    OakSapling,
-    SpruceSapling,
-    BirchSapling,
-    JungleSapling,
-    AcaciaSapling,
-    DarkOakSapling,
-    CherrySapling,
-    // --- Doors update: the block-items for the per-species wooden doors. Appended at
-    // the END (ids NOT equal to their block ids) and mapped explicitly in
-    // `from_block` / `as_block`, like the furnace/chest/torch/workbench/sapling
-    // block-items. Each renders as a flat door sprite (see `render_kind`). ---
-    OakDoor,
-    SpruceDoor,
-    BirchDoor,
-    JungleDoor,
-    AcaciaDoor,
-    DarkOakDoor,
-    CherryDoor,
-    MangroveDoor,
-    // --- Redwood update: block-items for the redwood wood set. Appended at the END
-    // (ids NOT equal to their block ids) and mapped explicitly in `from_block` /
-    // `as_block`, like the other late block-items. ---
-    RedwoodLog,
-    RedwoodLeaves,
-    RedwoodPlanks,
-    RedwoodDoor,
-    // --- Stairs update: block-items for directional stair blocks. Appended at the
-    // END (ids NOT equal to their block ids) and mapped explicitly below. ---
-    OakStairs,
-    SpruceStairs,
-    BirchStairs,
-    JungleStairs,
-    AcaciaStairs,
-    DarkOakStairs,
-    CherryStairs,
-    MangroveStairs,
-    RedwoodStairs,
-    CobblestoneStairs,
-    StoneStairs,
-    DirtStairs,
-    // --- Bucket update: the wooden bucket, the first ITEM-ONLY bbmodel item — it
-    // has NO block (`as_block()` = None, nothing to place) but still renders as its
-    // baked 3D model everywhere (see `render_kind` / `item_model`). Appended at the
-    // END so every id above stays frozen. ---
-    WoodenBucket,
-    // --- The filled state of the wooden bucket: scooping a water source converts
-    // the held bucket into this; pouring converts it back (see `game`'s item use).
-    // Not craftable — only ever obtained by filling. ---
-    WaterBucket,
-    // --- Shears update: the shears (a durable non-mining tool — used on a sheep,
-    // not a block; see `game`'s shear use) and the wool a shorn sheep drops. ---
-    Shears,
-    Wool,
-    // --- Bed update: the block-items for the bed frame and the bed. Appended at the
-    // END (ids NOT equal to their block ids) and mapped explicitly in `from_block` /
-    // `as_block`, like the other late block-items. ---
-    BedFrame,
-    Bed,
+pub(crate) use data::ENGINE_ITEM_NAMES;
+
+/// An item's engine-implemented right-click use, referenced from its
+/// `items.json` row by name (`"use": "bucket_fill"`). The string-keyed
+/// registry of engine handlers: [`from_name`](Self::from_name) resolves a
+/// row's key at load, and the tick-side dispatch (`game::item_use`,
+/// `game::placement`) matches on the resolved handler — never on concrete
+/// item ids — so packs can put an engine use on their own items.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ItemUse {
+    /// Scoop a targeted water source into the held item (the empty bucket).
+    BucketFill,
+    /// Empty the held item into the clicked cell as water (the full bucket).
+    BucketPour,
+    /// Shear the targeted mob (runs at the earlier shear stage, before block
+    /// interaction — see `game::placement`'s `tick_place`).
+    Shear,
+    /// A namespaced (`mod_id:key`) handler: recorded but inert until the WASM
+    /// host (Phase 2b) dispatches it.
+    Pending(&'static str),
+}
+
+impl ItemUse {
+    /// Resolve an `items.json` `use` key. Bare names must be engine handlers;
+    /// namespaced keys are allowed to dangle as [`Pending`](Self::Pending).
+    pub fn from_name(name: &str) -> Option<ItemUse> {
+        Some(match name {
+            "bucket_fill" => ItemUse::BucketFill,
+            "bucket_pour" => ItemUse::BucketPour,
+            "shear" => ItemUse::Shear,
+            _ if crate::registry::is_namespaced(name) => {
+                ItemUse::Pending(Box::leak(name.to_owned().into_boxed_str()))
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// A registered item, identified by its opaque runtime id. Engine items own
+/// the low ids in a compiled, frozen order (the named consts below — save
+/// palettes depend on those ids/names never moving); mod packs register
+/// additional ids at load through namespaced `items.json` rows (see
+/// [`crate::registry`]). Serde carries an item as its registered NAME string.
+///
+/// The engine block-item prefix mirrors [`Block`] ids (both start at
+/// `Air = 0`), so `from_block` / `as_block` are plain id conversions over that
+/// range; later engine block-items map explicitly, and DYNAMIC items link to
+/// their block through their row's `block` field.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct ItemType(pub u8);
+
+/// Engine item consts, named like the enum variants they replaced so every
+/// existing `ItemType::Stick` expression and match pattern keeps compiling.
+#[allow(non_upper_case_globals)]
+impl ItemType {
+    pub const Air: ItemType = ItemType(0);
+    pub const Grass: ItemType = ItemType(1);
+    pub const Dirt: ItemType = ItemType(2);
+    pub const Stone: ItemType = ItemType(3);
+    pub const Sand: ItemType = ItemType(4);
+    pub const Snow: ItemType = ItemType(5);
+    pub const Water: ItemType = ItemType(6);
+    pub const OakLog: ItemType = ItemType(7);
+    pub const OakLeaves: ItemType = ItemType(8);
+    pub const SpruceLog: ItemType = ItemType(9);
+    pub const BirchLog: ItemType = ItemType(10);
+    pub const JungleLog: ItemType = ItemType(11);
+    pub const AcaciaLog: ItemType = ItemType(12);
+    pub const DarkOakLog: ItemType = ItemType(13);
+    pub const CherryLog: ItemType = ItemType(14);
+    pub const MangroveLog: ItemType = ItemType(15);
+    pub const SpruceLeaves: ItemType = ItemType(16);
+    pub const BirchLeaves: ItemType = ItemType(17);
+    pub const JungleLeaves: ItemType = ItemType(18);
+    pub const AcaciaLeaves: ItemType = ItemType(19);
+    pub const DarkOakLeaves: ItemType = ItemType(20);
+    pub const MangroveLeaves: ItemType = ItemType(21);
+    pub const CherryLeaves: ItemType = ItemType(22);
+    pub const AzaleaLeaves: ItemType = ItemType(23);
+    pub const RedSand: ItemType = ItemType(24);
+    pub const Sandstone: ItemType = ItemType(25);
+    pub const RedSandstone: ItemType = ItemType(26);
+    pub const Terracotta: ItemType = ItemType(27);
+    pub const WhiteTerracotta: ItemType = ItemType(28);
+    pub const OrangeTerracotta: ItemType = ItemType(29);
+    pub const YellowTerracotta: ItemType = ItemType(30);
+    pub const BrownTerracotta: ItemType = ItemType(31);
+    pub const RedTerracotta: ItemType = ItemType(32);
+    pub const LightGrayTerracotta: ItemType = ItemType(33);
+    pub const Podzol: ItemType = ItemType(34);
+    pub const Mycelium: ItemType = ItemType(35);
+    pub const CoarseDirt: ItemType = ItemType(36);
+    pub const Gravel: ItemType = ItemType(37);
+    pub const Clay: ItemType = ItemType(38);
+    pub const Mud: ItemType = ItemType(39);
+    pub const MossBlock: ItemType = ItemType(40);
+    pub const SnowBlock: ItemType = ItemType(41);
+    pub const PackedIce: ItemType = ItemType(42);
+    pub const Ice: ItemType = ItemType(43);
+    pub const Calcite: ItemType = ItemType(44);
+    pub const Granite: ItemType = ItemType(45);
+    pub const Diorite: ItemType = ItemType(46);
+    pub const Andesite: ItemType = ItemType(47);
+    pub const Tuff: ItemType = ItemType(48);
+    pub const CoalOre: ItemType = ItemType(49);
+    pub const IronOre: ItemType = ItemType(50);
+    pub const CopperOre: ItemType = ItemType(51);
+    pub const GoldOre: ItemType = ItemType(52);
+    pub const RedstoneOre: ItemType = ItemType(53);
+    pub const LapisOre: ItemType = ItemType(54);
+    pub const DiamondOre: ItemType = ItemType(55);
+    pub const EmeraldOre: ItemType = ItemType(56);
+    pub const Pumpkin: ItemType = ItemType(57);
+    pub const Melon: ItemType = ItemType(58);
+    pub const Cactus: ItemType = ItemType(59);
+    pub const ShortGrass: ItemType = ItemType(60);
+    pub const Fern: ItemType = ItemType(61);
+    pub const Dandelion: ItemType = ItemType(62);
+    pub const Poppy: ItemType = ItemType(63);
+    pub const Cornflower: ItemType = ItemType(64);
+    pub const Allium: ItemType = ItemType(65);
+    pub const AzureBluet: ItemType = ItemType(66);
+    pub const OxeyeDaisy: ItemType = ItemType(67);
+    pub const RedTulip: ItemType = ItemType(68);
+    pub const DeadBush: ItemType = ItemType(69);
+    pub const BrownMushroom: ItemType = ItemType(70);
+    pub const RedMushroom: ItemType = ItemType(71);
+    pub const Cobblestone: ItemType = ItemType(72);
+    pub const OakPlanks: ItemType = ItemType(73);
+    pub const SprucePlanks: ItemType = ItemType(74);
+    pub const BirchPlanks: ItemType = ItemType(75);
+    pub const JunglePlanks: ItemType = ItemType(76);
+    pub const AcaciaPlanks: ItemType = ItemType(77);
+    pub const DarkOakPlanks: ItemType = ItemType(78);
+    pub const CherryPlanks: ItemType = ItemType(79);
+    pub const MangrovePlanks: ItemType = ItemType(80);
+    pub const CraftingTable: ItemType = ItemType(81);
+    pub const Stick: ItemType = ItemType(82);
+    pub const WoodenPickaxe: ItemType = ItemType(83);
+    pub const StonePickaxe: ItemType = ItemType(84);
+    pub const RawIron: ItemType = ItemType(85);
+    pub const RawCopper: ItemType = ItemType(86);
+    pub const Coal: ItemType = ItemType(87);
+    pub const IronIngot: ItemType = ItemType(88);
+    pub const CopperIngot: ItemType = ItemType(89);
+    pub const Furnace: ItemType = ItemType(90);
+    pub const Chest: ItemType = ItemType(91);
+    pub const Torch: ItemType = ItemType(92);
+    pub const Diamond: ItemType = ItemType(93);
+    pub const LapisLazuli: ItemType = ItemType(94);
+    pub const RawGold: ItemType = ItemType(95);
+    pub const GoldIngot: ItemType = ItemType(96);
+    pub const WoodenAxe: ItemType = ItemType(97);
+    pub const StoneAxe: ItemType = ItemType(98);
+    pub const IronAxe: ItemType = ItemType(99);
+    pub const DiamondAxe: ItemType = ItemType(100);
+    pub const IronPickaxe: ItemType = ItemType(101);
+    pub const DiamondPickaxe: ItemType = ItemType(102);
+    pub const WoodenShovel: ItemType = ItemType(103);
+    pub const StoneShovel: ItemType = ItemType(104);
+    pub const IronShovel: ItemType = ItemType(105);
+    pub const DiamondShovel: ItemType = ItemType(106);
+    pub const FurnitureWorkbench: ItemType = ItemType(107);
+    pub const OakSapling: ItemType = ItemType(108);
+    pub const SpruceSapling: ItemType = ItemType(109);
+    pub const BirchSapling: ItemType = ItemType(110);
+    pub const JungleSapling: ItemType = ItemType(111);
+    pub const AcaciaSapling: ItemType = ItemType(112);
+    pub const DarkOakSapling: ItemType = ItemType(113);
+    pub const CherrySapling: ItemType = ItemType(114);
+    pub const OakDoor: ItemType = ItemType(115);
+    pub const SpruceDoor: ItemType = ItemType(116);
+    pub const BirchDoor: ItemType = ItemType(117);
+    pub const JungleDoor: ItemType = ItemType(118);
+    pub const AcaciaDoor: ItemType = ItemType(119);
+    pub const DarkOakDoor: ItemType = ItemType(120);
+    pub const CherryDoor: ItemType = ItemType(121);
+    pub const MangroveDoor: ItemType = ItemType(122);
+    pub const RedwoodLog: ItemType = ItemType(123);
+    pub const RedwoodLeaves: ItemType = ItemType(124);
+    pub const RedwoodPlanks: ItemType = ItemType(125);
+    pub const RedwoodDoor: ItemType = ItemType(126);
+    pub const OakStairs: ItemType = ItemType(127);
+    pub const SpruceStairs: ItemType = ItemType(128);
+    pub const BirchStairs: ItemType = ItemType(129);
+    pub const JungleStairs: ItemType = ItemType(130);
+    pub const AcaciaStairs: ItemType = ItemType(131);
+    pub const DarkOakStairs: ItemType = ItemType(132);
+    pub const CherryStairs: ItemType = ItemType(133);
+    pub const MangroveStairs: ItemType = ItemType(134);
+    pub const RedwoodStairs: ItemType = ItemType(135);
+    pub const CobblestoneStairs: ItemType = ItemType(136);
+    pub const StoneStairs: ItemType = ItemType(137);
+    pub const DirtStairs: ItemType = ItemType(138);
+    pub const WoodenBucket: ItemType = ItemType(139);
+    pub const WaterBucket: ItemType = ItemType(140);
+    pub const Shears: ItemType = ItemType(141);
+    pub const Wool: ItemType = ItemType(142);
+    pub const BedFrame: ItemType = ItemType(143);
+    pub const Bed: ItemType = ItemType(144);
+}
+
+impl std::fmt::Debug for ItemType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match ENGINE_ITEM_NAMES.get(self.0 as usize) {
+            Some(name) => write!(f, "ItemType({name})"),
+            None => write!(f, "ItemType(#{})", self.0),
+        }
+    }
+}
+
+impl serde::Serialize for ItemType {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match crate::registry::names().items.name(self.0) {
+            Some(name) => s.serialize_str(name),
+            None => Err(serde::ser::Error::custom(format!(
+                "item id {} is not registered",
+                self.0
+            ))),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ItemType {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let name = std::borrow::Cow::<str>::deserialize(d)?;
+        crate::registry::names()
+            .items
+            .id(&name)
+            .map(ItemType)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown item '{name}'")))
+    }
 }
 
 /// One harvested drop: `min..=max` of `item`, dropped with probability `chance`.
@@ -399,8 +437,11 @@ impl HeldPose {
 }
 
 impl ItemType {
-    /// All item types in id order (mirrors [`Block::ALL`]).
-    pub const ALL: &'static [ItemType] = data::ALL_ITEMS;
+    /// Every registered item in id order — engine first (frozen ids), then
+    /// pack-registered items in load order (mirrors [`Block::all`]).
+    pub fn all() -> &'static [ItemType] {
+        data::all()
+    }
 
     /// Size of the original 0.1 block-item prefix: item ids `[0, LEGACY_BLOCK_ITEMS)`
     /// are block-items that share their block's id (`Air..=CraftingTable`). Block-items
@@ -408,10 +449,10 @@ impl ItemType {
     /// [`from_block`](Self::from_block)/[`as_block`](Self::as_block).
     const LEGACY_BLOCK_ITEMS: usize = Block::CraftingTable.id() as usize + 1;
 
-    /// Stable numeric id, identical to the matching block's id.
+    /// Stable numeric id.
     #[inline]
-    pub fn id(self) -> u8 {
-        self as u8
+    pub const fn id(self) -> u8 {
+        self.0
     }
 
     /// Item for `id`, or `Air` if `id` is out of range.
@@ -465,7 +506,10 @@ impl ItemType {
             Block::DirtStairs => ItemType::DirtStairs,
             Block::BedFrame => ItemType::BedFrame,
             Block::Bed => ItemType::Bed,
-            _ => Self::from_id(b.id()),
+            _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
+            // A pack-registered block: its item declares the link via its
+            // row's `block` field. No linked item -> Air (nothing to hold).
+            _ => data::item_for_block(b).unwrap_or(ItemType::Air),
         }
     }
 
@@ -514,7 +558,9 @@ impl ItemType {
             ItemType::BedFrame => Some(Block::BedFrame),
             ItemType::Bed => Some(Block::Bed),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
-            _ => None,
+            // Engine item-only items carry no link; a pack item's row may
+            // (`"block": "mod:key"` in items.json).
+            _ => self.def().block,
         }
     }
 
@@ -527,21 +573,20 @@ impl ItemType {
     /// tier ladder `1..=4` (wooden, stone, iron, diamond).
     #[inline]
     pub fn tool(self) -> Option<Tool> {
-        use ItemType::*;
         use ToolKind::*;
         let (kind, tier) = match self {
-            WoodenPickaxe => (Pickaxe, 1),
-            StonePickaxe => (Pickaxe, 2),
-            IronPickaxe => (Pickaxe, 3),
-            DiamondPickaxe => (Pickaxe, 4),
-            WoodenAxe => (Axe, 1),
-            StoneAxe => (Axe, 2),
-            IronAxe => (Axe, 3),
-            DiamondAxe => (Axe, 4),
-            WoodenShovel => (Shovel, 1),
-            StoneShovel => (Shovel, 2),
-            IronShovel => (Shovel, 3),
-            DiamondShovel => (Shovel, 4),
+            ItemType::WoodenPickaxe => (Pickaxe, 1),
+            ItemType::StonePickaxe => (Pickaxe, 2),
+            ItemType::IronPickaxe => (Pickaxe, 3),
+            ItemType::DiamondPickaxe => (Pickaxe, 4),
+            ItemType::WoodenAxe => (Axe, 1),
+            ItemType::StoneAxe => (Axe, 2),
+            ItemType::IronAxe => (Axe, 3),
+            ItemType::DiamondAxe => (Axe, 4),
+            ItemType::WoodenShovel => (Shovel, 1),
+            ItemType::StoneShovel => (Shovel, 2),
+            ItemType::IronShovel => (Shovel, 3),
+            ItemType::DiamondShovel => (Shovel, 4),
             _ => return None,
         };
         Some(Tool { kind, tier })
@@ -557,6 +602,15 @@ impl ItemType {
             ItemType::Coal => 4800,
             _ => 0,
         }
+    }
+
+    /// The right-click use this item's data row declares (`"use"` in
+    /// `items.json`), or `None` for items with no use of their own. The tick
+    /// dispatches on the resolved [`ItemUse`], so which item fills a bucket is
+    /// row data, not code.
+    #[inline]
+    pub fn item_use(self) -> Option<ItemUse> {
+        self.def().item_use
     }
 
     /// Whether this item belongs to `tag`. Membership is item data — each item's
@@ -727,7 +781,7 @@ mod tests {
             (1.0, 1.0),
             "a non-weapon punches like a fist"
         );
-        for &it in ItemType::ALL {
+        for &it in ItemType::all() {
             let (lo, hi) = attack_damage(Some(it));
             assert!(lo > 0.0 && lo <= hi, "{it:?}: invalid range {lo}..{hi}");
         }
@@ -923,7 +977,7 @@ mod tests {
 
     #[test]
     fn render_kind_matches_render_shape() {
-        for &block in Block::ALL {
+        for &block in Block::all() {
             let item = ItemType::from_block(block);
             match block.render_shape() {
                 RenderShape::Cube => {

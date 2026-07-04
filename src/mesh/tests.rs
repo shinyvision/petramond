@@ -253,6 +253,8 @@ fn shade_idx(v: &Vertex) -> u32 {
     (v.packed >> 10) & 0x3
 }
 
+/// Word 1's light bits (23..29) — SKY-ONLY since the channel split; every scene
+/// in these tests is sky-lit (no emitters), so it also equals the total light.
 fn light6(v: &Vertex) -> u32 {
     (v.packed >> 23) & 0x3F
 }
@@ -1077,7 +1079,11 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
         "lit front on the facing face only"
     );
     assert_eq!(count(&lit, Tile::named("furnace_front")), 0);
-    assert_eq!(count(&lit, Tile::named("furnace_side")), 12, "sides never glow");
+    assert_eq!(
+        count(&lit, Tile::named("furnace_side")),
+        12,
+        "sides never glow"
+    );
 }
 
 /// Greedy meshing collapses a flat, uniformly-lit region of identical opaque faces into a

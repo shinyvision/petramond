@@ -1,0 +1,12 @@
+[package]
+name = "zombies"
+version = "0.1.0"
+edition = "2021"
+description = "Proof-of-concept hostile mob mod: light-based zombie spawning driven by daynight time, sunburn, spatial groans, chase + melee combat, and 1s player i-frames."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

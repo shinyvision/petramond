@@ -34,6 +34,7 @@ impl Renderer {
         fog_color: [f32; 3],
         time: f32,
         underwater: bool,
+        shader_params: Option<&crate::world::environment::ShaderParamMap>,
     ) {
         let render_origin = render_origin_for_camera(cam.pos);
         let local_cam = cam.pos - render_origin;
@@ -49,7 +50,34 @@ impl Renderer {
             right: cam.right(),
             up: cam.up(),
         };
-        self.clear_color = fog_color;
+        self.update_shader_params(shader_params);
+        let mut effective_sky_scale = 1.0;
+        let mut effective_sky_color = [1.0, 1.0, 1.0];
+        let mut shader_light_overrode_identity = false;
+        if let (Some(params), Some(key)) = (shader_params, self.sky_light_param_key.as_deref()) {
+            if let Some(value) = params.get(key) {
+                effective_sky_scale = value[0].clamp(0.0, 1.0);
+                effective_sky_color = [
+                    value[1].clamp(0.0, 1.0),
+                    value[2].clamp(0.0, 1.0),
+                    value[3].clamp(0.0, 1.0),
+                ];
+                shader_light_overrode_identity = true;
+            }
+        }
+        let effective_fog_color = if shader_light_overrode_identity && !underwater {
+            [
+                fog_color[0] * effective_sky_scale * effective_sky_color[0],
+                fog_color[1] * effective_sky_scale * effective_sky_color[1],
+                fog_color[2] * effective_sky_scale * effective_sky_color[2],
+            ]
+        } else {
+            fog_color
+        };
+        self.clear_color = effective_fog_color;
+        self.underwater = underwater;
+        self.sky_scale = effective_sky_scale;
+        self.sky_color = effective_sky_color;
         let (fog_start, fog_end) = if underwater {
             (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
         } else {
@@ -60,13 +88,45 @@ impl Renderer {
             cam_pos: [local_cam.x, local_cam.y, local_cam.z, 0.0],
             // fog.z = animation time (caustics), fog.w = underwater flag.
             fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
-            fog_color: [fog_color[0], fog_color[1], fog_color[2], 1.0],
+            // fog_color.w = the sim's sky scale (1.0 = identity/noon).
+            fog_color: [
+                effective_fog_color[0],
+                effective_fog_color[1],
+                effective_fog_color[2],
+                effective_sky_scale,
+            ],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
             render_origin: [render_origin.x, render_origin.y, render_origin.z, 0.0],
             water_anim: crate::atlas::water_anim_uniform(),
+            sky_color: [
+                effective_sky_color[0],
+                effective_sky_color[1],
+                effective_sky_color[2],
+                0.0,
+            ],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
+    }
+
+    fn update_shader_params(
+        &self,
+        shader_params: Option<&crate::world::environment::ShaderParamMap>,
+    ) {
+        let mut values = [[0.0f32; 4]; super::super::uniforms::SHADER_PARAM_SLOTS];
+        if let Some(shader_params) = shader_params {
+            for (i, key) in self.sky_shader_param_keys.iter().enumerate() {
+                if i >= values.len() {
+                    break;
+                }
+                if let Some(value) = shader_params.get(key) {
+                    values[i] = *value;
+                }
+            }
+        }
+        let params = super::super::uniforms::ShaderParams { values };
+        self.queue
+            .write_buffer(&self.shader_params_buf, 0, bytemuck::cast_slice(&[params]));
     }
 
     /// Set (or clear) the target highlighted by the selection outline. Cheap: the
@@ -93,10 +153,12 @@ impl Renderer {
         self.crosshair_visible = visible;
     }
 
-    /// Store the combined light + warm-tint amount to apply to the first-person hand
-    /// / held item (so it brightens AND warms near torches/furnaces).
-    pub fn set_held_item_light(&mut self, skylight: u8, warm: u8) {
+    /// Store the two-channel light + warm-tint amount to apply to the first-person
+    /// hand / held item (so it brightens AND warms near torches/furnaces, and torch
+    /// light keeps it lit at night).
+    pub fn set_held_item_light(&mut self, skylight: u8, blocklight: u8, warm: u8) {
         self.held_item_skylight = skylight.min(crate::render::lighting::FULL_SKYLIGHT);
+        self.held_item_blocklight = blocklight.min(crate::render::lighting::FULL_SKYLIGHT);
         self.held_item_warm = warm;
     }
 

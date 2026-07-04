@@ -15,6 +15,7 @@ mod health;
 mod item_use;
 mod local_player;
 mod menu;
+mod mod_actions;
 mod placement;
 pub(crate) mod presentation;
 mod session;
@@ -44,7 +45,8 @@ pub use crate::gui::MenuSlot;
 use container::ContainerMenu;
 use drops::DropQueue;
 pub(crate) use environment::GameEnvironment;
-pub use tick::{GameEvents, GameInput, MovementInput};
+pub(crate) use tick::TickEvents;
+pub use tick::{GameEvents, GameInput, ModSound, ModSpatialSoundCommand, MovementInput};
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
@@ -77,6 +79,9 @@ pub struct Game {
     dropped_light_revision: u64,
     particles: ParticleSystem,
     spawn_counter: u32,
+    /// Next deterministic session handle for mod-owned spatial sounds. The app
+    /// owns playback; this counter only gives mods stable identities for stop calls.
+    next_mod_sound_handle: u64,
     mining_dust_t: f32,
     /// Game ticks remaining before the player may attack again — the
     /// [`ATTACK_COOLDOWN_TICKS`] gate, decremented once per tick. An attack is refused
@@ -154,10 +159,27 @@ pub struct Game {
     /// [`tick`](Self::tick) asks the app shell to open the workbench screen. One-shot
     /// open request (consumed via [`GameEvents`]).
     request_open_workbench: Option<IVec3>,
+    /// Set when a block's `open_gui` interaction (pos `Some`) or a mod's
+    /// `GuiOpen` HostCall (pos `None`) asks for a mod GUI screen. One-shot
+    /// open request (consumed via [`GameEvents`]).
+    request_open_mod_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
+    /// Set by a mod's `GuiClose` HostCall; the app closes the mod GUI screen
+    /// if one is up. One-shot (consumed via [`GameEvents`]).
+    request_close_mod_gui: bool,
     /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can
     /// flick the hand (the toggle itself already applied) and play the open/close
     /// sound. Carries the door's NEW open state. One-shot (consumed via `GameEvents`).
     toggled_door: Option<bool>,
+    /// The modding event bus (Phase 1): pre events dispatch at their decision sites,
+    /// post events queue and drain at tick-stage boundaries. The engine registers no
+    /// handlers yet — the seams exist for mods. See WIKI/modding.md.
+    bus: crate::events::EventBus,
+    /// Systems attached between the fixed-tick stages (Phase 1 seam).
+    systems: crate::events::TickSystems,
+    /// The WASM mod instances (Phase 2b). Their registered closures (held by
+    /// `bus`/`systems`) share ownership; the host keeps the canonical handles
+    /// for GUI click dispatch (Phase 5) and diagnostics.
+    mods: crate::modding::ModHost,
 }
 
 impl Game {
@@ -172,8 +194,27 @@ impl Game {
         self.player.inventory.add(stack)
     }
 
+    /// Test injection: replace the mod host (e.g. with a WAT guest) so the GUI
+    /// click dispatch plumbing can be driven without compiled mods.
+    #[cfg(test)]
+    pub(crate) fn set_mods_for_test(&mut self, mods: crate::modding::ModHost) {
+        self.mods = mods;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mods_for_test(&self) -> &crate::modding::ModHost {
+        &self.mods
+    }
+
     pub fn set_aspect(&mut self, aspect: f32) {
         self.cam.aspect = aspect;
+    }
+
+    /// The player's ear (eye) position, for the app layer's distance
+    /// attenuation of positional mod sounds.
+    #[inline]
+    pub fn listener_position(&self) -> crate::mathh::Vec3 {
+        self.player.eye()
     }
 
     pub fn toggle_player_mode(&mut self) {

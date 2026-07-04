@@ -1,7 +1,9 @@
 mod load;
 mod recipe;
 
+#[cfg(test)]
 pub use load::load_recipes;
+pub use load::load_recipes_for;
 pub use recipe::Recipes;
 #[cfg(test)]
 pub use recipe::{FurnitureRecipe, SmeltingRecipe};

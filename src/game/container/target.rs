@@ -21,6 +21,14 @@ pub(in crate::game) enum ContainerTarget {
     /// — the single input block lives transiently on the menu and is returned to the
     /// inventory on close — so no position is needed.
     FurnitureWorkbench,
+    /// A mod-defined GUI session (Phase 5). `pos` is the block it was opened
+    /// from (`None` for a programmatic `GuiOpen`); it rides the session into
+    /// every `gui_click` dispatch. The session's state lives in the world's
+    /// GUI state map, cleared on open/close.
+    ModGui {
+        kind: crate::gui::GuiKind,
+        pos: Option<IVec3>,
+    },
 }
 
 impl ContainerTarget {

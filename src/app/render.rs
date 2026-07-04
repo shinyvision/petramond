@@ -1,4 +1,5 @@
 use super::{now_seconds, ui_snapshot, App};
+use crate::audio::{SpatialListener, SpatialSoundSource};
 use crate::render::{HeldItemFrame, Renderer};
 
 impl App {
@@ -20,9 +21,18 @@ impl App {
         let shell = self.shell_ui_snapshot(screen_size, self.pointer.cursor());
 
         let Some(game) = self.game.as_mut() else {
+            self.audio.clear_spatial();
+            self.spatial_sound_commands.clear();
+            self.spatial_mob_positions.clear();
             renderer.set_crosshair_visible(false);
             renderer.set_hand_visible(false);
-            renderer.update_uniforms(&self.shell_camera, [0.60, 0.82, 1.00], now as f32, false);
+            renderer.update_uniforms(
+                &self.shell_camera,
+                [0.60, 0.82, 1.00],
+                now as f32,
+                false,
+                None,
+            );
             renderer.set_ui(ui_snapshot::build(
                 None,
                 self.screen,
@@ -37,13 +47,19 @@ impl App {
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
         renderer.set_hand_visible(!matches!(self.screen, crate::app::AppScreen::Pause));
 
+        let listener;
         {
             let frame = game.client_frame(now);
+            listener = SpatialListener {
+                pos: frame.camera.pos,
+                right: frame.camera.right(),
+            };
             renderer.update_uniforms(
                 frame.camera,
                 frame.environment.fog,
                 frame.environment.time,
                 frame.environment.underwater,
+                Some(&frame.environment.shader_params),
             );
             renderer.set_selection(
                 self.screen
@@ -65,6 +81,61 @@ impl App {
         {
             let presentation = self.presentation.snapshot(game);
             renderer.set_break_overlay(presentation.break_overlay);
+            self.spatial_mob_positions.clear();
+            self.spatial_mob_positions.extend(
+                presentation
+                    .mobs
+                    .iter()
+                    .map(|m| (m.id, m.prev_pos.lerp(m.pos, presentation.tick_alpha))),
+            );
+            for command in self.spatial_sound_commands.drain(..) {
+                match command {
+                    crate::game::ModSpatialSoundCommand::PlayAt {
+                        handle,
+                        sound,
+                        pos,
+                        volume,
+                        pitch,
+                    } => self.audio.play_spatial(
+                        handle,
+                        sound,
+                        SpatialSoundSource::Fixed(pos),
+                        volume,
+                        pitch,
+                        listener,
+                        pos,
+                    ),
+                    crate::game::ModSpatialSoundCommand::PlayOnMob {
+                        handle,
+                        sound,
+                        mob_id,
+                        volume,
+                        pitch,
+                        last_pos,
+                    } => {
+                        let initial = self
+                            .spatial_mob_positions
+                            .iter()
+                            .find(|(id, _)| *id == mob_id)
+                            .map(|(_, pos)| *pos)
+                            .unwrap_or(last_pos);
+                        self.audio.play_spatial(
+                            handle,
+                            sound,
+                            SpatialSoundSource::Mob(mob_id),
+                            volume,
+                            pitch,
+                            listener,
+                            initial,
+                        );
+                    }
+                    crate::game::ModSpatialSoundCommand::Stop { handle } => {
+                        self.audio.stop_spatial(handle);
+                    }
+                }
+            }
+            self.audio
+                .update_spatial(listener, &self.spatial_mob_positions);
             self.scene.bake(&presentation);
         }
         self.scene.upload(renderer);

@@ -102,7 +102,10 @@ pub fn build_chests(
 /// Append one placed chest (body + hinged lid + latch) for `inst`, lit by its
 /// skylight, oriented to its `facing` at the world block `pos`.
 fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &ChestInstance) {
-    let sky = inst.skylight;
+    let sky = super::lighting::DynLight {
+        sky: inst.skylight,
+        block: inst.blocklight,
+    };
     let start = verts.len();
     push_box_faces_lit(verts, indices, body_faces(), BODY_MIN, BODY_MAX, sky);
 
@@ -146,7 +149,7 @@ pub(super) fn push_chest_item(
     indices: &mut Vec<u32>,
     origin: Vec3,
     size: f32,
-    skylight: u8,
+    light: super::lighting::DynLight,
 ) {
     let lift = Vec3::new(0.0, ITEM_LIFT, 0.0);
     let map = |a: Vec3| origin + (a + lift) * size;
@@ -159,7 +162,7 @@ pub(super) fn push_chest_item(
         body_faces(),
         map(BODY_MIN),
         map(BODY_MAX),
-        skylight,
+        light,
     );
     push_box_faces_lit(
         verts,
@@ -167,7 +170,7 @@ pub(super) fn push_chest_item(
         lid_faces(),
         map(LID_MIN),
         map(LID_MAX),
-        skylight,
+        light,
     );
     push_box_faces_lit(
         verts,
@@ -175,7 +178,7 @@ pub(super) fn push_chest_item(
         latch_faces(),
         map(LATCH_MIN),
         map(LATCH_MAX),
-        skylight,
+        light,
     );
 }
 
@@ -187,7 +190,13 @@ pub(super) fn push_chest_item_full(
     origin: Vec3,
     size: f32,
 ) {
-    push_chest_item(verts, indices, origin, size, super::lighting::FULL_SKYLIGHT);
+    push_chest_item(
+        verts,
+        indices,
+        origin,
+        size,
+        super::lighting::DynLight::FULL,
+    );
 }
 
 /// Yaw (radians) that rotates the canonical front (`+Z`, South) to `facing`'s front.
@@ -211,6 +220,7 @@ mod tests {
             facing,
             lid01,
             skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
         }
     }
 

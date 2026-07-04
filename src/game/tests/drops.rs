@@ -12,7 +12,7 @@ use crate::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 fn spawn_drops_dirt_yields_one_drop() {
     let mut game = game();
     assert!(game.world.item_entities().is_empty());
-    game.spawn_drops(IVec3::new(2, 3, 4), Block::Dirt, 17);
+    game.spawn_drops(IVec3::new(2, 3, 4), Block::Dirt, (17, 0));
     assert_eq!(game.world.item_entities().len(), 1);
     let d = &game.world.item_entities()[0];
     assert_eq!(d.stack.item, crate::item::ItemType::Dirt);

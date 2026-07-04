@@ -3,10 +3,12 @@
 //! using a clicked block's own capability. Runs on the fixed tick, dispatched from
 //! `tick_place` after block interaction and before placement.
 
-use super::Game;
+use super::placement::facing_from_forward;
+use super::{tick::TickEvents, Game};
 use crate::block::Block;
 use crate::entity::DroppedItem;
-use crate::item::{ItemStack, ItemType};
+use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
+use crate::item::{ItemStack, ItemType, ItemUse};
 use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
 use crate::player::Player;
@@ -14,12 +16,36 @@ use crate::player::Player;
 impl Game {
     /// Apply the held item's own right-click use, if it has one. Returns `true`
     /// when the click was consumed: the world and the held item changed together.
-    pub(super) fn try_use_item(&mut self) -> bool {
-        match self.player.inventory.selected().map(|s| s.item) {
-            Some(ItemType::WoodenBucket) => self.try_fill_bucket(),
-            Some(ItemType::WaterBucket) => self.try_pour_bucket(),
-            _ => false,
+    pub(super) fn try_use_item(&mut self, events: &mut TickEvents) -> bool {
+        let Some(item) = self.player.inventory.selected().map(|s| s.item) else {
+            return false;
+        };
+        // A handler cancelling `item_use_pre` consumed the click: the engine's own
+        // use is skipped, but the item still reports as used (hand jab + post event).
+        let mut pre = ItemUsePre {
+            item,
+            target: self.look.map(|h| h.block),
+        };
+        if self
+            .bus
+            .item_use_pre(&mut self.world, &mut self.player, events, &mut pre)
+            == Outcome::Cancel
+        {
+            self.bus.emit(PostEvent::ItemUsed { item });
+            return true;
         }
+        // Dispatch on the item's data-declared use (`"use"` in items.json).
+        // `Shear` acts at the earlier shear stage of `tick_place`; a `Pending`
+        // (`mod_id:`) handler waits for the WASM host (Phase 2b).
+        let used = match item.item_use() {
+            Some(ItemUse::BucketFill) => self.try_fill_bucket(),
+            Some(ItemUse::BucketPour) => self.try_pour_bucket(events),
+            _ => false,
+        };
+        if used {
+            self.bus.emit(PostEvent::ItemUsed { item });
+        }
+        used
     }
 
     /// Shear the targeted mob with the held shears: the mob's coat comes off (and
@@ -27,7 +53,7 @@ impl Game {
     /// Returns `true` when the click was consumed. `targeted_mob` is already
     /// reach-limited by the per-frame target refresh, exactly like an attack.
     pub(super) fn try_shear_mob(&mut self) -> bool {
-        if self.selected_item() != Some(ItemType::Shears) {
+        if self.selected_item().and_then(ItemType::item_use) != Some(ItemUse::Shear) {
             return false;
         }
         let Some(idx) = self.targeted_mob else {
@@ -38,6 +64,7 @@ impl Game {
             count,
             pos,
             skylight,
+            blocklight,
         }) = self.world.mobs_mut().shear_mob(idx)
         else {
             return false;
@@ -47,6 +74,7 @@ impl Game {
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut drop = DroppedItem::new(centre, ItemStack::new(item, count), self.spawn_counter);
         drop.skylight = skylight;
+        drop.blocklight = blocklight;
         self.world.spawn_item(drop);
         true
     }
@@ -88,7 +116,7 @@ impl Game {
     /// on water the action is always predictable. On land it follows block
     /// placement: a replaceable target (grass, a fern) is filled in place,
     /// anything else pours against the clicked face.
-    fn try_pour_bucket(&mut self) -> bool {
+    fn try_pour_bucket(&mut self, events: &mut TickEvents) -> bool {
         let Some((h, _)) =
             Player::raycast_including_water(self.cam.pos, self.cam.forward(), &self.world)
         else {
@@ -104,6 +132,22 @@ impl Game {
             }
             h.block + h.normal
         };
+        // Pouring places a water block, so it announces the same `block_place_pre`
+        // a held block would; cancel = the pour is refused, the bucket kept full.
+        {
+            let mut pre = BlockPlacePre {
+                pos: p,
+                block: Block::Water,
+                facing: facing_from_forward(self.cam.forward()),
+            };
+            if self
+                .bus
+                .block_place_pre(&mut self.world, &mut self.player, events, &mut pre)
+                == Outcome::Cancel
+            {
+                return false;
+            }
+        }
         let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
         if !target.is_replaceable() {
             return false;
@@ -111,6 +155,10 @@ impl Game {
         if !self.world.set_block_world(p.x, p.y, p.z, Block::Water) {
             return false;
         }
+        self.bus.emit(PostEvent::BlockPlaced {
+            pos: p,
+            block: Block::Water,
+        });
         // A water bucket never stacks, so the swap back to the empty bucket is
         // always an in-place slot swap and cannot fail.
         self.player

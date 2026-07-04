@@ -43,6 +43,18 @@ const GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_mic
 /// the decoded `Section` plus the item entities and mobs that rode in its record.
 pub(super) type LoadedOverlay = (Section, Vec<DroppedItem>, Vec<SavedMob>);
 
+/// A section install the per-frame streamer performed, buffered for the tick-side
+/// event bus (`section_generated` / `section_loaded`): handlers must never run
+/// from per-frame code, so `poll` only records and the next game tick dispatches.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// A freshly generated section was installed.
+    Generated(SectionPos),
+    /// A saved (player-modified) section read from disk was overlaid over its
+    /// generated base.
+    Loaded(SectionPos),
+}
+
 impl World {
     /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
     /// cam_chunk_z)`. The world streams a flattened cylinder: a Euclidean horizontal disc
@@ -504,6 +516,21 @@ impl World {
         Self::column_kept(target, pos)
     }
 
+    /// Gate for buffering [`StreamEvent`]s in `poll`. Set each tick from event-bus
+    /// listener presence, so with no `section_*` handlers the streamer never
+    /// touches the buffer. Turning capture off drops anything already buffered.
+    pub fn set_stream_event_capture(&mut self, on: bool) {
+        if !on {
+            self.stream_events.clear();
+        }
+        self.stream_events_enabled = on;
+    }
+
+    /// Drain the section stream events buffered by `poll` since the last take.
+    pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
+        std::mem::take(&mut self.stream_events)
+    }
+
     /// Poll the worker and the save thread, then ingest: install each landed column's
     /// shared data (and kick off its per-section jobs), install generated sections,
     /// overlay any player-modified sections read from disk, and queue the affected
@@ -552,6 +579,9 @@ impl World {
                     }
                     self.sections.insert(sp, section);
                     self.classify_deep_on_install(sp);
+                    if self.stream_events_enabled {
+                        self.stream_events.push(StreamEvent::Generated(sp));
+                    }
                     ingested.push(sp);
                 }
             }
@@ -579,6 +609,11 @@ impl World {
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
+        if self.stream_events_enabled {
+            for sp in &overlaid {
+                self.stream_events.push(StreamEvent::Loaded(*sp));
+            }
+        }
         for sp in &overlaid {
             if !ingested.contains(sp) {
                 ingested.push(*sp);
@@ -703,7 +738,8 @@ impl World {
             .iter()
             .copied()
             .filter(|sp| {
-                !self.pending_overlays.contains_key(sp) && self.gen_neighborhood_settled(*sp, target)
+                !self.pending_overlays.contains_key(sp)
+                    && self.gen_neighborhood_settled(*sp, target)
             })
             .collect();
         for sp in ready {
@@ -745,7 +781,7 @@ impl World {
             }
             self.sections.insert(*sp, Arc::new(section));
             self.dropped_items.extend(entities);
-            self.mobs.restore(mobs);
+            self.restore_mobs(mobs);
         }
         ready
     }

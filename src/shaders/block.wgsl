@@ -4,11 +4,15 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     cam_pos:   vec4<f32>,
     fog:       vec4<f32>, // (start, end, time, underwater)
+    // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; mods dim it).
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
     // Animated-water flipbook: (still_base_tile, flow_base_tile, frame_count, _).
     water_anim: vec4<u32>,
+    // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
+    // subtly blue). Applied to the SKY term only — torch light keeps its warmth.
+    sky_color: vec4<f32>,
 };
 
 // Flipbook playback speed (frames/second) for still vs flowing water. Flowing
@@ -56,15 +60,19 @@ struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
     // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index,
-    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = skylight,
+    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = SKYlight,
     // 29..32 = UV mode.
     @location(2) packed: u32,
+    // Second packed word: bits 0..6 = block (torch) light, rest reserved (zero).
+    @location(3) packed2: u32,
 };
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) light: f32,
+    // Per-channel light: the sky term is tinted by the sim's sky colour, the
+    // block term is not, so the two can differ per channel at night.
+    @location(1) light: vec3<f32>,
     @location(2) dist: f32,
     @location(3) tint: vec3<f32>,
     @location(4) uv2: vec2<f32>,
@@ -213,18 +221,32 @@ fn vs_main(in: VsIn) -> VsOut {
     out.overlay_layer = overlay_tile;
 
     // Final vertex light = directional face shade (mirror of mesh::SHADES — keep
-    // byte-identical) * per-vertex AO * per-vertex skylight, all smoothly
+    // byte-identical) * per-vertex AO * max(sky term, block term), all smoothly
     // interpolated so shadows and the light-level gradient are soft.
     //   - AO_LUT: contact-shadow dip in lit areas.
-    //   - skylight: 0..63 -> 0..1; a gamma curve keeps near-full sky bright while
-    //     mid/low levels fall off, mixed up from SKY_MIN so a sky-occluded face
-    //     never goes black.
+    //   - each 6-bit channel: 0..63 -> 0..1; a gamma curve keeps near-full light
+    //     bright while mid/low levels fall off, mixed up from SKY_MIN so a fully
+    //     occluded face never goes black.
+    //   - SKY term: scaled by fog_color.w (the sim's sky scale) INSIDE the mix so
+    //     scale 1.0 is exactly identity and scale 0 bottoms out at the SKY_MIN cave
+    //     floor; tinted by sky_color.rgb (white = identity).
+    //   - BLOCK term (torches/furnaces): the SAME curve but night-invariant — no
+    //     scale, no tint — so torchlit surfaces keep their day brightness at night.
+    //     At scale 1.0 + white sky, max(sky_term, block_term) == the old single-
+    //     channel term of max(sky6, block6): the curve is monotone, so max commutes
+    //     through it. (The warm HUE still rides the CPU-baked tint.)
     //   - FINAL_MIN floors the darkest possible pixel: "very dark, not pitch black".
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
+    let block6 = in.packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
-    let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA));
-    out.light = max(FINAL_MIN, shades[shade_idx] * ao_lut[ao] * sky_term);
+    let blk = f32(block6) / 63.0;
+    let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
+    let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
+    out.light = max(
+        vec3<f32>(FINAL_MIN),
+        shades[shade_idx] * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
+    );
 
     out.dist = length(u.cam_pos.xyz - local_pos);
     out.tint = in.tint;

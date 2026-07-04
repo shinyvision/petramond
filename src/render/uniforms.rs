@@ -13,6 +13,7 @@ pub const UNDERWATER_FOG_END: f32 = 22.0;
 /// minimum uniform-block size guaranteed by WebGPU. The `pipeline.rs`
 /// `assert!(TILE_COUNT <= UV_RECTS_LEN)` is the compile-time guard.
 pub const UV_RECTS_LEN: usize = 256;
+pub const SHADER_PARAM_SLOTS: usize = 16;
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -20,6 +21,10 @@ pub struct Uniforms {
     pub view_proj: [[f32; 4]; 4],
     pub cam_pos: [f32; 4], // padded to 16
     pub fog: [f32; 4],     // (start, end, time, underwater)
+    /// `xyz` = fog colour; `w` = the sim-owned sky scale (1.0 = noon/identity),
+    /// read by `block.wgsl`, `model3d.wgsl`, and `sky.wgsl` to dim skylight,
+    /// the held item, and the sky-gradient zenith at draw time (WIKI/modding.md
+    /// Phase 2c).
     pub fog_color: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
     /// World-space origin subtracted by world shaders before applying `view_proj`.
@@ -30,4 +35,16 @@ pub struct Uniforms {
     /// `(water_still_base_tile, water_flow_base_tile, frame_count, _)`. The
     /// shader advances `base + floor(time*fps) % frames` over these two tiles.
     pub water_anim: [u32; 4],
+    /// `xyz` = the sim-owned sky light COLOUR (white `[1,1,1]` = identity; a
+    /// day/night mod tints the night subtly blue), applied to the SKY lighting
+    /// term only in `block.wgsl` / `model3d.wgsl` and to the `sky.wgsl` zenith.
+    /// `w` is reserved (0). Appended after `water_anim` so shaders declaring a
+    /// prefix of this struct stay layout-compatible.
+    pub sky_color: [f32; 4],
+}
+
+#[repr(C, align(16))]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ShaderParams {
+    pub values: [[f32; 4]; SHADER_PARAM_SLOTS],
 }

@@ -2,14 +2,20 @@
 //!
 //! Every block's data row lives on disk (like `recipes.json`), so block
 //! properties are editable — and moddable — without a rebuild. Rows reference
-//! blocks/tags/materials by their snake_case serde names, tiles by their atlas
-//! asset names, and behaviours by their [`BlockBehavior::key`] names.
+//! blocks/items by their registry names, tags/materials by their snake_case
+//! serde names, tiles by their atlas asset names, and behaviours by their
+//! [`BlockBehavior::key`] names.
+//!
+//! Two kinds of row (see [`crate::registry`]): a row whose key is an ENGINE
+//! block name overrides that block's def (a pack states only the rows it
+//! changes); a row with a NAMESPACED key (`mod_id:name`) REGISTERS a new
+//! dynamic block at the next free id. A new bare name is an error.
 //!
 //! Unlike recipes (where a malformed row is skipped), the block table is
 //! load-bearing for the whole engine — world gen, meshing, lighting, and save
 //! decode all index it by block id — so the loader validates that the file
-//! covers EVERY `Block` exactly once and fails loudly at startup on any
-//! mismatch, rather than limping on with a partial table.
+//! covers EVERY registered block exactly once and fails loudly at startup on
+//! any mismatch, rather than limping on with a partial table.
 //!
 //! [`BlockBehavior::key`]: super::behavior::BlockBehavior::key
 
@@ -17,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::atlas::Tile;
 use crate::item::{Drop, DropSpec, ItemType};
+use crate::registry::ContentNames;
 
 use super::definition::{BlockDef, BlockFlags, BlockMaterial};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
@@ -27,19 +34,23 @@ pub(super) struct RawFile {
 }
 
 /// One block row as written in `blocks.json`: a field-for-field mirror of
-/// [`BlockDef`] with names in place of pointers (tiles, behaviour) and owned
-/// `Vec`s in place of `'static` slices. Floats ride as `f64` (JSON's native
-/// width); converting narrows back to the exact `f32` the shortest decimal
-/// representation denotes.
+/// [`BlockDef`] with names in place of ids/pointers (the block itself, drops'
+/// items, tiles, behaviour) and owned `Vec`s in place of `'static` slices.
+/// Floats ride as `f64` (JSON's native width); converting narrows back to the
+/// exact `f32` the shortest decimal representation denotes.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawBlockDef {
-    pub block: Block,
+    /// Registry name: an engine block name (override) or a namespaced
+    /// `mod_id:name` key (dynamic registration). Resolved against the name
+    /// table, NOT through `Block` serde, so the loader stays the one place
+    /// ids are assigned.
+    pub block: String,
     pub shape: RenderShape,
     pub flags: Vec<RawFlag>,
     pub tags: Vec<BlockTag>,
     pub behavior: String,
-    pub interaction: BlockInteraction,
+    pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
     pub emission: u8,
     pub tiles: [String; 3],
@@ -47,6 +58,44 @@ pub(super) struct RawBlockDef {
     pub harvest_tier: u8,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
+}
+
+/// A row's `interaction` field: a bare engine action name (`"none"`,
+/// `"open_furnace"`, ...) or `{"open_gui": "mod_id:name"}` opening a
+/// mod-defined GUI kind. Resolved to [`BlockInteraction`] in [`convert`].
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RawInteraction {
+    Named(String),
+    OpenGui { open_gui: String },
+}
+
+impl RawInteraction {
+    fn resolve(&self) -> Result<BlockInteraction, String> {
+        match self {
+            RawInteraction::Named(name) => Ok(match name.as_str() {
+                "none" => BlockInteraction::None,
+                "open_crafting_table" => BlockInteraction::OpenCraftingTable,
+                "open_furnace" => BlockInteraction::OpenFurnace,
+                "open_chest" => BlockInteraction::OpenChest,
+                "open_furniture_workbench" => BlockInteraction::OpenFurnitureWorkbench,
+                "toggle_door" => BlockInteraction::ToggleDoor,
+                other => return Err(format!("unknown interaction '{other}'")),
+            }),
+            RawInteraction::OpenGui { open_gui } => {
+                // Mod GUI kinds must be namespaced (engine screens carry
+                // session/slot semantics an open_gui row cannot provide).
+                if !crate::registry::is_namespaced(open_gui) {
+                    return Err(format!(
+                        "open_gui '{open_gui}' must be a namespaced 'mod_id:name' GUI kind"
+                    ));
+                }
+                let kind = crate::gui::intern_kind(open_gui)
+                    .ok_or_else(|| format!("cannot register gui kind '{open_gui}'"))?;
+                Ok(BlockInteraction::OpenModGui(kind))
+            }
+        }
+    }
 }
 
 /// A [`BlockFlags`] bit by name — rows list the flags they carry.
@@ -72,11 +121,12 @@ impl RawFlag {
     }
 }
 
-/// One entry of a row's `drops` list (mirror of [`Drop`]).
+/// One entry of a row's `drops` list (mirror of [`Drop`]; `item` is the
+/// dropped item's registry name).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawDrop {
-    pub item: ItemType,
+    pub item: String,
     pub min: u8,
     pub max: u8,
     pub chance: f64,
@@ -104,17 +154,30 @@ pub(super) fn registry() -> Registry {
         log::info!("block defs layer: {}", path.display());
     }
     let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-    parse_layers(&texts).unwrap_or_else(|e| panic!("blocks.json: {e}"))
+    // The global name table was built from these same layers, so every row key
+    // resolves and every dynamic id is already assigned.
+    parse_layers(&texts, crate::registry::names()).unwrap_or_else(|e| panic!("blocks.json: {e}"))
 }
 
 #[cfg(test)]
 pub(super) fn parse(text: &str) -> Result<Registry, String> {
-    parse_layers(&[text])
+    parse_test_layers(&[text])
 }
 
-pub(super) fn parse_layers(texts: &[&str]) -> Result<Registry, String> {
-    // Merge layers by block: a later layer's row REPLACES the earlier one, so a
-    // mod pack states only the rows it changes.
+/// Test harness: parse synthetic layers against a name table built from those
+/// same layers (+ the shipped items for drop resolution), mirroring the real
+/// bootstrap without touching the global registries.
+#[cfg(test)]
+pub(super) fn parse_test_layers(texts: &[&str]) -> Result<Registry, String> {
+    let (items, _) =
+        crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
+    let names = crate::registry::build_names(texts, &[&items])?;
+    parse_layers(texts, &names)
+}
+
+pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Registry, String> {
+    // Merge layers by block key: a later layer's row REPLACES the earlier one,
+    // so a mod pack states only the rows it changes (or adds).
     let mut merged: Vec<RawBlockDef> = Vec::new();
     for (li, text) in texts.iter().enumerate() {
         let raw: RawFile =
@@ -126,18 +189,27 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<Registry, String> {
             }
         }
     }
-    let expected = Block::ALL.len();
+    let expected = names.blocks.len();
     let mut rows: Vec<Option<BlockDef>> = (0..expected).map(|_| None).collect();
     for r in merged {
-        let block = r.block;
-        let id = block.id() as usize;
-        rows[id] = Some(convert(r).map_err(|e| format!("block {block:?}: {e}"))?);
+        let id = names
+            .blocks
+            .id(&r.block)
+            .ok_or_else(|| format!("unregistered block '{}'", r.block))?;
+        let key = r.block.clone();
+        rows[id as usize] =
+            Some(convert(r, Block(id), names).map_err(|e| format!("block '{key}': {e}"))?);
     }
-    // Block ids are the contiguous enum discriminants, so covering every
-    // variant exactly once fills 0..expected with no holes.
+    // Ids are assigned contiguously by the name table, so covering every
+    // registered name exactly once fills 0..expected with no holes.
     let mut defs = Vec::with_capacity(expected);
     for (id, row) in rows.into_iter().enumerate() {
-        defs.push(row.ok_or_else(|| format!("missing row for block {:?}", Block::ALL[id]))?);
+        defs.push(row.ok_or_else(|| {
+            format!(
+                "missing row for block '{}'",
+                names.blocks.name(id as u8).unwrap_or("?")
+            )
+        })?);
     }
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
     let mut flags = [BlockFlags::NONE; 256];
@@ -147,7 +219,7 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<Registry, String> {
     Ok(Registry { defs, flags })
 }
 
-fn convert(r: RawBlockDef) -> Result<BlockDef, String> {
+fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDef, String> {
     let behavior = behavior::by_name(&r.behavior)
         .ok_or_else(|| format!("unknown behavior '{}'", r.behavior))?;
     let tile = |name: &String| -> Result<Tile, String> {
@@ -161,19 +233,26 @@ fn convert(r: RawBlockDef) -> Result<BlockDef, String> {
     let drops: Vec<Drop> = r
         .drops
         .iter()
-        .map(|d| Drop {
-            item: d.item,
-            min: d.min,
-            max: d.max,
-            chance: d.chance as f32,
+        .map(|d| {
+            let item = names
+                .items
+                .id(&d.item)
+                .map(ItemType)
+                .ok_or_else(|| format!("unknown drop item '{}'", d.item))?;
+            Ok(Drop {
+                item,
+                min: d.min,
+                max: d.max,
+                chance: d.chance as f32,
+            })
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     Ok(BlockDef {
-        block: r.block,
+        block,
         flags,
         tags: leak(r.tags),
         behavior,
-        interaction: r.interaction,
+        interaction: r.interaction.resolve()?,
         shape: r.shape,
         collision: leak(r.collision),
         emission: r.emission,
@@ -201,39 +280,124 @@ mod tests {
     #[test]
     fn shipped_blocks_json_loads_fully() {
         let (text, path) =
-            crate::assets::read_text("blocks.json").expect("assets/blocks.json must ship");
-        parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let reg = parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(
+            reg.defs.len(),
+            crate::block::ENGINE_BLOCK_NAMES.len(),
+            "the base table is exactly the engine set"
+        );
     }
 
     #[test]
     fn pack_layer_overrides_rows_by_block() {
         let (base, _) =
-            crate::assets::read_text("blocks.json").expect("assets/blocks.json must ship");
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let layer = r#"{ "blocks": [ { "block": "stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 99, "drops": [] } ] }"#;
-        let reg = parse_layers(&[&base, layer]).expect("layered table loads");
+        let reg = parse_test_layers(&[&base, layer]).expect("layered table loads");
         assert_eq!(
             reg.defs[Block::Stone.id() as usize].hardness,
             99.0,
             "the pack layer's stone row replaces the base row"
         );
+        // An override registers no new id.
+        assert_eq!(reg.defs.len(), crate::block::ENGINE_BLOCK_NAMES.len());
         // Rows the layer does not name are untouched.
         assert_eq!(reg.defs[Block::Dirt.id() as usize].hardness, 0.5);
     }
 
     #[test]
+    fn namespaced_pack_row_registers_a_new_block() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "mymod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [{"item": "cobblestone", "min": 1, "max": 1, "chance": 1.0}] } ] }"#;
+        let reg = parse_test_layers(&[&base, layer]).expect("dynamic row loads");
+        let engine = crate::block::ENGINE_BLOCK_NAMES.len();
+        assert_eq!(
+            reg.defs.len(),
+            engine + 1,
+            "one fresh id past the engine set"
+        );
+        let def = &reg.defs[engine];
+        assert_eq!(def.block, Block(engine as u8));
+        // The row's properties resolve like any engine row's.
+        assert!(def.flags.is_solid() && def.flags.is_opaque());
+        assert_eq!(def.behavior.key(), "inert");
+        assert_eq!(def.emission, 28);
+        assert_eq!(def.drop.drops.len(), 1);
+        assert_eq!(def.drop.drops[0].item, ItemType::Cobblestone);
+        // Engine ids are untouched by the addition.
+        assert_eq!(reg.defs[Block::Stone.id() as usize].block, Block::Stone);
+    }
+
+    #[test]
+    fn new_bare_name_rows_are_rejected() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "glowrock", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "none", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let err = parse_test_layers(&[&base, layer])
+            .err()
+            .expect("bare additions are refused");
+        assert!(
+            err.contains("glowrock") && err.contains("namespace"),
+            "{err}"
+        );
+    }
+
+    /// Phase 5: `interaction: {"open_gui": "mod:kind"}` resolves to
+    /// `OpenModGui` with a registered kind; a bare (un-namespaced) open_gui
+    /// key and an unknown named interaction are load errors.
+    #[test]
+    fn open_gui_interaction_parses_namespaced_and_rejects_bare() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "guimod:opener", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": {"open_gui": "guimod:panel"}, "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
+        let reg = parse_test_layers(&[&base, layer]).expect("open_gui row loads");
+        let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
+        let BlockInteraction::OpenModGui(kind) = def.interaction else {
+            panic!("expected OpenModGui, got {:?}", def.interaction);
+        };
+        assert_eq!(crate::gui::kind_key(kind), Some("guimod:panel"));
+
+        let bare = layer.replace("guimod:panel", "panel");
+        let err = parse_test_layers(&[&base, &bare]).err().unwrap();
+        assert!(err.contains("namespaced"), "{err}");
+
+        let unknown = layer.replace(r#"{"open_gui": "guimod:panel"}"#, r#""bogus_action""#);
+        let err = parse_test_layers(&[&base, &unknown]).err().unwrap();
+        assert!(err.contains("unknown interaction"), "{err}");
+    }
+
+    #[test]
     fn loader_rejects_incomplete_or_unknown_rows() {
-        // Unknown block name: serde's enum error names the bad variant.
-        let bad = r#"{ "blocks": [ { "block": "bogus_block", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
-        assert!(parse(bad).err().unwrap().contains("bogus_block"));
         // A single valid row is not a full table: the error names a missing block.
         let partial = r#"{ "blocks": [ { "block": "air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
         assert!(parse(partial).err().unwrap().contains("missing row"));
-        // Unknown behavior name.
-        let bad_behavior = partial.replace("\"inert\"", "\"bogus\"");
-        assert!(parse(&bad_behavior).err().unwrap().contains("unknown behavior"));
+        // Unknown behavior name (the full base table with one row broken).
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let bad_behavior = r#"{ "blocks": [ { "block": "air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
+        assert!(parse_test_layers(&[&base, bad_behavior])
+            .err()
+            .unwrap()
+            .contains("unknown behavior"));
         // Unknown tile name.
-        let bad_tile =
-            partial.replace("\"dirt\", \"dirt\", \"dirt\"", "\"dirt\", \"dirt\", \"bogus_tile\"");
-        assert!(parse(&bad_tile).err().unwrap().contains("unknown tile"));
+        let bad_tile = bad_behavior.replace("\"bogus\"", "\"inert\"").replace(
+            "\"dirt\", \"dirt\", \"dirt\"",
+            "\"dirt\", \"dirt\", \"bogus_tile\"",
+        );
+        assert!(parse_test_layers(&[&base, &bad_tile])
+            .err()
+            .unwrap()
+            .contains("unknown tile"));
+        // Unknown drop item name.
+        let bad_drop = bad_behavior.replace("\"bogus\"", "\"inert\"").replace(
+            "\"drops\": []",
+            "\"drops\": [{\"item\": \"bogus_item\", \"min\": 1, \"max\": 1, \"chance\": 1.0}]",
+        );
+        assert!(parse_test_layers(&[&base, &bad_drop])
+            .err()
+            .unwrap()
+            .contains("unknown drop item"));
     }
 }

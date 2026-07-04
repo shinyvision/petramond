@@ -6,33 +6,49 @@
 //! layout code maps pixels to these slot identities, and the game menu applies
 //! them on the tick.
 
+mod kind;
 mod layout;
 mod shell_skin;
 
 use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemStack, ItemType};
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
+pub use kind::GuiKind;
+pub(crate) use kind::{intern_kind, intern_str, kind_key, resolve_kind};
 pub(crate) use layout::{
-    baked_hovers, baked_overlays, baked_panels, def, hit, panel_contains, GuiDef, OverlayTag,
+    baked_hovers, baked_panels, baked_sprites, def, hit, panel_contains, GuiDef, LabelAlign,
+    OverlayMode, SpriteKey, WidgetDef,
 };
 pub(crate) use shell_skin::{
     baked_shell_hovers, baked_shell_scroll_thumbs, baked_shell_skins, shell_def, ShellDef,
     ShellKind, ShellRole,
 };
 
-/// Which container a baked GUI is for. Matches the gui-builder's `type` field.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GuiKind {
-    Chest,
-    Inventory,
-    CraftingTable,
-    Furnace,
-    Hotbar,
-    FurnitureWorkbench,
-    #[serde(other)]
-    Other,
+/// One value of the open GUI session's state map: written by mods on the tick
+/// (`GuiStateSet`), read per frame by the renderer for `label` text, `rotimage`
+/// angles (radians, `F32`), and mod overlay fractions.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GuiValue {
+    F32(f32),
+    I32(i32),
+    Str(String),
+}
+
+/// The open GUI session's state map. `BTreeMap` for deterministic iteration;
+/// snapshotted behind an `Arc` per frame (copy-on-write on the tick side).
+pub type GuiStateMap = BTreeMap<String, GuiValue>;
+
+/// A widget's stable id within its GUI manifest (interned — see
+/// [`kind::intern_str`]) so [`MenuSlot`] stays `Copy`.
+pub type WidgetId = &'static str;
+
+/// An empty shared state map (the per-frame default when no mod GUI is open).
+pub(crate) fn empty_gui_state() -> Arc<GuiStateMap> {
+    static EMPTY: std::sync::OnceLock<Arc<GuiStateMap>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(GuiStateMap::new())).clone()
 }
 
 /// A hit-tested crafting slot: an input cell index (`0..cols*cols`, row-major) or
@@ -75,6 +91,9 @@ pub enum MenuSlot {
     Chest(usize),
     /// A furniture-workbench slot: the input block, or a take-only result cell.
     Workbench(WorkbenchHit),
+    /// A manifest `button` widget (mod GUIs). Latches like every slot click;
+    /// the tick dispatches it to the kind's owning mod as a `gui_click`.
+    Widget(WidgetId),
 }
 
 /// A manifest slot role. Each role maps to a logical [`MenuSlot`] by in-role
@@ -311,6 +330,10 @@ pub struct UiSnapshot {
     /// The player's health for the bottom-left hearts, or `None` to hide the bar
     /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
     pub health: Option<HealthView>,
+    /// The open mod GUI's state map (labels / rotimage angles / overlay
+    /// fractions), or `None` when no mod GUI session is up. A cheap `Arc`
+    /// clone of the tick-owned map.
+    pub gui_state: Option<Arc<GuiStateMap>>,
     pub shell: ShellUiSnapshot,
 }
 
@@ -330,6 +353,7 @@ impl Default for UiSnapshot {
             chest: None,
             workbench: None,
             health: None,
+            gui_state: None,
             shell: ShellUiSnapshot::default(),
         }
     }

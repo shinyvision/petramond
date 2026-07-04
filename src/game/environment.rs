@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::biome::{blended_fog_color, Biome};
 use crate::block::Block;
 use crate::mathh::{lerp, voxel_at, IVec3, Vec3};
+use crate::world::environment::ShaderParamMap;
 use crate::world::World;
 
 use super::Game;
@@ -14,17 +17,21 @@ const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
 /// the view when the eye is only barely clipping their rendered surface.
 const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GameEnvironment {
     pub(crate) fog: [f32; 3],
     pub(crate) time: f32,
     pub(crate) underwater: bool,
+    /// Named visual shader parameters, written by mods on the tick and mapped
+    /// to fixed GPU slots by the active shader pack.
+    pub(crate) shader_params: Arc<ShaderParamMap>,
 }
 
 impl Game {
     pub(super) fn environment(&self, now: f64) -> GameEnvironment {
         let eye = self.cam.pos;
         let underwater = camera_eye_underwater(&self.world, eye);
+        let env = self.world.environment();
 
         let fog = if underwater {
             UNDERWATER_FOG_COLOR
@@ -36,6 +43,7 @@ impl Game {
             fog,
             underwater,
             time: (now % 3600.0) as f32,
+            shader_params: env.shader_params().clone(),
         }
     }
 

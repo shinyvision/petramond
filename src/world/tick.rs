@@ -204,6 +204,12 @@ impl World {
         }
     }
 
+    /// Public [`schedule_block_tick`](Self::schedule_block_tick): the mod
+    /// `ScheduleTick` HostCall's entry, same first-schedule-wins semantics.
+    pub fn schedule_tick(&mut self, pos: IVec3, delay: u64) {
+        self.schedule_block_tick(pos, delay);
+    }
+
     /// Ask for `pos` to run a scheduled tick `delay` ticks from now. No-op if a
     /// tick is already pending for `pos` (first schedule wins).
     pub(super) fn schedule_block_tick(&mut self, pos: IVec3, delay: u64) {

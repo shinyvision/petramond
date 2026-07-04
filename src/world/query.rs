@@ -1,4 +1,4 @@
-use crate::block::Block;
+use crate::block::{Aabb, Block};
 use crate::chunk::{self, ChunkPos, SectionPos, SKY_FULL, WORLD_MIN_Y};
 use crate::mathh::IVec3;
 use crate::mesh::ChunkMesh;
@@ -120,16 +120,18 @@ impl World {
             .max(self.blocklight6_at_world(wx, wy, wz))
     }
 
-    /// Combined brightness AND the warm-tint amount for dynamic geometry that also
-    /// takes the warm block-light tint (the held item / hand, particles). Returns
-    /// `(combined6, warm)` where `warm` is `crate::torch::warm_amount * 255` packed
-    /// into a byte (divide by 255 at render) — so the same warmth the chunk mesher
-    /// bakes into static blocks applies to dynamic geometry.
-    pub fn dynamic_light_at_world(&self, wx: i32, wy: i32, wz: i32) -> (u8, u8) {
+    /// The TWO light channels plus the warm-tint amount for dynamic geometry (the
+    /// held item / hand, mobs, dropped items, particles). Returns `(sky6, block6,
+    /// warm)` — the channels stay separate so the renderer can dim/tint the sky
+    /// term (day/night mods) without dimming torch light, mirroring the split
+    /// terrain vertex; `warm` is `crate::torch::warm_amount * 255` packed into a
+    /// byte (divide by 255 at render) so the same warmth the chunk mesher bakes
+    /// into static blocks applies to dynamic geometry.
+    pub fn dynamic_light_at_world(&self, wx: i32, wy: i32, wz: i32) -> (u8, u8, u8) {
         let sky6 = self.skylight6_at_world(wx, wy, wz);
         let block6 = self.blocklight6_at_world(wx, wy, wz);
         let warm = crate::torch::warm_amount(sky6 as f32 / 63.0, block6 as f32 / 63.0);
-        (sky6.max(block6), (warm * 255.0) as u8)
+        (sky6, block6, (warm * 255.0) as u8)
     }
 
     /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its
@@ -198,5 +200,56 @@ impl World {
         (WORLD_MIN_Y..=top)
             .rev()
             .find(|&y| self.blocks_movement_at(wx, y, wz))
+    }
+
+    /// Whether this loaded block is valid full-cube support for programmatic
+    /// mob spawns. This is stricter than movement collision: leaves are solid
+    /// for collision but remain canopy, and partial shapes such as stairs or
+    /// model blocks are not full spawn footing.
+    pub fn block_is_full_spawn_support(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        let Some(block) = self.block_if_loaded(wx, wy, wz) else {
+            return false;
+        };
+        if block.is_water() || block.is_leaves() {
+            return false;
+        }
+        full_unit_cube(self.collision_boxes_at(wx, wy, wz))
+    }
+}
+
+fn full_unit_cube(boxes: &[Aabb]) -> bool {
+    if boxes.len() != 1 {
+        return false;
+    }
+    let b = boxes[0];
+    b.min == [0.0, 0.0, 0.0] && b.max == [1.0, 1.0, 1.0]
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::chunk::ChunkPos;
+
+    use super::*;
+
+    #[test]
+    fn full_spawn_support_rejects_water_leaves_partials_and_unloaded_cells() {
+        let mut world = World::new(0, 1);
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+
+        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+
+        assert!(world.set_block_world(8, 63, 8, Block::Grass));
+        assert!(world.block_is_full_spawn_support(8, 63, 8));
+
+        assert!(world.set_block_world(8, 63, 8, Block::Water));
+        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+
+        assert!(world.set_block_world(8, 63, 8, Block::OakLeaves));
+        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+
+        assert!(world.set_block_world(8, 63, 8, Block::OakStairs));
+        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+
+        assert!(!world.block_is_full_spawn_support(128, 63, 128));
     }
 }

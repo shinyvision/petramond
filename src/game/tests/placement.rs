@@ -14,7 +14,7 @@ fn place_with_empty_hand_does_nothing() {
     // The starting inventory is already empty.
     assert!(game.player.inventory.selected().is_none());
     game.look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
-    assert!(!game.try_place());
+    assert!(!game.try_place_for_test());
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn place_into_loaded_air_decrements_selected() {
     let before = game.player.inventory.selected().unwrap().count;
 
     game.look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y));
-    assert!(game.try_place());
+    assert!(game.try_place_for_test());
 
     assert_eq!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)), block);
     assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
@@ -159,7 +159,10 @@ fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
 
     // Look straight at the grass and place into it.
     game.look = Some(hit(g, IVec3::Y));
-    assert!(game.try_place(), "placing into replaceable grass succeeds");
+    assert!(
+        game.try_place_for_test(),
+        "placing into replaceable grass succeeds"
+    );
 
     assert_eq!(
         Block::from_id(game.world.chunk_block(g.x, g.y, g.z)),
@@ -190,7 +193,7 @@ fn rooted_plants_place_only_on_their_required_ground() {
         game.player.inventory = inv;
         game.player.inventory.set_active(0);
         game.look = Some(hit(g, IVec3::Y)); // build on TOP of the ground block
-        let placed = game.try_place();
+        let placed = game.try_place_for_test();
         // The return must agree with whether the block actually landed above.
         let above = Block::from_id(game.world.chunk_block(g.x, g.y + 1, g.z));
         assert_eq!(
@@ -275,7 +278,7 @@ fn model_placement_orientation_spans_across_or_away() {
         game.player.inventory = inv;
         game.player.inventory.set_active(0);
         game.look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
-        assert!(game.try_place(), "{item:?} should place");
+        assert!(game.try_place_for_test(), "{item:?} should place");
         game
     };
     let at = |game: &Game, p: IVec3| Block::from_id(game.world.chunk_block(p.x, p.y, p.z));
@@ -284,7 +287,11 @@ fn model_placement_orientation_spans_across_or_away() {
     // away from the player) — never the cells beside it.
     let p = IVec3::new(4, 64, 4);
     let bed = place(ItemType::Bed, p);
-    assert_eq!(at(&bed, p), Block::Bed, "near (foot) end at the clicked cell");
+    assert_eq!(
+        at(&bed, p),
+        Block::Bed,
+        "near (foot) end at the clicked cell"
+    );
     assert_eq!(
         at(&bed, p + IVec3::new(0, 0, 1)),
         Block::Bed,

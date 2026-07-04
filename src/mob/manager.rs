@@ -18,7 +18,7 @@ use crate::world::World;
 
 use super::brain::AiMob;
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{model, push, spawn, Instance, Mob, MobRng, SavedMob, MOB_DEFS};
+use super::{defs, model, push, spawn, Instance, Mob, MobRng, SavedMob};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -27,6 +27,7 @@ pub struct DeathDrop {
     pub kind: Mob,
     pub pos: Vec3,
     pub skylight: u8,
+    pub blocklight: u8,
 }
 
 /// What a successful shear yields, so `Game` can spawn the drop (like [`DeathDrop`],
@@ -38,6 +39,25 @@ pub struct ShearDrop {
     pub count: u8,
     pub pos: Vec3,
     pub skylight: u8,
+    pub blocklight: u8,
+}
+
+/// A melee strike a mob landed on the player this tick. Drained from
+/// [`Mobs::tick`] by `Game`, which applies the damage through the
+/// `player_damage_pre` pipeline — a cancelled strike drops its knockback too.
+#[derive(Copy, Clone, Debug)]
+pub struct MobAttack {
+    /// Index into the live mob set — valid this tick only (mirrors
+    /// `MobHurtPre::mob`).
+    pub mob_index: usize,
+    pub mob: Mob,
+    /// Damage in half-heart points (rounded when applied to the player).
+    pub damage: f32,
+    /// Horizontal unit direction the player is knocked toward (away from the mob;
+    /// zero when the two exactly overlap — the strike still pops upward).
+    pub knockback_dir: Vec3,
+    /// Horizontal knockback speed (m/s) added to the player's velocity.
+    pub knockback: f32,
 }
 
 /// Hard cap on simultaneous mobs, so a spawn loop / debug key can't run the world
@@ -62,7 +82,7 @@ struct MobMeta {
 /// usize`. It's identical for every world, so computing it once keeps each `World::new` (of
 /// which the tests make dozens) from re-deriving it — and nothing here re-reads a `.bbmodel`.
 static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
-    MOB_DEFS
+    defs()
         .iter()
         .map(|d| MobMeta {
             idle_anims: model_meta::idle_anims(model(d.mob)),
@@ -108,12 +128,29 @@ impl Mobs {
     /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. Returns `false` if the
     /// mob cap is reached (the spawn is dropped).
     pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
+        self.spawn_lit(kind, pos, yaw, 63, 0)
+    }
+
+    /// Spawn a mob with its render light initialized for the first presentation
+    /// frame. Use this from world-owned spawn paths where the spawn cell's light
+    /// is already available; otherwise a cave spawn can render full-bright until
+    /// the next mob tick refreshes cached light.
+    pub fn spawn_lit(
+        &mut self,
+        kind: Mob,
+        pos: Vec3,
+        yaw: f32,
+        skylight: u8,
+        blocklight: u8,
+    ) -> bool {
         if self.list.len() >= MAX_MOBS {
             return false;
         }
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        self.list
-            .push(Instance::new(kind, pos, yaw, self.spawn_counter));
+        let mut mob = Instance::new(kind, pos, yaw, self.spawn_counter);
+        mob.skylight = skylight;
+        mob.blocklight = blocklight;
+        self.list.push(mob);
         true
     }
 
@@ -121,7 +158,8 @@ impl Mobs {
     /// metadata + ragdoll skeleton) and refresh its cached skylight, then resolve soft
     /// entity pushing and remove any mob that should leave the live world: a finished
     /// death corpse, or a hostile mob that has distance-despawned (culled, and so not
-    /// saved).
+    /// saved). Returns the melee strikes the brains landed on the player this tick,
+    /// for `Game` to route through the player damage pipeline.
     ///
     /// `player_pos` is the player's body centre — the AI's player anchor for head-look
     /// and distance-despawn. `player_body` is the player's *pushable* body, present only
@@ -142,7 +180,7 @@ impl Mobs {
         player_pos: Vec3,
         player_body: Option<push::Body>,
         freeze_unloaded: bool,
-    ) {
+    ) -> Vec<MobAttack> {
         let ai_mobs: Vec<AiMob> = self
             .list
             .iter()
@@ -152,11 +190,12 @@ impl Mobs {
                 active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
             })
             .collect();
+        let mut attacks = Vec::new();
         for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !chunk_loaded_at(world, mob) {
                 continue;
             }
-            let meta = &MOB_META[mob.kind as usize];
+            let meta = &MOB_META[mob.kind.0 as usize];
             mob.tick(
                 dt,
                 world,
@@ -166,12 +205,27 @@ impl Mobs {
                 &meta.idle_anims,
                 &meta.skeleton,
             );
+            if let Some(intent) = mob.take_attack() {
+                // The knockback direction is derived here, from the live mob→player
+                // geometry at strike time — horizontal, away from the attacker.
+                let mut away = player_pos - mob.pos;
+                away.y = 0.0;
+                attacks.push(MobAttack {
+                    mob_index: i,
+                    mob: mob.kind,
+                    damage: intent.damage,
+                    knockback_dir: away.normalize_or_zero(),
+                    knockback: intent.knockback,
+                });
+            }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
-            mob.skylight = world.combined_light6_at_world(c.x, c.y, c.z);
+            mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
+            mob.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
         }
         self.resolve_pushes(world, player_body, freeze_unloaded);
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
+        attacks
     }
 
     /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob←player when
@@ -248,6 +302,7 @@ impl Mobs {
                 kind: mob.kind,
                 pos: mob.pos,
                 skylight: mob.skylight,
+                blocklight: mob.blocklight,
             })
         } else {
             None
@@ -266,27 +321,37 @@ impl Mobs {
             count,
             pos: mob.pos,
             skylight: mob.skylight,
+            blocklight: mob.blocklight,
         })
     }
 
     /// Run one natural-spawn step: a single spawn attempt at a random loaded position.
-    /// Called once per game tick by `Game`, after [`tick`](Self::tick).
+    /// Called once per game tick by `Game`, after [`tick`](Self::tick). Returns the
+    /// spawns actually performed (kind + feet position), for the caller to report as
+    /// `mob_spawned` events.
     ///
     /// Mobs that leave the loaded area are no longer dropped here — they are saved into
     /// their chunk as it unloads (see [`take_in_chunk`](Self::take_in_chunk)) and reload
     /// with it. Because the unload harvests them out of the live set, the set still only
     /// holds loaded-area mobs, so the "in the loaded area" caps stay honest.
-    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) {
+    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) -> Vec<(Mob, Vec3)> {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
         let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
             spawn::room_for(list, kind)
         });
+        let mut spawned = Vec::new();
         if let Some(spawns) = chosen {
             for s in spawns {
-                self.spawn(s.kind, s.pos, s.yaw);
+                let c = crate::mathh::voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
+                let sky = world.skylight6_at_world(c.x, c.y, c.z);
+                let block = world.blocklight6_at_world(c.x, c.y, c.z);
+                if self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
+                    spawned.push((s.kind, s.pos));
+                }
             }
         }
+        spawned
     }
 
     /// Drain and return the live mobs resting in section `pos`, as [`SavedMob`]s — used
@@ -330,16 +395,57 @@ impl Mobs {
 
     /// Re-spawn mobs read back from a section's save record now that its section has
     /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
-    /// is subject to the mob cap like any spawn. The saved shear-regrow counter carries
-    /// over, so a shorn sheep reloads shorn.
+    /// is subject to the mob cap like any spawn. The saved shear-regrow counter and mod
+    /// KV carry over, so a shorn sheep reloads shorn and mod data survives.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
-            if self.spawn(m.kind, m.pos, m.yaw) {
-                if let Some(inst) = self.list.last_mut() {
-                    inst.set_shear_regrow(m.shear_regrow);
-                }
+            self.restore_saved_mob_lit(m, 63, 0);
+        }
+    }
+
+    pub(crate) fn restore_saved_mob_lit(&mut self, m: SavedMob, skylight: u8, blocklight: u8) {
+        if self.spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight) {
+            if let Some(inst) = self.list.last_mut() {
+                inst.set_shear_regrow(m.shear_regrow);
+                *inst.mod_kv_mut() = m.kv;
             }
         }
+    }
+
+    /// Remove the mob at `index` from the live set immediately — the mod
+    /// `DespawnMob` HostCall (no death, no loot, not saved). `swap_remove`, so
+    /// it renumbers the last mob into the hole; callers must re-query indices.
+    pub fn remove(&mut self, index: usize) -> bool {
+        if index < self.list.len() {
+            self.list.swap_remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A live mob's mod KV entry (see [`Instance::mod_kv`]).
+    pub fn mod_kv_get(&self, index: usize, key: &str) -> Option<&[u8]> {
+        self.list.get(index)?.mod_kv().get(key).map(Vec::as_slice)
+    }
+
+    /// Store a mod KV entry on the mob at `index`; `false` = no such mob.
+    pub fn mod_kv_set(&mut self, index: usize, key: String, value: Vec<u8>) -> bool {
+        match self.list.get_mut(index) {
+            Some(m) => {
+                m.mod_kv_mut().insert(key, value);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove a mod KV entry from the mob at `index`; returns whether it was
+    /// present.
+    pub fn mod_kv_remove(&mut self, index: usize, key: &str) -> bool {
+        self.list
+            .get_mut(index)
+            .is_some_and(|m| m.mod_kv_mut().remove(key).is_some())
     }
 
     /// The live mobs, for the render-side scene adapter to bake (read-only).
@@ -442,12 +548,14 @@ mod tests {
                 pos: Vec3::new(8.5, 70.0, 8.5),
                 yaw: 1.25,
                 shear_regrow: 0,
+                kv: Default::default(),
             },
             SavedMob {
                 kind: Mob::Sheep,
                 pos: Vec3::new(9.5, 70.0, 8.5),
                 yaw: -0.5,
                 shear_regrow: 500,
+                kv: Default::default(),
             },
         ]);
         assert_eq!(mobs.len(), 2);
@@ -468,11 +576,41 @@ mod tests {
     }
 
     #[test]
+    fn mob_mod_kv_survives_section_unload_and_reload() {
+        // The unload → save-record → reload cycle at the manager level: a mod
+        // KV entry set on a live mob rides its SavedMob projection and is back
+        // on the restored instance (the on-disk byte layer is covered by
+        // `save::mobs`).
+        let mut mobs = Mobs::new(0);
+        assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5));
+        assert!(mobs.mod_kv_set(0, "zombies:anger".into(), vec![3, 1]));
+        assert_eq!(mobs.mod_kv_get(0, "zombies:anger"), Some(&[3u8, 1][..]));
+
+        let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].kv.get("zombies:anger"), Some(&vec![3, 1]));
+        assert_eq!(mobs.len(), 0, "harvested out of the live set");
+
+        mobs.restore(taken);
+        assert_eq!(
+            mobs.mod_kv_get(0, "zombies:anger"),
+            Some(&[3u8, 1][..]),
+            "the KV is back on the restored mob"
+        );
+        // Removal reports presence honestly; out-of-range indices are inert.
+        assert!(mobs.mod_kv_remove(0, "zombies:anger"));
+        assert!(!mobs.mod_kv_remove(0, "zombies:anger"));
+        assert!(!mobs.mod_kv_set(9, "zombies:anger".into(), vec![1]));
+    }
+
+    #[test]
     fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         let world = World::new(0, 1);
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
-        let spec = crate::mob::def(Mob::Sheep).shear.expect("sheep are shearable");
+        let spec = crate::mob::def(Mob::Sheep)
+            .shear
+            .expect("sheep are shearable");
 
         let drop = mobs.shear_mob(0).expect("a coated sheep shears");
         assert_eq!(drop.item, spec.drop);

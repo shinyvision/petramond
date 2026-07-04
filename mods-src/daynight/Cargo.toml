@@ -1,0 +1,12 @@
+[package]
+name = "daynight"
+version = "0.1.0"
+edition = "2021"
+description = "Proof-of-concept day/night cycle mod: 10-minute days, sun/moon billboards, subtle night sky tint, world-KV time interop."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

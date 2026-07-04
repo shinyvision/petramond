@@ -19,7 +19,7 @@
 use glam::{Mat4, Vec3};
 
 use super::item_model::ItemVertex;
-use super::lighting::sky_light_factor;
+use super::lighting::{light_rgb, DynLight, LightEnv};
 use super::MobRenderInstance;
 use crate::bbmodel::{euler_quat, face_corners, Animation, Model};
 use crate::mesh::face::Face;
@@ -55,6 +55,7 @@ fn hurt_tint(hurt: f32) -> [f32; 3] {
 pub fn build_mob_instances(
     model: &Model,
     scale: f32,
+    env: LightEnv,
     instances: &[MobRenderInstance],
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
@@ -114,8 +115,17 @@ pub fn build_mob_instances(
         let global = Mat4::from_translation(inst.pos)
             * Mat4::from_rotation_y(inst.yaw)
             * Mat4::from_scale(Vec3::splat(scale));
-        let light = sky_light_factor(inst.skylight);
-        let tint = hurt_tint(inst.hurt);
+        // Two-channel RGB light folds into the tint (shade keeps the directional
+        // term), so a mob standing in torch light stays lit at night.
+        let rgb = light_rgb(
+            DynLight {
+                sky: inst.skylight,
+                block: inst.blocklight,
+            },
+            env,
+        );
+        let hurt = hurt_tint(inst.hurt);
+        let tint = [hurt[0] * rgb[0], hurt[1] * rgb[1], hurt[2] * rgb[2]];
 
         for cube in &model.cubes {
             if inst.shorn && cube.name == COAT_CUBE_NAME {
@@ -129,7 +139,7 @@ pub fn build_mob_instances(
 
             for (slot, face) in Face::ALL.into_iter().enumerate() {
                 let Some(uv) = cube.faces[slot] else { continue };
-                push_face(verts, indices, m, face, cube.from, cube.to, uv, light, tint);
+                push_face(verts, indices, m, face, cube.from, cube.to, uv, tint);
             }
         }
     }
@@ -148,7 +158,6 @@ fn push_face(
     from: Vec3,
     to: Vec3,
     uv: [f32; 4],
-    light: f32,
     tint: [f32; 3],
 ) {
     let local = face_corners(face, from, to);
@@ -162,7 +171,7 @@ fn push_face(
         return;
     }
 
-    let shade = SHADES[face.shade_idx() as usize] * light;
+    let shade = SHADES[face.shade_idx() as usize];
     // UV rect is [u0, v0_top, u1, v1_bottom]; assign per `quad_box` corner order
     // (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left).
     let [u0, v0, u1, v1] = uv;
@@ -204,6 +213,7 @@ mod tests {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
+            blocklight: 0,
             hurt: 0.0,
             shorn: false,
             ragdoll: None,
@@ -215,7 +225,10 @@ mod tests {
         let m = owl_model();
         let mut v = Vec::new();
         let mut i = Vec::new();
-        assert_eq!(build_mob_instances(&m, 0.25, &[], &mut v, &mut i), 0);
+        assert_eq!(
+            build_mob_instances(&m, 0.25, LightEnv::IDENTITY, &[], &mut v, &mut i),
+            0
+        );
         assert!(v.is_empty() && i.is_empty());
     }
 
@@ -227,6 +240,7 @@ mod tests {
         let n = build_mob_instances(
             &m,
             0.25,
+            LightEnv::IDENTITY,
             std::slice::from_ref(&instance(0.0, true)),
             &mut v,
             &mut i,
@@ -246,6 +260,7 @@ mod tests {
         build_mob_instances(
             &m,
             0.25,
+            LightEnv::IDENTITY,
             std::slice::from_ref(&instance(0.0, false)),
             &mut v1,
             &mut i1,
@@ -253,6 +268,7 @@ mod tests {
         build_mob_instances(
             &m,
             0.5,
+            LightEnv::IDENTITY,
             std::slice::from_ref(&instance(0.0, false)),
             &mut v2,
             &mut i2,
@@ -276,6 +292,7 @@ mod tests {
             build_mob_instances(
                 &m,
                 0.25,
+                LightEnv::IDENTITY,
                 std::slice::from_ref(&instance(t, moving)),
                 &mut v,
                 &mut i,
@@ -317,7 +334,14 @@ mod tests {
             inst.kind = kind;
             inst.shorn = shorn;
             let (mut v, mut i) = (Vec::new(), Vec::new());
-            build_mob_instances(model, 0.0625, std::slice::from_ref(&inst), &mut v, &mut i);
+            build_mob_instances(
+                model,
+                0.0625,
+                LightEnv::IDENTITY,
+                std::slice::from_ref(&inst),
+                &mut v,
+                &mut i,
+            );
             v
         };
         let coated = bake(&sheep, Mob::Sheep, false);
@@ -349,7 +373,14 @@ mod tests {
             let mut inst = instance(0.0, false);
             inst.head_yaw = head_yaw;
             let (mut v, mut i) = (Vec::new(), Vec::new());
-            build_mob_instances(&m, 0.25, std::slice::from_ref(&inst), &mut v, &mut i);
+            build_mob_instances(
+                &m,
+                0.25,
+                LightEnv::IDENTITY,
+                std::slice::from_ref(&inst),
+                &mut v,
+                &mut i,
+            );
             v
         };
         let straight = bake(0.0);

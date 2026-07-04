@@ -61,9 +61,11 @@ const FADE_TAIL: f32 = 0.4;
 pub struct Particle {
     pub pos: Vec3,
     pub vel: Vec3,
-    /// 6-bit combined sky+block light, re-sampled each tick so the fleck tracks the
-    /// lighting it drifts through (and dims when a nearby torch is broken).
+    /// 6-bit SKY light, re-sampled each tick so the fleck tracks the lighting it
+    /// drifts through (and dims with the environment sky scale at night).
     pub skylight: u8,
+    /// 6-bit block (torch) light, re-sampled alongside `skylight` — night-invariant.
+    pub blocklight: u8,
     /// Warm-tint amount (`crate::torch::warm_amount * 255`) from nearby block-light,
     /// re-sampled each tick; the render warms the fleck's tint by this so flecks near
     /// a torch/furnace glow warm.
@@ -197,8 +199,9 @@ impl ParticleSystem {
         // at its spawn light.
         for p in &mut self.particles {
             let c = voxel_at(p.pos);
-            let (light, warm) = world.dynamic_light_at_world(c.x, c.y, c.z);
-            p.skylight = light;
+            let (sky, block, warm) = world.dynamic_light_at_world(c.x, c.y, c.z);
+            p.skylight = sky;
+            p.blocklight = block;
             p.warm = warm;
         }
     }
@@ -284,7 +287,7 @@ impl ParticleSystem {
     /// [`spawn_mining_model`]: Self::spawn_mining_model
     #[cfg(test)]
     pub fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
-        self.spawn_mining_lit(block_pos, face_normal, block, 63, 0);
+        self.spawn_mining_lit(block_pos, face_normal, block, 63, 0, 0);
     }
 
     /// Same as [`spawn_mining`](Self::spawn_mining), with caller-provided render
@@ -295,6 +298,7 @@ impl ParticleSystem {
         face_normal: IVec3,
         block: Block,
         skylight: u8,
+        blocklight: u8,
         warm: u8,
     ) {
         let tile = Self::face_tile(block, face_normal);
@@ -328,6 +332,7 @@ impl ParticleSystem {
                 pos,
                 vel,
                 skylight: skylight.min(63),
+                blocklight: blocklight.min(63),
                 warm,
                 tile,
                 model: None,
@@ -351,7 +356,7 @@ impl ParticleSystem {
     /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
     #[cfg(test)]
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(block_pos, block, 63, 0);
+        self.spawn_break_burst_lit(block_pos, block, 63, 0, 0);
     }
 
     /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with caller-provided
@@ -361,6 +366,7 @@ impl ParticleSystem {
         block_pos: IVec3,
         block: Block,
         skylight: u8,
+        blocklight: u8,
         warm: u8,
     ) {
         let tiles = block.tiles();
@@ -394,6 +400,7 @@ impl ParticleSystem {
                 pos,
                 vel,
                 skylight: skylight.min(63),
+                blocklight: blocklight.min(63),
                 warm,
                 tile,
                 model: None,
@@ -416,6 +423,7 @@ impl ParticleSystem {
         block_pos: IVec3,
         kind: BlockModelKind,
         skylight: u8,
+        blocklight: u8,
         warm: u8,
     ) {
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
@@ -434,7 +442,7 @@ impl ParticleSystem {
             let lifetime = 1.0 + self.rand() * 2.0;
             let patch_r = self.rand();
             self.push(model_fleck(
-                kind, pos, vel, skylight, warm, lifetime, patch_r,
+                kind, pos, vel, skylight, blocklight, warm, lifetime, patch_r,
             ));
         }
     }
@@ -448,6 +456,7 @@ impl ParticleSystem {
         face_normal: IVec3,
         kind: BlockModelKind,
         skylight: u8,
+        blocklight: u8,
         warm: u8,
     ) {
         let n = Vec3::new(
@@ -474,7 +483,7 @@ impl ParticleSystem {
             let lifetime = 0.5 + self.rand() * 1.0;
             let patch_r = self.rand();
             self.push(model_fleck(
-                kind, pos, vel, skylight, warm, lifetime, patch_r,
+                kind, pos, vel, skylight, blocklight, warm, lifetime, patch_r,
             ));
         }
     }
@@ -483,11 +492,13 @@ impl ParticleSystem {
 /// One model-texture fleck: resolves an opaque model-atlas patch for `kind` and builds
 /// the particle (no foliage tint — a model fleck carries its own texture). Free function
 /// (not a method) so a spawn can build it inside `push(...)` without a self-borrow clash.
+#[allow(clippy::too_many_arguments)]
 fn model_fleck(
     kind: BlockModelKind,
     pos: Vec3,
     vel: Vec3,
     skylight: u8,
+    blocklight: u8,
     warm: u8,
     lifetime: f32,
     patch_r: f32,
@@ -497,6 +508,7 @@ fn model_fleck(
         pos,
         vel,
         skylight: skylight.min(63),
+        blocklight: blocklight.min(63),
         warm,
         // `tile` is unused for a model fleck (the model atlas is sampled); a placeholder
         // keeps the field populated.
@@ -534,6 +546,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            blocklight: 0,
             warm: 0,
             tile,
             model: None,
@@ -561,6 +574,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            blocklight: 0,
             warm: 0,
             tile: Tile::from_name("grass_top").unwrap(),
             model: None,
@@ -590,6 +604,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             skylight: 63,
+            blocklight: 0,
             warm: 0,
             tile: Tile::from_name("grass_top").unwrap(),
             model: None,
@@ -659,6 +674,7 @@ mod tests {
             pos,
             vel,
             skylight: 63,
+            blocklight: 0,
             warm: 0,
             tile: Tile::from_name("grass_top").unwrap(),
             model: None,

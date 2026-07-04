@@ -67,30 +67,39 @@ fn world_select_scrollbar_track_click_scrolls_to_valid_end() {
 }
 
 #[test]
-fn world_select_delete_requires_a_selected_world() {
+fn world_select_settings_requires_a_selected_world() {
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
 
     let screen = (1280, 720);
     let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    let delete = shell_button(&snapshot, "Delete World");
-    assert!(!delete.enabled);
+    let settings = shell_button(&snapshot, "World Settings");
+    assert!(!settings.enabled);
 
     app.selected_world = Some(0);
     let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    let delete = shell_button(&snapshot, "Delete World");
-    assert!(delete.enabled);
+    let settings = shell_button(&snapshot, "World Settings");
+    assert!(settings.enabled);
 }
 
+/// The delete flow moved behind World Settings: world-select -> settings
+/// screen (title + world name) -> its bottom-right Delete World button ->
+/// the unchanged confirmation window.
 #[test]
-fn world_select_delete_opens_confirmation_window() {
+fn world_settings_hosts_the_delete_confirmation_flow() {
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
     app.selected_world = Some(0);
 
     let screen = (1280, 720);
+    click_shell_button(&mut app, screen, "World Settings");
+
+    assert_eq!(app.screen, crate::app::AppScreen::WorldSettings);
+    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
+    assert!(snapshot.texts.iter().any(|text| text.text == "world-0"));
+
     click_shell_button(&mut app, screen, "Delete World");
 
     assert_eq!(app.screen, crate::app::AppScreen::DeleteWorld);

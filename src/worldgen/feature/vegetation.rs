@@ -136,32 +136,31 @@ fn pick_plant(
     wz: i32,
     rng: &mut FeatureRng,
 ) -> Option<Block> {
-    use Block::*;
     let vegetation = spec(biome).vegetation;
 
-    if matches!(surf, Sand | RedSand) {
+    if matches!(surf, Block::Sand | Block::RedSand) {
         return vegetation.sand_cover.and_then(|picker| picker(rng));
     }
 
-    if surf == Mycelium {
+    if surf == Block::Mycelium {
         if !rng.chance(0.10) {
             return None;
         }
         return Some(if rng.next_i32(0, 99) < 55 {
-            RedMushroom
+            Block::RedMushroom
         } else {
-            BrownMushroom
+            Block::BrownMushroom
         });
     }
 
-    if surf == Podzol {
+    if surf == Block::Podzol {
         if !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
             return None;
         }
         return vegetation.podzol_cover.and_then(|picker| picker(rng));
     }
 
-    if surf != Grass {
+    if surf != Block::Grass {
         return None;
     }
 

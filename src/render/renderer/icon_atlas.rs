@@ -123,8 +123,9 @@ pub(super) fn bake(
     model_icon_pipe: &wgpu::RenderPipeline,
     model3d_mvp_bgl: &wgpu::BindGroupLayout,
     uv_rects_buf: &wgpu::Buffer,
+    uniform_buf: &wgpu::Buffer,
 ) -> IconAtlas {
-    let count = ItemType::ALL.len() as u32;
+    let count = ItemType::all().len() as u32;
     let rows = count.div_ceil(COLS);
     let aw = COLS * CELL;
     let ah = rows * CELL;
@@ -212,7 +213,7 @@ pub(super) fn bake(
     let mut model_indices: Vec<u32> = Vec::new();
     let mut model_icons: Vec<ModelIcon> = Vec::new();
 
-    for &item in ItemType::ALL {
+    for &item in ItemType::all() {
         // Air never appears in a slot; skip its cell entirely (left transparent).
         if item == ItemType::Air {
             continue;
@@ -317,6 +318,13 @@ pub(super) fn bake(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: uv_rects_buf.as_entire_binding(),
+            },
+            // The frame Uniforms (model3d reads only the sky-scale lane,
+            // fog_color.w). At init its value is the identity 1.0, so baked
+            // icons are full-bright regardless of any later in-game scale.
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform_buf.as_entire_binding(),
             },
         ],
     });

@@ -5,7 +5,7 @@
 // dynamic-offset uniform at group(0) binding(0). group(1) is the block atlas
 // (texture + sampler), same shape as block.wgsl's atlas_bind.
 //
-// Vertex format is the shared 28-byte mesh::Vertex (see block.wgsl's VsIn). The
+// Vertex format is the shared 32-byte mesh::Vertex (see block.wgsl's VsIn). The
 // `packed` word folds tile / corner / shade / solid-flag / AO / skylight; this
 // shader reconstructs the uv (SELECTING from the uv_rects table — never
 // recomputing) and the face shade, exactly like the chunk pipeline, so a held
@@ -27,6 +27,21 @@ struct MvpUniform {
     mvp: mat4x4<f32>,
 };
 
+// Mirror of the frame `Uniforms` (block.wgsl) — only fog_color.w (the sim's sky
+// scale) and sky_color.rgb are read here, so the held block dims/tints in step
+// with terrain. The icon-atlas bake binds the same buffer at its init values
+// (w = 1.0, sky_color = white), so icons stay full-bright.
+struct FrameUniforms {
+    view_proj: mat4x4<f32>,
+    cam_pos:   vec4<f32>,
+    fog:       vec4<f32>,
+    fog_color: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
+    render_origin: vec4<f32>,
+    water_anim: vec4<u32>,
+    sky_color: vec4<f32>,
+};
+
 // Keep in sync with `block.wgsl` / `render::lighting` (dark cave floor).
 const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
@@ -35,6 +50,7 @@ const SKY_GAMMA: f32 = 3.0;
 @group(0) @binding(0) var<uniform> m: MvpUniform;
 // uv-rect table identical to block.wgsl: (u0,v0,u1,v1) per tile. SELECT only.
 @group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
+@group(0) @binding(2) var<uniform> frame: FrameUniforms;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
@@ -43,15 +59,17 @@ struct VsIn {
     @location(1) tint: vec3<f32>,
     // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index, 12..20 = overlay
     // tile, 20 = flag (solid-color OR has grass-side overlay), 21..23 = AO,
-    // 23..29 = skylight, 29..32 = UV mode (unused by this transformed-item path).
+    // 23..29 = SKYlight, 29..32 = UV mode (unused by this transformed-item path).
     @location(2) packed: u32,
+    // Second packed word: bits 0..6 = block (torch) light, rest reserved (zero).
+    @location(3) packed2: u32,
 };
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) tint: vec3<f32>,
-    @location(2) light: f32,
+    @location(2) light: vec3<f32>,
     // bit-20 flag (set for solid hand OR grass-side overlay).
     @location(3) @interpolate(flat) flag: u32,
     // overlay (grass-side) uv, sampled when `overlay_tile` is non-zero.
@@ -99,12 +117,22 @@ fn vs_model(in: VsIn) -> VsOut {
     // (see inset_tile). Applied to BOTH the base uv and the grass-side overlay uv2.
     out.uv = corner_uv(inset_tile(uv_rects[tile]), corner);
     out.uv2 = corner_uv(inset_tile(uv_rects[overlay_tile]), corner);
-    // Mirror of block.wgsl lighting: directional shade * AO * skylight.
+    // Mirror of block.wgsl lighting: directional shade * AO * max(sky term, block
+    // term), with the same sky-scale/-colour lanes so the held block dims and
+    // tints with the world (identity at scale 1.0 + white) while torch light stays
+    // night-invariant. See block.wgsl for the identity argument.
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
+    let block6 = in.packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
-    let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA));
-    out.light = max(FINAL_MIN, shades[shade_idx] * ao_lut[ao] * sky_term);
+    let blk = f32(block6) / 63.0;
+    let sky_term =
+        mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA) * frame.fog_color.w) * frame.sky_color.rgb;
+    let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
+    out.light = max(
+        vec3<f32>(FINAL_MIN),
+        shades[shade_idx] * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
+    );
     out.tint = in.tint;
     out.flag = (in.packed >> 20u) & 0x1u;
     out.overlay_tile = overlay_tile;

@@ -1,0 +1,45 @@
+{
+  "type": "wheel:wheel",
+  "canvas": { "w": 352, "h": 288 },
+  "scale": 2,
+  "image": "wheel_panel.png",
+  "widgets": [
+    {
+      "widget": "rotimage",
+      "x": 80,
+      "y": 36,
+      "w": 192,
+      "h": 192,
+      "image": "wheel_face_gui.png",
+      "state_key": "wheel:angle"
+    },
+    {
+      "widget": "image",
+      "x": 164,
+      "y": 22,
+      "w": 24,
+      "h": 30,
+      "image": "wheel_pointer.png"
+    },
+    {
+      "widget": "label",
+      "x": 16,
+      "y": 234,
+      "w": 320,
+      "h": 14,
+      "state_key": "wheel:result",
+      "align": "center",
+      "color": [1.0, 0.9, 0.5, 1.0]
+    },
+    {
+      "widget": "button",
+      "id": "spin",
+      "x": 144,
+      "y": 254,
+      "w": 64,
+      "h": 28,
+      "image": "wheel_button.png",
+      "hover_image": "wheel_button_hover.png"
+    }
+  ]
+}

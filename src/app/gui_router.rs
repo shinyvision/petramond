@@ -96,7 +96,10 @@ impl GuiRouter {
             _ if shift || button != PointerButton::Primary => None,
             MenuSlot::Inventory(i) => Some(i),
             MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
-            MenuSlot::Craft(_) | MenuSlot::Furnace(_) | MenuSlot::Workbench(_) => None,
+            MenuSlot::Craft(_)
+            | MenuSlot::Furnace(_)
+            | MenuSlot::Workbench(_)
+            | MenuSlot::Widget(_) => None,
         };
         match streak_key {
             Some(key) => self.double_click.register(key, now) && cursor_has_stack,

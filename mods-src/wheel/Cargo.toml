@@ -1,0 +1,12 @@
+[package]
+name = "wheel"
+version = "0.1.0"
+edition = "2021"
+description = "Proof-of-concept GUI mod: a craftable wheel-of-fortune block whose spin button animates a rotimage widget on the tick and pays out a seeded random reward."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

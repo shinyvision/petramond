@@ -8,8 +8,10 @@ mod chest;
 pub(crate) mod door;
 mod edit;
 mod entities;
+pub(crate) mod environment;
 pub(crate) mod fragile;
 mod furnace;
+mod kv;
 mod light;
 mod mesh_pool;
 mod mesh_queue;
@@ -30,6 +32,7 @@ pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub use store::{World, RENDER_DIST};
+pub(crate) use stream::StreamEvent;
 
 /// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
 pub(crate) fn mesh_stage_stats() -> (
