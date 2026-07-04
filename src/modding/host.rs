@@ -220,9 +220,10 @@ fn intern_mod_id(id: &str) -> &'static str {
     }
 }
 
-/// The mod-KV write guard: WRITES (set/delete) must use the calling mod's own
-/// `mod_id:` prefix — reads may cross namespaces (the interop surface) — and
-/// keys/values are size-capped. `Some(err)` rejects the call.
+/// The mod-KV write guard: WRITES (set/delete) must use either the calling
+/// mod's own `mod_id:` prefix or an exposed engine `llama:` key. Reads may cross
+/// namespaces (the interop surface), and keys/values are size-capped.
+/// `Some(err)` rejects the call.
 fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> {
     if key.len() > KV_MAX_KEY_BYTES {
         return Some(HostRet::Error(format!(
@@ -235,18 +236,23 @@ fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> 
             "KV value is {value_len} bytes; the limit is {KV_MAX_VALUE_BYTES}"
         )));
     }
-    mod_owned_key_guard(mod_id, key)
+    public_write_key_guard(mod_id, key)
 }
 
-fn mod_owned_key_guard(mod_id: &str, key: &str) -> Option<HostRet> {
-    let owned = key
-        .strip_prefix(mod_id)
+fn key_owned_by_namespace(namespace: &str, key: &str) -> bool {
+    key.strip_prefix(namespace)
         .and_then(|rest| rest.strip_prefix(':'))
-        .is_some_and(|name| !name.is_empty());
-    if !owned {
+        .is_some_and(|name| !name.is_empty())
+}
+
+fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet> {
+    let mod_owned = key_owned_by_namespace(mod_id, key);
+    let engine_owned = key_owned_by_namespace(crate::registry::ENGINE_NAMESPACE, key);
+    if !(mod_owned || engine_owned) {
         return Some(HostRet::Error(format!(
-            "mod writes must use this mod's own namespace ('{mod_id}:name'); got '{key}' \
-             (reads may cross namespaces, writes may not)"
+            "mod writes must use this mod's own namespace ('{mod_id}:name') or an engine-owned \
+             '{engine}:name' key; got '{key}' (reads may cross namespaces)",
+            engine = crate::registry::ENGINE_NAMESPACE
         )));
     }
     None
@@ -307,7 +313,8 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             priority,
             handler_id,
         }),
-        HostCall::ShaderSetParam { key, value } => match mod_owned_key_guard(&data.mod_id, &key) {
+        HostCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
+        {
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
         },
@@ -852,9 +859,10 @@ mod tests {
     }
 
     /// The KV namespace contract: writes must carry the CALLER's own
-    /// `mod_id:` prefix (foreign and bare keys are rejected with an error),
-    /// while reads may cross namespaces — that asymmetry IS the cross-mod
-    /// interop surface. Size caps reject oversized values.
+    /// `mod_id:` prefix or an engine-owned `llama:` key (foreign and bare keys
+    /// are rejected with an error), while reads may cross namespaces — that
+    /// asymmetry IS the cross-mod interop surface. Size caps reject oversized
+    /// values.
     #[test]
     fn kv_writes_enforce_own_namespace_and_reads_cross() {
         let mut alpha = ModStoreData::new("alpha", 1);
@@ -871,6 +879,17 @@ mod tests {
                 ),
                 HostRet::Unit
             );
+            // Engine-owned public surfaces are intentionally writable.
+            assert_eq!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::WorldKvSet {
+                        key: "llama:time".into(),
+                        value: vec![1],
+                    },
+                ),
+                HostRet::Unit
+            );
             // A foreign-prefix write is rejected...
             assert!(matches!(
                 handle_host_call(
@@ -883,7 +902,7 @@ mod tests {
                 HostRet::Error(_)
             ));
             // ...and so are bare / degenerate keys.
-            for bad in ["x", "alpha:", "alphax:y", "beta"] {
+            for bad in ["x", "alpha:", "llama:", "alphax:y", "beta"] {
                 assert!(
                     matches!(
                         handle_host_call(
@@ -907,6 +926,15 @@ mod tests {
                     },
                 ),
                 HostRet::Bytes(Some(vec![7]))
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::WorldKvGet {
+                        key: "llama:time".into(),
+                    },
+                ),
+                HostRet::Bytes(Some(vec![1]))
             );
             // Deletes are writes: foreign rejected, own applies.
             assert!(matches!(
@@ -945,6 +973,77 @@ mod tests {
                 &mut alpha,
                 HostCall::WorldKvGet {
                     key: "alpha:x".into(),
+                },
+            ),
+            HostRet::Error(_)
+        ));
+    }
+
+    /// Shader params are the visual environment surface mods use for sky
+    /// shaders and other pack-owned effects: own namespace or engine `llama:*`,
+    /// tick-scoped, and stored in the world's neutral environment snapshot.
+    #[test]
+    fn shader_param_writes_are_namespaced_and_tick_scoped() {
+        let mut alpha = ModStoreData::new("alpha", 1);
+        let mut beta = ModStoreData::new("beta", 1);
+        let mut world = World::new(1, 1);
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::ShaderSetParam {
+                        key: "alpha:sky".into(),
+                        value: [0.25, 0.5, 0.75, 1.0],
+                    },
+                ),
+                HostRet::Unit
+            );
+            assert!(matches!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::ShaderSetParam {
+                        key: "alpha:sky".into(),
+                        value: [1.0; 4],
+                    },
+                ),
+                HostRet::Error(_)
+            ));
+            assert_eq!(
+                handle_host_call(
+                    &mut beta,
+                    HostCall::ShaderSetParam {
+                        key: "llama:light".into(),
+                        value: [0.8, 0.0, 0.0, 0.0],
+                    },
+                ),
+                HostRet::Unit
+            );
+        });
+
+        assert_eq!(
+            world.environment().shader_params().get("alpha:sky"),
+            Some(&[0.25, 0.5, 0.75, 1.0])
+        );
+        assert_eq!(
+            world.environment().shader_params().get("llama:light"),
+            Some(&[0.8, 0.0, 0.0, 0.0])
+        );
+        assert!(matches!(
+            handle_host_call(
+                &mut alpha,
+                HostCall::ShaderSetParam {
+                    key: "alpha:outside".into(),
+                    value: [0.0; 4],
                 },
             ),
             HostRet::Error(_)
@@ -1016,7 +1115,12 @@ mod tests {
         assert_eq!(data.stats.rejected_registrations, 3);
         // ...but ResolveBlock works anywhere, with no SimCtx published.
         assert_eq!(
-            handle_host_call(&mut data, HostCall::ResolveBlock { key: "air".into() },),
+            handle_host_call(
+                &mut data,
+                HostCall::ResolveBlock {
+                    key: "llama:air".into()
+                },
+            ),
             HostRet::Block(Some(mod_api::BlockId(0)))
         );
         assert_eq!(
@@ -1050,7 +1154,7 @@ mod tests {
                 handle_host_call(
                     &mut data,
                     HostCall::EmitSound {
-                        key: "item_pickup".into(),
+                        key: "llama:item_pickup".into(),
                         pos: Some([1.0, 64.0, 1.0]),
                     },
                 ),
@@ -1096,7 +1200,7 @@ mod tests {
                 handle_host_call(
                     &mut data,
                     HostCall::SpawnMob {
-                        key: "owl".into(),
+                        key: "llama:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
                     },
@@ -1133,7 +1237,7 @@ mod tests {
                 handles.0 = match handle_host_call(
                     &mut data,
                     HostCall::SoundPlayAt {
-                        key: "item_pickup".into(),
+                        key: "llama:item_pickup".into(),
                         pos: [1.0, 81.0, 1.0],
                         volume: 0.5,
                         pitch: 1.25,
@@ -1146,7 +1250,7 @@ mod tests {
                     &mut data,
                     HostCall::SoundPlayOnMob {
                         mob_id,
-                        key: "item_pickup".into(),
+                        key: "llama:item_pickup".into(),
                         volume: 0.75,
                         pitch: 0.9,
                     },
@@ -1184,7 +1288,7 @@ mod tests {
             "same session inputs produce the same handles"
         );
 
-        let sound = crate::audio::sound_by_name("item_pickup").expect("engine sound exists");
+        let sound = crate::audio::sound_by_name("llama:item_pickup").expect("engine sound exists");
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],

@@ -44,12 +44,12 @@ impl GuiKind {
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
 const ENGINE_GUI_KIND_NAMES: [&str; 6] = [
-    "chest",
-    "inventory",
-    "crafting_table",
-    "furnace",
-    "hotbar",
-    "furniture_workbench",
+    "llama:chest",
+    "llama:inventory",
+    "llama:crafting_table",
+    "llama:furnace",
+    "llama:hotbar",
+    "llama:furniture_workbench",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a
@@ -77,11 +77,14 @@ pub(crate) fn intern_str(s: &str) -> &'static str {
 }
 
 /// Resolve `key` to its kind, REGISTERING a namespaced key on first sight.
-/// Engine names map to their consts; a new bare name is `None` (additions must
-/// be namespaced, exactly like blocks/items).
+/// Engine `llama:*` names map to their consts; a new bare name or unknown
+/// `llama:*` key is `None`.
 pub(crate) fn intern_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
+    }
+    if crate::registry::namespace(key) == Some(crate::registry::ENGINE_NAMESPACE) {
+        return None;
     }
     if !crate::registry::is_namespaced(key) {
         return None;
@@ -150,13 +153,14 @@ mod tests {
 
     #[test]
     fn engine_names_resolve_to_consts_and_mod_keys_intern_once() {
-        assert_eq!(intern_kind("furnace"), Some(GuiKind::Furnace));
-        assert_eq!(resolve_kind("hotbar"), Some(GuiKind::Hotbar));
+        assert_eq!(intern_kind("llama:furnace"), Some(GuiKind::Furnace));
+        assert_eq!(resolve_kind("llama:hotbar"), Some(GuiKind::Hotbar));
         assert!(!GuiKind::Furnace.is_mod());
         assert!(!GuiKind::Other.is_mod());
 
         // A new bare name is refused; a namespaced key registers exactly once.
         assert_eq!(intern_kind("wheel"), None);
+        assert_eq!(intern_kind("llama:wheel"), None);
         let a = intern_kind("kindtest:wheel").expect("namespaced key registers");
         let b = intern_kind("kindtest:wheel").unwrap();
         assert_eq!(a, b, "re-interning returns the same id");

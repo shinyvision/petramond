@@ -203,7 +203,7 @@ mod tests {
     fn pack_layer_overrides_rows_by_item() {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
-        let layer = r#"{"items": [{"item": "stone", "key": "stone", "name": "Modded Stone", "max_stack_size": 16, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
+        let layer = r#"{"items": [{"item": "llama:stone", "key": "llama:stone", "name": "Modded Stone", "max_stack_size": 16, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("layered table loads");
         let stone = &defs[ItemType::Stone.id() as usize];
         assert_eq!(stone.name, "Modded Stone");
@@ -219,7 +219,7 @@ mod tests {
         // resolves the same way) and carrying an engine use handler + a
         // pending namespaced one on a second item.
         let layer = r#"{"items": [
-            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "stone", "use": "bucket_fill"},
+            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "llama:stone", "use": "bucket_fill"},
             {"item": "mymod:widget", "key": "mymod:widget", "name": "Widget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "stick", "tags": [], "use": "mymod:zap"}
         ]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("dynamic rows load");
@@ -255,14 +255,14 @@ mod tests {
 
     #[test]
     fn loader_rejects_incomplete_tables_and_duplicate_keys() {
-        let row = r#"{"item": "air", "key": "air", "name": "Air", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}"#;
+        let row = r#"{"item": "llama:air", "key": "llama:air", "name": "Air", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}"#;
         // One valid row is not a full table.
         let partial = format!("{{\"items\": [{row}]}}");
         assert!(parse(&partial).err().unwrap().contains("missing row"));
         // Two DIFFERENT items sharing one key: rejected (recipes resolve by key).
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
-        let clash = r#"{"items": [{"item": "grass", "key": "stone", "name": "Grass", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
+        let clash = r#"{"items": [{"item": "llama:grass", "key": "llama:stone", "name": "Grass", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
         assert!(parse_test_layers(&[&base, clash])
             .err()
             .unwrap()

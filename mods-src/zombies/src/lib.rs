@@ -1,16 +1,15 @@
-//! zombies — the hostile-mob proof-of-concept mod (WIKI/modding.md), and the
-//! first MOD-INTEROP consumer: it reads the daynight mod's published world-KV
-//! time and the engine's split light channels to decide when to spawn and burn.
+//! zombies — the hostile-mob proof-of-concept mod (WIKI/modding.md), and a
+//! MOD-INTEROP consumer: it reads the core `llama:time` world-KV value and
+//! the engine's split light channels to decide when to spawn and burn.
 //!
 //! What it does, all on the deterministic tick:
-//! - **Light-based spawning** (tick system at `After(Spawning)`, behind
-//!   daynight's clock system in the same slot): every
+//! - **Light-based spawning** (tick system at `After(Spawning)`): every
 //!   [`SPAWN_INTERVAL_TICKS`] it rolls one bounded spawn pass — ring positions
 //!   32–128 blocks from the player from the mod's seeded RNG streams, dropped
 //!   to the ground by a column scan — then admits one at most, only when
 //!   `max(block_light, sky_light * daylight_factor)` is dark enough. Daylight
-//!   comes from `daynight:time`, using the same smooth dawn/dusk curve as the
-//!   daynight mod. Dark caves can spawn zombies during the day; torch/block
+//!   comes from `llama:time`, using the same smooth dawn/dusk curve as core
+//!   day/night. Dark caves can spawn zombies during the day; torch/block
 //!   light blocks the spawn.
 //! - **Sunburn**: every second, each zombie in strong direct sky light has a
 //!   5% seeded chance to take lethal `hurt_mob` damage. That deliberately uses
@@ -28,9 +27,8 @@
 //!
 //! # World-KV keys
 //!
-//! - reads `daynight:time` (4-byte LE f32 day fraction) — the sanctioned
-//!   interop surface published by the daynight mod (format frozen, see its
-//!   header).
+//! - reads `llama:time` (4-byte LE f32 day fraction) — the sanctioned
+//!   interop surface published by core day/night.
 //! - writes `zombies:invuln_until` — 8 bytes, little-endian u64: the game
 //!   tick the current i-frame window ends at, mirrored for inspection.
 //!   The in-memory copy is authoritative within a session and deliberately
@@ -44,7 +42,7 @@ const ON_PLAYER_DAMAGE_PRE: u32 = 1;
 
 const ZOMBIE_KEY: &str = "zombies:zombie";
 const GROAN_SOUND: &str = "zombies:groan";
-const TIME_KEY: &str = "daynight:time";
+const TIME_KEY: &str = "llama:time";
 const INVULN_KEY: &str = "zombies:invuln_until";
 const NEXT_GROAN_KEY: &str = "zombies:next_groan";
 
@@ -94,9 +92,10 @@ impl Mod for Zombies {
     }
 
     fn tick_system(&mut self, _system_id: u32) {
-        // daynight registered before us (we depend on it), so its clock system
-        // already published this tick's time when we run. Absent/malformed time
-        // disables the environment-dependent systems for this tick.
+        // Core day/night publishes this before mods run in a real Game. Absent
+        // or malformed time disables the environment-dependent systems for
+        // this tick, so the mod remains usable in host-only tests and custom
+        // harnesses that choose not to provide a clock.
         let Some(daylight) = daylight_factor_from_daynight() else {
             return;
         };

@@ -168,7 +168,7 @@ mod tests {
         player.set_health(7);
         player.inventory.set_active(3);
         let kv = BTreeMap::from([
-            ("daynight:time".to_owned(), vec![0x10, 0x20]),
+            ("llama:time".to_owned(), vec![0x10, 0x20]),
             ("zombies:invuln_until".to_owned(), Vec::new()),
         ]);
 

@@ -1,5 +1,5 @@
 {
-  "type": "hotbar",
+  "type": "llama:hotbar",
   "canvas": {
     "w": 364,
     "h": 44

@@ -302,78 +302,6 @@ fn smoke_mod_gui_click_updates_gui_state_via_wasm() {
     );
 }
 
-/// The daynight PoC end-to-end via wasm: the engine seeds `daynight:clock` to
-/// a midnight value BEFORE init (mirroring how world KV is restored before
-/// `mod_init` in `Game::new`), the mod restores it and publishes immediately —
-/// the interop keys appear (`daynight:time` = 4-byte LE f32 day fraction,
-/// `daynight:is_night` = 1 inside the documented `[0.5, 1.0)` window), the
-/// shader params publish a dark sky-light value for the active sky shader;
-/// further engine ticks advance the published time by exactly the elapsed
-/// ticks. Curve shape and exact scale/color values are deliberately unpinned.
-#[test]
-fn daynight_mod_restores_its_clock_and_darkens_the_night_sky_via_wasm() {
-    let Some(wasm) = built_mod_wasm("daynight") else {
-        return;
-    };
-    let mut sim = Sim::new();
-    let mut host = ModHost::from_wasm_list(0x99, &[("daynight".into(), wasm)]);
-
-    // Midnight: 9000 of the 12000-tick cycle = day fraction 0.75.
-    sim.world
-        .mod_kv_set("daynight:clock".into(), 9000u64.to_le_bytes().to_vec());
-    sim.init(&mut host);
-    let (disabled, _, _) = host.probe(0);
-    assert!(!disabled, "init leaves the mod healthy");
-
-    let time = |world: &World| -> f32 {
-        let bytes = world
-            .mod_kv_get("daynight:time")
-            .expect("daynight:time is published");
-        f32::from_le_bytes(bytes.try_into().expect("4-byte LE f32 contract"))
-    };
-    let t0 = time(&sim.world);
-    assert!(
-        (t0 - 0.75).abs() < 1e-6,
-        "restored clock 9000/12000 publishes fraction 0.75, got {t0}"
-    );
-    assert_eq!(
-        sim.world.mod_kv_get("daynight:is_night"),
-        Some(&[1u8][..]),
-        "0.75 is inside the documented night window [0.5, 1.0)"
-    );
-    let params = sim.world.environment().shader_params();
-    let night_light = params
-        .get("daynight:light")
-        .expect("daynight shader light param is published");
-    let night_scale = night_light[0];
-    assert!(
-        night_scale < 0.5,
-        "midnight shader sky-light scale departed from daylight (got {night_scale})"
-    );
-    assert!(
-        night_light[1] < night_light[3] && night_light[2] < night_light[3],
-        "midnight sky light color is blue-dominant but value-unpinned: {night_light:?}"
-    );
-    let shader_time = params
-        .get("daynight:time")
-        .expect("daynight shader time param is published");
-    assert_eq!(shader_time[0], t0);
-
-    // The clock is tick-anchored: engine ticks advance the published time.
-    let recipes = crate::crafting::Recipes::default();
-    for _ in 0..3 {
-        sim.world.game_tick(&recipes);
-        sim.run_all_slots();
-    }
-    let t3 = time(&sim.world);
-    assert!(t3 > t0, "time advances with the tick ({t0} -> {t3})");
-    assert_eq!(
-        sim.world.mod_kv_get("daynight:clock"),
-        Some(&9003u64.to_le_bytes()[..]),
-        "the persisted clock advanced by exactly the elapsed ticks"
-    );
-}
-
 /// Stage a fixture `mods/` root holding the REAL packs of `ids` with freshly
 /// built wasm, for child-process tests that need pack content registry-visible
 /// (`LLAMACRAFT_MODS` + the 2a re-spawn pattern). Returns the fixture root
@@ -411,9 +339,9 @@ pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
     Some(root)
 }
 
-/// The daynight + zombies pair (the zombies tests' fixture).
-pub(crate) fn stage_daynight_zombies_fixture(tag: &str) -> Option<PathBuf> {
-    stage_mods_fixture(tag, &["daynight", "zombies"])
+/// The zombies pack fixture.
+pub(crate) fn stage_zombies_fixture(tag: &str) -> Option<PathBuf> {
+    stage_mods_fixture(tag, &["zombies"])
 }
 
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
@@ -437,15 +365,15 @@ pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
     );
 }
 
-/// The zombies PoC's interop + population proof: the mod reads daynight's
-/// published `daynight:time`, combines it with the split `LightAt` channels,
+/// The zombies PoC's interop + population proof: the mod reads the
+/// `llama:time` contract, combines it with the split `LightAt` channels,
 /// spawns in dark daytime cells, refuses torch/block-lit cells, and starts
 /// groans through the mob-pinned spatial sound API. Species and sound
 /// registration need the pack in the registry, so the assertions run in a
-/// child process (see [`stage_daynight_zombies_fixture`]).
+/// child process (see [`stage_zombies_fixture`]).
 #[test]
 fn zombies_mod_spawns_by_light_and_uses_spatial_groans_via_wasm() {
-    let Some(root) = stage_daynight_zombies_fixture("light") else {
+    let Some(root) = stage_zombies_fixture("light") else {
         return;
     };
     run_child_test(&root, "modding::tests::zombies_light_spawn_inner");
@@ -516,12 +444,9 @@ fn zombies_light_spawn_inner() {
         let mut sim = Sim::new();
         install_spawn_platform(&mut sim, sky_x2, block_x2, floor);
         sim.player.pos = Vec3::new(8.0, 64.0, 8.0);
-        // Noon: daylight factor is full, so dark-cell spawning here proves the
-        // zombies mod no longer gates on `is_night`.
-        sim.world
-            .mod_kv_set("daynight:clock".into(), 3_000u64.to_le_bytes().to_vec());
+        publish_noon(&mut sim.world);
         let mut host = ModHost::load(1, &Default::default());
-        assert_eq!(host.loaded(), 2, "daynight + zombies wasm from the fixture");
+        assert_eq!(host.loaded(), 1, "zombies wasm from the fixture");
         sim.init(&mut host);
         (sim, host)
     }
@@ -530,12 +455,16 @@ fn zombies_light_spawn_inner() {
         let mut sim = Sim::new();
         install_spawn_tunnel(&mut sim, sky_x2, block_x2);
         sim.player.pos = Vec3::new(8.0, 64.0, 8.0);
-        sim.world
-            .mod_kv_set("daynight:clock".into(), 3_000u64.to_le_bytes().to_vec());
+        publish_noon(&mut sim.world);
         let mut host = ModHost::load(1, &Default::default());
-        assert_eq!(host.loaded(), 2, "daynight + zombies wasm from the fixture");
+        assert_eq!(host.loaded(), 1, "zombies wasm from the fixture");
         sim.init(&mut host);
         (sim, host)
+    }
+
+    fn publish_noon(world: &mut World) {
+        world.mod_kv_set("llama:time".into(), 0.25f32.to_le_bytes().to_vec());
+        world.mod_kv_set("llama:is_night".into(), vec![0]);
     }
 
     let zombies_alive = |world: &World| {
@@ -554,7 +483,7 @@ fn zombies_light_spawn_inner() {
         dark_sim.run_all_slots();
     }
     assert_eq!(
-        dark_sim.world.mod_kv_get("daynight:is_night"),
+        dark_sim.world.mod_kv_get("llama:is_night"),
         Some(&[0u8][..]),
         "the seeded noon clock is day, not night"
     );
@@ -601,12 +530,8 @@ fn zombies_light_spawn_inner() {
         }),
         "the zombies mod emitted a mob-pinned groan on a stable mob id"
     );
-    let (d0, _, _) = dark_host.probe(0);
-    let (d1, _, _) = dark_host.probe(1);
-    assert!(
-        !d0 && !d1,
-        "both mods stayed healthy in the dark-spawn case"
-    );
+    let (disabled, _, _) = dark_host.probe(0);
+    assert!(!disabled, "zombies stayed healthy in the dark-spawn case");
 
     let (mut lit_sim, lit_host) = start_fixture(0, SKY_FULL, Block::Grass);
     for _ in 0..320 {
@@ -618,12 +543,8 @@ fn zombies_light_spawn_inner() {
         0,
         "block light at the candidate cell blocks zombie spawning"
     );
-    let (d0, _, _) = lit_host.probe(0);
-    let (d1, _, _) = lit_host.probe(1);
-    assert!(
-        !d0 && !d1,
-        "both mods stayed healthy in the block-light case"
-    );
+    let (disabled, _, _) = lit_host.probe(0);
+    assert!(!disabled, "zombies stayed healthy in the block-light case");
 
     for (floor, label) in [
         (Block::Water, "water"),
@@ -640,11 +561,10 @@ fn zombies_light_spawn_inner() {
             0,
             "zombies must not spawn on {label}"
         );
-        let (d0, _, _) = blocked_host.probe(0);
-        let (d1, _, _) = blocked_host.probe(1);
+        let (disabled, _, _) = blocked_host.probe(0);
         assert!(
-            !d0 && !d1,
-            "both mods stayed healthy in the {label} support-rejection case"
+            !disabled,
+            "zombies stayed healthy in the {label} support-rejection case"
         );
     }
 
@@ -657,12 +577,8 @@ fn zombies_light_spawn_inner() {
         zombies_alive(&tunnel_sim.world) > 0,
         "bounded retries should find a sparse dark cave tunnel without waiting minutes"
     );
-    let (d0, _, _) = tunnel_host.probe(0);
-    let (d1, _, _) = tunnel_host.probe(1);
-    assert!(
-        !d0 && !d1,
-        "both mods stayed healthy in the sparse-cave case"
-    );
+    let (disabled, _, _) = tunnel_host.probe(0);
+    assert!(!disabled, "zombies stayed healthy in the sparse-cave case");
 }
 
 /// A guest module implementing the raw ABI by hand: `mod_init` issues one

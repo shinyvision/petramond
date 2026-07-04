@@ -40,8 +40,8 @@ impl Game {
         // Editing settings for a world that is NOT open only takes effect on
         // the next open — nothing re-reads settings.json mid-session.
         world.set_disabled_mods(disabled_mods.clone());
-        // The mod world KV rides level.dat: restore it BEFORE mod init below,
-        // so init-time HostCalls (a daynight mod re-reading its clock) see it.
+        // The mod world KV rides level.dat: restore it before core systems and
+        // mod init below, so core day/night and init-time HostCalls see it.
         if let Some(level) = &opened.level {
             world.set_mod_kv(level.world_kv.clone());
         }
@@ -87,6 +87,7 @@ impl Game {
             systems: crate::events::TickSystems::default(),
             mods: crate::modding::ModHost::load(seed, &disabled_mods),
         };
+        super::daynight::install_core(&mut game.world, &mut game.systems);
         // Mod init runs AFTER any engine registrations so mods sort behind the
         // engine at equal priority (the bus ordering contract), and after the
         // full session state exists so init-time host calls see a real world.

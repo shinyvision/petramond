@@ -41,8 +41,14 @@ struct SkyShaderRow {
 }
 
 pub(crate) fn active_sky_shader() -> Option<SkyShaderSpec> {
+    active_sky_shader_from_layers(crate::assets::read_layers("shaders.json"))
+}
+
+fn active_sky_shader_from_layers(
+    layers: impl IntoIterator<Item = (String, PathBuf)>,
+) -> Option<SkyShaderSpec> {
     let mut chosen = None;
-    for (text, path) in crate::assets::read_layers("shaders.json") {
+    for (text, path) in layers {
         match parse_catalog(&text) {
             Ok(catalog) => {
                 if let Some(row) = catalog.sky {
@@ -139,19 +145,19 @@ mod tests {
             r#"{
                 "sky": {
                     "shader": "shaders/daynight_sky.wgsl",
-                    "params": ["daynight:time", "daynight:light"],
+                    "params": ["llama:time", "llama:light"],
                     "textures": [
                         "textures/environment/sun.png",
                         "textures/environment/moon_phases.png"
                     ],
-                    "sky_light_param": "daynight:light"
+                    "sky_light_param": "llama:light"
                 }
             }"#,
         )
         .expect("catalog parses");
         let row = catalog.sky.expect("sky row");
         assert_eq!(row.shader, "shaders/daynight_sky.wgsl");
-        assert_eq!(row.params, ["daynight:time", "daynight:light"]);
+        assert_eq!(row.params, ["llama:time", "llama:light"]);
         assert_eq!(
             row.textures,
             [
@@ -159,6 +165,34 @@ mod tests {
                 "textures/environment/moon_phases.png"
             ]
         );
-        assert_eq!(row.sky_light_param.as_deref(), Some("daynight:light"));
+        assert_eq!(row.sky_light_param.as_deref(), Some("llama:light"));
+    }
+
+    #[test]
+    fn active_sky_shader_uses_the_highest_priority_catalog_layer() {
+        let base = r#"{
+            "sky": {
+                "shader": "shaders/daynight_sky.wgsl",
+                "params": ["base:time"],
+                "sky_light_param": "base:time"
+            }
+        }"#;
+        let pack = r#"{
+            "sky": {
+                "shader": "shaders/daynight_sky.wgsl",
+                "params": ["pack:time", "pack:light"],
+                "sky_light_param": "pack:light"
+            }
+        }"#;
+
+        let spec = active_sky_shader_from_layers([
+            (base.into(), PathBuf::from("assets/shaders.json")),
+            (pack.into(), PathBuf::from("mods/pack/shaders.json")),
+        ])
+        .expect("pack layer selects an active sky shader");
+
+        assert_eq!(spec.params, ["pack:time", "pack:light"]);
+        assert_eq!(spec.sky_light_param.as_deref(), Some("pack:light"));
+        assert!(spec.path.ends_with("shaders/daynight_sky.wgsl"));
     }
 }

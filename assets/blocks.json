@@ -1,1789 +1,4681 @@
 {
   "blocks": [
     {
-      "block": "air",
+      "block": "llama:air",
       "shape": "cube",
       "flags": [],
-      "tags": ["replaceable"],
+      "tags": [
+        "replaceable"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oak_leaves", "oak_leaves", "oak_leaves"],
+      "tiles": [
+        "oak_leaves",
+        "oak_leaves",
+        "oak_leaves"
+      ],
       "material": "none",
       "harvest_tier": 0,
       "hardness": -1,
       "drops": []
     },
     {
-      "block": "grass",
+      "block": "llama:grass",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["terrain", "soil"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "terrain",
+        "soil"
+      ],
       "behavior": "grass",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["grass_top", "dirt", "grass_side"],
+      "tiles": [
+        "grass_top",
+        "dirt",
+        "grass_side"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.7,
-      "drops": [{"item": "dirt", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dirt",
+      "block": "llama:dirt",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["terrain", "soil"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "terrain",
+        "soil"
+      ],
       "behavior": "dirt",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["dirt", "dirt", "dirt"],
+      "tiles": [
+        "dirt",
+        "dirt",
+        "dirt"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "dirt", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "stone",
+      "block": "llama:stone",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["terrain"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "terrain"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["stone", "stone", "stone"],
+      "tiles": [
+        "stone",
+        "stone",
+        "stone"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "cobblestone", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cobblestone",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "sand",
+      "block": "llama:sand",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["terrain", "sand"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "terrain",
+        "sand"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["sand", "sand", "sand"],
+      "tiles": [
+        "sand",
+        "sand",
+        "sand"
+      ],
       "material": "sand",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "sand", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:sand",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "snow",
+      "block": "llama:snow",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["terrain"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "terrain"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["snow", "dirt", "grass_snow"],
+      "tiles": [
+        "snow",
+        "dirt",
+        "grass_snow"
+      ],
       "material": "sand",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "snow", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:snow",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "water",
+      "block": "llama:water",
       "shape": "cube",
-      "flags": ["transparent"],
-      "tags": ["replaceable"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "replaceable"
+      ],
       "behavior": "water",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["water", "water", "water"],
+      "tiles": [
+        "water",
+        "water",
+        "water"
+      ],
       "material": "none",
       "harvest_tier": 0,
       "hardness": -1,
       "drops": []
     },
     {
-      "block": "oak_log",
+      "block": "llama:oak_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["oak_log_top", "oak_log_top", "oak_log_side"],
+      "tiles": [
+        "oak_log_top",
+        "oak_log_top",
+        "oak_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "oak_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oak_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oak_leaves",
+      "block": "llama:oak_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["oak_leaves", "oak_leaves", "oak_leaves"],
+      "tiles": [
+        "oak_leaves",
+        "oak_leaves",
+        "oak_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "oak_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "spruce_log",
+      "block": "llama:spruce_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["spruce_log_top", "spruce_log_top", "spruce_log_side"],
+      "tiles": [
+        "spruce_log_top",
+        "spruce_log_top",
+        "spruce_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "spruce_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:spruce_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "birch_log",
+      "block": "llama:birch_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["birch_log_top", "birch_log_top", "birch_log_side"],
+      "tiles": [
+        "birch_log_top",
+        "birch_log_top",
+        "birch_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "birch_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:birch_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "jungle_log",
+      "block": "llama:jungle_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["jungle_log_top", "jungle_log_top", "jungle_log_side"],
+      "tiles": [
+        "jungle_log_top",
+        "jungle_log_top",
+        "jungle_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "jungle_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:jungle_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "acacia_log",
+      "block": "llama:acacia_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["acacia_log_top", "acacia_log_top", "acacia_log_side"],
+      "tiles": [
+        "acacia_log_top",
+        "acacia_log_top",
+        "acacia_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "acacia_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:acacia_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dark_oak_log",
+      "block": "llama:dark_oak_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["dark_oak_log_top", "dark_oak_log_top", "dark_oak_log_side"],
+      "tiles": [
+        "dark_oak_log_top",
+        "dark_oak_log_top",
+        "dark_oak_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "dark_oak_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cherry_log",
+      "block": "llama:cherry_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cherry_log_top", "cherry_log_top", "cherry_log_side"],
+      "tiles": [
+        "cherry_log_top",
+        "cherry_log_top",
+        "cherry_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "cherry_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cherry_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mangrove_log",
+      "block": "llama:mangrove_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mangrove_log_top", "mangrove_log_top", "mangrove_log_side"],
+      "tiles": [
+        "mangrove_log_top",
+        "mangrove_log_top",
+        "mangrove_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "mangrove_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mangrove_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "spruce_leaves",
+      "block": "llama:spruce_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["spruce_leaves", "spruce_leaves", "spruce_leaves"],
+      "tiles": [
+        "spruce_leaves",
+        "spruce_leaves",
+        "spruce_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "spruce_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:spruce_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "birch_leaves",
+      "block": "llama:birch_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["birch_leaves", "birch_leaves", "birch_leaves"],
+      "tiles": [
+        "birch_leaves",
+        "birch_leaves",
+        "birch_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "birch_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:birch_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "jungle_leaves",
+      "block": "llama:jungle_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["jungle_leaves", "jungle_leaves", "jungle_leaves"],
+      "tiles": [
+        "jungle_leaves",
+        "jungle_leaves",
+        "jungle_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "jungle_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:jungle_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "acacia_leaves",
+      "block": "llama:acacia_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["acacia_leaves", "acacia_leaves", "acacia_leaves"],
+      "tiles": [
+        "acacia_leaves",
+        "acacia_leaves",
+        "acacia_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "acacia_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:acacia_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "dark_oak_leaves",
+      "block": "llama:dark_oak_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["dark_oak_leaves", "dark_oak_leaves", "dark_oak_leaves"],
+      "tiles": [
+        "dark_oak_leaves",
+        "dark_oak_leaves",
+        "dark_oak_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "dark_oak_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "mangrove_leaves",
+      "block": "llama:mangrove_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mangrove_leaves", "mangrove_leaves", "mangrove_leaves"],
+      "tiles": [
+        "mangrove_leaves",
+        "mangrove_leaves",
+        "mangrove_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
       "drops": []
     },
     {
-      "block": "cherry_leaves",
+      "block": "llama:cherry_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cherry_leaves", "cherry_leaves", "cherry_leaves"],
+      "tiles": [
+        "cherry_leaves",
+        "cherry_leaves",
+        "cherry_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
-      "drops": [{"item": "cherry_sapling", "min": 1, "max": 1, "chance": 0.1}]
+      "drops": [
+        {
+          "item": "llama:cherry_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 0.1
+        }
+      ]
     },
     {
-      "block": "azalea_leaves",
+      "block": "llama:azalea_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["azalea_leaves", "azalea_leaves", "azalea_leaves"],
+      "tiles": [
+        "azalea_leaves",
+        "azalea_leaves",
+        "azalea_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
       "drops": []
     },
     {
-      "block": "red_sand",
+      "block": "llama:red_sand",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["sand"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "sand"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["red_sand", "red_sand", "red_sand"],
+      "tiles": [
+        "red_sand",
+        "red_sand",
+        "red_sand"
+      ],
       "material": "sand",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "red_sand", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:red_sand",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "sandstone",
+      "block": "llama:sandstone",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["sandstone_top", "sandstone_bottom", "sandstone_side"],
+      "tiles": [
+        "sandstone_top",
+        "sandstone_bottom",
+        "sandstone_side"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "sandstone", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:sandstone",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "red_sandstone",
+      "block": "llama:red_sandstone",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["red_sandstone_top", "red_sandstone_bottom", "red_sandstone_side"],
+      "tiles": [
+        "red_sandstone_top",
+        "red_sandstone_bottom",
+        "red_sandstone_side"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "red_sandstone", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:red_sandstone",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "terracotta",
+      "block": "llama:terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["terracotta", "terracotta", "terracotta"],
+      "tiles": [
+        "terracotta",
+        "terracotta",
+        "terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "white_terracotta",
+      "block": "llama:white_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["white_terracotta", "white_terracotta", "white_terracotta"],
+      "tiles": [
+        "white_terracotta",
+        "white_terracotta",
+        "white_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "white_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:white_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "orange_terracotta",
+      "block": "llama:orange_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["orange_terracotta", "orange_terracotta", "orange_terracotta"],
+      "tiles": [
+        "orange_terracotta",
+        "orange_terracotta",
+        "orange_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "orange_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:orange_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "yellow_terracotta",
+      "block": "llama:yellow_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["yellow_terracotta", "yellow_terracotta", "yellow_terracotta"],
+      "tiles": [
+        "yellow_terracotta",
+        "yellow_terracotta",
+        "yellow_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "yellow_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:yellow_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "brown_terracotta",
+      "block": "llama:brown_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["brown_terracotta", "brown_terracotta", "brown_terracotta"],
+      "tiles": [
+        "brown_terracotta",
+        "brown_terracotta",
+        "brown_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "brown_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:brown_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "red_terracotta",
+      "block": "llama:red_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["red_terracotta", "red_terracotta", "red_terracotta"],
+      "tiles": [
+        "red_terracotta",
+        "red_terracotta",
+        "red_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "red_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:red_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "light_gray_terracotta",
+      "block": "llama:light_gray_terracotta",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["light_gray_terracotta", "light_gray_terracotta", "light_gray_terracotta"],
+      "tiles": [
+        "light_gray_terracotta",
+        "light_gray_terracotta",
+        "light_gray_terracotta"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "light_gray_terracotta", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:light_gray_terracotta",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "podzol",
+      "block": "llama:podzol",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["podzol_top", "dirt", "podzol_side"],
+      "tiles": [
+        "podzol_top",
+        "dirt",
+        "podzol_side"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "podzol", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:podzol",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mycelium",
+      "block": "llama:mycelium",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mycelium_top", "dirt", "mycelium_side"],
+      "tiles": [
+        "mycelium_top",
+        "dirt",
+        "mycelium_side"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "mycelium", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mycelium",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "coarse_dirt",
+      "block": "llama:coarse_dirt",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["coarse_dirt", "coarse_dirt", "coarse_dirt"],
+      "tiles": [
+        "coarse_dirt",
+        "coarse_dirt",
+        "coarse_dirt"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "coarse_dirt", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:coarse_dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "gravel",
+      "block": "llama:gravel",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["gravel", "gravel", "gravel"],
+      "tiles": [
+        "gravel",
+        "gravel",
+        "gravel"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "gravel", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:gravel",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "clay",
+      "block": "llama:clay",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["clay", "clay", "clay"],
+      "tiles": [
+        "clay",
+        "clay",
+        "clay"
+      ],
       "material": "sand",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "clay", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:clay",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mud",
+      "block": "llama:mud",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mud", "mud", "mud"],
+      "tiles": [
+        "mud",
+        "mud",
+        "mud"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "mud", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mud",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "moss_block",
+      "block": "llama:moss_block",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["moss_block", "moss_block", "moss_block"],
+      "tiles": [
+        "moss_block",
+        "moss_block",
+        "moss_block"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "moss_block", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:moss_block",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "snow_block",
+      "block": "llama:snow_block",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["snow", "snow", "snow"],
+      "tiles": [
+        "snow",
+        "snow",
+        "snow"
+      ],
       "material": "sand",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "snow_block", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:snow_block",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "packed_ice",
+      "block": "llama:packed_ice",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["packed_ice", "packed_ice", "packed_ice"],
+      "tiles": [
+        "packed_ice",
+        "packed_ice",
+        "packed_ice"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 0.5,
-      "drops": [{"item": "packed_ice", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:packed_ice",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "ice",
+      "block": "llama:ice",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["ice", "ice", "ice"],
+      "tiles": [
+        "ice",
+        "ice",
+        "ice"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 0.5,
-      "drops": [{"item": "ice", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:ice",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "calcite",
+      "block": "llama:calcite",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["calcite", "calcite", "calcite"],
+      "tiles": [
+        "calcite",
+        "calcite",
+        "calcite"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "calcite", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:calcite",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "granite",
+      "block": "llama:granite",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["granite", "granite", "granite"],
+      "tiles": [
+        "granite",
+        "granite",
+        "granite"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "granite", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:granite",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "diorite",
+      "block": "llama:diorite",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["diorite", "diorite", "diorite"],
+      "tiles": [
+        "diorite",
+        "diorite",
+        "diorite"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "diorite", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:diorite",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "andesite",
+      "block": "llama:andesite",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["andesite", "andesite", "andesite"],
+      "tiles": [
+        "andesite",
+        "andesite",
+        "andesite"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "andesite", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:andesite",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "tuff",
+      "block": "llama:tuff",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["tuff", "tuff", "tuff"],
+      "tiles": [
+        "tuff",
+        "tuff",
+        "tuff"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "tuff", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:tuff",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "coal_ore",
+      "block": "llama:coal_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["coal_ore", "coal_ore", "coal_ore"],
+      "tiles": [
+        "coal_ore",
+        "coal_ore",
+        "coal_ore"
+      ],
       "material": "ore",
       "harvest_tier": 1,
       "hardness": 3,
-      "drops": [{"item": "coal", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:coal",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "iron_ore",
+      "block": "llama:iron_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["iron_ore", "iron_ore", "iron_ore"],
+      "tiles": [
+        "iron_ore",
+        "iron_ore",
+        "iron_ore"
+      ],
       "material": "ore",
       "harvest_tier": 2,
       "hardness": 3,
-      "drops": [{"item": "raw_iron", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:raw_iron",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "copper_ore",
+      "block": "llama:copper_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["copper_ore", "copper_ore", "copper_ore"],
+      "tiles": [
+        "copper_ore",
+        "copper_ore",
+        "copper_ore"
+      ],
       "material": "ore",
       "harvest_tier": 2,
       "hardness": 3,
-      "drops": [{"item": "raw_copper", "min": 2, "max": 4, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:raw_copper",
+          "min": 2,
+          "max": 4,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "gold_ore",
+      "block": "llama:gold_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["gold_ore", "gold_ore", "gold_ore"],
+      "tiles": [
+        "gold_ore",
+        "gold_ore",
+        "gold_ore"
+      ],
       "material": "ore",
       "harvest_tier": 3,
       "hardness": 3,
-      "drops": [{"item": "raw_gold", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:raw_gold",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "redstone_ore",
+      "block": "llama:redstone_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["redstone_ore", "redstone_ore", "redstone_ore"],
+      "tiles": [
+        "redstone_ore",
+        "redstone_ore",
+        "redstone_ore"
+      ],
       "material": "ore",
       "harvest_tier": 3,
       "hardness": 3,
       "drops": []
     },
     {
-      "block": "lapis_ore",
+      "block": "llama:lapis_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["lapis_ore", "lapis_ore", "lapis_ore"],
+      "tiles": [
+        "lapis_ore",
+        "lapis_ore",
+        "lapis_ore"
+      ],
       "material": "ore",
       "harvest_tier": 3,
       "hardness": 3,
-      "drops": [{"item": "lapis_lazuli", "min": 2, "max": 4, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:lapis_lazuli",
+          "min": 2,
+          "max": 4,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "diamond_ore",
+      "block": "llama:diamond_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["diamond_ore", "diamond_ore", "diamond_ore"],
+      "tiles": [
+        "diamond_ore",
+        "diamond_ore",
+        "diamond_ore"
+      ],
       "material": "ore",
       "harvest_tier": 3,
       "hardness": 3,
-      "drops": [{"item": "diamond", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:diamond",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "emerald_ore",
+      "block": "llama:emerald_ore",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["emerald_ore", "emerald_ore", "emerald_ore"],
+      "tiles": [
+        "emerald_ore",
+        "emerald_ore",
+        "emerald_ore"
+      ],
       "material": "ore",
       "harvest_tier": 3,
       "hardness": 3,
-      "drops": [{"item": "emerald_ore", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:emerald_ore",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "pumpkin",
+      "block": "llama:pumpkin",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["pumpkin_top", "pumpkin_top", "pumpkin_side"],
+      "tiles": [
+        "pumpkin_top",
+        "pumpkin_top",
+        "pumpkin_side"
+      ],
       "material": "other",
       "harvest_tier": 0,
       "hardness": 1,
-      "drops": [{"item": "pumpkin", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:pumpkin",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "melon",
+      "block": "llama:melon",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["melon_top", "melon_top", "melon_side"],
+      "tiles": [
+        "melon_top",
+        "melon_top",
+        "melon_side"
+      ],
       "material": "other",
       "harvest_tier": 0,
       "hardness": 1,
-      "drops": [{"item": "melon", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:melon",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cactus",
+      "block": "llama:cactus",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder"],
-      "tags": ["fragile", "roots_in_sand"],
+      "flags": [
+        "solid",
+        "ao_occluder"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_sand"
+      ],
       "behavior": "fragile",
       "interaction": "none",
-      "collision": [{"min": [0.0625, 0, 0.0625], "max": [0.9375, 1, 0.9375]}],
+      "collision": [
+        {
+          "min": [
+            0.0625,
+            0,
+            0.0625
+          ],
+          "max": [
+            0.9375,
+            1,
+            0.9375
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cactus_top", "cactus_bottom", "cactus_side"],
+      "tiles": [
+        "cactus_top",
+        "cactus_bottom",
+        "cactus_side"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0.4,
-      "drops": [{"item": "cactus", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cactus",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "short_grass",
+      "block": "llama:short_grass",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "replaceable", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["short_grass", "short_grass", "short_grass"],
+      "tiles": [
+        "short_grass",
+        "short_grass",
+        "short_grass"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
       "drops": []
     },
     {
-      "block": "fern",
+      "block": "llama:fern",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "replaceable", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["fern", "fern", "fern"],
+      "tiles": [
+        "fern",
+        "fern",
+        "fern"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "fern", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:fern",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dandelion",
+      "block": "llama:dandelion",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["dandelion", "dandelion", "dandelion"],
+      "tiles": [
+        "dandelion",
+        "dandelion",
+        "dandelion"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "dandelion", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dandelion",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "poppy",
+      "block": "llama:poppy",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["poppy", "poppy", "poppy"],
+      "tiles": [
+        "poppy",
+        "poppy",
+        "poppy"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "poppy", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:poppy",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cornflower",
+      "block": "llama:cornflower",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["cornflower", "cornflower", "cornflower"],
+      "tiles": [
+        "cornflower",
+        "cornflower",
+        "cornflower"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "cornflower", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cornflower",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "allium",
+      "block": "llama:allium",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["allium", "allium", "allium"],
+      "tiles": [
+        "allium",
+        "allium",
+        "allium"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "allium", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:allium",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "azure_bluet",
+      "block": "llama:azure_bluet",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["azure_bluet", "azure_bluet", "azure_bluet"],
+      "tiles": [
+        "azure_bluet",
+        "azure_bluet",
+        "azure_bluet"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "azure_bluet", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:azure_bluet",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oxeye_daisy",
+      "block": "llama:oxeye_daisy",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oxeye_daisy", "oxeye_daisy", "oxeye_daisy"],
+      "tiles": [
+        "oxeye_daisy",
+        "oxeye_daisy",
+        "oxeye_daisy"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "oxeye_daisy", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oxeye_daisy",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "red_tulip",
+      "block": "llama:red_tulip",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["red_tulip", "red_tulip", "red_tulip"],
+      "tiles": [
+        "red_tulip",
+        "red_tulip",
+        "red_tulip"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "red_tulip", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:red_tulip",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dead_bush",
+      "block": "llama:dead_bush",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "replaceable", "roots_in_sand"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "roots_in_sand"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["dead_bush", "dead_bush", "dead_bush"],
+      "tiles": [
+        "dead_bush",
+        "dead_bush",
+        "dead_bush"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "dead_bush", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dead_bush",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "brown_mushroom",
+      "block": "llama:brown_mushroom",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil", "roots_in_stone"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "roots_in_stone"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["brown_mushroom", "brown_mushroom", "brown_mushroom"],
+      "tiles": [
+        "brown_mushroom",
+        "brown_mushroom",
+        "brown_mushroom"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "brown_mushroom", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:brown_mushroom",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "red_mushroom",
+      "block": "llama:red_mushroom",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil", "roots_in_stone"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "roots_in_stone"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["red_mushroom", "red_mushroom", "red_mushroom"],
+      "tiles": [
+        "red_mushroom",
+        "red_mushroom",
+        "red_mushroom"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "red_mushroom", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:red_mushroom",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cobblestone",
+      "block": "llama:cobblestone",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cobblestone", "cobblestone", "cobblestone"],
+      "tiles": [
+        "cobblestone",
+        "cobblestone",
+        "cobblestone"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 2,
-      "drops": [{"item": "cobblestone", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cobblestone",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oak_planks",
+      "block": "llama:oak_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["oak_planks", "oak_planks", "oak_planks"],
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "oak_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oak_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "spruce_planks",
+      "block": "llama:spruce_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["spruce_planks", "spruce_planks", "spruce_planks"],
+      "tiles": [
+        "spruce_planks",
+        "spruce_planks",
+        "spruce_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "spruce_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:spruce_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "birch_planks",
+      "block": "llama:birch_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["birch_planks", "birch_planks", "birch_planks"],
+      "tiles": [
+        "birch_planks",
+        "birch_planks",
+        "birch_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "birch_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:birch_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "jungle_planks",
+      "block": "llama:jungle_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["jungle_planks", "jungle_planks", "jungle_planks"],
+      "tiles": [
+        "jungle_planks",
+        "jungle_planks",
+        "jungle_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "jungle_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:jungle_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "acacia_planks",
+      "block": "llama:acacia_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["acacia_planks", "acacia_planks", "acacia_planks"],
+      "tiles": [
+        "acacia_planks",
+        "acacia_planks",
+        "acacia_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "acacia_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:acacia_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dark_oak_planks",
+      "block": "llama:dark_oak_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["dark_oak_planks", "dark_oak_planks", "dark_oak_planks"],
+      "tiles": [
+        "dark_oak_planks",
+        "dark_oak_planks",
+        "dark_oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "dark_oak_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cherry_planks",
+      "block": "llama:cherry_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cherry_planks", "cherry_planks", "cherry_planks"],
+      "tiles": [
+        "cherry_planks",
+        "cherry_planks",
+        "cherry_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "cherry_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cherry_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mangrove_planks",
+      "block": "llama:mangrove_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mangrove_planks", "mangrove_planks", "mangrove_planks"],
+      "tiles": [
+        "mangrove_planks",
+        "mangrove_planks",
+        "mangrove_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "mangrove_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mangrove_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "crafting_table",
+      "block": "llama:crafting_table",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "open_crafting_table",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["crafting_table_top", "oak_planks", "crafting_table_front"],
+      "tiles": [
+        "crafting_table_top",
+        "oak_planks",
+        "crafting_table_front"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2.5,
-      "drops": [{"item": "crafting_table", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:crafting_table",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "furnace",
+      "block": "llama:furnace",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder", "directional_view"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder",
+        "directional_view"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "open_furnace",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 28,
-      "tiles": ["furnace_top", "furnace_top", "furnace_side"],
+      "tiles": [
+        "furnace_top",
+        "furnace_top",
+        "furnace_side"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 3.5,
-      "drops": [{"item": "furnace", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:furnace",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "chest",
+      "block": "llama:chest",
       "shape": "cube",
-      "flags": ["solid", "directional_view"],
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "open_chest",
-      "collision": [{"min": [0.0625, 0, 0.0625], "max": [0.9375, 0.875, 0.9375]}],
+      "collision": [
+        {
+          "min": [
+            0.0625,
+            0,
+            0.0625
+          ],
+          "max": [
+            0.9375,
+            0.875,
+            0.9375
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["chest_top", "chest_side", "chest_side"],
+      "tiles": [
+        "chest_top",
+        "chest_side",
+        "chest_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2.5,
-      "drops": [{"item": "chest", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:chest",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "torch",
+      "block": "llama:torch",
       "shape": "torch",
-      "flags": ["transparent"],
-      "tags": ["fragile"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
       "emission": 28,
-      "tiles": ["torch_top", "torch_side", "torch_side"],
+      "tiles": [
+        "torch_top",
+        "torch_side",
+        "torch_side"
+      ],
       "material": "other",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "torch", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:torch",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "furniture_workbench",
-      "shape": {"model":"furniture_workbench"},
-      "flags": ["solid", "directional_view"],
+      "block": "llama:furniture_workbench",
+      "shape": {
+        "model": "llama:furniture_workbench"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "open_furniture_workbench",
       "collision": [],
       "emission": 0,
-      "tiles": ["crafting_table_top", "oak_planks", "crafting_table_front"],
+      "tiles": [
+        "crafting_table_top",
+        "oak_planks",
+        "crafting_table_front"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2.5,
-      "drops": [{"item": "furniture_workbench", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:furniture_workbench",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oak_sapling",
+      "block": "llama:oak_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oak_sapling", "oak_sapling", "oak_sapling"],
+      "tiles": [
+        "oak_sapling",
+        "oak_sapling",
+        "oak_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "oak_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "spruce_sapling",
+      "block": "llama:spruce_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["spruce_sapling", "spruce_sapling", "spruce_sapling"],
+      "tiles": [
+        "spruce_sapling",
+        "spruce_sapling",
+        "spruce_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "spruce_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:spruce_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "birch_sapling",
+      "block": "llama:birch_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["birch_sapling", "birch_sapling", "birch_sapling"],
+      "tiles": [
+        "birch_sapling",
+        "birch_sapling",
+        "birch_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "birch_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:birch_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "jungle_sapling",
+      "block": "llama:jungle_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["jungle_sapling", "jungle_sapling", "jungle_sapling"],
+      "tiles": [
+        "jungle_sapling",
+        "jungle_sapling",
+        "jungle_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "jungle_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:jungle_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "acacia_sapling",
+      "block": "llama:acacia_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["acacia_sapling", "acacia_sapling", "acacia_sapling"],
+      "tiles": [
+        "acacia_sapling",
+        "acacia_sapling",
+        "acacia_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "acacia_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:acacia_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dark_oak_sapling",
+      "block": "llama:dark_oak_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["dark_oak_sapling", "dark_oak_sapling", "dark_oak_sapling"],
+      "tiles": [
+        "dark_oak_sapling",
+        "dark_oak_sapling",
+        "dark_oak_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "dark_oak_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cherry_sapling",
+      "block": "llama:cherry_sapling",
       "shape": "cross",
-      "flags": ["transparent"],
-      "tags": ["fragile", "roots_in_soil"],
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil"
+      ],
       "behavior": "sapling",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["cherry_sapling", "cherry_sapling", "cherry_sapling"],
+      "tiles": [
+        "cherry_sapling",
+        "cherry_sapling",
+        "cherry_sapling"
+      ],
       "material": "plant",
       "harvest_tier": 0,
       "hardness": 0,
-      "drops": [{"item": "cherry_sapling", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cherry_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oak_door",
+      "block": "llama:oak_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["oak_door_top", "oak_door_bottom", "oak_planks"],
+      "tiles": [
+        "oak_door_top",
+        "oak_door_bottom",
+        "oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "oak_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oak_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "spruce_door",
+      "block": "llama:spruce_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["spruce_door_top", "spruce_door_bottom", "spruce_planks"],
+      "tiles": [
+        "spruce_door_top",
+        "spruce_door_bottom",
+        "spruce_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "spruce_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:spruce_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "birch_door",
+      "block": "llama:birch_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["birch_door_top", "birch_door_bottom", "birch_planks"],
+      "tiles": [
+        "birch_door_top",
+        "birch_door_bottom",
+        "birch_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "birch_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:birch_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "jungle_door",
+      "block": "llama:jungle_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["jungle_door_top", "jungle_door_bottom", "jungle_planks"],
+      "tiles": [
+        "jungle_door_top",
+        "jungle_door_bottom",
+        "jungle_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "jungle_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:jungle_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "acacia_door",
+      "block": "llama:acacia_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["acacia_door_top", "acacia_door_bottom", "acacia_planks"],
+      "tiles": [
+        "acacia_door_top",
+        "acacia_door_bottom",
+        "acacia_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "acacia_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:acacia_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dark_oak_door",
+      "block": "llama:dark_oak_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["dark_oak_door_top", "dark_oak_door_bottom", "dark_oak_planks"],
+      "tiles": [
+        "dark_oak_door_top",
+        "dark_oak_door_bottom",
+        "dark_oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "dark_oak_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cherry_door",
+      "block": "llama:cherry_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["cherry_door_top", "cherry_door_bottom", "cherry_planks"],
+      "tiles": [
+        "cherry_door_top",
+        "cherry_door_bottom",
+        "cherry_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "cherry_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cherry_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mangrove_door",
+      "block": "llama:mangrove_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["mangrove_door_top", "mangrove_door_bottom", "mangrove_planks"],
+      "tiles": [
+        "mangrove_door_top",
+        "mangrove_door_bottom",
+        "mangrove_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "mangrove_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mangrove_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "redwood_log",
+      "block": "llama:redwood_log",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
-      "tags": ["log"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["redwood_log_top", "redwood_log_top", "redwood_log_side"],
+      "tiles": [
+        "redwood_log_top",
+        "redwood_log_top",
+        "redwood_log_side"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "redwood_log", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:redwood_log",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "redwood_leaves",
+      "block": "llama:redwood_leaves",
       "shape": "cube",
-      "flags": ["solid", "ao_occluder", "transparent"],
-      "tags": ["leaves", "no_grass_decay"],
+      "flags": [
+        "solid",
+        "ao_occluder",
+        "transparent"
+      ],
+      "tags": [
+        "leaves",
+        "no_grass_decay"
+      ],
       "behavior": "leaves",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["redwood_leaves", "redwood_leaves", "redwood_leaves"],
+      "tiles": [
+        "redwood_leaves",
+        "redwood_leaves",
+        "redwood_leaves"
+      ],
       "material": "foliage",
       "harvest_tier": 0,
       "hardness": 0.2,
       "drops": []
     },
     {
-      "block": "redwood_planks",
+      "block": "llama:redwood_planks",
       "shape": "cube",
-      "flags": ["solid", "opaque", "ao_occluder"],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
-      "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["redwood_planks", "redwood_planks", "redwood_planks"],
+      "tiles": [
+        "redwood_planks",
+        "redwood_planks",
+        "redwood_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "redwood_planks", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:redwood_planks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "redwood_door",
+      "block": "llama:redwood_door",
       "shape": "door",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "door",
       "interaction": "toggle_door",
-      "collision": [{"min": [0, 0, 0.8125], "max": [1, 1, 1]}],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 0,
-      "tiles": ["redwood_door_top", "redwood_door_bottom", "redwood_planks"],
+      "tiles": [
+        "redwood_door_top",
+        "redwood_door_bottom",
+        "redwood_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 3,
-      "drops": [{"item": "redwood_door", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:redwood_door",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "oak_stairs",
+      "block": "llama:oak_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oak_planks", "oak_planks", "oak_planks"],
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "oak_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:oak_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "spruce_stairs",
+      "block": "llama:spruce_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["spruce_planks", "spruce_planks", "spruce_planks"],
+      "tiles": [
+        "spruce_planks",
+        "spruce_planks",
+        "spruce_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "spruce_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:spruce_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "birch_stairs",
+      "block": "llama:birch_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["birch_planks", "birch_planks", "birch_planks"],
+      "tiles": [
+        "birch_planks",
+        "birch_planks",
+        "birch_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "birch_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:birch_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "jungle_stairs",
+      "block": "llama:jungle_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["jungle_planks", "jungle_planks", "jungle_planks"],
+      "tiles": [
+        "jungle_planks",
+        "jungle_planks",
+        "jungle_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "jungle_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:jungle_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "acacia_stairs",
+      "block": "llama:acacia_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["acacia_planks", "acacia_planks", "acacia_planks"],
+      "tiles": [
+        "acacia_planks",
+        "acacia_planks",
+        "acacia_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "acacia_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:acacia_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dark_oak_stairs",
+      "block": "llama:dark_oak_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["dark_oak_planks", "dark_oak_planks", "dark_oak_planks"],
+      "tiles": [
+        "dark_oak_planks",
+        "dark_oak_planks",
+        "dark_oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "dark_oak_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dark_oak_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cherry_stairs",
+      "block": "llama:cherry_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["cherry_planks", "cherry_planks", "cherry_planks"],
+      "tiles": [
+        "cherry_planks",
+        "cherry_planks",
+        "cherry_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "cherry_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cherry_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "mangrove_stairs",
+      "block": "llama:mangrove_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["mangrove_planks", "mangrove_planks", "mangrove_planks"],
+      "tiles": [
+        "mangrove_planks",
+        "mangrove_planks",
+        "mangrove_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "mangrove_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:mangrove_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "redwood_stairs",
+      "block": "llama:redwood_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["redwood_planks", "redwood_planks", "redwood_planks"],
+      "tiles": [
+        "redwood_planks",
+        "redwood_planks",
+        "redwood_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "redwood_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:redwood_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "cobblestone_stairs",
+      "block": "llama:cobblestone_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["cobblestone", "cobblestone", "cobblestone"],
+      "tiles": [
+        "cobblestone",
+        "cobblestone",
+        "cobblestone"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 2,
-      "drops": [{"item": "cobblestone_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:cobblestone_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "stone_stairs",
+      "block": "llama:stone_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["stone", "stone", "stone"],
+      "tiles": [
+        "stone",
+        "stone",
+        "stone"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
-      "drops": [{"item": "stone_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:stone_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "dirt_stairs",
+      "block": "llama:dirt_stairs",
       "shape": "stair",
-      "flags": ["solid"],
-      "tags": ["no_grass_decay"],
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["dirt", "dirt", "dirt"],
+      "tiles": [
+        "dirt",
+        "dirt",
+        "dirt"
+      ],
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.5,
-      "drops": [{"item": "dirt_stairs", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:dirt_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "bed_frame",
-      "shape": {"model":"bed_frame"},
-      "flags": ["solid", "directional_view"],
+      "block": "llama:bed_frame",
+      "shape": {
+        "model": "llama:bed_frame"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oak_planks", "oak_planks", "oak_planks"],
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2,
-      "drops": [{"item": "bed_frame", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:bed_frame",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     },
     {
-      "block": "bed",
-      "shape": {"model":"bed"},
-      "flags": ["solid", "directional_view"],
+      "block": "llama:bed",
+      "shape": {
+        "model": "llama:bed"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["oak_planks", "oak_planks", "oak_planks"],
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 1,
-      "drops": [{"item": "bed", "min": 1, "max": 1, "chance": 1}]
+      "drops": [
+        {
+          "item": "llama:bed",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     }
   ]
 }

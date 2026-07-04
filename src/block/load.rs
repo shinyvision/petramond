@@ -293,7 +293,7 @@ mod tests {
     fn pack_layer_overrides_rows_by_block() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 99, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "llama:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 99, "drops": [] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("layered table loads");
         assert_eq!(
             reg.defs[Block::Stone.id() as usize].hardness,
@@ -310,7 +310,7 @@ mod tests {
     fn namespaced_pack_row_registers_a_new_block() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "mymod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [{"item": "cobblestone", "min": 1, "max": 1, "chance": 1.0}] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "mymod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [{"item": "llama:cobblestone", "min": 1, "max": 1, "chance": 1.0}] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("dynamic row loads");
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
         assert_eq!(
@@ -371,12 +371,12 @@ mod tests {
     #[test]
     fn loader_rejects_incomplete_or_unknown_rows() {
         // A single valid row is not a full table: the error names a missing block.
-        let partial = r#"{ "blocks": [ { "block": "air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
+        let partial = r#"{ "blocks": [ { "block": "llama:air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
         assert!(parse(partial).err().unwrap().contains("missing row"));
         // Unknown behavior name (the full base table with one row broken).
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let bad_behavior = r#"{ "blocks": [ { "block": "air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
+        let bad_behavior = r#"{ "blocks": [ { "block": "llama:air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
         assert!(parse_test_layers(&[&base, bad_behavior])
             .err()
             .unwrap()

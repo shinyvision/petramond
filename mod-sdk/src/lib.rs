@@ -148,7 +148,8 @@ pub fn register_event_handler(event: EventKind, priority: i32, handler_id: u32) 
 }
 
 /// Set one named visual shader parameter (`vec4<f32>`). `key` must be in this
-/// mod's namespace (`mod_id:name`). Shader packs map names onto fixed GPU slots.
+/// mod's namespace (`mod_id:name`) or an exposed engine `llama:*` key. Shader
+/// packs map names onto fixed GPU slots.
 pub fn shader_set_param(key: &str, value: [f32; 4]) {
     __rt::expect_unit(
         "ShaderSetParam",
@@ -409,10 +410,10 @@ pub fn sound_stop(handle: u64) {
 
 // --- Phase 3b: persistent KV ----------------------------------------------------
 //
-// Keys are namespaced `mod_id:name`. Writes must use this mod's own prefix
-// (enforced by the host; a violation panics = disables the mod); reads may
-// cross namespaces — the cross-mod interop surface. Key ≤ 256 bytes, value
-// ≤ 64 KiB.
+// Keys are namespaced. Writes must use this mod's own prefix or an exposed
+// engine `llama:*` key (enforced by the host; a violation panics = disables the
+// mod); reads may cross namespaces — the cross-mod interop surface. Key ≤ 256
+// bytes, value ≤ 64 KiB.
 
 /// Read a world KV entry (persists in the save's `level.dat`).
 pub fn world_kv_get(key: &str) -> Option<Vec<u8>> {
@@ -422,7 +423,7 @@ pub fn world_kv_get(key: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Write a world KV entry (own-namespace key required).
+/// Write a world KV entry (own namespace or exposed `llama:*` key required).
 pub fn world_kv_set(key: &str, value: Vec<u8>) {
     __rt::expect_unit(
         "WorldKvSet",
@@ -433,7 +434,8 @@ pub fn world_kv_set(key: &str, value: Vec<u8>) {
     );
 }
 
-/// Delete a world KV entry (own-namespace key required); `false` = absent.
+/// Delete a world KV entry (own namespace or exposed `llama:*` key required);
+/// `false` = absent.
 pub fn world_kv_delete(key: &str) -> bool {
     match __rt::host_call(&HostCall::WorldKvDelete { key: key.into() }) {
         HostRet::Bool(present) => present,
@@ -515,7 +517,7 @@ pub fn mob_kv_delete(mob_index: u32, key: &str) -> bool {
 
 // --- Phase 4: worldgen hooks ----------------------------------------------------
 
-/// Resolve a block registry key (`"stone"`, `"mymod:gadget"`) to its
+/// Resolve a block registry key (`"llama:stone"`, `"mymod:gadget"`) to its
 /// session-scoped runtime id. Works everywhere, worldgen instances included —
 /// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
 /// persist it: ids can change between sessions; names are the stable identity).

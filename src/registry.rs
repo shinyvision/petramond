@@ -3,11 +3,11 @@
 //! Blocks and items are opaque `u8` ids behind newtypes (`Block(u8)`,
 //! `ItemType(u8)`). Engine content owns the low ids in a compiled, frozen
 //! order (worldgen parity and existing saves depend on those ids never
-//! moving); mod packs ADD content by introducing rows with NAMESPACED keys
+//! moving); engine content is named under the reserved `llama:*` namespace.
+//! Mod packs ADD content by introducing rows with their own NAMESPACED keys
 //! (`mod_id:name`) in the existing layered catalogs (`blocks.json`,
 //! `items.json`), which register fresh ids after the engine range in pack
-//! load order. Bare names are reserved for engine content: a bare-name row
-//! either overrides the engine row of that name or is an error.
+//! load order. Bare names are not registry keys.
 //!
 //! This module owns the NAME side of that contract: the id-ordered name
 //! tables both serde (`Block`/`ItemType` (de)serialize as their name string)
@@ -23,6 +23,9 @@
 use std::sync::LazyLock;
 
 use serde::Deserialize;
+
+/// Reserved namespace for engine-owned public keys.
+pub(crate) const ENGINE_NAMESPACE: &str = "llama";
 
 /// An id-ordered list of registered names: the compiled engine names first
 /// (index == frozen engine id), then pack-registered namespaced names in load
@@ -49,10 +52,9 @@ impl NameTable {
 
     /// Build a table from the compiled engine names plus every layer's row
     /// keys in order. A key that is an engine name (or an already-registered
-    /// dynamic name) is an override — no new id. A NAMESPACED key
-    /// (`mod_id:name`) registers the next id. Any other key is an error:
-    /// additions must be namespaced so they can never collide with future
-    /// engine names.
+    /// dynamic name) is an override — no new id. A non-`llama` NAMESPACED key
+    /// (`mod_id:name`) registers the next id. Bare keys and unknown `llama:*`
+    /// keys are errors.
     pub fn build(
         engine: &[&'static str],
         layer_keys: &[Vec<String>],
@@ -66,8 +68,14 @@ impl NameTable {
                 }
                 if !is_namespaced(key) {
                     return Err(format!(
-                        "unknown {what} '{key}': a pack may only override engine {what}s by \
-                         bare name; new {what}s need a 'mod_id:name' namespaced key"
+                        "unknown {what} '{key}': registry keys must be namespaced; use a known \
+                         engine key like 'llama:name' or a mod-owned 'mod_id:name' key"
+                    ));
+                }
+                if namespace(key) == Some(ENGINE_NAMESPACE) {
+                    return Err(format!(
+                        "unknown {what} '{key}': the '{ENGINE_NAMESPACE}' namespace is reserved \
+                         for engine-owned keys"
                     ));
                 }
                 names.push(Box::leak(key.clone().into_boxed_str()));
@@ -85,15 +93,15 @@ impl NameTable {
     }
 }
 
-/// Whether `key` carries a `mod_id:` namespace (the form REQUIRED for pack
-/// additions; engine names are bare).
+/// Whether `key` carries a `namespace:` prefix.
 pub(crate) fn is_namespaced(key: &str) -> bool {
     namespace(key).is_some()
 }
 
-/// The `mod_id` namespace of `key` (`"wheel:wheel" → Some("wheel")`), or
-/// `None` for bare engine names and degenerate forms. The per-world mod
-/// enablement gates (palette / recipes / natural spawner) key off this.
+/// The namespace of `key` (`"wheel:wheel" → Some("wheel")`,
+/// `"llama:stone" → Some("llama")`), or `None` for bare and degenerate forms.
+/// The per-world mod enablement gates (palette / recipes / natural spawner)
+/// key off this.
 pub(crate) fn namespace(key: &str) -> Option<&str> {
     match key.split_once(':') {
         Some((ns, name)) if !ns.is_empty() && !name.is_empty() => Some(ns),
@@ -169,16 +177,16 @@ mod tests {
 
     #[test]
     fn namespaced_keys_register_and_bare_unknowns_error() {
-        let engine = &["air", "stone"];
-        // Engine override (bare, known) + a namespaced addition.
+        let engine = &["llama:air", "llama:stone"];
+        // Engine override (known `llama:*`) + a namespaced addition.
         let table = NameTable::build(
             engine,
-            &[vec!["stone".into(), "mymod:gadget".into()]],
+            &[vec!["llama:stone".into(), "mymod:gadget".into()]],
             "block",
         )
         .expect("valid layers");
         assert_eq!(table.len(), 3, "override adds no id; the addition does");
-        assert_eq!(table.id("stone"), Some(1), "engine ids never move");
+        assert_eq!(table.id("llama:stone"), Some(1), "engine ids never move");
         assert_eq!(table.id("mymod:gadget"), Some(2), "appended after engine");
         assert_eq!(table.name(2), Some("mymod:gadget"));
         // Restating a registered dynamic name in a later layer adds no id.
@@ -193,6 +201,9 @@ mod tests {
         let err = NameTable::build(engine, &[vec!["gadget".into()]], "block")
             .expect_err("bare additions are refused");
         assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
+        let err = NameTable::build(engine, &[vec!["llama:gadget".into()]], "block")
+            .expect_err("unknown engine-namespace additions are refused");
+        assert!(err.contains("llama") && err.contains("reserved"), "{err}");
         // Degenerate namespaces are not namespaces.
         for bad in [":gadget", "mymod:", ":"] {
             assert!(!is_namespaced(bad), "{bad}");
@@ -202,7 +213,7 @@ mod tests {
 
     #[test]
     fn registry_caps_at_256_ids() {
-        let engine = &["air"];
+        let engine = &["llama:air"];
         let keys: Vec<String> = (0..256).map(|i| format!("mymod:thing_{i}")).collect();
         let err = NameTable::build(engine, &[keys], "block").expect_err("cap enforced");
         assert!(err.contains("256"), "{err}");

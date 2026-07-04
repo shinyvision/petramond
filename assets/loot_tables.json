@@ -1,8 +1,18 @@
 {
   "tables": {
-    "owl": [
-      { "item": "stick", "min": 1, "max": 2, "chance": 0.5 },
-      { "item": "coal", "min": 1, "max": 1, "chance": 0.25 }
+    "llama:owl": [
+      {
+        "item": "llama:stick",
+        "min": 1,
+        "max": 2,
+        "chance": 0.5
+      },
+      {
+        "item": "llama:coal",
+        "min": 1,
+        "max": 1,
+        "chance": 0.25
+      }
     ]
   }
 }

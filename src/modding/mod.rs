@@ -196,9 +196,9 @@ impl ModHost {
 
     /// Dispatch a GUI button click to the OWNING mod — the pack whose
     /// namespace `kind_key` carries (Phase 5). Runs on the tick, from the
-    /// menu stage's click drain. Engine kinds carry no namespace and a
-    /// content-only pack may ship a GUI with no wasm: both simply dispatch
-    /// nothing.
+    /// menu stage's click drain. Engine kinds carry the reserved `llama`
+    /// namespace but are not mod kinds, and a content-only pack may ship a GUI
+    /// with no wasm: both simply dispatch nothing.
     pub(crate) fn dispatch_gui_click(
         &mut self,
         ctx: &mut SimCtx,

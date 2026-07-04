@@ -158,8 +158,8 @@ fn mob_from_name(name: &str) -> Option<Mob> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
 }
 
-/// Whether `name` belongs to a mod id in `disabled` (bare engine names never
-/// do) — such names get the unknown-name treatment and are never appended.
+/// Whether `name` belongs to a mod id in `disabled`. The engine `llama`
+/// namespace is reserved and never appears in the disabled mod-id set.
 fn name_disabled(name: &str, disabled: &BTreeSet<String>) -> bool {
     crate::registry::namespace(name).is_some_and(|ns| disabled.contains(ns))
 }
@@ -216,11 +216,11 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             changed = true;
         }
     }
-    if file.blocks.first().map(String::as_str) != Some("air")
-        || file.items.first().map(String::as_str) != Some("air")
+    if file.blocks.first().map(String::as_str) != Some("llama:air")
+        || file.items.first().map(String::as_str) != Some("llama:air")
     {
         panic!(
-            "corrupt save palette {}: disk id 0 must be 'air' (the empty-slot sentinel)",
+            "corrupt save palette {}: disk id 0 must be 'llama:air' (the empty-slot sentinel)",
             path.display()
         );
     }
@@ -390,7 +390,7 @@ mod tests {
     fn unknown_disk_names_decode_to_air_and_registry_gets_appended() {
         let dir = temp_dir("unknown");
         // A save from "the future": disk id 1 is a block this build lacks.
-        let mut blocks = vec!["air".to_string(), "unobtainium".to_string()];
+        let mut blocks = vec!["llama:air".to_string(), "unobtainium".to_string()];
         blocks.extend(Block::all().iter().skip(1).map(|&b| block_name(b)));
         let items: Vec<String> = ItemType::all().iter().map(|&i| item_name(i)).collect();
         let mobs: Vec<String> = Mob::all().iter().map(|&m| mob_name(m)).collect();

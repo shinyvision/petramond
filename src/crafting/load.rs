@@ -327,8 +327,8 @@ mod tests {
     #[test]
     fn smelting_recipes_parse_and_skip_unknown() {
         let text = r#"{ "recipes": [
-            { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
-            { "type": "smelting", "ingredient": "mystery", "result": "iron_ingot" }
+            { "type": "smelting", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" },
+            { "type": "smelting", "ingredient": "mystery", "result": "llama:iron_ingot" }
         ] }"#;
         let (grid, smelting, _furniture) = parse(text);
         assert!(grid.is_empty());
@@ -344,9 +344,9 @@ mod tests {
     #[test]
     fn furniture_recipes_parse_and_look_up_by_input() {
         let text = r#"{ "recipes": [
-            { "type": "furniture", "input": "oak_planks", "result": "oak_door", "cost": 1 },
-            { "type": "furniture", "input": "spruce_planks", "result": "spruce_door", "cost": 6 },
-            { "type": "furniture", "input": "mystery", "result": "oak_door" }
+            { "type": "furniture", "input": "llama:oak_planks", "result": "llama:oak_door", "cost": 1 },
+            { "type": "furniture", "input": "llama:spruce_planks", "result": "llama:spruce_door", "cost": 6 },
+            { "type": "furniture", "input": "mystery", "result": "llama:oak_door" }
         ] }"#;
         let (grid, smelting, furniture) = parse(text);
         assert!(grid.is_empty() && smelting.is_empty());
@@ -365,18 +365,18 @@ mod tests {
     #[test]
     fn tag_and_item_ingredients_parse() {
         assert!(matches!(
-            parse_ingredient("#planks"),
+            parse_ingredient("#llama:planks"),
             Ok(Ingredient::Tag(_))
         ));
         assert!(matches!(
-            parse_ingredient("stick"),
+            parse_ingredient("llama:stick"),
             Ok(Ingredient::Item(ItemType::Stick))
         ));
         assert!(parse_ingredient("#bogus").is_err());
         assert!(parse_ingredient("bogus_item").is_err());
     }
 
-    /// A mod pack's shaped recipe (stick plus around a `#logs` centre → the
+    /// A mod pack's shaped recipe (stick plus around a `#llama:logs` centre → the
     /// pack's own dynamic item) resolves through the ENGINE recipe matcher:
     /// pack recipes.json layers append, `#tag` ingredients resolve, and the
     /// namespaced result key finds the dynamically registered item. Pack
@@ -409,7 +409,7 @@ mod tests {
         };
         let (s, log) = (Some(ItemType::Stick), Some(ItemType::BirchLog));
 
-        // The plus arrangement: sticks NESW around any `#logs` centre.
+        // The plus arrangement: sticks NESW around any `#llama:logs` centre.
         let plus = grid([None, s, None, s, log, s, None, s, None]);
         assert_eq!(
             recipes.find(&plus, 3),
@@ -441,20 +441,20 @@ mod tests {
 
     /// Per-world disabled mods: a recipe is dropped when its RESULT or any
     /// INGREDIENT (shaped key, shapeless list, smelt input, furniture input —
-    /// `#tag` keys included) is namespaced to a disabled mod id; engine-bare
-    /// keys and other namespaces pass.
+    /// `#tag` keys included) is namespaced to a disabled mod id; engine
+    /// `llama:*` keys and other namespaces pass.
     #[test]
     fn recipes_touching_a_disabled_namespace_are_filtered() {
         let disabled: std::collections::BTreeSet<String> = ["wheel".to_owned()].into();
         let raw = |json: &str| serde_json::from_str::<RawRecipe>(json).expect("recipe json");
 
         let hits = [
-            r##"{ "type": "shaped", "pattern": ["L"], "key": {"L": "#logs"}, "result": "wheel:wheel_of_fortune" }"##,
-            r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "stick" }"##,
-            r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "stick" }"##,
-            r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "stick" }"##,
-            r##"{ "type": "smelting", "ingredient": "wheel:wheel_of_fortune", "result": "coal" }"##,
-            r##"{ "type": "furniture", "input": "oak_planks", "result": "wheel:wheel_of_fortune" }"##,
+            r##"{ "type": "shaped", "pattern": ["L"], "key": {"L": "#llama:logs"}, "result": "wheel:wheel_of_fortune" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "llama:stick" }"##,
+            r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "llama:stick" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "llama:stick" }"##,
+            r##"{ "type": "smelting", "ingredient": "wheel:wheel_of_fortune", "result": "llama:coal" }"##,
+            r##"{ "type": "furniture", "input": "llama:oak_planks", "result": "wheel:wheel_of_fortune" }"##,
         ];
         for json in hits {
             assert_eq!(
@@ -465,8 +465,8 @@ mod tests {
         }
 
         let passes = [
-            r#"{ "type": "shapeless", "ingredients": ["oak_log"], "result": "oak_planks" }"#,
-            r#"{ "type": "shapeless", "ingredients": ["othermod:gear"], "result": "stick" }"#,
+            r#"{ "type": "shapeless", "ingredients": ["llama:oak_log"], "result": "llama:oak_planks" }"#,
+            r#"{ "type": "shapeless", "ingredients": ["othermod:gear"], "result": "llama:stick" }"#,
         ];
         for json in passes {
             assert_eq!(disabled_namespace_in(&raw(json), &disabled), None, "{json}");
@@ -476,9 +476,9 @@ mod tests {
     #[test]
     fn bad_recipes_are_skipped_not_fatal() {
         let text = r#"{ "recipes": [
-            { "type": "shapeless", "ingredients": ["oak_log"], "result": "oak_planks", "count": 4 },
-            { "type": "shapeless", "ingredients": ["mystery"], "result": "oak_planks" },
-            { "type": "shaped", "pattern": ["X"], "key": {}, "result": "stick" }
+            { "type": "shapeless", "ingredients": ["llama:oak_log"], "result": "llama:oak_planks", "count": 4 },
+            { "type": "shapeless", "ingredients": ["mystery"], "result": "llama:oak_planks" },
+            { "type": "shaped", "pattern": ["X"], "key": {}, "result": "llama:stick" }
         ] }"#;
         // Only the first (valid) recipe survives; the other two are skipped.
         let (grid, smelting, furniture) = parse(text);

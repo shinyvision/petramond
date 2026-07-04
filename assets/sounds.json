@@ -1,99 +1,133 @@
 {
   "sounds": [
     {
-      "sound": "wood_punch",
-      "variants": ["sounds/wood_punch_1.ogg", "sounds/wood_punch_2.ogg", "sounds/wood_punch_3.ogg"],
+      "sound": "llama:wood_punch",
+      "variants": [
+        "sounds/wood_punch_1.ogg",
+        "sounds/wood_punch_2.ogg",
+        "sounds/wood_punch_3.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "wood_place",
-      "variants": ["sounds/wood_place.ogg"],
+      "sound": "llama:wood_place",
+      "variants": [
+        "sounds/wood_place.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "wood_break",
-      "variants": ["sounds/wood_break.ogg"],
+      "sound": "llama:wood_break",
+      "variants": [
+        "sounds/wood_break.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "item_pickup",
-      "variants": ["sounds/item_pickup.ogg"],
+      "sound": "llama:item_pickup",
+      "variants": [
+        "sounds/item_pickup.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "ui"
     },
     {
-      "sound": "door_open",
-      "variants": ["sounds/door_open.ogg"],
+      "sound": "llama:door_open",
+      "variants": [
+        "sounds/door_open.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.08,
       "category": "block"
     },
     {
-      "sound": "door_close",
-      "variants": ["sounds/door_close.ogg"],
+      "sound": "llama:door_close",
+      "variants": [
+        "sounds/door_close.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.08,
       "category": "block"
     },
     {
-      "sound": "chest_open",
-      "variants": ["sounds/chest_open.ogg"],
+      "sound": "llama:chest_open",
+      "variants": [
+        "sounds/chest_open.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.08,
       "category": "block"
     },
     {
-      "sound": "chest_close",
-      "variants": ["sounds/chest_close.ogg"],
+      "sound": "llama:chest_close",
+      "variants": [
+        "sounds/chest_close.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.08,
       "category": "block"
     },
     {
-      "sound": "stone_punch",
-      "variants": ["sounds/stone_punch_1.ogg", "sounds/stone_punch_2.ogg", "sounds/stone_punch_3.ogg"],
+      "sound": "llama:stone_punch",
+      "variants": [
+        "sounds/stone_punch_1.ogg",
+        "sounds/stone_punch_2.ogg",
+        "sounds/stone_punch_3.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "stone_break",
-      "variants": ["sounds/stone_break.ogg"],
+      "sound": "llama:stone_break",
+      "variants": [
+        "sounds/stone_break.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "stone_place",
-      "variants": ["sounds/stone_place.ogg"],
+      "sound": "llama:stone_place",
+      "variants": [
+        "sounds/stone_place.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "dirt_punch",
-      "variants": ["sounds/dirt_punch_1.ogg", "sounds/dirt_punch_2.ogg", "sounds/dirt_punch_3.ogg"],
+      "sound": "llama:dirt_punch",
+      "variants": [
+        "sounds/dirt_punch_1.ogg",
+        "sounds/dirt_punch_2.ogg",
+        "sounds/dirt_punch_3.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "dirt_break",
-      "variants": ["sounds/dirt_break.ogg"],
+      "sound": "llama:dirt_break",
+      "variants": [
+        "sounds/dirt_break.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
     },
     {
-      "sound": "dirt_place",
-      "variants": ["sounds/dirt_place.ogg"],
+      "sound": "llama:dirt_place",
+      "variants": [
+        "sounds/dirt_place.ogg"
+      ],
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"

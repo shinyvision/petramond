@@ -1,7 +1,0 @@
-{
-  "name": "Day/Night Cycle",
-  "id": "daynight",
-  "version": "0.1.0",
-  "description": "Proof-of-concept day/night cycle: 10-minute days, shader-driven dark nights, procedural sun/moon sky, and daynight:time/daynight:is_night world KV.",
-  "wasm": "mod.wasm"
-}

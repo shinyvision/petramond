@@ -322,11 +322,11 @@ mod tests {
     #[test]
     fn pack_layer_overrides_rows_by_mob() {
         let layer = r#"{"mobs": [{
-            "mob": "owl", "key": "owl", "model": "models/owl.bbmodel", "scale": 0.5,
+            "mob": "llama:owl", "key": "llama:owl", "model": "models/owl.bbmodel", "scale": 0.5,
             "size": {"half_width": 0.3, "height": 0.9}, "max_health": 6.0,
             "walk_speed": 3.0, "jump_speed": 7.2, "turn_rate": 7.0, "walk_anim_rate": 1.2,
             "category": "passive", "cap": 4,
-            "spawn": {"biomes": ["forest"], "ground": ["grass"]},
+            "spawn": {"biomes": ["forest"], "ground": ["llama:grass"]},
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": ["forest"]},
@@ -523,7 +523,7 @@ mod tests {
         assert!(err.contains("missing row"), "{err}");
 
         // Two DIFFERENT mobs sharing one key: rejected (loot resolves by key).
-        let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "owl", "model": "m", "scale": 1.0,
+        let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "llama:owl", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
@@ -655,7 +655,7 @@ mod tests {
             serde_json::json!({
                 "blocks": blocks,
                 "items": items,
-                "mobs": ["owl", "othermod:phantom", "sheep"],
+                "mobs": ["llama:owl", "othermod:phantom", "llama:sheep"],
             })
             .to_string(),
         )

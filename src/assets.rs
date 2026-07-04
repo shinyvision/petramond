@@ -34,11 +34,12 @@
 //! }
 //! ```
 //!
-//! Only `name` is required. `id` is the pack's stable snake_case namespace —
-//! required as soon as the pack ships `wasm` or introduces namespaced
-//! (`id:name`) catalog keys, and every namespaced key the pack states must
-//! carry ITS OWN id as the prefix (a violation disables the whole pack with a
-//! logged error — packs never load partially).
+//! Only `name` is required. `id` is the pack's stable snake_case namespace
+//! (except reserved `llama`, which belongs to the engine) — required as soon as
+//! the pack ships `wasm` or introduces namespaced (`id:name`) catalog keys, and
+//! every namespaced key the pack states must carry ITS OWN id as the prefix (a
+//! violation disables the whole pack with a logged error — packs never load
+//! partially).
 //!
 //! Load order = topological sort by `dependencies` + `after`, ties broken by
 //! directory name (so unconstrained packs keep the classic `10_terrain`,
@@ -59,7 +60,8 @@
 //!   sounds): the highest-priority pack that has the file wins; base `assets/`
 //!   is the fallback. Overriding one texture = shipping just that file.
 //! - **Layered catalogs** ([`read_layers`]: `blocks.json`, `items.json`,
-//!   `recipes.json`, `loot_tables.json`, `textures/atlas.json`): EVERY copy is
+//!   `recipes.json`, `loot_tables.json`, `textures/atlas.json`, `shaders.json`):
+//!   EVERY copy is
 //!   returned base-first and the caller merges — by entry key (later packs
 //!   replace or extend) or by appending (recipes) — so a pack states only what
 //!   it changes, never a full copy of the catalogue.
@@ -88,7 +90,7 @@ pub struct Pack {
     pub dir: PathBuf,
     /// The pack's display name (`pack.json` `name` — the only required field).
     pub name: String,
-    /// The pack's namespace id (`None` = content-only override pack).
+    /// The pack's namespace id (`None` = content-only point-file override pack).
     pub id: Option<String>,
     /// The pack's declared version string, for the save's mod-set record
     /// (`mods.json` — see `modding::modset`).

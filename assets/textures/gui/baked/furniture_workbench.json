@@ -1,5 +1,5 @@
 {
-  "type": "furniture_workbench",
+  "type": "llama:furniture_workbench",
   "canvas": {
     "w": 352,
     "h": 332

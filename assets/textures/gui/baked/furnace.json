@@ -1,5 +1,5 @@
 {
-  "type": "furnace",
+  "type": "llama:furnace",
   "canvas": {
     "w": 352,
     "h": 332

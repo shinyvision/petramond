@@ -50,7 +50,8 @@ use brain::AiBehavior;
 /// the loaded def table). Engine species own the low ids in a compiled, frozen order
 /// (the named consts below — the save palette identifies species by those ids/names);
 /// mod packs register additional ids at load through namespaced `mobs.json` rows.
-/// Serde carries a species as its registered NAME string (`"owl"`, `"mod:zombie"`).
+/// Serde carries a species as its registered NAME string
+/// (`"llama:owl"`, `"mod:zombie"`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Mob(pub u8);
 
@@ -66,7 +67,7 @@ impl Mob {
 /// Append-only: save palettes identify mobs by these ids/names. Must stay in
 /// lockstep with the consts above; the shipped `mobs.json` covering every name
 /// keeps a typo here from going unnoticed.
-pub(crate) const ENGINE_MOB_NAMES: &[&str] = &["owl", "sheep"];
+pub(crate) const ENGINE_MOB_NAMES: &[&str] = &["llama:owl", "llama:sheep"];
 
 impl std::fmt::Debug for Mob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -352,11 +353,12 @@ pub(crate) fn build_brain(def: &'static MobDef) -> Brain {
 /// see [`model`].)
 pub struct MobDef {
     pub mob: Mob,
-    /// Registry name — the row key in `mobs.json` (`"owl"`, or `"mod_id:name"` for a
-    /// pack species). The identity serde and the save palette speak.
+    /// Registry name — the row key in `mobs.json` (`"llama:owl"`, or
+    /// `"mod_id:name"` for a pack species). The identity serde and the save
+    /// palette speak.
     pub name: &'static str,
-    /// Stable snake_case identity (e.g. `"owl"`), independent of any display name —
-    /// the key a loot table is looked up by. Mirrors [`crate::item::ItemType::key`].
+    /// Stable identity key (e.g. `"llama:owl"`), independent of any display name
+    /// — the key a loot table is looked up by. Mirrors [`crate::item::ItemType::key`].
     pub key: &'static str,
     /// Asset-relative `.bbmodel` path (`models/owl.bbmodel`), resolved through the
     /// pack overlay ([`crate::assets::read_bytes`]) at precache time (see [`model`]);

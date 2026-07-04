@@ -14,7 +14,8 @@ pub type ShaderParamMap = BTreeMap<String, [f32; 4]>;
 #[derive(Clone, Debug)]
 pub struct WorldEnvironment {
     /// Named visual shader parameters. Shader packs map names onto fixed GPU
-    /// slots; mods write only their own namespace through the host API.
+    /// slots; mods write their own namespace or exposed engine `llama:*` keys
+    /// through the host API.
     shader_params: Arc<ShaderParamMap>,
 }
 
@@ -49,15 +50,15 @@ mod tests {
     #[test]
     fn shader_params_snapshot_and_reject_non_finite_values() {
         let mut env = WorldEnvironment::default();
-        env.set_shader_param("daynight:sky".into(), [0.5, 0.25, 0.0, 1.0]);
+        env.set_shader_param("alpha:sky".into(), [0.5, 0.25, 0.0, 1.0]);
         let first = env.shader_params().clone();
-        assert_eq!(first["daynight:sky"], [0.5, 0.25, 0.0, 1.0]);
+        assert_eq!(first["alpha:sky"], [0.5, 0.25, 0.0, 1.0]);
 
-        env.set_shader_param("daynight:sky".into(), [f32::NAN, 0.0, 0.0, 0.0]);
+        env.set_shader_param("alpha:sky".into(), [f32::NAN, 0.0, 0.0, 0.0]);
         assert!(Arc::ptr_eq(&first, env.shader_params()));
 
-        env.set_shader_param("daynight:sky".into(), [0.75, 0.0, 0.0, 0.0]);
+        env.set_shader_param("alpha:sky".into(), [0.75, 0.0, 0.0, 0.0]);
         assert!(!Arc::ptr_eq(&first, env.shader_params()));
-        assert_eq!(env.shader_params()["daynight:sky"][0], 0.75);
+        assert_eq!(env.shader_params()["alpha:sky"][0], 0.75);
     }
 }

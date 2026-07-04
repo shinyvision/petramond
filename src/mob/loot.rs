@@ -3,7 +3,7 @@
 //! Mirrors the crafting recipe loader ([`crate::crafting`]): the on-disk file is
 //! preferred so loot can be tuned without a rebuild, with an embedded copy as the
 //! fallback when the game runs outside the project tree. Items are referenced by their
-//! stable snake_case [`key`](crate::item::ItemType::key); tables are keyed by a mob's
+//! stable namespaced [`key`](crate::item::ItemType::key); tables are keyed by a mob's
 //! [`key`](crate::mob::MobDef::key). Malformed entries are logged and skipped rather
 //! than aborting the world load.
 
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn embedded_loot_parses_and_resolves_the_owl() {
         let tables = parse(EMBEDDED);
-        let owl = tables.get("owl").expect("owl loot table exists");
+        let owl = tables.get("llama:owl").expect("owl loot table exists");
         let items: Vec<ItemType> = owl.entries.iter().map(|e| e.item).collect();
         assert!(items.contains(&ItemType::Stick), "owl drops sticks");
         assert!(items.contains(&ItemType::Coal), "owl drops coal");
@@ -190,13 +190,13 @@ mod tests {
 
     #[test]
     fn unknown_item_entry_is_skipped_not_fatal() {
-        let text = r#"{ "tables": { "owl": [
-            { "item": "stick", "min": 1, "max": 2, "chance": 0.5 },
+        let text = r#"{ "tables": { "llama:owl": [
+            { "item": "llama:stick", "min": 1, "max": 2, "chance": 0.5 },
             { "item": "mystery_meat", "chance": 1.0 }
         ] } }"#;
         let tables = parse(text);
         let owl = tables
-            .get("owl")
+            .get("llama:owl")
             .expect("table present despite a bad entry");
         assert_eq!(owl.entries.len(), 1, "only the valid entry survives");
         assert_eq!(owl.entries[0].item, ItemType::Stick);
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn malformed_json_is_empty_not_a_panic() {
-        assert!(parse("not json").get("owl").is_none());
-        assert!(parse("{}").get("owl").is_none());
+        assert!(parse("not json").get("llama:owl").is_none());
+        assert!(parse("{}").get("llama:owl").is_none());
     }
 }

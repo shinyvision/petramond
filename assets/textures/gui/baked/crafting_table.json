@@ -1,5 +1,5 @@
 {
-  "type": "crafting_table",
+  "type": "llama:crafting_table",
   "canvas": {
     "w": 352,
     "h": 332

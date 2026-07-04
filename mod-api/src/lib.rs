@@ -127,7 +127,7 @@ pub enum EventKind {
 pub enum DamageSource {
     Fall,
     /// A mob's melee strike; `key` is the attacking species' registry name
-    /// (`"owl"`, `"zombies:zombie"`).
+    /// (`"llama:owl"`, `"zombies:zombie"`).
     Mob {
         key: String,
     },
@@ -290,7 +290,7 @@ pub enum GuiValue {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
     pub index: u32,
-    /// The species' registry name (`"owl"`, `"zombies:zombie"`).
+    /// The species' registry name (`"llama:owl"`, `"zombies:zombie"`).
     pub key: String,
     /// Feet position.
     pub pos: [f32; 3],
@@ -446,10 +446,11 @@ pub enum HostCall {
     EmitSound { key: String, pos: Option<[f32; 3]> },
 
     // --- Phase 3b: persistent KV -------------------------------------------
-    // Keys are namespaced `mod_id:name`. WRITES (set/delete) must use the
-    // calling mod's own prefix; READS may cross namespaces — that is the
-    // cross-mod interop surface (daynight publishes, zombies reads). Limits:
-    // key ≤ 256 bytes, value ≤ 64 KiB; violations return `HostRet::Error`.
+    // Keys are namespaced. WRITES (set/delete) must use the calling mod's own
+    // prefix or an exposed engine `llama:*` key; READS may cross namespaces —
+    // that is the cross-mod interop surface (core day/night publishes, zombies
+    // reads). Limits: key ≤ 256 bytes, value ≤ 64 KiB; violations return
+    // `HostRet::Error`.
     /// World KV (persists in `level.dat`). → [`HostRet::Bytes`].
     WorldKvGet { key: String },
     /// → [`HostRet::Unit`].
@@ -481,7 +482,7 @@ pub enum HostCall {
     MobKvDelete { mob_index: u32, key: String },
 
     // --- Phase 4: worldgen hooks ---------------------------------------------
-    /// Resolve a block registry key (`"stone"`, `"smoke:smoke_block"`) to its
+    /// Resolve a block registry key (`"llama:stone"`, `"smoke:smoke_block"`) to its
     /// session-scoped runtime id. Needs no simulation context — legal anywhere,
     /// including on worldgen instances. `None` = not registered (a typo'd or
     /// absent pack — degrade gracefully, don't panic). → [`HostRet::Block`].
@@ -570,9 +571,10 @@ pub enum HostCall {
     BlockIsFullSpawnSupport { pos: [i32; 3] },
 
     // --- Shader parameters ------------------------------------------------
-    /// Set one named visual shader parameter (`vec4<f32>`). Mods may only
-    /// write their own `mod_id:name` keys; active shader packs map keys onto
-    /// fixed GPU slots. Not persisted: re-apply it from mod state on load.
+    /// Set one named visual shader parameter (`vec4<f32>`). Mods may write
+    /// their own `mod_id:name` keys or exposed engine `llama:*` keys; active
+    /// shader packs map keys onto fixed GPU slots. Not persisted: re-apply it
+    /// from mod state on load.
     /// → [`HostRet::Unit`].
     ShaderSetParam { key: String, value: [f32; 4] },
 }
@@ -802,7 +804,7 @@ mod tests {
         });
         roundtrip(HostCall::DespawnMob { index: 7 });
         roundtrip(HostCall::SpawnItem {
-            item_key: "stick".into(),
+            item_key: "llama:stick".into(),
             count: 4,
             pos: [0.5, 64.0, 0.5],
         });
@@ -812,7 +814,7 @@ mod tests {
             impulse: [1.0, 3.0, -1.0],
         });
         roundtrip(HostCall::GiveItem {
-            item_key: "diamond".into(),
+            item_key: "llama:diamond".into(),
             count: 1,
         });
         roundtrip(HostCall::KillPlayer);
@@ -825,14 +827,14 @@ mod tests {
             pos: Some([0.0, 64.0, 0.0]),
         });
         roundtrip(HostCall::WorldKvGet {
-            key: "daynight:time".into(),
+            key: "llama:time".into(),
         });
         roundtrip(HostCall::WorldKvSet {
-            key: "daynight:time".into(),
+            key: "llama:time".into(),
             value: vec![1, 2, 3],
         });
         roundtrip(HostCall::WorldKvDelete {
-            key: "daynight:time".into(),
+            key: "llama:time".into(),
         });
         roundtrip(HostCall::SectionKvGet {
             pos: [4, -60, 4],
@@ -898,10 +900,12 @@ mod tests {
         roundtrip(HostCall::SoundStop { handle: 99 });
         roundtrip(HostCall::BlockIsFullSpawnSupport { pos: [8, 63, 8] });
         roundtrip(HostCall::ShaderSetParam {
-            key: "daynight:sky".into(),
+            key: "llama:light".into(),
             value: [0.75, 0.0, 0.0, 1.0],
         });
-        roundtrip(HostRet::GuiValue(Some(GuiValue::Str("diamond".into()))));
+        roundtrip(HostRet::GuiValue(Some(GuiValue::Str(
+            "llama:diamond".into(),
+        ))));
         roundtrip(HostRet::GuiValue(Some(GuiValue::I32(-3))));
         roundtrip(HostRet::GuiValue(None));
         roundtrip(GuestCall::GuiClick {
@@ -950,7 +954,7 @@ mod tests {
         });
         roundtrip(HostRet::Mobs(vec![MobSnapshot {
             index: 0,
-            key: "owl".into(),
+            key: "llama:owl".into(),
             pos: [1.5, 64.0, -3.5],
             health: 4.0,
             id: 123,

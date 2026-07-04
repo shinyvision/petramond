@@ -266,7 +266,7 @@ pub(crate) enum OverlayMode {
 
 #[derive(Deserialize)]
 struct Manifest {
-    /// The kind key: an engine name (`"furnace"`) or a namespaced mod kind
+    /// The kind key: an engine name (`"llama:furnace"`) or a namespaced mod kind
     /// (`"wheel:wheel"`). Resolved (and, for namespaced keys, registered)
     /// against the runtime kind registry.
     #[serde(rename = "type")]
@@ -859,7 +859,7 @@ mod tests {
     // Inline samples so tests exercise the parser/geometry without pinning the
     // user's freely-re-baked manifests (their exact slot pixels are table data).
     const CHEST: &str = r#"{
-        "type": "chest",
+        "type": "llama:chest",
         "canvas": { "w": 352, "h": 332 },
         "scale": 2,
         "image": "chest.png",
@@ -874,7 +874,7 @@ mod tests {
 
     fn furnace_with_overlays() -> &'static str {
         r#"{
-            "type": "furnace",
+            "type": "llama:furnace",
             "canvas": { "w": 352, "h": 332 },
             "scale": 2,
             "image": "furnace.png",
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn validate_rejects_non_row_major_storage() {
         let json = r#"{
-            "type": "chest", "canvas": { "w": 352, "h": 332 }, "scale": 2, "image": "c.png",
+            "type": "llama:chest", "canvas": { "w": 352, "h": 332 }, "scale": 2, "image": "c.png",
             "slots": [
                 { "role": "storage", "x": 52, "y": 26, "w": 32, "h": 32 },
                 { "role": "storage", "x": 16, "y": 26, "w": 32, "h": 32 }

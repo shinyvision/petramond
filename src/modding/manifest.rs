@@ -26,19 +26,21 @@ pub(crate) struct PackMeta {
     pub after: Vec<String>,
 }
 
-/// A valid mod id: non-empty snake_case (`[a-z0-9_]+`), stable, used as the
-/// `id:` prefix of every registry key the pack introduces.
+/// A valid mod id: non-empty snake_case (`[a-z0-9_]+`), stable, not the
+/// reserved engine namespace, and used as the `id:` prefix of every registry key
+/// the pack introduces.
 pub(crate) fn valid_mod_id(id: &str) -> bool {
     !id.is_empty()
+        && id != crate::registry::ENGINE_NAMESPACE
         && id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 /// The namespaced catalog keys `keys` that `pack_id` may NOT introduce: every
-/// `ns:name` key must carry the pack's own id as `ns` (bare keys are engine
-/// overrides and always fine). A pack without an id may introduce no
-/// namespaced keys at all.
+/// `ns:name` key must carry the pack's own id as `ns`. The reserved `llama:*`
+/// namespace belongs to base engine content, not packs. A pack without an id
+/// may introduce no namespaced keys at all.
 pub(crate) fn foreign_namespaced_keys(pack_id: Option<&str>, keys: &[String]) -> Vec<String> {
     keys.iter()
         .filter(|key| {
@@ -270,14 +272,14 @@ mod tests {
     #[test]
     fn missing_dependency_disables_the_mod_and_its_dependents() {
         let packs = [
-            meta("zombies", Some("zombies"), &["daynight"], &[]),
-            meta("graves", Some("graves"), &["zombies"], &[]),
+            meta("lanterns", Some("lanterns"), &["glow_core"], &[]),
+            meta("graves", Some("graves"), &["lanterns"], &[]),
             meta("wheel", Some("wheel"), &[], &[]),
         ];
         let (order, disabled) = order_of(&packs);
         assert_eq!(order, ["wheel"], "unaffected packs still load");
         let names: Vec<&str> = disabled.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"zombies") && names.contains(&"graves"));
+        assert!(names.contains(&"lanterns") && names.contains(&"graves"));
         assert!(disabled.iter().all(|(_, why)| why.contains("dependency")));
 
         // A dependency cycle disables every member, loudly, and spares the rest.
@@ -311,23 +313,28 @@ mod tests {
     #[test]
     fn foreign_namespace_keys_flag_violations() {
         let keys = vec![
-            "stone".to_owned(),       // bare engine override: fine anywhere
+            "stone".to_owned(),       // bare non-registry string: ignored here
             "smoke:lamp".to_owned(),  // own namespace
             "other:thing".to_owned(), // someone else's
+            "llama:stone".to_owned(), // reserved engine namespace
         ];
         assert_eq!(
             foreign_namespaced_keys(Some("smoke"), &keys),
-            vec!["other:thing".to_owned()]
+            vec!["other:thing".to_owned(), "llama:stone".to_owned()]
         );
         // Without an id, ANY namespaced key is a violation.
         assert_eq!(
             foreign_namespaced_keys(None, &keys),
-            vec!["smoke:lamp".to_owned(), "other:thing".to_owned()]
+            vec![
+                "smoke:lamp".to_owned(),
+                "other:thing".to_owned(),
+                "llama:stone".to_owned()
+            ]
         );
         assert!(foreign_namespaced_keys(Some("smoke"), &["stone".to_owned()]).is_empty());
 
         assert!(valid_mod_id("day_night2"));
-        for bad in ["", "Day", "day-night", "day night", "dæy"] {
+        for bad in ["", "Day", "day-night", "day night", "dæy", "llama"] {
             assert!(!valid_mod_id(bad), "{bad}");
         }
     }

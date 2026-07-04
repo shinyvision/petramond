@@ -1,5 +1,18 @@
 {
   "recipes": [
-    { "type": "shaped", "pattern": [" S ", "SLS", " S "], "key": { "S": "stick", "L": "#logs" }, "result": "wheel:wheel_of_fortune", "count": 1 }
+    {
+      "type": "shaped",
+      "pattern": [
+        " S ",
+        "SLS",
+        " S "
+      ],
+      "key": {
+        "S": "llama:stick",
+        "L": "#llama:logs"
+      },
+      "result": "wheel:wheel_of_fortune",
+      "count": 1
+    }
   ]
 }

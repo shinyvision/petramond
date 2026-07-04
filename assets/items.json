@@ -1,149 +1,1827 @@
 {
   "items": [
-    {"item": "air", "key": "air", "name": "Air", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "grass", "key": "grass_block", "name": "Grass Block", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dirt", "key": "dirt", "name": "Dirt", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "stone", "key": "stone", "name": "Stone", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "sand", "key": "sand", "name": "Sand", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "snow", "key": "snow", "name": "Snow", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "water", "key": "water", "name": "Water", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "oak_log", "key": "oak_log", "name": "Oak Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "oak_leaves", "key": "oak_leaves", "name": "Oak Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "spruce_log", "key": "spruce_log", "name": "Spruce Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "birch_log", "key": "birch_log", "name": "Birch Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "jungle_log", "key": "jungle_log", "name": "Jungle Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "acacia_log", "key": "acacia_log", "name": "Acacia Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "dark_oak_log", "key": "dark_oak_log", "name": "Dark Oak Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "cherry_log", "key": "cherry_log", "name": "Cherry Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "mangrove_log", "key": "mangrove_log", "name": "Mangrove Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "spruce_leaves", "key": "spruce_leaves", "name": "Spruce Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "birch_leaves", "key": "birch_leaves", "name": "Birch Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "jungle_leaves", "key": "jungle_leaves", "name": "Jungle Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "acacia_leaves", "key": "acacia_leaves", "name": "Acacia Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dark_oak_leaves", "key": "dark_oak_leaves", "name": "Dark Oak Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "mangrove_leaves", "key": "mangrove_leaves", "name": "Mangrove Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cherry_leaves", "key": "cherry_leaves", "name": "Cherry Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "azalea_leaves", "key": "azalea_leaves", "name": "Azalea Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "red_sand", "key": "red_sand", "name": "Red Sand", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "sandstone", "key": "sandstone", "name": "Sandstone", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "red_sandstone", "key": "red_sandstone", "name": "Red Sandstone", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "terracotta", "key": "terracotta", "name": "Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "white_terracotta", "key": "white_terracotta", "name": "White Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "orange_terracotta", "key": "orange_terracotta", "name": "Orange Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "yellow_terracotta", "key": "yellow_terracotta", "name": "Yellow Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "brown_terracotta", "key": "brown_terracotta", "name": "Brown Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "red_terracotta", "key": "red_terracotta", "name": "Red Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "light_gray_terracotta", "key": "light_gray_terracotta", "name": "Light Gray Terracotta", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "podzol", "key": "podzol", "name": "Podzol", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "mycelium", "key": "mycelium", "name": "Mycelium", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "coarse_dirt", "key": "coarse_dirt", "name": "Coarse Dirt", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "gravel", "key": "gravel", "name": "Gravel", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "clay", "key": "clay", "name": "Clay", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "mud", "key": "mud", "name": "Mud", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "moss_block", "key": "moss_block", "name": "Moss Block", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "snow_block", "key": "snow_block", "name": "Snow Block", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "packed_ice", "key": "packed_ice", "name": "Packed Ice", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "ice", "key": "ice", "name": "Ice", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "calcite", "key": "calcite", "name": "Calcite", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "granite", "key": "granite", "name": "Granite", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "diorite", "key": "diorite", "name": "Diorite", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "andesite", "key": "andesite", "name": "Andesite", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "tuff", "key": "tuff", "name": "Tuff", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "coal_ore", "key": "coal_ore", "name": "Coal Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "iron_ore", "key": "iron_ore", "name": "Iron Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "copper_ore", "key": "copper_ore", "name": "Copper Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "gold_ore", "key": "gold_ore", "name": "Gold Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "redstone_ore", "key": "redstone_ore", "name": "Redstone Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "lapis_ore", "key": "lapis_ore", "name": "Lapis Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "diamond_ore", "key": "diamond_ore", "name": "Diamond Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "emerald_ore", "key": "emerald_ore", "name": "Emerald Ore", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "pumpkin", "key": "pumpkin", "name": "Pumpkin", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "melon", "key": "melon", "name": "Melon", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cactus", "key": "cactus", "name": "Cactus", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "short_grass", "key": "short_grass", "name": "Short Grass", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "fern", "key": "fern", "name": "Fern", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dandelion", "key": "dandelion", "name": "Dandelion", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "poppy", "key": "poppy", "name": "Poppy", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cornflower", "key": "cornflower", "name": "Cornflower", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "allium", "key": "allium", "name": "Allium", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "azure_bluet", "key": "azure_bluet", "name": "Azure Bluet", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "oxeye_daisy", "key": "oxeye_daisy", "name": "Oxeye Daisy", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "red_tulip", "key": "red_tulip", "name": "Red Tulip", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dead_bush", "key": "dead_bush", "name": "Dead Bush", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "brown_mushroom", "key": "brown_mushroom", "name": "Brown Mushroom", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "red_mushroom", "key": "red_mushroom", "name": "Red Mushroom", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cobblestone", "key": "cobblestone", "name": "Cobblestone", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["smeltable"]},
-    {"item": "oak_planks", "key": "oak_planks", "name": "Oak Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "spruce_planks", "key": "spruce_planks", "name": "Spruce Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "birch_planks", "key": "birch_planks", "name": "Birch Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "jungle_planks", "key": "jungle_planks", "name": "Jungle Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "acacia_planks", "key": "acacia_planks", "name": "Acacia Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "dark_oak_planks", "key": "dark_oak_planks", "name": "Dark Oak Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "cherry_planks", "key": "cherry_planks", "name": "Cherry Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "mangrove_planks", "key": "mangrove_planks", "name": "Mangrove Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "crafting_table", "key": "crafting_table", "name": "Crafting Table", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "stick", "key": "stick", "name": "Stick", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "stick", "tags": []},
-    {"item": "wooden_pickaxe", "key": "wooden_pickaxe", "name": "Wooden Pickaxe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "wooden_pickaxe", "tags": []},
-    {"item": "stone_pickaxe", "key": "stone_pickaxe", "name": "Stone Pickaxe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "stone_pickaxe", "tags": []},
-    {"item": "raw_iron", "key": "raw_iron", "name": "Raw Iron", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "raw_iron", "tags": ["smeltable"]},
-    {"item": "raw_copper", "key": "raw_copper", "name": "Raw Copper", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "raw_copper", "tags": ["smeltable"]},
-    {"item": "coal", "key": "coal", "name": "Coal", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 1.4}, "sprite": "coal", "tags": ["fuel"]},
-    {"item": "iron_ingot", "key": "iron_ingot", "name": "Iron Ingot", "max_stack_size": 64, "held_pose": {"pitch": -0.1, "yaw": 1.8, "roll": -0.75}, "sprite": "iron_ingot", "tags": []},
-    {"item": "copper_ingot", "key": "copper_ingot", "name": "Copper Ingot", "max_stack_size": 64, "held_pose": {"pitch": -0.1, "yaw": 1.8, "roll": -0.75}, "sprite": "copper_ingot", "tags": []},
-    {"item": "furnace", "key": "furnace", "name": "Furnace", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "chest", "key": "chest", "name": "Chest", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "torch", "key": "torch", "name": "Torch", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "torch", "tags": []},
-    {"item": "diamond", "key": "diamond", "name": "Diamond", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "diamond", "tags": []},
-    {"item": "lapis_lazuli", "key": "lapis_lazuli", "name": "Lapis Lazuli", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "lapis_lazuli", "tags": []},
-    {"item": "raw_gold", "key": "raw_gold", "name": "Raw Gold", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "raw_gold", "tags": ["smeltable"]},
-    {"item": "gold_ingot", "key": "gold_ingot", "name": "Gold Ingot", "max_stack_size": 64, "held_pose": {"pitch": -0.1, "yaw": 1.8, "roll": -0.75}, "sprite": "gold_ingot", "tags": []},
-    {"item": "wooden_axe", "key": "wooden_axe", "name": "Wooden Axe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "wooden_axe", "tags": []},
-    {"item": "stone_axe", "key": "stone_axe", "name": "Stone Axe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "stone_axe", "tags": []},
-    {"item": "iron_axe", "key": "iron_axe", "name": "Iron Axe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "iron_axe", "tags": []},
-    {"item": "diamond_axe", "key": "diamond_axe", "name": "Diamond Axe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "diamond_axe", "tags": []},
-    {"item": "iron_pickaxe", "key": "iron_pickaxe", "name": "Iron Pickaxe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "iron_pickaxe", "tags": []},
-    {"item": "diamond_pickaxe", "key": "diamond_pickaxe", "name": "Diamond Pickaxe", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "diamond_pickaxe", "tags": []},
-    {"item": "wooden_shovel", "key": "wooden_shovel", "name": "Wooden Shovel", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "wooden_shovel", "tags": []},
-    {"item": "stone_shovel", "key": "stone_shovel", "name": "Stone Shovel", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "stone_shovel", "tags": []},
-    {"item": "iron_shovel", "key": "iron_shovel", "name": "Iron Shovel", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "iron_shovel", "tags": []},
-    {"item": "diamond_shovel", "key": "diamond_shovel", "name": "Diamond Shovel", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "diamond_shovel", "tags": []},
-    {"item": "furniture_workbench", "key": "furniture_workbench", "name": "Furniture Workbench", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "oak_sapling", "key": "oak_sapling", "name": "Oak Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "spruce_sapling", "key": "spruce_sapling", "name": "Spruce Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "birch_sapling", "key": "birch_sapling", "name": "Birch Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "jungle_sapling", "key": "jungle_sapling", "name": "Jungle Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "acacia_sapling", "key": "acacia_sapling", "name": "Acacia Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dark_oak_sapling", "key": "dark_oak_sapling", "name": "Dark Oak Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cherry_sapling", "key": "cherry_sapling", "name": "Cherry Sapling", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "oak_door", "key": "oak_door", "name": "Oak Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "oak_door_item", "tags": []},
-    {"item": "spruce_door", "key": "spruce_door", "name": "Spruce Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "spruce_door_item", "tags": []},
-    {"item": "birch_door", "key": "birch_door", "name": "Birch Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "birch_door_item", "tags": []},
-    {"item": "jungle_door", "key": "jungle_door", "name": "Jungle Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "jungle_door_item", "tags": []},
-    {"item": "acacia_door", "key": "acacia_door", "name": "Acacia Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "acacia_door_item", "tags": []},
-    {"item": "dark_oak_door", "key": "dark_oak_door", "name": "Dark Oak Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "dark_oak_door_item", "tags": []},
-    {"item": "cherry_door", "key": "cherry_door", "name": "Cherry Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "cherry_door_item", "tags": []},
-    {"item": "mangrove_door", "key": "mangrove_door", "name": "Mangrove Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "mangrove_door_item", "tags": []},
-    {"item": "redwood_log", "key": "redwood_log", "name": "Redwood Log", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["logs"]},
-    {"item": "redwood_leaves", "key": "redwood_leaves", "name": "Redwood Leaves", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "redwood_planks", "key": "redwood_planks", "name": "Redwood Planks", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": ["planks"]},
-    {"item": "redwood_door", "key": "redwood_door", "name": "Redwood Door", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "redwood_door_item", "tags": []},
-    {"item": "oak_stairs", "key": "oak_stairs", "name": "Oak Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "spruce_stairs", "key": "spruce_stairs", "name": "Spruce Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "birch_stairs", "key": "birch_stairs", "name": "Birch Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "jungle_stairs", "key": "jungle_stairs", "name": "Jungle Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "acacia_stairs", "key": "acacia_stairs", "name": "Acacia Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dark_oak_stairs", "key": "dark_oak_stairs", "name": "Dark Oak Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cherry_stairs", "key": "cherry_stairs", "name": "Cherry Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "mangrove_stairs", "key": "mangrove_stairs", "name": "Mangrove Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "redwood_stairs", "key": "redwood_stairs", "name": "Redwood Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "cobblestone_stairs", "key": "cobblestone_stairs", "name": "Cobblestone Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "stone_stairs", "key": "stone_stairs", "name": "Stone Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "dirt_stairs", "key": "dirt_stairs", "name": "Dirt Stairs", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "wooden_bucket", "key": "wooden_bucket", "name": "Wooden Bucket", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_fill"},
-    {"item": "water_bucket", "key": "water_bucket", "name": "Water Bucket", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_pour"},
-    {"item": "shears", "key": "shears", "name": "Shears", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": -1.5, "roll": 0.5}, "sprite": "shears", "tags": [], "use": "shear"},
-    {"item": "wool", "key": "wool", "name": "Wool", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "wool", "tags": []},
-    {"item": "bed_frame", "key": "bed_frame", "name": "Bed Frame", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-    {"item": "bed", "key": "bed", "name": "Bed", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}
+    {
+      "item": "llama:air",
+      "key": "llama:air",
+      "name": "Air",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:grass",
+      "key": "llama:grass_block",
+      "name": "Grass Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dirt",
+      "key": "llama:dirt",
+      "name": "Dirt",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:stone",
+      "key": "llama:stone",
+      "name": "Stone",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:sand",
+      "key": "llama:sand",
+      "name": "Sand",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:snow",
+      "key": "llama:snow",
+      "name": "Snow",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:water",
+      "key": "llama:water",
+      "name": "Water",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:oak_log",
+      "key": "llama:oak_log",
+      "name": "Oak Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:oak_leaves",
+      "key": "llama:oak_leaves",
+      "name": "Oak Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:spruce_log",
+      "key": "llama:spruce_log",
+      "name": "Spruce Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:birch_log",
+      "key": "llama:birch_log",
+      "name": "Birch Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:jungle_log",
+      "key": "llama:jungle_log",
+      "name": "Jungle Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:acacia_log",
+      "key": "llama:acacia_log",
+      "name": "Acacia Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:dark_oak_log",
+      "key": "llama:dark_oak_log",
+      "name": "Dark Oak Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:cherry_log",
+      "key": "llama:cherry_log",
+      "name": "Cherry Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:mangrove_log",
+      "key": "llama:mangrove_log",
+      "name": "Mangrove Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:spruce_leaves",
+      "key": "llama:spruce_leaves",
+      "name": "Spruce Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:birch_leaves",
+      "key": "llama:birch_leaves",
+      "name": "Birch Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:jungle_leaves",
+      "key": "llama:jungle_leaves",
+      "name": "Jungle Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:acacia_leaves",
+      "key": "llama:acacia_leaves",
+      "name": "Acacia Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dark_oak_leaves",
+      "key": "llama:dark_oak_leaves",
+      "name": "Dark Oak Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:mangrove_leaves",
+      "key": "llama:mangrove_leaves",
+      "name": "Mangrove Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cherry_leaves",
+      "key": "llama:cherry_leaves",
+      "name": "Cherry Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:azalea_leaves",
+      "key": "llama:azalea_leaves",
+      "name": "Azalea Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:red_sand",
+      "key": "llama:red_sand",
+      "name": "Red Sand",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:sandstone",
+      "key": "llama:sandstone",
+      "name": "Sandstone",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:red_sandstone",
+      "key": "llama:red_sandstone",
+      "name": "Red Sandstone",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:terracotta",
+      "key": "llama:terracotta",
+      "name": "Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:white_terracotta",
+      "key": "llama:white_terracotta",
+      "name": "White Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:orange_terracotta",
+      "key": "llama:orange_terracotta",
+      "name": "Orange Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:yellow_terracotta",
+      "key": "llama:yellow_terracotta",
+      "name": "Yellow Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:brown_terracotta",
+      "key": "llama:brown_terracotta",
+      "name": "Brown Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:red_terracotta",
+      "key": "llama:red_terracotta",
+      "name": "Red Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:light_gray_terracotta",
+      "key": "llama:light_gray_terracotta",
+      "name": "Light Gray Terracotta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:podzol",
+      "key": "llama:podzol",
+      "name": "Podzol",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:mycelium",
+      "key": "llama:mycelium",
+      "name": "Mycelium",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:coarse_dirt",
+      "key": "llama:coarse_dirt",
+      "name": "Coarse Dirt",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:gravel",
+      "key": "llama:gravel",
+      "name": "Gravel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:clay",
+      "key": "llama:clay",
+      "name": "Clay",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:mud",
+      "key": "llama:mud",
+      "name": "Mud",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:moss_block",
+      "key": "llama:moss_block",
+      "name": "Moss Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:snow_block",
+      "key": "llama:snow_block",
+      "name": "Snow Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:packed_ice",
+      "key": "llama:packed_ice",
+      "name": "Packed Ice",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:ice",
+      "key": "llama:ice",
+      "name": "Ice",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:calcite",
+      "key": "llama:calcite",
+      "name": "Calcite",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:granite",
+      "key": "llama:granite",
+      "name": "Granite",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:diorite",
+      "key": "llama:diorite",
+      "name": "Diorite",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:andesite",
+      "key": "llama:andesite",
+      "name": "Andesite",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:tuff",
+      "key": "llama:tuff",
+      "name": "Tuff",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:coal_ore",
+      "key": "llama:coal_ore",
+      "name": "Coal Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:iron_ore",
+      "key": "llama:iron_ore",
+      "name": "Iron Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:copper_ore",
+      "key": "llama:copper_ore",
+      "name": "Copper Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:gold_ore",
+      "key": "llama:gold_ore",
+      "name": "Gold Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:redstone_ore",
+      "key": "llama:redstone_ore",
+      "name": "Redstone Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:lapis_ore",
+      "key": "llama:lapis_ore",
+      "name": "Lapis Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:diamond_ore",
+      "key": "llama:diamond_ore",
+      "name": "Diamond Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:emerald_ore",
+      "key": "llama:emerald_ore",
+      "name": "Emerald Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:pumpkin",
+      "key": "llama:pumpkin",
+      "name": "Pumpkin",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:melon",
+      "key": "llama:melon",
+      "name": "Melon",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cactus",
+      "key": "llama:cactus",
+      "name": "Cactus",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:short_grass",
+      "key": "llama:short_grass",
+      "name": "Short Grass",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:fern",
+      "key": "llama:fern",
+      "name": "Fern",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dandelion",
+      "key": "llama:dandelion",
+      "name": "Dandelion",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:poppy",
+      "key": "llama:poppy",
+      "name": "Poppy",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cornflower",
+      "key": "llama:cornflower",
+      "name": "Cornflower",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:allium",
+      "key": "llama:allium",
+      "name": "Allium",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:azure_bluet",
+      "key": "llama:azure_bluet",
+      "name": "Azure Bluet",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:oxeye_daisy",
+      "key": "llama:oxeye_daisy",
+      "name": "Oxeye Daisy",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:red_tulip",
+      "key": "llama:red_tulip",
+      "name": "Red Tulip",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dead_bush",
+      "key": "llama:dead_bush",
+      "name": "Dead Bush",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:brown_mushroom",
+      "key": "llama:brown_mushroom",
+      "name": "Brown Mushroom",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:red_mushroom",
+      "key": "llama:red_mushroom",
+      "name": "Red Mushroom",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cobblestone",
+      "key": "llama:cobblestone",
+      "name": "Cobblestone",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "smeltable"
+      ]
+    },
+    {
+      "item": "llama:oak_planks",
+      "key": "llama:oak_planks",
+      "name": "Oak Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:spruce_planks",
+      "key": "llama:spruce_planks",
+      "name": "Spruce Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:birch_planks",
+      "key": "llama:birch_planks",
+      "name": "Birch Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:jungle_planks",
+      "key": "llama:jungle_planks",
+      "name": "Jungle Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:acacia_planks",
+      "key": "llama:acacia_planks",
+      "name": "Acacia Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:dark_oak_planks",
+      "key": "llama:dark_oak_planks",
+      "name": "Dark Oak Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:cherry_planks",
+      "key": "llama:cherry_planks",
+      "name": "Cherry Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:mangrove_planks",
+      "key": "llama:mangrove_planks",
+      "name": "Mangrove Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:crafting_table",
+      "key": "llama:crafting_table",
+      "name": "Crafting Table",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:stick",
+      "key": "llama:stick",
+      "name": "Stick",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "stick",
+      "tags": []
+    },
+    {
+      "item": "llama:wooden_pickaxe",
+      "key": "llama:wooden_pickaxe",
+      "name": "Wooden Pickaxe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "wooden_pickaxe",
+      "tags": []
+    },
+    {
+      "item": "llama:stone_pickaxe",
+      "key": "llama:stone_pickaxe",
+      "name": "Stone Pickaxe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "stone_pickaxe",
+      "tags": []
+    },
+    {
+      "item": "llama:raw_iron",
+      "key": "llama:raw_iron",
+      "name": "Raw Iron",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "raw_iron",
+      "tags": [
+        "smeltable"
+      ]
+    },
+    {
+      "item": "llama:raw_copper",
+      "key": "llama:raw_copper",
+      "name": "Raw Copper",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "raw_copper",
+      "tags": [
+        "smeltable"
+      ]
+    },
+    {
+      "item": "llama:coal",
+      "key": "llama:coal",
+      "name": "Coal",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 1.4
+      },
+      "sprite": "coal",
+      "tags": [
+        "fuel"
+      ]
+    },
+    {
+      "item": "llama:iron_ingot",
+      "key": "llama:iron_ingot",
+      "name": "Iron Ingot",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": -0.1,
+        "yaw": 1.8,
+        "roll": -0.75
+      },
+      "sprite": "iron_ingot",
+      "tags": []
+    },
+    {
+      "item": "llama:copper_ingot",
+      "key": "llama:copper_ingot",
+      "name": "Copper Ingot",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": -0.1,
+        "yaw": 1.8,
+        "roll": -0.75
+      },
+      "sprite": "copper_ingot",
+      "tags": []
+    },
+    {
+      "item": "llama:furnace",
+      "key": "llama:furnace",
+      "name": "Furnace",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:chest",
+      "key": "llama:chest",
+      "name": "Chest",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:torch",
+      "key": "llama:torch",
+      "name": "Torch",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "torch",
+      "tags": []
+    },
+    {
+      "item": "llama:diamond",
+      "key": "llama:diamond",
+      "name": "Diamond",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "diamond",
+      "tags": []
+    },
+    {
+      "item": "llama:lapis_lazuli",
+      "key": "llama:lapis_lazuli",
+      "name": "Lapis Lazuli",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "lapis_lazuli",
+      "tags": []
+    },
+    {
+      "item": "llama:raw_gold",
+      "key": "llama:raw_gold",
+      "name": "Raw Gold",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "raw_gold",
+      "tags": [
+        "smeltable"
+      ]
+    },
+    {
+      "item": "llama:gold_ingot",
+      "key": "llama:gold_ingot",
+      "name": "Gold Ingot",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": -0.1,
+        "yaw": 1.8,
+        "roll": -0.75
+      },
+      "sprite": "gold_ingot",
+      "tags": []
+    },
+    {
+      "item": "llama:wooden_axe",
+      "key": "llama:wooden_axe",
+      "name": "Wooden Axe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "wooden_axe",
+      "tags": []
+    },
+    {
+      "item": "llama:stone_axe",
+      "key": "llama:stone_axe",
+      "name": "Stone Axe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "stone_axe",
+      "tags": []
+    },
+    {
+      "item": "llama:iron_axe",
+      "key": "llama:iron_axe",
+      "name": "Iron Axe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "iron_axe",
+      "tags": []
+    },
+    {
+      "item": "llama:diamond_axe",
+      "key": "llama:diamond_axe",
+      "name": "Diamond Axe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "diamond_axe",
+      "tags": []
+    },
+    {
+      "item": "llama:iron_pickaxe",
+      "key": "llama:iron_pickaxe",
+      "name": "Iron Pickaxe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "iron_pickaxe",
+      "tags": []
+    },
+    {
+      "item": "llama:diamond_pickaxe",
+      "key": "llama:diamond_pickaxe",
+      "name": "Diamond Pickaxe",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "diamond_pickaxe",
+      "tags": []
+    },
+    {
+      "item": "llama:wooden_shovel",
+      "key": "llama:wooden_shovel",
+      "name": "Wooden Shovel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "wooden_shovel",
+      "tags": []
+    },
+    {
+      "item": "llama:stone_shovel",
+      "key": "llama:stone_shovel",
+      "name": "Stone Shovel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "stone_shovel",
+      "tags": []
+    },
+    {
+      "item": "llama:iron_shovel",
+      "key": "llama:iron_shovel",
+      "name": "Iron Shovel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "iron_shovel",
+      "tags": []
+    },
+    {
+      "item": "llama:diamond_shovel",
+      "key": "llama:diamond_shovel",
+      "name": "Diamond Shovel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "diamond_shovel",
+      "tags": []
+    },
+    {
+      "item": "llama:furniture_workbench",
+      "key": "llama:furniture_workbench",
+      "name": "Furniture Workbench",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:oak_sapling",
+      "key": "llama:oak_sapling",
+      "name": "Oak Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:spruce_sapling",
+      "key": "llama:spruce_sapling",
+      "name": "Spruce Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:birch_sapling",
+      "key": "llama:birch_sapling",
+      "name": "Birch Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:jungle_sapling",
+      "key": "llama:jungle_sapling",
+      "name": "Jungle Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:acacia_sapling",
+      "key": "llama:acacia_sapling",
+      "name": "Acacia Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dark_oak_sapling",
+      "key": "llama:dark_oak_sapling",
+      "name": "Dark Oak Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cherry_sapling",
+      "key": "llama:cherry_sapling",
+      "name": "Cherry Sapling",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:oak_door",
+      "key": "llama:oak_door",
+      "name": "Oak Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "oak_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:spruce_door",
+      "key": "llama:spruce_door",
+      "name": "Spruce Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "spruce_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:birch_door",
+      "key": "llama:birch_door",
+      "name": "Birch Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "birch_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:jungle_door",
+      "key": "llama:jungle_door",
+      "name": "Jungle Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "jungle_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:acacia_door",
+      "key": "llama:acacia_door",
+      "name": "Acacia Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "acacia_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:dark_oak_door",
+      "key": "llama:dark_oak_door",
+      "name": "Dark Oak Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "dark_oak_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:cherry_door",
+      "key": "llama:cherry_door",
+      "name": "Cherry Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "cherry_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:mangrove_door",
+      "key": "llama:mangrove_door",
+      "name": "Mangrove Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "mangrove_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:redwood_log",
+      "key": "llama:redwood_log",
+      "name": "Redwood Log",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "logs"
+      ]
+    },
+    {
+      "item": "llama:redwood_leaves",
+      "key": "llama:redwood_leaves",
+      "name": "Redwood Leaves",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:redwood_planks",
+      "key": "llama:redwood_planks",
+      "name": "Redwood Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "planks"
+      ]
+    },
+    {
+      "item": "llama:redwood_door",
+      "key": "llama:redwood_door",
+      "name": "Redwood Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "redwood_door_item",
+      "tags": []
+    },
+    {
+      "item": "llama:oak_stairs",
+      "key": "llama:oak_stairs",
+      "name": "Oak Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:spruce_stairs",
+      "key": "llama:spruce_stairs",
+      "name": "Spruce Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:birch_stairs",
+      "key": "llama:birch_stairs",
+      "name": "Birch Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:jungle_stairs",
+      "key": "llama:jungle_stairs",
+      "name": "Jungle Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:acacia_stairs",
+      "key": "llama:acacia_stairs",
+      "name": "Acacia Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dark_oak_stairs",
+      "key": "llama:dark_oak_stairs",
+      "name": "Dark Oak Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cherry_stairs",
+      "key": "llama:cherry_stairs",
+      "name": "Cherry Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:mangrove_stairs",
+      "key": "llama:mangrove_stairs",
+      "name": "Mangrove Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:redwood_stairs",
+      "key": "llama:redwood_stairs",
+      "name": "Redwood Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cobblestone_stairs",
+      "key": "llama:cobblestone_stairs",
+      "name": "Cobblestone Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:stone_stairs",
+      "key": "llama:stone_stairs",
+      "name": "Stone Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dirt_stairs",
+      "key": "llama:dirt_stairs",
+      "name": "Dirt Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:wooden_bucket",
+      "key": "llama:wooden_bucket",
+      "name": "Wooden Bucket",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "use": "bucket_fill"
+    },
+    {
+      "item": "llama:water_bucket",
+      "key": "llama:water_bucket",
+      "name": "Water Bucket",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "use": "bucket_pour"
+    },
+    {
+      "item": "llama:shears",
+      "key": "llama:shears",
+      "name": "Shears",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "shears",
+      "tags": [],
+      "use": "shear"
+    },
+    {
+      "item": "llama:wool",
+      "key": "llama:wool",
+      "name": "Wool",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "wool",
+      "tags": []
+    },
+    {
+      "item": "llama:bed_frame",
+      "key": "llama:bed_frame",
+      "name": "Bed Frame",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:bed",
+      "key": "llama:bed",
+      "name": "Bed",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    }
   ]
 }

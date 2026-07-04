@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 #[test]
 fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
-    let Some(root) = crate::modding::tests::stage_daynight_zombies_fixture("combat") else {
+    let Some(root) = crate::modding::tests::stage_zombies_fixture("combat") else {
         return;
     };
     crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_combat_inner");
@@ -37,11 +37,7 @@ fn zombie_combat_inner() {
         .expect("zombies:zombie registered from the fixture pack");
 
     let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
-    assert_eq!(
-        game.mods_for_test().loaded(),
-        2,
-        "daynight + zombies loaded"
-    );
+    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
     // The mod spawner needs loaded dark cells in the 32-128 ring; this tiny
     // fixture has neither, so this test owns its zombies. Flat floor, player
     // standing on it.
@@ -111,14 +107,13 @@ fn zombie_combat_inner() {
         .expect("zombies:invuln_until mirrored to world KV");
     let until = u64::from_le_bytes(bytes.try_into().expect("8-byte LE u64 contract"));
     assert!(until > 0, "the mirror records the window end");
-    let (d0, _, _) = game.mods_for_test().probe(0);
-    let (d1, _, _) = game.mods_for_test().probe(1);
-    assert!(!d0 && !d1, "both mods stayed healthy through combat");
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "zombies stayed healthy through combat");
 }
 
 #[test]
 fn zombie_sunburn_uses_ragdoll_death_path_via_wasm() {
-    let Some(root) = crate::modding::tests::stage_daynight_zombies_fixture("sunburn") else {
+    let Some(root) = crate::modding::tests::stage_zombies_fixture("sunburn") else {
         return;
     };
     crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_sunburn_inner");
@@ -148,11 +143,7 @@ fn zombie_sunburn_inner() {
         7,
         1,
     );
-    assert_eq!(
-        game.mods_for_test().loaded(),
-        2,
-        "daynight + zombies loaded"
-    );
+    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
     game.world.clear_world();
     game.player.pos = Vec3::new(80.0, 64.0, 8.0);
     game.player.vel = Vec3::ZERO;
@@ -233,7 +224,6 @@ fn zombie_sunburn_inner() {
             .all(|id| mobs.iter().any(|m| m.id() == *id && !m.is_dead())),
         "torch-lit/dark-control zombies do not burn without direct sky light"
     );
-    let (d0, _, _) = game.mods_for_test().probe(0);
-    let (d1, _, _) = game.mods_for_test().probe(1);
-    assert!(!d0 && !d1, "both mods stayed healthy through sunburn");
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "zombies stayed healthy through sunburn");
 }

@@ -67,7 +67,7 @@ impl Mod for Smoke {
             if let Some(probe) = world_kv_get("smoke:probe") {
                 self.probed = true;
                 world_kv_set("smoke:pong", probe);
-                let spawned = spawn_mob("owl", [8.5, 80.5, 8.5], 0.0);
+                let spawned = spawn_mob("llama:owl", [8.5, 80.5, 8.5], 0.0);
                 log(&format!("probe answered (owl spawned: {spawned})"));
             }
         }

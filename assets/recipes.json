@@ -1,99 +1,867 @@
 {
   "recipes": [
-    { "type": "shapeless", "ingredients": ["oak_log"], "result": "oak_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["spruce_log"], "result": "spruce_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["birch_log"], "result": "birch_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["jungle_log"], "result": "jungle_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["acacia_log"], "result": "acacia_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["dark_oak_log"], "result": "dark_oak_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["cherry_log"], "result": "cherry_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["mangrove_log"], "result": "mangrove_planks", "count": 4 },
-    { "type": "shapeless", "ingredients": ["redwood_log"], "result": "redwood_planks", "count": 4 },
-
-    { "type": "shaped", "pattern": ["#", "#"], "key": { "#": "#planks" }, "result": "stick", "count": 4 },
-    { "type": "shaped", "pattern": ["##", "##"], "key": { "#": "#planks" }, "result": "crafting_table", "count": 1 },
-    { "type": "shaped", "pattern": [" T ", "LLL"], "key": { "T": "crafting_table", "L": "#logs" }, "result": "furniture_workbench", "count": 1 },
-
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "oak_planks" }, "result": "oak_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "oak_planks" }, "result": "oak_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "spruce_planks" }, "result": "spruce_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "spruce_planks" }, "result": "spruce_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "birch_planks" }, "result": "birch_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "birch_planks" }, "result": "birch_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "jungle_planks" }, "result": "jungle_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "jungle_planks" }, "result": "jungle_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "acacia_planks" }, "result": "acacia_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "acacia_planks" }, "result": "acacia_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "dark_oak_planks" }, "result": "dark_oak_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "dark_oak_planks" }, "result": "dark_oak_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "cherry_planks" }, "result": "cherry_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "cherry_planks" }, "result": "cherry_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "mangrove_planks" }, "result": "mangrove_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "mangrove_planks" }, "result": "mangrove_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["P  ", "PP ", "PPP"], "key": { "P": "redwood_planks" }, "result": "redwood_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  P", " PP", "PPP"], "key": { "P": "redwood_planks" }, "result": "redwood_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["C  ", "CC ", "CCC"], "key": { "C": "cobblestone" }, "result": "cobblestone_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  C", " CC", "CCC"], "key": { "C": "cobblestone" }, "result": "cobblestone_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["S  ", "SS ", "SSS"], "key": { "S": "stone" }, "result": "stone_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  S", " SS", "SSS"], "key": { "S": "stone" }, "result": "stone_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["D  ", "DD ", "DDD"], "key": { "D": "dirt" }, "result": "dirt_stairs", "count": 6 },
-    { "type": "shaped", "pattern": ["  D", " DD", "DDD"], "key": { "D": "dirt" }, "result": "dirt_stairs", "count": 6 },
-
-    { "type": "shaped", "pattern": ["PPP", " S ", " S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_pickaxe", "count": 1 },
-    { "type": "shaped", "pattern": ["CCC", " S ", " S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_pickaxe", "count": 1 },
-    { "type": "shaped", "pattern": ["III", " S ", " S "], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_pickaxe", "count": 1 },
-    { "type": "shaped", "pattern": ["DDD", " S ", " S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_pickaxe", "count": 1 },
-
-    { "type": "shaped", "pattern": ["P", "S", "S"], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_shovel", "count": 1 },
-    { "type": "shaped", "pattern": ["C", "S", "S"], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_shovel", "count": 1 },
-    { "type": "shaped", "pattern": ["I", "S", "S"], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_shovel", "count": 1 },
-    { "type": "shaped", "pattern": ["D", "S", "S"], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_shovel", "count": 1 },
-
-    { "type": "shaped", "pattern": ["PP", "PS", " S"], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["PP", "SP", "S "], "key": { "P": "#planks", "S": "stick" }, "result": "wooden_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["CC", "CS", " S"], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["CC", "SC", "S "], "key": { "C": "cobblestone", "S": "stick" }, "result": "stone_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["II", "IS", " S"], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["II", "SI", "S "], "key": { "I": "iron_ingot", "S": "stick" }, "result": "iron_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["DD", "DS", " S"], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
-    { "type": "shaped", "pattern": ["DD", "SD", "S "], "key": { "D": "diamond", "S": "stick" }, "result": "diamond_axe", "count": 1 },
-
-    { "type": "shaped", "pattern": ["I ", " I"], "key": { "I": "iron_ingot" }, "result": "shears", "count": 1 },
-    { "type": "shaped", "pattern": [" I", "I "], "key": { "I": "iron_ingot" }, "result": "shears", "count": 1 },
-
-    { "type": "shaped", "pattern": ["CCC", "C C", "CKC"], "key": { "C": "cobblestone", "K": "coal" }, "result": "furnace", "count": 1 },
-
-    { "type": "shaped", "pattern": ["PPP", "P P", "PPP"], "key": { "P": "#planks" }, "result": "chest", "count": 1 },
-
-    { "type": "shaped", "pattern": ["C", "S"], "key": { "C": "coal", "S": "stick" }, "result": "torch", "count": 4 },
-
-    { "type": "shaped", "pattern": ["P P", " P "], "key": { "P": "#planks" }, "result": "wooden_bucket", "count": 1 },
-
-    { "type": "shaped", "pattern": ["WWW", "WBW", "WWW"], "key": { "W": "wool", "B": "bed_frame" }, "result": "bed", "count": 1 },
-
-    { "type": "smelting", "ingredient": "raw_iron", "result": "iron_ingot" },
-    { "type": "smelting", "ingredient": "raw_copper", "result": "copper_ingot" },
-    { "type": "smelting", "ingredient": "raw_gold", "result": "gold_ingot" },
-    { "type": "smelting", "ingredient": "cobblestone", "result": "stone" },
-
-    { "type": "furniture", "input": "oak_planks", "result": "oak_door", "cost": 1 },
-    { "type": "furniture", "input": "spruce_planks", "result": "spruce_door", "cost": 1 },
-    { "type": "furniture", "input": "birch_planks", "result": "birch_door", "cost": 1 },
-    { "type": "furniture", "input": "jungle_planks", "result": "jungle_door", "cost": 1 },
-    { "type": "furniture", "input": "acacia_planks", "result": "acacia_door", "cost": 1 },
-    { "type": "furniture", "input": "dark_oak_planks", "result": "dark_oak_door", "cost": 1 },
-    { "type": "furniture", "input": "cherry_planks", "result": "cherry_door", "cost": 1 },
-    { "type": "furniture", "input": "mangrove_planks", "result": "mangrove_door", "cost": 1 },
-    { "type": "furniture", "input": "redwood_planks", "result": "redwood_door", "cost": 1 },
-
-    { "type": "furniture", "input": "oak_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "spruce_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "birch_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "jungle_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "acacia_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "dark_oak_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "cherry_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "mangrove_planks", "result": "bed_frame", "cost": 5 },
-    { "type": "furniture", "input": "redwood_planks", "result": "bed_frame", "cost": 5 }
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:oak_log"
+      ],
+      "result": "llama:oak_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:spruce_log"
+      ],
+      "result": "llama:spruce_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:birch_log"
+      ],
+      "result": "llama:birch_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:jungle_log"
+      ],
+      "result": "llama:jungle_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:acacia_log"
+      ],
+      "result": "llama:acacia_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:dark_oak_log"
+      ],
+      "result": "llama:dark_oak_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:cherry_log"
+      ],
+      "result": "llama:cherry_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:mangrove_log"
+      ],
+      "result": "llama:mangrove_planks",
+      "count": 4
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "llama:redwood_log"
+      ],
+      "result": "llama:redwood_planks",
+      "count": 4
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "#",
+        "#"
+      ],
+      "key": {
+        "#": "#llama:planks"
+      },
+      "result": "llama:stick",
+      "count": 4
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "##",
+        "##"
+      ],
+      "key": {
+        "#": "#llama:planks"
+      },
+      "result": "llama:crafting_table",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        " T ",
+        "LLL"
+      ],
+      "key": {
+        "T": "llama:crafting_table",
+        "L": "#llama:logs"
+      },
+      "result": "llama:furniture_workbench",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:oak_planks"
+      },
+      "result": "llama:oak_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:oak_planks"
+      },
+      "result": "llama:oak_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:spruce_planks"
+      },
+      "result": "llama:spruce_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:spruce_planks"
+      },
+      "result": "llama:spruce_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:birch_planks"
+      },
+      "result": "llama:birch_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:birch_planks"
+      },
+      "result": "llama:birch_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:jungle_planks"
+      },
+      "result": "llama:jungle_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:jungle_planks"
+      },
+      "result": "llama:jungle_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:acacia_planks"
+      },
+      "result": "llama:acacia_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:acacia_planks"
+      },
+      "result": "llama:acacia_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:dark_oak_planks"
+      },
+      "result": "llama:dark_oak_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:dark_oak_planks"
+      },
+      "result": "llama:dark_oak_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:cherry_planks"
+      },
+      "result": "llama:cherry_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:cherry_planks"
+      },
+      "result": "llama:cherry_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:mangrove_planks"
+      },
+      "result": "llama:mangrove_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:mangrove_planks"
+      },
+      "result": "llama:mangrove_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:redwood_planks"
+      },
+      "result": "llama:redwood_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:redwood_planks"
+      },
+      "result": "llama:redwood_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "C  ",
+        "CC ",
+        "CCC"
+      ],
+      "key": {
+        "C": "llama:cobblestone"
+      },
+      "result": "llama:cobblestone_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  C",
+        " CC",
+        "CCC"
+      ],
+      "key": {
+        "C": "llama:cobblestone"
+      },
+      "result": "llama:cobblestone_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "S  ",
+        "SS ",
+        "SSS"
+      ],
+      "key": {
+        "S": "llama:stone"
+      },
+      "result": "llama:stone_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  S",
+        " SS",
+        "SSS"
+      ],
+      "key": {
+        "S": "llama:stone"
+      },
+      "result": "llama:stone_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "D  ",
+        "DD ",
+        "DDD"
+      ],
+      "key": {
+        "D": "llama:dirt"
+      },
+      "result": "llama:dirt_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  D",
+        " DD",
+        "DDD"
+      ],
+      "key": {
+        "D": "llama:dirt"
+      },
+      "result": "llama:dirt_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP",
+        " S ",
+        " S "
+      ],
+      "key": {
+        "P": "#llama:planks",
+        "S": "llama:stick"
+      },
+      "result": "llama:wooden_pickaxe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "CCC",
+        " S ",
+        " S "
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "S": "llama:stick"
+      },
+      "result": "llama:stone_pickaxe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "III",
+        " S ",
+        " S "
+      ],
+      "key": {
+        "I": "llama:iron_ingot",
+        "S": "llama:stick"
+      },
+      "result": "llama:iron_pickaxe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "DDD",
+        " S ",
+        " S "
+      ],
+      "key": {
+        "D": "llama:diamond",
+        "S": "llama:stick"
+      },
+      "result": "llama:diamond_pickaxe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P",
+        "S",
+        "S"
+      ],
+      "key": {
+        "P": "#llama:planks",
+        "S": "llama:stick"
+      },
+      "result": "llama:wooden_shovel",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "C",
+        "S",
+        "S"
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "S": "llama:stick"
+      },
+      "result": "llama:stone_shovel",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "I",
+        "S",
+        "S"
+      ],
+      "key": {
+        "I": "llama:iron_ingot",
+        "S": "llama:stick"
+      },
+      "result": "llama:iron_shovel",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "D",
+        "S",
+        "S"
+      ],
+      "key": {
+        "D": "llama:diamond",
+        "S": "llama:stick"
+      },
+      "result": "llama:diamond_shovel",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PP",
+        "PS",
+        " S"
+      ],
+      "key": {
+        "P": "#llama:planks",
+        "S": "llama:stick"
+      },
+      "result": "llama:wooden_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PP",
+        "SP",
+        "S "
+      ],
+      "key": {
+        "P": "#llama:planks",
+        "S": "llama:stick"
+      },
+      "result": "llama:wooden_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "CC",
+        "CS",
+        " S"
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "S": "llama:stick"
+      },
+      "result": "llama:stone_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "CC",
+        "SC",
+        "S "
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "S": "llama:stick"
+      },
+      "result": "llama:stone_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "II",
+        "IS",
+        " S"
+      ],
+      "key": {
+        "I": "llama:iron_ingot",
+        "S": "llama:stick"
+      },
+      "result": "llama:iron_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "II",
+        "SI",
+        "S "
+      ],
+      "key": {
+        "I": "llama:iron_ingot",
+        "S": "llama:stick"
+      },
+      "result": "llama:iron_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "DD",
+        "DS",
+        " S"
+      ],
+      "key": {
+        "D": "llama:diamond",
+        "S": "llama:stick"
+      },
+      "result": "llama:diamond_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "DD",
+        "SD",
+        "S "
+      ],
+      "key": {
+        "D": "llama:diamond",
+        "S": "llama:stick"
+      },
+      "result": "llama:diamond_axe",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "I ",
+        " I"
+      ],
+      "key": {
+        "I": "llama:iron_ingot"
+      },
+      "result": "llama:shears",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        " I",
+        "I "
+      ],
+      "key": {
+        "I": "llama:iron_ingot"
+      },
+      "result": "llama:shears",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "CCC",
+        "C C",
+        "CKC"
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "K": "llama:coal"
+      },
+      "result": "llama:furnace",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP",
+        "P P",
+        "PPP"
+      ],
+      "key": {
+        "P": "#llama:planks"
+      },
+      "result": "llama:chest",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "C",
+        "S"
+      ],
+      "key": {
+        "C": "llama:coal",
+        "S": "llama:stick"
+      },
+      "result": "llama:torch",
+      "count": 4
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P P",
+        " P "
+      ],
+      "key": {
+        "P": "#llama:planks"
+      },
+      "result": "llama:wooden_bucket",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "WWW",
+        "WBW",
+        "WWW"
+      ],
+      "key": {
+        "W": "llama:wool",
+        "B": "llama:bed_frame"
+      },
+      "result": "llama:bed",
+      "count": 1
+    },
+    {
+      "type": "smelting",
+      "ingredient": "llama:raw_iron",
+      "result": "llama:iron_ingot"
+    },
+    {
+      "type": "smelting",
+      "ingredient": "llama:raw_copper",
+      "result": "llama:copper_ingot"
+    },
+    {
+      "type": "smelting",
+      "ingredient": "llama:raw_gold",
+      "result": "llama:gold_ingot"
+    },
+    {
+      "type": "smelting",
+      "ingredient": "llama:cobblestone",
+      "result": "llama:stone"
+    },
+    {
+      "type": "furniture",
+      "input": "llama:oak_planks",
+      "result": "llama:oak_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:spruce_planks",
+      "result": "llama:spruce_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:birch_planks",
+      "result": "llama:birch_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:jungle_planks",
+      "result": "llama:jungle_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:acacia_planks",
+      "result": "llama:acacia_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:dark_oak_planks",
+      "result": "llama:dark_oak_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:cherry_planks",
+      "result": "llama:cherry_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:mangrove_planks",
+      "result": "llama:mangrove_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:redwood_planks",
+      "result": "llama:redwood_door",
+      "cost": 1
+    },
+    {
+      "type": "furniture",
+      "input": "llama:oak_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:spruce_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:birch_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:jungle_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:acacia_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:dark_oak_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:cherry_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:mangrove_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    },
+    {
+      "type": "furniture",
+      "input": "llama:redwood_planks",
+      "result": "llama:bed_frame",
+      "cost": 5
+    }
   ]
 }

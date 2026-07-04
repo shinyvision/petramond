@@ -292,9 +292,9 @@ impl DropSpec {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemTag {
-    /// Any wood-type planks (mirrors Minecraft's `#planks`).
+    /// Any wood-type planks (recipe key `#llama:planks`).
     Planks,
-    /// Any wood-type log (mirrors Minecraft's `#logs`).
+    /// Any wood-type log (recipe key `#llama:logs`).
     Logs,
     /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
     Fuel,
@@ -307,10 +307,10 @@ impl ItemTag {
     /// or `None` if unknown.
     pub fn from_key(key: &str) -> Option<ItemTag> {
         match key {
-            "planks" => Some(ItemTag::Planks),
-            "logs" => Some(ItemTag::Logs),
-            "fuel" => Some(ItemTag::Fuel),
-            "smeltable" => Some(ItemTag::Smeltable),
+            "llama:planks" => Some(ItemTag::Planks),
+            "llama:logs" => Some(ItemTag::Logs),
+            "llama:fuel" => Some(ItemTag::Fuel),
+            "llama:smeltable" => Some(ItemTag::Smeltable),
             _ => None,
         }
     }
@@ -615,8 +615,8 @@ impl ItemType {
 
     /// Whether this item belongs to `tag`. Membership is item data — each item's
     /// [`ItemDef`](definition::ItemDef) lists its tags — so recipes can require a
-    /// group (e.g. any `#planks`) without naming every member, and a new item joins
-    /// a group by editing its data row, never any recipe code.
+    /// group (e.g. any `#llama:planks`) without naming every member, and a new
+    /// item joins a group by editing its data row, never any recipe code.
     #[inline]
     pub fn has_tag(self, tag: ItemTag) -> bool {
         self.def().tags.contains(&tag)
@@ -957,8 +957,8 @@ mod tests {
         assert!(!ItemType::Stick.has_tag(Logs));
         assert!(!ItemType::Stick.has_tag(Planks));
         // Tag names resolve from the recipe key.
-        assert_eq!(ItemTag::from_key("planks"), Some(Planks));
-        assert_eq!(ItemTag::from_key("logs"), Some(Logs));
+        assert_eq!(ItemTag::from_key("llama:planks"), Some(Planks));
+        assert_eq!(ItemTag::from_key("llama:logs"), Some(Logs));
         assert_eq!(ItemTag::from_key("bogus"), None);
 
         // Furnace routing tags: coal is fuel; raw ores are smeltable; the products
@@ -971,8 +971,11 @@ mod tests {
         assert!(!ItemType::RawIron.has_tag(ItemTag::Fuel));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::Smeltable));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::Fuel));
-        assert_eq!(ItemTag::from_key("fuel"), Some(ItemTag::Fuel));
-        assert_eq!(ItemTag::from_key("smeltable"), Some(ItemTag::Smeltable));
+        assert_eq!(ItemTag::from_key("llama:fuel"), Some(ItemTag::Fuel));
+        assert_eq!(
+            ItemTag::from_key("llama:smeltable"),
+            Some(ItemTag::Smeltable)
+        );
     }
 
     #[test]
