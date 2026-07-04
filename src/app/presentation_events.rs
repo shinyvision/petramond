@@ -26,6 +26,8 @@ impl App {
         }
         self.spatial_sound_commands
             .extend(events.mod_spatial_sounds.iter().copied());
+        self.mob_sound_events
+            .extend(events.mob_sounds.iter().copied());
 
         if let Some(b) = events.placed_block {
             if let Some(s) = b.sound(BlockSoundAction::Place) {

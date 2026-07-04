@@ -6,7 +6,27 @@
       "gain": 0.85,
       "pitch_variation": 0.08,
       "attenuation_distance": 32.0,
-      "category": "block"
+      "category": "mob"
+    },
+    {
+      "sound": "zombies:hurt",
+      "variants": [
+        "sounds/zombie_hurt1.ogg",
+        "sounds/zombie_hurt2.ogg",
+        "sounds/zombie_hurt3.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 32.0,
+      "category": "mob"
+    },
+    {
+      "sound": "zombies:death",
+      "variants": ["sounds/zombie_death.ogg"],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 32.0,
+      "category": "mob"
     }
   ]
 }

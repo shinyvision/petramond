@@ -258,6 +258,31 @@ impl Audio {
         );
     }
 
+    /// Start a presentation-owned one-shot spatial sound using the row's own
+    /// gain and pitch jitter. This is for engine presentation events such as
+    /// mob hurt/death calls; deterministic mod HostCalls keep using
+    /// [`play_spatial`](Self::play_spatial), where the guest supplies pitch.
+    pub(crate) fn play_spatial_randomized(
+        &mut self,
+        handle: u64,
+        sound: Sound,
+        source: SpatialSoundSource,
+        listener: SpatialListener,
+        initial_position: crate::mathh::Vec3,
+    ) {
+        let pitch_variation = sound.def().pitch_variation;
+        let pitch = 1.0 + self.next_jitter() * pitch_variation;
+        self.play_spatial(
+            handle,
+            sound,
+            source,
+            1.0,
+            pitch,
+            listener,
+            initial_position,
+        );
+    }
+
     /// Stop a mod-owned spatial sound. Unknown handles are intentionally inert.
     pub(crate) fn stop_spatial(&mut self, handle: u64) {
         if let Some(active) = self.spatial.remove(&handle) {
@@ -373,7 +398,7 @@ impl Default for Audio {
 /// a future per-category (block / UI) volume control.
 fn category_gain(category: SoundCategory) -> f32 {
     match category {
-        SoundCategory::Block | SoundCategory::Ui => 1.0,
+        SoundCategory::Block | SoundCategory::Mob | SoundCategory::Ui => 1.0,
     }
 }
 

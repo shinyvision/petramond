@@ -108,6 +108,8 @@ impl Sound {
 pub enum SoundCategory {
     /// Block interaction — mining, breaking, placing, footsteps.
     Block,
+    /// Creature and entity presentation — idle calls, hurt barks, deaths.
+    Mob,
     /// UI / interface & player feedback — menu clicks, item pickup, etc.
     Ui,
 }

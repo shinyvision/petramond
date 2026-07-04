@@ -119,6 +119,7 @@ pub(crate) struct MobPresentation {
     pub(crate) skylight: u8,
     pub(crate) blocklight: u8,
     pub(crate) hurt_flash: f32,
+    pub(crate) dead: bool,
     pub(crate) shorn: bool,
     pub(crate) ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
 }
@@ -270,6 +271,7 @@ impl GamePresentationScratch {
                     skylight: mob.skylight,
                     blocklight: mob.blocklight,
                     hurt_flash: mob.hurt_flash(tick_alpha),
+                    dead: mob.is_dead(),
                     shorn: mob.is_shorn(),
                     ragdoll_pose: mob.ragdoll_pose(tick_alpha).map(Into::into),
                 }),

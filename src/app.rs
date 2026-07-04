@@ -17,6 +17,8 @@ mod text_input;
 mod ui_snapshot;
 mod update;
 
+use std::collections::HashMap;
+
 use screen::AppScreen;
 pub use screen::{CursorIcon, CursorPolicy};
 pub(crate) use text_input::TextClipboard;
@@ -32,6 +34,8 @@ use crate::game::presentation::GamePresentationScratch;
 use crate::game::Game;
 use crate::render::Scene;
 
+const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
+
 pub struct App {
     game: Option<Game>,
     shell_camera: Camera,
@@ -45,6 +49,12 @@ pub struct App {
     /// applied alongside the same mob presentation snapshot the renderer uses.
     spatial_sound_commands: Vec<crate::game::ModSpatialSoundCommand>,
     spatial_mob_positions: Vec<(u64, crate::mathh::Vec3)>,
+    /// Gameplay-originated mob sound events waiting for the next presentation
+    /// snapshot, where they can be pinned to interpolated mob positions.
+    mob_sound_events: Vec<crate::game::MobSoundEvent>,
+    /// Client-owned idle sound scheduling per live mob session id.
+    mob_sound_state: HashMap<u64, MobSoundState>,
+    next_mob_sound_handle: u64,
     /// Client-side sound engine. Drains the sim's per-tick [`crate::audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
     audio: Audio,
@@ -88,6 +98,12 @@ struct HandTriggers {
     swung: bool,
 }
 
+#[derive(Default)]
+struct MobSoundState {
+    next_idle_tick: u64,
+    sequence: u64,
+}
+
 impl App {
     pub fn new(cam: Camera, render_dist: i32) -> Self {
         let mut app = Self {
@@ -98,6 +114,9 @@ impl App {
             scene: Scene::new(),
             spatial_sound_commands: Vec::new(),
             spatial_mob_positions: Vec::new(),
+            mob_sound_events: Vec::new(),
+            mob_sound_state: HashMap::new(),
+            next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio: Audio::new(),
             last: now_seconds(),
             input: InputController::default(),

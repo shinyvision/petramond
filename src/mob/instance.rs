@@ -62,12 +62,6 @@ const WATER_CURRENT_SPEED: f32 = 0.75;
 /// head pans rather than snaps.
 const HEAD_TURN_RATE: f32 = 4.0;
 
-/// How many consecutive game ticks a mob with a row-level despawn radius must spend
-/// beyond that radius from the player before it is culled. A short window (1 s at
-/// 20 TPS) so a strayed hostile mob vanishes promptly while a momentary excursion
-/// doesn't. Passive mobs default to no despawn radius and ignore it.
-const HOSTILE_DESPAWN_TICKS: u32 = 20;
-
 /// A live mob. Render-facing fields (`pos`/`yaw`/`anim_time`/`moving`/`skylight` and
 /// their `prev_*` snapshots) are public for the scene adapter; the AI/physics state
 /// is private.
@@ -105,11 +99,9 @@ pub struct Instance {
     on_ground: bool,
     /// Current health; at `0` the mob dies and `death` becomes `Some`.
     health: f32,
-    /// Consecutive game ticks spent beyond the row-level despawn radius from the player.
-    /// Species with no resolved radius leave it at zero; at
-    /// [`HOSTILE_DESPAWN_TICKS`] the manager culls the mob. Reset whenever a player is
-    /// near, and never persisted — a reloaded mob re-accumulates from zero.
-    despawn_timer: u32,
+    /// True once this mob is beyond its row-level despawn radius this tick. The manager
+    /// culls it at the end of the tick. Never persisted.
+    distance_despawned: bool,
     /// Seconds of hurt flash + stagger remaining (non-lethal hits). Drives the red
     /// tint and suppresses locomotion so the knockback reads.
     hurt_timer: f32,
@@ -178,7 +170,7 @@ impl Instance {
             vel: Vec3::ZERO,
             on_ground: false,
             health: d.max_health,
-            despawn_timer: 0,
+            distance_despawned: false,
             hurt_timer: 0.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
@@ -345,14 +337,13 @@ impl Instance {
         self.death.as_ref().is_some_and(Ragdoll::is_done)
     }
 
-    /// Has this mob stayed beyond its category's despawn radius from the player long
-    /// enough to be culled (always false for a category that never distance-despawns,
-    /// e.g. a passive owl)? The manager drops such a mob from the live set without
-    /// saving it — distinct from [`is_despawned`](Self::is_despawned), which is a
-    /// finished death corpse.
+    /// Has this mob moved beyond its row-level despawn radius and should be culled at
+    /// the end of this tick? Always false for species that never distance-despawn. The
+    /// manager drops such a mob from the live set without saving it — distinct from
+    /// [`is_despawned`](Self::is_despawned), which is a finished death corpse.
     #[inline]
     pub fn is_distance_despawned(&self) -> bool {
-        self.despawn_timer >= HOSTILE_DESPAWN_TICKS
+        self.distance_despawned
     }
 
     /// Hurt-flash intensity in `[0, 1]` at `alpha` into the tick. The renderer fades the
@@ -419,12 +410,10 @@ impl Instance {
         // simply not run), like the dropped-item timers.
         self.shear_regrow = self.shear_regrow.saturating_sub(1);
 
-        // Distance-despawn: a mob with a row-level radius tallies ticks spent beyond it
-        // from the player; once the tally reaches the threshold the manager removes it.
-        // Species with no radius never advance this timer and persist while loaded.
+        // Distance-despawn: a mob with a row-level radius is culled immediately once it
+        // is outside that radius. Species with no radius persist while loaded.
         if let Some(radius) = d.despawn_radius {
-            let far = (self.pos - player_pos).length_squared() >= radius * radius;
-            self.despawn_timer = next_despawn_timer(self.despawn_timer, far);
+            self.distance_despawned = (self.pos - player_pos).length_squared() >= radius * radius;
         }
 
         let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
@@ -775,17 +764,6 @@ fn approach(cur: f32, target: f32, step: f32) -> f32 {
     cur + (target - cur).clamp(-step, step)
 }
 
-/// Advance a mob's distance-despawn timer by one tick: count up while it is `far` from
-/// the player, and reset to zero the instant a player is near again, so only a
-/// *sustained* absence culls the mob. Saturating, so a very long absence can't wrap.
-fn next_despawn_timer(prev: u32, far: bool) -> u32 {
-    if far {
-        prev.saturating_add(1)
-    } else {
-        0
-    }
-}
-
 fn route_steering_supported(on_ground: bool, in_water: bool, vertical_velocity: f32) -> bool {
     on_ground || in_water || vertical_velocity > 0.0
 }
@@ -851,30 +829,6 @@ mod tests {
 
     fn floor_at_zero(p: IVec3) -> bool {
         p.y < 0
-    }
-
-    #[test]
-    fn despawn_timer_counts_far_ticks_and_resets_when_near() {
-        // The distance-despawn tally only grows while the mob is far, and a single near
-        // tick wipes it — so only a sustained absence reaches the cull threshold.
-        let mut t = 0;
-        for _ in 0..5 {
-            t = next_despawn_timer(t, true);
-        }
-        assert_eq!(t, 5, "counts up while far");
-        t = next_despawn_timer(t, false);
-        assert_eq!(t, 0, "a near tick resets the tally");
-
-        // It takes a full uninterrupted run of HOSTILE_DESPAWN_TICKS to cross the line.
-        let mut t = 0;
-        for _ in 0..HOSTILE_DESPAWN_TICKS {
-            assert!(
-                t < HOSTILE_DESPAWN_TICKS,
-                "below threshold until the last tick"
-            );
-            t = next_despawn_timer(t, true);
-        }
-        assert!(t >= HOSTILE_DESPAWN_TICKS, "reaches the cull threshold");
     }
 
     fn owl_def() -> &'static MobDef {

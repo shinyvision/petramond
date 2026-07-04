@@ -47,7 +47,9 @@ use container::ContainerMenu;
 use drops::DropQueue;
 pub(crate) use environment::GameEnvironment;
 pub(crate) use tick::TickEvents;
-pub use tick::{GameEvents, GameInput, ModSound, ModSpatialSoundCommand, MovementInput};
+pub use tick::{
+    GameEvents, GameInput, MobSoundEvent, ModSound, ModSpatialSoundCommand, MovementInput,
+};
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
@@ -216,6 +218,13 @@ impl Game {
     #[inline]
     pub fn listener_position(&self) -> crate::mathh::Vec3 {
         self.player.eye()
+    }
+
+    /// Current fixed-tick number, exposed for client-side presentation systems
+    /// that schedule effects against game tick time without mutating the sim.
+    #[inline]
+    pub fn current_tick(&self) -> u64 {
+        self.world.current_tick()
     }
 
     pub fn toggle_player_mode(&mut self) {

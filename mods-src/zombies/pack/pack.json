@@ -2,6 +2,6 @@
   "name": "Zombies",
   "id": "zombies",
   "version": "0.1.0",
-  "description": "Proof-of-concept hostile mob: zombies spawn in dark light levels using llama:time, burn in sunlight through the mob death path, groan with spatial mob-pinned audio, chase and melee through the player damage pipeline, and grant 1-second i-frames by cancelling player_damage_pre.",
+  "description": "Proof-of-concept hostile mob: zombies spawn in dark light levels using llama:time, burn in sunlight through the mob death path, use data-driven mob sounds, chase and melee through the player damage pipeline, and grant 1-second i-frames by cancelling player_damage_pre.",
   "wasm": "mod.wasm"
 }

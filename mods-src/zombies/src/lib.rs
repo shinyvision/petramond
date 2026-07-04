@@ -14,9 +14,9 @@
 //! - **Sunburn**: every second, each zombie in strong direct sky light has a
 //!   5% seeded chance to take lethal `hurt_mob` damage. That deliberately uses
 //!   the engine death path, so `mob_died`, loot, and the ragdoll all happen.
-//! - **Groans**: each zombie stores its next groan tick in mob KV. When due,
-//!   the mod starts `zombies:groan` with `sound_play_on_mob` using the
-//!   snapshot's stable mob id, never its tick-local index.
+//! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
+//!   The mod does not start audio directly; the engine presentation layer plays
+//!   those semantic mob sound hooks.
 //! - **I-frames** (the API proof): a `player_damage_pre` handler cancels any
 //!   ZOMBIE-sourced damage landing within [`IFRAME_TICKS`] of the previous
 //!   zombie hit. A cancel suppresses both the damage AND the knockback
@@ -41,10 +41,8 @@ const SPAWN_SYSTEM: u32 = 1;
 const ON_PLAYER_DAMAGE_PRE: u32 = 1;
 
 const ZOMBIE_KEY: &str = "zombies:zombie";
-const GROAN_SOUND: &str = "zombies:groan";
 const TIME_KEY: &str = "llama:time";
 const INVULN_KEY: &str = "zombies:invuln_until";
-const NEXT_GROAN_KEY: &str = "zombies:next_groan";
 
 /// One spawn roll every tick.
 const SPAWN_INTERVAL_TICKS: u64 = 1;
@@ -56,7 +54,7 @@ const MIN_SPAWN_DIST: f32 = 25.0;
 const MAX_SPAWN_DIST: f32 = 128.0;
 /// Live-zombie cap; counted within [`COUNT_RADIUS`] of the player, which
 /// covers the 128-block spawn ring plus the 32-block despawn slack.
-const MAX_ZOMBIES: usize = 8;
+const MAX_ZOMBIES: usize = 70;
 const COUNT_RADIUS: f32 = 160.0;
 /// 6-bit effective light strictly below this value allows a spawn. The value
 /// is intentionally below ordinary torch light, while still accepting caves
@@ -67,9 +65,6 @@ const SUNBURN_INTERVAL_TICKS: u64 = 20;
 const SUNBURN_SKY_THRESHOLD: f32 = 45.0;
 const SUNBURN_DAMAGE: f32 = 10_000.0;
 const SUNBURN_CHANCE_PER_100: u64 = 5;
-/// Zombies groan every 6–16 seconds, independently per live mob.
-const GROAN_MIN_TICKS: u64 = 120;
-const GROAN_MAX_TICKS: u64 = 320;
 /// 1 s of invulnerability at 20 TPS.
 const IFRAME_TICKS: u64 = 20;
 /// Ground-scan window around the player's feet Y (spawns follow the player's
@@ -88,7 +83,7 @@ impl Mod for Zombies {
     fn init(&mut self) {
         register_tick_system(Stage::Spawning, AttachSide::After, 0, SPAWN_SYSTEM);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
-        log("initialized: light spawner + sunburn + groans + zombie-melee i-frames");
+        log("initialized: light spawner + sunburn + zombie-melee i-frames");
     }
 
     fn tick_system(&mut self, _system_id: u32) {
@@ -173,7 +168,6 @@ fn spawn_candidate(player: &PlayerSnapshot, daylight: f32) -> Option<([f32; 3], 
 fn tick_live_zombies(tick: u64, daylight: f32, near: &[MobSnapshot]) {
     let burn_due = tick % SUNBURN_INTERVAL_TICKS == 0;
     for mob in near.iter().filter(|m| m.key == ZOMBIE_KEY) {
-        maybe_groan(tick, mob);
         if burn_due
             && in_sunlight(mob.pos, daylight)
             && rng_u64("sunburn") % 100 < SUNBURN_CHANCE_PER_100
@@ -182,34 +176,6 @@ fn tick_live_zombies(tick: u64, daylight: f32, near: &[MobSnapshot]) {
             hurt_mob(mob.index, SUNBURN_DAMAGE, from);
         }
     }
-}
-
-fn maybe_groan(tick: u64, mob: &MobSnapshot) {
-    match mob_next_groan(mob.index) {
-        Some(next) if tick >= next => {
-            let pitch = 0.95 + (rng_u64("groan_pitch") % 101) as f32 / 1_000.0;
-            sound_play_on_mob(mob.id, GROAN_SOUND, 0.65, pitch);
-            set_next_groan(mob.index, tick);
-        }
-        Some(_) => {}
-        None => set_next_groan(mob.index, tick),
-    }
-}
-
-fn mob_next_groan(index: u32) -> Option<u64> {
-    let bytes = mob_kv_get(index, NEXT_GROAN_KEY)?;
-    let raw: [u8; 8] = bytes.as_slice().try_into().ok()?;
-    Some(u64::from_le_bytes(raw))
-}
-
-fn set_next_groan(index: u32, tick: u64) {
-    let span = GROAN_MAX_TICKS - GROAN_MIN_TICKS + 1;
-    let delay = GROAN_MIN_TICKS + rng_u64("groan_delay") % span;
-    let _ = mob_kv_set(
-        index,
-        NEXT_GROAN_KEY,
-        tick.saturating_add(delay).to_le_bytes().to_vec(),
-    );
 }
 
 /// Feet Y of the highest standable cell in column `(wx, wz)` near `py`:

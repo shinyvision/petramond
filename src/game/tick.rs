@@ -53,6 +53,16 @@ pub struct ModSound {
     pub pos: Option<crate::mathh::Vec3>,
 }
 
+/// A semantic mob sound event produced by gameplay. The app resolves the
+/// species' `mobs.json` sound hook and owns actual playback.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MobSoundEvent {
+    pub mob_id: u64,
+    pub kind: crate::mob::Mob,
+    pub category: crate::mob::MobSoundCategory,
+    pub pos: crate::mathh::Vec3,
+}
+
 /// A deterministic presentation command produced by the spatial sound HostCalls.
 /// The app/audio side owns actual playback and active sinks; the sim only carries
 /// resolved sound ids, stable handles, and positions through the tick event queue.
@@ -120,6 +130,9 @@ pub struct GameEvents {
     /// Spatial sound start/stop commands emitted by mods across this frame's
     /// fixed ticks. NON-lossy; the app/audio side owns active playback state.
     pub mod_spatial_sounds: Vec<ModSpatialSoundCommand>,
+    /// Semantic mob sound events emitted by gameplay across this frame's fixed
+    /// ticks. NON-lossy; the app resolves species data and plays them.
+    pub mob_sounds: Vec<MobSoundEvent>,
 }
 
 /// What the world-mutating actions did across the fixed tick(s) that ran this frame.
@@ -137,6 +150,7 @@ pub(crate) struct TickEvents {
     pub(crate) used_item: bool,
     pub(crate) sounds: Vec<ModSound>,
     pub(crate) spatial_sounds: Vec<ModSpatialSoundCommand>,
+    pub(crate) mob_sounds: Vec<MobSoundEvent>,
     next_spatial_sound_handle: u64,
 }
 
@@ -157,6 +171,7 @@ impl TickEvents {
             used_item: false,
             sounds: Vec::new(),
             spatial_sounds: Vec::new(),
+            mob_sounds: Vec::new(),
             next_spatial_sound_handle: next_spatial_sound_handle.max(1),
         }
     }
@@ -210,6 +225,7 @@ impl Game {
             used_item: events.used_item,
             mod_sounds: std::mem::take(&mut events.sounds),
             mod_spatial_sounds: std::mem::take(&mut events.spatial_sounds),
+            mob_sounds: std::mem::take(&mut events.mob_sounds),
         }
     }
 

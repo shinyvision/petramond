@@ -1,5 +1,7 @@
 use super::{now_seconds, ui_snapshot, App};
 use crate::audio::{SpatialListener, SpatialSoundSource};
+use crate::game::presentation::MobPresentation;
+use crate::mob::MobSoundCategory;
 use crate::render::{HeldItemFrame, Renderer};
 
 impl App {
@@ -24,6 +26,8 @@ impl App {
             self.audio.clear_spatial();
             self.spatial_sound_commands.clear();
             self.spatial_mob_positions.clear();
+            self.mob_sound_events.clear();
+            self.mob_sound_state.clear();
             renderer.set_crosshair_visible(false);
             renderer.set_hand_visible(false);
             renderer.update_uniforms(
@@ -79,6 +83,7 @@ impl App {
         }
         // Build the neutral read snapshot, then bake it into render wire structs.
         {
+            let current_tick = game.current_tick();
             let presentation = self.presentation.snapshot(game);
             renderer.set_break_overlay(presentation.break_overlay);
             self.spatial_mob_positions.clear();
@@ -134,6 +139,24 @@ impl App {
                     }
                 }
             }
+            play_pending_mob_sound_events(
+                &mut self.audio,
+                &mut self.mob_sound_events,
+                &mut self.next_mob_sound_handle,
+                listener,
+                &self.spatial_mob_positions,
+            );
+            if self.screen.gameplay_enabled() {
+                tick_idle_mob_sounds(
+                    &mut self.audio,
+                    &mut self.mob_sound_state,
+                    &mut self.next_mob_sound_handle,
+                    listener,
+                    presentation.mobs,
+                    &self.spatial_mob_positions,
+                    current_tick,
+                );
+            }
             self.audio
                 .update_spatial(listener, &self.spatial_mob_positions);
             self.scene.bake(&presentation);
@@ -153,4 +176,108 @@ impl App {
         }
         renderer.render();
     }
+}
+
+fn play_pending_mob_sound_events(
+    audio: &mut crate::audio::Audio,
+    events: &mut Vec<crate::game::MobSoundEvent>,
+    next_handle: &mut u64,
+    listener: SpatialListener,
+    positions: &[(u64, crate::mathh::Vec3)],
+) {
+    for event in events.drain(..) {
+        let Some(spec) = crate::mob::def(event.kind).sound_for(event.category) else {
+            continue;
+        };
+        let initial = mob_position(positions, event.mob_id).unwrap_or(event.pos);
+        play_mob_sound(
+            audio,
+            next_handle,
+            spec.sound,
+            event.mob_id,
+            listener,
+            initial,
+        );
+    }
+}
+
+fn tick_idle_mob_sounds(
+    audio: &mut crate::audio::Audio,
+    states: &mut std::collections::HashMap<u64, super::MobSoundState>,
+    next_handle: &mut u64,
+    listener: SpatialListener,
+    mobs: &[MobPresentation],
+    positions: &[(u64, crate::mathh::Vec3)],
+    current_tick: u64,
+) {
+    for mob in mobs {
+        if mob.dead {
+            continue;
+        }
+        let Some(spec) = crate::mob::def(mob.kind).sound_for(MobSoundCategory::Idle) else {
+            continue;
+        };
+        let state = states
+            .entry(mob.id)
+            .or_insert_with(|| super::MobSoundState {
+                next_idle_tick: current_tick.saturating_add(idle_delay_ticks(mob.id, 0, spec)),
+                sequence: 0,
+            });
+        if current_tick < state.next_idle_tick {
+            continue;
+        }
+        let initial = mob_position(positions, mob.id).unwrap_or(mob.pos);
+        play_mob_sound(audio, next_handle, spec.sound, mob.id, listener, initial);
+        state.sequence = state.sequence.wrapping_add(1);
+        state.next_idle_tick =
+            current_tick.saturating_add(idle_delay_ticks(mob.id, state.sequence, spec));
+    }
+    states.retain(|id, _| mobs.iter().any(|m| m.id == *id && !m.dead));
+}
+
+fn play_mob_sound(
+    audio: &mut crate::audio::Audio,
+    next_handle: &mut u64,
+    sound: crate::audio::Sound,
+    mob_id: u64,
+    listener: SpatialListener,
+    initial: crate::mathh::Vec3,
+) {
+    audio.play_spatial_randomized(
+        alloc_mob_sound_handle(next_handle),
+        sound,
+        SpatialSoundSource::Mob(mob_id),
+        listener,
+        initial,
+    );
+}
+
+fn alloc_mob_sound_handle(next: &mut u64) -> u64 {
+    let handle = (*next).max(super::MOB_SOUND_HANDLE_START);
+    *next = handle.wrapping_add(1).max(super::MOB_SOUND_HANDLE_START);
+    handle
+}
+
+fn mob_position(
+    positions: &[(u64, crate::mathh::Vec3)],
+    mob_id: u64,
+) -> Option<crate::mathh::Vec3> {
+    positions
+        .iter()
+        .find(|(id, _)| *id == mob_id)
+        .map(|(_, pos)| *pos)
+}
+
+fn idle_delay_ticks(mob_id: u64, sequence: u64, spec: &crate::mob::MobSoundSpec) -> u64 {
+    let base = spec.tick_interval.unwrap_or(1) as u64;
+    let variance = spec.tick_interval_variance as u64;
+    let lo = base.saturating_sub(variance).max(1);
+    let hi = base.saturating_add(variance).max(lo);
+    lo + mix64(mob_id ^ sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15)) % (hi - lo + 1)
+}
+
+fn mix64(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }

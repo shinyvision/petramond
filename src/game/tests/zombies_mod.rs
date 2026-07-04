@@ -130,6 +130,7 @@ fn zombie_sunburn_inner() {
     use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_VOLUME, SKY_FULL};
     use crate::events::{PostEvent, PostEventKind};
+    use crate::mob::MobSoundCategory;
 
     let zombie = crate::mob::defs()
         .iter()
@@ -210,6 +211,12 @@ fn zombie_sunburn_inner() {
     assert!(
         deaths.get() > 0,
         "sunlit zombies eventually burn through the mob death path"
+    );
+    assert!(
+        ev.mob_sounds
+            .iter()
+            .any(|s| s.kind == zombie && s.category == MobSoundCategory::Death),
+        "the same death path queued the zombie's data-driven death sound"
     );
     let mobs = game.world.mobs().instances();
     assert!(

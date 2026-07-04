@@ -2,7 +2,7 @@ use crate::entity::DroppedItem;
 use crate::events::{DamageSource, MobHurtPre, Outcome, PostEvent};
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
-use crate::mob::{DeathDrop, MobAttack};
+use crate::mob::{DeathDrop, MobAttack, MobSoundCategory};
 use crate::world::World;
 
 use super::{tick::TickEvents, Game, ATTACK_COOLDOWN_TICKS};
@@ -67,9 +67,16 @@ impl Game {
         from: Vec3,
         events: &mut TickEvents,
     ) -> bool {
-        let Some(kind) = self.world.mobs().instances().get(idx).map(|m| m.kind) else {
+        let Some(snapshot) = self
+            .world
+            .mobs()
+            .instances()
+            .get(idx)
+            .map(|m| (m.kind, m.id(), m.pos, m.is_dead()))
+        else {
             return false;
         };
+        let (kind, mob_id, pos, was_dead) = snapshot;
         let mut pre = MobHurtPre {
             mob: idx,
             kind,
@@ -83,12 +90,16 @@ impl Game {
         {
             return false;
         }
+        let soundable_hit = pre.amount > 0.0 && !was_dead;
         if let Some(death) = self.world.mobs_mut().hurt_mob(idx, pre.amount, from) {
+            queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
             self.bus.emit(PostEvent::MobDied {
                 kind: death.kind,
                 pos: death.pos,
             });
             self.spawn_mob_loot(death);
+        } else if soundable_hit {
+            queue_mob_sound(events, mob_id, kind, MobSoundCategory::Hurt, pos);
         }
         true
     }
@@ -190,6 +201,23 @@ impl Game {
         }
         self.world.refresh_item_lights();
         self.dropped_light_revision = revision;
+    }
+}
+
+fn queue_mob_sound(
+    events: &mut TickEvents,
+    mob_id: u64,
+    kind: crate::mob::Mob,
+    category: MobSoundCategory,
+    pos: Vec3,
+) {
+    if crate::mob::def(kind).sound_for(category).is_some() {
+        events.mob_sounds.push(crate::game::MobSoundEvent {
+            mob_id,
+            kind,
+            category,
+            pos,
+        });
     }
 }
 

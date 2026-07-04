@@ -19,6 +19,11 @@
       "wander": { "chance_per_tick": 0.005, "radius": 6 },
       "habitat": { "avoid": [], "prefer": [] },
       "avoid_water": false,
+      "sounds": [
+        { "category": "idle", "sound": "zombies:groan", "tick_interval": 400, "tick_interval_variance": 200 },
+        { "category": "hurt", "sound": "zombies:hurt" },
+        { "category": "death", "sound": "zombies:death" }
+      ],
       "brain": [
         { "node": "wander", "priority": 0 },
         { "node": "head_look", "priority": 10 },

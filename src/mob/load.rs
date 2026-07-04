@@ -26,8 +26,8 @@ use crate::registry::{is_namespaced, NameTable};
 
 use super::brain::AiBehavior;
 use super::{
-    behavior, BrainNode, Habitat, Mob, MobCategory, MobDef, MobSize, ShearSpec, SpawnGroup,
-    SpawnRule, WanderCohesion, WanderTuning, ENGINE_MOB_NAMES,
+    behavior, BrainNode, Habitat, Mob, MobCategory, MobDef, MobSize, MobSoundCategory,
+    MobSoundSpec, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning, ENGINE_MOB_NAMES,
 };
 
 /// Constructs one AI node from its brain-row params + the owning species row.
@@ -71,6 +71,8 @@ struct RawMobDef {
     avoid_water: bool,
     #[serde(default)]
     shear: Option<ShearSpec>,
+    #[serde(default)]
+    sounds: Vec<RawMobSound>,
     brain: Vec<RawBrainNode>,
 }
 
@@ -106,6 +108,21 @@ struct RawCohesion {
 struct RawHabitat {
     avoid: Vec<String>,
     prefer: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMobSound {
+    /// Registry key from `sounds.json`.
+    sound: String,
+    /// Semantic mob sound slot (`idle`, `hurt`, or `death`).
+    category: MobSoundCategory,
+    /// Required for `idle`, rejected for one-shot categories.
+    #[serde(default)]
+    tick_interval: Option<u32>,
+    /// Symmetric variance around `tick_interval`; only meaningful for `idle`.
+    #[serde(default)]
+    tick_interval_variance: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -249,6 +266,7 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         },
         avoid_water: r.avoid_water,
         shear: r.shear,
+        sounds: convert_sounds(r.sounds)?,
         brain: convert_brain(r.brain)?,
     })
 }
@@ -290,6 +308,43 @@ fn convert_brain(rows: Vec<RawBrainNode>) -> Result<&'static [BrainNode], String
         });
     }
     Ok(Box::leak(nodes.into_boxed_slice()))
+}
+
+fn convert_sounds(rows: Vec<RawMobSound>) -> Result<&'static [MobSoundSpec], String> {
+    let mut out = Vec::with_capacity(rows.len());
+    let mut categories = HashSet::new();
+    for r in rows {
+        if !categories.insert(r.category) {
+            return Err(format!("duplicate {:?} sound category", r.category));
+        }
+        let sound = crate::audio::sound_by_name(&r.sound)
+            .ok_or_else(|| format!("sound '{}' is not registered in sounds.json", r.sound))?;
+        let (tick_interval, tick_interval_variance) = match r.category {
+            MobSoundCategory::Idle => {
+                let interval = r.tick_interval.ok_or("idle sound requires tick_interval")?;
+                if interval == 0 {
+                    return Err("idle sound tick_interval must be greater than 0".into());
+                }
+                (Some(interval), r.tick_interval_variance.unwrap_or(0))
+            }
+            MobSoundCategory::Hurt | MobSoundCategory::Death => {
+                if r.tick_interval.is_some() || r.tick_interval_variance.is_some() {
+                    return Err(format!(
+                        "{:?} sound must not set tick_interval or tick_interval_variance",
+                        r.category
+                    ));
+                }
+                (None, 0)
+            }
+        };
+        out.push(MobSoundSpec {
+            category: r.category,
+            sound,
+            tick_interval,
+            tick_interval_variance,
+        });
+    }
+    Ok(Box::leak(out.into_boxed_slice()))
 }
 
 #[cfg(test)]
@@ -418,6 +473,72 @@ mod tests {
             .expect("melee_attack emits an intent in reach");
         assert_eq!(attack.damage, 2.0);
         assert_eq!(attack.knockback, 5.0);
+    }
+
+    #[test]
+    fn mob_sound_hooks_resolve_registered_sound_keys() {
+        let layer = r#"{"mobs": [{
+            "mob": "mymod:caller", "key": "mymod:caller", "model": "models/owl.bbmodel",
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
+            "category": "passive", "cap": 8,
+            "spawn": {"biomes": [], "ground": []},
+            "spawn_group": {"min": 1, "max": 1},
+            "wander": {"chance_per_tick": 0.0125, "radius": 8},
+            "habitat": {"avoid": [], "prefer": []},
+            "avoid_water": false,
+            "sounds": [
+                {"category": "idle", "sound": "llama:item_pickup", "tick_interval": 40, "tick_interval_variance": 10},
+                {"category": "hurt", "sound": "llama:wood_punch"},
+                {"category": "death", "sound": "llama:wood_break"}
+            ],
+            "brain": []
+        }]}"#;
+        let defs = parse_layers(&[&base(), layer]).expect("sound hooks load");
+        let caller = defs
+            .iter()
+            .find(|d| d.name == "mymod:caller")
+            .expect("dynamic mob registered");
+        assert_eq!(
+            caller
+                .sound_for(super::super::MobSoundCategory::Idle)
+                .expect("idle hook")
+                .tick_interval,
+            Some(40)
+        );
+        assert!(
+            caller
+                .sound_for(super::super::MobSoundCategory::Hurt)
+                .is_some(),
+            "hurt hook resolved"
+        );
+        assert!(
+            caller
+                .sound_for(super::super::MobSoundCategory::Death)
+                .is_some(),
+            "death hook resolved"
+        );
+    }
+
+    #[test]
+    fn idle_mob_sound_requires_a_positive_interval() {
+        let layer = r#"{"mobs": [{
+            "mob": "mymod:caller", "key": "mymod:caller", "model": "models/owl.bbmodel",
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
+            "category": "passive", "cap": 8,
+            "spawn": {"biomes": [], "ground": []},
+            "spawn_group": {"min": 1, "max": 1},
+            "wander": {"chance_per_tick": 0.0125, "radius": 8},
+            "habitat": {"avoid": [], "prefer": []},
+            "avoid_water": false,
+            "sounds": [{"category": "idle", "sound": "llama:item_pickup"}],
+            "brain": []
+        }]}"#;
+        let err = parse_layers(&[&base(), layer])
+            .map(|_| ())
+            .expect_err("idle cadence is required");
+        assert!(err.contains("tick_interval"), "{err}");
     }
 
     #[test]
@@ -622,25 +743,17 @@ mod tests {
         let home = Vec3::new(8.0, 64.0, 8.0);
         assert!(mobs.spawn(z, home, 0.0));
 
-        // --- Hostile despawn contract: culled only after a sustained absence. ---
+        // --- Hostile despawn contract: culled on the first far tick. ---
         let near = home + Vec3::new(4.0, 0.0, 0.0);
         let far = home + Vec3::new(500.0, 0.0, 0.0); // way past the despawn radius
         for _ in 0..40 {
             mobs.tick(0.05, &world, near, None, false);
         }
         assert_eq!(mobs.len(), 1, "a near player keeps the hostile mob alive");
-        let mut culled_at = None;
-        for i in 0..60 {
-            mobs.tick(0.05, &world, far, None, false);
-            if mobs.is_empty() {
-                culled_at = Some(i + 1);
-                break;
-            }
-        }
-        let culled_at = culled_at.expect("a far player culls the hostile mob");
+        mobs.tick(0.05, &world, far, None, false);
         assert!(
-            culled_at >= 10,
-            "the cull needs a sustained absence, not one far tick: {culled_at}"
+            mobs.is_empty(),
+            "a far player culls the hostile mob immediately"
         );
 
         // --- Save palette: the namespaced mob pins by name; strangers skip. ---

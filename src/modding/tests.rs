@@ -367,12 +367,12 @@ pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
 
 /// The zombies PoC's interop + population proof: the mod reads the
 /// `llama:time` contract, combines it with the split `LightAt` channels,
-/// spawns in dark daytime cells, refuses torch/block-lit cells, and starts
-/// groans through the mob-pinned spatial sound API. Species and sound
-/// registration need the pack in the registry, so the assertions run in a
-/// child process (see [`stage_zombies_fixture`]).
+/// spawns in dark daytime cells, refuses torch/block-lit cells, and declares
+/// data-driven mob sound hooks. Species and sound registration need the pack
+/// in the registry, so the assertions run in a child process (see
+/// [`stage_zombies_fixture`]).
 #[test]
-fn zombies_mod_spawns_by_light_and_uses_spatial_groans_via_wasm() {
+fn zombies_mod_spawns_by_light_and_registers_mob_sounds() {
     let Some(root) = stage_zombies_fixture("light") else {
         return;
     };
@@ -382,10 +382,10 @@ fn zombies_mod_spawns_by_light_and_uses_spatial_groans_via_wasm() {
 /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
 /// pointing at the fixture packs before first registry touch).
 #[test]
-#[ignore = "spawned by zombies_mod_spawns_by_light_and_uses_spatial_groans_via_wasm with a fixture pack env"]
+#[ignore = "spawned by zombies_mod_spawns_by_light_and_registers_mob_sounds with a fixture pack env"]
 fn zombies_light_spawn_inner() {
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_VOLUME, SKY_FULL};
-    use crate::game::ModSpatialSoundCommand;
+    use crate::mob::MobSoundCategory;
 
     let zombie = crate::mob::defs()
         .iter()
@@ -491,14 +491,6 @@ fn zombies_light_spawn_inner() {
         zombies_alive(&dark_sim.world) > 0,
         "dark cells can spawn zombies during the day"
     );
-    let zombie_ids: Vec<u64> = dark_sim
-        .world
-        .mobs()
-        .instances()
-        .iter()
-        .filter(|m| m.kind == zombie)
-        .map(|m| m.id())
-        .collect();
     for m in dark_sim
         .world
         .mobs()
@@ -518,18 +510,19 @@ fn zombies_light_spawn_inner() {
             "spawned inside the 32-128 ring (cell-centre slack): {dist}"
         );
     }
-    let groan = crate::audio::sound_by_name("zombies:groan")
-        .expect("zombies pack registered its groan sound");
-    assert!(
-        dark_sim.feed.spatial_sounds.iter().any(|cmd| {
-            matches!(
-                cmd,
-                ModSpatialSoundCommand::PlayOnMob { sound, mob_id, .. }
-                    if *sound == groan && zombie_ids.contains(mob_id)
-            )
-        }),
-        "the zombies mod emitted a mob-pinned groan on a stable mob id"
-    );
+    let zdef = crate::mob::def(zombie);
+    for (category, key) in [
+        (MobSoundCategory::Idle, "zombies:groan"),
+        (MobSoundCategory::Hurt, "zombies:hurt"),
+        (MobSoundCategory::Death, "zombies:death"),
+    ] {
+        let sound = crate::audio::sound_by_name(key).expect("zombie sound registered");
+        assert_eq!(
+            zdef.sound_for(category).map(|s| s.sound),
+            Some(sound),
+            "{key} is wired to the zombie {category:?} hook"
+        );
+    }
     let (disabled, _, _) = dark_host.probe(0);
     assert!(!disabled, "zombies stayed healthy in the dark-spawn case");
 

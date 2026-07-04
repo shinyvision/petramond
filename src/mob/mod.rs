@@ -125,8 +125,8 @@ const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
 /// independently across the loaded area (so the world can't fill with one kind),
 /// alongside the per-species [`MobDef::cap`]. A [`Passive`] mob defaults to persisting
 /// when far from the player — it leaves the live set only by being saved into its
-/// unloading chunk — while a [`Hostile`] one defaults to being culled after staying
-/// beyond its row-resolved [`MobDef::despawn_radius`].
+/// unloading chunk — while a [`Hostile`] one defaults to being culled immediately
+/// at its row-resolved [`MobDef::despawn_radius`].
 ///
 /// [`Passive`]: MobCategory::Passive
 /// [`Hostile`]: MobCategory::Hostile
@@ -242,6 +242,29 @@ pub struct WanderTuning {
     pub chance_per_tick: f32,
     pub radius: i32,
     pub cohesion: Option<WanderCohesion>,
+}
+
+/// The semantic reason a mob sound is played. The sound clip itself stays in
+/// `sounds.json`; this category maps a species to a row in that catalog.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobSoundCategory {
+    /// Periodic ambient call while the mob is alive and present to the client.
+    Idle,
+    /// A non-lethal hit landed on the mob.
+    Hurt,
+    /// The killing hit landed on the mob.
+    Death,
+}
+
+/// One species sound hook. Idle sounds carry a client-side tick cadence; hurt
+/// and death sounds are fired from semantic hit/death events.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MobSoundSpec {
+    pub category: MobSoundCategory,
+    pub sound: crate::audio::Sound,
+    pub tick_interval: Option<u32>,
+    pub tick_interval_variance: u32,
 }
 
 /// A mob's collision/render footprint: a centred AABB `half_width` across and
@@ -381,8 +404,8 @@ pub struct MobDef {
     pub walk_anim_rate: f32,
     /// Which population cap this species counts against (with [`MobCategory::cap`]).
     pub category: MobCategory,
-    /// Distance (blocks) beyond which this species is distance-despawned after a
-    /// sustained absence, or `None` for species that persist while loaded.
+    /// Distance (blocks) at or beyond which this species is distance-despawned
+    /// immediately, or `None` for species that persist while loaded.
     pub despawn_radius: Option<f32>,
     /// Most individuals of this species allowed in the loaded area; natural spawning
     /// stops here even if the category cap has room.
@@ -402,9 +425,19 @@ pub struct MobDef {
     pub avoid_water: bool,
     /// What shearing this species yields, or `None` for species that can't be shorn.
     pub shear: Option<ShearSpec>,
+    /// Presentation sound hooks keyed by semantic mob event. The actual clip
+    /// variants, gain, pitch jitter, and attenuation live in `sounds.json`.
+    pub sounds: &'static [MobSoundSpec],
     /// The species' AI as data: priority-ordered node rows resolved against the
     /// engine AI-node registry at load (see [`behavior`] and [`build_brain`]).
     pub brain: &'static [BrainNode],
+}
+
+impl MobDef {
+    #[inline]
+    pub fn sound_for(&self, category: MobSoundCategory) -> Option<&MobSoundSpec> {
+        self.sounds.iter().find(|s| s.category == category)
+    }
 }
 
 /// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
