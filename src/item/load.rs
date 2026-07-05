@@ -16,7 +16,7 @@ use crate::block::Block;
 use crate::registry::ContentNames;
 
 use super::definition::ItemDef;
-use super::{HeldPose, ItemTag, ItemType, ItemUse};
+use super::{HeldPose, ItemTag, ItemType, ItemUse, Tool, ToolKind};
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct RawFile {
@@ -51,6 +51,25 @@ pub(super) struct RawItemDef {
     /// name (`bucket_fill`, `bucket_pour`, `shear`) or a namespaced pending one.
     #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
     pub use_: Option<String>,
+    /// Game ticks this item burns as furnace fuel; absent = not a fuel.
+    #[serde(default, skip_serializing_if = "u16_is_zero")]
+    pub fuel_burn_ticks: u16,
+    /// The mining tool this item acts as; absent = not a tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<RawTool>,
+}
+
+fn u16_is_zero(v: &u16) -> bool {
+    *v == 0
+}
+
+/// A tool declaration in `items.json`: family + material tier (1 = wooden,
+/// 2 = stone, 3 = iron, 4 = diamond).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawTool {
+    pub kind: ToolKind,
+    pub tier: u8,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -164,6 +183,21 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         })?),
         None => None,
     };
+    let tool = match &r.tool {
+        Some(t) => {
+            if !(1..=4).contains(&t.tier) {
+                return Err(format!(
+                    "tool tier {} out of range (1 = wooden … 4 = diamond)",
+                    t.tier
+                ));
+            }
+            Some(Tool {
+                kind: t.kind,
+                tier: t.tier,
+            })
+        }
+        None => None,
+    };
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
@@ -178,6 +212,8 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         tags: Box::leak(r.tags.into_boxed_slice()),
         block,
         item_use,
+        fuel_burn_ticks: r.fuel_burn_ticks,
+        tool,
     })
 }
 

@@ -334,7 +334,8 @@ impl ItemTag {
 /// sand — and a wrong-kind tool (an axe on stone, a shovel on a log) mines no
 /// faster than a bare hand and unlocks no drop. The block half of this pairing is
 /// [`Block::preferred_tool`](crate::block::Block::preferred_tool).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolKind {
     Pickaxe,
     Axe,
@@ -609,35 +610,15 @@ impl ItemType {
     /// tier ladder `1..=4` (wooden, stone, iron, diamond).
     #[inline]
     pub fn tool(self) -> Option<Tool> {
-        use ToolKind::*;
-        let (kind, tier) = match self {
-            ItemType::WoodenPickaxe => (Pickaxe, 1),
-            ItemType::StonePickaxe => (Pickaxe, 2),
-            ItemType::IronPickaxe => (Pickaxe, 3),
-            ItemType::DiamondPickaxe => (Pickaxe, 4),
-            ItemType::WoodenAxe => (Axe, 1),
-            ItemType::StoneAxe => (Axe, 2),
-            ItemType::IronAxe => (Axe, 3),
-            ItemType::DiamondAxe => (Axe, 4),
-            ItemType::WoodenShovel => (Shovel, 1),
-            ItemType::StoneShovel => (Shovel, 2),
-            ItemType::IronShovel => (Shovel, 3),
-            ItemType::DiamondShovel => (Shovel, 4),
-            _ => return None,
-        };
-        Some(Tool { kind, tier })
+        self.def().tool
     }
 
     /// How many game ticks this item burns as furnace fuel (`0` = not a fuel).
-    /// A property of the item — a furnace consuming it reads this, like mining
-    /// reads [`tool`](Self::tool). One piece of coal burns 4800
-    /// ticks (= eight 600-tick smelts).
+    /// A property of the item (`"fuel_burn_ticks"` in `items.json`) — a furnace
+    /// consuming it reads this, like mining reads [`tool`](Self::tool).
     #[inline]
     pub fn fuel_burn_ticks(self) -> u16 {
-        match self {
-            ItemType::Coal => 4800,
-            _ => 0,
-        }
+        self.def().fuel_burn_ticks
     }
 
     /// The right-click use this item's data row declares (`"use"` in

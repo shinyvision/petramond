@@ -7,7 +7,7 @@
 use crate::atlas::Tile;
 use crate::block::Block;
 
-use super::{HeldPose, ItemTag, ItemType, ItemUse};
+use super::{HeldPose, ItemTag, ItemType, ItemUse, Tool};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct ItemDef {
@@ -41,4 +41,9 @@ pub(super) struct ItemDef {
     /// The engine use handler this item's row declares (`"use"` in
     /// `items.json`) — see [`ItemUse`]. `None` = no use of its own.
     pub item_use: Option<ItemUse>,
+    /// Game ticks this item burns as furnace fuel (`"fuel_burn_ticks"`;
+    /// `0` = not a fuel).
+    pub fuel_burn_ticks: u16,
+    /// The mining tool this item acts as (`"tool": {kind, tier}`), or `None`.
+    pub tool: Option<Tool>,
 }

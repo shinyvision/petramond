@@ -1042,7 +1042,11 @@
         "roll": 0.5
       },
       "sprite": "wooden_pickaxe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "pickaxe",
+        "tier": 1
+      }
     },
     {
       "item": "llama:stone_pickaxe",
@@ -1055,7 +1059,11 @@
         "roll": 0.5
       },
       "sprite": "stone_pickaxe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "pickaxe",
+        "tier": 2
+      }
     },
     {
       "item": "llama:raw_iron",
@@ -1100,7 +1108,8 @@
       "sprite": "coal",
       "tags": [
         "fuel"
-      ]
+      ],
+      "fuel_burn_ticks": 4800
     },
     {
       "item": "llama:iron_ingot",
@@ -1230,7 +1239,11 @@
         "roll": 0.5
       },
       "sprite": "wooden_axe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "axe",
+        "tier": 1
+      }
     },
     {
       "item": "llama:stone_axe",
@@ -1243,7 +1256,11 @@
         "roll": 0.5
       },
       "sprite": "stone_axe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "axe",
+        "tier": 2
+      }
     },
     {
       "item": "llama:iron_axe",
@@ -1256,7 +1273,11 @@
         "roll": 0.5
       },
       "sprite": "iron_axe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "axe",
+        "tier": 3
+      }
     },
     {
       "item": "llama:diamond_axe",
@@ -1269,7 +1290,11 @@
         "roll": 0.5
       },
       "sprite": "diamond_axe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "axe",
+        "tier": 4
+      }
     },
     {
       "item": "llama:iron_pickaxe",
@@ -1282,7 +1307,11 @@
         "roll": 0.5
       },
       "sprite": "iron_pickaxe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "pickaxe",
+        "tier": 3
+      }
     },
     {
       "item": "llama:diamond_pickaxe",
@@ -1295,7 +1324,11 @@
         "roll": 0.5
       },
       "sprite": "diamond_pickaxe",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "pickaxe",
+        "tier": 4
+      }
     },
     {
       "item": "llama:wooden_shovel",
@@ -1308,7 +1341,11 @@
         "roll": 0.5
       },
       "sprite": "wooden_shovel",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "shovel",
+        "tier": 1
+      }
     },
     {
       "item": "llama:stone_shovel",
@@ -1321,7 +1358,11 @@
         "roll": 0.5
       },
       "sprite": "stone_shovel",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "shovel",
+        "tier": 2
+      }
     },
     {
       "item": "llama:iron_shovel",
@@ -1334,7 +1375,11 @@
         "roll": 0.5
       },
       "sprite": "iron_shovel",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "shovel",
+        "tier": 3
+      }
     },
     {
       "item": "llama:diamond_shovel",
@@ -1347,7 +1392,11 @@
         "roll": 0.5
       },
       "sprite": "diamond_shovel",
-      "tags": []
+      "tags": [],
+      "tool": {
+        "kind": "shovel",
+        "tier": 4
+      }
     },
     {
       "item": "llama:furniture_workbench",
