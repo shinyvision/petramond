@@ -1056,7 +1056,9 @@ mod tests {
         // A saved section carrying a chest lands from disk.
         let mut saved = Section::new(0, 4, 0);
         saved.insert_chest(0, 0, 0, crate::chest::Chest::default());
-        world.pending_overlays.insert(sp, (saved, Vec::new(), Vec::new()));
+        world
+            .pending_overlays
+            .insert(sp, (saved, Vec::new(), Vec::new()));
         world.apply_pending_overlays();
 
         let mut out = Vec::new();

@@ -11,8 +11,8 @@
 //! cell that gets **closest** to the goal (a best-effort partial path), so a mob
 //! always makes progress instead of standing still.
 
-use std::cmp::Reverse;
 use rustc_hash::FxHashMap;
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use crate::mathh::{IVec3, Vec3};

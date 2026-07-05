@@ -23,13 +23,13 @@ use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
 
-use super::item_cube::BillboardBasis;
 use super::break_overlay::build_break_overlay;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
+use super::item_cube::BillboardBasis;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;

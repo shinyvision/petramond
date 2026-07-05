@@ -691,12 +691,10 @@ fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::WorldKvGet { key } => {
             sim_query(|ctx| HostRet::Bytes(ctx.world.mod_kv_get(&key).map(<[u8]>::to_vec)))
         }
-        HostCall::WorldKvSet { key, value } => {
-            match kv_write_guard(mod_id, &key, value.len()) {
-                Some(err) => err,
-                None => sim_call(|ctx| ctx.world.mod_kv_set(key, value)),
-            }
-        }
+        HostCall::WorldKvSet { key, value } => match kv_write_guard(mod_id, &key, value.len()) {
+            Some(err) => err,
+            None => sim_call(|ctx| ctx.world.mod_kv_set(key, value)),
+        },
         HostCall::WorldKvDelete { key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key))),

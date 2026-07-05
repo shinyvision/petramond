@@ -1,6 +1,5 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-mod item_cube;
 mod break_overlay;
 mod chest_model;
 mod crosshair;
@@ -8,6 +7,7 @@ mod door_model;
 mod foliage_tint;
 mod hand;
 mod hand_animator;
+mod item_cube;
 mod item_entity;
 mod item_model;
 mod lighting;

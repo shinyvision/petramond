@@ -30,8 +30,8 @@
 //!   callback. Air picks are skipped on the spot and sections with nothing
 //!   random-tickable are skipped wholesale via a per-section counter.
 
-use std::cmp::Reverse;
 use rustc_hash::FxHashSet;
+use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::block::Block;
