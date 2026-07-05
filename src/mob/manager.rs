@@ -97,6 +97,10 @@ pub struct Mobs {
     spawn_counter: u64,
     /// Deterministic RNG driving the per-tick natural-spawn picker.
     rng: MobRng,
+    /// Reused per-tick AI snapshot buffer (one entry per live mob).
+    ai_scratch: Vec<AiMob>,
+    /// Reused per-tick push-body snapshot buffer (index-aligned with `list`).
+    push_scratch: Vec<Option<push::Body>>,
 }
 
 impl Default for Mobs {
@@ -112,6 +116,8 @@ impl Mobs {
             list: Vec::new(),
             spawn_counter: 0,
             rng: MobRng::new(seed ^ SPAWN_RNG_SALT),
+            ai_scratch: Vec::new(),
+            push_scratch: Vec::new(),
         }
     }
 
@@ -189,15 +195,13 @@ impl Mobs {
         freeze_unloaded: bool,
         hostile_despawn_radius: Option<f32>,
     ) -> Vec<MobAttack> {
-        let ai_mobs: Vec<AiMob> = self
-            .list
-            .iter()
-            .map(|m| AiMob {
-                kind: m.kind,
-                pos: m.pos,
-                active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
-            })
-            .collect();
+        let mut ai_mobs = std::mem::take(&mut self.ai_scratch);
+        ai_mobs.clear();
+        ai_mobs.extend(self.list.iter().map(|m| AiMob {
+            kind: m.kind,
+            pos: m.pos,
+            active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
+        }));
         let mut attacks = Vec::new();
         for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !chunk_loaded_at(world, mob) {
@@ -231,6 +235,7 @@ impl Mobs {
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
         }
+        self.ai_scratch = ai_mobs;
         self.resolve_pushes(world, player_body, freeze_unloaded);
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
@@ -250,11 +255,13 @@ impl Mobs {
     /// pushes nor is pushed.
     fn resolve_pushes(&mut self, world: &World, player: Option<push::Body>, freeze_unloaded: bool) {
         // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
-        let bodies: Vec<Option<push::Body>> = self
-            .list
-            .iter()
-            .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.push_body()))
-            .collect();
+        let mut bodies = std::mem::take(&mut self.push_scratch);
+        bodies.clear();
+        bodies.extend(
+            self.list
+                .iter()
+                .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.push_body())),
+        );
 
         for i in 0..self.list.len() {
             let Some(bi) = bodies[i] else { continue };
@@ -280,6 +287,7 @@ impl Mobs {
             }
             self.list[i].set_push(push_vel);
         }
+        self.push_scratch = bodies;
     }
 
     /// The net horizontal push *velocity* the live mobs impart on the player right now,

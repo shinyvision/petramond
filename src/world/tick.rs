@@ -83,6 +83,10 @@ pub(super) struct TickState {
     /// xorshift64 state for random-tick cell selection (kept non-zero; see
     /// [`TickState::new`]).
     rng: u64,
+    /// Reused per-phase batch buffer (scheduled dues, update drain, random-tick
+    /// cells). The phases run strictly in sequence, so one buffer serves all
+    /// three without a fresh allocation every tick.
+    batch_scratch: Vec<IVec3>,
 }
 
 impl TickState {
@@ -138,7 +142,8 @@ impl World {
         let now = self.sim.tick;
 
         // 1. Run scheduled block ticks whose due time has arrived (EXECUTE phase).
-        let mut due: Vec<IVec3> = Vec::new();
+        let mut due = std::mem::take(&mut self.sim.batch_scratch);
+        due.clear();
         while let Some(&Reverse((d, _, x, y, z))) = self.sim.scheduled.peek() {
             if d > now {
                 break;
@@ -148,7 +153,7 @@ impl World {
             self.sim.scheduled_set.remove(&pos);
             due.push(pos);
         }
-        for pos in due {
+        for pos in due.drain(..) {
             // Streaming-finality gate (see `world::sim_guard`): a behaviour must not
             // act on reads of sections whose streamed content is still in flight or
             // absent-and-lying. In-flight blockers resolve within ticks — retry;
@@ -165,9 +170,10 @@ impl World {
         //    phase). MUST run after scheduled ticks: collapsing or reordering the
         //    two reorders the simulation.
         if !self.sim.update_queue.is_empty() {
-            let updates: Vec<IVec3> = self.sim.update_queue.drain(..).collect();
+            let mut updates = due; // reuse the drained phase-1 buffer
+            updates.extend(self.sim.update_queue.drain(..));
             self.sim.update_set.clear();
-            for pos in updates {
+            for pos in updates.drain(..) {
                 // Same streaming-finality gate as scheduled ticks; a Wait re-queues
                 // into the NEXT tick's batch (this tick's snapshot is already taken).
                 match self.sim_readiness_at(pos) {
@@ -178,6 +184,9 @@ impl World {
                     SimReadiness::Drop => {}
                 }
             }
+            self.sim.batch_scratch = updates;
+        } else {
+            self.sim.batch_scratch = due;
         }
 
         // 3. Smelt every loaded furnace one tick (chunk-owned; cheap when none).
@@ -322,7 +331,8 @@ impl World {
         // borrow across the dispatch (which mutates the world). `self.sim` and
         // `self.sections` are disjoint fields, so the RNG draw and the block reads
         // borrow side by side.
-        let mut due: Vec<IVec3> = Vec::new();
+        let mut due = std::mem::take(&mut self.sim.batch_scratch);
+        due.clear();
         for dz in -r..=r {
             for dx in -r..=r {
                 if dx * dx + dz * dz > r * r {
@@ -362,11 +372,12 @@ impl World {
         // free to edit the world (a decaying leaf sets air, which relights/remeshes).
         // Random ticks are probabilistic, so the streaming-finality gate simply
         // skips a cell whose neighbourhood is not final — same as not picking it.
-        for pos in due {
+        for pos in due.drain(..) {
             if self.sim_readiness_at(pos) == SimReadiness::Ready {
                 self.run_random_tick(pos);
             }
         }
+        self.sim.batch_scratch = due;
     }
 
     /// Read the block at `pos` and run its random-tick behaviour. The block is

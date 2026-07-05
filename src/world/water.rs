@@ -431,7 +431,8 @@ impl FluidSim {
         if carried == 0 {
             return;
         }
-        for (d, new_meta) in self.spread_directions(world, pos) {
+        let (dirs, count) = self.spread_directions(world, pos);
+        for &(d, new_meta) in &dirs[..count] {
             let np = pos + d;
             if block_at(world, np) != Block::Water {
                 fill_with_water(world, np, new_meta);
@@ -446,9 +447,10 @@ impl FluidSim {
     /// Each kept direction carries the metadata its cell would re-evaluate to
     /// (computed before any of this ring is written), so merging flows land at
     /// their final level immediately.
-    fn spread_directions(&self, world: &World, pos: IVec3) -> Vec<(IVec3, u8)> {
+    fn spread_directions(&self, world: &World, pos: IVec3) -> ([(IVec3, u8); 4], usize) {
         let mut best = i32::MAX;
-        let mut out: Vec<(IVec3, u8)> = Vec::new();
+        let mut out = [(IVec3::new(0, 0, 0), 0u8); 4];
+        let mut count = 0;
         for d in CARDINALS {
             let np = pos + d;
             if !self.passable(world, np) {
@@ -463,14 +465,15 @@ impl FluidSim {
                 self.slope_distance(world, np, 1, opposite(d))
             };
             if dist < best {
-                out.clear();
+                count = 0;
             }
             if dist <= best {
-                out.push((d, new_meta));
+                out[count] = (d, new_meta);
+                count += 1;
                 best = dist;
             }
         }
-        out
+        (out, count)
     }
 
     /// Shortest path length (over passable cells at this Y, no immediate
