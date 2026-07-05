@@ -23,6 +23,14 @@ pub(super) enum AppScreen {
     /// `open_gui` interaction or a mod's `GuiOpen` call. Carries which
     /// registered kind it draws.
     ModGui(crate::gui::GuiKind),
+    /// The sleep overlay (bed interaction): the simulation KEEPS TICKING under
+    /// it — the tick-owned sleep timer drives the fade and the wake — unlike
+    /// `Pause`, which freezes the world.
+    Sleeping,
+    /// The death screen. The simulation keeps ticking (the world does not
+    /// freeze around a corpse); ESC cannot close it — only respawn or
+    /// save-and-quit leave.
+    Dead,
 }
 
 impl AppScreen {
@@ -48,6 +56,14 @@ impl AppScreen {
     #[cfg(test)]
     pub(super) fn inventory_open(self) -> bool {
         matches!(self, AppScreen::Inventory)
+    }
+
+    /// A gameplay overlay screen is up (sleep fade / death): the document UI
+    /// owns input like a shell screen (controller-dispatched buttons), but the
+    /// simulation keeps ticking underneath.
+    #[inline]
+    pub(super) fn overlay_open(self) -> bool {
+        matches!(self, AppScreen::Sleeping | AppScreen::Dead)
     }
 
     /// Any slot-based menu (inventory or crafting table) is open — drives click
@@ -79,6 +95,8 @@ impl AppScreen {
             AppScreen::Chest => GuiKind::Chest,
             AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
             AppScreen::ModGui(kind) => kind,
+            AppScreen::Sleeping => GuiKind::Sleep,
+            AppScreen::Dead => GuiKind::Death,
             AppScreen::Title
             | AppScreen::WorldSelect
             | AppScreen::WorldSettings

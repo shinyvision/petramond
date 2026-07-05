@@ -112,21 +112,38 @@ pub fn standing_cell(
     let params = PathParams::for_body(head, half_width);
     let feet_y = pos.y.floor() as i32;
     let centre = IVec3::new(pos.x.floor() as i32, feet_y, pos.z.floor() as i32);
-    if is_foothold(centre, params, solid) {
-        return Some(centre);
+    // A mob standing ON a partial-collision solid (a bed, stair, slab, model
+    // block) has its feet inside that block's own cell, which reads blocked —
+    // the real foothold is then the cell above it (floor = that block, body
+    // space clear). Without this the standing probe fails and the mob goes
+    // goalless the moment it steps onto a bed.
+    let foothold_at = |c: IVec3| -> Option<IVec3> {
+        if is_foothold(c, params, solid) {
+            return Some(c);
+        }
+        if solid(c) && is_foothold(c + IVec3::Y, params, solid) {
+            return Some(c + IVec3::Y);
+        }
+        None
+    };
+    if let Some(c) = foothold_at(centre) {
+        return Some(c);
     }
     // The centre overhangs — pick the footprint-corner foothold nearest the centre.
     let mut best: Option<(IVec3, f32)> = None;
     for sx in [-half_width, half_width] {
         for sz in [-half_width, half_width] {
-            let c = IVec3::new(
+            let corner = IVec3::new(
                 (pos.x + sx).floor() as i32,
                 feet_y,
                 (pos.z + sz).floor() as i32,
             );
-            if c == centre || !is_foothold(c, params, solid) {
+            if corner == centre {
                 continue;
             }
+            let Some(c) = foothold_at(corner) else {
+                continue;
+            };
             let (dx, dz) = (c.x as f32 + 0.5 - pos.x, c.z as f32 + 0.5 - pos.z);
             let dist = dx * dx + dz * dz;
             if best.is_none_or(|(_, bd)| dist < bd) {
@@ -713,6 +730,24 @@ mod tests {
         // Over nothing (mid-air) -> None.
         let off = standing_cell(Vec3::new(5.0, 1.0, 5.0), 0.25, 1, &solid);
         assert_eq!(off, None);
+    }
+
+    #[test]
+    fn standing_on_a_partial_solid_resolves_to_the_cell_above_it() {
+        // Ground plane at y=0 plus a bed-like partial-collision block at (0,1,0):
+        // its cell blocks movement, but a mob resting ON it has feet INSIDE that
+        // cell (feet y ≈ 1.56). The foothold must resolve to the cell above the
+        // block, not fail and strand the mob goalless (the zombies-on-beds bug).
+        let solid = |c: IVec3| c.y == 0 || c == IVec3::new(0, 1, 0);
+        let on_bed = standing_cell(Vec3::new(0.5, 1.56, 0.5), 0.25, 1, &solid);
+        assert_eq!(on_bed, Some(IVec3::new(0, 2, 0)));
+
+        // The corner fallback gets the same treatment: a bed on a one-block
+        // pillar, mob centre overhanging past its edge into open air — the
+        // corner still resting on the bed resolves to the cell above it.
+        let pillar = |c: IVec3| c == IVec3::new(0, 0, 0) || c == IVec3::new(0, 1, 0);
+        let edge = standing_cell(Vec3::new(1.1, 1.56, 0.5), 0.25, 1, &pillar);
+        assert_eq!(edge, Some(IVec3::new(0, 2, 0)));
     }
 
     #[test]

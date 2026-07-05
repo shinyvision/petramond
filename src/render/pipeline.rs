@@ -284,6 +284,12 @@ pub(super) struct PipelineResources {
     /// `ItemVertex`, REPLACE blend + alpha-cutout, double-sided (flat sub-cubes show
     /// from both sides), depth test + WRITE so mobs occlude terrain.
     pub mob_pipe: wgpu::RenderPipeline,
+    /// World-model pipeline: the chunk's bbmodel-block stream (`ModelVertex`,
+    /// model atlas at group1). Same layout/blend/depth as `mob_pipe`, but its
+    /// vertices carry (sky, block) light separately and the shader applies the
+    /// sim's day/night sky scale at draw time, so placed models darken at
+    /// night like terrain (their meshes don't rebake when the sun sets).
+    pub world_model_pipe: wgpu::RenderPipeline,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
@@ -1145,6 +1151,56 @@ pub(super) fn create_pipeline_resources(
     // bind group + DynamicDraw are built in the renderer by iterating `mob::defs()`
     // (each species has a distinct texture, so geometry can't share one buffer).
 
+    // --- world-model pipeline (chunk bbmodel-block stream). ---
+    // `ModelVertex`: the ItemVertex attributes + a (sky, block) light pair at
+    // @location(4), so `fs_world_model` can scale the sky term by the sim's
+    // day/night state at draw time (chunk meshes don't rebake at sunset).
+    let world_model_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32,
+            offset: 20,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 24,
+            shader_location: 3,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 36,
+            shader_location: 4,
+        },
+    ];
+    let world_model_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<crate::mesh::ModelVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &world_model_vbuf_attrs,
+    };
+    let world_model_pipe = world_pipeline(
+        device,
+        "world model pipe",
+        &layout,
+        &mob_shader,
+        "vs_world_model",
+        "fs_world_model",
+        std::slice::from_ref(&world_model_vbuf_layout),
+        &opaque_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::WriteLess),
+        sample_count,
+    );
+
     // --- Break-overlay pipeline (the destroy crack). ---
     // Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
     // (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
@@ -1509,6 +1565,7 @@ pub(super) fn create_pipeline_resources(
         item3d_mvp_bind,
         item3d_vbuf,
         mob_pipe,
+        world_model_pipe,
         break_pipe,
         break_vbuf,
         break_ibuf,

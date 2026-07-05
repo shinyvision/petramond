@@ -258,5 +258,17 @@ impl App {
         self.gui_router.reset_click_streak();
         self.hand = HandTriggers::default();
         self.renderer_world_clear_pending = false;
+        // A world saved while dead (quit from the death screen, or a crash)
+        // reopens ON the death screen — a 0-health player must never resume
+        // walking around.
+        let dead = self
+            .game
+            .as_ref()
+            .and_then(|g| g.player_health())
+            .is_some_and(|h| h.current == 0);
+        if dead {
+            self.screen = AppScreen::Dead;
+            self.pointer.release_for_menu();
+        }
     }
 }

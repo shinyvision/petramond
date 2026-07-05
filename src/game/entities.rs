@@ -161,6 +161,12 @@ impl Game {
     /// least one item was collected this tick, so the client can play the pickup sound.
     pub(super) fn item_pickup_tick(&mut self) -> bool {
         self.world.tick_item_lifetime();
+        // A dead body vacuums nothing: without this the corpse standing at the
+        // death spot would re-collect its own spilled inventory behind the
+        // death screen.
+        if self.player.health() == 0 {
+            return false;
+        }
         let player_pos = self.player.body_center();
         // Plan first against a cloned inventory, reserving capacity without
         // mutating the real slots. Only requested drops are allowed to magnet.

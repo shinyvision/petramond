@@ -277,7 +277,10 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-            pass.set_pipeline(&self.model_pipe);
+            // Chunk model geometry draws with the world-model pipeline: its
+            // vertices carry (sky, block) light so the shader applies the
+            // day/night sky scale (meshes don't rebake at sunset).
+            pass.set_pipeline(&self.world_model_pipe);
             for (_, pos) in model_columns {
                 let Some(col) = self.terrain_columns.get(pos) else {
                     continue;
@@ -308,7 +311,10 @@ impl Renderer {
                     );
                 }
             }
-            // Dropped bbmodel items (world-space, same model atlas + pipeline).
+            // Dropped bbmodel items (world-space, same model atlas; ItemVertex
+            // with per-frame CPU-baked light, so they stay on the mob-layout
+            // pipeline).
+            pass.set_pipeline(&self.model_pipe);
             self.item_model_entity_draw.draw(&mut pass);
         }
         // ITEM-ENTITY PASS (§8 2b): dropped items as full-bright spinning cubes /
@@ -552,11 +558,19 @@ impl Renderer {
         // the sampler, so any layout-compatible texture works).
         if self.ui_hearts_vertex_count > 0
             || self.icon_quad_vertex_count > 0
+            || self.ui_vignette_vertex_count > 0
             || !self.doc_ui.batches.is_empty()
         {
             let mut pass =
                 color_depth_pass(enc, view, &self.depth, "ui pass", wgpu::LoadOp::Load, None);
             pass.set_pipeline(&self.ui_pipe);
+            // 0) Hurt-flash edge vignette, under all chrome (solid gradient
+            //    quads; the solid sentinel skips the sampler, any bind works).
+            if self.ui_vignette_vertex_count > 0 {
+                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui_vignette_vbuf.slice(..));
+                pass.draw(0..self.ui_vignette_vertex_count, 0..1);
+            }
             // 1) GUI-document draw list: every panel, slot face, hover, gauge,
             //    text and dim quad of the frame's screen.
             self.draw_doc_ui(&mut pass);

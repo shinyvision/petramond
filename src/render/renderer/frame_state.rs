@@ -149,6 +149,12 @@ impl Renderer {
         self.hand_visible = visible;
     }
 
+    /// Store this frame's hurt-shake screen offset for the hand/held item, in
+    /// NDC units (tiny values — the shake is subtle).
+    pub fn set_hand_shake(&mut self, shake: [f32; 2]) {
+        self.hand_shake = shake;
+    }
+
     pub fn set_crosshair_visible(&mut self, visible: bool) {
         self.crosshair_visible = visible;
     }

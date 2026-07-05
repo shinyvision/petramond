@@ -5,6 +5,9 @@ use super::{Game, GameInput};
 
 const STEP_CAMERA_SETTLE_SPEED: f32 = 12.0;
 const STEP_CAMERA_EPS: f32 = 0.001;
+/// Camera height above the feet while asleep: head-on-the-pillow, a touch
+/// above the mattress the body is standing on (vs the standing `player::EYE`).
+const SLEEP_EYE_HEIGHT: f32 = 0.25;
 
 impl Game {
     pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
@@ -119,7 +122,15 @@ impl Game {
             self.camera_step_y_offset = 0.0;
         }
 
-        self.cam.pos = Vec3::new(target.x, target.y + self.camera_step_y_offset, target.z);
+        // Lying in bed: the body stays a standing collision box on the
+        // mattress (physics unchanged), but the camera drops to pillow height
+        // so the player visibly lies down rather than standing on the bed.
+        let eye_y = if self.sleep.is_some() {
+            self.player.pos.y + SLEEP_EYE_HEIGHT
+        } else {
+            target.y + self.camera_step_y_offset
+        };
+        self.cam.pos = Vec3::new(target.x, eye_y, target.z);
         self.last_player_eye_y = target.y;
     }
 

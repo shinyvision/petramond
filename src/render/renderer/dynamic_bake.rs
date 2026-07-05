@@ -54,6 +54,14 @@ impl Renderer {
         }
     }
 
+    /// The hurt-shake as a clip-space post-transform: left-multiplying a
+    /// translation adds `t * w` to the clip position, which after the divide is
+    /// exactly an NDC screen shift — the whole hand jitters without touching
+    /// any pose math.
+    fn hand_shake_mat(&self) -> glam::Mat4 {
+        glam::Mat4::from_translation(glam::Vec3::new(self.hand_shake[0], self.hand_shake[1], 0.0))
+    }
+
     /// Build + upload this frame's first-person hand geometry and the extruded /
     /// bbmodel held-item geometry (mutually exclusive). Extracted from `render`.
     pub(super) fn prepare_held_item(&mut self) {
@@ -81,7 +89,7 @@ impl Renderer {
             // mutably alongside the immutable `held_item` borrow, then restore.
             let mut hv = std::mem::take(&mut self.hand_verts);
             let mut hi = std::mem::take(&mut self.hand_indices);
-            let mvp = build_hand_lit(
+            let mvp = self.hand_shake_mat() * build_hand_lit(
                 &self.held_item,
                 aspect,
                 crate::render::lighting::DynLight {
@@ -123,7 +131,9 @@ impl Renderer {
             } else {
                 1.0
             };
-            if let Some((kind, mvp)) = crate::render::hand::held_model(&self.held_item, aspect) {
+            if let Some((kind, mvp)) = crate::render::hand::held_model(&self.held_item, aspect)
+                .map(|(kind, mvp)| (kind, self.hand_shake_mat() * mvp))
+            {
                 // A held bbmodel block: bake its real model (model atlas) into the item3d
                 // vbuf and draw it through the item3d pipeline bound to the MODEL atlas.
                 // item3d is non-indexed, so expand the baked indexed mesh to a triangle
@@ -160,8 +170,8 @@ impl Renderer {
                     self.held_is_model = true;
                 }
                 self.item3d_verts = iv;
-            } else if let Some((tile, mvp)) =
-                crate::render::hand::held_sprite(&self.held_item, aspect)
+            } else if let Some((tile, mvp)) = crate::render::hand::held_sprite(&self.held_item, aspect)
+                .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
             {
                 let mut iv = std::mem::take(&mut self.item3d_verts);
                 let count = crate::render::item_model::build_extruded_item_lit(

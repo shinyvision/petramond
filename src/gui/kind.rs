@@ -39,6 +39,10 @@ impl GuiKind {
     pub const Pause: GuiKind = GuiKind(11);
     /// Dev-only widget-catalog demo screen.
     pub const Demo: GuiKind = GuiKind(12);
+    /// The sleep overlay (dark fade + "Leave bed"), over a live simulation.
+    pub const Sleep: GuiKind = GuiKind(13);
+    /// The death screen ("You died": respawn / save-and-quit).
+    pub const Death: GuiKind = GuiKind(14);
     /// The not-a-container sentinel; compares equal to no registered kind.
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
@@ -52,7 +56,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 13] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 15] = [
     "llama:chest",
     "llama:inventory",
     "llama:crafting_table",
@@ -66,6 +70,8 @@ const ENGINE_GUI_KIND_NAMES: [&str; 13] = [
     "llama:delete_world",
     "llama:pause",
     "llama:demo",
+    "llama:sleep",
+    "llama:death",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

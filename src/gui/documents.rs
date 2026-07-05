@@ -284,10 +284,22 @@ mod tests {
             "llama:create_world",
             "llama:delete_world",
             "llama:pause",
+            "llama:sleep",
+            "llama:death",
             "llama:hotbar",
             "llama:furnace",
         ] {
             assert!(kinds.contains_key(key), "{key} missing from bindings catalog");
+        }
+    }
+
+    #[test]
+    fn overlay_documents_ship_and_validate() {
+        // The sleep and death overlays are engine screens: a document that
+        // fails validation is skipped loudly at load and the screen would
+        // draw (and route) nothing — pin that the shipped ones load.
+        for kind in [GuiKind::Sleep, GuiKind::Death] {
+            assert!(doc_for(kind).is_some(), "{kind:?} document loads");
         }
     }
 

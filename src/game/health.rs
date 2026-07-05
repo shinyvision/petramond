@@ -63,6 +63,12 @@ impl Game {
         if amount <= 0 {
             return false;
         }
+        // A dead player takes no further hits: without this, mobs pounding the
+        // corpse behind the death screen would re-fire `player_damaged` (hurt
+        // sound + shake) every strike and knock the body around.
+        if self.player.health() == 0 {
+            return false;
+        }
         let mut pre = PlayerDamagePre { amount, source };
         if self
             .bus
@@ -77,6 +83,10 @@ impl Game {
         let was_alive = self.player.health() > 0;
         self.player.apply_damage(pre.amount);
         let new_health = self.player.health();
+        events.player_damaged = true;
+        // Being hurt in bed ends the sleep immediately — it never continues
+        // through a fight (and a lethal hit hands straight over to death).
+        self.interrupt_sleep(events);
         self.bus.emit(PostEvent::PlayerDamaged {
             amount: pre.amount,
             new_health,
@@ -84,9 +94,45 @@ impl Game {
         // The transition check keeps this a one-shot: further damage at 0 health
         // (or the zero-damage fall drain) can never re-fire it.
         if was_alive && new_health == 0 {
+            events.player_died = true;
+            self.spill_inventory_on_death();
             self.bus.emit(PostEvent::PlayerDied);
         }
         true
+    }
+
+    /// Death spills everything the player carried as item entities at the
+    /// body — the classic corpse pile, waiting where they died.
+    fn spill_inventory_on_death(&mut self) {
+        // An open container session first returns its transient contents
+        // (craft grid, cursor stack) to the inventory, so they spill too
+        // instead of quietly surviving in a menu the app closes a frame later.
+        self.close_open_menu();
+        let centre = self.player.body_center();
+        let mut stacks: Vec<crate::item::ItemStack> = Vec::new();
+        for i in 0..crate::inventory::TOTAL_SLOTS {
+            if let Some(slot) = self.player.inventory.slot_mut(i) {
+                if let Some(stack) = slot.take() {
+                    stacks.push(stack);
+                }
+            }
+        }
+        if let Some(stack) = self.player.inventory.take_cursor() {
+            stacks.push(stack);
+        }
+        let cell = (
+            centre.x.floor() as i32,
+            centre.y.floor() as i32,
+            centre.z.floor() as i32,
+        );
+        let (sky, blk, _) = self.world.dynamic_light_at_world(cell.0, cell.1, cell.2);
+        for stack in stacks {
+            self.spawn_counter = self.spawn_counter.wrapping_add(1);
+            let mut drop = crate::entity::DroppedItem::new(centre, stack, self.spawn_counter);
+            drop.skylight = sky;
+            drop.blocklight = blk;
+            self.world.spawn_item(drop);
+        }
     }
 
     /// The player's health for the HUD hearts, or `None` when there is no survival

@@ -35,6 +35,10 @@ use crate::render::Scene;
 
 const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
+/// How long the hurt screen/hand shake (and red edge flash) lasts. Punchy and
+/// short: an unmistakable "get out of here", not a lasting wobble.
+const HURT_SHAKE_SECS: f32 = 0.45;
+
 pub struct App {
     game: Option<Game>,
     shell_camera: Camera,
@@ -74,6 +78,10 @@ pub struct App {
     /// First-person hand-animation triggers latched since the last render, so a
     /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
     hand: HandTriggers,
+    /// Seconds left of the hurt screen/hand shake, latched to
+    /// [`HURT_SHAKE_SECS`] when a `player_damaged` event arrives and decayed by
+    /// render time. Presentation-only.
+    hurt_shake_t: f32,
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     /// The World Settings session for the selected world (`None` unless the
@@ -122,6 +130,7 @@ impl App {
             modifiers: Modifiers::default(),
             last_render: now_seconds(),
             hand: HandTriggers::default(),
+            hurt_shake_t: 0.0,
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,
@@ -172,7 +181,11 @@ impl App {
 
         match event {
             ControlEvent::ToggleInventory => {
-                if self.game.is_some() && !self.screen.shell_open() {
+                // Not from a shell screen, and not over the sleep/death
+                // overlays — an inventory opened over a running sleep would
+                // strand the overlay's tick-owned state behind another screen.
+                if self.game.is_some() && !self.screen.shell_open() && !self.screen.overlay_open()
+                {
                     self.toggle_inventory();
                 }
                 true
@@ -227,6 +240,8 @@ impl App {
             AppScreen::CreateWorld => GuiKind::CreateWorld,
             AppScreen::DeleteWorld => GuiKind::DeleteWorld,
             AppScreen::Pause => GuiKind::Pause,
+            AppScreen::Sleeping => GuiKind::Sleep,
+            AppScreen::Dead => GuiKind::Death,
             AppScreen::ModGui(kind) => kind,
             AppScreen::Inventory => GuiKind::Inventory,
             AppScreen::CraftingTable => GuiKind::CraftingTable,
@@ -243,7 +258,19 @@ impl App {
     /// GUIs, containers) return `None` here — they drive their document UI
     /// AND tick the game.
     pub(crate) fn doc_shell_kind(&self) -> Option<crate::gui::GuiKind> {
-        if self.screen.ui_open() {
+        if self.screen.ui_open() || self.screen.overlay_open() {
+            return None;
+        }
+        self.doc_ui_kind()
+    }
+
+    /// The subset of [`doc_ui_kind`](Self::doc_ui_kind) for gameplay OVERLAY
+    /// screens (sleep / death): the document owns input like a shell screen —
+    /// its events dispatch to a controller, not to slot routing — but the
+    /// simulation keeps ticking underneath (the sleep timer and respawn are
+    /// tick-owned).
+    pub(crate) fn doc_overlay_kind(&self) -> Option<crate::gui::GuiKind> {
+        if !self.screen.overlay_open() {
             return None;
         }
         self.doc_ui_kind()

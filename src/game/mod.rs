@@ -4,6 +4,7 @@
 //! platform input, app screens, or hand animation; those belong to the app shell
 //! and render presentation layer.
 
+mod bed;
 mod breaking;
 mod client_presentation;
 mod container;
@@ -169,6 +170,17 @@ pub struct Game {
     /// Set by a mod's `GuiClose` HostCall; the app closes the mod GUI screen
     /// if one is up. One-shot (consumed via [`GameEvents`]).
     request_close_mod_gui: bool,
+    /// Set when the player right-clicks a bed, so the next [`tick`](Self::tick)
+    /// asks the app shell to open the sleep overlay. One-shot open request
+    /// (consumed via [`GameEvents`]).
+    request_open_sleep: bool,
+    /// The in-flight sleep session (`None` = awake). Tick-owned; the overlay
+    /// fade reads it through [`sleep_progress01`](Self::sleep_progress01).
+    sleep: Option<bed::SleepState>,
+    /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
+    wake_requested: bool,
+    /// App-side respawn request (the death screen), latched to the next tick.
+    respawn_requested: bool,
     /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can
     /// flick the hand (the toggle itself already applied) and play the open/close
     /// sound. Carries the door's NEW open state. One-shot (consumed via `GameEvents`).

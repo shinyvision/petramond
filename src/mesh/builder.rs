@@ -643,9 +643,8 @@ fn section_geometry(
                         wx,
                         wy,
                         wz,
-                        // The explicit-UV model stream bakes light at mesh time; the
-                        // combined max equals the pre-split single channel exactly.
-                        sky6.max(block6),
+                        sky6,
+                        block6,
                         warm,
                     );
                     continue;
@@ -1195,7 +1194,8 @@ fn chunk_geometry(
                         wx,
                         y as i32,
                         wz,
-                        sky6.max(block6),
+                        sky6,
+                        block6,
                         warm,
                     );
                     continue;
@@ -1467,19 +1467,13 @@ fn chunk_geometry(
 /// the model pass shader just multiplies, so we bake the curve in here) — keep the
 /// constants in sync.
 #[inline]
-fn model_light_factor(light6: u32) -> f32 {
-    const SKY_MIN: f32 = 0.02;
-    const FINAL_MIN: f32 = 0.006;
-    let s = (light6 as f32 / 63.0).clamp(0.0, 1.0);
-    (SKY_MIN + (1.0 - SKY_MIN) * s * s * s).max(FINAL_MIN)
-}
-
 /// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
 /// startup-baked template (positions already taken through the cube rotation + placement
-/// facing) translated to the world base, folding the cell's combined light into each
-/// vertex's directional shade and applying the warm block-light tint. No matrices /
-/// quaternions / face-bias work happens per remesh — it's all resolved once in
-/// [`block_model::ModelInstance`], so meshing a placed model is a translate + scale + copy.
+/// facing) translated to the world base, carrying the cell's (sky, block) light
+/// separately so the world-model shader applies the day/night scale at draw time,
+/// plus the warm block-light tint. No matrices / quaternions / face-bias work
+/// happens per remesh — it's all resolved once in [`block_model::ModelInstance`],
+/// so meshing a placed model is a translate + scale + copy.
 #[allow(clippy::too_many_arguments)]
 fn emit_model_block(
     verts: &mut Vec<ModelVertex>,
@@ -1490,7 +1484,8 @@ fn emit_model_block(
     wx: i32,
     wy: i32,
     wz: i32,
-    light6: u32,
+    sky6: u32,
+    block6: u32,
     warm: f32,
 ) {
     let inst = block_model::instance(kind);
@@ -1502,14 +1497,18 @@ fn emit_model_block(
     // placing the cell is one translate per vertex.
     let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
     let basef = Vec3::new(base.x as f32, base.y as f32, base.z as f32);
-    let light = model_light_factor(light6);
+    let light = [
+        (sky6 as f32 / 63.0).clamp(0.0, 1.0),
+        (block6 as f32 / 63.0).clamp(0.0, 1.0),
+    ];
     let tint = warm_tint([1.0, 1.0, 1.0], warm);
     let start = verts.len() as u32;
     verts.extend(tmpl.verts.iter().map(|v| ModelVertex {
         pos: (basef + v.pos).to_array(),
         uv: v.uv,
-        shade: v.shade * light,
+        shade: v.shade,
         tint,
+        light,
     }));
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
 }

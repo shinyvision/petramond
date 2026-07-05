@@ -4657,7 +4657,7 @@
       ],
       "tags": [],
       "behavior": "inert",
-      "interaction": "none",
+      "interaction": "sleep",
       "collision": [],
       "emission": 0,
       "tiles": [

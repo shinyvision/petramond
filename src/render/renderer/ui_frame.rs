@@ -20,6 +20,7 @@ impl Renderer {
         self.ui_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
         self.ui_hearts_vertex_count = 0;
+        self.ui_vignette_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
@@ -55,6 +56,15 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.ui_hearts_vbuf, 0, bytemuck::cast_slice(hearts));
             self.ui_hearts_vertex_count = hearts.len() as u32;
+        }
+
+        // Hurt vignette (fixed 24-vertex frame; the buffer is sized for it).
+        let vignette = &self.ui_build.vignette;
+        let vignette_cap = (self.ui_vignette_vbuf.size() / vsize as u64) as usize;
+        if !vignette.is_empty() && vignette.len() <= vignette_cap {
+            self.queue
+                .write_buffer(&self.ui_vignette_vbuf, 0, bytemuck::cast_slice(vignette));
+            self.ui_vignette_vertex_count = vignette.len() as u32;
         }
 
         // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's

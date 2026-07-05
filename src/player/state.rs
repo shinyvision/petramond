@@ -1,4 +1,4 @@
-use crate::mathh::Vec3;
+use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
 /// Half the horizontal width (box is 0.6 wide on x and z).
@@ -31,6 +31,17 @@ pub struct Input {
 pub enum PlayerMode {
     Survival,
     Spectator,
+}
+
+/// The player's bed spawn point: which bed owns it (the bed's rotated-footprint
+/// base cell — cleared when that bed is destroyed) and the safe standing cell
+/// chosen beside it when the spawn was set (the respawn target when the bed's
+/// area isn't loaded for a fresh scan). Set by interacting with a bed
+/// (`game::bed`), persisted in `level.dat`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BedSpawn {
+    pub bed: IVec3,
+    pub spot: IVec3,
 }
 
 pub struct Player {
@@ -68,6 +79,8 @@ pub struct Player {
     /// The player's 36-slot inventory (9 hotbar + 27 main). Owns the active
     /// hotbar selection that drives the held item and placement.
     pub inventory: crate::inventory::Inventory,
+    /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
+    pub bed_spawn: Option<BedSpawn>,
 }
 
 impl Player {
@@ -84,6 +97,7 @@ impl Player {
             fall_peak_y: feet.y,
             fall_distance: 0.0,
             inventory: crate::inventory::Inventory::new(),
+            bed_spawn: None,
         }
     }
 

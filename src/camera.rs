@@ -87,6 +87,7 @@ impl Frustum {
     }
 }
 
+#[derive(Clone)]
 pub struct Camera {
     pub pos: Vec3,
     // Orientation mirrored from the player's look each frame — `player::Player`

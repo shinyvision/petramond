@@ -44,6 +44,45 @@ impl App {
         if events.close_mod_gui && matches!(self.screen, AppScreen::ModGui(_)) {
             self.close_menu();
         }
+        // Right-clicking a bed starts the sleep overlay.
+        if events.open_sleep && self.screen.gameplay_enabled() {
+            self.screen = AppScreen::Sleeping;
+            self.pointer.release_for_menu();
+        }
+        // The tick ended the sleep (completed or wake applied): drop the
+        // overlay. A cancel via ESC/button already left the screen — this
+        // then no-ops.
+        if events.sleep_ended && matches!(self.screen, AppScreen::Sleeping) {
+            self.screen = AppScreen::Game;
+            self.pointer.grab_for_gameplay();
+        }
+        // Death overrides whatever is up (gameplay, a container, the sleep
+        // overlay); an open container menu is closed properly first so its
+        // cursor stack and edit target are cleaned up on the tick.
+        if events.player_died {
+            if self.screen.ui_open() {
+                if let Some(game) = self.game.as_mut() {
+                    game.close_open_menu();
+                }
+            }
+            self.screen = AppScreen::Dead;
+            self.pointer.release_for_menu();
+        }
+        // The tick applied the respawn: back to gameplay.
+        if events.respawned && matches!(self.screen, AppScreen::Dead) {
+            self.screen = AppScreen::Game;
+            self.pointer.grab_for_gameplay();
+        }
+    }
+
+    /// Cancel an in-progress sleep (ESC or the "Leave bed" button): ask the
+    /// tick to wake the player beside the bed and drop the overlay now.
+    pub(super) fn cancel_sleep(&mut self) {
+        if let Some(game) = self.game.as_mut() {
+            game.request_wake();
+        }
+        self.screen = AppScreen::Game;
+        self.pointer.grab_for_gameplay();
     }
 
     fn open_inventory(&mut self) {
@@ -121,6 +160,12 @@ impl App {
     pub(super) fn close_screen(&mut self) -> bool {
         if self.screen.ui_open() {
             self.close_menu();
+            true
+        } else if matches!(self.screen, AppScreen::Sleeping) {
+            self.cancel_sleep();
+            true
+        } else if matches!(self.screen, AppScreen::Dead) {
+            // Death cannot be escaped — only the screen's buttons leave.
             true
         } else if matches!(self.screen, AppScreen::Game) {
             self.open_pause();

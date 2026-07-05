@@ -80,6 +80,7 @@ impl RawInteraction {
                 "open_chest" => BlockInteraction::OpenChest,
                 "open_furniture_workbench" => BlockInteraction::OpenFurnitureWorkbench,
                 "toggle_door" => BlockInteraction::ToggleDoor,
+                "sleep" => BlockInteraction::Sleep,
                 other => return Err(format!("unknown interaction '{other}'")),
             }),
             RawInteraction::OpenGui { open_gui } => {

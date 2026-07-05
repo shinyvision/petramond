@@ -216,6 +216,9 @@ pub struct Renderer {
     /// in packed terrain columns as per-section model ranges, so there's no per-frame
     /// model bake — the model pass just draws the visible sections' model streams.
     model_pipe: wgpu::RenderPipeline,
+    /// Pipeline for the chunk `ModelVertex` stream (day/night-aware lighting);
+    /// `model_pipe` (mob layout) keeps drawing dropped bbmodel item entities.
+    world_model_pipe: wgpu::RenderPipeline,
     model_atlas_bind: wgpu::BindGroup,
     /// Dropped bbmodel item-entities (world-space ItemVertex, model atlas), drawn by the
     /// model pipeline in the model pass — the explicit-UV counterpart of `item_entity_draw`.
@@ -265,6 +268,9 @@ pub struct Renderer {
     /// First-person held item / hand state (defaults to the bare hand).
     held_item: HeldItemView,
     hand_visible: bool,
+    /// Screen-space (NDC) offset applied to the whole hand/held-item draw this
+    /// frame — the hurt-shake jitter. Zero when calm.
+    hand_shake: [f32; 2],
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
     held_item_blocklight: u8,
@@ -327,6 +333,10 @@ pub struct Renderer {
     /// heart atlas; empty for a spectator or behind an open menu.
     ui_hearts_vbuf: wgpu::Buffer,
     ui_hearts_vertex_count: u32,
+    /// Hurt-flash red edge vignette (solid gradient quads) + vertex count.
+    /// Drawn first in the UI pass; zero on a calm frame.
+    ui_vignette_vbuf: wgpu::Buffer,
+    ui_vignette_vertex_count: u32,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.

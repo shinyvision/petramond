@@ -25,7 +25,16 @@ struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    // NDC position, for the radial vignette falloff (uv.x < -1.5 sentinel).
+    @location(2) ndc: vec2<f32>,
 };
+
+// Radial hurt-vignette falloff: transparent inside INNER (NDC radius from the
+// screen centre), ramping smoothly to the vertex alpha toward OUTER. A screen
+// corner sits at radius ~1.414, so the corners read strongest and the edge
+// midpoints stay a subtle rim.
+const VIGNETTE_INNER: f32 = 0.7;
+const VIGNETTE_OUTER: f32 = 1.6;
 
 @vertex
 fn vs_ui(in: VsIn) -> VsOut {
@@ -33,11 +42,18 @@ fn vs_ui(in: VsIn) -> VsOut {
     out.clip = vec4<f32>(in.pos, 0.0, 1.0);
     out.uv = in.uv;
     out.color = in.color;
+    out.ndc = in.pos;
     return out;
 }
 
 @fragment
 fn fs_ui(in: VsOut) -> @location(0) vec4<f32> {
+    // Vignette sentinel (u < -1.5): one fullscreen quad, radial alpha falloff
+    // from the screen centre — a connected ring, not four separate bands.
+    if (in.uv.x < -1.5) {
+        let a = in.color.a * smoothstep(VIGNETTE_INNER, VIGNETTE_OUTER, length(in.ndc));
+        return vec4<f32>(in.color.rgb, a);
+    }
     // Solid-color sentinel: negative u means "no texture, output color".
     if (in.uv.x < 0.0) {
         return in.color;

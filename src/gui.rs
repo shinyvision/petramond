@@ -250,6 +250,9 @@ pub struct UiSnapshot {
     /// these rects and skips every legacy panel/shell group — the document
     /// draw list owns all chrome.
     pub doc_slots: Option<Arc<Vec<DocSlot>>>,
+    /// Hurt-flash strength in `[0, 1]`: `build_ui` draws a subtle red edge
+    /// vignette scaled by it. `0.0` = none (the common frame).
+    pub hurt_flash: f32,
 }
 
 /// One document slot cell: the game role, in-role index, and physical rect.
@@ -284,6 +287,7 @@ impl Default for UiSnapshot {
             health: None,
             gui_state: None,
             doc_slots: None,
+            hurt_flash: 0.0,
         }
     }
 }

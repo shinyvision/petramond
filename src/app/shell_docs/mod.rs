@@ -12,8 +12,10 @@
 //! to the renderer.
 
 mod create_world;
+mod death;
 mod delete_world;
 mod pause;
+mod sleep;
 mod title;
 mod world_select;
 mod world_settings;
@@ -47,10 +49,26 @@ impl App {
             GuiKind::CreateWorld => with_state(self, create_world::populate),
             GuiKind::DeleteWorld => with_state(self, delete_world::populate),
             GuiKind::Pause => with_state(self, pause::populate),
+            GuiKind::Sleep => with_state(self, sleep::populate),
+            GuiKind::Death => with_state(self, death::populate),
             _ => {}
         }
-        // Screens over live gameplay dim the world behind them.
-        let dim = matches!(kind, GuiKind::Pause);
+        // Screens over live gameplay dim the world behind them: a flat menu
+        // dim for pause, the tick-driven darkening fade for sleep, and a
+        // subtle red tint for death.
+        let dim = match kind {
+            GuiKind::Pause => Some([0.0, 0.0, 0.0, 0.6]),
+            GuiKind::Sleep => {
+                let progress = self
+                    .game
+                    .as_ref()
+                    .and_then(|g| g.sleep_progress01())
+                    .unwrap_or(1.0);
+                Some([0.0, 0.0, 0.0, 0.25 + 0.75 * progress])
+            }
+            GuiKind::Death => Some([0.35, 0.02, 0.02, 0.40]),
+            _ => None,
+        };
         self.ui.frame(kind, screen, now, dim);
         let events = self.ui.take_events();
         for ev in events {
@@ -64,6 +82,8 @@ impl App {
                 GuiKind::CreateWorld => create_world::handle(self, ev),
                 GuiKind::DeleteWorld => delete_world::handle(self, ev),
                 GuiKind::Pause => pause::handle(self, ev),
+                GuiKind::Sleep => sleep::handle(self, ev),
+                GuiKind::Death => death::handle(self, ev),
                 _ => {}
             }
         }
@@ -96,7 +116,8 @@ impl App {
                 }
             }
         }
-        self.ui.frame(kind, screen, now, true);
+        self.ui
+            .frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
         let to_button = |b: llama_ui::PointerButton| match b {
             llama_ui::PointerButton::Primary => crate::controls::PointerButton::Primary,

@@ -77,6 +77,11 @@ impl Game {
             }
         }
         events.broke_block = Some(event.block);
+        // Breaking a bed takes its spawn point with it — resolved BEFORE the
+        // removal below clears the footprint metadata the group lookup needs.
+        if event.block.interaction() == crate::block::BlockInteraction::Sleep {
+            self.clear_bed_spawn_at(event.pos);
+        }
         let hit_normal = self
             .look
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
@@ -150,6 +155,11 @@ impl Game {
     /// what the burst should glow with.
     pub(super) fn process_natural_breaks(&mut self) {
         for (pos, block) in self.world.take_natural_breaks() {
+            // The cell is already cleared, so the group base can't be derived;
+            // re-checking the stored spawn bed still exists covers it.
+            if block.interaction() == crate::block::BlockInteraction::Sleep {
+                self.validate_bed_spawn();
+            }
             let (sky, blk, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
             match block.render_shape() {
                 RenderShape::Model(kind) => self

@@ -225,6 +225,7 @@ async fn new_renderer_inner(
         ],
     });
     let model_pipe = pipelines.mob_pipe.clone();
+    let world_model_pipe = pipelines.world_model_pipe.clone();
     // Dropped bbmodel item-entities ride the model pipeline (world-space ItemVertex,
     // model atlas) in their OWN buffers, sized like the packed item-entity buffers.
     let item_model_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -297,6 +298,13 @@ async fn new_renderer_inner(
     let ui_hearts_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ui hearts vbuf"),
         size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Hurt vignette: four gradient bands = 24 vertices; a small fixed buffer.
+    let ui_vignette_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui vignette vbuf"),
+        size: 24 * std::mem::size_of::<UiVertex>() as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -376,6 +384,7 @@ async fn new_renderer_inner(
         ),
         mob_gpu,
         model_pipe: model_pipe.clone(),
+        world_model_pipe,
         model_atlas_bind,
         item_model_entity_draw: DynamicDraw::new(
             model_pipe,
@@ -408,6 +417,7 @@ async fn new_renderer_inner(
         break_overlay: None,
         held_item: HeldItemView::default(),
         hand_visible: false,
+        hand_shake: [0.0, 0.0],
         held_item_anim: HeldItemAnimator::default(),
         held_item_skylight: crate::render::lighting::FULL_SKYLIGHT,
         held_item_blocklight: 0,
@@ -439,6 +449,8 @@ async fn new_renderer_inner(
         ui_drag_count_vertex_count: 0,
         ui_hearts_vbuf,
         ui_hearts_vertex_count: 0,
+        ui_vignette_vbuf,
+        ui_vignette_vertex_count: 0,
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),

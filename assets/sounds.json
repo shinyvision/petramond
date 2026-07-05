@@ -131,6 +131,15 @@
       "gain": 1.0,
       "pitch_variation": 0.12,
       "category": "block"
+    },
+    {
+      "sound": "llama:player_hurt",
+      "variants": [
+        "sounds/player_hurt.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.08,
+      "category": "ui"
     }
   ]
 }

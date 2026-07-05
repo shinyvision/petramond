@@ -24,12 +24,20 @@ impl App {
             return;
         }
 
+        // Gameplay OVERLAYS (sleep fade, death screen) drive the document like
+        // a shell screen — their buttons dispatch to controllers — but fall
+        // through to the simulation below: the sleep timer and respawn are
+        // tick-owned, so the world must keep ticking behind them.
+        if let Some(kind) = self.doc_overlay_kind() {
+            self.drive_doc_ui(kind, screen_size, now);
+            self.pointer.clear_edges();
+        }
         // Document-backed game MENUS (mod GUIs, containers) drive their UI
         // frame here too — slot/widget clicks latch to the tick through the
         // document runtime (there is no other click route) — and the
         // simulation continues below. Clearing the pointer edges keeps a
         // menu-consumed click from also firing block break/placement.
-        if let Some(kind) = self.doc_ui_kind() {
+        else if let Some(kind) = self.doc_ui_kind() {
             self.drive_doc_menu(kind, screen_size, now);
             self.pointer.clear_edges();
         }

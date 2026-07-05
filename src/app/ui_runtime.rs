@@ -166,8 +166,17 @@ impl AppUi {
     }
 
     /// Run one runtime frame for `kind`; queued input drains into this frame.
-    /// Returns `false` (and draws nothing) when no document backs `kind`.
-    pub fn frame(&mut self, kind: GuiKind, screen: (u32, u32), now: f64, dim: bool) -> bool {
+    /// `dim` is the full-screen backdrop quad painted behind the tree
+    /// (`None` = none) — screens over live gameplay pass their own colour
+    /// (menu dim, sleep fade, death tint). Returns `false` (and draws
+    /// nothing) when no document backs `kind`.
+    pub fn frame(
+        &mut self,
+        kind: GuiKind,
+        screen: (u32, u32),
+        now: f64,
+        dim: Option<[f32; 4]>,
+    ) -> bool {
         let Some(doc) = documents::doc_for(kind) else {
             self.input.clear();
             return false;
@@ -193,7 +202,7 @@ impl AppUi {
                 input: &input,
                 clipboard: Some(self.clipboard.as_mut()),
                 images: &images,
-                dim: dim.then_some([0.0, 0.0, 0.0, 0.6]),
+                dim,
                 preview: None,
             },
             &mut self.fs,

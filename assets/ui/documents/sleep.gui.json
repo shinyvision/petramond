@@ -1,0 +1,30 @@
+{
+    "format": 1,
+    "kind": "llama:sleep",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "layout": {
+            "anchor": {
+                "h": "center",
+                "v": "end"
+            },
+            "margin": [
+                0,
+                0,
+                0,
+                28
+            ]
+        },
+        "children": [
+            {
+                "type": "button",
+                "id": "leave_bed",
+                "text": "LEAVE BED",
+                "layout": {
+                    "w": 110
+                }
+            }
+        ]
+    }
+}

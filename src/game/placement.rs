@@ -107,6 +107,13 @@ impl Game {
                 }
                 true
             }
+            // Right-clicking a bed sets the spawn point beside it and starts
+            // the sleep (see `game::bed`); the app opens the sleep overlay via
+            // the open request this queues.
+            BlockInteraction::Sleep => {
+                self.start_sleep(h.block);
+                true
+            }
             BlockInteraction::None => false,
         }
     }

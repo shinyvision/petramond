@@ -45,6 +45,13 @@ impl App {
             self.audio.play(Sound::ItemPickup);
         }
 
+        // Player damage: the hurt bark plus the subtle screen/hand shake the
+        // next renders decay (see `App::render`).
+        if events.player_damaged {
+            self.audio.play(Sound::PlayerHurt);
+            self.hurt_shake_t = super::HURT_SHAKE_SECS;
+        }
+
         if let Some(now_open) = events.toggled_door {
             self.audio.play(if now_open {
                 Sound::DoorOpen

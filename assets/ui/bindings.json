@@ -194,6 +194,21 @@
             "handles": {
                 "<button id>": "click: dispatched to the owning mod as gui_click (primary clicks only)"
             }
+        },
+        "llama:sleep": {
+            "state": {},
+            "handles": {
+                "leave_bed": "click: cancel the sleep and wake beside the bed",
+                "keys": "ESC cancels the sleep (global close control)"
+            }
+        },
+        "llama:death": {
+            "state": {},
+            "handles": {
+                "respawn": "click: respawn at the bed spawn (or a fresh surface spot) on the tick",
+                "save_quit": "click: save and return to title",
+                "keys": "ESC is swallowed; only the buttons leave the death screen"
+            }
         }
     }
 }

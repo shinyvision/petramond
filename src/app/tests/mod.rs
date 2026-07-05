@@ -9,6 +9,7 @@ use crate::mathh::Vec3;
 mod controls;
 mod drops;
 mod gui_routing;
+mod overlays;
 
 impl App {
     fn game(&self) -> &Game {

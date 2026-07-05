@@ -6,14 +6,15 @@ use std::collections::BTreeMap;
 
 use crate::inventory::{Inventory, TOTAL_SLOTS};
 use crate::item::ItemStack;
-use crate::mathh::Vec3;
-use crate::player::{Player, PlayerMode};
+use crate::mathh::{IVec3, Vec3};
+use crate::player::{BedSpawn, Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u64, put_u8, Reader};
 
 /// Bumped to 2 for the player's look direction (yaw/pitch), then 3 for player
-/// health, then 4 for the mod world KV map. `decode` still accepts v1..v3;
-/// their missing fields default (facing 0, full health, empty KV).
-const VERSION: u32 = 4;
+/// health, then 4 for the mod world KV map, then 5 for the bed spawn point.
+/// `decode` still accepts v1..v4; their missing fields default (facing 0, full
+/// health, empty KV, no bed spawn).
+const VERSION: u32 = 5;
 
 /// Decoded `level.dat` contents.
 pub struct LevelData {
@@ -35,6 +36,9 @@ pub struct LevelData {
     /// The mod world KV map (`mod_id:key` → bytes; WIKI/modding.md Phase 3b).
     /// Defaults empty when loading a pre-v4 save.
     pub world_kv: BTreeMap<String, Vec<u8>>,
+    /// The player's bed spawn point (`None` = no bed spawn — respawn falls back
+    /// to a fresh surface pick). Defaults `None` when loading a pre-v5 save.
+    pub bed_spawn: Option<BedSpawn>,
 }
 
 pub fn encode(
@@ -78,13 +82,23 @@ pub fn encode(
         put_u32(&mut b, value.len() as u32);
         b.extend_from_slice(value);
     }
+    // v5: the bed spawn point, appended last so v1..v4 saves still decode
+    // (defaults to none on load): presence byte + bed base cell + wake spot.
+    match player.bed_spawn {
+        Some(bs) => {
+            put_u8(&mut b, 1);
+            put_ivec3(&mut b, bs.bed);
+            put_ivec3(&mut b, bs.spot);
+        }
+        None => put_u8(&mut b, 0),
+    }
     b
 }
 
 pub fn decode(bytes: &[u8]) -> Option<LevelData> {
     let mut r = Reader::new(bytes);
     let version = r.u32()?;
-    if !(1..=4).contains(&version) {
+    if !(1..=5).contains(&version) {
         return None;
     }
     let seed = r.u32()?;
@@ -130,6 +144,16 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
         }
     }
 
+    // The bed spawn point was appended in v5; older saves load without one.
+    let bed_spawn = if version >= 5 && r.u8()? == 1 {
+        Some(BedSpawn {
+            bed: get_ivec3(&mut r)?,
+            spot: get_ivec3(&mut r)?,
+        })
+    } else {
+        None
+    };
+
     Some(LevelData {
         seed,
         player_pos,
@@ -141,6 +165,7 @@ pub fn decode(bytes: &[u8]) -> Option<LevelData> {
         inventory,
         tick,
         world_kv,
+        bed_spawn,
     })
 }
 
@@ -152,6 +177,20 @@ fn put_vec3(b: &mut Vec<u8>, v: Vec3) {
 
 fn get_vec3(r: &mut Reader) -> Option<Vec3> {
     Some(Vec3::new(r.f32()?, r.f32()?, r.f32()?))
+}
+
+fn put_ivec3(b: &mut Vec<u8>, v: IVec3) {
+    put_u32(b, v.x as u32);
+    put_u32(b, v.y as u32);
+    put_u32(b, v.z as u32);
+}
+
+fn get_ivec3(r: &mut Reader) -> Option<IVec3> {
+    Some(IVec3::new(
+        r.u32()? as i32,
+        r.u32()? as i32,
+        r.u32()? as i32,
+    ))
 }
 
 #[cfg(test)]
@@ -167,6 +206,10 @@ mod tests {
         player.pitch = -0.5;
         player.set_health(7);
         player.inventory.set_active(3);
+        player.bed_spawn = Some(BedSpawn {
+            bed: IVec3::new(-3, 70, 12),
+            spot: IVec3::new(-2, 70, 13),
+        });
         let kv = BTreeMap::from([
             ("llama:time".to_owned(), vec![0x10, 0x20]),
             ("zombies:invuln_until".to_owned(), Vec::new()),
@@ -185,6 +228,10 @@ mod tests {
         assert_eq!(got.tick, 12_345);
         assert_eq!(got.inventory.active_slot(), 3);
         assert_eq!(got.world_kv, kv, "the mod world KV survives the round-trip");
+        assert_eq!(
+            got.bed_spawn, player.bed_spawn,
+            "the bed spawn survives the round-trip"
+        );
         // Demo hotbar survives the round-trip.
         assert_eq!(
             got.inventory.selected().map(|s| s.item),
@@ -195,17 +242,17 @@ mod tests {
     #[test]
     fn v1_save_without_look_or_health_decodes_with_defaults() {
         // A pre-look (v1) save must still load: build a current blob (empty KV
-        // so its v4 tail is exactly the 4-byte zero count), rewrite the version
-        // word to 1, and strip the appended yaw/pitch + health + KV count (four
-        // trailing f32/u32 words = 16 bytes). It decodes with the rest intact,
-        // the facing defaulted, and health full.
+        // + no bed spawn, so the appended tail is yaw/pitch + health + KV count
+        // + bed presence byte = 17 bytes), rewrite the version word to 1, and
+        // strip that tail. It decodes with the rest intact, the facing
+        // defaulted, and health full.
         let mut player = Player::new(Vec3::new(1.0, 2.0, 3.0));
         player.yaw = 0.9; // present in the bytes, then truncated away below
         player.pitch = 0.3;
         player.set_health(5);
         let mut bytes = encode(7, &player, 0, &BTreeMap::new());
         bytes[0..4].copy_from_slice(&1u32.to_le_bytes());
-        bytes.truncate(bytes.len() - 16);
+        bytes.truncate(bytes.len() - 17);
 
         let got = decode(&bytes).expect("v1 decodes");
         assert_eq!(got.player_pos, Vec3::new(1.0, 2.0, 3.0));
@@ -221,16 +268,16 @@ mod tests {
 
     #[test]
     fn v2_save_without_health_decodes_at_full_health() {
-        // A v2 save carries the look but predates health and the KV map: strip
-        // the trailing health + KV-count words (8 bytes) and mark it v2. Facing
-        // survives; health defaults to full.
+        // A v2 save carries the look but predates health, the KV map, and the
+        // bed spawn: strip the trailing health + KV-count + bed presence bytes
+        // (9 bytes) and mark it v2. Facing survives; health defaults to full.
         let mut player = Player::new(Vec3::new(4.0, 5.0, 6.0));
         player.yaw = 1.1;
         player.pitch = -0.2;
         player.set_health(9);
         let mut bytes = encode(3, &player, 0, &BTreeMap::new());
         bytes[0..4].copy_from_slice(&2u32.to_le_bytes());
-        bytes.truncate(bytes.len() - 8);
+        bytes.truncate(bytes.len() - 9);
 
         let got = decode(&bytes).expect("v2 decodes");
         assert_eq!(got.player_yaw, 1.1, "v2 keeps the look");
@@ -245,17 +292,36 @@ mod tests {
 
     #[test]
     fn v3_save_without_world_kv_decodes_with_an_empty_map() {
-        // A v3 save (health, no KV) must keep loading: strip the trailing
-        // 4-byte KV count and mark it v3. Everything else is intact and the KV
-        // defaults empty.
+        // A v3 save (health, no KV, no bed spawn) must keep loading: strip the
+        // trailing KV count + bed presence (5 bytes) and mark it v3. Everything
+        // else is intact and the KV defaults empty.
         let mut player = Player::new(Vec3::new(4.0, 5.0, 6.0));
         player.set_health(9);
         let mut bytes = encode(3, &player, 0, &BTreeMap::new());
         bytes[0..4].copy_from_slice(&3u32.to_le_bytes());
-        bytes.truncate(bytes.len() - 4);
+        bytes.truncate(bytes.len() - 5);
 
         let got = decode(&bytes).expect("v3 decodes");
         assert_eq!(got.player_health, 9, "v3 keeps its health");
         assert!(got.world_kv.is_empty(), "v3 loads with no mod world KV");
+    }
+
+    #[test]
+    fn v4_save_without_bed_spawn_decodes_with_none() {
+        // A v4 save predates the bed spawn: strip the trailing presence byte
+        // and mark it v4. Everything else (including the KV) is intact.
+        let mut player = Player::new(Vec3::new(4.0, 5.0, 6.0));
+        player.bed_spawn = Some(BedSpawn {
+            bed: IVec3::new(1, 2, 3),
+            spot: IVec3::new(2, 2, 3),
+        });
+        let kv = BTreeMap::from([("llama:clock".to_owned(), vec![1, 2, 3, 4, 5, 6, 7, 8])]);
+        let mut bytes = encode(3, &player, 0, &kv);
+        bytes[0..4].copy_from_slice(&4u32.to_le_bytes());
+        bytes.truncate(bytes.len() - 25); // presence byte + two encoded cells (6 × u32)
+
+        let got = decode(&bytes).expect("v4 decodes");
+        assert_eq!(got.world_kv, kv, "v4 keeps its KV");
+        assert!(got.bed_spawn.is_none(), "v4 loads with no bed spawn");
     }
 }

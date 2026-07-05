@@ -83,12 +83,15 @@ pub(crate) const UV_MODE_STAIR_POS_Z: u32 = 5;
 pub(crate) const UV_MODE_STAIR_NEG_Z: u32 = 6;
 pub(crate) const UV_MODE_STAIR_TOP: u32 = 7;
 
-/// GPU vertex for the chunk's bbmodel-block geometry: 36 bytes of EXPLICIT attributes
+/// GPU vertex for the chunk's bbmodel-block geometry: EXPLICIT attributes
 /// (not the packed tile word), because a `.bbmodel` face carries an arbitrary
 /// sub-rectangle UV into the model atlas that the tile-packed [`Vertex`] can't express.
-/// Baked at mesh time with full mesh-time lighting folded into `shade` + the warm `tint`
-/// (the model pass shader does `tex * shade * tint`, like the mob pipeline whose
-/// `ItemVertex` layout this mirrors byte-for-byte so they share a pipeline).
+/// `shade` is the directional face shade only and `light` carries the cell's
+/// (sky, block) light fractions separately, so the world-model shader applies
+/// the sim's day/night sky scale at DRAW time — a placed model darkens at night
+/// exactly like the terrain around it (a remesh-time bake could not, since
+/// meshes don't rebuild when the sun sets). `tint` stays the warm block-light
+/// tint baked at mesh time.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelVertex {
@@ -96,6 +99,8 @@ pub struct ModelVertex {
     pub uv: [f32; 2],
     pub shade: f32,
     pub tint: [f32; 3],
+    /// `(sky01, block01)` light fractions (0..1 of the 6-bit channels).
+    pub light: [f32; 2],
 }
 
 pub struct ChunkMesh {

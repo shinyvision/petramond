@@ -8,6 +8,8 @@ use crate::world::World;
 
 /// Full day-night cycle length in game ticks (10 minutes at 20 TPS).
 pub(crate) const CYCLE_TICKS: u64 = 12_000;
+/// Clock offset of "early morning" within a day (fraction 0.05, just after
+/// sunrise) — both the fresh-world start and where sleeping skips to.
 const FRESH_CLOCK: u64 = 600;
 const TRANSITION: f32 = 0.04;
 const NIGHT_SKY_SCALE: f32 = 0.04;
@@ -98,6 +100,27 @@ impl DayNightCycle {
     }
 }
 
+/// Whether it is night per the published `llama:is_night` KV (day fraction in
+/// [0.5, 1.0) — sunset through sunrise). False on a world where the cycle has
+/// not published yet.
+pub(super) fn is_night(world: &World) -> bool {
+    world.mod_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
+}
+
+/// Skip the clock to early morning of the NEXT day (sleeping through the
+/// night — or the day). Written as a `llama:clock` KV like any external write;
+/// the core cycle adopts it on its next tick (clock writes win exactly).
+pub(super) fn skip_to_morning(world: &mut World) {
+    let clock = read_clock(world).unwrap_or(FRESH_CLOCK);
+    let next = morning_after(clock);
+    world.mod_kv_set(CLOCK_KEY.into(), next.to_le_bytes().to_vec());
+}
+
+/// The first early-morning clock strictly after `clock`.
+fn morning_after(clock: u64) -> u64 {
+    (clock / CYCLE_TICKS + 1) * CYCLE_TICKS + FRESH_CLOCK
+}
+
 fn read_clock(world: &World) -> Option<u64> {
     let raw: [u8; 8] = world.mod_kv_get(CLOCK_KEY)?.try_into().ok()?;
     Some(u64::from_le_bytes(raw))
@@ -144,6 +167,27 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::crafting::Recipes;
+
+    #[test]
+    fn sleeping_skips_to_the_next_early_morning() {
+        // Mid-night (t = 0.75 of day 0) → morning of day 1; already-morning
+        // still skips a whole day forward (strictly after).
+        assert_eq!(morning_after(9_000), CYCLE_TICKS + FRESH_CLOCK);
+        assert_eq!(morning_after(FRESH_CLOCK), CYCLE_TICKS + FRESH_CLOCK);
+        // The target is always "early morning": same day fraction as fresh.
+        assert!(
+            (day_fraction(morning_after(123_456)) - day_fraction(FRESH_CLOCK)).abs() < 1e-6
+        );
+
+        let mut world = World::new(1, 1);
+        world.mod_kv_set(CLOCK_KEY.into(), 9_000u64.to_le_bytes().to_vec());
+        skip_to_morning(&mut world);
+        assert_eq!(
+            world.mod_kv_get(CLOCK_KEY),
+            Some(&(CYCLE_TICKS + FRESH_CLOCK).to_le_bytes()[..]),
+            "the skip writes the adopted llama:clock format"
+        );
+    }
     use crate::events::EventBus;
     use crate::game::TickEvents;
     use crate::mathh::Vec3;

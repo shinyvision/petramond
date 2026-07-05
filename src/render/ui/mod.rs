@@ -68,6 +68,9 @@ pub struct UiBuild {
     pub drag_icon_quads: Vec<(ItemType, SlotRect)>,
     /// Cursor-held stack-count digits, drawn over the cursor icon.
     pub drag_counts: Vec<UiVertex>,
+    /// The hurt-flash edge vignette (solid, per-vertex alpha gradient), drawn
+    /// under everything else in the UI pass. Empty on a calm frame.
+    pub vignette: Vec<UiVertex>,
 }
 
 impl UiBuild {
@@ -78,6 +81,7 @@ impl UiBuild {
         self.counts.clear();
         self.drag_icon_quads.clear();
         self.drag_counts.clear();
+        self.vignette.clear();
     }
 }
 
@@ -293,10 +297,42 @@ pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
     if screen.0 == 0 || screen.1 == 0 {
         return;
     }
+    if ui.hurt_flash > 0.0 {
+        push_hurt_vignette(&mut build.vignette, screen, ui.hurt_flash);
+    }
     let scale = gui_scale(screen);
     if let Some(doc_slots) = ui.doc_slots.clone() {
         push_doc_game_content(ui, build, &doc_slots, scale);
     }
+}
+
+/// Peak vignette alpha at full strength (reached toward the screen corners —
+/// the shader's radial falloff scales it down toward the centre).
+const VIGNETTE_MAX_ALPHA: f32 = 0.55;
+const VIGNETTE_RED: [f32; 3] = [0.75, 0.03, 0.03];
+
+/// uv sentinel marking the radial hurt vignette (see `ui.wgsl`): the fragment
+/// stage computes a smooth falloff from the screen centre, so the overlay is
+/// one connected ring rather than assembled bands.
+const VIGNETTE_UV: [f32; 2] = [-2.0, -2.0];
+
+/// The hurt flash: one fullscreen quad carrying the vignette sentinel; the
+/// shader shapes it into a red radial rim (transparent centre, strongest at
+/// the corners), scaled by `strength`.
+fn push_hurt_vignette(out: &mut Vec<UiVertex>, screen: (u32, u32), strength: f32) {
+    let (w, h) = (screen.0 as f32, screen.1 as f32);
+    let a = VIGNETTE_MAX_ALPHA * strength.clamp(0.0, 1.0);
+    push_quad_uv(
+        out,
+        screen,
+        0.0,
+        0.0,
+        w,
+        h,
+        VIGNETTE_UV,
+        VIGNETTE_UV,
+        [VIGNETTE_RED[0], VIGNETTE_RED[1], VIGNETTE_RED[2], a],
+    );
 }
 
 #[cfg(test)]

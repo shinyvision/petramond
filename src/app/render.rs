@@ -33,7 +33,7 @@ impl App {
                     .state_mut()
                     .set("active_slot", llama_ui::UiValue::I32(active as i32));
             }
-            self.ui.frame(kind, screen_size, now, false);
+            self.ui.frame(kind, screen_size, now, None);
             doc_kind = Some(kind);
         }
         if doc_kind.is_some() {
@@ -69,7 +69,19 @@ impl App {
         };
 
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
-        renderer.set_hand_visible(!matches!(self.screen, crate::app::AppScreen::Pause));
+        // No first-person hand behind the pause menu, under the sleep fade, or
+        // while dead.
+        renderer.set_hand_visible(!matches!(
+            self.screen,
+            crate::app::AppScreen::Pause | crate::app::AppScreen::Sleeping | crate::app::AppScreen::Dead
+        ));
+
+        // The hurt shake: a short decaying jitter on the camera look and the
+        // hand's screen position. Presentation-only — the sim camera state is
+        // untouched; a clone carries the offset into the uniforms.
+        self.hurt_shake_t = (self.hurt_shake_t - dt).max(0.0);
+        let shake = hurt_shake(self.hurt_shake_t, now);
+        renderer.set_hand_shake(shake.hand);
 
         let listener;
         {
@@ -78,8 +90,11 @@ impl App {
                 pos: frame.camera.pos,
                 right: frame.camera.right(),
             };
+            let mut cam = frame.camera.clone();
+            cam.yaw += shake.yaw;
+            cam.pitch += shake.pitch;
             renderer.update_uniforms(
-                frame.camera,
+                &cam,
                 frame.environment.fog,
                 frame.environment.time,
                 frame.environment.underwater,
@@ -188,6 +203,7 @@ impl App {
             screen_size,
             self.pointer.cursor(),
         );
+        ui.hurt_flash = shake.flash;
         if doc_kind.is_some() {
             // A document draws this screen's chrome: hand build_ui the
             // document's slot cells so it emits ONLY the game content (icons,
@@ -201,6 +217,41 @@ impl App {
             renderer.sync_meshes(&mut terrain);
         }
         renderer.render();
+    }
+}
+
+/// The hurt-shake offsets for this frame: camera look jitter (radians), a hand
+/// screen offset (NDC), and the red edge-vignette strength. Two incommensurate
+/// frequencies so the motion reads as a tremble, not a metronome; the squared
+/// envelope front-loads the kick and dies smoothly. Punchy enough that a hit
+/// is unmistakable, short enough that it never turns into a wobble.
+struct HurtShake {
+    yaw: f32,
+    pitch: f32,
+    hand: [f32; 2],
+    /// Red edge-vignette strength `[0, 1]` (linear envelope — it should linger
+    /// a touch longer than the motion).
+    flash: f32,
+}
+
+fn hurt_shake(remaining: f32, now: f64) -> HurtShake {
+    if remaining <= 0.0 {
+        return HurtShake {
+            yaw: 0.0,
+            pitch: 0.0,
+            hand: [0.0, 0.0],
+            flash: 0.0,
+        };
+    }
+    let envelope = (remaining / super::HURT_SHAKE_SECS).clamp(0.0, 1.0);
+    let amp = envelope * envelope;
+    let t = now as f32;
+    let (a, b) = ((t * 71.0).sin(), (t * 53.0).cos());
+    HurtShake {
+        yaw: 0.011 * amp * a,
+        pitch: 0.008 * amp * b,
+        hand: [0.032 * amp * b, 0.026 * amp * a],
+        flash: envelope,
     }
 }
 

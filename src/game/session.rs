@@ -82,6 +82,10 @@ impl Game {
             request_open_workbench: None,
             request_open_mod_gui: None,
             request_close_mod_gui: false,
+            request_open_sleep: false,
+            sleep: None,
+            wake_requested: false,
+            respawn_requested: false,
             toggled_door: None,
             bus: crate::events::EventBus::default(),
             systems: crate::events::TickSystems::default(),
@@ -179,6 +183,7 @@ fn restore_player(level: &LevelData) -> Player {
     player.pitch = level.player_pitch;
     player.set_health(level.player_health);
     player.inventory = level.inventory.clone();
+    player.bed_spawn = level.bed_spawn;
     player
 }
 

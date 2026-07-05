@@ -1,0 +1,41 @@
+{
+    "format": 1,
+    "kind": "llama:death",
+    "class": "screen",
+    "root": {
+        "type": "column",
+        "layout": {
+            "gap": 8,
+            "align": "center"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "You died",
+                "scale": 3
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 10
+                }
+            },
+            {
+                "type": "button",
+                "id": "respawn",
+                "text": "RESPAWN",
+                "layout": {
+                    "w": 130
+                }
+            },
+            {
+                "type": "button",
+                "id": "save_quit",
+                "text": "SAVE AND QUIT",
+                "layout": {
+                    "w": 130
+                }
+            }
+        ]
+    }
+}

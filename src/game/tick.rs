@@ -123,6 +123,19 @@ pub struct GameEvents {
     /// The held item's own right-click use fired this frame (a bucket scooping
     /// or pouring water) — plays the same hand jab as placing.
     pub used_item: bool,
+    /// The player took damage this frame (post `player_damage_pre`, amount
+    /// > 0) — plays the hurt sound and kicks the screen/hand shake.
+    pub player_damaged: bool,
+    /// The player's health hit 0 this frame — the app opens the death screen.
+    pub player_died: bool,
+    /// The player right-clicked a bed this frame — the app opens the sleep
+    /// overlay.
+    pub open_sleep: bool,
+    /// The sleep ended this frame (completed, cancelled, or died) — the app
+    /// closes the sleep overlay if it is up.
+    pub sleep_ended: bool,
+    /// The player respawned this frame — the app closes the death screen.
+    pub respawned: bool,
     /// Every sound mods emitted across this frame's fixed ticks, in emission
     /// order. NON-lossy (unlike the latched booleans above): each entry plays
     /// exactly once.
@@ -148,6 +161,10 @@ pub(crate) struct TickEvents {
     pub(crate) picked_up_item: bool,
     pub(crate) threw_item: bool,
     pub(crate) used_item: bool,
+    pub(crate) player_damaged: bool,
+    pub(crate) player_died: bool,
+    pub(crate) sleep_ended: bool,
+    pub(crate) respawned: bool,
     pub(crate) sounds: Vec<ModSound>,
     pub(crate) spatial_sounds: Vec<ModSpatialSoundCommand>,
     pub(crate) mob_sounds: Vec<MobSoundEvent>,
@@ -169,6 +186,10 @@ impl TickEvents {
             picked_up_item: false,
             threw_item: false,
             used_item: false,
+            player_damaged: false,
+            player_died: false,
+            sleep_ended: false,
+            respawned: false,
             sounds: Vec::new(),
             spatial_sounds: Vec::new(),
             mob_sounds: Vec::new(),
@@ -223,6 +244,11 @@ impl Game {
             close_mod_gui: std::mem::take(&mut self.request_close_mod_gui),
             toggled_door: self.toggled_door.take(),
             used_item: events.used_item,
+            player_damaged: events.player_damaged,
+            player_died: events.player_died,
+            open_sleep: std::mem::take(&mut self.request_open_sleep),
+            sleep_ended: events.sleep_ended,
+            respawned: events.respawned,
             mod_sounds: std::mem::take(&mut events.sounds),
             mod_spatial_sounds: std::mem::take(&mut events.spatial_sounds),
             mob_sounds: std::mem::take(&mut events.mob_sounds),
@@ -303,6 +329,9 @@ impl Game {
 
         self.begin_stage(Stage::PlayerDamage, events);
         self.tick_fall_damage(events);
+        // Sleeping and respawn ride the same stage: both are pure player-state
+        // transitions (teleport, health restore, time skip) on the tick.
+        self.tick_bed_and_respawn(events);
         self.end_stage(Stage::PlayerDamage, events);
 
         // World::game_tick's internal order (scheduled → block updates → furnaces
