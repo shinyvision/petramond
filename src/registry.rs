@@ -109,6 +109,69 @@ pub(crate) fn namespace(key: &str) -> Option<&str> {
     }
 }
 
+/// Extensible tag vocabulary: compiled engine tags own the low ids (bare
+/// snake_case names, also reachable as `llama:<name>`); packs add NAMESPACED
+/// tags (`mod_id:name`), interned on first sight during load — a tag is
+/// *defined by being listed* (on a data row or in a recipe), it has no
+/// standalone declaration. Ids are process-local and never persisted, so
+/// intern order only needs to be self-consistent within a run; runtime tag
+/// checks compare ids, no lock taken.
+pub(crate) struct TagTable {
+    engine: &'static [&'static str],
+    dynamic: std::sync::RwLock<Vec<&'static str>>,
+}
+
+impl TagTable {
+    pub(crate) const fn new(engine: &'static [&'static str]) -> Self {
+        Self {
+            engine,
+            dynamic: std::sync::RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Resolve a tag name from data: a bare name must be an engine tag (typo
+    /// guard — a misspelled engine tag must not silently become a new tag);
+    /// `llama:<engine>` resolves to the same id; a namespaced `mod_id:name`
+    /// interns on first sight.
+    pub(crate) fn resolve(&self, name: &str) -> Result<u8, String> {
+        let bare = name.strip_prefix("llama:").unwrap_or(name);
+        if let Some(i) = self.engine.iter().position(|n| *n == bare) {
+            return Ok(i as u8);
+        }
+        if !is_namespaced(name) {
+            return Err(format!(
+                "unknown tag '{name}' (engine tags: {}; mod tags must be namespaced 'mod_id:name')",
+                self.engine.join(", ")
+            ));
+        }
+        let mut dynamic = self.dynamic.write().unwrap();
+        if let Some(i) = dynamic.iter().position(|n| *n == name) {
+            return Ok((self.engine.len() + i) as u8);
+        }
+        let id = self.engine.len() + dynamic.len();
+        if id > u8::MAX as usize {
+            return Err(format!("tag table full registering '{name}' (256 max)"));
+        }
+        dynamic.push(Box::leak(name.to_owned().into_boxed_str()));
+        Ok(id as u8)
+    }
+
+    /// The registered name for `id` (diagnostics only).
+    #[allow(dead_code)]
+    pub(crate) fn name(&self, id: u8) -> &'static str {
+        let id = id as usize;
+        if id < self.engine.len() {
+            return self.engine[id];
+        }
+        self.dynamic
+            .read()
+            .unwrap()
+            .get(id - self.engine.len())
+            .copied()
+            .unwrap_or("?")
+    }
+}
+
 /// The block + item name tables (see module docs).
 pub(crate) struct ContentNames {
     pub blocks: NameTable,
@@ -174,6 +237,24 @@ pub(crate) fn names() -> &'static ContentNames {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tag_table_interns_namespaced_and_rejects_bare_unknowns() {
+        let t = TagTable::new(&["fuel", "planks"]);
+        assert_eq!(t.resolve("fuel"), Ok(0));
+        assert_eq!(
+            t.resolve("llama:planks"),
+            Ok(1),
+            "an engine tag resolves under its namespaced recipe form too"
+        );
+        let a = t.resolve("mymod:ores").expect("namespaced tags intern");
+        assert_eq!(t.resolve("mymod:ores"), Ok(a), "stable on re-resolution");
+        assert_eq!(t.name(a), "mymod:ores");
+        assert!(
+            t.resolve("orees").is_err(),
+            "a bare unknown is a typo'd engine tag, never a silent new tag"
+        );
+    }
 
     #[test]
     fn namespaced_keys_register_and_bare_unknowns_error() {

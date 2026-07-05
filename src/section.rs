@@ -504,7 +504,7 @@ impl Section {
         matches!(
             block,
             Block::Grass | Block::Water | Block::ShortGrass | Block::Fern
-        ) || block.has_tag(BlockTag::Leaves)
+        ) || block.has_tag(BlockTag::LEAVES)
     }
 
     #[cfg(all(test, feature = "worldgen-tests"))]

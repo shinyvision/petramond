@@ -64,9 +64,9 @@ impl Furnace {
         }
     }
     pub fn fill_slot_for(item: ItemType) -> Option<FillSlot> {
-        if item.has_tag(ItemTag::Fuel) {
+        if item.has_tag(ItemTag::FUEL) {
             Some(FillSlot::Fuel)
-        } else if item.has_tag(ItemTag::Smeltable) {
+        } else if item.has_tag(ItemTag::SMELTABLE) {
             Some(FillSlot::Input)
         } else {
             None

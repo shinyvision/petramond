@@ -5,7 +5,7 @@
 //! world tick scheduler ([`World::schedule_block_tick`]) and the natural-break hand-off
 //! ([`World::note_block_destroyed`]), world internals a `block`-side behaviour can't
 //! reach — while still implementing the `block`-defined [`BlockBehavior`]. Carried by
-//! every block tagged [`BlockTag::Fragile`](crate::block::BlockTag::Fragile) (see
+//! every block tagged [`BlockTag::FRAGILE`](crate::block::BlockTag::FRAGILE) (see
 //! `block::data`): the tag is the categorisation (the water sim reads it to know which
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.

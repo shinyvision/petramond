@@ -48,7 +48,9 @@ pub(super) struct RawBlockDef {
     pub block: String,
     pub shape: RenderShape,
     pub flags: Vec<RawFlag>,
-    pub tags: Vec<BlockTag>,
+    /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
+    /// (interned at load — see [`BlockTag::resolve`]).
+    pub tags: Vec<String>,
     pub behavior: String,
     pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
@@ -248,10 +250,15 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
             })
         })
         .collect::<Result<_, String>>()?;
+    let tags: Vec<BlockTag> = r
+        .tags
+        .iter()
+        .map(|t| BlockTag::resolve(t))
+        .collect::<Result<_, String>>()?;
     Ok(BlockDef {
         block,
         flags,
-        tags: leak(r.tags),
+        tags: leak(tags),
         behavior,
         interaction: r.interaction.resolve()?,
         shape: r.shape,

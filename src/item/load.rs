@@ -41,7 +41,9 @@ pub(super) struct RawItemDef {
     /// from their block or bbmodel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite: Option<String>,
-    pub tags: Vec<ItemTag>,
+    /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
+    /// (interned at load — see [`ItemTag::resolve`]).
+    pub tags: Vec<String>,
     /// Registry name of the block a DYNAMIC item places — the data-side link
     /// that replaces the compiled `from_block`/`as_block` match for pack
     /// content. Engine rows omit it (their mapping stays compiled).
@@ -198,6 +200,11 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         }
         None => None,
     };
+    let tags: Vec<ItemTag> = r
+        .tags
+        .iter()
+        .map(|t| ItemTag::resolve(t))
+        .collect::<Result<_, String>>()?;
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
@@ -209,7 +216,7 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
             roll: r.held_pose.roll as f32,
         },
         sprite,
-        tags: Box::leak(r.tags.into_boxed_slice()),
+        tags: Box::leak(tags.into_boxed_slice()),
         block,
         item_use,
         fuel_burn_ticks: r.fuel_burn_ticks,

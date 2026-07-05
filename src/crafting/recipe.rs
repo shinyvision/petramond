@@ -236,8 +236,8 @@ mod tests {
             width: 1,
             height: 2,
             cells: vec![
-                Some(Ingredient::Tag(ItemTag::Planks)),
-                Some(Ingredient::Tag(ItemTag::Planks)),
+                Some(Ingredient::Tag(ItemTag::PLANKS)),
+                Some(Ingredient::Tag(ItemTag::PLANKS)),
             ],
             result: ItemStack::new(ItemType::Stick, 4),
         }
@@ -306,9 +306,9 @@ mod tests {
             width: 3,
             height: 3,
             cells: vec![
-                Some(Ingredient::Tag(ItemTag::Planks)),
-                Some(Ingredient::Tag(ItemTag::Planks)),
-                Some(Ingredient::Tag(ItemTag::Planks)),
+                Some(Ingredient::Tag(ItemTag::PLANKS)),
+                Some(Ingredient::Tag(ItemTag::PLANKS)),
+                Some(Ingredient::Tag(ItemTag::PLANKS)),
                 None,
                 Some(Ingredient::Item(ItemType::Stick)),
                 None,

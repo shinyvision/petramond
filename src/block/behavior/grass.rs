@@ -10,7 +10,7 @@ use super::BlockBehavior;
 /// Grass. On a random tick it dies back to [`Block::Dirt`] when the cell directly
 /// above [`smothered`]s it OR [`submerged`]s it — grass survives under neither a
 /// placed solid block (though it tolerates leaves and other
-/// [`BlockTag::NoGrassDecay`] cover) nor water. The exact inverse of
+/// [`BlockTag::NO_GRASS_DECAY`] cover) nor water. The exact inverse of
 /// [`Dirt`](super::dirt::Dirt)'s spread (which refuses to green such a cell), so a
 /// surface settles into a stable state: grass only where its top is open or
 /// canopied and dry, dirt under solid cover or water.
@@ -40,7 +40,7 @@ impl BlockBehavior for Grass {
 pub static GRASS: Grass = Grass;
 
 /// Whether the cell directly above `pos` smothers grass: a solid cover that does
-/// NOT carry [`BlockTag::NoGrassDecay`]. This is the condition that kills grass, and
+/// NOT carry [`BlockTag::NO_GRASS_DECAY`]. This is the condition that kills grass, and
 /// (read the other way) the cover that stops dirt greening over — both behaviours
 /// share it so the spread and the death agree on one rule. Leaves and other
 /// `NoGrassDecay` blocks are solid yet let grass live, so they never smother. An
@@ -49,7 +49,7 @@ pub static GRASS: Grass = Grass;
 pub(super) fn smothered(world: &World, pos: IVec3) -> bool {
     world
         .block_if_loaded(pos.x, pos.y + 1, pos.z)
-        .is_some_and(|b| b.is_solid() && !b.has_tag(BlockTag::NoGrassDecay))
+        .is_some_and(|b| b.is_solid() && !b.has_tag(BlockTag::NO_GRASS_DECAY))
 }
 
 /// Whether the cell directly above `pos` is water — grass drowns and dies back to

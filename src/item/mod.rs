@@ -296,30 +296,39 @@ impl DropSpec {
 /// item whether it carries the tag (see [`ItemType::has_tag`]). Keeping membership
 /// in item data (not the recipe loader) means a new item joins a group by editing
 /// its data row, never any recipe code.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ItemTag {
-    /// Any wood-type planks (recipe key `#llama:planks`).
-    Planks,
-    /// Any wood-type log (recipe key `#llama:logs`).
-    Logs,
-    /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
-    Fuel,
-    /// Anything a furnace can smelt — shift-clicked into the input slot.
-    Smeltable,
-}
+///
+/// The vocabulary is OPEN: engine tags are the named consts below (bare
+/// snake_case in `items.json`, `#llama:<name>` in recipes); a pack introduces
+/// its own tag by listing a namespaced `mod_id:name` on item rows and
+/// referencing `#mod_id:name` in recipes (interned at load — see
+/// [`crate::registry::TagTable`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ItemTag(u8);
+
+/// Engine item-tag names, id-ordered to match the consts on [`ItemTag`].
+static ITEM_TAGS: crate::registry::TagTable =
+    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable"]);
 
 impl ItemTag {
-    /// Resolve a tag's registry name (the text after `#` in a recipe) to its tag,
-    /// or `None` if unknown.
+    /// Any wood-type planks (recipe key `#llama:planks`).
+    pub const PLANKS: ItemTag = ItemTag(0);
+    /// Any wood-type log (recipe key `#llama:logs`).
+    pub const LOGS: ItemTag = ItemTag(1);
+    /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
+    pub const FUEL: ItemTag = ItemTag(2);
+    /// Anything a furnace can smelt — shift-clicked into the input slot.
+    pub const SMELTABLE: ItemTag = ItemTag(3);
+
+    /// Resolve a tag's registry name (the text after `#` in a recipe, or an
+    /// `items.json` row entry), interning an unseen namespaced pack tag.
+    /// `None` only for invalid names (a bare non-engine name).
     pub fn from_key(key: &str) -> Option<ItemTag> {
-        match key {
-            "llama:planks" => Some(ItemTag::Planks),
-            "llama:logs" => Some(ItemTag::Logs),
-            "llama:fuel" => Some(ItemTag::Fuel),
-            "llama:smeltable" => Some(ItemTag::Smeltable),
-            _ => None,
-        }
+        ITEM_TAGS.resolve(key).ok().map(ItemTag)
+    }
+
+    /// Loader-side [`from_key`](Self::from_key) that surfaces the error text.
+    pub(crate) fn resolve(name: &str) -> Result<ItemTag, String> {
+        ITEM_TAGS.resolve(name).map(ItemTag)
     }
 }
 
@@ -944,13 +953,14 @@ mod tests {
 
     #[test]
     fn item_tags_are_item_data() {
-        use ItemTag::{Logs, Planks};
+        const PLANKS: ItemTag = ItemTag::PLANKS;
+        const LOGS: ItemTag = ItemTag::LOGS;
         for p in [
             ItemType::OakPlanks,
             ItemType::SprucePlanks,
             ItemType::MangrovePlanks,
         ] {
-            assert!(p.has_tag(Planks), "{p:?}");
+            assert!(p.has_tag(PLANKS), "{p:?}");
         }
         for log in [
             ItemType::OakLog,
@@ -962,32 +972,32 @@ mod tests {
             ItemType::CherryLog,
             ItemType::MangroveLog,
         ] {
-            assert!(log.has_tag(Logs), "{log:?}");
-            assert!(!log.has_tag(Planks), "{log:?}");
+            assert!(log.has_tag(LOGS), "{log:?}");
+            assert!(!log.has_tag(PLANKS), "{log:?}");
         }
         // Sticks are neither logs nor planks.
-        assert!(!ItemType::OakLog.has_tag(Planks));
-        assert!(!ItemType::Stick.has_tag(Logs));
-        assert!(!ItemType::Stick.has_tag(Planks));
+        assert!(!ItemType::OakLog.has_tag(PLANKS));
+        assert!(!ItemType::Stick.has_tag(LOGS));
+        assert!(!ItemType::Stick.has_tag(PLANKS));
         // Tag names resolve from the recipe key.
-        assert_eq!(ItemTag::from_key("llama:planks"), Some(Planks));
-        assert_eq!(ItemTag::from_key("llama:logs"), Some(Logs));
+        assert_eq!(ItemTag::from_key("llama:planks"), Some(PLANKS));
+        assert_eq!(ItemTag::from_key("llama:logs"), Some(LOGS));
         assert_eq!(ItemTag::from_key("bogus"), None);
 
         // Furnace routing tags: coal is fuel; raw ores are smeltable; the products
         // are neither (so a finished ingot doesn't shift back into the furnace).
-        assert!(ItemType::Coal.has_tag(ItemTag::Fuel));
-        assert!(!ItemType::Coal.has_tag(ItemTag::Smeltable));
-        assert!(ItemType::RawIron.has_tag(ItemTag::Smeltable));
-        assert!(ItemType::RawCopper.has_tag(ItemTag::Smeltable));
-        assert!(ItemType::Cobblestone.has_tag(ItemTag::Smeltable));
-        assert!(!ItemType::RawIron.has_tag(ItemTag::Fuel));
-        assert!(!ItemType::IronIngot.has_tag(ItemTag::Smeltable));
-        assert!(!ItemType::IronIngot.has_tag(ItemTag::Fuel));
-        assert_eq!(ItemTag::from_key("llama:fuel"), Some(ItemTag::Fuel));
+        assert!(ItemType::Coal.has_tag(ItemTag::FUEL));
+        assert!(!ItemType::Coal.has_tag(ItemTag::SMELTABLE));
+        assert!(ItemType::RawIron.has_tag(ItemTag::SMELTABLE));
+        assert!(ItemType::RawCopper.has_tag(ItemTag::SMELTABLE));
+        assert!(ItemType::Cobblestone.has_tag(ItemTag::SMELTABLE));
+        assert!(!ItemType::RawIron.has_tag(ItemTag::FUEL));
+        assert!(!ItemType::IronIngot.has_tag(ItemTag::SMELTABLE));
+        assert!(!ItemType::IronIngot.has_tag(ItemTag::FUEL));
+        assert_eq!(ItemTag::from_key("llama:fuel"), Some(ItemTag::FUEL));
         assert_eq!(
             ItemTag::from_key("llama:smeltable"),
-            Some(ItemTag::Smeltable)
+            Some(ItemTag::SMELTABLE)
         );
     }
 

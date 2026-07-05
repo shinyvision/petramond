@@ -66,7 +66,7 @@ pub(super) struct BlockFlags(u8);
 
 impl BlockFlags {
     /// No material properties at all (air). Replaceability is no longer a flag —
-    /// it migrated to [`BlockTag::Replaceable`](super::BlockTag::Replaceable) — so
+    /// it migrated to [`BlockTag::REPLACEABLE`](super::BlockTag::REPLACEABLE) — so
     /// air carries no flags; bit `1 << 4` is now unused.
     pub const NONE: BlockFlags = BlockFlags(0);
     pub const SOLID: BlockFlags = BlockFlags(1 << 0);
