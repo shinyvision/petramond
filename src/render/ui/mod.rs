@@ -156,8 +156,7 @@ fn push_doc_game_content(
         };
         let i = slot.index as usize;
         if slot.role == Role::WorkbenchResult {
-            if let Some(&(item, craftable)) = ui.workbench.as_ref().and_then(|w| w.results.get(i))
-            {
+            if let Some(&(item, craftable)) = ui.workbench.as_ref().and_then(|w| w.results.get(i)) {
                 if item != ItemType::Air {
                     if craftable {
                         icon::push_slot_icon(build, screen, item, r);

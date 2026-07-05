@@ -242,11 +242,7 @@ fn discover_packs() -> Vec<Pack> {
                 version: m.version.clone(),
                 description: m.description.clone(),
                 summary: m.summary.clone(),
-                icon: m
-                    .icon
-                    .as_ref()
-                    .map(|i| dir.join(i))
-                    .filter(|p| p.is_file()),
+                icon: m.icon.as_ref().map(|i| dir.join(i)).filter(|p| p.is_file()),
                 wasm: m.wasm.as_ref().map(|w| dir.join(w)),
             }
         })

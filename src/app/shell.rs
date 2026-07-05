@@ -139,6 +139,7 @@ impl App {
         self.audio.set_loop(None, now_seconds());
         self.scene.clear();
         self.hand = HandTriggers::default();
+        self.sleep_interact_hand_t = 0.0;
         self.renderer_world_clear_pending = true;
         self.refresh_worlds();
     }
@@ -257,6 +258,7 @@ impl App {
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();
         self.hand = HandTriggers::default();
+        self.sleep_interact_hand_t = 0.0;
         self.renderer_world_clear_pending = false;
         // A world saved while dead (quit from the death screen, or a crash)
         // reopens ON the death screen — a 0-health player must never resume

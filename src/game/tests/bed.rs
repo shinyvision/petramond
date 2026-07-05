@@ -8,7 +8,7 @@ use super::common::{game, hit, install_empty_chunk};
 use crate::block::Block;
 use crate::events::DamageSource;
 use crate::mathh::IVec3;
-use crate::player::MAX_HEALTH;
+use crate::player::{MAX_HEALTH, PITCH_LIMIT};
 
 const CLOCK_KEY: &str = "llama:clock";
 
@@ -61,11 +61,23 @@ fn kill_player(game: &mut Game) -> TickEvents {
 fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
     let (mut game, base) = game_with_bed();
     make_night(&mut game);
-    interact_with_bed(&mut game, base);
+    let events = interact_with_bed(&mut game, base);
 
-    assert!(game.request_open_sleep, "asks the app for the sleep overlay");
+    assert!(
+        events.bed_interacted,
+        "bed clicks drive the interact hand jab"
+    );
+    assert!(
+        game.request_open_sleep,
+        "asks the app for the sleep overlay"
+    );
     assert_eq!(game.sleep_progress01(), Some(0.0), "sleep starts at zero");
-    let bs = game.player.bed_spawn.expect("one interaction sets the spawn");
+    assert_eq!(game.player.pitch, PITCH_LIMIT, "sleep starts looking up");
+    assert_eq!(game.cam.pitch, PITCH_LIMIT, "camera mirrors the sleep look");
+    let bs = game
+        .player
+        .bed_spawn
+        .expect("one interaction sets the spawn");
     assert_eq!(bs.bed, base);
     assert_ne!(
         (bs.spot.x, bs.spot.z),
@@ -78,8 +90,12 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
 fn daytime_bed_interaction_sets_the_spawn_but_never_sleeps() {
     let (mut game, base) = game_with_bed();
     // Fresh world = early morning: it is day, so no night flag is set.
-    interact_with_bed(&mut game, base);
+    let events = interact_with_bed(&mut game, base);
 
+    assert!(
+        events.bed_interacted,
+        "daytime bed clicks still animate the hand"
+    );
     assert!(
         game.player.bed_spawn.is_some(),
         "a daytime click still sets the spawn point"
@@ -146,7 +162,11 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
 
     assert!(events.sleep_ended, "the hit ends the sleep on the spot");
     assert_eq!(game.sleep_progress01(), None, "no longer sleeping");
-    assert_eq!(clock(&game), clock_before, "an interrupted sleep skips no time");
+    assert_eq!(
+        clock(&game),
+        clock_before,
+        "an interrupted sleep skips no time"
+    );
     assert_eq!(game.player.health(), MAX_HEALTH - 2);
     // Woken beside the bed, ready to face the attacker.
     let feet = game.player.pos;

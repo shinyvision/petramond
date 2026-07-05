@@ -163,9 +163,12 @@ impl Theme {
         }
         let mut palette = BTreeMap::new();
         for (k, v) in t.palette {
-            palette.insert(k.clone(), parse_hex(&v).ok_or_else(|| {
-                ThemeError(format!("palette '{k}': bad color '{v}' (want #RRGGBB[AA])"))
-            })?);
+            palette.insert(
+                k.clone(),
+                parse_hex(&v).ok_or_else(|| {
+                    ThemeError(format!("palette '{k}': bad color '{v}' (want #RRGGBB[AA])"))
+                })?,
+            );
         }
         let mut parts = BTreeMap::new();
         for (key, pj) in t.parts {
@@ -470,12 +473,12 @@ impl Theme {
 
         let base_border = [90, 100, 110, 255];
         let single = |atlas: &mut PlaceholderAtlas,
-                          parts: &mut BTreeMap<String, Part>,
-                          key: &str,
-                          w: u32,
-                          h: u32,
-                          fill: [u8; 4],
-                          slice: Option<[i32; 4]>| {
+                      parts: &mut BTreeMap<String, Part>,
+                      key: &str,
+                      w: u32,
+                      h: u32,
+                      fill: [u8; 4],
+                      slice: Option<[i32; 4]>| {
             let rect = atlas.cell(w, h, fill, base_border);
             let mut faces = BTreeMap::new();
             faces.insert("default".to_owned(), PartFace { rect, slice });
@@ -489,12 +492,12 @@ impl Theme {
             );
         };
         let multi = |atlas: &mut PlaceholderAtlas,
-                         parts: &mut BTreeMap<String, Part>,
-                         key: &str,
-                         w: u32,
-                         h: u32,
-                         slice: Option<[i32; 4]>,
-                         states: &[(&str, [u8; 4])]| {
+                     parts: &mut BTreeMap<String, Part>,
+                     key: &str,
+                     w: u32,
+                     h: u32,
+                     slice: Option<[i32; 4]>,
+                     states: &[(&str, [u8; 4])]| {
             let mut faces = BTreeMap::new();
             for (state, fill) in states {
                 let rect = atlas.cell(w, h, *fill, base_border);
@@ -511,80 +514,226 @@ impl Theme {
         };
 
         let sl4 = Some([4, 4, 4, 4]);
-        single(&mut atlas, &mut parts, "panel.large", 32, 32, [24, 32, 40, 255], sl4);
-        single(&mut atlas, &mut parts, "panel.inset", 16, 16, [16, 22, 28, 255], sl4);
-        single(&mut atlas, &mut parts, "section.titled", 32, 32, [28, 36, 44, 255], Some([4, 12, 4, 4]));
-        multi(&mut atlas, &mut parts, "button.default", 24, 20, sl4, &[
-            ("default", [45, 58, 70, 255]),
-            ("hover", [62, 80, 96, 255]),
-            ("pressed", [35, 45, 55, 255]),
-            ("disabled", [38, 42, 46, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "button.success", 24, 20, sl4, &[
-            ("default", [40, 90, 45, 255]),
-            ("hover", [55, 115, 60, 255]),
-            ("pressed", [30, 70, 35, 255]),
-            ("disabled", [40, 52, 42, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "button.danger", 24, 20, sl4, &[
-            ("default", [110, 40, 40, 255]),
-            ("hover", [140, 55, 55, 255]),
-            ("pressed", [85, 30, 30, 255]),
-            ("disabled", [56, 40, 40, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "checkbox", 10, 10, None, &[
-            ("off", [30, 38, 46, 255]),
-            ("on", [80, 190, 90, 255]),
-            ("disabled", [40, 44, 48, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "toggle", 18, 10, None, &[
-            ("off", [55, 60, 66, 255]),
-            ("on", [70, 170, 80, 255]),
-            ("disabled", [42, 46, 50, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "slot", 18, 18, Some([1, 1, 1, 1]), &[
-            ("default", [20, 26, 32, 255]),
-            ("hover", [90, 110, 130, 160]),
-        ]);
-        single(&mut atlas, &mut parts, "scrollbar.track", 8, 24, [18, 24, 30, 255], Some([2, 2, 2, 2]));
-        multi(&mut atlas, &mut parts, "scrollbar.thumb", 8, 16, Some([2, 2, 2, 2]), &[
-            ("default", [90, 100, 110, 255]),
-            ("hover", [120, 132, 144, 255]),
-        ]);
-        single(&mut atlas, &mut parts, "slider.track", 24, 6, [30, 60, 90, 255], Some([2, 2, 2, 2]));
-        multi(&mut atlas, &mut parts, "slider.handle", 8, 14, None, &[
-            ("default", [150, 160, 170, 255]),
-            ("hover", [190, 200, 210, 255]),
-            ("pressed", [120, 130, 140, 255]),
-            ("disabled", [80, 84, 88, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "list.row", 32, 26, sl4, &[
-            ("default", [26, 34, 42, 255]),
-            ("hover", [38, 50, 62, 255]),
-            ("selected", [50, 70, 100, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "input", 32, 18, sl4, &[
-            ("default", [16, 20, 24, 255]),
-            ("focus", [22, 30, 40, 255]),
-            ("disabled", [30, 32, 34, 255]),
-        ]);
-        single(&mut atlas, &mut parts, "badge", 16, 13, [40, 52, 64, 255], Some([2, 2, 2, 2]));
+        single(
+            &mut atlas,
+            &mut parts,
+            "panel.large",
+            32,
+            32,
+            [24, 32, 40, 255],
+            sl4,
+        );
+        single(
+            &mut atlas,
+            &mut parts,
+            "panel.inset",
+            16,
+            16,
+            [16, 22, 28, 255],
+            sl4,
+        );
+        single(
+            &mut atlas,
+            &mut parts,
+            "section.titled",
+            32,
+            32,
+            [28, 36, 44, 255],
+            Some([4, 12, 4, 4]),
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "button.default",
+            24,
+            20,
+            sl4,
+            &[
+                ("default", [45, 58, 70, 255]),
+                ("hover", [62, 80, 96, 255]),
+                ("pressed", [35, 45, 55, 255]),
+                ("disabled", [38, 42, 46, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "button.success",
+            24,
+            20,
+            sl4,
+            &[
+                ("default", [40, 90, 45, 255]),
+                ("hover", [55, 115, 60, 255]),
+                ("pressed", [30, 70, 35, 255]),
+                ("disabled", [40, 52, 42, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "button.danger",
+            24,
+            20,
+            sl4,
+            &[
+                ("default", [110, 40, 40, 255]),
+                ("hover", [140, 55, 55, 255]),
+                ("pressed", [85, 30, 30, 255]),
+                ("disabled", [56, 40, 40, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "checkbox",
+            10,
+            10,
+            None,
+            &[
+                ("off", [30, 38, 46, 255]),
+                ("on", [80, 190, 90, 255]),
+                ("disabled", [40, 44, 48, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "toggle",
+            18,
+            10,
+            None,
+            &[
+                ("off", [55, 60, 66, 255]),
+                ("on", [70, 170, 80, 255]),
+                ("disabled", [42, 46, 50, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "slot",
+            18,
+            18,
+            Some([1, 1, 1, 1]),
+            &[
+                ("default", [20, 26, 32, 255]),
+                ("hover", [90, 110, 130, 160]),
+            ],
+        );
+        single(
+            &mut atlas,
+            &mut parts,
+            "scrollbar.track",
+            8,
+            24,
+            [18, 24, 30, 255],
+            Some([2, 2, 2, 2]),
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "scrollbar.thumb",
+            8,
+            16,
+            Some([2, 2, 2, 2]),
+            &[
+                ("default", [90, 100, 110, 255]),
+                ("hover", [120, 132, 144, 255]),
+            ],
+        );
+        single(
+            &mut atlas,
+            &mut parts,
+            "slider.track",
+            24,
+            6,
+            [30, 60, 90, 255],
+            Some([2, 2, 2, 2]),
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "slider.handle",
+            8,
+            14,
+            None,
+            &[
+                ("default", [150, 160, 170, 255]),
+                ("hover", [190, 200, 210, 255]),
+                ("pressed", [120, 130, 140, 255]),
+                ("disabled", [80, 84, 88, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "list.row",
+            32,
+            26,
+            sl4,
+            &[
+                ("default", [26, 34, 42, 255]),
+                ("hover", [38, 50, 62, 255]),
+                ("selected", [50, 70, 100, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "input",
+            32,
+            18,
+            sl4,
+            &[
+                ("default", [16, 20, 24, 255]),
+                ("focus", [22, 30, 40, 255]),
+                ("disabled", [30, 32, 34, 255]),
+            ],
+        );
+        single(
+            &mut atlas,
+            &mut parts,
+            "badge",
+            16,
+            13,
+            [40, 52, 64, 255],
+            Some([2, 2, 2, 2]),
+        );
         for (level, fill) in [
             ("info", [30, 60, 110, 255]),
             ("warning", [110, 90, 20, 255]),
             ("success", [30, 90, 40, 255]),
             ("danger", [110, 35, 35, 255]),
         ] {
-            single(&mut atlas, &mut parts, &format!("alert.{level}"), 32, 20, fill, sl4);
+            single(
+                &mut atlas,
+                &mut parts,
+                &format!("alert.{level}"),
+                32,
+                20,
+                fill,
+                sl4,
+            );
         }
-        multi(&mut atlas, &mut parts, "gauge.arrow", 24, 17, None, &[
-            ("empty", [40, 44, 48, 255]),
-            ("full", [230, 230, 230, 255]),
-        ]);
-        multi(&mut atlas, &mut parts, "gauge.flame", 14, 14, None, &[
-            ("empty", [40, 40, 40, 255]),
-            ("full", [230, 140, 40, 255]),
-        ]);
+        multi(
+            &mut atlas,
+            &mut parts,
+            "gauge.arrow",
+            24,
+            17,
+            None,
+            &[("empty", [40, 44, 48, 255]), ("full", [230, 230, 230, 255])],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "gauge.flame",
+            14,
+            14,
+            None,
+            &[("empty", [40, 40, 40, 255]), ("full", [230, 140, 40, 255])],
+        );
         single(&mut atlas, &mut parts, "label", 1, 1, [0, 0, 0, 0], None);
 
         let mut palette = BTreeMap::new();
@@ -723,12 +872,20 @@ mod tests {
         assert_eq!(t.part("panel.large").unwrap().natural(), (64, 64));
         let b = t.part("button.default").unwrap();
         assert_eq!(b.face("hover").unwrap().rect, [32, 64, 32, 20]);
-        assert_eq!(b.face("pressed").unwrap().rect, [0, 64, 32, 20], "fallback to default");
+        assert_eq!(
+            b.face("pressed").unwrap().rect,
+            [0, 64, 32, 20],
+            "fallback to default"
+        );
         assert_eq!(b.pressed_label_offset, [0, 1]);
         assert_eq!(t.metrics.slot, 20);
         assert_eq!(t.color("accent")[3], 128.0 / 255.0);
         assert_eq!(t.color("#FF0000"), [1.0, 0.0, 0.0, 1.0]);
-        assert_eq!(t.color("nope"), [1.0, 0.0, 1.0, 1.0], "missing key is loud magenta");
+        assert_eq!(
+            t.color("nope"),
+            [1.0, 0.0, 1.0, 1.0],
+            "missing key is loud magenta"
+        );
         // Font defaults to the builtin atlas.
         assert_eq!(t.font.size, crate::text::atlas_size());
     }
@@ -753,9 +910,15 @@ mod tests {
         let text = Some("A rather long warning message");
         let (w_free, h_free) = env.leaf_size(alert, text, None, None);
         let (w_tight, h_tight) = env.leaf_size(alert, text, None, Some(100));
-        assert!(w_tight <= 100, "constrained alert fits its width: {w_tight}");
+        assert!(
+            w_tight <= 100,
+            "constrained alert fits its width: {w_tight}"
+        );
         assert!(w_tight < w_free);
-        assert!(h_tight > h_free, "wrapped alert grows taller instead of overflowing");
+        assert!(
+            h_tight > h_free,
+            "wrapped alert grows taller instead of overflowing"
+        );
     }
 
     #[test]
@@ -789,6 +952,9 @@ mod tests {
             env.leaf_size(&n[3], None, Some("wheel.png"), None),
             (32, 32)
         );
-        assert_eq!(env.leaf_size(&n[4], None, Some("missing.png"), None), (0, 0));
+        assert_eq!(
+            env.leaf_size(&n[4], None, Some("missing.png"), None),
+            (0, 0)
+        );
     }
 }

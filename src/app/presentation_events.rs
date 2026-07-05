@@ -67,6 +67,9 @@ impl App {
 
     pub(super) fn latch_game_event_hand_triggers(&mut self, events: &GameEvents) {
         let opened_interactable = opened_interactable(events);
+        if events.bed_interacted {
+            self.sleep_interact_hand_t = super::SLEEP_INTERACT_HAND_SECS;
+        }
 
         self.hand.broke |= events.broke_block.is_some();
         self.hand.placed |= events.placed_block.is_some()
@@ -88,4 +91,5 @@ fn opened_interactable(events: &GameEvents) -> bool {
         || events.open_chest.is_some()
         || events.open_furniture_workbench.is_some()
         || events.toggled_door.is_some()
+        || events.bed_interacted
 }

@@ -40,14 +40,33 @@ pub enum NavKey {
 /// One host input event. Pointer coordinates are physical px.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum InputEvent {
-    PointerMove { x: f32, y: f32 },
-    PointerDown { x: f32, y: f32, button: PointerButton, shift: bool },
-    PointerUp { x: f32, y: f32, button: PointerButton },
+    PointerMove {
+        x: f32,
+        y: f32,
+    },
+    PointerDown {
+        x: f32,
+        y: f32,
+        button: PointerButton,
+        shift: bool,
+    },
+    PointerUp {
+        x: f32,
+        y: f32,
+        button: PointerButton,
+    },
     /// Wheel scroll; positive = content moves up/left (natural list scroll),
     /// in logical px.
-    Scroll { delta: i32 },
-    Key { key: NavKey, shift: bool },
-    Char { ch: char },
+    Scroll {
+        delta: i32,
+    },
+    Key {
+        key: NavKey,
+        shift: bool,
+    },
+    Char {
+        ch: char,
+    },
     /// Pointer/keyboard focus left the window: release presses and drags.
     Blur,
 }

@@ -116,8 +116,7 @@ impl App {
                 }
             }
         }
-        self.ui
-            .frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
+        self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
         let to_button = |b: llama_ui::PointerButton| match b {
             llama_ui::PointerButton::Primary => crate::controls::PointerButton::Primary,
@@ -147,14 +146,13 @@ impl App {
                     button,
                     shift,
                 } => {
-                    let Some(slot) = crate::gui::Role::from_key(&role)
-                        .and_then(|r| r.menu_slot(index as usize))
+                    let Some(slot) =
+                        crate::gui::Role::from_key(&role).and_then(|r| r.menu_slot(index as usize))
                     else {
                         continue;
                     };
                     let button = to_button(button);
-                    let cursor_has_stack =
-                        self.game.as_ref().is_some_and(|g| g.cursor_has_stack());
+                    let cursor_has_stack = self.game.as_ref().is_some_and(|g| g.cursor_has_stack());
                     let gather =
                         self.gui_router
                             .doc_gather(slot, button, shift, now, cursor_has_stack);

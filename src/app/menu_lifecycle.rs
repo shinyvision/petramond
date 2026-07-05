@@ -173,10 +173,7 @@ impl App {
         } else if matches!(self.screen, AppScreen::Pause) {
             self.resume_game();
             true
-        } else if matches!(
-            self.screen,
-            AppScreen::CreateWorld | AppScreen::DeleteWorld
-        ) {
+        } else if matches!(self.screen, AppScreen::CreateWorld | AppScreen::DeleteWorld) {
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
             true

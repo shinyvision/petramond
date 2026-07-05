@@ -301,7 +301,11 @@ pub(super) mod demo {
                 UiEvent::Toggle { id, item: None, on } if id == "t1" || id == "c1" => {
                     state.set("demo_on", UiValue::Bool(*on));
                 }
-                UiEvent::Toggle { id, item: Some(i), on } if id == "row_on" => {
+                UiEvent::Toggle {
+                    id,
+                    item: Some(i),
+                    on,
+                } if id == "row_on" => {
                     if let Some(rows) = state.get_list("demo_rows").cloned() {
                         let mut rows = (*rows).clone();
                         if let Some(row) = rows.get_mut(*i as usize) {

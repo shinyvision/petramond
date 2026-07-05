@@ -94,11 +94,14 @@ impl<'d> InstTree<'d> {
     /// The arena index of the instance keyed `id` (+ optional item), if it
     /// expanded this frame.
     pub fn find(&self, id: &str, item: Option<u32>) -> Option<u32> {
-        self.insts.iter().position(|inst| {
-            inst.key
-                .as_ref()
-                .is_some_and(|k| k.id == id && k.item == item)
-        }).map(|i| i as u32)
+        self.insts
+            .iter()
+            .position(|inst| {
+                inst.key
+                    .as_ref()
+                    .is_some_and(|k| k.id == id && k.item == item)
+            })
+            .map(|i| i as u32)
     }
 
     /// Expand `node` (and descendants) into the arena; returns its index, or
@@ -141,14 +144,14 @@ impl<'d> InstTree<'d> {
         let child_indices = match &node.kind {
             NodeKind::List => {
                 let template = node.children.first();
-                let items = node
-                    .bind
-                    .items
-                    .as_deref()
-                    .and_then(|k| match state.resolve(item_map, k) {
-                        Some(UiValue::List(items)) => Some(items.clone()),
-                        _ => None,
-                    });
+                let items =
+                    node.bind
+                        .items
+                        .as_deref()
+                        .and_then(|k| match state.resolve(item_map, k) {
+                            Some(UiValue::List(items)) => Some(items.clone()),
+                            _ => None,
+                        });
                 let mut out = Vec::new();
                 if let (Some(template), Some(items)) = (template, items) {
                     for (i, m) in items.iter().enumerate() {
@@ -273,7 +276,10 @@ mod tests {
         assert!(toggle0.enabled);
         assert_eq!(
             toggle0.key,
-            Some(InstKey { id: "mod_on".into(), item: Some(0) })
+            Some(InstKey {
+                id: "mod_on".into(),
+                item: Some(0)
+            })
         );
 
         // Second row: distinct key, off + disabled.

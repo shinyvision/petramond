@@ -125,7 +125,12 @@ pub fn atlas_size() -> (u32, u32) {
 pub fn atlas_rect(ch: char) -> [u32; 4] {
     let cell = atlas_cell(ch);
     let (cx, cy) = (cell % ATLAS_COLS, cell / ATLAS_COLS);
-    [cx * GLYPH_W as u32, cy * GLYPH_H as u32, GLYPH_W as u32, GLYPH_H as u32]
+    [
+        cx * GLYPH_W as u32,
+        cy * GLYPH_H as u32,
+        GLYPH_W as u32,
+        GLYPH_H as u32,
+    ]
 }
 
 /// Generate the font atlas as tightly-packed RGBA (white glyphs on

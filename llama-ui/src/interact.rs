@@ -83,7 +83,12 @@ impl Interact<'_> {
                     fs.cursor = (x, y);
                     self.pointer_drag(fs, events);
                 }
-                InputEvent::PointerDown { x, y, button, shift } => {
+                InputEvent::PointerDown {
+                    x,
+                    y,
+                    button,
+                    shift,
+                } => {
                     fs.cursor = (x, y);
                     self.pointer_down(fs, button, shift, events);
                 }
@@ -118,15 +123,13 @@ impl Interact<'_> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find(|&i| {
             let inst = self.tree.get(i);
-            widget::pointer_target(inst)
-                && self.visible_at(i, x, y)
+            widget::pointer_target(inst) && self.visible_at(i, x, y)
         })
     }
 
     fn visible_at(&self, i: u32, x: f32, y: f32) -> bool {
         widget::contains_f(self.solved.rects[i as usize], x, y)
-            && self.solved.clips[i as usize]
-                .is_none_or(|c| widget::contains_f(c, x, y))
+            && self.solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, x, y))
     }
 
     /// The deepest list-template stamp (list direct child) under the cursor,
@@ -182,9 +185,13 @@ impl Interact<'_> {
             let content = self.solved.scroll_content[i as usize].unwrap_or((0, 0));
             let Some(key) = self.key_of(i) else { continue };
             let offset = fs.scroll_offset(&key);
-            let Some((track, thumb)) =
-                widget::scrollbar(view, rect.h, content.1, offset, self.theme.metrics.scrollbar_w)
-            else {
+            let Some((track, thumb)) = widget::scrollbar(
+                view,
+                rect.h,
+                content.1,
+                offset,
+                self.theme.metrics.scrollbar_w,
+            ) else {
                 continue;
             };
             if widget::contains_f(thumb, x, y) {
@@ -214,11 +221,9 @@ impl Interact<'_> {
                 NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => {
                     if let Some(slot) = self.slots.iter().find(|s| s.inst == i) {
                         let cell = match inst.node.kind {
-                            NodeKind::SlotGrid { cols, rows, .. } => {
-                                (0..cols * rows).find(|&c| {
-                                    widget::contains_f(grid_cell(rect, cols, c, self.metrics), x, y)
-                                })
-                            }
+                            NodeKind::SlotGrid { cols, rows, .. } => (0..cols * rows).find(|&c| {
+                                widget::contains_f(grid_cell(rect, cols, c, self.metrics), x, y)
+                            }),
                             _ => Some(0),
                         };
                         if let Some(cell) = cell {
@@ -283,12 +288,9 @@ impl Interact<'_> {
                     id: key.id.clone(),
                     index: row,
                 });
-                let doubled = fs
-                    .last_row_click
-                    .as_ref()
-                    .is_some_and(|(k, r, t)| {
-                        *k == key && *r == row && fs.now - t < ROW_ACTIVATE_SECS
-                    });
+                let doubled = fs.last_row_click.as_ref().is_some_and(|(k, r, t)| {
+                    *k == key && *r == row && fs.now - t < ROW_ACTIVATE_SECS
+                });
                 if doubled {
                     events.push(UiEvent::ListActivate {
                         id: key.id.clone(),
@@ -331,8 +333,7 @@ impl Interact<'_> {
                     let rect = self.solved.rects[i as usize];
                     let view = widget::scroll_view_rect(self.theme, self.tree.get(i).node, rect);
                     let content = self.solved.scroll_content[i as usize].unwrap_or((0, 0));
-                    let off =
-                        widget::scroll_offset_for_thumb_y(view, rect.h, content.1, y - grab);
+                    let off = widget::scroll_offset_for_thumb_y(view, rect.h, content.1, y - grab);
                     fs.set_scroll(key, widget::clamp_scroll(off, rect.h, content.1));
                 }
             }
@@ -432,8 +433,7 @@ impl Interact<'_> {
             if let Some(i) = self.tree.find(&focus.id, focus.item) {
                 let rect = self.solved.rects[i as usize];
                 let pad = self.theme.metrics.button_pad;
-                let visible =
-                    widget::input_visible_chars(widget::input_text_rect(rect, pad).w);
+                let visible = widget::input_visible_chars(widget::input_text_rect(rect, pad).w);
                 let now = fs.now;
                 if let Some(editor) = fs.editors.get_mut(&focus) {
                     let before = editor.text().to_owned();

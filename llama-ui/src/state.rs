@@ -68,7 +68,8 @@ impl UiState {
     /// Resolve `key` against an optional list-item map first, then the global
     /// map — the template-binding rule.
     pub fn resolve<'a>(&'a self, item: Option<&'a UiMap>, key: &str) -> Option<&'a UiValue> {
-        item.and_then(|m| m.get(key)).or_else(|| self.values.get(key))
+        item.and_then(|m| m.get(key))
+            .or_else(|| self.values.get(key))
     }
 
     pub fn get_str(&self, key: &str) -> Option<&str> {

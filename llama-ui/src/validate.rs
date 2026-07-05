@@ -71,7 +71,9 @@ impl Document {
                     Some((_, got)) if got == want => {}
                     Some((_, got)) => issues.push(DocIssue {
                         path: "document".into(),
-                        message: format!("role '{role}' declares {got} slots, contract wants {want}"),
+                        message: format!(
+                            "role '{role}' declares {got} slots, contract wants {want}"
+                        ),
                     }),
                     None => issues.push(DocIssue {
                         path: "document".into(),
@@ -125,10 +127,7 @@ fn walk<'a>(
     }
 
     if !node.kind.is_container() && !node.children.is_empty() {
-        issue(format!(
-            "{} cannot have children",
-            node.kind.type_name()
-        ));
+        issue(format!("{} cannot have children", node.kind.type_name()));
     }
 
     match &node.kind {
@@ -231,8 +230,7 @@ mod tests {
                 { "type": "slot_grid", "role": "hotbar", "cols": 9, "rows": 1 }
             ] }
         }"#);
-        let contract =
-            SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]);
+        let contract = SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]);
         assert_eq!(d.validate(None, Some(&contract)), vec![]);
     }
 
@@ -247,10 +245,17 @@ mod tests {
         }"#);
         let contract = SlotContract::new(&[("storage", 27), ("hotbar", 9)]);
         let issues = d.validate(None, Some(&contract));
-        let all = issues.iter().map(|i| i.message.as_str()).collect::<Vec<_>>().join("; ");
+        let all = issues
+            .iter()
+            .map(|i| i.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
         assert!(all.contains("'storage' declares 18"), "{all}");
         assert!(all.contains("'hotbar' missing"), "{all}");
-        assert!(all.contains("'mystery' is not in this kind's contract"), "{all}");
+        assert!(
+            all.contains("'mystery' is not in this kind's contract"),
+            "{all}"
+        );
     }
 
     #[test]
@@ -262,7 +267,9 @@ mod tests {
             ] }
         }"#);
         let issues = d.validate(None, Some(&SlotContract::default()));
-        assert!(issues.iter().any(|i| i.message.contains("not in this kind's contract")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("not in this kind's contract")));
     }
 
     #[test]
@@ -276,7 +283,11 @@ mod tests {
             ] }
         }"#);
         let issues = d.validate(None, None);
-        let all = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("; ");
+        let all = issues
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
         assert!(all.contains("button requires an id"), "{all}");
         assert!(all.contains("duplicate id 'a'"), "{all}");
     }
@@ -295,7 +306,11 @@ mod tests {
             ] }
         }"#);
         let issues = d.validate(None, None);
-        let all = issues.iter().map(|i| i.message.as_str()).collect::<Vec<_>>().join("; ");
+        let all = issues
+            .iter()
+            .map(|i| i.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
         assert!(all.contains("exactly one template child"), "{all}");
         assert!(all.contains("gauge needs a 'value' binding"), "{all}");
         assert!(all.contains("rotimage needs a 'value' binding"), "{all}");

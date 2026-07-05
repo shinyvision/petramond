@@ -27,7 +27,12 @@ pub struct RectI {
 }
 
 impl RectI {
-    pub const ZERO: RectI = RectI { x: 0, y: 0, w: 0, h: 0 };
+    pub const ZERO: RectI = RectI {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+    };
 
     /// Half-open containment (includes top-left edge, excludes bottom-right).
     pub fn contains(&self, px: i32, py: i32) -> bool {
@@ -126,8 +131,7 @@ impl Solved {
     /// Whether `(px, py)` hits instance `idx`'s rect within its clip.
     pub fn hit(&self, idx: u32, px: i32, py: i32) -> bool {
         let i = idx as usize;
-        self.rects[i].contains(px, py)
-            && self.clips[i].is_none_or(|c| c.contains(px, py))
+        self.rects[i].contains(px, py) && self.clips[i].is_none_or(|c| c.contains(px, py))
     }
 }
 
@@ -512,8 +516,7 @@ impl Solver<'_, '_, '_> {
                 let wsum: i64 = cands.iter().map(|&i| weights[i] as i64).sum();
                 let mut cut_any = false;
                 for &i in &cands {
-                    let share =
-                        ((deficit as i64 * weights[i] as i64) / wsum).max(0) as i32;
+                    let share = ((deficit as i64 * weights[i] as i64) / wsum).max(0) as i32;
                     let cut = share.min(bases[i] - min_of(i)).min(deficit);
                     if cut > 0 {
                         bases[i] -= cut;
@@ -630,8 +633,11 @@ impl Solver<'_, '_, '_> {
             for &c in &flow {
                 let cl = &tree.get(c).node.layout;
                 let r = self.out.rects[c as usize];
-                cross_used = cross_used
-                    .max(cross.of((r.w, r.h)) + cross.margin_lead(cl.margin) + cross.margin_trail(cl.margin));
+                cross_used = cross_used.max(
+                    cross.of((r.w, r.h))
+                        + cross.margin_lead(cl.margin)
+                        + cross.margin_trail(cl.margin),
+                );
             }
             let main_used = outer_sum + gaps;
             let (w, h) = main.pack(main_used, cross_used);
@@ -718,9 +724,33 @@ mod tests {
         );
         // Natural: w = 8+18+8 = 34 (toggle widest), h = 6+10+4+10+6 = 36.
         // Centered in 200×100 → x=(200-34)/2=83, y=(100-36)/2=32.
-        assert_eq!(s.rects[0], RectI { x: 83, y: 32, w: 34, h: 36 });
-        assert_eq!(s.rects[1], RectI { x: 91, y: 38, w: 10, h: 10 });
-        assert_eq!(s.rects[2], RectI { x: 91, y: 52, w: 18, h: 10 });
+        assert_eq!(
+            s.rects[0],
+            RectI {
+                x: 83,
+                y: 32,
+                w: 34,
+                h: 36
+            }
+        );
+        assert_eq!(
+            s.rects[1],
+            RectI {
+                x: 91,
+                y: 38,
+                w: 10,
+                h: 10
+            }
+        );
+        assert_eq!(
+            s.rects[2],
+            RectI {
+                x: 91,
+                y: 52,
+                w: 18,
+                h: 10
+            }
+        );
     }
 
     #[test]
@@ -793,9 +823,25 @@ mod tests {
         }"#,
             (100, 100),
         );
-        assert_eq!(s.rects[1], RectI { x: 10, y: 10, w: 10, h: 10 });
+        assert_eq!(
+            s.rects[1],
+            RectI {
+                x: 10,
+                y: 10,
+                w: 10,
+                h: 10
+            }
+        );
         // abs against the padded rect; takes no flow space.
-        assert_eq!(s.rects[2], RectI { x: 15, y: 17, w: 10, h: 10 });
+        assert_eq!(
+            s.rects[2],
+            RectI {
+                x: 15,
+                y: 17,
+                w: 10,
+                h: 10
+            }
+        );
     }
 
     #[test]
@@ -823,8 +869,19 @@ mod tests {
         assert_eq!(solved.rects[1].y, solved.rects[0].y - 8);
         // Children carry the scroll clip; scrolled-away rows can't hit.
         let clip = solved.clips[1].expect("scroll children are clipped");
-        assert_eq!(clip, RectI { x: 0, y: 0, w: 50, h: 30 });
-        assert!(!solved.hit(1, 45, 28), "row scrolled partly out doesn't hit below clip");
+        assert_eq!(
+            clip,
+            RectI {
+                x: 0,
+                y: 0,
+                w: 50,
+                h: 30
+            }
+        );
+        assert!(
+            !solved.hit(1, 45, 28),
+            "row scrolled partly out doesn't hit below clip"
+        );
         assert!(solved.hit(2, 5, solved.rects[2].y), "visible row hits");
     }
 
@@ -956,9 +1013,33 @@ mod tests {
         assert_eq!((g.w, g.h), (162, 54));
         let m = MockEnv.slot_metrics();
         // Row-major: cell 9 (second row, first column).
-        assert_eq!(grid_cell(g, 9, 0, m), RectI { x: g.x, y: g.y, w: 18, h: 18 });
-        assert_eq!(grid_cell(g, 9, 8, m), RectI { x: g.x + 8 * 18, y: g.y, w: 18, h: 18 });
-        assert_eq!(grid_cell(g, 9, 9, m), RectI { x: g.x, y: g.y + 18, w: 18, h: 18 });
+        assert_eq!(
+            grid_cell(g, 9, 0, m),
+            RectI {
+                x: g.x,
+                y: g.y,
+                w: 18,
+                h: 18
+            }
+        );
+        assert_eq!(
+            grid_cell(g, 9, 8, m),
+            RectI {
+                x: g.x + 8 * 18,
+                y: g.y,
+                w: 18,
+                h: 18
+            }
+        );
+        assert_eq!(
+            grid_cell(g, 9, 9, m),
+            RectI {
+                x: g.x,
+                y: g.y + 18,
+                w: 18,
+                h: 18
+            }
+        );
     }
 
     #[test]
@@ -971,7 +1052,11 @@ mod tests {
         }"#,
             (320, 240),
         );
-        assert_eq!(s.rects[0].y, 240 - 18 - 1, "pinned to bottom edge with 1px lift");
+        assert_eq!(
+            s.rects[0].y,
+            240 - 18 - 1,
+            "pinned to bottom edge with 1px lift"
+        );
         assert_eq!(s.rects[0].x, (320 - 162) / 2);
     }
 

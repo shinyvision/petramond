@@ -192,8 +192,17 @@ mod tests {
     fn solid_quads_cover_exact_pixels() {
         let theme = Theme::placeholder();
         let mut dl = DrawList::default();
-        Painter { list: &mut dl, scale: 2 }.solid(
-            RectI { x: 1, y: 1, w: 3, h: 2 },
+        Painter {
+            list: &mut dl,
+            scale: 2,
+        }
+        .solid(
+            RectI {
+                x: 1,
+                y: 1,
+                w: 3,
+                h: 2,
+            },
             [1.0, 0.0, 0.0, 1.0],
             None,
         );
@@ -225,10 +234,24 @@ mod tests {
     fn scissor_clips_pixels() {
         let theme = Theme::placeholder();
         let mut dl = DrawList::default();
-        Painter { list: &mut dl, scale: 1 }.solid(
-            RectI { x: 0, y: 0, w: 10, h: 10 },
+        Painter {
+            list: &mut dl,
+            scale: 1,
+        }
+        .solid(
+            RectI {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
             [0.0, 1.0, 0.0, 1.0],
-            Some(RectI { x: 2, y: 2, w: 4, h: 4 }),
+            Some(RectI {
+                x: 2,
+                y: 2,
+                w: 4,
+                h: 4,
+            }),
         );
         let tex = TextureSet {
             theme_atlas: &theme.atlas,
@@ -239,7 +262,11 @@ mod tests {
         let mut out = Vec::new();
         rasterize(&dl, &tex, size, [0, 0, 0, 255], &mut out);
         assert_eq!(px(&out, size, 3, 3), [0, 255, 0, 255]);
-        assert_eq!(px(&out, size, 1, 1), [0, 0, 0, 255], "clipped outside scissor");
+        assert_eq!(
+            px(&out, size, 1, 1),
+            [0, 0, 0, 255],
+            "clipped outside scissor"
+        );
         assert_eq!(px(&out, size, 6, 6), [0, 0, 0, 255]);
     }
 
@@ -247,8 +274,17 @@ mod tests {
     fn alpha_blends_over_background() {
         let theme = Theme::placeholder();
         let mut dl = DrawList::default();
-        Painter { list: &mut dl, scale: 1 }.solid(
-            RectI { x: 0, y: 0, w: 2, h: 2 },
+        Painter {
+            list: &mut dl,
+            scale: 1,
+        }
+        .solid(
+            RectI {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 2,
+            },
             [1.0, 1.0, 1.0, 0.5],
             None,
         );
@@ -260,14 +296,22 @@ mod tests {
         let mut out = Vec::new();
         rasterize(&dl, &tex, (2, 2), [0, 0, 0, 255], &mut out);
         let p = px(&out, (2, 2), 0, 0);
-        assert!((126..=130).contains(&p[0]), "50% white over black ≈ 128, got {}", p[0]);
+        assert!(
+            (126..=130).contains(&p[0]),
+            "50% white over black ≈ 128, got {}",
+            p[0]
+        );
     }
 
     #[test]
     fn text_renders_glyph_pixels() {
         let theme = Theme::placeholder();
         let mut dl = DrawList::default();
-        Painter { list: &mut dl, scale: 1 }.text("A", 0, 0, [1.0, 1.0, 1.0, 1.0], None);
+        Painter {
+            list: &mut dl,
+            scale: 1,
+        }
+        .text("A", 0, 0, [1.0, 1.0, 1.0, 1.0], None);
         let tex = TextureSet {
             theme_atlas: &theme.atlas,
             font: &theme.font,

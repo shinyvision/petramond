@@ -130,12 +130,20 @@ pub enum NodeKind {
     /// Repeats its single template child once per item in `bind.items`.
     List,
     /// One host-mapped slot (item cell) of `role`.
-    Slot { role: String },
+    Slot {
+        role: String,
+    },
     /// A `cols`×`rows` grid of `role` slots, generated row-major — the in-role
     /// index ↔ cell order contract holds by construction.
-    SlotGrid { role: String, cols: u32, rows: u32 },
+    SlotGrid {
+        role: String,
+        cols: u32,
+        rows: u32,
+    },
     /// A 0..=1 fill gauge (furnace arrow/flame; mod gauges).
-    Gauge { mode: GaugeMode },
+    Gauge {
+        mode: GaugeMode,
+    },
     Badge {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
@@ -510,7 +518,9 @@ impl Document {
         };
         self.root.visit(&mut |node| match &node.kind {
             NodeKind::Slot { role } => add(role, 1),
-            NodeKind::SlotGrid { role, cols, rows } => add(role, (*cols as usize) * (*rows as usize)),
+            NodeKind::SlotGrid { role, cols, rows } => {
+                add(role, (*cols as usize) * (*rows as usize))
+            }
             _ => {}
         });
         out

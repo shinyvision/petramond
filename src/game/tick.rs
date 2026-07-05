@@ -120,6 +120,9 @@ pub struct GameEvents {
     /// state (after the toggle applied), so the presentation picks the open vs
     /// close sound. `None` = no door toggle this frame.
     pub toggled_door: Option<bool>,
+    /// The player right-clicked a bed this frame. This fires even in daytime,
+    /// when the click sets the spawn point but does not start sleep.
+    pub bed_interacted: bool,
     /// The held item's own right-click use fired this frame (a bucket scooping
     /// or pouring water) — plays the same hand jab as placing.
     pub used_item: bool,
@@ -161,6 +164,7 @@ pub(crate) struct TickEvents {
     pub(crate) picked_up_item: bool,
     pub(crate) threw_item: bool,
     pub(crate) used_item: bool,
+    pub(crate) bed_interacted: bool,
     pub(crate) player_damaged: bool,
     pub(crate) player_died: bool,
     pub(crate) sleep_ended: bool,
@@ -186,6 +190,7 @@ impl TickEvents {
             picked_up_item: false,
             threw_item: false,
             used_item: false,
+            bed_interacted: false,
             player_damaged: false,
             player_died: false,
             sleep_ended: false,
@@ -243,6 +248,7 @@ impl Game {
             open_mod_gui: std::mem::take(&mut self.request_open_mod_gui),
             close_mod_gui: std::mem::take(&mut self.request_close_mod_gui),
             toggled_door: self.toggled_door.take(),
+            bed_interacted: events.bed_interacted,
             used_item: events.used_item,
             player_damaged: events.player_damaged,
             player_died: events.player_died,

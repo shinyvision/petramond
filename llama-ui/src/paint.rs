@@ -399,18 +399,54 @@ mod tests {
             list: &mut dl,
             scale: 2,
         };
-        p.solid(RectI { x: 0, y: 0, w: 4, h: 4 }, [1.0; 4], None);
-        p.solid(RectI { x: 8, y: 0, w: 4, h: 4 }, [1.0; 4], None);
+        p.solid(
+            RectI {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 4,
+            },
+            [1.0; 4],
+            None,
+        );
+        p.solid(
+            RectI {
+                x: 8,
+                y: 0,
+                w: 4,
+                h: 4,
+            },
+            [1.0; 4],
+            None,
+        );
         p.text("A", 0, 0, [1.0; 4], None);
         p.solid(
-            RectI { x: 0, y: 0, w: 2, h: 2 },
+            RectI {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 2,
+            },
             [1.0; 4],
-            Some(RectI { x: 0, y: 0, w: 10, h: 10 }),
+            Some(RectI {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            }),
         );
-        assert_eq!(dl.batches.len(), 3, "solid+solid merge; font and clipped-solid split");
+        assert_eq!(
+            dl.batches.len(),
+            3,
+            "solid+solid merge; font and clipped-solid split"
+        );
         assert_eq!(dl.batches[0].count, 12);
         assert_eq!(dl.batches[1].tex, TexId::Font);
-        assert_eq!(dl.batches[2].clip, Some([0, 0, 20, 20]), "clip is physical px");
+        assert_eq!(
+            dl.batches[2].clip,
+            Some([0, 0, 20, 20]),
+            "clip is physical px"
+        );
     }
 
     #[test]
@@ -420,7 +456,16 @@ mod tests {
             list: &mut dl,
             scale: 3,
         };
-        p.solid(RectI { x: 5, y: 7, w: 10, h: 2 }, [1.0; 4], None);
+        p.solid(
+            RectI {
+                x: 5,
+                y: 7,
+                w: 10,
+                h: 2,
+            },
+            [1.0; 4],
+            None,
+        );
         assert_eq!(dl.vertices[0].pos, [15.0, 21.0]);
         assert_eq!(dl.vertices[2].pos, [45.0, 27.0]); // br corner
     }
@@ -434,7 +479,12 @@ mod tests {
         };
         p.nine_slice(
             TexId::ThemeAtlas,
-            RectI { x: 0, y: 0, w: 32, h: 20 },
+            RectI {
+                x: 0,
+                y: 0,
+                w: 32,
+                h: 20,
+            },
             [0, 0, 16, 16],
             [4, 4, 4, 4],
             (64, 64),
@@ -460,7 +510,12 @@ mod tests {
         // Dst exactly two insets wide: no middle column.
         p.nine_slice(
             TexId::ThemeAtlas,
-            RectI { x: 0, y: 0, w: 8, h: 30 },
+            RectI {
+                x: 0,
+                y: 0,
+                w: 8,
+                h: 30,
+            },
             [0, 0, 16, 16],
             [4, 4, 4, 4],
             (64, 64),
@@ -480,7 +535,12 @@ mod tests {
         // 90° around the rect centre maps tl -> tr.
         p.rotated_sprite(
             TexId::DocImage(0),
-            RectI { x: 0, y: 0, w: 10, h: 10 },
+            RectI {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
             [0, 0, 10, 10],
             (10, 10),
             std::f32::consts::FRAC_PI_2,
@@ -489,6 +549,9 @@ mod tests {
             None,
         );
         let tl = dl.vertices[0].pos;
-        assert!((tl[0] - 10.0).abs() < 1e-4 && tl[1].abs() < 1e-4, "tl → tr, got {tl:?}");
+        assert!(
+            (tl[0] - 10.0).abs() < 1e-4 && tl[1].abs() < 1e-4,
+            "tl → tr, got {tl:?}"
+        );
     }
 }

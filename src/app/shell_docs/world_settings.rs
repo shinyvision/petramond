@@ -44,11 +44,11 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
             m.insert("name".into(), UiValue::Str(pack.name.clone()));
             let version = pack.version.as_ref().map(|v| format!("v{v}"));
             m.insert("has_version".into(), UiValue::Bool(version.is_some()));
-            m.insert(
-                "version".into(),
-                UiValue::Str(version.unwrap_or_default()),
-            );
-            let desc = pack.summary.clone().unwrap_or_else(|| pack.description.clone());
+            m.insert("version".into(), UiValue::Str(version.unwrap_or_default()));
+            let desc = pack
+                .summary
+                .clone()
+                .unwrap_or_else(|| pack.description.clone());
             m.insert("desc".into(), UiValue::Str(desc));
             let toggleable = pack.id.is_some();
             let enabled = match &pack.id {
@@ -97,7 +97,9 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
                         s.world_name.clone()
                     })
                     .unwrap_or_default();
-                app.ui.state_mut().set("rename_text", UiValue::Str(name.clone()));
+                app.ui
+                    .state_mut()
+                    .set("rename_text", UiValue::Str(name.clone()));
                 app.ui.focus_text_input("rename_input", &name, 48);
             }
             "rename_confirm" => {

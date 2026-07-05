@@ -65,10 +65,7 @@ pub struct FrameOutput {
 impl FrameOutput {
     /// The physical rect of instance `id` (first match).
     pub fn rect(&self, id: &str) -> Option<RectI> {
-        self.named
-            .iter()
-            .find(|(k, _)| k.id == id)
-            .map(|(_, r)| *r)
+        self.named.iter().find(|(k, _)| k.id == id).map(|(_, r)| *r)
     }
 }
 
@@ -105,11 +102,7 @@ impl UiRuntime {
         let images = args.images;
         let env = ThemeEnv {
             theme: &self.theme,
-            image_size: &|name| {
-                images
-                    .resolve(name)
-                    .map(|(_, (w, h))| (w as i32, h as i32))
-            },
+            image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
         };
         let viewport = (
             (args.screen.0 as i32) / scale,
@@ -130,7 +123,9 @@ impl UiRuntime {
             let NodeKind::Scroll { axis } = inst.node.kind else {
                 continue;
             };
-            let Some(key) = inst.key.clone() else { continue };
+            let Some(key) = inst.key.clone() else {
+                continue;
+            };
             let (viewport_len, content_len) = widget::scroll_lengths(
                 axis,
                 solved.rects[i as usize],
@@ -423,13 +418,21 @@ mod tests {
 
         let ev = h.frame(&[down(bx, by), up(bx, by)]);
         assert!(
-            ev.iter().any(|e| matches!(e, UiEvent::Click { id, .. } if id == "ok")),
+            ev.iter()
+                .any(|e| matches!(e, UiEvent::Click { id, .. } if id == "ok")),
             "{ev:?}"
         );
 
         // Press in, drag out, release: no click.
-        let ev = h.frame(&[down(bx, by), InputEvent::PointerMove { x: 1.0, y: 1.0 }, up(1.0, 1.0)]);
-        assert!(!ev.iter().any(|e| matches!(e, UiEvent::Click { .. })), "{ev:?}");
+        let ev = h.frame(&[
+            down(bx, by),
+            InputEvent::PointerMove { x: 1.0, y: 1.0 },
+            up(1.0, 1.0),
+        ]);
+        assert!(
+            !ev.iter().any(|e| matches!(e, UiEvent::Click { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
@@ -464,15 +467,19 @@ mod tests {
         let y = (r.y + r.h / 2) as f32;
         let ev = h.frame(&[down(x, y)]);
         assert!(
-            ev.iter().any(|e| matches!(e, UiEvent::SliderChange { id, value, committed: false, .. }
-                if id == "vol" && *value == 50.0)),
+            ev.iter().any(
+                |e| matches!(e, UiEvent::SliderChange { id, value, committed: false, .. }
+                if id == "vol" && *value == 50.0)
+            ),
             "{ev:?}"
         );
         let end = r.x as f32 + r.w as f32 + 50.0; // drag past the end clamps to max
         let ev = h.frame(&[InputEvent::PointerMove { x: end, y }, up(end, y)]);
         assert!(
-            ev.iter().any(|e| matches!(e, UiEvent::SliderChange { value, committed: true, .. }
-                if *value == 100.0)),
+            ev.iter().any(
+                |e| matches!(e, UiEvent::SliderChange { value, committed: true, .. }
+                if *value == 100.0)
+            ),
             "{ev:?}"
         );
     }
@@ -486,11 +493,15 @@ mod tests {
             down(ix, iy),
             InputEvent::Char { ch: 'H' },
             InputEvent::Char { ch: 'i' },
-            InputEvent::Key { key: NavKey::Enter, shift: false },
+            InputEvent::Key {
+                key: NavKey::Enter,
+                shift: false,
+            },
         ]);
         assert!(
-            ev.iter()
-                .any(|e| matches!(e, UiEvent::TextChanged { id, text } if id == "name" && text == "Hi")),
+            ev.iter().any(
+                |e| matches!(e, UiEvent::TextChanged { id, text } if id == "name" && text == "Hi")
+            ),
             "{ev:?}"
         );
         assert!(
@@ -500,10 +511,16 @@ mod tests {
         );
         // Unfocused chars go nowhere; ESC blurs first.
         let ev = h.frame(&[
-            InputEvent::Key { key: NavKey::Escape, shift: false },
+            InputEvent::Key {
+                key: NavKey::Escape,
+                shift: false,
+            },
             InputEvent::Char { ch: 'X' },
         ]);
-        assert!(!ev.iter().any(|e| matches!(e, UiEvent::TextChanged { .. })), "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, UiEvent::TextChanged { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
@@ -533,10 +550,20 @@ mod tests {
         let sc = h.out.rect("sc").unwrap();
         let (sx, sy) = ((sc.x + sc.w / 2) as f32, (sc.y + sc.h / 2) as f32);
         // Content: 6 rows × 20 = 120; viewport 40 → max offset 80.
-        h.frame(&[InputEvent::PointerMove { x: sx, y: sy }, InputEvent::Scroll { delta: 500 }]);
+        h.frame(&[
+            InputEvent::PointerMove { x: sx, y: sy },
+            InputEvent::Scroll { delta: 500 },
+        ]);
         h.frame(&[]);
-        let key = InstKey { id: "sc".into(), item: None };
-        assert_eq!(h.fs.scroll_offset(&key), 80, "clamped to content - viewport");
+        let key = InstKey {
+            id: "sc".into(),
+            item: None,
+        };
+        assert_eq!(
+            h.fs.scroll_offset(&key),
+            80,
+            "clamped to content - viewport"
+        );
         h.frame(&[InputEvent::Scroll { delta: -500 }]);
         h.frame(&[]);
         assert_eq!(h.fs.scroll_offset(&key), 0);
@@ -552,7 +579,10 @@ mod tests {
         // 200x200 at 0,0 filling everything, so instead verify a click on
         // empty panel space does NOT emit ClickOutside.
         let ev = h.frame(&[down(300.0, 390.0)]);
-        assert!(!ev.iter().any(|e| matches!(e, UiEvent::ClickOutside { .. })), "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, UiEvent::ClickOutside { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
@@ -606,7 +636,12 @@ mod tests {
             (cell4.rect.y + cell4.rect.h / 2) as f32,
         );
         let ev = frame(
-            &[InputEvent::PointerDown { x: cx, y: cy, button: PointerButton::Secondary, shift: true }],
+            &[InputEvent::PointerDown {
+                x: cx,
+                y: cy,
+                button: PointerButton::Secondary,
+                shift: true,
+            }],
             &mut fs,
             &mut out,
         );
@@ -626,6 +661,10 @@ mod tests {
         assert!(!h.out.draw.is_empty());
         assert!(h.out.draw.batches.len() > 1);
         let total: u32 = h.out.draw.batches.iter().map(|b| b.count).sum();
-        assert_eq!(total as usize, h.out.draw.vertices.len(), "batches tile the vertex buffer");
+        assert_eq!(
+            total as usize,
+            h.out.draw.vertices.len(),
+            "batches tile the vertex buffer"
+        );
     }
 }

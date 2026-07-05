@@ -30,7 +30,7 @@ pub mod validate;
 mod widget;
 
 pub use doc::{
-    AbsPos, Align, AlertLevel, Anchor, AnchorEdge, Bindings, Dir, DocClass, DocError, Document,
+    AbsPos, AlertLevel, Align, Anchor, AnchorEdge, Bindings, Dir, DocClass, DocError, Document,
     GaugeMode, ImageFit, Justify, LayoutProps, Node, NodeKind, ScrollAxis, Size, FORMAT_VERSION,
 };
 pub use input::{FrameState, InputEvent, NavKey, PointerButton, PreviewState, UiEvent};

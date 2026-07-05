@@ -69,12 +69,13 @@ impl App {
         };
 
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
-        // No first-person hand behind the pause menu, under the sleep fade, or
-        // while dead.
-        renderer.set_hand_visible(!matches!(
-            self.screen,
-            crate::app::AppScreen::Pause | crate::app::AppScreen::Sleeping | crate::app::AppScreen::Dead
-        ));
+        self.sleep_interact_hand_t = (self.sleep_interact_hand_t - dt).max(0.0);
+        let hand_visible = match self.screen {
+            crate::app::AppScreen::Pause | crate::app::AppScreen::Dead => false,
+            crate::app::AppScreen::Sleeping => self.sleep_interact_hand_t > 0.0,
+            _ => true,
+        };
+        renderer.set_hand_visible(hand_visible);
 
         // The hurt shake: a short decaying jitter on the camera look and the
         // hand's screen position. Presentation-only — the sim camera state is
@@ -197,12 +198,8 @@ impl App {
             self.scene.bake(&presentation);
         }
         self.scene.upload(renderer);
-        let mut ui = ui_snapshot::build(
-            Some(game),
-            self.screen,
-            screen_size,
-            self.pointer.cursor(),
-        );
+        let mut ui =
+            ui_snapshot::build(Some(game), self.screen, screen_size, self.pointer.cursor());
         ui.hurt_flash = shake.flash;
         if doc_kind.is_some() {
             // A document draws this screen's chrome: hand build_ui the

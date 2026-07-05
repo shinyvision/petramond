@@ -81,10 +81,7 @@ fn cursor_over_menu(app: &mut App, screen: (u32, u32), want: MenuSlot) -> (f32, 
             .and_then(|role| role.menu_slot(slot.index as usize));
         if hit == Some(want) {
             let r = slot.rect;
-            return (
-                r.x as f32 + r.w as f32 * 0.5,
-                r.y as f32 + r.h as f32 * 0.5,
-            );
+            return (r.x as f32 + r.w as f32 * 0.5, r.y as f32 + r.h as f32 * 0.5);
         }
     }
     panic!("no document slot cell maps to {want:?}");

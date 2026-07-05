@@ -89,17 +89,18 @@ impl Renderer {
             // mutably alongside the immutable `held_item` borrow, then restore.
             let mut hv = std::mem::take(&mut self.hand_verts);
             let mut hi = std::mem::take(&mut self.hand_indices);
-            let mvp = self.hand_shake_mat() * build_hand_lit(
-                &self.held_item,
-                aspect,
-                crate::render::lighting::DynLight {
-                    sky: self.held_item_skylight,
-                    block: self.held_item_blocklight,
-                },
-                self.held_item_warm,
-                &mut hv,
-                &mut hi,
-            );
+            let mvp = self.hand_shake_mat()
+                * build_hand_lit(
+                    &self.held_item,
+                    aspect,
+                    crate::render::lighting::DynLight {
+                        sky: self.held_item_skylight,
+                        block: self.held_item_blocklight,
+                    },
+                    self.held_item_warm,
+                    &mut hv,
+                    &mut hi,
+                );
             if !hi.is_empty() {
                 self.queue
                     .write_buffer(&self.model3d_vbuf, 0, bytemuck::cast_slice(&hv));
@@ -170,8 +171,9 @@ impl Renderer {
                     self.held_is_model = true;
                 }
                 self.item3d_verts = iv;
-            } else if let Some((tile, mvp)) = crate::render::hand::held_sprite(&self.held_item, aspect)
-                .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
+            } else if let Some((tile, mvp)) =
+                crate::render::hand::held_sprite(&self.held_item, aspect)
+                    .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
             {
                 let mut iv = std::mem::take(&mut self.item3d_verts);
                 let count = crate::render::item_model::build_extruded_item_lit(

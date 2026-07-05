@@ -37,7 +37,10 @@ const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
 /// How long the hurt screen/hand shake (and red edge flash) lasts. Punchy and
 /// short: an unmistakable "get out of here", not a lasting wobble.
-const HURT_SHAKE_SECS: f32 = 0.45;
+const HURT_SHAKE_SECS: f32 = 0.25;
+/// How long the hand remains visible after a bed click that opens the sleep
+/// overlay, giving the interact jab time to read before the sleeping view takes over.
+const SLEEP_INTERACT_HAND_SECS: f32 = 0.30;
 
 pub struct App {
     game: Option<Game>,
@@ -82,6 +85,9 @@ pub struct App {
     /// [`HURT_SHAKE_SECS`] when a `player_damaged` event arrives and decayed by
     /// render time. Presentation-only.
     hurt_shake_t: f32,
+    /// Seconds left to keep the hand visible over the sleep overlay after the
+    /// bed interaction jab starts. Presentation-only.
+    sleep_interact_hand_t: f32,
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     /// The World Settings session for the selected world (`None` unless the
@@ -131,6 +137,7 @@ impl App {
             last_render: now_seconds(),
             hand: HandTriggers::default(),
             hurt_shake_t: 0.0,
+            sleep_interact_hand_t: 0.0,
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,
@@ -184,8 +191,7 @@ impl App {
                 // Not from a shell screen, and not over the sleep/death
                 // overlays — an inventory opened over a running sleep would
                 // strand the overlay's tick-owned state behind another screen.
-                if self.game.is_some() && !self.screen.shell_open() && !self.screen.overlay_open()
-                {
+                if self.game.is_some() && !self.screen.shell_open() && !self.screen.overlay_open() {
                     self.toggle_inventory();
                 }
                 true

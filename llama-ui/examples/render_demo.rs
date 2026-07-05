@@ -67,10 +67,8 @@ fn main() {
     let theme = Arc::new(match std::env::var("LLAMA_UI_THEME_DIR") {
         Ok(dir) => {
             let dir = std::path::PathBuf::from(dir);
-            let json =
-                std::fs::read_to_string(dir.join("theme.json")).expect("read theme.json");
-            Theme::load(&json, &|rel| std::fs::read(dir.join(rel)).ok())
-                .expect("theme loads")
+            let json = std::fs::read_to_string(dir.join("theme.json")).expect("read theme.json");
+            Theme::load(&json, &|rel| std::fs::read(dir.join(rel)).ok()).expect("theme loads")
         }
         Err(_) => Theme::placeholder(),
     });
@@ -85,16 +83,20 @@ fn main() {
     state.set("cook", UiValue::F32(0.6));
     state.set("burn", UiValue::F32(0.4));
     state.set("mod_sel", UiValue::I32(1));
-    let mods: Vec<UiMap> = [("Smoke Test", "v0.1.0", true), ("Zombies", "v0.1.0", false), ("Wheel", "v0.2.3", true)]
-        .iter()
-        .map(|(n, v, e)| {
-            let mut m = UiMap::new();
-            m.insert("name".into(), UiValue::Str((*n).into()));
-            m.insert("version".into(), UiValue::Str((*v).into()));
-            m.insert("enabled".into(), UiValue::Bool(*e));
-            m
-        })
-        .collect();
+    let mods: Vec<UiMap> = [
+        ("Smoke Test", "v0.1.0", true),
+        ("Zombies", "v0.1.0", false),
+        ("Wheel", "v0.2.3", true),
+    ]
+    .iter()
+    .map(|(n, v, e)| {
+        let mut m = UiMap::new();
+        m.insert("name".into(), UiValue::Str((*n).into()));
+        m.insert("version".into(), UiValue::Str((*v).into()));
+        m.insert("enabled".into(), UiValue::Bool(*e));
+        m
+    })
+    .collect();
     state.set("mods", UiValue::List(Arc::new(mods)));
 
     let rt = UiRuntime::new(doc, theme.clone());

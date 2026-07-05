@@ -271,7 +271,11 @@ impl PaintCtx<'_> {
                 } else {
                     "default"
                 };
-                if let Some(face) = self.theme.part("slider.handle").and_then(|p| p.face(hstate)) {
+                if let Some(face) = self
+                    .theme
+                    .part("slider.handle")
+                    .and_then(|p| p.face(hstate))
+                {
                     p.sprite(TexId::ThemeAtlas, handle, face.rect, atlas, [1.0; 4], clip);
                 }
             }
@@ -315,7 +319,12 @@ impl PaintCtx<'_> {
                         if view.show_cursor {
                             let cx = text_rect.x + view.cursor as i32 * crate::text::ADVANCE - 1;
                             p.solid(
-                                RectI { x: cx, y: ty - 1, w: 1, h: crate::text::GLYPH_H + 2 },
+                                RectI {
+                                    x: cx,
+                                    y: ty - 1,
+                                    w: 1,
+                                    h: crate::text::GLYPH_H + 2,
+                                },
                                 text_color("text"),
                                 clip,
                             );
@@ -524,7 +533,10 @@ impl PaintCtx<'_> {
         }
 
         // Scrollbar chrome overlays the scroll node's children.
-        if let NodeKind::Scroll { axis: ScrollAxis::Vertical } = inst.node.kind {
+        if let NodeKind::Scroll {
+            axis: ScrollAxis::Vertical,
+        } = inst.node.kind
+        {
             let content = self.solved.scroll_content[i as usize].unwrap_or((0, 0));
             let offset = inst
                 .key
@@ -532,9 +544,13 @@ impl PaintCtx<'_> {
                 .map(|k| self.fs.scroll_offset(k))
                 .unwrap_or(0);
             let view = widget::scroll_view_rect(self.theme, inst.node, rect);
-            if let Some((track, thumb)) =
-                widget::scrollbar(view, rect.h, content.1, offset, self.theme.metrics.scrollbar_w)
-            {
+            if let Some((track, thumb)) = widget::scrollbar(
+                view,
+                rect.h,
+                content.1,
+                offset,
+                self.theme.metrics.scrollbar_w,
+            ) {
                 if let Some(face) = self
                     .theme
                     .part("scrollbar.track")

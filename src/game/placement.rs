@@ -111,6 +111,7 @@ impl Game {
             // the sleep (see `game::bed`); the app opens the sleep overlay via
             // the open request this queues.
             BlockInteraction::Sleep => {
+                events.bed_interacted = true;
                 self.start_sleep(h.block);
                 true
             }

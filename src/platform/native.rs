@@ -159,10 +159,7 @@ impl ApplicationHandler for NativeHost {
         apply_cursor_policy(
             self.window.as_ref().unwrap(),
             &mut self.cursor_policy,
-            self.app
-                .as_ref()
-                .unwrap()
-                .cursor_policy(),
+            self.app.as_ref().unwrap().cursor_policy(),
         );
     }
 
@@ -278,11 +275,7 @@ impl ApplicationHandler for NativeHost {
                 _ => {}
             },
             WindowEvent::RedrawRequested => {
-                apply_cursor_policy(
-                    window,
-                    &mut self.cursor_policy,
-                    app.cursor_policy(),
-                );
+                apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
                 // The host requests this once per `App::update`; the simulation itself
                 // advances in `about_to_wait`.
                 let render_start = Instant::now();

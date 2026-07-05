@@ -50,6 +50,27 @@ fn sleep_overlay_closes_when_the_tick_reports_the_sleep_ended() {
 }
 
 #[test]
+fn bed_interaction_latches_hand_jab_for_sleep_overlay() {
+    let mut app = app();
+    let mut ev = events();
+    ev.bed_interacted = true;
+    ev.open_sleep = true;
+
+    app.handle_open_screen_events(&ev);
+    app.latch_game_event_hand_triggers(&ev);
+
+    assert!(matches!(app.screen, AppScreen::Sleeping));
+    assert!(
+        app.hand.placed,
+        "bed interaction plays the softer interact jab"
+    );
+    assert!(
+        app.sleep_interact_hand_t > 0.0,
+        "sleep keeps the hand visible briefly so the jab can render"
+    );
+}
+
+#[test]
 fn death_opens_the_death_screen_and_only_respawn_leaves_it() {
     let mut app = app();
     let mut ev = events();

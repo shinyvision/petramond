@@ -16,7 +16,10 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     // (renamed worlds keep their original directory).
     let exists = !name.is_empty()
         && (crate::save::world_exists(&name)
-            || app.worlds.iter().any(|w| w.name.eq_ignore_ascii_case(&name)));
+            || app
+                .worlds
+                .iter()
+                .any(|w| w.name.eq_ignore_ascii_case(&name)));
     state.set("name_exists", UiValue::Bool(exists));
     state.set("can_create", UiValue::Bool(!name.is_empty() && !exists));
 }
@@ -48,7 +51,10 @@ fn create(app: &mut App) {
         .trim()
         .to_owned();
     let taken = crate::save::world_exists(&name)
-        || app.worlds.iter().any(|w| w.name.eq_ignore_ascii_case(&name));
+        || app
+            .worlds
+            .iter()
+            .any(|w| w.name.eq_ignore_ascii_case(&name));
     if name.is_empty() || taken {
         return;
     }

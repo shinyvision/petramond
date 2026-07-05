@@ -81,11 +81,7 @@ pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
 /// role slots (mod GUIs are widgets-only; shell screens have no item slots).
 pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
-        GuiKind::Chest => SlotContract::new(&[
-            ("storage", 27),
-            ("player_inv", 27),
-            ("hotbar", 9),
-        ]),
+        GuiKind::Chest => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
         GuiKind::Inventory => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
@@ -289,7 +285,10 @@ mod tests {
             "llama:hotbar",
             "llama:furnace",
         ] {
-            assert!(kinds.contains_key(key), "{key} missing from bindings catalog");
+            assert!(
+                kinds.contains_key(key),
+                "{key} missing from bindings catalog"
+            );
         }
     }
 

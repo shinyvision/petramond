@@ -175,9 +175,7 @@ mod tests {
         assert_eq!(morning_after(9_000), CYCLE_TICKS + FRESH_CLOCK);
         assert_eq!(morning_after(FRESH_CLOCK), CYCLE_TICKS + FRESH_CLOCK);
         // The target is always "early morning": same day fraction as fresh.
-        assert!(
-            (day_fraction(morning_after(123_456)) - day_fraction(FRESH_CLOCK)).abs() < 1e-6
-        );
+        assert!((day_fraction(morning_after(123_456)) - day_fraction(FRESH_CLOCK)).abs() < 1e-6);
 
         let mut world = World::new(1, 1);
         world.mod_kv_set(CLOCK_KEY.into(), 9_000u64.to_le_bytes().to_vec());

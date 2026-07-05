@@ -17,7 +17,7 @@
 
 use crate::block::{Block, BlockInteraction};
 use crate::mathh::{IVec3, Vec3};
-use crate::player::{BedSpawn, MAX_HEALTH};
+use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
 
 use super::tick::TickEvents;
@@ -61,7 +61,11 @@ impl Game {
         // the mattress (movement input is off while the sleep screen is up).
         self.player.teleport(group_centre(&cells));
         self.player.vel = Vec3::ZERO;
+        self.player.pitch = PITCH_LIMIT;
+        self.cam.yaw = self.player.yaw;
+        self.cam.pitch = self.player.pitch;
         self.sleep = Some(SleepState { base, progress: 0 });
+        self.sync_camera_to_player_eye(0.0);
         self.request_open_sleep = true;
     }
 
