@@ -187,11 +187,29 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
     ))
 }
 
+/// Where the first-person item sits relative to the camera (view units = blocks;
+/// camera at origin looking down −Z): the vanilla right-hand anchor, the same point
+/// Blockbench's first-person preview seats its `display_area` at (its "monitor"
+/// reference: `(9.039, −8.318+24, 20.8)` pixels against a camera at `(0, 24, 32.4)`).
+/// Held bbmodel items compose their authored pose about this anchor so the in-game
+/// hold matches the Blockbench preview exactly.
+const MODEL_HAND_ANCHOR: Vec3 = Vec3::new(9.039 / 16.0, -8.318 / 16.0, -11.6 / 16.0);
+
 /// If `view` holds a bbmodel item, return its kind + the clip-space MVP to draw its
-/// actual baked model (centred in a unit cube by the baker) at the held three-quarter
-/// angle — the model counterpart of [`held_sprite`]. The renderer bakes the geometry
-/// (model atlas) and draws it through the item3d pipeline in the hand pass. `None` for a
-/// bare hand, a held block, or a sprite.
+/// actual baked model (centred in a unit cube by the baker) exactly as the authored
+/// Blockbench `firstperson_righthand` pose shows it — the model counterpart of
+/// [`held_sprite`]. The renderer bakes the geometry (model atlas) and draws it through
+/// the item3d pipeline in the hand pass. `None` for a bare hand, a held block, or a
+/// sprite.
+///
+/// The whole pose is DATA: [`ModelInstance::display_from_unit`] rebases the baked
+/// unit geometry into the authored display space (blocks about the authored block
+/// centre), [`DisplayTransform::base_matrix`] applies the authored
+/// translation/rotation/scale/pivots exactly as Blockbench's preview does (raw euler,
+/// no mirroring for the right hand), and [`MODEL_HAND_ANCHOR`] seats the result at
+/// the vanilla hand point under [`model_hand_view_proj`], the exact camera
+/// Blockbench's preview renders with. Editing the pose in Blockbench (then
+/// recompiling the `.llblock`) moves the in-game hold, no code.
 pub fn held_model(
     view: &HeldItemView,
     aspect: f32,
@@ -200,36 +218,33 @@ pub fn held_model(
     let ItemRenderKind::Model(kind) = item.render_kind() else {
         return None;
     };
-    // Orient the held model by the AUTHORED Blockbench `firstperson_righthand` pose,
-    // seated in our hand anchor, so it is held exactly as designed in Blockbench:
-    //   * rotation: composed under a 180° yaw base. Unlike the GUI icon (which must
-    //     also mirror its euler — see `ui::icon::gui_rotation`), the first-person
-    //     context takes the RAW euler; vanilla's first-person path carries its own
-    //     mirror that cancels the display-frame difference. Verified against the
-    //     Blockbench first-person preview via the icon preview harness.
-    //   * scale: the authored multiplier is relative to the model's REAL size, but the
-    //     baker centres the model to a unit cube (divides by its largest footprint
-    //     axis), so multiply the span back in. 1.25 calibrates the whole product so
-    //     the workbench (span 2, authored scale 0.22) keeps its original 0.55 fit.
-    //   * translation stays engine-fixed (the shared held anchor).
-    let pose = crate::block_model::display(kind).firstperson_righthand;
-    let span = {
-        let fp = crate::block_model::footprint(kind);
-        fp.iter().copied().max().unwrap_or(1).max(1) as f32
-    };
-    let scale = 1.25 * span * pose.scale[0].max(0.01);
-    let rot = Quat::from_rotation_y(std::f32::consts::PI) * pose.rotation_quat();
-    let base_model = Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, Vec3::ZERO);
-    Some((
-        kind,
-        hand_view_proj(aspect) * held_item_placement(view, aspect) * base_model,
-    ))
+    let pose = &crate::block_model::display(kind).firstperson_righthand;
+    let model = pose.base_matrix() * crate::block_model::instance(kind).display_from_unit;
+    // The swing amplitude was tuned at the legacy HAND_DEPTH; the vanilla anchor is
+    // much nearer the camera, so the punch translation scales down proportionally.
+    let placement = placement_at(view, MODEL_HAND_ANCHOR, -MODEL_HAND_ANCHOR.z / HAND_DEPTH);
+    Some((kind, model_hand_view_proj(aspect) * placement * model))
 }
 
 /// Fixed first-person perspective for the hand (independent of the world camera).
 fn hand_view_proj(aspect: f32) -> Mat4 {
     let proj = Mat4::perspective_rh(HAND_FOV_Y, aspect.max(0.0001), 0.01, 10.0);
     // Camera at origin looking down -Z; the model sits a short distance ahead.
+    let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), Vec3::Y);
+    proj * view
+}
+
+/// The camera under which Blockbench's first-person preview is SEEN: its "monitor"
+/// reference masks the (wider, `getOptimalFocalLength`) render down to a screen
+/// window of black planes — inner edges ±1.65 × ±0.93 at 1.2 units before the camera
+/// (display_references `monitor`) — and that window is the vanilla screen. Mapping
+/// our framebuffer to that window means a FIXED vertical half-extent slope of
+/// `0.93 / 1.2` (≈75.6° vertical), horizontal spanning with aspect, independent of
+/// Blockbench's render-canvas fov (window and scene geometry cancel it). Verified
+/// against a Blockbench screenshot to <1% (bed features, window-normalized).
+fn model_hand_view_proj(aspect: f32) -> Mat4 {
+    let vslope: f32 = 0.93 / 1.2;
+    let proj = Mat4::perspective_rh(2.0 * vslope.atan(), aspect.max(0.0001), 0.01, 10.0);
     let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), Vec3::Y);
     proj * view
 }
@@ -310,6 +325,13 @@ fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
 fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
     let aspect = aspect.max(0.0001);
     let rest = view_pos_from_ndc(REST_NDC_X, REST_NDC_Y, HAND_DEPTH, aspect);
+    placement_at(view, rest, 1.0)
+}
+
+/// Seat the held item at `rest` (view units) and fold in the mining-punch swing, its
+/// translation throw scaled by `throw_scale` so an item seated nearer the camera
+/// (the bbmodel anchor) jabs proportionally, not across the whole screen.
+fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
     let mut pos = rest;
     let mut rot = Quat::IDENTITY;
 
@@ -320,7 +342,10 @@ fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
         let swing_sin = (std::f32::consts::PI * s).sin();
         let swing_sq_sin = (std::f32::consts::PI * s * s).sin();
 
+        // Only the translation throw scales with the seat depth; the punch ANGLES are
+        // unit-free and keep their full arc.
         pos += amp
+            * throw_scale
             * Vec3::new(
                 -0.30 * root_sin,
                 0.40 * (std::f32::consts::TAU * s.sqrt()).sin(),
@@ -419,6 +444,142 @@ mod tests {
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
         assert!(v.is_empty(), "sprite hand emits no model3d verts");
         assert!(i.is_empty(), "sprite hand emits no model3d indices");
+    }
+
+    /// CPU-rasterize one held-model view (perspective divide, z-buffer, model-atlas
+    /// sampling — exactly what the item3d hand pass draws) into row `row` of a stacked
+    /// `w`×`h`-per-row RGB canvas. Shared by the preview harnesses below.
+    fn raster_held_cell(
+        kind: crate::block_model::BlockModelKind,
+        mvp: Mat4,
+        (w, h): (usize, usize),
+        row: usize,
+        color: &mut [u8],
+    ) {
+        use crate::render::lighting::{DynLight, LightEnv};
+        let (atlas_rgba, aw, ah) = crate::block_model::atlas().texture();
+        let (mut verts, mut indices) = (Vec::new(), Vec::new());
+        crate::render::item_model::build_block_model_item(
+            kind,
+            Mat4::IDENTITY,
+            DynLight::FULL,
+            LightEnv::IDENTITY,
+            0,
+            None,
+            &mut verts,
+            &mut indices,
+        );
+        let mut zbuf = vec![f32::INFINITY; w * h];
+        let project = |p: [f32; 3]| -> Option<[f32; 3]> {
+            let c = mvp * glam::Vec4::new(p[0], p[1], p[2], 1.0);
+            if c.w <= 1e-6 {
+                return None;
+            }
+            let n = c / c.w;
+            Some([
+                (n.x * 0.5 + 0.5) * w as f32,
+                (1.0 - (n.y * 0.5 + 0.5)) * h as f32,
+                n.z,
+            ])
+        };
+        for tri in indices.chunks_exact(3) {
+            let vtx = [
+                verts[tri[0] as usize],
+                verts[tri[1] as usize],
+                verts[tri[2] as usize],
+            ];
+            let (Some(s0), Some(s1), Some(s2)) = (
+                project(vtx[0].pos),
+                project(vtx[1].pos),
+                project(vtx[2].pos),
+            ) else {
+                continue;
+            };
+            let s = [s0, s1, s2];
+            let (x0, y0, x1, y1, x2, y2) = (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
+            let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+            if area.abs() < 1e-6 {
+                continue;
+            }
+            let inv_area = 1.0 / area;
+            let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
+            let maxx = x0.max(x1).max(x2).ceil().min(w as f32 - 1.0) as usize;
+            let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
+            let maxy = y0.max(y1).max(y2).ceil().min(h as f32 - 1.0) as usize;
+            for y in miny..=maxy {
+                for x in minx..=maxx {
+                    let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
+                    let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
+                    let w2 = 1.0 - w0 - w1;
+                    if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                        continue;
+                    }
+                    let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
+                    let li = y * w + x;
+                    if z >= zbuf[li] {
+                        continue;
+                    }
+                    let u = w0 * vtx[0].uv[0] + w1 * vtx[1].uv[0] + w2 * vtx[2].uv[0];
+                    let v = w0 * vtx[0].uv[1] + w1 * vtx[1].uv[1] + w2 * vtx[2].uv[1];
+                    let tx = (u * aw as f32).clamp(0.0, aw as f32 - 1.0) as u32;
+                    let ty = (v * ah as f32).clamp(0.0, ah as f32 - 1.0) as u32;
+                    let ti = ((ty * aw + tx) * 4) as usize;
+                    if atlas_rgba[ti + 3] < 128 {
+                        continue;
+                    }
+                    let shade = w0 * vtx[0].shade + w1 * vtx[1].shade + w2 * vtx[2].shade;
+                    zbuf[li] = z;
+                    let o = ((row * h + y) * w + x) * 3;
+                    color[o] = (atlas_rgba[ti] as f32 * shade).min(255.0) as u8;
+                    color[o + 1] = (atlas_rgba[ti + 1] as f32 * shade).min(255.0) as u8;
+                    color[o + 2] = (atlas_rgba[ti + 2] as f32 * shade).min(255.0) as u8;
+                }
+            }
+        }
+    }
+
+    /// Visual preview harness (NOT an assertion): rasterizes each held bbmodel item via
+    /// the REAL `held_model` MVP into a stacked PNG, so the in-hand pose can be checked
+    /// against Blockbench's first-person preview without launching the game.
+    /// Run: `cargo test --lib -- --ignored --nocapture render_held_model_preview`.
+    /// Writes /tmp/held_model.png.
+    #[test]
+    #[ignore = "visual preview harness; run explicitly to regenerate /tmp/held_model.png"]
+    fn render_held_model_preview() {
+        let items = [
+            ("WoodenBucket", ItemType::WoodenBucket),
+            ("WaterBucket", ItemType::WaterBucket),
+            ("FurnitureWorkbench", ItemType::FurnitureWorkbench),
+            ("Bed", ItemType::Bed),
+        ];
+        let (w, h) = (940usize, 530usize);
+        let aspect = w as f32 / h as f32;
+        let bg = [30u8, 32, 38];
+        let gh = h * items.len();
+        let mut color = vec![0u8; w * gh * 3];
+        for px in color.chunks_mut(3) {
+            px.copy_from_slice(&bg);
+        }
+        for (row, (label, item)) in items.iter().enumerate() {
+            let view = HeldItemView {
+                item: Some(*item),
+                swing: 0.0,
+                swing_scale: 1.0,
+            };
+            let (kind, mvp) = held_model(&view, aspect).expect("model item");
+            raster_held_cell(kind, mvp, (w, h), row, &mut color);
+            println!("row {row}: {label}");
+        }
+        image::save_buffer(
+            "/tmp/held_model.png",
+            &color,
+            w as u32,
+            gh as u32,
+            image::ColorType::Rgb8,
+        )
+        .expect("save png");
+        println!("wrote /tmp/held_model.png ({w}x{gh}, one row per item)");
     }
 
     #[test]

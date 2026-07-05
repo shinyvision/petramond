@@ -68,14 +68,18 @@ pub struct ModelCube {
 }
 
 /// One Blockbench `display` transform (rotation degrees, translation in 1/16-block
-/// units, scale multiplier) — how the author wants the model posed in a given context
-/// (in-hand, in the GUI, …). Cached in the `.llblock` so the held item + inventory icon
-/// can pose the model exactly as designed. Default = identity (no display entry).
+/// units, scale multiplier, plus the optional rotation/scale pivots in block units) —
+/// how the author wants the model posed in a given context (in-hand, in the GUI, …).
+/// Cached in the `.llblock` so the held item + inventory icon can pose the model
+/// exactly as designed. Default = identity (no display entry). A NEGATIVE scale
+/// component is Blockbench's "mirror" checkbox (the sign is saved into the scale).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DisplayTransform {
     pub rotation: [f32; 3],
     pub translation: [f32; 3],
     pub scale: [f32; 3],
+    pub rotation_pivot: [f32; 3],
+    pub scale_pivot: [f32; 3],
 }
 
 impl Default for DisplayTransform {
@@ -84,17 +88,39 @@ impl Default for DisplayTransform {
             rotation: [0.0; 3],
             translation: [0.0; 3],
             scale: [1.0; 3],
+            rotation_pivot: [0.0; 3],
+            scale_pivot: [0.0; 3],
         }
     }
 }
 
 impl DisplayTransform {
-    /// The display rotation as a quaternion, in the SAME euler convention as the model's
-    /// static cube tilts (so a posed item matches the in-world block). The held item +
-    /// icon orient the model by this.
-    #[inline]
-    pub fn rotation_quat(&self) -> Quat {
-        euler_quat(Vec3::from(self.rotation))
+    /// The COMPLETE display transform `T(translation) · R(rotation) · S(scale)` with the
+    /// pivot position-corrections, in BLOCK units — element-for-element the matrix
+    /// Blockbench's display preview builds in `updateDisplayBase` (display_mode.js) for
+    /// the right-hand / unmirrored contexts, so a pose renders exactly as authored.
+    /// Model points are expected relative to the authored display pivot (the block
+    /// centre — see [`BlockModel::display_pivot`] / [`ModelInstance::display_from_unit`]).
+    /// Translation is authored in pixels (16 per block); the pivots in blocks. A zero
+    /// scale component degrades to 0.001 exactly as Blockbench does; a negative one
+    /// mirrors that axis (the authored "mirror" flag).
+    pub fn base_matrix(&self) -> Mat4 {
+        let rot = euler_quat(Vec3::from(self.rotation));
+        let s = Vec3::from(self.scale);
+        let guarded = |v: f32| if v == 0.0 { 0.001 } else { v };
+        let scale = Vec3::new(guarded(s.x), guarded(s.y), guarded(s.z));
+        let mut pos = Vec3::from(self.translation) / 16.0;
+        let rp = Vec3::from(self.rotation_pivot);
+        if rp != Vec3::ZERO {
+            pos -= rot * rp - rp;
+        }
+        let sp = Vec3::from(self.scale_pivot);
+        if sp != Vec3::ZERO {
+            // Blockbench rotates the pivot FIRST, then damps it componentwise by
+            // (1 - scale) — replicated verbatim, quirks included.
+            pos += (rot * sp) * (Vec3::ONE - s);
+        }
+        Mat4::from_translation(pos) * Mat4::from_quat(rot) * Mat4::from_scale(scale)
     }
 
     fn parse(v: &Value) -> Self {
@@ -112,6 +138,8 @@ impl DisplayTransform {
             rotation: read("rotation", [0.0; 3]),
             translation: read("translation", [0.0; 3]),
             scale: read("scale", [1.0; 3]),
+            rotation_pivot: read("rotation_pivot", [0.0; 3]),
+            scale_pivot: read("scale_pivot", [0.0; 3]),
         }
     }
 }
@@ -169,6 +197,14 @@ pub struct BlockModel {
     /// The Blockbench `display` poses (hand / GUI / …), cached so the held item + slot
     /// icon orient the model exactly as authored rather than via a hardcoded angle.
     pub display: BlockDisplay,
+    /// The point (MODEL space, authored pixel coords) the `display` poses transform
+    /// about: the centre of the authored 16³ block cell. Blockbench pivots display
+    /// previews there regardless of the model's real extent, so replicating a pose
+    /// needs this exact point, not the geometric centre. Where it sits in authored
+    /// coords depends on the format's grid: centred formats (bedrock_block, …) author
+    /// x/z about 0 → pivot `(0, 8, 0)`; corner-grid formats (java_block) author
+    /// `0..16` → pivot `(8, 8, 8)`.
+    pub display_pivot: [f32; 3],
 }
 
 impl BlockModel {
@@ -186,22 +222,50 @@ impl BlockModel {
                 max: [1.0; 3],
             },
             display: BlockDisplay::default(),
+            display_pivot: [0.0, 8.0, 0.0],
         }
     }
 
-    /// Keep the cube geometry + texture from a parsed mob-frontend [`Model`] (dropping
-    /// bones/animations a block never needs) and BAKE the collision boxes + bounding box
-    /// from that geometry.
+    /// Keep the cube geometry + texture from a parsed mob-frontend [`Model`] and BAKE
+    /// the collision boxes + bounding box from that geometry. A block has no
+    /// animations, but authored GROUP rotations are part of the rest pose Blockbench
+    /// displays (the bed is authored under a 90°-turned group) — they are baked into
+    /// each cube here (composed rotation + shifted box, an exact equivalence) so the
+    /// compiled model is WYSIWYG with the Blockbench scene. Dropping them was the
+    /// 2026-07-05 "held bed 90° off" bug.
     fn from_model(m: &Model) -> Self {
+        let rest = m.rest_pose();
         let cubes: Vec<ModelCube> = m
             .cubes
             .iter()
-            .map(|c| ModelCube {
-                from: c.from,
-                to: c.to,
-                origin: c.origin,
-                rotation: c.rotation,
-                faces: c.faces,
+            .map(|c| {
+                let pose = rest.get(c.bone).copied().unwrap_or(Mat4::IDENTITY);
+                if pose.abs_diff_eq(Mat4::IDENTITY, 1e-6) {
+                    return ModelCube {
+                        from: c.from,
+                        to: c.to,
+                        origin: c.origin,
+                        rotation: c.rotation,
+                        faces: c.faces,
+                    };
+                }
+                // Fold the bone-chain pose `A` into the cube: the posed cube
+                // `A · (T(o)·Rc·T(−o))` equals a plain cube with rotation
+                // `R = A_rot·Rc` about `o' = A(o)` and its box shifted by `o' − o`
+                // (derivation: `R(p + s − o') + o' = A_rot·Rc·p + A(o) − A_rot·Rc·o`
+                // with `s = o' − o`). Faces stay attached to the cube's local axes,
+                // exactly like an authored static tilt.
+                let rot = Quat::from_mat4(&pose) * euler_quat(c.rotation);
+                let (ex, ey, ez) = rot.to_euler(glam::EulerRot::XYZ);
+                let origin = pose.transform_point3(c.origin);
+                let shift = origin - c.origin;
+                ModelCube {
+                    from: c.from + shift,
+                    to: c.to + shift,
+                    origin,
+                    rotation: Vec3::new(ex.to_degrees(), ey.to_degrees(), ez.to_degrees()),
+                    faces: c.faces,
+                }
             })
             .collect();
         // Collision = one posed AABB per SOLID cube (skip flat/degenerate — a zero-extent
@@ -239,8 +303,9 @@ impl BlockModel {
             collision,
             bounds,
             // `from_model` has only the parsed geometry; `compile` fills the display
-            // poses from the raw JSON (the mob frontend drops them).
+            // poses + pivot from the raw JSON (the mob frontend drops them).
             display: BlockDisplay::default(),
+            display_pivot: [0.0, 8.0, 0.0],
         }
     }
 }
@@ -249,10 +314,12 @@ impl CompiledAsset for BlockModel {
     /// `LLBLK` — the compiled bbmodel-block container (geometry + texture + baked
     /// collision/bounds), distinct from the mob `LLMOB` so the two never alias.
     const MAGIC: [u8; 8] = *b"LLBLK\0\0\0";
-    /// v4: model-space cubes (per-face UV) + RGBA texture + baked per-cube collision +
-    /// bounding box + the Blockbench `display` poses. (v1 had no collision/bounds; v2 no
-    /// display; v3 predates the multi-texture sheet; each bump rebuilds stale caches.)
-    const FORMAT_VERSION: u32 = 4;
+    /// v6: model-space cubes (per-face UV, group REST POSES baked in) + RGBA texture +
+    /// baked per-cube collision + bounding box + the FULL Blockbench `display` poses
+    /// (incl. rotation/scale pivots) + the authored display pivot. (v1 had no
+    /// collision/bounds; v2 no display; v3 predates the multi-texture sheet; v4 the
+    /// display pivots; v5 dropped group rest poses; each bump rebuilds stale caches.)
+    const FORMAT_VERSION: u32 = 6;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 
@@ -264,6 +331,18 @@ impl CompiledAsset for BlockModel {
         let mut model = BlockModel::from_model(&Model::load(src)?);
         let root: Value = serde_json::from_str(src).map_err(|e| format!("json: {e}"))?;
         model.display = BlockDisplay::parse(&root);
+        // The display pivot follows the authoring grid: java_block authors 0..16
+        // (corner grid), every other Blockbench format centres x/z about 0.
+        let corner_grid = root
+            .get("meta")
+            .and_then(|m| m.get("model_format"))
+            .and_then(Value::as_str)
+            == Some("java_block");
+        model.display_pivot = if corner_grid {
+            [8.0, 8.0, 8.0]
+        } else {
+            [0.0, 8.0, 0.0]
+        };
         Ok(model)
     }
 }
@@ -740,6 +819,13 @@ pub struct ModelInstance {
     /// face bias, degenerate-face culling, atlas UVs, directional shade) is resolved here
     /// once so a remesh just translates + lights the verts.
     pub oriented_render: [Vec<ModelCellTemplate>; 4],
+    /// Maps the CENTRED-UNIT item space (the `build_block_model_item` bake: footprint
+    /// centred on the origin, largest axis spanning ±0.5) back to the model's AUTHORED
+    /// display space in blocks — origin at the authored display pivot, 1 unit = 16
+    /// authored pixels. This undoes the placement fit (floor-rest, centring, fill
+    /// scale) so a Blockbench `display` pose ([`DisplayTransform::base_matrix`])
+    /// composes about the exact geometry Blockbench posed, and renders identically.
+    pub display_from_unit: Mat4,
 }
 
 impl ModelInstance {
@@ -901,6 +987,18 @@ impl ModelInstance {
                 .collect()
         });
 
+        // Centred-unit item space → authored display space (blocks about the display
+        // pivot): invert the item bake's centring (`p_fp = p_unit·uspan + fp/2`), then
+        // the footprint fit (`p_px = mn + (p_fp − lo)·per_unit`), then rebase on the
+        // pivot in blocks. Uniform scale + translation, folded into one matrix.
+        let display_from_unit = {
+            let uspan = fp.max_element().max(1.0);
+            let pivot = Vec3::from(m.display_pivot);
+            let k = uspan * per_unit / 16.0;
+            let offset = (mn + (fp * 0.5 - lo) * per_unit - pivot) / 16.0;
+            Mat4::from_translation(offset) * Mat4::from_scale(Vec3::splat(k))
+        };
+
         ModelInstance {
             footprint,
             cubes,
@@ -910,6 +1008,7 @@ impl ModelInstance {
             cube_boxes,
             oriented_cells,
             oriented_render,
+            display_from_unit,
         }
     }
 }
@@ -1897,8 +1996,78 @@ mod tests {
         );
         // The cached accessor returns the same parsed data.
         assert_eq!(display(WB).gui, gui);
-        // A quaternion is produced (finite) for posing.
-        assert!(gui.rotation_quat().to_array().iter().all(|f| f.is_finite()));
+        // A finite pose matrix is produced for posing.
+        assert!(fp
+            .base_matrix()
+            .to_cols_array()
+            .iter()
+            .all(|f| f.is_finite()));
+    }
+
+    /// The display euler must compose exactly as Blockbench/three.js 'XYZ' does
+    /// (matrix `Rx·Ry·Rz`) — the convention the in-hand pose replication depends on.
+    /// Single-axis mappings pin each axis's direction; the composed case pins the order.
+    #[test]
+    fn display_base_matrix_matches_blockbench_euler_convention() {
+        let with_rot = |r: [f32; 3]| DisplayTransform {
+            rotation: r,
+            ..Default::default()
+        };
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        // Ry(+90°): +X → −Z (yaw left, as in Blockbench's preview).
+        let m = with_rot([0.0, 90.0, 0.0]).base_matrix();
+        assert!(close(m.transform_vector3(Vec3::X), -Vec3::Z));
+        // Rx(+90°): +Y → +Z (pitch toward the viewer's side).
+        let m = with_rot([90.0, 0.0, 0.0]).base_matrix();
+        assert!(close(m.transform_vector3(Vec3::Y), Vec3::Z));
+        // Order Rx·Ry: +X goes through Ry first (→ −Z), then Rx (→ +Y).
+        let m = with_rot([90.0, 90.0, 0.0]).base_matrix();
+        assert!(close(m.transform_vector3(Vec3::X), Vec3::Y));
+    }
+
+    /// With a `rotation_pivot` authored, the pose must rotate ABOUT that point: the
+    /// pivot itself only moves by the authored translation. Pins the Blockbench
+    /// position-correction algorithm (`pos -= R·piv − piv`).
+    #[test]
+    fn display_base_matrix_rotates_about_the_authored_pivot() {
+        let piv = Vec3::new(0.25, -0.5, 0.125);
+        let t = DisplayTransform {
+            rotation: [16.0, 14.0, 4.0],
+            translation: [1.0, 2.0, 3.0],
+            rotation_pivot: piv.to_array(),
+            ..Default::default()
+        };
+        let moved = t.base_matrix().transform_point3(piv);
+        let expected = piv + Vec3::new(1.0, 2.0, 3.0) / 16.0;
+        assert!(
+            (moved - expected).length() < 1e-5,
+            "pivot must stay fixed under rotation (moved to {moved:?}, expected {expected:?})"
+        );
+    }
+
+    /// `display_from_unit` must be a POSITIVE uniform rescale + translation — no
+    /// rotation, no mirrored axis. Any flip smuggled in here (the historical 180°-yaw /
+    /// mirrored-euler hand bugs) would silently mis-pose every held model again.
+    #[test]
+    fn display_from_unit_is_an_unmirrored_uniform_rescale() {
+        let m = instance(WB).display_from_unit;
+        let (x, y, z) = (
+            m.transform_vector3(Vec3::X),
+            m.transform_vector3(Vec3::Y),
+            m.transform_vector3(Vec3::Z),
+        );
+        for (v, axis) in [(x, Vec3::X), (y, Vec3::Y), (z, Vec3::Z)] {
+            let k = v.dot(axis);
+            assert!(k > 0.0, "axis {axis:?} must keep its direction, got {v:?}");
+            assert!(
+                (v - axis * k).length() < 1e-6,
+                "axis {axis:?} must not rotate, got {v:?}"
+            );
+        }
+        assert!(
+            (x.length() - y.length()).abs() < 1e-6 && (y.length() - z.length()).abs() < 1e-6,
+            "rescale must be uniform"
+        );
     }
 
     #[test]

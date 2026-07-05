@@ -34,21 +34,21 @@
       "key": "llama:bed_frame",
       "model_file": "models/blocks/bed_frame.bbmodel",
       "cells": [
-        2,
         1,
-        1
+        1,
+        2
       ],
-      "orientation": "front_to_back"
+      "orientation": "left_to_right"
     },
     {
       "key": "llama:bed",
       "model_file": "models/blocks/bed.bbmodel",
       "cells": [
-        2,
         1,
-        1
+        1,
+        2
       ],
-      "orientation": "front_to_back"
+      "orientation": "left_to_right"
     }
   ]
 }
