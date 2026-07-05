@@ -128,6 +128,7 @@ mod tests {
 
     fn ctx<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3, player: Vec3) -> AiCtx<'a> {
         AiCtx {
+            mob_id: 1,
             pos,
             cell: crate::mathh::voxel_at(pos),
             yaw: 0.0,

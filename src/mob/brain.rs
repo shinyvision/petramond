@@ -51,6 +51,9 @@ pub struct AiMob {
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors
 /// mutate only their own state + the shared [`MobRng`]; the world is read-only.
 pub struct AiCtx<'a> {
+    /// The mob's stable id (spawn-counter identity) — scripted (WASM) nodes
+    /// key per-mob guest state off it.
+    pub mob_id: u64,
     /// Mob feet position (world space).
     pub pos: Vec3,
     /// Mob foothold cell (the voxel its feet occupy).
@@ -196,6 +199,7 @@ mod tests {
 
     fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
         AiCtx {
+            mob_id: 1,
             pos: Vec3::ZERO,
             cell: IVec3::ZERO,
             yaw: 0.0,

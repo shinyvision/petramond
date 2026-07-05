@@ -322,6 +322,7 @@ mod tests {
         pos: Vec3,
     ) -> AiCtx<'a> {
         AiCtx {
+            mob_id: 1,
             pos,
             cell: IVec3::new(
                 pos.x.floor() as i32,

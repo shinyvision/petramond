@@ -607,6 +607,13 @@ pub enum HostCall {
     /// for every hook that fires on such a block. Legal ONLY during
     /// `mod_init`. → [`HostRet::Unit`].
     RegisterBlockBehavior { key: String, callback_id: u32 },
+
+    // --- Scripted AI nodes (landed 2026-07-06) ------------------------------
+    /// Register the scripted AI node for `mobs.json` brain rows whose `node`
+    /// key is `key` — a `mod_id:name` owned by THIS pack. The engine then
+    /// dispatches [`GuestCall::AiNode`] with `callback_id` once per owning
+    /// mob per game tick. Legal ONLY during `mod_init`. → [`HostRet::Unit`].
+    RegisterAiNode { key: String, callback_id: u32 },
 }
 
 /// Which [`BlockBehavior`](GuestCall::BlockBehavior) hook fired — the mod-side
@@ -748,6 +755,50 @@ pub enum GuestCall {
         kind: BlockHookKind,
         pos: [i32; 3],
     },
+
+    // --- Scripted AI nodes (landed 2026-07-06) ------------------------------
+    /// One AI decision for one mob, this tick — the node the mod registered
+    /// via [`HostCall::RegisterAiNode`]. DECISION-ONLY: the dispatch runs
+    /// inside the mob tick with NO simulation scope, so sim host calls
+    /// (world edits, spawns, player state) error here; core calls (RNG, log,
+    /// tick) work. Return desires in [`GuestRet::AiDecision`]; the engine's
+    /// brain arbitration merges them by the brain row's priority.
+    /// → [`GuestRet::AiDecision`].
+    AiNode { callback_id: u32, ctx: AiNodeCtx },
+}
+
+/// The read-only mob snapshot an [`GuestCall::AiNode`] decision sees.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AiNodeCtx {
+    /// Stable id of the deciding mob — key per-mob guest state off it.
+    pub mob_id: u64,
+    /// Mob feet position (world space).
+    pub pos: [f32; 3],
+    /// Mob foothold voxel.
+    pub cell: [i32; 3],
+    /// Body facing (radians).
+    pub yaw: f32,
+    /// Player body-centre (world space).
+    pub player_pos: [f32; 3],
+    /// True when the navigator has no active path ("the mob is idle").
+    pub nav_idle: bool,
+    /// True when the mob's body is in water.
+    pub in_water: bool,
+}
+
+/// One scripted node's contribution to a mob's tick. Every field defaults to
+/// "no opinion"; the engine keeps the highest-priority non-`None` value per
+/// field across the whole brain (scripted and engine nodes alike).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct AiNodeDecision {
+    /// A navigation destination (world voxel) to path toward.
+    pub goal: Option<[i32; 3]>,
+    /// A desired head orientation `[yaw, pitch]` relative to the body.
+    pub head_look: Option<[f32; 2]>,
+    /// An `idle_*` animation index to play.
+    pub idle_anim: Option<u8>,
+    /// A melee strike `[damage, knockback]` to land on the player this tick.
+    pub attack: Option<[f32; 2]>,
 }
 
 /// Guest → host reply for a [`GuestCall`].
@@ -775,6 +826,9 @@ pub enum GuestRet {
     /// Reply to [`GuestCall::HostileSpawnCandidate`]: `Some(registry_key)` to
     /// ask core to spawn that hostile species here, `None` to reject this site.
     HostileSpawn(Option<String>),
+    /// Reply to [`GuestCall::AiNode`]: the node's desires for this mob this
+    /// tick (`None` = no opinion on anything, same as the default decision).
+    AiDecision(Option<AiNodeDecision>),
 }
 
 /// Pack a guest-memory buffer address for the `u64` return lane of
@@ -1003,6 +1057,28 @@ mod tests {
             kind: BlockHookKind::ScheduledTick,
             pos: [4, 65, -2],
         });
+        roundtrip(HostCall::RegisterAiNode {
+            key: "mymod:levitate".into(),
+            callback_id: 9,
+        });
+        roundtrip(GuestCall::AiNode {
+            callback_id: 9,
+            ctx: AiNodeCtx {
+                mob_id: 42,
+                pos: [1.5, 64.0, -3.5],
+                cell: [1, 64, -4],
+                yaw: 0.5,
+                player_pos: [8.0, 65.0, 8.0],
+                nav_idle: true,
+                in_water: false,
+            },
+        });
+        roundtrip(GuestRet::AiDecision(Some(AiNodeDecision {
+            goal: Some([3, 64, 2]),
+            head_look: None,
+            idle_anim: Some(1),
+            attack: Some([2.0, 6.0]),
+        })));
         roundtrip(EventPayload::ContainerOpened {
             kind: ContainerKind::Mod {
                 key: "wheel:wheel".into(),

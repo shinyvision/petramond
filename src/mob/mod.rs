@@ -353,7 +353,7 @@ impl BrainNode {
     /// Run the factory once, discarding the behavior — the loader's validation pass,
     /// so a bad row fails the catalog load instead of the first spawn.
     fn validate(&self, def: &'static MobDef) -> Result<(), String> {
-        (self.factory)(self.params, def).map(|_| ())
+        (self.factory)(self.node, self.params, def).map(|_| ())
     }
 }
 
@@ -363,12 +363,13 @@ impl BrainNode {
 pub(crate) fn build_brain(def: &'static MobDef) -> Brain {
     let mut brain = Brain::new();
     for node in def.brain {
-        let behavior: Box<dyn AiBehavior> = (node.factory)(node.params, def).unwrap_or_else(|e| {
-            panic!(
-                "mob '{}': brain node '{}' failed after load validation: {e}",
-                def.name, node.node
-            )
-        });
+        let behavior: Box<dyn AiBehavior> = (node.factory)(node.node, node.params, def)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "mob '{}': brain node '{}' failed after load validation: {e}",
+                    def.name, node.node
+                )
+            });
         brain = brain.with_boxed(node.priority, behavior);
     }
     brain

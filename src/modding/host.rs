@@ -128,6 +128,11 @@ pub(super) enum Registration {
         key: String,
         callback_id: u32,
     },
+    AiNode {
+        /// The namespaced `mobs.json` brain-row `node` key this mod handles.
+        key: String,
+        callback_id: u32,
+    },
 }
 
 impl Registration {
@@ -301,6 +306,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::RegisterEventHandler { .. }
         | HostCall::RegisterHostileSpawner { .. }
         | HostCall::RegisterBlockBehavior { .. }
+        | HostCall::RegisterAiNode { .. }
         | HostCall::ShaderSetParam { .. } => handle_core_call(data, call),
         HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
@@ -396,6 +402,15 @@ fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                 ));
             }
             data.register(Registration::BlockBehavior { key, callback_id })
+        }
+        HostCall::RegisterAiNode { key, callback_id } => {
+            if !key_owned_by_namespace(&data.mod_id, &key) {
+                return HostRet::Error(format!(
+                    "AI node key '{key}' must be namespaced '{}:name'",
+                    data.mod_id
+                ));
+            }
+            data.register(Registration::AiNode { key, callback_id })
         }
         HostCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
         {

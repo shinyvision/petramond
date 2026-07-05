@@ -110,6 +110,15 @@ pub trait Mod: Default {
     /// tick right after the world's own scheduled/random ticks; edit the
     /// world through the sim host calls ([`set_block`], [`schedule_tick`], …).
     fn block_hook(&mut self, _callback_id: u32, _kind: BlockHookKind, _pos: [i32; 3]) {}
+
+    /// One AI decision for one mob this tick, for a brain-row `node` key this
+    /// mod registered via [`register_ai_node`]. DECISION-ONLY: the dispatch
+    /// runs mid-mob-tick with no simulation scope, so sim host calls error
+    /// here (RNG/log/tick work). Return `None` (or default fields) for "no
+    /// opinion"; the engine merges by the brain row's priority.
+    fn ai_node(&mut self, _callback_id: u32, _ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+        None
+    }
 }
 
 /// Log a line through the engine's logger.
@@ -185,6 +194,20 @@ pub fn register_block_behavior(key: &str, callback_id: u32) {
     __rt::expect_unit(
         "RegisterBlockBehavior",
         __rt::host_call(&HostCall::RegisterBlockBehavior {
+            key: key.to_owned(),
+            callback_id,
+        }),
+    );
+}
+
+/// Register the scripted AI node for `mobs.json` brain rows whose `node` key
+/// is `key` (must be this mod's own `mod_id:name`). Only legal during
+/// [`Mod::init`]; the engine echoes `callback_id` to [`Mod::ai_node`] once
+/// per owning mob per game tick.
+pub fn register_ai_node(key: &str, callback_id: u32) {
+    __rt::expect_unit(
+        "RegisterAiNode",
+        __rt::host_call(&HostCall::RegisterAiNode {
             key: key.to_owned(),
             callback_id,
         }),
@@ -1081,6 +1104,9 @@ pub mod __rt {
             } => {
                 mod_.block_hook(callback_id, kind, pos);
                 GuestRet::Unit
+            }
+            GuestCall::AiNode { callback_id, ctx } => {
+                GuestRet::AiDecision(mod_.ai_node(callback_id, &ctx))
             }
         };
         to_wire(&mod_api::encode(&ret).expect("encode guest reply"))

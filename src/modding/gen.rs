@@ -343,6 +343,7 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
         GuestRet::GenBlocks(_) => "GenBlocks",
         GuestRet::GenBiomes(_) => "GenBiomes",
         GuestRet::HostileSpawn(_) => "HostileSpawn",
+        GuestRet::AiDecision(_) => "AiDecision",
     };
     format!("{call} expected a {expected} reply, got {got}")
 }
@@ -416,7 +417,8 @@ impl GenHooksBuilder {
             Registration::TickSystem { .. }
             | Registration::EventHandler { .. }
             | Registration::HostileSpawner { .. }
-            | Registration::BlockBehavior { .. } => {}
+            | Registration::BlockBehavior { .. }
+            | Registration::AiNode { .. } => {}
         }
     }
 

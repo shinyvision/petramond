@@ -17,6 +17,7 @@
 //! wiki page. A trapping / deadline-blowing / protocol-breaking mod is
 //! disabled for the session with a visible error and the tick continues.
 
+pub(crate) mod ai;
 mod convert;
 pub(crate) mod gen;
 mod host;
@@ -187,6 +188,8 @@ impl ModHost {
         next_spatial_sound_handle: &mut u64,
     ) {
         let mut gen_hooks = gen::GenHooksBuilder::new(world.seed);
+        let mut ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration> =
+            std::collections::HashMap::new();
         let mut hostile_order = self.hostile_spawners.len();
         for (shared, meta) in self.instances.iter().zip(&self.metas) {
             // Init runs outside any tick; give host calls a real context
@@ -239,6 +242,24 @@ impl ModHost {
                             );
                         }
                     }
+                    Registration::AiNode { key, callback_id } => {
+                        if ai_nodes
+                            .insert(
+                                key.clone(),
+                                ai::AiNodeRegistration {
+                                    instance: Rc::clone(shared),
+                                    callback_id,
+                                },
+                            )
+                            .is_some()
+                        {
+                            log::warn!(
+                                "mod '{}': AI node '{key}' registered twice; \
+                                 the later registration wins",
+                                meta.id
+                            );
+                        }
+                    }
                     other if other.is_gen() => match &meta.module {
                         Some(module) => gen_hooks.add_registration(&meta.id, module, &other),
                         None => log::error!(
@@ -255,6 +276,7 @@ impl ModHost {
         }
         self.hostile_spawners.sort_by_key(|r| (r.priority, r.order));
         gen::install(gen_hooks.build());
+        ai::install(ai_nodes);
     }
 
     /// Dispatch a GUI button click to the OWNING mod — the pack whose
@@ -446,7 +468,8 @@ fn apply_registration(
         | Registration::StageReplacement { .. }
         | Registration::Generator { .. }
         | Registration::HostileSpawner { .. }
-        | Registration::BlockBehavior { .. } => {
+        | Registration::BlockBehavior { .. }
+        | Registration::AiNode { .. } => {
             unreachable!("non-system registrations are routed during ModHost::initialize")
         }
     }

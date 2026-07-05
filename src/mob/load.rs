@@ -13,8 +13,8 @@
 //! Brains are data here: each row's `brain` list of `{node, priority, params}` is
 //! resolved against the engine AI-node registry ([`super::behavior::factory`]) and
 //! every node's params are validated by actually running its factory once, so a bad
-//! brain fails the load, never a spawn. Namespaced node keys are RESERVED (scripted
-//! AI nodes are future work) and refuse to load.
+//! brain fails the load, never a spawn. A namespaced node key resolves to the
+//! scripted (WASM) AI node (see `behavior::wasm`).
 
 use std::collections::HashSet;
 
@@ -22,7 +22,7 @@ use serde::Deserialize;
 
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::registry::{is_namespaced, NameTable};
+use crate::registry::NameTable;
 
 use super::brain::AiBehavior;
 use super::{
@@ -30,10 +30,12 @@ use super::{
     MobSoundSpec, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning, ENGINE_MOB_NAMES,
 };
 
-/// Constructs one AI node from its brain-row params + the owning species row.
-/// Factories run once at load for validation and once per spawned mob.
+/// Constructs one AI node from its row key + brain-row params + the owning
+/// species row. Factories run once at load for validation and once per
+/// spawned mob. The key matters only to the scripted (WASM) node, which
+/// routes its dispatch on it; engine factories ignore it.
 pub(super) type NodeFactory =
-    fn(&serde_json::Value, &'static MobDef) -> Result<Box<dyn AiBehavior>, String>;
+    fn(&'static str, &serde_json::Value, &'static MobDef) -> Result<Box<dyn AiBehavior>, String>;
 
 #[derive(Deserialize)]
 struct RawFile {
@@ -283,15 +285,7 @@ fn convert_brain(rows: Vec<RawBrainNode>) -> Result<&'static [BrainNode], String
     let mut nodes = Vec::with_capacity(rows.len());
     for r in rows {
         let Some(spec) = behavior::node_spec(&r.node) else {
-            return Err(if is_namespaced(&r.node) {
-                format!(
-                    "brain node '{}': namespaced AI-node keys are reserved (scripted AI \
-                     nodes are future work); use an engine node",
-                    r.node
-                )
-            } else {
-                format!("unknown AI node '{}'", r.node)
-            });
+            return Err(format!("unknown AI node '{}'", r.node));
         };
         // A missing `params` reads as JSON null; normalize to the empty object so
         // factories see one shape.
@@ -447,6 +441,7 @@ mod tests {
         let mob_pos = Vec3::new(2.5, 64.0, 2.5);
         let player = Vec3::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
         let mut ctx = super::super::brain::AiCtx {
+            mob_id: 1,
             pos: mob_pos,
             cell: crate::mathh::voxel_at(mob_pos),
             yaw: -std::f32::consts::FRAC_PI_2, // facing +X, toward the player
@@ -563,10 +558,8 @@ mod tests {
             .map(|_| ())
             .expect_err("unknown node refused");
         assert!(err.contains("unknown AI node 'levitate'"), "{err}");
-        let err = parse_layers(&[&base(), &row("mymod:levitate")])
-            .map(|_| ())
-            .expect_err("namespaced reserved");
-        assert!(err.contains("reserved"), "{err}");
+        // A namespaced key resolves to the scripted WASM node and loads.
+        parse_layers(&[&base(), &row("mymod:levitate")]).expect("scripted node key loads");
         // Params on a params-less node are refused too (typos never load).
         let bad = r#"{"mobs": [{
             "mob": "mymod:thing", "key": "mymod:thing", "model": "models/owl.bbmodel",

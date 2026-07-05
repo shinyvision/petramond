@@ -445,6 +445,7 @@ impl Instance {
         let nav_idle = self.nav.is_idle();
         let decision = {
             let mut ctx = AiCtx {
+                mob_id: self.id,
                 pos: self.pos,
                 cell,
                 yaw: self.yaw,

@@ -263,6 +263,7 @@ mod tests {
         player: Vec3,
     ) -> AiCtx<'a> {
         AiCtx {
+            mob_id: 1,
             pos,
             cell: crate::mathh::voxel_at(pos),
             yaw,

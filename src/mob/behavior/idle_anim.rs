@@ -91,6 +91,7 @@ mod tests {
         for _ in 0..20_000 {
             let out = {
                 let mut ctx = AiCtx {
+                    mob_id: 1,
                     pos: Vec3::ZERO,
                     cell: IVec3::ZERO,
                     yaw: 0.0,
@@ -156,6 +157,7 @@ mod tests {
         let mut ai = IdleAnimAi::new();
         for _ in 0..20_000 {
             let mut ctx = AiCtx {
+                mob_id: 1,
                 pos: Vec3::ZERO,
                 cell: IVec3::ZERO,
                 yaw: 0.0,
