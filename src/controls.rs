@@ -20,6 +20,8 @@ pub enum Control {
     /// Drop the held (active hotbar) item: one item, or the whole stack when the
     /// sprint/Ctrl modifier is held.
     DropItem,
+    /// Toggle the held block's placement/render state when it supports rotation.
+    RotateHeldBlock,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -74,6 +76,7 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::KeyE => Some(Control::ToggleInventory),
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
         KeyCode::KeyQ => Some(Control::DropItem),
+        KeyCode::KeyR => Some(Control::RotateHeldBlock),
         KeyCode::Escape => Some(Control::CloseScreen),
         KeyCode::Digit1 => Some(Control::SelectHotbar(0)),
         KeyCode::Digit2 => Some(Control::SelectHotbar(1)),

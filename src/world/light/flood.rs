@@ -202,6 +202,7 @@ mod tests {
     use super::*;
 
     use crate::block::Block;
+    use crate::block_state::{StairHalf, StairState};
     use crate::furnace::Facing;
 
     use super::super::shape::{ShapeStateSnapshot, SparseCellState};
@@ -237,7 +238,10 @@ mod tests {
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
         let states = entries
             .iter()
-            .map(|&(idx, facing)| SparseCellState::Stair { idx, facing })
+            .map(|&(idx, facing)| SparseCellState::Stair {
+                idx,
+                state: StairState::new(facing, StairHalf::Bottom),
+            })
             .collect::<Vec<_>>();
         ShapeStateSnapshot::from_sparse(&states)
     }

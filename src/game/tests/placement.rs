@@ -3,6 +3,7 @@ use super::super::tick::TickEvents;
 use super::super::Game;
 use super::common::{filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
+use crate::block_state::{HeldBlockState, LogAxis, StairHalf, StairState};
 use crate::furnace::Facing;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -261,6 +262,83 @@ fn rooted_plants_place_only_on_their_required_ground() {
         !place_on(&mut game, Block::OakPlanks, ItemType::BrownMushroom, 9),
         "no mushroom on wood"
     );
+}
+
+#[test]
+fn rotating_held_stair_places_top_half() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::OakStairs, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+
+    let p = IVec3::new(4, 64, 4);
+    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test());
+
+    assert_eq!(
+        game.world.stair_state_at(p.x, p.y, p.z),
+        StairState::new(Facing::North, StairHalf::Top)
+    );
+}
+
+#[test]
+fn rotating_held_log_places_horizontal_axis() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::OakLog, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+
+    let vertical = IVec3::new(4, 64, 4);
+    game.look = Some(hit(vertical - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test());
+    assert_eq!(
+        game.world.log_axis_at(vertical.x, vertical.y, vertical.z),
+        LogAxis::Y
+    );
+
+    inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::OakLog, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+
+    let horizontal = IVec3::new(6, 64, 4);
+    game.look = Some(hit(horizontal - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test());
+    assert_eq!(
+        game.world
+            .log_axis_at(horizontal.x, horizontal.y, horizontal.z),
+        LogAxis::Z
+    );
+}
+
+#[test]
+fn held_rotation_state_toggles_only_for_rotatable_blocks() {
+    let mut game = game();
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::OakLog, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+
+    assert_eq!(game.held_block_state(), HeldBlockState::Log(LogAxis::Y));
+    game.toggle_held_block_rotation();
+    assert_eq!(game.held_block_state(), HeldBlockState::Log(LogAxis::X));
+    game.toggle_held_block_rotation();
+    assert_eq!(game.held_block_state(), HeldBlockState::Log(LogAxis::Y));
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::StonePickaxe, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+    assert_eq!(game.held_block_state(), HeldBlockState::None);
 }
 
 /// A model block's data row picks how it turns to meet the player: LeftToRight spans

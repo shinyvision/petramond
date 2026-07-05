@@ -20,6 +20,7 @@ mod bbmodel;
 mod biome;
 mod block;
 mod block_model;
+mod block_state;
 mod camera;
 mod chest;
 mod chunk;

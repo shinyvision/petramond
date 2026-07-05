@@ -88,14 +88,14 @@ pub fn build_break_overlay(
                 super::lighting::DynLight::FULL,
             );
         }
-    } else if let Some(mask) = view.stair_mask {
+    } else if let Some(shape) = view.stair_shape {
         // A stair cracks over the EXACT quads the chunk mesher emitted for it
         // (same plane merge, same cell-local UVs), so the crack is one
         // continuous decal over the cut-out shape — no per-box tile restarts,
         // no buried faces.
         for face in crate::mesh::face::Face::ALL {
             for outer in [true, false] {
-                let (quads, n) = crate::mesh::stair::plane_quads(mask, face, outer);
+                let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
                 for &(min, max) in quads.iter().take(n) {
                     super::block_model::push_cell_local_face(
                         verts,
@@ -173,7 +173,7 @@ mod tests {
             block: IVec3::new(3, 64, -7),
             // A full cube (Stone) has no special visual box, so the crack spans the cell.
             visual_box: None,
-            stair_mask: None,
+            stair_shape: None,
             model: None,
             stage: 4,
         };
@@ -207,11 +207,14 @@ mod tests {
         use crate::mesh::face::Face;
 
         let block = IVec3::new(2, 60, 5);
-        let mask = crate::stair::mask(crate::furnace::Facing::South);
+        let shape = crate::stair::shape(crate::block_state::StairState::new(
+            crate::furnace::Facing::South,
+            Default::default(),
+        ));
         let view = BreakOverlayView {
             block,
             visual_box: None,
-            stair_mask: Some(mask),
+            stair_shape: Some(shape),
             model: None,
             stage: 5,
         };
@@ -222,7 +225,9 @@ mod tests {
         // Exactly the mesher's quads: 4 verts per plane quad, nothing else.
         let quads: usize = Face::ALL
             .into_iter()
-            .flat_map(|f| [true, false].map(|outer| crate::mesh::stair::plane_quads(mask, f, outer).1))
+            .flat_map(|f| {
+                [true, false].map(|outer| crate::mesh::stair::plane_quads(shape, f, outer).1)
+            })
             .sum();
         assert_eq!(v.len(), quads * 4);
 
@@ -289,7 +294,7 @@ mod tests {
         let view = BreakOverlayView {
             block,
             visual_box: None,
-            stair_mask: None,
+            stair_shape: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
@@ -548,7 +553,7 @@ mod tests {
         let view = BreakOverlayView {
             block: IVec3::ZERO,
             visual_box: None,
-            stair_mask: None,
+            stair_shape: None,
             model: None,
             stage: 0,
         };

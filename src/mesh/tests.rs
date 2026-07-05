@@ -1,6 +1,7 @@
 use super::face::{should_flip, vertex_ao};
 use super::*;
 use crate::block::Block;
+use crate::block_state::{LogAxis, StairHalf, StairState};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
 
 /// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
@@ -764,7 +765,7 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
                 Block::Air.id()
             }
         },
-        |_, _, _| crate::furnace::Facing::North,
+        |_, _, _| StairState::default(),
         |_, _, _| 0,
         |_, _| 0,
         |wx, wy, wz| {
@@ -796,6 +797,70 @@ fn cell_uv16(v: &Vertex) -> (u32, u32) {
     ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
 }
 
+#[test]
+fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
+    use super::vertex::{UV_MODE_CELL_LOCAL, UV_MODE_NONE};
+
+    let pos = crate::chunk::SectionPos::new(0, 0, 0);
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::OakLog);
+    section.set_log_axis(8, 8, 8, LogAxis::X);
+
+    let mesh = super::build_section_mesh(
+        &section,
+        pos,
+        |wx, wy, wz| {
+            if (wx, wy, wz) == (8, 8, 8) {
+                Block::OakLog.id()
+            } else {
+                Block::Air.id()
+            }
+        },
+        |_, _, _| StairState::default(),
+        |_, _, _| 0,
+        |_, _| 0,
+        |_, _, _| SKY_FULL,
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    let top_bark = mesh
+        .opaque
+        .iter()
+        .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 9.0).abs() < 1.0e-3)
+        .collect::<Vec<_>>();
+    assert_eq!(top_bark.len(), 4, "top bark face should emit one quad");
+    assert!(
+        top_bark.iter().all(|v| uv_mode(v) == UV_MODE_CELL_LOCAL),
+        "horizontal log bark faces must carry explicit UVs"
+    );
+    let mut uvs = top_bark.iter().map(|v| cell_uv16(v)).collect::<Vec<_>>();
+    uvs.sort_unstable();
+    assert_eq!(
+        uvs,
+        vec![(0, 0), (0, 16), (16, 0), (16, 16)],
+        "the rotated bark face must still span the full tile"
+    );
+
+    let end_caps = mesh
+        .opaque
+        .iter()
+        .filter(|v| {
+            shade_idx(v) == 2
+                && ((v.pos[0] - 8.0).abs() < 1.0e-3 || (v.pos[0] - 9.0).abs() < 1.0e-3)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        end_caps.len(),
+        8,
+        "x-axis log should have two end-cap quads"
+    );
+    assert!(
+        end_caps.iter().all(|v| uv_mode(v) == UV_MODE_NONE),
+        "log end caps keep the normal cube UV mapping"
+    );
+}
+
 /// Mesh a lone stair (with optional extra blocks) through the section path with
 /// uniform full skylight, so tests can probe stair-only geometry.
 fn mesh_stair_fixture(
@@ -825,7 +890,9 @@ fn mesh_stair_fixture(
             facings
                 .iter()
                 .find(|(p, _)| *p == (wx, wy, wz))
-                .map_or(crate::furnace::Facing::North, |(_, f)| *f)
+                .map_or(StairState::default(), |(_, f)| {
+                    StairState::new(*f, StairHalf::Bottom)
+                })
         },
         |_, _, _| 0,
         |_, _| 0,
@@ -1014,9 +1081,9 @@ fn stair_mesh_uses_resolved_outside_corner_shape() {
             _ => Block::Air.id(),
         },
         |wx, wy, wz| match (wx, wy, wz) {
-            (8, 8, 8) => Facing::East,
-            (7, 8, 8) => Facing::South,
-            _ => Facing::North,
+            (8, 8, 8) => StairState::new(Facing::East, StairHalf::Bottom),
+            (7, 8, 8) => StairState::new(Facing::South, StairHalf::Bottom),
+            _ => StairState::default(),
         },
         |_, _, _| 0,
         |_, _| 0,
@@ -1238,7 +1305,6 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
 #[test]
 fn greedy_merges_flat_floor_into_tiled_quads() {
     use crate::chunk::SectionPos;
-    use crate::furnace::Facing;
     use crate::section::Section;
 
     let pos = SectionPos::new(0, 0, 0);
@@ -1260,7 +1326,7 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
                 Block::Air.id()
             }
         },
-        |_, _, _| Facing::North,
+        |_, _, _| StairState::default(),
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -1365,14 +1431,14 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             0
         }
     };
-    let stair_at = |wx: i32, wy: i32, wz: i32| -> Facing {
+    let stair_at = |wx: i32, wy: i32, wz: i32| -> StairState {
         if (0..SECTION_SIZE as i32).contains(&wx)
             && (0..SECTION_SIZE as i32).contains(&wy)
             && (0..SECTION_SIZE as i32).contains(&wz)
         {
-            section.stair_facing(wx as usize, wy as usize, wz as usize)
+            section.stair_state(wx as usize, wy as usize, wz as usize)
         } else {
-            Facing::North
+            StairState::default()
         }
     };
     let sky_at = |wx: i32, wy: i32, wz: i32| -> u8 {
@@ -1405,7 +1471,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut water = vec![0u8; PAD_VOL];
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![0u8; PAD_VOL];
-    let mut stair_facings = vec![Facing::North.to_u8(); PAD_VOL];
+    let mut stair_states = vec![StairState::default().encode(); PAD_VOL];
     let loaded = vec![true; PAD_VOL];
     for py in 0..PAD {
         for pz in 0..PAD {
@@ -1416,7 +1482,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
                 water[i] = water_at(wx, wy, wz);
                 skylight[i] = sky_at(wx, wy, wz);
                 blocklight[i] = blocklight_at(wx, wy, wz);
-                stair_facings[i] = stair_at(wx, wy, wz).to_u8();
+                stair_states[i] = stair_at(wx, wy, wz).encode();
             }
         }
     }
@@ -1436,7 +1502,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             water: &water,
             skylight: &skylight,
             blocklight: &blocklight,
-            stair_facings: &stair_facings,
+            stair_states: &stair_states,
             loaded: &loaded,
             biome: &biome,
         },

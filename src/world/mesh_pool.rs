@@ -12,8 +12,8 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::block_state::StairState;
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
-use crate::furnace::Facing;
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
 use crate::worker::JobPool;
@@ -71,7 +71,7 @@ pub(super) struct NeighborSnap {
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[u8]>>,
-    pub stair_facings: Option<Box<[(u16, Facing)]>>,
+    pub stair_states: Option<Box<[(u16, StairState)]>>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -144,7 +144,7 @@ struct Pad {
     water: Box<[u8]>,
     skylight: Box<[u8]>,
     blocklight: Box<[u8]>,
-    stair_facings: Box<[u8]>,
+    stair_states: Box<[u8]>,
     loaded: Box<[bool]>,
 }
 
@@ -155,7 +155,7 @@ impl Pad {
             water: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
             blocklight: vec![0u8; PAD_VOL].into_boxed_slice(),
-            stair_facings: vec![Facing::North.to_u8(); PAD_VOL].into_boxed_slice(),
+            stair_states: vec![StairState::default().encode(); PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
         }
     }
@@ -167,7 +167,7 @@ impl Pad {
         self.water.fill(0);
         self.skylight.fill(SKY_FULL);
         self.blocklight.fill(0);
-        self.stair_facings.fill(Facing::North.to_u8());
+        self.stair_states.fill(StairState::default().encode());
         self.loaded.fill(false);
     }
 }
@@ -188,7 +188,7 @@ thread_local! {
 /// neighbour (the centre-X section) and is a contiguous slice copy, not 16 per-cell
 /// neighbour lookups; only the two X-border cells fall to per-cell handling. That keeps the
 /// per-cell `pad_axis`/`nbhd_idx27`/`Option` decode to the two edges plus once per row,
-/// instead of all 18³ cells. Stair facings (rare) are scattered per bearing neighbour after.
+/// instead of all 18³ cells. Stair states (rare) are scattered per bearing neighbour after.
 fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pad) {
     let (_ox, oy, _oz) = pos.origin_world();
     pad.reset();
@@ -197,7 +197,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         water,
         skylight,
         blocklight,
-        stair_facings,
+        stair_states,
         loaded,
     } = pad;
 
@@ -268,7 +268,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         }
     }
 
-    // Stair facings are rare (most sections carry none, so most neighbours skip entirely).
+    // Stair states are rare (most sections carry none, so most neighbours skip entirely).
     // Scatter each bearing neighbour's sparse entries into the pad, mapping the cell's
     // local coords to a pad index only when the cell actually lies inside the pad.
     for dy in -1i32..=1 {
@@ -277,10 +277,10 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 let Some(s) = nbhd[nbhd_idx27(dx, dy, dz)].as_ref() else {
                     continue;
                 };
-                let Some(facings) = s.stair_facings.as_ref() else {
+                let Some(states) = s.stair_states.as_ref() else {
                     continue;
                 };
-                for &(key, facing) in facings.iter() {
+                for &(key, state) in states.iter() {
                     let li = key as usize;
                     let (lx, ly, lz) = (li & 15, li >> 8, (li >> 4) & 15);
                     let (Some(px), Some(py), Some(pz)) =
@@ -288,7 +288,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                     else {
                         continue;
                     };
-                    stair_facings[pad_idx(px, py, pz)] = facing.to_u8();
+                    stair_states[pad_idx(px, py, pz)] = state.encode();
                 }
             }
         }
@@ -331,7 +331,7 @@ fn build(job: MeshJob) -> MeshDone {
                 water: &pad.water,
                 skylight: &pad.skylight,
                 blocklight: &pad.blocklight,
-                stair_facings: &pad.stair_facings,
+                stair_states: &pad.stair_states,
                 loaded: &pad.loaded,
                 biome: &biome,
             },

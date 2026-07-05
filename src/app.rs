@@ -223,6 +223,14 @@ impl App {
                 }
                 true
             }
+            ControlEvent::RotateHeldBlock => {
+                if self.screen.gameplay_enabled() {
+                    if let Some(game) = self.game.as_mut() {
+                        game.toggle_held_block_rotation();
+                    }
+                }
+                true
+            }
         }
     }
 

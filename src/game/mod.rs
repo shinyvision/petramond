@@ -26,6 +26,8 @@ mod tick;
 
 use std::collections::HashMap;
 
+use crate::block::RenderShape;
+use crate::block_state::{HeldBlockState, LogAxis, StairHalf, StairState};
 use crate::camera::Camera;
 use crate::crafting::Recipes;
 use crate::entity::ParticleSystem;
@@ -106,6 +108,8 @@ pub struct Game {
     /// A secondary-button *press* is waiting to be resolved as a place/interact on the
     /// next tick (edge-latched; the tick consumes it).
     pending_place: bool,
+    held_rotation_item: Option<ItemType>,
+    held_block_rotated: bool,
     /// Item-drop intents latched by input/menu cleanup and applied on the next fixed
     /// tick. Gameplay-visible inventory/cursor mutation and entity spawning happen
     /// together in [`tick_drops`](Self::tick_drops).
@@ -251,12 +255,95 @@ impl Game {
 
     pub fn set_active_hotbar(&mut self, slot: u8) {
         self.player.inventory.set_active(slot);
+        self.clear_held_block_rotation();
     }
 
     #[inline]
     fn selected_item(&self) -> Option<ItemType> {
         self.player.inventory.selected().map(|s| s.item)
     }
+
+    pub fn toggle_held_block_rotation(&mut self) {
+        let Some(item) = self.selected_item() else {
+            self.clear_held_block_rotation();
+            return;
+        };
+        if !item.as_block().is_some_and(rotatable_block) {
+            self.clear_held_block_rotation();
+            return;
+        }
+        if self.held_rotation_item == Some(item) {
+            self.held_block_rotated = !self.held_block_rotated;
+        } else {
+            self.held_rotation_item = Some(item);
+            self.held_block_rotated = true;
+        }
+    }
+
+    #[inline]
+    fn clear_held_block_rotation(&mut self) {
+        self.held_rotation_item = None;
+        self.held_block_rotated = false;
+    }
+
+    #[inline]
+    fn held_rotation_active(&self) -> bool {
+        let Some(item) = self.selected_item() else {
+            return false;
+        };
+        self.held_rotation_item == Some(item)
+            && self.held_block_rotated
+            && item.as_block().is_some_and(rotatable_block)
+    }
+
+    #[inline]
+    pub(crate) fn held_block_state(&self) -> HeldBlockState {
+        let Some(block) = self.selected_item().and_then(ItemType::as_block) else {
+            return HeldBlockState::None;
+        };
+        if block.render_shape() == RenderShape::Stair {
+            return HeldBlockState::Stair(StairState::new(
+                crate::block_model::DEFAULT_MODEL_FACING,
+                if self.held_rotation_active() {
+                    StairHalf::Top
+                } else {
+                    StairHalf::Bottom
+                },
+            ));
+        }
+        if block.is_log() {
+            return HeldBlockState::Log(if self.held_rotation_active() {
+                LogAxis::X
+            } else {
+                LogAxis::Y
+            });
+        }
+        HeldBlockState::None
+    }
+
+    #[inline]
+    pub(crate) fn held_stair_half(&self) -> StairHalf {
+        if self.held_rotation_active() {
+            StairHalf::Top
+        } else {
+            StairHalf::Bottom
+        }
+    }
+
+    #[inline]
+    pub(crate) fn held_log_axis_for_facing(&self, facing: crate::furnace::Facing) -> LogAxis {
+        if !self.held_rotation_active() {
+            return LogAxis::Y;
+        }
+        match facing {
+            crate::furnace::Facing::East | crate::furnace::Facing::West => LogAxis::X,
+            crate::furnace::Facing::North | crate::furnace::Facing::South => LogAxis::Z,
+        }
+    }
+}
+
+fn rotatable_block(block: crate::block::Block) -> bool {
+    block.render_shape() == RenderShape::Stair || block.is_log()
 }
 
 #[cfg(test)]

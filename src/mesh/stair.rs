@@ -19,6 +19,7 @@
 
 use crate::atlas::Tile;
 use crate::block::Block;
+use crate::stair::StairShape;
 use crate::torch::warm_tint;
 
 use super::builder::cube_face_lighting;
@@ -53,7 +54,7 @@ fn cell_uv16(face: Face, p: [f32; 3]) -> u32 {
 /// Up to four cell-local quad boxes (min, max) plus their count.
 pub(crate) type PlaneQuads = ([([f32; 3], [f32; 3]); 4], usize);
 
-/// The exterior quads of one (face direction, plane) of a stair `mask`, as
+/// The exterior quads of one (face direction, plane) of a stair shape, as
 /// cell-local boxes whose `face` side is the quad. `outer` selects the cell
 /// boundary plane (faces that front the neighbour cell), `!outer` the cell's
 /// mid plane. Exposed half-cells covering an exact rectangle merge into ONE
@@ -62,7 +63,7 @@ pub(crate) type PlaneQuads = ([([f32; 3], [f32; 3]); 4], usize);
 ///
 /// Pure geometry, shared by the chunk mesher and the break-crack overlay so
 /// the crack decal is built from exactly the quads the mesh renders.
-pub(crate) fn plane_quads(mask: u8, face: Face, outer: bool) -> PlaneQuads {
+pub(crate) fn plane_quads(shape: StairShape, face: Face, outer: bool) -> PlaneQuads {
     let (dx, dy, dz) = face.dir();
     let dir = [dx, dy, dz];
     let axis = dir.iter().position(|&d| d != 0).expect("face dir");
@@ -78,8 +79,14 @@ pub(crate) fn plane_quads(mask: u8, face: Face, outer: bool) -> PlaneQuads {
             for ix in 0..2 {
                 let idx = [ix, iy, iz];
                 if idx[axis] != layer
-                    || !crate::stair::half_cell_occupied(mask, ix, iy, iz)
-                    || crate::stair::adjacent_half_cell_occupied(mask, ix, iy, iz, face.dir())
+                    || !crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
+                    || crate::stair::adjacent_shape_half_cell_occupied(
+                        shape,
+                        ix,
+                        iy,
+                        iz,
+                        face.dir(),
+                    )
                 {
                     continue;
                 }
@@ -136,7 +143,7 @@ pub(super) fn emit_stair_block<B, L, K, T>(
     wx: i32,
     wy: i32,
     wz: i32,
-    mask: u8,
+    shape: StairShape,
     tiles: [Tile; 3],
     tint_for: &T,
     block_at: &B,
@@ -156,7 +163,7 @@ pub(super) fn emit_stair_block<B, L, K, T>(
                 wx,
                 wy,
                 wz,
-                mask,
+                shape,
                 face,
                 outer,
                 tiles,
@@ -179,7 +186,7 @@ fn emit_face_plane<B, L, K, T>(
     wx: i32,
     wy: i32,
     wz: i32,
-    mask: u8,
+    shape: StairShape,
     face: Face,
     outer: bool,
     tiles: [Tile; 3],
@@ -193,7 +200,7 @@ fn emit_face_plane<B, L, K, T>(
     K: Fn(i32, i32, i32) -> u8,
     T: Fn(Tile) -> [f32; 3],
 {
-    let (quads, n) = plane_quads(mask, face, outer);
+    let (quads, n) = plane_quads(shape, face, outer);
     if n == 0 {
         return;
     }
@@ -238,7 +245,9 @@ fn emit_face_plane<B, L, K, T>(
     let tint = tint_for(tile);
 
     for &(min, max) in quads.iter().take(n) {
-        push_plane_quad(opaque, opaque_idx, wx, wy, wz, min, max, face, tile, tint, &light);
+        push_plane_quad(
+            opaque, opaque_idx, wx, wy, wz, min, max, face, tile, tint, &light,
+        );
     }
 }
 

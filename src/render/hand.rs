@@ -20,7 +20,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::block_model::{push_block_item_cube_lit, push_cube_solid_lit};
+use super::block_model::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
 use super::lighting::DynLight;
 use super::HeldItemView;
 use crate::atlas::Tile;
@@ -101,10 +101,11 @@ pub(super) fn build_hand_lit(
                         light,
                     );
                 } else {
-                    push_block_item_cube_lit(
+                    push_block_item_cube_lit_with_state(
                         verts,
                         indices,
                         block,
+                        view.block_state,
                         Vec3::new(-0.5, -0.5, -0.5),
                         1.0,
                         light,
@@ -370,6 +371,7 @@ mod tests {
     fn bare_hand_builds_solid_cuboid() {
         let view = HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -393,6 +395,7 @@ mod tests {
     fn held_block_builds_textured_cube() {
         let view = HeldItemView {
             item: Some(ItemType::OakLog),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -410,6 +413,7 @@ mod tests {
     fn lit_hand_packs_sampled_skylight() {
         let view = HeldItemView {
             item: Some(ItemType::Stone),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -437,6 +441,7 @@ mod tests {
         // pipeline, NOT the model3d hand pass, so build_hand emits nothing.
         let view = HeldItemView {
             item: Some(ItemType::Poppy),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -564,6 +569,7 @@ mod tests {
         for (row, (label, item)) in items.iter().enumerate() {
             let view = HeldItemView {
                 item: Some(*item),
+                block_state: Default::default(),
                 swing: 0.0,
                 swing_scale: 1.0,
             };
@@ -588,6 +594,7 @@ mod tests {
         // tile (and a finite MVP) for a sprite item and None otherwise.
         let poppy = HeldItemView {
             item: Some(ItemType::Poppy),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -597,10 +604,12 @@ mod tests {
         // Bare hand + held block return None (they go through build_hand).
         let bare = HeldItemView {
             item: None,
+            block_state: Default::default(),
             ..poppy
         };
         let block = HeldItemView {
             item: Some(ItemType::Stone),
+            block_state: Default::default(),
             ..poppy
         };
         assert!(held_sprite(&bare, 1.5).is_none());
@@ -612,11 +621,13 @@ mod tests {
         // The hand buffers are cleared + refilled each call, never reallocated.
         let block = HeldItemView {
             item: Some(ItemType::Stone),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
         let bare = HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -682,6 +693,7 @@ mod tests {
         let screens: [(u32, u32); 4] = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
         let view = HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -721,6 +733,7 @@ mod tests {
     fn bare_hand_rest_does_not_show_large_fist_cap() {
         let view = HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -782,6 +795,7 @@ mod tests {
         let aspect = 16.0 / 9.0;
         let rest_view = HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -847,6 +861,7 @@ mod tests {
         let fist_local = Vec3::new(0.0, 6.0, 0.0); // +Y end of the arm cuboid
         let view = |swing| HeldItemView {
             item: None,
+            block_state: Default::default(),
             swing,
             swing_scale: 1.0,
         };
@@ -884,6 +899,7 @@ mod tests {
     fn swing_and_place_change_the_mvp() {
         let rest = HeldItemView {
             item: Some(ItemType::Stone),
+            block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
         };
@@ -929,6 +945,7 @@ mod tests {
         for (item, file) in targets {
             let view = HeldItemView {
                 item: Some(item),
+                block_state: Default::default(),
                 swing: 0.0,
                 swing_scale: 1.0,
             };

@@ -11,6 +11,7 @@ pub enum ControlEvent {
     /// the whole stack is decided by the App from the physical Ctrl modifier, not
     /// here — keeping the drop key independent of the sprint binding.
     DropItem,
+    RotateHeldBlock,
 }
 
 #[derive(Default)]
@@ -26,6 +27,7 @@ pub struct InputController {
     toggle_mode_chord: bool,
     inventory_toggle_held: bool,
     drop_item_held: bool,
+    rotate_held_block_held: bool,
 }
 
 impl InputController {
@@ -76,6 +78,11 @@ impl InputController {
                 let edge = down && !self.drop_item_held;
                 self.drop_item_held = down;
                 edge.then_some(ControlEvent::DropItem)
+            }
+            Control::RotateHeldBlock => {
+                let edge = down && !self.rotate_held_block_held;
+                self.rotate_held_block_held = down;
+                edge.then_some(ControlEvent::RotateHeldBlock)
             }
         };
 
@@ -137,6 +144,21 @@ mod tests {
         assert_eq!(
             input.set_control(Control::DropItem, true),
             Some(ControlEvent::DropItem)
+        );
+    }
+
+    #[test]
+    fn rotate_held_block_is_edge_triggered() {
+        let mut input = InputController::default();
+        assert_eq!(
+            input.set_control(Control::RotateHeldBlock, true),
+            Some(ControlEvent::RotateHeldBlock)
+        );
+        assert_eq!(input.set_control(Control::RotateHeldBlock, true), None);
+        assert_eq!(input.set_control(Control::RotateHeldBlock, false), None);
+        assert_eq!(
+            input.set_control(Control::RotateHeldBlock, true),
+            Some(ControlEvent::RotateHeldBlock)
         );
     }
 

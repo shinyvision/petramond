@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
+use crate::block_state::{LogAxis, StairState};
 use crate::chest::Chest;
 use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::door::DoorState;
@@ -41,6 +42,7 @@ const FLAG2_HAS_SAPLINGS: u8 = 0x01;
 const FLAG2_HAS_DOORS: u8 = 0x02;
 const FLAG2_HAS_STAIRS: u8 = 0x04;
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
+const FLAG2_HAS_LOG_AXES: u8 = 0x10;
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -77,9 +79,11 @@ pub struct SectionSnapshot {
     /// placed door reloads on the same edge and in the same open/closed pose. Empty for
     /// the common section. See `Section::doors` / [`crate::door`].
     pub doors: HashMap<u16, DoorState>,
-    /// Facing of placed stairs, keyed by section-local index, so a stair reloads
-    /// with the same low/open side.
-    pub stair_facings: HashMap<u16, Facing>,
+    /// State of placed stairs, keyed by section-local index, so a stair reloads with
+    /// the same low/open side and top/bottom half.
+    pub stair_states: HashMap<u16, StairState>,
+    /// Non-default log axes, keyed by section-local index. Missing logs are vertical.
+    pub log_axes: HashMap<u16, LogAxis>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
@@ -109,7 +113,8 @@ impl SectionSnapshot {
             model_facings: s.model_facings().clone(),
             sapling_stages: s.sapling_stages().clone(),
             doors: s.doors().clone(),
-            stair_facings: s.stair_facings().clone(),
+            stair_states: s.stair_states().clone(),
+            log_axes: s.log_axes().clone(),
             cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
         }
@@ -333,11 +338,14 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.doors.is_empty() {
         flags2 |= FLAG2_HAS_DOORS;
     }
-    if !s.stair_facings.is_empty() {
+    if !s.stair_states.is_empty() {
         flags2 |= FLAG2_HAS_STAIRS;
     }
     if !s.cell_kv.is_empty() {
         flags2 |= FLAG2_HAS_CELL_KV;
+    }
+    if !s.log_axes.is_empty() {
+        flags2 |= FLAG2_HAS_LOG_AXES;
     }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
@@ -388,9 +396,9 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
             put_u8(buf, state.encode());
         });
     }
-    if !s.stair_facings.is_empty() {
-        put_indexed(&mut payload, &s.stair_facings, 1, |buf, facing| {
-            put_u8(buf, facing.to_u8());
+    if !s.stair_states.is_empty() {
+        put_indexed(&mut payload, &s.stair_states, 1, |buf, state| {
+            put_u8(buf, state.encode());
         });
     }
     if !s.cell_kv.is_empty() {
@@ -398,6 +406,11 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
         // rec_bytes is a reserve hint only — the record body is variable.
         put_indexed(&mut payload, &s.cell_kv, 16, |buf, map| {
             put_kv_map(buf, map);
+        });
+    }
+    if !s.log_axes.is_empty() {
+        put_indexed(&mut payload, &s.log_axes, 1, |buf, axis| {
+            put_u8(buf, axis.to_u8());
         });
     }
     deflate(&payload)
@@ -474,13 +487,18 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
-    let stair_facings = if flags2 & FLAG2_HAS_STAIRS != 0 {
-        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
+    let stair_states = if flags2 & FLAG2_HAS_STAIRS != 0 {
+        get_indexed(&mut r, |r| Some(StairState::decode(r.u8()?)))?
     } else {
         HashMap::new()
     };
     let cell_kv = if flags2 & FLAG2_HAS_CELL_KV != 0 {
         get_indexed(&mut r, get_kv_map)?
+    } else {
+        HashMap::new()
+    };
+    let log_axes = if flags2 & FLAG2_HAS_LOG_AXES != 0 {
+        get_indexed(&mut r, |r| Some(LogAxis::from_u8(r.u8()?)))?
     } else {
         HashMap::new()
     };
@@ -498,7 +516,8 @@ pub fn decode_section(
             model_facings,
             sapling_stages,
             doors,
-            stair_facings,
+            stair_states,
+            log_axes,
             cell_kv,
         ),
         entities,
@@ -780,12 +799,17 @@ mod tests {
     }
 
     #[test]
-    fn section_record_roundtrips_stair_facings() {
+    fn section_record_roundtrips_stair_states() {
         let mut s = sec(7, 4, 1);
         s.set_block(2, 0, 3, Block::OakStairs);
         s.set_stair_facing(2, 0, 3, Facing::West);
         s.set_block(9, 5, 1, Block::StoneStairs);
-        s.set_stair_facing(9, 5, 1, Facing::South);
+        s.set_stair_state(
+            9,
+            5,
+            1,
+            StairState::new(Facing::South, crate::block_state::StairHalf::Top),
+        );
 
         let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, _entities, _mobs) =
@@ -794,8 +818,28 @@ mod tests {
         assert_eq!(back.block_raw(2, 0, 3), Block::OakStairs.id());
         assert_eq!(back.stair_facing(2, 0, 3), Facing::West);
         assert_eq!(back.block_raw(9, 5, 1), Block::StoneStairs.id());
-        assert_eq!(back.stair_facing(9, 5, 1), Facing::South);
-        assert_eq!(back.stair_facing(0, 0, 0), Facing::North);
+        assert_eq!(
+            back.stair_state(9, 5, 1),
+            StairState::new(Facing::South, crate::block_state::StairHalf::Top)
+        );
+        assert_eq!(back.stair_state(0, 0, 0), StairState::default());
+    }
+
+    #[test]
+    fn section_record_roundtrips_log_axes() {
+        let mut s = sec(7, 4, 1);
+        s.set_block(2, 0, 3, Block::OakLog);
+        s.set_log_axis(2, 0, 3, LogAxis::X);
+        s.set_block(9, 5, 1, Block::SpruceLog);
+        s.set_log_axis(9, 5, 1, LogAxis::Z);
+
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(7, 4, 1), &blob).expect("decodes");
+
+        assert_eq!(back.log_axis(2, 0, 3), LogAxis::X);
+        assert_eq!(back.log_axis(9, 5, 1), LogAxis::Z);
+        assert_eq!(back.log_axis(0, 0, 0), LogAxis::Y);
     }
 
     #[test]

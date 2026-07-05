@@ -1,3 +1,5 @@
+use crate::block_state::LogAxis;
+
 /// Face direction enum. Shared by the chunk mesher (`mesh::builder`) and the
 /// dynamic-geometry builder (`render::block_model`): both pick faces from
 /// [`Face::ALL`], shade them via [`Face::shade_idx`], and wind their quads via
@@ -104,6 +106,27 @@ impl Face {
             Face::PosZ => [p(0, 0, 1), p(1, 0, 1), p(1, 1, 1), p(0, 1, 1)],
             Face::NegZ => [p(1, 0, 0), p(0, 0, 0), p(0, 1, 0), p(1, 1, 0)],
         }
+    }
+
+    /// Explicit tile-local UV for the bark side of a horizontal log. The texture's
+    /// vertical axis follows the log axis, matching the default vertical-log mapping
+    /// where bark runs along world Y.
+    pub(crate) fn log_side_cell_uv(self, axis: LogAxis, local: [f32; 3]) -> Option<[f32; 2]> {
+        let axis_idx = match axis {
+            LogAxis::X => 0,
+            LogAxis::Y => return None,
+            LogAxis::Z => 2,
+        };
+        let normal_idx = match self {
+            Face::PosX | Face::NegX => 0,
+            Face::PosY | Face::NegY => 1,
+            Face::PosZ | Face::NegZ => 2,
+        };
+        if normal_idx == axis_idx {
+            return None;
+        }
+        let cross_idx = 3 - axis_idx - normal_idx;
+        Some([local[cross_idx], 1.0 - local[axis_idx]])
     }
 }
 

@@ -44,14 +44,14 @@ pub(super) fn gather(pos: SectionPos, sections: &HashMap<SectionPos, Arc<Section
                 let bx = ((dcx + 1) as usize) * SECTION_SIZE;
                 let by = ((dcy + 1) as usize) * SECTION_SIZE;
                 let bz = ((dcz + 1) as usize) * SECTION_SIZE;
-                states.extend(section.stair_facings().iter().map(|(&key, &facing)| {
+                states.extend(section.stair_states().iter().map(|(&key, &state)| {
                     let key = key as usize;
                     let lx = key & 0x0F;
                     let ly = key >> 8;
                     let lz = (key >> 4) & 0x0F;
                     SparseCellState::Stair {
                         idx: nbhd_idx(bx + lx, by + ly, bz + lz),
-                        facing,
+                        state,
                     }
                 }));
             }

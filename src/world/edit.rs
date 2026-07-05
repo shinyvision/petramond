@@ -1,6 +1,8 @@
 use crate::block::Block;
+use crate::block_state::LogAxis;
 use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use crate::column::NO_SURFACE;
+use crate::mathh::IVec3;
 use crate::section::SectionSummary;
 
 use super::store::World;
@@ -51,6 +53,36 @@ impl World {
         // Announce the change: re-lights the neighbourhood and lets reactive
         // neighbours (e.g. water) re-evaluate on the next game tick.
         self.notify_block_and_neighbors(wx, wy, wz);
+        true
+    }
+
+    #[inline]
+    pub fn log_axis_at(&self, wx: i32, wy: i32, wz: i32) -> LogAxis {
+        match self.chunk_at_world(wx, wy, wz) {
+            Some((s, lx, ly, lz)) => s.log_axis(lx, ly, lz),
+            None => LogAxis::Y,
+        }
+    }
+
+    /// Place a single-cell log and record its axis before relighting/remeshing.
+    /// Missing/vertical axes are represented sparsely, so normal trees keep no extra state.
+    pub fn place_log(&mut self, pos: IVec3, block: Block, axis: LogAxis) -> bool {
+        if !block.is_log() || !self.materialize_section_at(pos) {
+            return false;
+        }
+        let Some((section_pos, _, _, _)) = Self::split_world(pos.x, pos.y, pos.z) else {
+            return false;
+        };
+        let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+            return false;
+        };
+        section.set_block(lx, ly, lz, block);
+        section.set_log_axis(lx, ly, lz, axis);
+        section.modified = true;
+        if self.update_column_height_after_set(pos.x, pos.y, pos.z, true) {
+            self.mark_heightmap_light_dirty_around(section_pos.chunk_pos());
+        }
+        self.refresh_region(&[pos]);
         true
     }
 

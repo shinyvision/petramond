@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::block::{Block, BlockTag};
+use crate::block_state::{BlockStates, LogAxis, StairHalf, StairState};
 use crate::chest::Chest;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::door::DoorState;
@@ -53,49 +54,20 @@ impl SectionSummary {
 /// multi-millisecond main-thread spike while streaming. Mutation is copy-on-write via
 /// `Arc::make_mut`: a setter clones the buffer only if a bake is mid-flight against it.
 ///
-/// `Clone` is derived so the mesher can take an owned snapshot of a section (plus its
-/// neighbourhood) and build off the render thread.
+/// Block ids stay dense and minimal. Per-cell state that changes block behavior or
+/// rendering lives in `states`, which keeps uncommon states sparse and centralized.
 #[derive(Clone)]
 pub struct Section {
     pub cx: i32,
     pub cy: i32,
     pub cz: i32,
     blocks: Arc<[u8]>,
-    /// Per-block water state, parallel to `blocks`, only meaningful where the block
-    /// is `Water`. Encodes flow `falloff` + a `FALLING` bit (see `world::water`).
-    /// `None` until the section first holds non-source flowing water.
-    ///
-    /// `Arc` like [`blocks`](Self::blocks): when a section is shared with an in-flight bake,
-    /// a copy-on-write edit ([`Arc::make_mut`] on the whole `Section`) must stay cheap, so
-    /// every large buffer it holds is itself an `Arc` (clone = a refcount bump, not 4 KB).
-    water: Option<Arc<[u8]>>,
+    states: BlockStates,
     /// Furnace block-entities, keyed by section-local block index (`section_idx`,
     /// max 4095 — fits `u16`). Empty for the common section.
     furnaces: HashMap<u16, Furnace>,
     /// Chest block-entities, keyed like [`furnaces`](Self::furnaces).
     chests: HashMap<u16, Chest>,
-    /// Torch orientations, keyed like [`furnaces`](Self::furnaces).
-    torches: HashMap<u16, TorchPlacement>,
-    /// Multi-cell bbmodel block occupancy (authored footprint offset for every cell
-    /// whose offset is not `[0,0,0]`), keyed by section-local index.
-    model_cells: HashMap<u16, [u8; 3]>,
-    /// Per-cell facing for placed bbmodel blocks that need orientation.
-    model_facings: HashMap<u16, Facing>,
-    /// Growth stage (`0..=2`) of each sapling, keyed by section-local index. Absent
-    /// reads as stage 0.
-    sapling_stages: HashMap<u16, u8>,
-    /// Door state (facing + open + which-half) of each door cell, keyed by
-    /// section-local index.
-    doors: HashMap<u16, DoorState>,
-    /// Facing of each placed stair, keyed by section-local index. Absent stairs use
-    /// the default north-facing shape, so old saves remain loadable.
-    stair_facings: HashMap<u16, Facing>,
-    /// Sparse per-cell mod KV (`mod_id:key` → bytes), keyed by section-local
-    /// index like the block-entity maps. Opaque to the engine: entries persist
-    /// byte-exact with the section record (unknown keys are never dropped) so
-    /// data written by an absent mod survives. Inner map is a BTreeMap so the
-    /// save encoding is deterministic.
-    cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     pub dirty: bool,
     /// Set true by runtime edits, never by generation, so only player-touched
     /// sections are written to disk.
@@ -151,16 +123,9 @@ impl Section {
             cy,
             cz,
             blocks: vec![0u8; SECTION_VOLUME].into(),
-            water: None,
+            states: BlockStates::new(),
             furnaces: HashMap::new(),
             chests: HashMap::new(),
-            torches: HashMap::new(),
-            model_cells: HashMap::new(),
-            model_facings: HashMap::new(),
-            sapling_stages: HashMap::new(),
-            doors: HashMap::new(),
-            stair_facings: HashMap::new(),
-            cell_kv: HashMap::new(),
             dirty: true,
             modified: false,
             skylight: None,
@@ -210,11 +175,7 @@ impl Section {
         blocks[i] = id;
         self.adjust_random_tick_count(old, id);
         self.adjust_opaque_count(x, y, z, old, id);
-        self.clear_water_meta(i);
-        self.clear_model_cell(i);
-        self.clear_sapling_stage(i);
-        self.clear_door(i);
-        self.clear_stair_facing(i);
+        self.states.clear_on_block_change(i);
         self.dirty = true;
         self.mark_light_dirty();
     }
@@ -237,7 +198,7 @@ impl Section {
     /// clones, no copy; `None` when the buffer is absent). Used to snapshot a section's
     /// neighbour for off-thread meshing without deep-copying any voxel array.
     pub fn water_arc(&self) -> Option<Arc<[u8]>> {
-        self.water.clone()
+        self.states.water_arc()
     }
     pub fn skylight_arc(&self) -> Option<Arc<[u8]>> {
         self.skylight.clone()
@@ -259,10 +220,7 @@ impl Section {
     /// Water-flow metadata at a local voxel (0 where not flowing water).
     #[inline]
     pub fn water_meta(&self, x: usize, y: usize, z: usize) -> u8 {
-        match &self.water {
-            Some(w) => w[section_idx(x, y, z)],
-            None => 0,
-        }
+        self.states.water_meta(section_idx(x, y, z))
     }
 
     /// Set a water cell (block + flow meta) WITHOUT marking skylight dirty: water
@@ -277,32 +235,13 @@ impl Section {
         self.adjust_random_tick_count(old, id);
         self.adjust_opaque_count(x, y, z, old, id);
         let meta = if b == Block::Water { meta } else { 0 };
-        self.store_water_meta(i, meta);
+        self.states.store_water_meta(i, meta);
         self.dirty = true;
     }
 
     /// Bulk water-flow metadata for saving (`None` if never held flowing water).
     pub fn water_slice(&self) -> Option<&[u8]> {
-        self.water.as_deref()
-    }
-
-    #[inline]
-    fn clear_water_meta(&mut self, i: usize) {
-        if let Some(w) = self.water.as_mut() {
-            Arc::make_mut(w)[i] = 0;
-        }
-    }
-
-    #[inline]
-    fn store_water_meta(&mut self, i: usize, meta: u8) {
-        if meta == 0 {
-            self.clear_water_meta(i);
-            return;
-        }
-        let w = self
-            .water
-            .get_or_insert_with(|| vec![0u8; SECTION_VOLUME].into());
-        Arc::make_mut(w)[i] = meta;
+        self.states.water_slice()
     }
 
     // --- Light ------------------------------------------------------------------
@@ -594,144 +533,111 @@ impl Section {
     }
 
     #[inline]
-    fn clear_model_cell(&mut self, i: usize) {
-        if !self.model_cells.is_empty() {
-            self.model_cells.remove(&(i as u16));
-        }
-        if !self.model_facings.is_empty() {
-            self.model_facings.remove(&(i as u16));
-        }
-    }
-
-    #[inline]
     pub fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
-        self.model_cells
-            .insert(Self::block_entity_key(x, y, z), offset);
+        self.states.set_model_offset(x, y, z, offset);
         self.dirty = true;
     }
 
     #[inline]
     pub fn model_offset(&self, x: usize, y: usize, z: usize) -> [u8; 3] {
-        self.model_cells
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or([0, 0, 0])
+        self.states.model_offset(x, y, z)
     }
 
     #[inline]
     pub fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.model_facings
-            .insert(Self::block_entity_key(x, y, z), facing);
+        self.states.set_model_facing(x, y, z, facing);
         self.dirty = true;
     }
 
     #[inline]
     pub fn model_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.model_facings
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or(crate::block_model::DEFAULT_MODEL_FACING)
+        self.states.model_facing(x, y, z)
     }
 
     #[inline]
     pub fn model_cells(&self) -> &HashMap<u16, [u8; 3]> {
-        &self.model_cells
+        self.states.model_cells()
     }
 
     #[inline]
     pub fn model_facings(&self) -> &HashMap<u16, Facing> {
-        &self.model_facings
+        self.states.model_facings()
     }
 
     #[inline]
     pub fn sapling_stage(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.sapling_stages
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or(0)
+        self.states.sapling_stage(x, y, z)
     }
 
     pub fn set_sapling_stage(&mut self, x: usize, y: usize, z: usize, stage: u8) {
-        let key = Self::block_entity_key(x, y, z);
-        if stage == 0 {
-            self.sapling_stages.remove(&key);
-        } else {
-            self.sapling_stages.insert(key, stage);
-        }
+        self.states.set_sapling_stage(x, y, z, stage);
         self.modified = true;
-    }
-
-    #[inline]
-    fn clear_sapling_stage(&mut self, i: usize) {
-        if !self.sapling_stages.is_empty() {
-            self.sapling_stages.remove(&(i as u16));
-        }
     }
 
     #[inline]
     pub fn sapling_stages(&self) -> &HashMap<u16, u8> {
-        &self.sapling_stages
+        self.states.sapling_stages()
     }
 
     #[inline]
     pub fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
-        self.doors.get(&Self::block_entity_key(x, y, z)).copied()
+        self.states.door_state(x, y, z)
     }
 
     pub fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
-        self.doors.insert(Self::block_entity_key(x, y, z), state);
+        self.states.set_door_state(x, y, z, state);
         self.modified = true;
-    }
-
-    #[inline]
-    fn clear_door(&mut self, i: usize) {
-        if !self.doors.is_empty() {
-            self.doors.remove(&(i as u16));
-        }
     }
 
     #[inline]
     pub fn doors(&self) -> &HashMap<u16, DoorState> {
-        &self.doors
+        self.states.doors()
     }
 
     #[inline]
     pub fn stair_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.stair_facings
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or_default()
+        self.stair_state(x, y, z).facing
     }
 
     pub fn set_stair_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.stair_facings
-            .insert(Self::block_entity_key(x, y, z), facing);
+        self.set_stair_state(x, y, z, StairState::new(facing, StairHalf::Bottom));
+    }
+
+    #[inline]
+    pub fn stair_state(&self, x: usize, y: usize, z: usize) -> StairState {
+        self.states.stair_state(x, y, z)
+    }
+
+    pub fn set_stair_state(&mut self, x: usize, y: usize, z: usize, state: StairState) {
+        self.states.set_stair_state(x, y, z, state);
         self.modified = true;
     }
 
     #[inline]
-    fn clear_stair_facing(&mut self, i: usize) {
-        if !self.stair_facings.is_empty() {
-            self.stair_facings.remove(&(i as u16));
-        }
+    pub fn log_axis(&self, x: usize, y: usize, z: usize) -> LogAxis {
+        self.states.log_axis(x, y, z)
+    }
+
+    pub fn set_log_axis(&mut self, x: usize, y: usize, z: usize, axis: LogAxis) {
+        self.states.set_log_axis(x, y, z, axis);
+        self.modified = true;
+    }
+
+    #[inline]
+    pub fn log_axes(&self) -> &HashMap<u16, LogAxis> {
+        self.states.log_axes()
     }
 
     #[inline]
     /// A cell's mod KV entry, or `None` when the cell (or key) has none.
     pub fn cell_kv_get(&self, x: usize, y: usize, z: usize, key: &str) -> Option<&[u8]> {
-        self.cell_kv
-            .get(&(section_idx(x, y, z) as u16))?
-            .get(key)
-            .map(Vec::as_slice)
+        self.states.cell_kv_get(x, y, z, key)
     }
 
     /// Store a cell mod KV entry. Does NOT set `modified` — the world-level
     /// wrapper owns that (mirroring the block-entity insert pattern).
     pub fn cell_kv_set(&mut self, x: usize, y: usize, z: usize, key: String, value: Vec<u8>) {
-        self.cell_kv
-            .entry(section_idx(x, y, z) as u16)
-            .or_default()
-            .insert(key, value);
+        self.states.cell_kv_set(x, y, z, key, value);
     }
 
     /// Remove a cell mod KV entry; returns whether it was present. An inner
@@ -739,24 +645,16 @@ impl Section {
     /// has-cell-kv flag clears once the last entry goes (the stale-record
     /// guard pattern — see WIKI/save-entities.md).
     pub fn cell_kv_remove(&mut self, x: usize, y: usize, z: usize, key: &str) -> bool {
-        let idx = section_idx(x, y, z) as u16;
-        let Some(map) = self.cell_kv.get_mut(&idx) else {
-            return false;
-        };
-        let removed = map.remove(key).is_some();
-        if map.is_empty() {
-            self.cell_kv.remove(&idx);
-        }
-        removed
+        self.states.cell_kv_remove(x, y, z, key)
     }
 
     /// The whole per-cell mod KV map, for the save codec.
     pub fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
-        &self.cell_kv
+        self.states.cell_kv()
     }
 
-    pub fn stair_facings(&self) -> &HashMap<u16, Facing> {
-        &self.stair_facings
+    pub fn stair_states(&self) -> &HashMap<u16, StairState> {
+        self.states.stair_states()
     }
 
     #[inline]
@@ -829,31 +727,23 @@ impl Section {
 
     #[inline]
     pub fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
-        self.torches
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or_default()
+        self.states.torch_placement(x, y, z)
     }
 
     pub fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
-        self.torches
-            .insert(Self::block_entity_key(x, y, z), placement);
+        self.states.insert_torch(x, y, z, placement);
         self.modified = true;
     }
 
     pub fn take_torch(&mut self, x: usize, y: usize, z: usize) {
-        if self
-            .torches
-            .remove(&Self::block_entity_key(x, y, z))
-            .is_some()
-        {
+        if self.states.take_torch(x, y, z) {
             self.modified = true;
         }
     }
 
     #[inline]
     pub fn torches(&self) -> &HashMap<u16, TorchPlacement> {
-        &self.torches
+        self.states.torches()
     }
 
     /// Advance every furnace one game tick. Returns the local coordinates of
@@ -902,7 +792,8 @@ impl Section {
         model_facings: HashMap<u16, Facing>,
         sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
-        stair_facings: HashMap<u16, Facing>,
+        stairs: HashMap<u16, StairState>,
+        log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         let mut s = Self {
@@ -910,16 +801,19 @@ impl Section {
             cy,
             cz,
             blocks: blocks.into(),
-            water: water.map(Arc::from),
+            states: BlockStates::from_saved(
+                water,
+                torches,
+                model_cells,
+                model_facings,
+                sapling_stages,
+                doors,
+                stairs,
+                log_axes,
+                cell_kv,
+            ),
             furnaces,
             chests,
-            torches,
-            model_cells,
-            model_facings,
-            sapling_stages,
-            doors,
-            stair_facings,
-            cell_kv,
             dirty: true,
             modified: false,
             skylight: None,

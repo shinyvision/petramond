@@ -1,42 +1,42 @@
 use crate::block::{Block, BlockLightShape};
-use crate::furnace::Facing;
+use crate::block_state::StairState;
 
 use super::{nbhd_idx, NBHD_VOLUME};
 
 pub(super) enum SparseCellState {
-    Stair { idx: usize, facing: Facing },
+    Stair { idx: usize, state: StairState },
 }
 
 #[derive(Default)]
 pub(super) struct ShapeStateSnapshot {
-    stair_facings: Option<Box<[u8]>>,
+    stair_states: Option<Box<[u8]>>,
 }
 
 impl ShapeStateSnapshot {
     pub(super) fn from_sparse(states: &[SparseCellState]) -> Self {
-        let mut stair_facings: Option<Box<[u8]>> = None;
+        let mut stair_states: Option<Box<[u8]>> = None;
         for state in states {
             match *state {
-                SparseCellState::Stair { idx, facing } => {
+                SparseCellState::Stair { idx, state } => {
                     if idx >= NBHD_VOLUME {
                         continue;
                     }
-                    let facings = stair_facings.get_or_insert_with(|| {
-                        vec![Facing::North.to_u8(); NBHD_VOLUME].into_boxed_slice()
+                    let states = stair_states.get_or_insert_with(|| {
+                        vec![StairState::default().encode(); NBHD_VOLUME].into_boxed_slice()
                     });
-                    facings[idx] = facing.to_u8();
+                    states[idx] = state.encode();
                 }
             }
         }
-        Self { stair_facings }
+        Self { stair_states }
     }
 
-    fn stair_facing(&self, idx: usize) -> Facing {
-        self.stair_facings
+    fn stair_state(&self, idx: usize) -> StairState {
+        self.stair_states
             .as_ref()
             .and_then(|f| f.get(idx).copied())
-            .map(Facing::from_u8)
-            .unwrap_or(Facing::North)
+            .map(StairState::decode)
+            .unwrap_or_default()
     }
 }
 
@@ -70,7 +70,7 @@ impl<'a> LightCells<'a> {
             BlockLightShape::OpaqueCube => 0,
             BlockLightShape::Open => 0b1111,
             BlockLightShape::Stair => {
-                crate::stair::light_side_mask(self.states.stair_facing(idx), dir.0, dir.1, dir.2)
+                crate::stair::light_side_mask(self.states.stair_state(idx), dir.0, dir.1, dir.2)
             }
         }
     }

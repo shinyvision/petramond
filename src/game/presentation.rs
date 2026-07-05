@@ -15,6 +15,7 @@ use crate::door::DoorState;
 use crate::furnace::Facing;
 use crate::item::ItemType;
 use crate::mob::Mob;
+use crate::stair::StairShape;
 
 use super::Game;
 
@@ -25,9 +26,9 @@ pub struct BreakOverlayView {
     pub block: IVec3,
     /// The cell-local visual box the crack hugs. `None` means an ordinary full cube.
     pub visual_box: Option<([f32; 3], [f32; 3])>,
-    /// A stair's corner-resolved high-half mask: the crack rebuilds the exact
+    /// A stair's corner-resolved shape: the crack rebuilds the exact
     /// quads the chunk mesher emitted for it (`mesh::stair::plane_quads`).
-    pub stair_mask: Option<u8>,
+    pub stair_shape: Option<StairShape>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
@@ -278,16 +279,16 @@ fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
             _ => None,
         };
         let block_type = Block::from_id(game.world.chunk_block(block.x, block.y, block.z));
-        let stair_mask = (block_type.render_shape() == RenderShape::Stair)
-            .then(|| game.world.stair_mask_at(block.x, block.y, block.z));
+        let stair_shape = (block_type.render_shape() == RenderShape::Stair)
+            .then(|| game.world.stair_shape_at(block.x, block.y, block.z));
         BreakOverlayView {
             block,
-            visual_box: if model.is_some() || stair_mask.is_some() {
+            visual_box: if model.is_some() || stair_shape.is_some() {
                 None
             } else {
                 game.world.selection_box_at(block.x, block.y, block.z)
             },
-            stair_mask,
+            stair_shape,
             model,
             stage,
         }

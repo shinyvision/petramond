@@ -1,6 +1,7 @@
 //! Stair shape and orientation shared by placement, collision, selection, and meshing.
 
 use crate::block::{Aabb, Block, RenderShape};
+use crate::block_state::{StairHalf, StairState};
 use crate::furnace::Facing;
 use crate::mathh::{IVec3, Vec3};
 
@@ -44,6 +45,13 @@ const EMPTY_SHAPE: Shape = Shape {
 };
 
 static SHAPES: [Shape; 16] = make_shapes();
+static TOP_SHAPES: [Shape; 16] = make_top_shapes();
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct StairShape {
+    pub mask: u8,
+    pub half: StairHalf,
+}
 
 #[inline]
 pub fn mask(facing: Facing) -> u8 {
@@ -56,6 +64,15 @@ pub fn boxes(facing: Facing) -> &'static [Aabb] {
 }
 
 #[inline]
+pub fn shape(state: StairState) -> StairShape {
+    StairShape {
+        mask: mask(state.facing),
+        half: state.half,
+    }
+}
+
+#[inline]
+#[cfg(test)]
 pub fn resolved_mask<N>(pos: IVec3, facing: Facing, mut neighbour_stair: N) -> u8
 where
     N: FnMut(IVec3) -> Option<Facing>,
@@ -77,11 +94,41 @@ where
 }
 
 #[inline]
-pub fn resolved_boxes<N>(pos: IVec3, facing: Facing, neighbour_stair: N) -> &'static [Aabb]
+pub fn resolved_shape<N>(pos: IVec3, state: StairState, mut neighbour_stair: N) -> StairShape
 where
-    N: FnMut(IVec3) -> Option<Facing>,
+    N: FnMut(IVec3) -> Option<StairState>,
 {
-    boxes_for_top_mask(resolved_mask(pos, facing, neighbour_stair))
+    let facing = state.facing;
+    let high = -facing_offset(facing);
+    if let Some(next) = neighbour_stair(pos + high) {
+        if next.half == state.half && perpendicular(facing, next.facing) {
+            return StairShape {
+                mask: back_mask(facing) & back_mask(next.facing),
+                half: state.half,
+            };
+        }
+    }
+    if let Some(next) = neighbour_stair(pos - high) {
+        if next.half == state.half && perpendicular(facing, next.facing) {
+            return StairShape {
+                mask: back_mask(facing) | back_mask(next.facing),
+                half: state.half,
+            };
+        }
+    }
+
+    StairShape {
+        mask: back_mask(facing),
+        half: state.half,
+    }
+}
+
+#[inline]
+pub fn resolved_boxes_state<N>(pos: IVec3, state: StairState, neighbour_stair: N) -> &'static [Aabb]
+where
+    N: FnMut(IVec3) -> Option<StairState>,
+{
+    boxes_for_shape(resolved_shape(pos, state, neighbour_stair))
 }
 
 #[inline]
@@ -99,14 +146,18 @@ pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> WorldBoxList {
 }
 
 #[inline]
-pub fn half_cell_occupied(mask: u8, ix: usize, iy: usize, iz: usize) -> bool {
+pub fn shape_half_cell_occupied(shape: StairShape, ix: usize, iy: usize, iz: usize) -> bool {
     debug_assert!(ix < 2 && iy < 2 && iz < 2);
-    iy == 0 || normalize_top_mask(mask) & quadrant_bit(ix, iz) != 0
+    let mask = normalize_top_mask(shape.mask);
+    match shape.half {
+        StairHalf::Bottom => iy == 0 || mask & quadrant_bit(ix, iz) != 0,
+        StairHalf::Top => iy == 1 || mask & quadrant_bit(ix, iz) != 0,
+    }
 }
 
 #[inline]
-pub fn adjacent_half_cell_occupied(
-    mask: u8,
+pub fn adjacent_shape_half_cell_occupied(
+    shape: StairShape,
     ix: usize,
     iy: usize,
     iz: usize,
@@ -118,7 +169,7 @@ pub fn adjacent_half_cell_occupied(
     (0..2).contains(&nx)
         && (0..2).contains(&ny)
         && (0..2).contains(&nz)
-        && half_cell_occupied(mask, nx as usize, ny as usize, nz as usize)
+        && shape_half_cell_occupied(shape, nx as usize, ny as usize, nz as usize)
 }
 
 #[inline]
@@ -144,6 +195,16 @@ const fn make_shapes() -> [Shape; 16] {
     shapes
 }
 
+const fn make_top_shapes() -> [Shape; 16] {
+    let mut shapes = [EMPTY_SHAPE; 16];
+    let mut mask = 0;
+    while mask < shapes.len() {
+        shapes[mask] = make_top_shape(mask as u8);
+        mask += 1;
+    }
+    shapes
+}
+
 const fn make_shape(mask: u8) -> Shape {
     let mask = normalize_top_mask(mask);
     let mut shape = EMPTY_SHAPE;
@@ -163,6 +224,31 @@ const fn make_shape(mask: u8) -> Shape {
             }
         } else {
             shape = push(shape, mask_rect(mask, H, 1.0));
+        }
+    }
+
+    shape
+}
+
+const fn make_top_shape(mask: u8) -> Shape {
+    let mask = normalize_top_mask(mask);
+    let mut shape = EMPTY_SHAPE;
+
+    if mask == ALL {
+        return push(shape, rect(0, 2, 0, 2, 0.0, 1.0));
+    }
+
+    shape = push(shape, rect(0, 2, 0, 2, H, 1.0));
+    if mask != 0 {
+        let line = contained_line(mask);
+        if line != 0 {
+            shape = push(shape, mask_rect(line, 0.0, H));
+            let rest = mask ^ line;
+            if rest != 0 {
+                shape = push(shape, mask_rect(rest, 0.0, H));
+            }
+        } else {
+            shape = push(shape, mask_rect(mask, 0.0, H));
         }
     }
 
@@ -254,6 +340,14 @@ fn boxes_for_top_mask(mask: u8) -> &'static [Aabb] {
 }
 
 #[inline]
+pub fn boxes_for_shape(shape: StairShape) -> &'static [Aabb] {
+    match shape.half {
+        StairHalf::Bottom => SHAPES[normalize_top_mask(shape.mask) as usize].as_slice(),
+        StairHalf::Top => TOP_SHAPES[normalize_top_mask(shape.mask) as usize].as_slice(),
+    }
+}
+
+#[inline]
 fn facing_offset(facing: Facing) -> IVec3 {
     let (x, z) = facing_xz(facing);
     IVec3::new(x, 0, z)
@@ -272,27 +366,25 @@ fn back_mask(facing: Facing) -> u8 {
 /// A 2x2 mask of the open half-face quadrants on a stair boundary. The light flood
 /// intersects the two cells' masks; light crosses only where their gaps overlap.
 #[inline]
-pub fn light_side_mask(facing: Facing, dx: i32, dy: i32, dz: i32) -> u8 {
-    if dy < 0 {
+pub fn light_side_mask(state: StairState, dx: i32, dy: i32, dz: i32) -> u8 {
+    let shape = shape(state);
+    let dir = [dx, dy, dz];
+    let Some(axis) = dir.iter().position(|&d| d != 0) else {
         return 0;
+    };
+    let layer = usize::from(dir[axis] > 0);
+    let mut open = 0u8;
+    for iy in 0..2 {
+        for iz in 0..2 {
+            for ix in 0..2 {
+                let idx = [ix, iy, iz];
+                if idx[axis] == layer && !shape_half_cell_occupied(shape, ix, iy, iz) {
+                    open |= aperture_bit(axis, ix, iy, iz);
+                }
+            }
+        }
     }
-    if dy > 0 {
-        return ALL ^ back_mask(facing);
-    }
-    let (fx, fz) = facing_xz(facing);
-    if (dx, dz) == (-fx, -fz) {
-        return 0;
-    }
-    if (dx, dz) == (fx, fz) {
-        return UPPER_FULL;
-    }
-    match (dx, dz, facing) {
-        (-1, 0, Facing::North) | (1, 0, Facing::North) => UPPER_U0,
-        (-1, 0, Facing::South) | (1, 0, Facing::South) => UPPER_U1,
-        (0, -1, Facing::West) | (0, 1, Facing::West) => UPPER_U0,
-        (0, -1, Facing::East) | (0, 1, Facing::East) => UPPER_U1,
-        _ => 0,
-    }
+    open
 }
 
 #[inline]
@@ -305,9 +397,14 @@ fn facing_xz(facing: Facing) -> (i32, i32) {
     }
 }
 
-const UPPER_FULL: u8 = 0b1100;
-const UPPER_U0: u8 = 0b0100;
-const UPPER_U1: u8 = 0b1000;
+#[inline]
+fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
+    match axis {
+        0 => quadrant_bit(iz, iy),
+        1 => quadrant_bit(ix, iz),
+        _ => quadrant_bit(ix, iy),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -434,13 +531,20 @@ mod tests {
 
     #[test]
     fn stair_light_masks_match_the_cut_out_gap() {
-        assert_eq!(light_side_mask(Facing::East, -1, 0, 0), 0);
-        assert_ne!(light_side_mask(Facing::East, 1, 0, 0), 0);
-        assert_ne!(light_side_mask(Facing::East, 0, 1, 0), 0);
-        assert_eq!(light_side_mask(Facing::East, 0, -1, 0), 0);
+        let east = StairState::new(Facing::East, StairHalf::Bottom);
+        assert_eq!(light_side_mask(east, -1, 0, 0), 0);
+        assert_ne!(light_side_mask(east, 1, 0, 0), 0);
+        assert_ne!(light_side_mask(east, 0, 1, 0), 0);
+        assert_eq!(light_side_mask(east, 0, -1, 0), 0);
 
-        let north_side_gap = light_side_mask(Facing::North, 1, 0, 0);
-        let south_side_gap = light_side_mask(Facing::South, -1, 0, 0);
+        let east_top = StairState::new(Facing::East, StairHalf::Top);
+        assert_ne!(light_side_mask(east_top, 0, -1, 0), 0);
+        assert_eq!(light_side_mask(east_top, 0, 1, 0), 0);
+
+        let north_side_gap =
+            light_side_mask(StairState::new(Facing::North, StairHalf::Bottom), 1, 0, 0);
+        let south_side_gap =
+            light_side_mask(StairState::new(Facing::South, StairHalf::Bottom), -1, 0, 0);
         assert_eq!(
             north_side_gap & south_side_gap,
             0,

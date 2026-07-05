@@ -32,6 +32,7 @@ pub(crate) use scene::Scene;
 #[cfg(test)]
 pub use block_model::SOLID_COLOR_FLAG;
 
+use crate::block_state::HeldBlockState;
 use crate::item::ItemType;
 use glam::{Quat, Vec3};
 use std::sync::Arc;
@@ -44,6 +45,7 @@ use std::sync::Arc;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemView {
     pub item: Option<ItemType>,
+    pub block_state: HeldBlockState,
     /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
     pub swing: f32,
     /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
@@ -55,6 +57,7 @@ impl Default for HeldItemView {
     fn default() -> Self {
         HeldItemView {
             item: None,
+            block_state: HeldBlockState::None,
             swing: 0.0,
             swing_scale: 1.0,
         }
@@ -66,6 +69,7 @@ impl Default for HeldItemView {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
+    pub block_state: HeldBlockState,
     pub mining: bool,
     /// True on the frame a block breaks, including instant hardness-0 blocks.
     pub broke_block: bool,

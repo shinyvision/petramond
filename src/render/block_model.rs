@@ -40,6 +40,7 @@ use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
+use crate::block_state::{HeldBlockState, LogAxis, StairState};
 use crate::mesh::face::Face;
 use crate::mesh::{pack_cell_uv, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
@@ -103,6 +104,48 @@ fn push_quad(
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
+#[inline]
+fn uv_16ths(value: f32) -> u32 {
+    (value.clamp(0.0, 1.0) * 16.0).round() as u32
+}
+
+#[inline]
+fn log_side_cell_uvs(axis: LogAxis, face: Face) -> Option<[(u32, u32); 4]> {
+    let mut uvs = [(0, 0); 4];
+    for (i, local) in face
+        .quad_box([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
+        .into_iter()
+        .enumerate()
+    {
+        let [u, v] = face.log_side_cell_uv(axis, local)?;
+        uvs[i] = (uv_16ths(u), uv_16ths(v));
+    }
+    Some(uvs)
+}
+
+#[inline]
+fn push_quad_cell_uvs(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    cell_uvs: [(u32, u32); 4],
+    tint: [f32; 3],
+    base_bits: u32,
+    packed2: u32,
+) {
+    let start = verts.len() as u32;
+    for (corner, pos) in corners.into_iter().enumerate() {
+        let (u, v) = cell_uvs[corner];
+        verts.push(Vertex {
+            pos,
+            tint,
+            packed: base_bits | ((corner as u32) << 8),
+            packed2: packed2 | pack_cell_uv(u, v),
+        });
+    }
+    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+}
+
 /// Append a full-bright textured cube spanning `[origin, origin + size]`, per-face
 /// tiles `[top, bottom, side]` (matching `Block::tiles()`), into the caller-owned
 /// `verts`/`indices` (capacity reused, nothing cleared). Indices are re-based onto
@@ -144,12 +187,34 @@ fn expand_tiles(tiles: [Tile; 3]) -> [Tile; 6] {
     [side, side, top, bottom, side, side]
 }
 
+#[inline]
+fn expand_log_tiles(tiles: [Tile; 3], axis: LogAxis) -> [Tile; 6] {
+    let [top, bottom, side] = tiles;
+    match axis {
+        LogAxis::X => [top, bottom, side, side, side, side],
+        LogAxis::Y => [side, side, top, bottom, side, side],
+        LogAxis::Z => [side, side, side, side, top, bottom],
+    }
+}
+
 /// The 6 per-face tiles (`ALL_FACES` order) for drawing `block` as an inventory /
 /// held / dropped-item cube. Most blocks just expand their `[top, bottom, side]`
 /// model; the furnace puts its front on a single visible face so the item reads as
 /// a furnace instead of four mouths (the placed block is meshed directionally).
-pub(super) fn block_icon_faces(block: Block) -> [Tile; 6] {
+#[cfg(test)]
+fn block_icon_faces(block: Block) -> [Tile; 6] {
+    block_icon_faces_with_state(block, HeldBlockState::None)
+}
+
+pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -> [Tile; 6] {
     let mut faces = expand_tiles(block.tiles());
+    if block.is_log() {
+        let axis = match state {
+            HeldBlockState::Log(axis) => axis,
+            _ => LogAxis::Y,
+        };
+        faces = expand_log_tiles(block.tiles(), axis);
+    }
     // Index 4 = PosZ, one of the two side faces the isometric icon presents, so a
     // directional block shows its front there instead of repeating the side art.
     match block {
@@ -194,6 +259,44 @@ pub(super) fn push_box_faces_lit(
             face_bits_textured_lit(mat, face, light.sky),
             lighting::blocklight_word(light.block),
         );
+    }
+}
+
+fn push_log_cube_faces_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    axis: LogAxis,
+    origin: Vec3,
+    size: f32,
+    light: DynLight,
+) {
+    let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
+    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
+        let mat = foliage_tint::face_material(tile);
+        let corners = face.quad_box(origin.to_array(), max.to_array());
+        let word2 = lighting::blocklight_word(light.block);
+        if let Some(cell_uvs) = log_side_cell_uvs(axis, face) {
+            push_quad_cell_uvs(
+                verts,
+                indices,
+                corners,
+                cell_uvs,
+                mat.tint,
+                face_bits_textured_lit(mat, face, light.sky)
+                    | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
+                word2,
+            );
+        } else {
+            push_quad(
+                verts,
+                indices,
+                corners,
+                mat.tint,
+                face_bits_textured_lit(mat, face, light.sky),
+                word2,
+            );
+        }
     }
 }
 
@@ -313,12 +416,42 @@ pub(super) fn push_block_item_cube_lit(
     size: f32,
     light: DynLight,
 ) {
-    let faces = block_icon_faces(block);
+    push_block_item_cube_lit_with_state(
+        verts,
+        indices,
+        block,
+        HeldBlockState::None,
+        origin,
+        size,
+        light,
+    );
+}
+
+pub(super) fn push_block_item_cube_lit_with_state(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    block: Block,
+    state: HeldBlockState,
+    origin: Vec3,
+    size: f32,
+    light: DynLight,
+) {
+    let faces = block_icon_faces_with_state(block, state);
     if block.render_shape() == crate::block::RenderShape::Stair {
-        push_stair_item_lit(verts, indices, faces, origin, size, light);
+        let stair = match state {
+            HeldBlockState::Stair(state) => state,
+            _ => StairState::new(crate::furnace::Facing::South, Default::default()),
+        };
+        push_stair_item_lit(verts, indices, faces, stair, origin, size, light);
     } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
         push_cactus_faces_lit(verts, indices, faces, origin, max, light);
+    } else if block.is_log() {
+        let axis = match state {
+            HeldBlockState::Log(axis) => axis,
+            _ => LogAxis::Y,
+        };
+        push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
     } else {
         push_cube_faces_lit(verts, indices, faces, origin, size, light);
     }
@@ -328,14 +461,15 @@ fn push_stair_item_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     faces: [Tile; 6],
+    state: StairState,
     origin: Vec3,
     size: f32,
     light: DynLight,
 ) {
-    let mask = crate::stair::mask(crate::furnace::Facing::South);
+    let shape = crate::stair::shape(state);
     for face in Face::ALL {
         for outer in [true, false] {
-            let (quads, n) = crate::mesh::stair::plane_quads(mask, face, outer);
+            let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
             for &(min, max) in quads.iter().take(n) {
                 push_cell_local_face(
                     verts,
@@ -373,8 +507,7 @@ pub(super) fn push_cell_local_face(
     let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
     let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
     let mat = foliage_tint::face_material(tile);
-    let bits =
-        face_bits_textured_lit(mat, face, light.sky) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
+    let bits = face_bits_textured_lit(mat, face, light.sky) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
     let word2 = lighting::blocklight_word(light.block);
     let corners = face.quad_box(mn.to_array(), mx.to_array());
     let local = face.quad_box(min, max);
@@ -560,6 +693,14 @@ mod tests {
     use super::*;
     use crate::mesh::SHADES;
 
+    fn uv_mode(v: &Vertex) -> u32 {
+        (v.packed >> UV_MODE_SHIFT) & 0x7
+    }
+
+    fn cell_uv16(v: &Vertex) -> (u32, u32) {
+        ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
+    }
+
     #[test]
     fn cube_textured_has_24_verts_36_indices() {
         let (v, i) = cube_textured(
@@ -604,6 +745,38 @@ mod tests {
         let faces = block_icon_faces(Block::OakLog);
         let [top, bottom, side] = Block::OakLog.tiles();
         assert_eq!(faces, [side, side, top, bottom, side, side]);
+    }
+
+    #[test]
+    fn horizontal_log_item_rotates_bark_face_uvs() {
+        let mut verts = Vec::new();
+        let mut indices = Vec::new();
+        push_block_item_cube_lit_with_state(
+            &mut verts,
+            &mut indices,
+            Block::OakLog,
+            HeldBlockState::Log(LogAxis::X),
+            Vec3::ZERO,
+            1.0,
+            DynLight::FULL,
+        );
+
+        assert_eq!(verts.len(), 24);
+        assert_eq!(indices.len(), 36);
+        let top_bark = &verts[2 * 4..3 * 4];
+        assert!(
+            top_bark.iter().all(|v| uv_mode(v) == UV_MODE_CELL_LOCAL),
+            "horizontal log side faces must rotate their bark UVs"
+        );
+        let mut uvs = top_bark.iter().map(cell_uv16).collect::<Vec<_>>();
+        uvs.sort_unstable();
+        assert_eq!(uvs, vec![(0, 0), (0, 16), (16, 0), (16, 16)]);
+
+        let pos_x_end_cap = &verts[0..4];
+        assert!(
+            pos_x_end_cap.iter().all(|v| uv_mode(v) == 0),
+            "end caps keep the regular cube UVs"
+        );
     }
 
     #[test]

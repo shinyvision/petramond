@@ -1,5 +1,6 @@
 use super::{tick::TickEvents, Game};
 use crate::block::{Block, BlockInteraction, RenderShape};
+use crate::block_state::StairState;
 use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::furnace::Facing;
 use crate::mathh::{IVec3, Vec3};
@@ -262,13 +263,14 @@ impl Game {
 
         if block.render_shape() == RenderShape::Stair {
             let facing = facing_from_forward(self.cam.forward());
+            let state = StairState::new(facing, self.held_stair_half());
             if !self.world.placement_cell_open(p) {
                 return None;
             }
-            let boxes = self.world.resolved_stair_boxes(p, facing);
+            let boxes = self.world.resolved_stair_boxes(p, state);
             let blocked = self.player.intersects_block_boxes(p, boxes)
                 || self.world.mobs().any_overlapping_boxes(p, boxes);
-            if !blocked && self.world.place_stair(p, block, facing) {
+            if !blocked && self.world.place_stair(p, block, state) {
                 self.player.inventory.decrement_selected();
                 return Some(p);
             }
@@ -296,7 +298,13 @@ impl Game {
         if target.is_replaceable()
             && clear_of_player
             && clear_of_mobs
-            && self.world.set_block_world(p.x, p.y, p.z, block)
+            && if block.is_log() {
+                let facing = facing_from_forward(self.cam.forward());
+                let axis = self.held_log_axis_for_facing(facing);
+                self.world.place_log(p, block, axis)
+            } else {
+                self.world.set_block_world(p.x, p.y, p.z, block)
+            }
         {
             // A placed furnace/chest gets an empty block-entity from the moment it
             // exists. Blocks marked directionalView have their front oriented to face
