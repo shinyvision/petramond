@@ -271,10 +271,11 @@ async fn new_renderer_inner(
     });
 
     // HUD heart atlas (empty | half | full, side by side). One texture for the whole
-    // health bar; the UI pass selects a cell per heart by UV. Loaded from disk at
-    // runtime into its own bind group (reusing the gui-atlas bind layout).
-    let load_gui_bind = |path: &std::path::Path| -> Option<wgpu::BindGroup> {
-        let bytes = std::fs::read(path).ok()?;
+    // health bar; the UI pass selects a cell per heart by UV. Resolved through the
+    // asset overlay (a pack can reskin it) into its own bind group (reusing the
+    // gui-atlas bind layout).
+    let load_gui_bind = |rel: &str| -> Option<wgpu::BindGroup> {
+        let (bytes, _path) = crate::assets::read_bytes(rel)?;
         let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
         Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gui texture bind"),
@@ -291,10 +292,7 @@ async fn new_renderer_inner(
             ],
         }))
     };
-    let hearts_bind = load_gui_bind(std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/textures/gui/hearts.png"
-    )));
+    let hearts_bind = load_gui_bind("textures/gui/hearts.png");
     let ui_hearts_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ui hearts vbuf"),
         size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
