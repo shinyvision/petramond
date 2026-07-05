@@ -175,14 +175,14 @@ fn inferred_parent(
     }
     let pivot = pivots[bone];
     let mut best: Option<(usize, f32)> = None;
-    for i in 0..model.bones.len() {
+    for (i, &bone_box) in boxes.iter().enumerate() {
         if i == bone || authored_descendant(model, i, bone) {
             continue;
         }
-        if !box_contains(boxes[i], pivot) {
+        if !box_contains(bone_box, pivot) {
             continue;
         }
-        let centre = (boxes[i].0 + boxes[i].1) * 0.5;
+        let centre = (bone_box.0 + bone_box.1) * 0.5;
         let score = (centre - pivot).length_squared();
         if best.is_none_or(|(_, best_score)| score < best_score) {
             best = Some((i, score));

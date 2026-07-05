@@ -1,7 +1,7 @@
 use super::face::{should_flip, vertex_ao};
 use super::*;
 use crate::block::Block;
-use crate::block_state::{LogAxis, StairHalf, StairState};
+use crate::block_state::{LogAxis, SlabState, StairHalf, StairState};
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
 
 /// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
@@ -766,6 +766,7 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
             }
         },
         |_, _, _| StairState::default(),
+        |_, _, _| SlabState::EMPTY,
         |_, _, _| 0,
         |_, _| 0,
         |wx, wy, wz| {
@@ -817,6 +818,7 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
             }
         },
         |_, _, _| StairState::default(),
+        |_, _, _| SlabState::EMPTY,
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -894,6 +896,7 @@ fn mesh_stair_fixture(
                     StairState::new(*f, StairHalf::Bottom)
                 })
         },
+        |_, _, _| SlabState::EMPTY,
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -1085,6 +1088,7 @@ fn stair_mesh_uses_resolved_outside_corner_shape() {
             (7, 8, 8) => StairState::new(Facing::South, StairHalf::Bottom),
             _ => StairState::default(),
         },
+        |_, _, _| SlabState::EMPTY,
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -1327,6 +1331,7 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
             }
         },
         |_, _, _| StairState::default(),
+        |_, _, _| SlabState::EMPTY,
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
@@ -1441,6 +1446,16 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             StairState::default()
         }
     };
+    let slab_at = |wx: i32, wy: i32, wz: i32| -> SlabState {
+        if (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+        {
+            section.slab_state(wx as usize, wy as usize, wz as usize)
+        } else {
+            SlabState::EMPTY
+        }
+    };
     let sky_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if wy < 0 {
             0
@@ -1460,6 +1475,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         pos,
         block_at,
         stair_at,
+        slab_at,
         water_at,
         biome_at,
         sky_at,
@@ -1472,6 +1488,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![0u8; PAD_VOL];
     let mut stair_states = vec![StairState::default().encode(); PAD_VOL];
+    let mut slab_states = vec![SlabState::EMPTY; PAD_VOL];
     let loaded = vec![true; PAD_VOL];
     for py in 0..PAD {
         for pz in 0..PAD {
@@ -1483,6 +1500,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
                 skylight[i] = sky_at(wx, wy, wz);
                 blocklight[i] = blocklight_at(wx, wy, wz);
                 stair_states[i] = stair_at(wx, wy, wz).encode();
+                slab_states[i] = slab_at(wx, wy, wz);
             }
         }
     }
@@ -1503,6 +1521,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             skylight: &skylight,
             blocklight: &blocklight,
             stair_states: &stair_states,
+            slab_states: &slab_states,
             loaded: &loaded,
             biome: &biome,
         },

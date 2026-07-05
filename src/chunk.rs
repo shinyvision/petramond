@@ -62,6 +62,18 @@ pub fn section_idx(x: usize, y: usize, z: usize) -> usize {
     (y * SECTION_SIZE * SECTION_SIZE) + (z * SECTION_SIZE) + x
 }
 
+/// Inverse of [`section_idx`]: the section-local `(x, y, z)` a linear cell index
+/// (equivalently, a sparse block-state `u16` key) refers to.
+#[inline]
+pub fn section_local(idx: usize) -> (usize, usize, usize) {
+    debug_assert!(idx < SECTION_VOLUME);
+    (
+        idx % SECTION_SIZE,
+        idx / (SECTION_SIZE * SECTION_SIZE),
+        (idx / SECTION_SIZE) % SECTION_SIZE,
+    )
+}
+
 /// A voxel column. Blocks stored as `Box<[u8; VOLUME]>` (256 KiB / chunk).
 pub struct Chunk {
     pub cx: i32,

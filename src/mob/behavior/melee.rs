@@ -63,7 +63,8 @@ impl MeleeAttackAi {
     /// Build from a brain row's `params` — the `melee_attack` node factory core.
     pub(super) fn from_params(params: &serde_json::Value) -> Result<Self, String> {
         let p: MeleeParams = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-        if !(p.reach > 0.0) {
+        // `partial_cmp` (not `<=`) so a NaN reach is rejected too.
+        if p.reach.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err("reach must be > 0".into());
         }
         if p.cooldown_ticks == 0 {

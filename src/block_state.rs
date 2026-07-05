@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use crate::block::Block;
 use crate::chunk::SECTION_VOLUME;
 use crate::door::DoorState;
 use crate::furnace::Facing;
@@ -63,6 +64,108 @@ impl StairState {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SlabSplit {
+    X = 0,
+    #[default]
+    Y = 1,
+    Z = 2,
+}
+
+impl SlabSplit {
+    #[inline]
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::X,
+            2 => Self::Z,
+            _ => Self::Y,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SlabState {
+    pub split: SlabSplit,
+    /// Slot 0 is the negative/lower half of the split axis, slot 1 the
+    /// positive/upper half. `Air` means that slot is empty.
+    pub layers: [Block; 2],
+}
+
+impl Default for SlabState {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl SlabState {
+    pub const EMPTY: Self = Self {
+        split: SlabSplit::Y,
+        layers: [Block::Air, Block::Air],
+    };
+
+    #[inline]
+    pub fn single(split: SlabSplit, slot: usize, block: Block) -> Self {
+        let mut layers = [Block::Air, Block::Air];
+        layers[slot.min(1)] = block;
+        Self { split, layers }
+    }
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.layers[0] == Block::Air && self.layers[1] == Block::Air
+    }
+
+    #[inline]
+    pub fn is_full(self) -> bool {
+        self.layers[0] != Block::Air && self.layers[1] != Block::Air
+    }
+
+    #[inline]
+    pub fn mask(self) -> u8 {
+        (u8::from(self.layers[0] != Block::Air)) | (u8::from(self.layers[1] != Block::Air) << 1)
+    }
+
+    #[inline]
+    pub fn block_in_slot(self, slot: usize) -> Option<Block> {
+        let block = self.layers[slot.min(1)];
+        (block != Block::Air).then_some(block)
+    }
+
+    #[inline]
+    pub fn with_slot(mut self, slot: usize, block: Block) -> Option<Self> {
+        let slot = slot.min(1);
+        if self.layers[slot] != Block::Air {
+            return None;
+        }
+        self.layers[slot] = block;
+        Some(self)
+    }
+
+    #[inline]
+    pub fn encode_meta(self) -> u8 {
+        self.split.to_u8() | (self.mask() << 2)
+    }
+
+    #[inline]
+    pub fn decode(meta: u8, a: Block, b: Block) -> Self {
+        let split = SlabSplit::from_u8(meta & 0b11);
+        let mask = (meta >> 2) & 0b11;
+        Self {
+            split,
+            layers: [
+                if mask & 0b01 != 0 { a } else { Block::Air },
+                if mask & 0b10 != 0 { b } else { Block::Air },
+            ],
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum LogAxis {
     X = 0,
     #[default]
@@ -91,6 +194,7 @@ pub(crate) enum HeldBlockState {
     #[default]
     None,
     Stair(StairState),
+    Slab(SlabState),
     Log(LogAxis),
 }
 
@@ -103,6 +207,7 @@ pub(crate) struct BlockStates {
     sapling_stages: HashMap<u16, u8>,
     doors: HashMap<u16, DoorState>,
     stairs: HashMap<u16, StairState>,
+    slabs: HashMap<u16, SlabState>,
     log_axes: HashMap<u16, LogAxis>,
     cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
 }
@@ -121,6 +226,7 @@ impl BlockStates {
         sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
         stairs: HashMap<u16, StairState>,
+        slabs: HashMap<u16, SlabState>,
         log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
@@ -132,6 +238,7 @@ impl BlockStates {
             sapling_stages,
             doors,
             stairs,
+            slabs,
             log_axes,
             cell_kv,
         }
@@ -180,6 +287,7 @@ impl BlockStates {
         self.clear_sapling_stage(idx);
         self.clear_door(idx);
         self.clear_stair(idx);
+        self.clear_slab(idx);
         self.clear_log_axis(idx);
         self.clear_torch(idx);
     }
@@ -300,6 +408,34 @@ impl BlockStates {
     #[inline]
     pub(crate) fn stair_states(&self) -> &HashMap<u16, StairState> {
         &self.stairs
+    }
+
+    #[inline]
+    pub(crate) fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
+        self.slabs
+            .get(&Self::key(x, y, z))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
+        let key = Self::key(x, y, z);
+        if state.is_empty() {
+            self.slabs.remove(&key);
+        } else {
+            self.slabs.insert(key, state);
+        }
+    }
+
+    #[inline]
+    fn clear_slab(&mut self, idx: usize) {
+        self.slabs.remove(&(idx as u16));
+    }
+
+    #[inline]
+    pub(crate) fn slab_states(&self) -> &HashMap<u16, SlabState> {
+        &self.slabs
     }
 
     #[inline]

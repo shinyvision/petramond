@@ -12,7 +12,7 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::block_state::StairState;
+use crate::block_state::{SlabState, StairState};
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
@@ -72,6 +72,7 @@ pub(super) struct NeighborSnap {
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[u8]>>,
     pub stair_states: Option<Box<[(u16, StairState)]>>,
+    pub slab_states: Option<Box<[(u16, SlabState)]>>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -145,6 +146,7 @@ struct Pad {
     skylight: Box<[u8]>,
     blocklight: Box<[u8]>,
     stair_states: Box<[u8]>,
+    slab_states: Box<[SlabState]>,
     loaded: Box<[bool]>,
 }
 
@@ -156,6 +158,7 @@ impl Pad {
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
             blocklight: vec![0u8; PAD_VOL].into_boxed_slice(),
             stair_states: vec![StairState::default().encode(); PAD_VOL].into_boxed_slice(),
+            slab_states: vec![SlabState::EMPTY; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
         }
     }
@@ -168,6 +171,7 @@ impl Pad {
         self.skylight.fill(SKY_FULL);
         self.blocklight.fill(0);
         self.stair_states.fill(StairState::default().encode());
+        self.slab_states.fill(SlabState::EMPTY);
         self.loaded.fill(false);
     }
 }
@@ -198,6 +202,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         skylight,
         blocklight,
         stair_states,
+        slab_states,
         loaded,
     } = pad;
 
@@ -268,30 +273,43 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         }
     }
 
-    // Stair states are rare (most sections carry none, so most neighbours skip entirely).
-    // Scatter each bearing neighbour's sparse entries into the pad, mapping the cell's
-    // local coords to a pad index only when the cell actually lies inside the pad.
+    // Sparse per-cell shape states (stairs, slabs) are rare (most sections carry none,
+    // so most neighbours skip entirely). Scatter each bearing neighbour's entries into
+    // the pad, mapping local coords to a pad index only when the cell lies inside it.
     for dy in -1i32..=1 {
         for dz in -1i32..=1 {
             for dx in -1i32..=1 {
                 let Some(s) = nbhd[nbhd_idx27(dx, dy, dz)].as_ref() else {
                     continue;
                 };
-                let Some(states) = s.stair_states.as_ref() else {
-                    continue;
-                };
-                for &(key, state) in states.iter() {
-                    let li = key as usize;
-                    let (lx, ly, lz) = (li & 15, li >> 8, (li >> 4) & 15);
-                    let (Some(px), Some(py), Some(pz)) =
-                        (pad_border(dx, lx), pad_border(dy, ly), pad_border(dz, lz))
-                    else {
-                        continue;
-                    };
-                    stair_states[pad_idx(px, py, pz)] = state.encode();
+                if let Some(states) = s.stair_states.as_ref() {
+                    scatter_border_states(states, (dx, dy, dz), |i, state| {
+                        stair_states[i] = state.encode();
+                    });
+                }
+                if let Some(states) = s.slab_states.as_ref() {
+                    scatter_border_states(states, (dx, dy, dz), |i, state| slab_states[i] = state);
                 }
             }
         }
+    }
+}
+
+/// Scatter one neighbour's sparse per-cell states into the pad via `write(pad_idx,
+/// state)`, skipping cells that lie outside this section's one-cell border ring.
+fn scatter_border_states<T: Copy>(
+    states: &[(u16, T)],
+    (dx, dy, dz): (i32, i32, i32),
+    mut write: impl FnMut(usize, T),
+) {
+    for &(key, state) in states {
+        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+        let (Some(px), Some(py), Some(pz)) =
+            (pad_border(dx, lx), pad_border(dy, ly), pad_border(dz, lz))
+        else {
+            continue;
+        };
+        write(pad_idx(px, py, pz), state);
     }
 }
 
@@ -332,6 +350,7 @@ fn build(job: MeshJob) -> MeshDone {
                 skylight: &pad.skylight,
                 blocklight: &pad.blocklight,
                 stair_states: &pad.stair_states,
+                slab_states: &pad.slab_states,
                 loaded: &pad.loaded,
                 biome: &biome,
             },

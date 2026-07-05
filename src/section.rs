@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::block::{Block, BlockTag};
-use crate::block_state::{BlockStates, LogAxis, StairHalf, StairState};
+use crate::block_state::{BlockStates, LogAxis, SlabState, StairHalf, StairState};
 use crate::chest::Chest;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::door::DoorState;
@@ -658,6 +658,20 @@ impl Section {
     }
 
     #[inline]
+    pub fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
+        self.states.slab_state(x, y, z)
+    }
+
+    pub fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
+        self.states.set_slab_state(x, y, z, state);
+        self.modified = true;
+    }
+
+    pub fn slab_states(&self) -> &HashMap<u16, SlabState> {
+        self.states.slab_states()
+    }
+
+    #[inline]
     pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
         self.furnaces.get(&Self::block_entity_key(x, y, z))
     }
@@ -793,6 +807,7 @@ impl Section {
         sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
         stairs: HashMap<u16, StairState>,
+        slabs: HashMap<u16, SlabState>,
         log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
@@ -809,6 +824,7 @@ impl Section {
                 sapling_stages,
                 doors,
                 stairs,
+                slabs,
                 log_axes,
                 cell_kv,
             ),

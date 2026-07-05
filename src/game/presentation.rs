@@ -29,6 +29,10 @@ pub struct BreakOverlayView {
     /// A stair's corner-resolved shape: the crack rebuilds the exact
     /// quads the chunk mesher emitted for it (`mesh::stair::plane_quads`).
     pub stair_shape: Option<StairShape>,
+    /// A slab cell's layer state: the crack rebuilds the exact per-layer quads
+    /// the chunk mesher emitted (`mesh::slab::layer_quads`), so the decal is
+    /// cropped to the occupied halves rather than stretched over them.
+    pub slab_state: Option<crate::block_state::SlabState>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
@@ -281,14 +285,16 @@ fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
         let block_type = Block::from_id(game.world.chunk_block(block.x, block.y, block.z));
         let stair_shape = (block_type.render_shape() == RenderShape::Stair)
             .then(|| game.world.stair_shape_at(block.x, block.y, block.z));
+        let slab_state = game.world.slab_state_if_slab(block);
         BreakOverlayView {
             block,
-            visual_box: if model.is_some() || stair_shape.is_some() {
+            visual_box: if model.is_some() || stair_shape.is_some() || slab_state.is_some() {
                 None
             } else {
                 game.world.selection_box_at(block.x, block.y, block.z)
             },
             stair_shape,
+            slab_state,
             model,
             stage,
         }

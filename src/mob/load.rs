@@ -449,7 +449,7 @@ mod tests {
         let mut ctx = super::super::brain::AiCtx {
             pos: mob_pos,
             cell: crate::mathh::voxel_at(mob_pos),
-            yaw: std::f32::consts::FRAC_PI_2 * -1.0, // facing +X, toward the player
+            yaw: -std::f32::consts::FRAC_PI_2, // facing +X, toward the player
             head_height: z.size.height,
             half_width: z.size.half_width,
             world: &world,

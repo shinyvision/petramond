@@ -166,6 +166,18 @@ pub(crate) const ENGINE_ITEM_NAMES: &[&str] = &[
     "llama:wool",
     "llama:bed_frame",
     "llama:bed",
+    "llama:oak_slab",
+    "llama:spruce_slab",
+    "llama:birch_slab",
+    "llama:jungle_slab",
+    "llama:acacia_slab",
+    "llama:dark_oak_slab",
+    "llama:cherry_slab",
+    "llama:mangrove_slab",
+    "llama:redwood_slab",
+    "llama:cobblestone_slab",
+    "llama:stone_slab",
+    "llama:dirt_slab",
 ];
 
 /// The JSON-loaded item table. Loads exactly once, on first access; the loader

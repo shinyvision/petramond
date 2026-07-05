@@ -1822,6 +1822,150 @@
         "roll": 0
       },
       "tags": []
+    },
+    {
+      "item": "llama:oak_slab",
+      "key": "llama:oak_slab",
+      "name": "Oak Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:spruce_slab",
+      "key": "llama:spruce_slab",
+      "name": "Spruce Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:birch_slab",
+      "key": "llama:birch_slab",
+      "name": "Birch Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:jungle_slab",
+      "key": "llama:jungle_slab",
+      "name": "Jungle Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:acacia_slab",
+      "key": "llama:acacia_slab",
+      "name": "Acacia Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dark_oak_slab",
+      "key": "llama:dark_oak_slab",
+      "name": "Dark Oak Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cherry_slab",
+      "key": "llama:cherry_slab",
+      "name": "Cherry Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:mangrove_slab",
+      "key": "llama:mangrove_slab",
+      "name": "Mangrove Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:redwood_slab",
+      "key": "llama:redwood_slab",
+      "name": "Redwood Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:cobblestone_slab",
+      "key": "llama:cobblestone_slab",
+      "name": "Cobblestone Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:stone_slab",
+      "key": "llama:stone_slab",
+      "name": "Stone Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:dirt_slab",
+      "key": "llama:dirt_slab",
+      "name": "Dirt Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
     }
   ]
 }

@@ -45,11 +45,15 @@ pub(super) fn gather(pos: SectionPos, sections: &HashMap<SectionPos, Arc<Section
                 let by = ((dcy + 1) as usize) * SECTION_SIZE;
                 let bz = ((dcz + 1) as usize) * SECTION_SIZE;
                 states.extend(section.stair_states().iter().map(|(&key, &state)| {
-                    let key = key as usize;
-                    let lx = key & 0x0F;
-                    let ly = key >> 8;
-                    let lz = (key >> 4) & 0x0F;
+                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
                     SparseCellState::Stair {
+                        idx: nbhd_idx(bx + lx, by + ly, bz + lz),
+                        state,
+                    }
+                }));
+                states.extend(section.slab_states().iter().map(|(&key, &state)| {
+                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+                    SparseCellState::Slab {
                         idx: nbhd_idx(bx + lx, by + ly, bz + lz),
                         state,
                     }

@@ -68,7 +68,7 @@ impl Game {
             pending_attack: false,
             pending_place: false,
             held_rotation_item: None,
-            held_block_rotated: false,
+            held_block_rotation: 0,
             drop_queue: DropQueue::default(),
             pending_menu_clicks: Vec::new(),
             chest_lids: HashMap::new(),

@@ -484,7 +484,7 @@ mod tests {
         let field = CaveField::new(0xC0FFEE);
         let a = field.build_lattice(0, 0, 0, 15, 15, 15);
         let b = field.build_lattice(-16, 4, 8, 15, 35, 23);
-        for &(x, y, z) in &[(0, 4, 8), (7, 15, 15), (15, 12, 9), (3, 8, 23_i32.min(15))] {
+        for &(x, y, z) in &[(0, 4, 8), (7, 15, 15), (15, 12, 9), (3, 8, 15)] {
             assert_eq!(a.a(x, y, z).to_bits(), b.a(x, y, z).to_bits());
             assert_eq!(a.rough(x, y, z).to_bits(), b.rough(x, y, z).to_bits());
             assert_eq!(a.cheese(x, y, z).to_bits(), b.cheese(x, y, z).to_bits());

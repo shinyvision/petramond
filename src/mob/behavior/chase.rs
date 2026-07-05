@@ -51,7 +51,8 @@ impl ChasePlayerAi {
     /// Build from a brain row's `params` — the `chase_player` node factory core.
     pub(super) fn from_params(params: &serde_json::Value) -> Result<Self, String> {
         let p: ChaseParams = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-        if !(p.radius > 0.0) {
+        // `partial_cmp` (not `<=`) so a NaN radius is rejected too.
+        if p.radius.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err("radius must be > 0".into());
         }
         if p.give_up_radius < p.radius {

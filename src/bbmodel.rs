@@ -350,7 +350,7 @@ impl Model {
     fn resolve_pose(&self, local: &[Mat4]) -> Vec<Mat4> {
         let mut world: Vec<Option<Mat4>> = vec![None; self.bones.len()];
         for i in 0..self.bones.len() {
-            self.resolve_world(i, &local, &mut world);
+            self.resolve_world(i, local, &mut world);
         }
         world
             .into_iter()
@@ -648,7 +648,16 @@ impl TextureSheet {
         // Decode each entry's `data:image/png;base64,<payload>` source; an entry
         // without one (or that fails to decode) stays `None` so indices keep lining
         // up with face references.
-        let images: Vec<Option<(Vec<u8>, u32, u32, f32, f32)>> = texs
+        struct DecodedTex {
+            rgba: Vec<u8>,
+            w: u32,
+            h: u32,
+            /// UV-space size the face coordinates are authored in (entry override
+            /// or the project resolution).
+            uv_w: f32,
+            uv_h: f32,
+        }
+        let images: Vec<Option<DecodedTex>> = texs
             .iter()
             .map(|t| {
                 let src = t.get("source").and_then(Value::as_str)?;
@@ -663,12 +672,18 @@ impl TextureSheet {
                 } else {
                     (res_w, res_h)
                 };
-                Some((img.into_raw(), w, h, uv_w, uv_h))
+                Some(DecodedTex {
+                    rgba: img.into_raw(),
+                    w,
+                    h,
+                    uv_w,
+                    uv_h,
+                })
             })
             .collect();
 
-        let sheet_w = images.iter().flatten().map(|i| i.1).max().unwrap_or(0);
-        let sheet_h: u32 = images.iter().flatten().map(|i| i.2).sum();
+        let sheet_w = images.iter().flatten().map(|i| i.w).max().unwrap_or(0);
+        let sheet_h: u32 = images.iter().flatten().map(|i| i.h).sum();
         if sheet_w == 0 || sheet_h == 0 {
             return Err("no embedded texture source".into());
         }
@@ -677,25 +692,25 @@ impl TextureSheet {
         let mut rects = Vec::with_capacity(images.len());
         let mut y_off = 0u32;
         for img in images {
-            let Some((tex, w, h, uv_w, uv_h)) = img else {
+            let Some(tex) = img else {
                 rects.push(None);
                 continue;
             };
-            for row in 0..h {
-                let src = (row * w * 4) as usize;
+            for row in 0..tex.h {
+                let src = (row * tex.w * 4) as usize;
                 let dst = (((y_off + row) * sheet_w) * 4) as usize;
-                rgba[dst..dst + (w * 4) as usize]
-                    .copy_from_slice(&tex[src..src + (w * 4) as usize]);
+                rgba[dst..dst + (tex.w * 4) as usize]
+                    .copy_from_slice(&tex.rgba[src..src + (tex.w * 4) as usize]);
             }
             rects.push(Some(TexRect {
-                uv_w,
-                uv_h,
+                uv_w: tex.uv_w,
+                uv_h: tex.uv_h,
                 u_off: 0.0,
                 v_off: y_off as f32 / sheet_h as f32,
-                u_scale: w as f32 / sheet_w as f32,
-                v_scale: h as f32 / sheet_h as f32,
+                u_scale: tex.w as f32 / sheet_w as f32,
+                v_scale: tex.h as f32 / sheet_h as f32,
             }));
-            y_off += h;
+            y_off += tex.h;
         }
 
         Ok(TextureSheet {

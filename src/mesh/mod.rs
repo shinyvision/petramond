@@ -9,8 +9,10 @@
 
 mod builder;
 pub(crate) mod face;
+pub(crate) mod plane;
 #[cfg(test)]
 mod skylight;
+pub(crate) mod slab;
 pub(crate) mod stair;
 mod tint;
 mod torch;

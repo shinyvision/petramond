@@ -9,6 +9,27 @@ use crate::world::World;
 pub const REACH: f32 = 4.0;
 const EPS: f32 = 1.0e-5;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(super) struct ShapeHit {
+    t: f32,
+    normal: Option<IVec3>,
+}
+
+impl ShapeHit {
+    #[inline]
+    fn distance(t: f32) -> Self {
+        Self { t, normal: None }
+    }
+
+    #[inline]
+    fn with_normal(t: f32, normal: IVec3) -> Self {
+        Self {
+            t,
+            normal: Some(normal),
+        }
+    }
+}
+
 /// Result of a block raycast.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RaycastHit {
@@ -73,6 +94,14 @@ impl Player {
             let (boxes, len) = crate::stair::world_boxes(
                 hit.block,
                 world.stair_boxes_at(hit.block.x, hit.block.y, hit.block.z),
+            );
+            hit.outline = SelectionShape::Boxes {
+                boxes: SelectionBoxes { boxes, len },
+            };
+        } else if hit_block.render_shape() == RenderShape::Slab {
+            let (boxes, len) = crate::slab::world_boxes(
+                hit.block,
+                world.slab_boxes_at(hit.block.x, hit.block.y, hit.block.z),
             );
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
@@ -171,7 +200,7 @@ impl Player {
     ) -> Option<(RaycastHit, f32)>
     where
         F: Fn(i32, i32, i32) -> Block,
-        S: Fn(Vec3, Vec3, IVec3, Block) -> Option<f32>,
+        S: Fn(Vec3, Vec3, IVec3, Block) -> Option<ShapeHit>,
     {
         if dir.length_squared() <= f32::EPSILON {
             return None;
@@ -206,12 +235,14 @@ impl Player {
                 if block.visual_aabb().is_none()
                     && block != Block::Torch
                     && block.render_shape() != RenderShape::Stair
+                    && block.render_shape() != RenderShape::Slab
                 {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
-                if let Some(t) = shape_hit(eye, dir, pos, block) {
+                if let Some(shape) = shape_hit(eye, dir, pos, block) {
+                    let t = shape.t;
                     if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
-                        return Some((hit(pos, entry_normal, block), t));
+                        return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
             } else if block.render_shape() == RenderShape::Cross {
@@ -305,7 +336,13 @@ fn should_outline_as_full_block(bounds: TileAlphaBounds) -> bool {
 /// inset chest body, or the torch pole — or `None` if the ray misses it. Full cubes
 /// never reach here (they stop the ray on cell entry); this is what lets selection
 /// ignore the empty parts of an inset/thin block's cell.
-fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &World) -> Option<f32> {
+fn precise_shape_hit(
+    eye: Vec3,
+    dir: Vec3,
+    pos: IVec3,
+    block: Block,
+    world: &World,
+) -> Option<ShapeHit> {
     if block == Block::Torch {
         return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
     }
@@ -323,14 +360,15 @@ fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &Wor
             inv.transform_point3(eye),
             inv.transform_vector3(dir),
             kind,
-        );
+        )
+        .map(ShapeHit::distance);
     }
     // A door's thin slab depends on its facing + open state (the chunk door map), so
     // test the position-aware box rather than the block row's position-less default.
     if block.render_shape() == RenderShape::Door {
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
+        return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
     if block.render_shape() == RenderShape::Stair {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
@@ -338,26 +376,41 @@ fn precise_shape_hit(eye: Vec3, dir: Vec3, pos: IVec3, block: Block, world: &Wor
             .stair_boxes_at(pos.x, pos.y, pos.z)
             .iter()
             .filter_map(|b| {
-                ray_vs_aabb(
+                ray_vs_aabb_hit(
                     eye,
                     dir,
                     base + Vec3::new(b.min[0], b.min[1], b.min[2]),
                     base + Vec3::new(b.max[0], b.max[1], b.max[2]),
                 )
             })
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    if block.render_shape() == RenderShape::Slab {
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return world
+            .slab_boxes_at(pos.x, pos.y, pos.z)
+            .iter()
+            .filter_map(|b| {
+                ray_vs_aabb_hit(
+                    eye,
+                    dir,
+                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
+                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                )
+            })
+            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
     // Any other custom-shaped solid (the chest) tests its inset visual box.
     let (mn, mx) = block.visual_aabb()?;
     let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    ray_vs_aabb(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
+    ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
 }
 
 /// First-crossing distance of the ray through the torch's pole box. The pole is a
 /// thin, possibly-tilted box, so transform the ray into the torch's local model
 /// space (the inverse of its placement transform — a rigid rotate+translate, so
 /// distances along the ray are preserved) and test the upright local box.
-fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> Option<f32> {
+fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> Option<ShapeHit> {
     let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     let inv = placement.model_transform().inverse();
     let ol = inv.transform_point3(eye - base);
@@ -368,12 +421,19 @@ fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> 
         Vec3::new(-POLE_HALF, 0.0, -POLE_HALF),
         Vec3::new(POLE_HALF, POLE_HEIGHT, POLE_HALF),
     )
+    .map(ShapeHit::distance)
 }
 
 /// Ray vs axis-aligned box (slab method): the entry distance `t >= 0`, or `None`
 /// when the ray misses the box or it lies entirely behind the eye. Shared with mob
 /// targeting (a mob is an AABB) — that's why it's crate-visible.
 pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+    ray_vs_aabb_hit(eye, dir, min, max).map(|hit| hit.t)
+}
+
+/// Ray vs axis-aligned box with the crossed face normal. The normal points back
+/// toward the ray origin, matching [`RaycastHit::normal`].
+pub(super) fn ray_vs_aabb_hit(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<ShapeHit> {
     let (e, d, lo, hi) = (
         eye.to_array(),
         dir.to_array(),
@@ -382,6 +442,7 @@ pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<
     );
     let mut t_near = f32::NEG_INFINITY;
     let mut t_far = f32::INFINITY;
+    let mut normal = IVec3::ZERO;
     for i in 0..3 {
         if d[i].abs() < EPS {
             // Ray parallel to this slab: miss unless the origin is within it.
@@ -392,8 +453,14 @@ pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<
             let inv = 1.0 / d[i];
             let mut t1 = (lo[i] - e[i]) * inv;
             let mut t2 = (hi[i] - e[i]) * inv;
+            let mut n1 = axis_normal(i, -1);
+            let mut n2 = axis_normal(i, 1);
             if t1 > t2 {
                 std::mem::swap(&mut t1, &mut t2);
+                std::mem::swap(&mut n1, &mut n2);
+            }
+            if t1 > t_near {
+                normal = n1;
             }
             t_near = t_near.max(t1);
             t_far = t_far.min(t2);
@@ -405,7 +472,20 @@ pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<
     if t_far < 0.0 {
         return None;
     }
-    Some(t_near.max(0.0))
+    if t_near < 0.0 {
+        Some(ShapeHit::with_normal(0.0, IVec3::ZERO))
+    } else {
+        Some(ShapeHit::with_normal(t_near, normal))
+    }
+}
+
+#[inline]
+fn axis_normal(axis: usize, sign: i32) -> IVec3 {
+    match axis {
+        0 => IVec3::new(sign, 0, 0),
+        1 => IVec3::new(0, sign, 0),
+        _ => IVec3::new(0, 0, sign),
+    }
 }
 
 fn intersect_cross_plant(eye: Vec3, dir: Vec3, block_pos: IVec3, block: Block) -> Option<f32> {

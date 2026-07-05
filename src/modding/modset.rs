@@ -1,5 +1,5 @@
 //! The save's recorded mod set (`mods.json` in the save dir): active pack ids
-//! + versions, written on every save and compared at world open with a LOUD
+//! and versions, written on every save and compared at world open with a LOUD
 //! warning listing added / removed / version-changed mods. Nothing blocks —
 //! content already degrades safely (the name-addressed save palette maps
 //! unknown blocks to air, unknown mob species are skipped).

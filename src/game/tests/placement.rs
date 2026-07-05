@@ -3,7 +3,7 @@ use super::super::tick::TickEvents;
 use super::super::Game;
 use super::common::{filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
-use crate::block_state::{HeldBlockState, LogAxis, StairHalf, StairState};
+use crate::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
 use crate::furnace::Facing;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -282,6 +282,147 @@ fn rotating_held_stair_places_top_half() {
     assert_eq!(
         game.world.stair_state_at(p.x, p.y, p.z),
         StairState::new(Facing::North, StairHalf::Top)
+    );
+}
+
+#[test]
+fn slabs_stack_horizontally_with_mixed_materials() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let p = IVec3::new(4, 64, 4);
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::DirtSlab, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test(), "first slab places");
+    assert_eq!(
+        game.world.slab_state_at(p.x, p.y, p.z),
+        SlabState::single(SlabSplit::Y, 0, Block::DirtSlab)
+    );
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::CobblestoneSlab, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(p, IVec3::Y));
+    assert!(
+        game.try_place_for_test(),
+        "second slab stacks in the hit cell"
+    );
+
+    let state = game.world.slab_state_at(p.x, p.y, p.z);
+    assert_eq!(state.split, SlabSplit::Y);
+    assert_eq!(state.layers, [Block::DirtSlab, Block::CobblestoneSlab]);
+    assert_eq!(
+        game.world.slab_drop_stacks_at(p),
+        vec![
+            ItemStack::new(ItemType::DirtSlab, 1),
+            ItemStack::new(ItemType::CobblestoneSlab, 1),
+        ],
+        "breaking a mixed stack must recover every slab layer"
+    );
+}
+
+#[test]
+fn slabs_stack_vertically_with_mixed_materials() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let support = IVec3::new(3, 64, 4);
+    let p = support + IVec3::X;
+    game.world
+        .set_block_world(support.x, support.y, support.z, Block::Stone);
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::StoneSlab, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+    game.toggle_held_block_rotation();
+    game.look = Some(hit(support, IVec3::X));
+    assert!(
+        game.try_place_for_test(),
+        "vertical slab places against support"
+    );
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::DirtSlab, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+    game.toggle_held_block_rotation();
+    game.look = Some(hit(p, IVec3::X));
+    assert!(
+        game.try_place_for_test(),
+        "second vertical slab stacks in the open half"
+    );
+
+    let state = game.world.slab_state_at(p.x, p.y, p.z);
+    assert_eq!(state.split, SlabSplit::X);
+    assert_eq!(state.layers, [Block::StoneSlab, Block::DirtSlab]);
+}
+
+#[test]
+fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let p = IVec3::new(4, 64, 4);
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::DirtSlab, 2));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test(), "bottom slab places");
+
+    // Hold TOP rotation and click the bottom slab's SIDE face: the hit cell's
+    // empty top half must not swallow the click — only a face looking along
+    // the split axis stacks. The top slab builds in the adjacent cell.
+    game.toggle_held_block_rotation();
+    game.look = Some(hit(p, IVec3::X));
+    assert!(game.try_place_for_test(), "side click places");
+    assert_eq!(
+        game.world.slab_state_at(p.x, p.y, p.z),
+        SlabState::single(SlabSplit::Y, 0, Block::DirtSlab),
+        "the hit cell keeps its lone bottom layer"
+    );
+    assert_eq!(
+        game.world.slab_state_at(p.x + 1, p.y, p.z),
+        SlabState::single(SlabSplit::Y, 1, Block::DirtSlab),
+        "the top slab lands in the adjacent cell"
+    );
+}
+
+#[test]
+fn held_rotation_does_not_leak_across_item_swaps() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let p = IVec3::new(4, 64, 4);
+
+    // Rotate a held stair, then swap the ACTIVE SLOT's content to a slab (an
+    // inventory-GUI style swap — no hotbar switch, so nothing clears the
+    // latched rotation). The stale stair rotation must not orient the slab.
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::DirtStairs, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.toggle_held_block_rotation();
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::DirtSlab, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.try_place_for_test(), "slab places");
+    assert_eq!(
+        game.world.slab_state_at(p.x, p.y, p.z),
+        SlabState::single(SlabSplit::Y, 0, Block::DirtSlab),
+        "an un-rotated slab places as a bottom slab"
     );
 }
 

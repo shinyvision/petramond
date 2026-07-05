@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
-use crate::block_state::{LogAxis, StairState};
+use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chest::Chest;
 use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::door::DoorState;
@@ -26,7 +26,8 @@ use crate::torch::TorchPlacement;
 /// fresh at `1` (the column-era chunk records are not migrated — saves regenerate).
 /// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`);
 /// v3 widens it again with the per-mob mod KV map (default-empty for older records).
-const SECTION_REC_VERSION: u8 = 3;
+/// v4 appends a third flags byte for slab layer state.
+const SECTION_REC_VERSION: u8 = 4;
 /// Oldest section-record version this build can still read.
 const SECTION_REC_MIN_VERSION: u8 = 1;
 const FLAG_HAS_WATER: u8 = 0x01;
@@ -43,6 +44,8 @@ const FLAG2_HAS_DOORS: u8 = 0x02;
 const FLAG2_HAS_STAIRS: u8 = 0x04;
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
 const FLAG2_HAS_LOG_AXES: u8 = 0x10;
+/// Third flags byte (section-record v4+). `0` for older records.
+const FLAG3_HAS_SLABS: u8 = 0x01;
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -82,6 +85,9 @@ pub struct SectionSnapshot {
     /// State of placed stairs, keyed by section-local index, so a stair reloads with
     /// the same low/open side and top/bottom half.
     pub stair_states: HashMap<u16, StairState>,
+    /// State of placed slabs, keyed by section-local index. Stores split axis plus
+    /// the material block in each occupied half so mixed slab stacks reload exactly.
+    pub slab_states: HashMap<u16, SlabState>,
     /// Non-default log axes, keyed by section-local index. Missing logs are vertical.
     pub log_axes: HashMap<u16, LogAxis>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
@@ -114,6 +120,7 @@ impl SectionSnapshot {
             sapling_stages: s.sapling_stages().clone(),
             doors: s.doors().clone(),
             stair_states: s.stair_states().clone(),
+            slab_states: s.slab_states().clone(),
             log_axes: s.log_axes().clone(),
             cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
@@ -299,12 +306,12 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Compress a section snapshot into a record: `[version, flags, flags2, blocks,
+/// Compress a section snapshot into a record: `[version, flags, flags2, flags3, blocks,
 /// water?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
 /// when present, so a terrain-only section pays for just its block array.
 pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
-    let mut payload = Vec::with_capacity(3 + s.blocks.len() + extra);
+    let mut payload = Vec::with_capacity(4 + s.blocks.len() + extra);
     put_u8(&mut payload, SECTION_REC_VERSION);
     let mut flags = 0u8;
     if s.water.is_some() {
@@ -347,8 +354,13 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.log_axes.is_empty() {
         flags2 |= FLAG2_HAS_LOG_AXES;
     }
+    let mut flags3 = 0u8;
+    if !s.slab_states.is_empty() {
+        flags3 |= FLAG3_HAS_SLABS;
+    }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
+    put_u8(&mut payload, flags3);
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
     // future registry renumbering can't corrupt old worlds.
     let pal = super::palette::active();
@@ -413,6 +425,13 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
             put_u8(buf, axis.to_u8());
         });
     }
+    if !s.slab_states.is_empty() {
+        put_indexed(&mut payload, &s.slab_states, 3, |buf, state| {
+            put_u8(buf, state.encode_meta());
+            put_u8(buf, pal.block_to_disk(state.layers[0].id()));
+            put_u8(buf, pal.block_to_disk(state.layers[1].id()));
+        });
+    }
     deflate(&payload)
 }
 
@@ -431,6 +450,7 @@ pub fn decode_section(
     }
     let flags = r.u8()?;
     let flags2 = r.u8()?;
+    let flags3 = if version >= 4 { r.u8()? } else { 0 };
     let pal = super::palette::active();
     let blocks: Box<[u8]> = r
         .bytes(SECTION_VOLUME)?
@@ -502,6 +522,16 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
+    let slab_states = if flags3 & FLAG3_HAS_SLABS != 0 {
+        get_indexed(&mut r, |r| {
+            let meta = r.u8()?;
+            let a = crate::block::Block(pal.block_from_disk(r.u8()?));
+            let b = crate::block::Block(pal.block_from_disk(r.u8()?));
+            Some(SlabState::decode(meta, a, b))
+        })?
+    } else {
+        HashMap::new()
+    };
     Some((
         Section::from_saved(
             pos.cx,
@@ -517,6 +547,7 @@ pub fn decode_section(
             sapling_stages,
             doors,
             stair_states,
+            slab_states,
             log_axes,
             cell_kv,
         ),
@@ -529,6 +560,7 @@ pub fn decode_section(
 mod tests {
     use super::*;
     use crate::block::Block;
+    use crate::block_state::SlabSplit;
     use crate::mathh::Vec3;
 
     fn sec(cx: i32, cy: i32, cz: i32) -> Section {
@@ -823,6 +855,25 @@ mod tests {
             StairState::new(Facing::South, crate::block_state::StairHalf::Top)
         );
         assert_eq!(back.stair_state(0, 0, 0), StairState::default());
+    }
+
+    #[test]
+    fn section_record_roundtrips_slab_states() {
+        let mut s = sec(7, 4, 2);
+        let state = SlabState {
+            split: SlabSplit::Y,
+            layers: [Block::DirtSlab, Block::CobblestoneSlab],
+        };
+        s.set_block(4, 2, 4, Block::CobblestoneSlab);
+        s.set_slab_state(4, 2, 4, state);
+
+        let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, _entities, _mobs) =
+            decode_section(SectionPos::new(7, 4, 2), &blob).expect("decodes");
+
+        assert_eq!(back.block_raw(4, 2, 4), Block::CobblestoneSlab.id());
+        assert_eq!(back.slab_state(4, 2, 4), state);
+        assert_eq!(back.slab_state(0, 0, 0), SlabState::EMPTY);
     }
 
     #[test]

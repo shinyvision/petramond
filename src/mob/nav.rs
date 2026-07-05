@@ -166,7 +166,7 @@ impl Navigator {
             (!goal_changed && self.index < self.path.len()).then(|| self.path[self.index]);
         self.path = old_waypoint
             .and_then(|wp| preserve_waypoint_path(start, wp, goal, self.params, &solid, &water))
-            .unwrap_or_else(|| path::find_path(start, goal, self.params, &solid, &water));
+            .unwrap_or_else(|| path::find_path(start, goal, self.params, &solid, water));
         self.path_reaches_goal = self.path.last().is_some_and(|&last| last == goal);
         // Index 1 = the first cell to walk to (path[0] is the start).
         self.index = if self.path.len() > 1 {

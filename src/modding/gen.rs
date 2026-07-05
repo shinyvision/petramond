@@ -374,10 +374,10 @@ struct ThreadSlots {
 thread_local! {
     /// This thread's gen instances, keyed by the config epoch (a new session's
     /// config drops the previous session's instances lazily).
-    static THREAD_SLOTS: RefCell<ThreadSlots> = RefCell::new(ThreadSlots {
+    static THREAD_SLOTS: RefCell<ThreadSlots> = const { RefCell::new(ThreadSlots {
         epoch: 0,
         slots: Vec::new(),
-    });
+    }) };
 }
 
 // ---------------------------------------------------------------------------

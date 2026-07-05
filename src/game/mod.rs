@@ -27,7 +27,7 @@ mod tick;
 use std::collections::HashMap;
 
 use crate::block::RenderShape;
-use crate::block_state::{HeldBlockState, LogAxis, StairHalf, StairState};
+use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
 use crate::camera::Camera;
 use crate::crafting::Recipes;
 use crate::entity::ParticleSystem;
@@ -109,7 +109,7 @@ pub struct Game {
     /// next tick (edge-latched; the tick consumes it).
     pending_place: bool,
     held_rotation_item: Option<ItemType>,
-    held_block_rotated: bool,
+    held_block_rotation: u8,
     /// Item-drop intents latched by input/menu cleanup and applied on the next fixed
     /// tick. Gameplay-visible inventory/cursor mutation and entity spawning happen
     /// together in [`tick_drops`](Self::tick_drops).
@@ -273,17 +273,18 @@ impl Game {
             return;
         }
         if self.held_rotation_item == Some(item) {
-            self.held_block_rotated = !self.held_block_rotated;
+            let count = item.as_block().map_or(1, rotation_count).max(1);
+            self.held_block_rotation = (self.held_block_rotation + 1) % count;
         } else {
             self.held_rotation_item = Some(item);
-            self.held_block_rotated = true;
+            self.held_block_rotation = 1 % item.as_block().map_or(1, rotation_count).max(1);
         }
     }
 
     #[inline]
     fn clear_held_block_rotation(&mut self) {
         self.held_rotation_item = None;
-        self.held_block_rotated = false;
+        self.held_block_rotation = 0;
     }
 
     #[inline]
@@ -292,7 +293,7 @@ impl Game {
             return false;
         };
         self.held_rotation_item == Some(item)
-            && self.held_block_rotated
+            && self.held_block_rotation != 0
             && item.as_block().is_some_and(rotatable_block)
     }
 
@@ -310,6 +311,14 @@ impl Game {
                     StairHalf::Bottom
                 },
             ));
+        }
+        if block.render_shape() == RenderShape::Slab {
+            let slot = crate::slab::slot_for_rotation(
+                self.held_slab_rotation(),
+                IVec3::ZERO,
+                crate::furnace::Facing::South,
+            );
+            return HeldBlockState::Slab(SlabState::single(slot.split, slot.index, block));
         }
         if block.is_log() {
             return HeldBlockState::Log(if self.held_rotation_active() {
@@ -331,6 +340,15 @@ impl Game {
     }
 
     #[inline]
+    pub(crate) fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
+        if self.held_rotation_active() {
+            crate::slab::SlabRotation::from_index(self.held_block_rotation)
+        } else {
+            crate::slab::SlabRotation::Bottom
+        }
+    }
+
+    #[inline]
     pub(crate) fn held_log_axis_for_facing(&self, facing: crate::furnace::Facing) -> LogAxis {
         if !self.held_rotation_active() {
             return LogAxis::Y;
@@ -343,7 +361,15 @@ impl Game {
 }
 
 fn rotatable_block(block: crate::block::Block) -> bool {
-    block.render_shape() == RenderShape::Stair || block.is_log()
+    matches!(block.render_shape(), RenderShape::Stair | RenderShape::Slab) || block.is_log()
+}
+
+fn rotation_count(block: crate::block::Block) -> u8 {
+    if block.render_shape() == RenderShape::Slab {
+        3
+    } else {
+        2
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use glam::{IVec3, Vec3};
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
 use crate::block_model::{self, BlockModelKind};
-use crate::block_state::{LogAxis, StairState};
+use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{
     section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y,
 };
@@ -134,6 +134,7 @@ pub(crate) struct SectionMeshPad<'a> {
     pub skylight: &'a [u8],
     pub blocklight: &'a [u8],
     pub stair_states: &'a [u8],
+    pub slab_states: &'a [SlabState],
     pub loaded: &'a [bool],
     pub biome: &'a [u8],
 }
@@ -167,6 +168,12 @@ impl SectionMeshPad<'_> {
             .map_or(StairState::default(), |i| {
                 StairState::decode(self.stair_states[i])
             })
+    }
+
+    #[inline]
+    fn slab_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> SlabState {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .map_or(SlabState::EMPTY, |i| self.slab_states[i])
     }
 
     #[inline]
@@ -453,6 +460,7 @@ pub fn build_section_mesh(
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_stair_state: impl Fn(i32, i32, i32) -> StairState,
+    neighbour_slab_state: impl Fn(i32, i32, i32) -> SlabState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
@@ -468,6 +476,7 @@ pub fn build_section_mesh(
         pos,
         &neighbour_block,
         &neighbour_stair_state,
+        &neighbour_slab_state,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -484,6 +493,7 @@ pub fn build_section_mesh(
         pos,
         &neighbour_block,
         &neighbour_stair_state,
+        &neighbour_slab_state,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -507,6 +517,7 @@ pub(crate) fn build_section_mesh_from_pad(
     let (ox, oy, oz) = pos.origin_world();
     let nb_block = |wx, wy, wz| pad.block_world(ox, oy, oz, wx, wy, wz);
     let nb_stair_state = |wx, wy, wz| pad.stair_world(ox, oy, oz, wx, wy, wz);
+    let nb_slab_state = |wx, wy, wz| pad.slab_world(ox, oy, oz, wx, wy, wz);
     let nb_water = |wx, wy, wz| pad.water_world(ox, oy, oz, wx, wy, wz);
     let nb_biome = |wx, wz| pad.biome_world(ox, oz, wx, wz);
     let nb_skylight = |wx, wy, wz| pad.skylight_world(ox, oy, oz, wx, wy, wz);
@@ -514,16 +525,17 @@ pub(crate) fn build_section_mesh_from_pad(
     let nb_loaded = |wx, wy, wz| pad.loaded_world(ox, oy, oz, wx, wy, wz);
     let tints = section
         .has_biome_tint_blocks()
-        .then(|| tint::biome_window(ox, oz, &nb_biome));
+        .then(|| tint::biome_window(ox, oz, nb_biome));
     let mut mesh = section_geometry(
         section,
         pos,
-        &nb_block,
-        &nb_stair_state,
-        &nb_water,
-        &nb_skylight,
-        &nb_blocklight,
-        &nb_loaded,
+        nb_block,
+        nb_stair_state,
+        nb_slab_state,
+        nb_water,
+        nb_skylight,
+        nb_blocklight,
+        nb_loaded,
         tints.as_ref(),
         MeshOptions::DETAILED,
         Some(&pad),
@@ -534,12 +546,13 @@ pub(crate) fn build_section_mesh_from_pad(
     let far = section_geometry(
         section,
         pos,
-        &nb_block,
-        &nb_stair_state,
-        &nb_water,
-        &nb_skylight,
-        &nb_blocklight,
-        &nb_loaded,
+        nb_block,
+        nb_stair_state,
+        nb_slab_state,
+        nb_water,
+        nb_skylight,
+        nb_blocklight,
+        nb_loaded,
         tints.as_ref(),
         MeshOptions::FAR_LEAVES,
         None,
@@ -557,6 +570,7 @@ fn section_geometry(
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
     neighbour_stair_state: impl Fn(i32, i32, i32) -> StairState,
+    neighbour_slab_state: impl Fn(i32, i32, i32) -> SlabState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
@@ -581,6 +595,11 @@ fn section_geometry(
     // and cross-section alike); out-of-world / unloaded reads return air.
     let block_at =
         |wx: i32, wy: i32, wz: i32| -> Block { Block::from_id(neighbour_block(wx, wy, wz)) };
+    let slab_at = |wx: i32, wy: i32, wz: i32| -> Option<SlabState> {
+        let block = block_at(wx, wy, wz);
+        crate::slab::is_slab(block)
+            .then(|| crate::slab::normalize_state(block, neighbour_slab_state(wx, wy, wz)))
+    };
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 { neighbour_water(wx, wy, wz) };
     let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
         if block_at(wx, wy, wz) != Block::Water {
@@ -726,6 +745,25 @@ fn section_geometry(
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
+                    );
+                    continue;
+                }
+
+                if shape == RenderShape::Slab {
+                    let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
+                    let state = crate::slab::normalize_state(block, section.slab_state(lx, ly, lz));
+                    super::slab::emit_slab_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        state,
+                        &tint_for,
+                        &block_at,
+                        &slab_at,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );

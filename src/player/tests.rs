@@ -801,6 +801,34 @@ fn raycast_eye_inside_solid_returns_zero_normal() {
 }
 
 #[test]
+fn raycast_precise_shape_uses_the_shape_surface_normal() {
+    let blocks = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (2, 64, 0) {
+            Block::DirtSlab
+        } else {
+            Block::Air
+        }
+    };
+    let eye = Vec3::new(1.9, 64.75, 0.5);
+    let dir = Vec3::new(1.0, -0.5, 0.0).normalize();
+    let (hit, _) = Player::raycast_blocks_core(eye, dir, &blocks, &|e, d, pos, block| {
+        if block != Block::DirtSlab {
+            return None;
+        }
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        interaction::ray_vs_aabb_hit(e, d, base, base + Vec3::new(1.0, 0.5, 1.0))
+    })
+    .unwrap();
+
+    assert_eq!(hit.block, IVec3::new(2, 64, 0));
+    assert_eq!(
+        hit.normal,
+        IVec3::Y,
+        "placement should use the slab top face, not the full voxel side"
+    );
+}
+
+#[test]
 fn raycast_hits_opaque_plant_texel() {
     let blocks = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (2, 64, 0) {

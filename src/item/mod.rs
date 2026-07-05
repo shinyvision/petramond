@@ -221,6 +221,18 @@ impl ItemType {
     pub const Wool: ItemType = ItemType(142);
     pub const BedFrame: ItemType = ItemType(143);
     pub const Bed: ItemType = ItemType(144);
+    pub const OakSlab: ItemType = ItemType(145);
+    pub const SpruceSlab: ItemType = ItemType(146);
+    pub const BirchSlab: ItemType = ItemType(147);
+    pub const JungleSlab: ItemType = ItemType(148);
+    pub const AcaciaSlab: ItemType = ItemType(149);
+    pub const DarkOakSlab: ItemType = ItemType(150);
+    pub const CherrySlab: ItemType = ItemType(151);
+    pub const MangroveSlab: ItemType = ItemType(152);
+    pub const RedwoodSlab: ItemType = ItemType(153);
+    pub const CobblestoneSlab: ItemType = ItemType(154);
+    pub const StoneSlab: ItemType = ItemType(155);
+    pub const DirtSlab: ItemType = ItemType(156);
 }
 
 impl std::fmt::Debug for ItemType {
@@ -506,6 +518,18 @@ impl ItemType {
             Block::DirtStairs => ItemType::DirtStairs,
             Block::BedFrame => ItemType::BedFrame,
             Block::Bed => ItemType::Bed,
+            Block::OakSlab => ItemType::OakSlab,
+            Block::SpruceSlab => ItemType::SpruceSlab,
+            Block::BirchSlab => ItemType::BirchSlab,
+            Block::JungleSlab => ItemType::JungleSlab,
+            Block::AcaciaSlab => ItemType::AcaciaSlab,
+            Block::DarkOakSlab => ItemType::DarkOakSlab,
+            Block::CherrySlab => ItemType::CherrySlab,
+            Block::MangroveSlab => ItemType::MangroveSlab,
+            Block::RedwoodSlab => ItemType::RedwoodSlab,
+            Block::CobblestoneSlab => ItemType::CobblestoneSlab,
+            Block::StoneSlab => ItemType::StoneSlab,
+            Block::DirtSlab => ItemType::DirtSlab,
             _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
             // A pack-registered block: its item declares the link via its
             // row's `block` field. No linked item -> Air (nothing to hold).
@@ -557,6 +581,18 @@ impl ItemType {
             ItemType::DirtStairs => Some(Block::DirtStairs),
             ItemType::BedFrame => Some(Block::BedFrame),
             ItemType::Bed => Some(Block::Bed),
+            ItemType::OakSlab => Some(Block::OakSlab),
+            ItemType::SpruceSlab => Some(Block::SpruceSlab),
+            ItemType::BirchSlab => Some(Block::BirchSlab),
+            ItemType::JungleSlab => Some(Block::JungleSlab),
+            ItemType::AcaciaSlab => Some(Block::AcaciaSlab),
+            ItemType::DarkOakSlab => Some(Block::DarkOakSlab),
+            ItemType::CherrySlab => Some(Block::CherrySlab),
+            ItemType::MangroveSlab => Some(Block::MangroveSlab),
+            ItemType::RedwoodSlab => Some(Block::RedwoodSlab),
+            ItemType::CobblestoneSlab => Some(Block::CobblestoneSlab),
+            ItemType::StoneSlab => Some(Block::StoneSlab),
+            ItemType::DirtSlab => Some(Block::DirtSlab),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             // Engine item-only items carry no link; a pack item's row may
             // (`"block": "mod:key"` in items.json).
@@ -670,6 +706,7 @@ impl ItemType {
             Some(block) => match block.render_shape() {
                 RenderShape::Cube => ItemRenderKind::BlockCube(block),
                 RenderShape::Stair => ItemRenderKind::BlockCube(block),
+                RenderShape::Slab => ItemRenderKind::BlockCube(block),
                 RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
                 // A torch isn't a cube; it shows the full torch sprite as a flat
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
@@ -991,6 +1028,13 @@ mod tests {
                     );
                 }
                 RenderShape::Stair => {
+                    assert_eq!(
+                        item.render_kind(),
+                        ItemRenderKind::BlockCube(block),
+                        "{block:?}"
+                    );
+                }
+                RenderShape::Slab => {
                     assert_eq!(
                         item.render_kind(),
                         ItemRenderKind::BlockCube(block),

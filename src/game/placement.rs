@@ -150,6 +150,18 @@ impl Game {
         } else {
             h.block + h.normal
         };
+        let player_facing = facing_from_forward(self.cam.forward());
+        let slab_stack_slot = (block.render_shape() == RenderShape::Slab
+            && crate::slab::is_slab(looked_at))
+        .then(|| crate::slab::stack_slot(self.held_slab_rotation(), h.normal, player_facing))
+        .flatten();
+        let slab_stacks_in_hit = slab_stack_slot.is_some_and(|slot| {
+            crate::slab::can_add_layer(
+                self.world.slab_state_at(h.block.x, h.block.y, h.block.z),
+                slot,
+            )
+        });
+        let place_pos_for_pre = if slab_stacks_in_hit { h.block } else { p };
 
         // The placement decision, announced before the shape-specific validity
         // checks: a cancelled `block_place_pre` refuses the placement outright (the
@@ -157,9 +169,9 @@ impl Game {
         // player-derived placement input; the shape paths below may orient it further.
         {
             let mut pre = BlockPlacePre {
-                pos: p,
+                pos: place_pos_for_pre,
                 block,
-                facing: facing_from_forward(self.cam.forward()),
+                facing: player_facing,
             };
             if self
                 .bus
@@ -191,6 +203,33 @@ impl Game {
             None
         };
 
+        if block.render_shape() == RenderShape::Slab {
+            let (target, slot) = match slab_stack_slot {
+                Some(slot) if slab_stacks_in_hit => (h.block, slot),
+                _ => (
+                    p,
+                    crate::slab::slot_for_rotation(
+                        self.held_slab_rotation(),
+                        h.normal,
+                        player_facing,
+                    ),
+                ),
+            };
+            let target_block = Block::from_id(self.world.chunk_block(target.x, target.y, target.z));
+            if !crate::slab::is_slab(target_block) && !self.world.placement_cell_open(target) {
+                return None;
+            }
+            let next_state = self.world.slab_layer_target_state(target, block, slot)?;
+            let boxes = crate::slab::boxes_for_state(next_state);
+            let blocked = self.player.intersects_block_boxes(target, boxes)
+                || self.world.mobs().any_overlapping_boxes(target, boxes);
+            if !blocked && self.world.place_slab_layer(target, block, slot) {
+                self.player.inventory.decrement_selected();
+                return Some(target);
+            }
+            return None;
+        }
+
         // A bbmodel block places its WHOLE footprint (the workbench is 2×2×1): every
         // occupied cell must be loaded + replaceable AND clear of the player/mobs, or the
         // placement fails as a unit (nothing placed, the held item kept). Multi-cell
@@ -199,7 +238,6 @@ impl Game {
         // left-to-right across the view, the bed runs front-to-back away from it);
         // `p` is the front-left bottom anchor from the player's view.
         if let RenderShape::Model(kind) = block.render_shape() {
-            let player_facing = facing_from_forward(self.cam.forward());
             let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
             let facing = if block.directional_view() || multi_cell {
                 crate::block_model::def(kind)
@@ -238,7 +276,7 @@ impl Game {
         // mob. It sits on the edge nearest the placer (the player's facing). Placement
         // + the paired door state live in `World::place_door`.
         if block.render_shape() == RenderShape::Door {
-            let facing = facing_from_forward(self.cam.forward());
+            let facing = player_facing;
             let upper = p + IVec3::new(0, 1, 0);
             if !self.world.door_footprint_clear(p) {
                 return None;
@@ -262,7 +300,7 @@ impl Game {
         }
 
         if block.render_shape() == RenderShape::Stair {
-            let facing = facing_from_forward(self.cam.forward());
+            let facing = player_facing;
             let state = StairState::new(facing, self.held_stair_half());
             if !self.world.placement_cell_open(p) {
                 return None;
@@ -299,8 +337,7 @@ impl Game {
             && clear_of_player
             && clear_of_mobs
             && if block.is_log() {
-                let facing = facing_from_forward(self.cam.forward());
-                let axis = self.held_log_axis_for_facing(facing);
+                let axis = self.held_log_axis_for_facing(player_facing);
                 self.world.place_log(p, block, axis)
             } else {
                 self.world.set_block_world(p.x, p.y, p.z, block)
@@ -311,7 +348,7 @@ impl Game {
             // the player; a torch records how it is mounted (floor vs which wall) for
             // the mesher + outline.
             let placed_facing = if block.directional_view() {
-                facing_from_forward(self.cam.forward())
+                player_facing
             } else {
                 crate::block_model::DEFAULT_MODEL_FACING
             };

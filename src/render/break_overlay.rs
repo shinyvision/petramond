@@ -39,8 +39,8 @@ fn destroy_tile(stage: u8) -> Tile {
 /// Build the crack overlay geometry for `view` into `verts` / `indices` (cleared
 /// first, capacity reused). Returns the index count. All faces use the same
 /// destroy tile so the crack reads from every angle. A plain cube cracks over its
-/// six cell faces; a stair over its meshed plane quads; a chest over its inset
-/// box; a bbmodel block over its structural model cubes.
+/// six cell faces; a stair or slab over its meshed cell-local quads; a chest over
+/// its inset box; a bbmodel block over its structural model cubes.
 ///
 /// The cube spans the block's exact `[block, block + 1]` cell with no inflation,
 /// so each face lands on the same integer-coordinate plane the chunk mesh emitted
@@ -96,6 +96,29 @@ pub fn build_break_overlay(
         for face in crate::mesh::face::Face::ALL {
             for outer in [true, false] {
                 let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
+                for &(min, max) in quads.iter().take(n) {
+                    super::block_model::push_cell_local_face(
+                        verts,
+                        indices,
+                        tile,
+                        base,
+                        1.0,
+                        min,
+                        max,
+                        face,
+                        super::lighting::DynLight::FULL,
+                    );
+                }
+            }
+        }
+    } else if let Some(state) = view.slab_state {
+        // A slab cracks over its meshed per-layer quads with the same
+        // cell-local UVs, so the decal is cropped to the occupied halves (a
+        // bottom slab's side shows the lower half of the crack tile, not a
+        // squashed full tile) and shared mid faces of a full stack stay buried.
+        for (slot, _) in crate::slab::layer_slots(state) {
+            for face in crate::mesh::face::Face::ALL {
+                let (quads, n) = crate::mesh::slab::layer_quads(state, slot, face);
                 for &(min, max) in quads.iter().take(n) {
                     super::block_model::push_cell_local_face(
                         verts,
@@ -174,6 +197,7 @@ mod tests {
             // A full cube (Stone) has no special visual box, so the crack spans the cell.
             visual_box: None,
             stair_shape: None,
+            slab_state: None,
             model: None,
             stage: 4,
         };
@@ -215,6 +239,7 @@ mod tests {
             block,
             visual_box: None,
             stair_shape: Some(shape),
+            slab_state: None,
             model: None,
             stage: 5,
         };
@@ -264,6 +289,54 @@ mod tests {
         assert_eq!(uvs, vec![(0, 0), (0, 16), (16, 0), (16, 16)]);
     }
 
+    /// A slab cracks over its meshed quads with cell-local UVs: the decal on a
+    /// bottom slab's side is CROPPED to the lower half of the destroy tile,
+    /// never a full tile squashed onto the half-height face.
+    #[test]
+    fn slab_crack_crops_the_tile_to_the_occupied_half() {
+        use crate::block::Block;
+        use crate::block_state::{SlabSplit, SlabState};
+
+        let block = IVec3::new(-3, 70, 8);
+        let state = SlabState::single(SlabSplit::Y, 0, Block::DirtSlab);
+        let view = BreakOverlayView {
+            block,
+            visual_box: None,
+            stair_shape: None,
+            slab_state: Some(state),
+            model: None,
+            stage: 6,
+        };
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        build_break_overlay(&view, &mut v, &mut i);
+
+        // A lone bottom slab is six merged quads (top, bottom, four sides).
+        assert_eq!(v.len(), 6 * 4);
+        for vert in &v {
+            assert_eq!(
+                (vert.packed >> crate::mesh::UV_MODE_SHIFT) & 0x7,
+                crate::mesh::UV_MODE_CELL_LOCAL,
+                "slab crack quads must carry cell-local UVs"
+            );
+            assert!(
+                vert.pos[1] <= 70.5 + 1e-6,
+                "bottom slab crack must stay on the lower half"
+            );
+            // Side-face verts (X or Z shade groups) sit in the cell's lower
+            // half, so their cell-local v spans 8..=16 — the lower half of the
+            // tile — instead of restarting at 0 (which would stretch the decal).
+            let shade = (vert.packed >> 10) & 0x3;
+            if shade == 1 || shade == 2 {
+                let v16 = (vert.packed2 >> 11) & 0x1F;
+                assert!(
+                    (8..=16).contains(&v16),
+                    "side crack v16 = {v16} must be cropped to the lower tile half"
+                );
+            }
+        }
+    }
+
     #[test]
     fn model_overlay_cracks_each_cube_surface_within_the_outline() {
         use crate::block_model::BlockModelKind;
@@ -295,6 +368,7 @@ mod tests {
             block,
             visual_box: None,
             stair_shape: None,
+            slab_state: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
@@ -554,6 +628,7 @@ mod tests {
             block: IVec3::ZERO,
             visual_box: None,
             stair_shape: None,
+            slab_state: None,
             model: None,
             stage: 0,
         };

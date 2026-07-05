@@ -845,6 +845,49 @@ fn give_item(ctx: &mut SimCtx<'_>, item: ItemType, count: u8) {
     }
 }
 
+/// Build the linker exposing the single guest import,
+/// `env::host_dispatch(ptr, len) -> u64` (packed reply `ptr << 32 | len`).
+/// Reply buffers are allocated IN the guest via its exported `mod_alloc` —
+/// wasmtime host functions may re-enter the calling instance — and freed by
+/// the guest once decoded.
+pub(super) fn linker() -> Result<Linker<ModStoreData>, String> {
+    let mut linker = Linker::new(engine());
+    linker
+        .func_wrap(
+            "env",
+            "host_dispatch",
+            |mut caller: Caller<'_, ModStoreData>, ptr: u32, len: u32| -> wasmtime::Result<u64> {
+                let memory = caller
+                    .data()
+                    .memory
+                    .ok_or_else(|| wasmtime::Error::msg("host_dispatch during instantiation"))?;
+                // Bounds-check BEFORE sizing the copy so a hostile length
+                // can't balloon a host allocation; a lying guest just traps.
+                if len as usize > memory.data_size(&caller) {
+                    return Err(wasmtime::Error::msg("host call exceeds guest memory"));
+                }
+                let mut buf = vec![0u8; len as usize];
+                memory.read(&caller, ptr as usize, &mut buf)?;
+                // A call the host cannot decode is a broken ABI, not a bad
+                // argument: trap (=> the mod is disabled), don't guess.
+                let call: HostCall = mod_api::decode(&buf)
+                    .map_err(|e| wasmtime::Error::msg(format!("malformed host call: {e}")))?;
+                let ret = handle_host_call(caller.data_mut(), call);
+                let bytes = mod_api::encode(&ret)
+                    .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
+                let alloc =
+                    caller.data().alloc.clone().ok_or_else(|| {
+                        wasmtime::Error::msg("host_dispatch during instantiation")
+                    })?;
+                let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;
+                memory.write(&mut caller, reply_ptr as usize, &bytes)?;
+                Ok(mod_api::pack_ptr_len(reply_ptr, bytes.len() as u32))
+            },
+        )
+        .map_err(|e| format!("define host_dispatch: {e:#}"))?;
+    Ok(linker)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1396,47 +1439,4 @@ mod tests {
             assert_eq!(after[0].pos, [2.0, 80.0, 2.0]);
         });
     }
-}
-
-/// Build the linker exposing the single guest import,
-/// `env::host_dispatch(ptr, len) -> u64` (packed reply `ptr << 32 | len`).
-/// Reply buffers are allocated IN the guest via its exported `mod_alloc` —
-/// wasmtime host functions may re-enter the calling instance — and freed by
-/// the guest once decoded.
-pub(super) fn linker() -> Result<Linker<ModStoreData>, String> {
-    let mut linker = Linker::new(engine());
-    linker
-        .func_wrap(
-            "env",
-            "host_dispatch",
-            |mut caller: Caller<'_, ModStoreData>, ptr: u32, len: u32| -> wasmtime::Result<u64> {
-                let memory = caller
-                    .data()
-                    .memory
-                    .ok_or_else(|| wasmtime::Error::msg("host_dispatch during instantiation"))?;
-                // Bounds-check BEFORE sizing the copy so a hostile length
-                // can't balloon a host allocation; a lying guest just traps.
-                if len as usize > memory.data_size(&caller) {
-                    return Err(wasmtime::Error::msg("host call exceeds guest memory"));
-                }
-                let mut buf = vec![0u8; len as usize];
-                memory.read(&caller, ptr as usize, &mut buf)?;
-                // A call the host cannot decode is a broken ABI, not a bad
-                // argument: trap (=> the mod is disabled), don't guess.
-                let call: HostCall = mod_api::decode(&buf)
-                    .map_err(|e| wasmtime::Error::msg(format!("malformed host call: {e}")))?;
-                let ret = handle_host_call(caller.data_mut(), call);
-                let bytes = mod_api::encode(&ret)
-                    .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
-                let alloc =
-                    caller.data().alloc.clone().ok_or_else(|| {
-                        wasmtime::Error::msg("host_dispatch during instantiation")
-                    })?;
-                let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;
-                memory.write(&mut caller, reply_ptr as usize, &bytes)?;
-                Ok(mod_api::pack_ptr_len(reply_ptr, bytes.len() as u32))
-            },
-        )
-        .map_err(|e| format!("define host_dispatch: {e:#}"))?;
-    Ok(linker)
 }

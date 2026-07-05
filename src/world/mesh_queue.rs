@@ -313,13 +313,8 @@ impl World {
                             water: s.water_arc(),
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),
-                            stair_states: (!s.stair_states().is_empty()).then(|| {
-                                s.stair_states()
-                                    .iter()
-                                    .map(|(&key, &state)| (key, state))
-                                    .collect::<Vec<_>>()
-                                    .into_boxed_slice()
-                            }),
+                            stair_states: sparse_state_snapshot(s.stair_states()),
+                            slab_states: sparse_state_snapshot(s.slab_states()),
                         });
                 }
             }
@@ -467,6 +462,14 @@ impl World {
             }
         }
     }
+}
+
+/// Owned copy of a section's sparse per-cell state map for a mesh job, `None`
+/// when the section carries none (the common case — no allocation).
+fn sparse_state_snapshot<T: Copy>(
+    map: &std::collections::HashMap<u16, T>,
+) -> Option<Box<[(u16, T)]>> {
+    (!map.is_empty()).then(|| map.iter().map(|(&key, &state)| (key, state)).collect())
 }
 
 #[cfg(test)]

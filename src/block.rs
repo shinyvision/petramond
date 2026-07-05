@@ -151,6 +151,18 @@ impl Block {
     pub const DirtStairs: Block = Block(116);
     pub const BedFrame: Block = Block(117);
     pub const Bed: Block = Block(118);
+    pub const OakSlab: Block = Block(119);
+    pub const SpruceSlab: Block = Block(120);
+    pub const BirchSlab: Block = Block(121);
+    pub const JungleSlab: Block = Block(122);
+    pub const AcaciaSlab: Block = Block(123);
+    pub const DarkOakSlab: Block = Block(124);
+    pub const CherrySlab: Block = Block(125);
+    pub const MangroveSlab: Block = Block(126);
+    pub const RedwoodSlab: Block = Block(127);
+    pub const CobblestoneSlab: Block = Block(128);
+    pub const StoneSlab: Block = Block(129);
+    pub const DirtSlab: Block = Block(130);
 }
 
 impl std::fmt::Debug for Block {
@@ -285,6 +297,10 @@ pub enum RenderShape {
     /// placed. Its per-cell facing lives in the section's stair-facing map; collision,
     /// selection, and meshing resolve straight/corner boxes through `crate::stair`.
     Stair,
+    /// A chunk-meshed half-cell slab. Its per-cell state stores the split axis and up
+    /// to two material-bearing layers, so a cell can hold mixed slabs without adding a
+    /// registry row for every material pair.
+    Slab,
     Model(BlockModelKind),
     /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT
     /// chunk-meshed — it is drawn each frame as a dynamic hinged model (see
@@ -303,6 +319,7 @@ pub(crate) enum BlockLightShape {
     Open,
     OpaqueCube,
     Stair,
+    Slab,
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -338,6 +355,7 @@ impl Block {
         }
         match self.def().shape {
             RenderShape::Stair => BlockLightShape::Stair,
+            RenderShape::Slab => BlockLightShape::Slab,
             _ => BlockLightShape::Open,
         }
     }
@@ -362,6 +380,9 @@ impl Block {
         }
         if self.def().shape == RenderShape::Stair {
             return crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING);
+        }
+        if self.def().shape == RenderShape::Slab {
+            return crate::slab::default_boxes();
         }
         self.def().collision
     }

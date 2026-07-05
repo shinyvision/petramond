@@ -20,6 +20,7 @@ mod query;
 mod render_handoff;
 pub(crate) mod sapling;
 mod sim_guard;
+mod slab;
 mod stair;
 mod store;
 mod stream;

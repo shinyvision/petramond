@@ -40,7 +40,7 @@ use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
-use crate::block_state::{HeldBlockState, LogAxis, StairState};
+use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairState};
 use crate::mesh::face::Face;
 use crate::mesh::{pack_cell_uv, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
@@ -443,6 +443,12 @@ pub(super) fn push_block_item_cube_lit_with_state(
             _ => StairState::new(crate::furnace::Facing::South, Default::default()),
         };
         push_stair_item_lit(verts, indices, faces, stair, origin, size, light);
+    } else if block.render_shape() == crate::block::RenderShape::Slab {
+        let slab = match state {
+            HeldBlockState::Slab(state) => crate::slab::normalize_state(block, state),
+            _ => crate::slab::default_state(block),
+        };
+        push_slab_item_lit(verts, indices, slab, origin, size, light);
     } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
         push_cactus_faces_lit(verts, indices, faces, origin, max, light);
@@ -454,6 +460,35 @@ pub(super) fn push_block_item_cube_lit_with_state(
         push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
     } else {
         push_cube_faces_lit(verts, indices, faces, origin, size, light);
+    }
+}
+
+fn push_slab_item_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    state: SlabState,
+    origin: Vec3,
+    size: f32,
+    light: DynLight,
+) {
+    for (slot, block) in crate::slab::layer_slots(state) {
+        let faces = block_icon_faces_with_state(block, HeldBlockState::None);
+        for face in Face::ALL {
+            let (quads, n) = crate::mesh::slab::layer_quads(state, slot, face);
+            for &(min, max) in quads.iter().take(n) {
+                push_cell_local_face(
+                    verts,
+                    indices,
+                    faces[face as usize],
+                    origin,
+                    size,
+                    min,
+                    max,
+                    face,
+                    light,
+                );
+            }
+        }
     }
 }
 
@@ -513,7 +548,7 @@ pub(super) fn push_cell_local_face(
     let local = face.quad_box(min, max);
     let start = verts.len() as u32;
     for (corner, pos) in corners.into_iter().enumerate() {
-        let [u, v] = crate::mesh::stair::cell_uv(face, local[corner]);
+        let [u, v] = crate::mesh::plane::cell_uv(face, local[corner]);
         verts.push(Vertex {
             pos,
             tint: mat.tint,

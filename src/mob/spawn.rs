@@ -82,9 +82,7 @@ pub(super) fn attempt(
 
     let origin = IVec3::new(wx, 0, wz);
     while spawns.len() < want as usize {
-        let Some(next) = nearby_spawn(world, player_pos, kind, origin, &spawns, rng) else {
-            return None;
-        };
+        let next = nearby_spawn(world, player_pos, kind, origin, &spawns, rng)?;
         spawns.push(next);
     }
     Some(spawns)

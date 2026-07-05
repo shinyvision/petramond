@@ -47,6 +47,7 @@ mod registry;
 mod render;
 mod save;
 mod section;
+mod slab;
 mod stair;
 mod texture_mips;
 pub mod tooling;

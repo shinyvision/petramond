@@ -87,6 +87,8 @@ impl Game {
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
         let (sky, blk, warm) = break_light(&self.world, event.pos, hit_normal);
+        let slab_drops = (event.block.render_shape() == RenderShape::Slab)
+            .then(|| self.world.slab_drop_stacks_at(event.pos));
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
         if matches!(event.block.render_shape(), RenderShape::Model(_)) {
@@ -136,7 +138,13 @@ impl Game {
                 .spawn_break_burst_lit(event.pos, event.block, sky, blk, warm),
         }
         if event.harvested {
-            self.spawn_drops(event.pos, event.block, (sky, blk));
+            if let Some(stacks) = slab_drops {
+                for stack in stacks {
+                    self.spawn_item_stack(event.pos, stack, (sky, blk));
+                }
+            } else {
+                self.spawn_drops(event.pos, event.block, (sky, blk));
+            }
         }
         self.bus.emit(PostEvent::BlockBroken {
             pos: event.pos,

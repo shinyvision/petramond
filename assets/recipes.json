@@ -411,6 +411,138 @@
     {
       "type": "shaped",
       "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:oak_planks"
+      },
+      "result": "llama:oak_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:spruce_planks"
+      },
+      "result": "llama:spruce_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:birch_planks"
+      },
+      "result": "llama:birch_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:jungle_planks"
+      },
+      "result": "llama:jungle_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:acacia_planks"
+      },
+      "result": "llama:acacia_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:dark_oak_planks"
+      },
+      "result": "llama:dark_oak_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:cherry_planks"
+      },
+      "result": "llama:cherry_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:mangrove_planks"
+      },
+      "result": "llama:mangrove_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "llama:redwood_planks"
+      },
+      "result": "llama:redwood_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "CCC"
+      ],
+      "key": {
+        "C": "llama:cobblestone"
+      },
+      "result": "llama:cobblestone_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "SSS"
+      ],
+      "key": {
+        "S": "llama:stone"
+      },
+      "result": "llama:stone_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "DDD"
+      ],
+      "key": {
+        "D": "llama:dirt"
+      },
+      "result": "llama:dirt_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
         "  D",
         " DD",
         "DDD"

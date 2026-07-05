@@ -1,20 +1,23 @@
 use crate::block::{Block, BlockLightShape};
-use crate::block_state::StairState;
+use crate::block_state::{SlabState, StairState};
 
 use super::{nbhd_idx, NBHD_VOLUME};
 
 pub(super) enum SparseCellState {
     Stair { idx: usize, state: StairState },
+    Slab { idx: usize, state: SlabState },
 }
 
 #[derive(Default)]
 pub(super) struct ShapeStateSnapshot {
     stair_states: Option<Box<[u8]>>,
+    slab_states: Option<Box<[SlabState]>>,
 }
 
 impl ShapeStateSnapshot {
     pub(super) fn from_sparse(states: &[SparseCellState]) -> Self {
         let mut stair_states: Option<Box<[u8]>> = None;
+        let mut slab_states: Option<Box<[SlabState]>> = None;
         for state in states {
             match *state {
                 SparseCellState::Stair { idx, state } => {
@@ -26,9 +29,21 @@ impl ShapeStateSnapshot {
                     });
                     states[idx] = state.encode();
                 }
+                SparseCellState::Slab { idx, state } => {
+                    if idx >= NBHD_VOLUME {
+                        continue;
+                    }
+                    let states = slab_states.get_or_insert_with(|| {
+                        vec![SlabState::EMPTY; NBHD_VOLUME].into_boxed_slice()
+                    });
+                    states[idx] = state;
+                }
             }
         }
-        Self { stair_states }
+        Self {
+            stair_states,
+            slab_states,
+        }
     }
 
     fn stair_state(&self, idx: usize) -> StairState {
@@ -37,6 +52,14 @@ impl ShapeStateSnapshot {
             .and_then(|f| f.get(idx).copied())
             .map(StairState::decode)
             .unwrap_or_default()
+    }
+
+    fn slab_state(&self, idx: usize, block: Block) -> SlabState {
+        self.slab_states
+            .as_ref()
+            .and_then(|f| f.get(idx).copied())
+            .map(|state| crate::slab::normalize_state(block, state))
+            .unwrap_or_else(|| crate::slab::default_state(block))
     }
 }
 
@@ -72,6 +95,12 @@ impl<'a> LightCells<'a> {
             BlockLightShape::Stair => {
                 crate::stair::light_side_mask(self.states.stair_state(idx), dir.0, dir.1, dir.2)
             }
+            BlockLightShape::Slab => crate::slab::light_side_mask(
+                self.states.slab_state(idx, block),
+                dir.0,
+                dir.1,
+                dir.2,
+            ),
         }
     }
 }

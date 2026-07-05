@@ -390,18 +390,17 @@ impl ChunkGenerator {
 
         // 3. Ground vegetation: the bare-ground plant cell (anchor+1) can fall here only
         //    if some land column's surface (≥ sea level) sits within reach of the section.
-        if !self.run_stage_replacement(WorldgenStage::Vegetation, sp, &mut section, col) {
-            if col.surf_max >= SEA_LEVEL
-                && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
-            {
-                vegetation::place_vegetation_section(
-                    &mut section,
-                    &col.biome,
-                    &col.surf,
-                    &col.top_surf,
-                    self.seed,
-                );
-            }
+        if !self.run_stage_replacement(WorldgenStage::Vegetation, sp, &mut section, col)
+            && col.surf_max >= SEA_LEVEL
+            && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
+        {
+            vegetation::place_vegetation_section(
+                &mut section,
+                &col.biome,
+                &col.surf,
+                &col.top_surf,
+                self.seed,
+            );
         }
         self.run_gen_features(WorldgenStage::Vegetation, sp, &mut section, col);
 
