@@ -1,6 +1,6 @@
 use super::Game;
 use crate::block::Block;
-use crate::events::{Attach, PostEvent, PostEventKind, Stage};
+use crate::events::{Attach, PostEvent, PostEventKind, SimCtx, Stage};
 use crate::mathh::IVec3;
 use crate::player;
 use crate::world::StreamEvent;
@@ -361,7 +361,10 @@ impl Game {
             .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
 
         self.begin_stage(Stage::Mobs, events);
-        let attacks = self.world.tick_mobs(TICK_DT, player_pos, player_body);
+        let hostile_despawn_radius = super::daynight::night_pulse_despawn_radius(&self.world);
+        let attacks =
+            self.world
+                .tick_mobs(TICK_DT, player_pos, player_body, hostile_despawn_radius);
         // Mob→player combat resolves right after the mobs moved: each strike runs
         // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
         // an applied strike knocks the player back.
@@ -376,7 +379,47 @@ impl Game {
         for (kind, pos) in self.world.spawn_mobs_tick(player_pos) {
             self.bus.emit(PostEvent::MobSpawned { kind, pos });
         }
+        self.tick_mod_hostile_mob_spawns(events);
         self.end_stage(Stage::Spawning, events);
+    }
+
+    fn tick_mod_hostile_mob_spawns(&mut self, events: &mut TickEvents) {
+        if !self.mods.has_hostile_spawners() || crate::mob::hostile_cap_full(&self.world) {
+            return;
+        }
+
+        let player_pos = self.player.pos;
+        'attempts: for attempt in 0..crate::mob::HOSTILE_SPAWN_ATTEMPTS {
+            let sites = crate::mob::hostile_attempt_sites(&self.world, player_pos, attempt);
+            for site in sites {
+                let kind = {
+                    let Self {
+                        world,
+                        player,
+                        mods,
+                        bus,
+                        ..
+                    } = self;
+                    let mut ctx = SimCtx {
+                        world,
+                        player,
+                        feed: events,
+                        queue: bus.queue_mut(),
+                    };
+                    mods.hostile_spawn_kind(&mut ctx, &site.candidate)
+                };
+                let Some(kind) = kind else {
+                    continue;
+                };
+                if self.world.spawn_mob(kind, site.pos, site.yaw) {
+                    self.bus.emit(PostEvent::MobSpawned {
+                        kind,
+                        pos: site.pos,
+                    });
+                }
+                break 'attempts;
+            }
+        }
     }
 
     /// Run the systems attached at `at` — the mod seam. Nothing is attached in

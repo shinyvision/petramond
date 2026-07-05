@@ -29,10 +29,12 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use mod_api::{EventKind, EventPayload, GuestCall, GuestRet};
+use mod_api::{EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
 
 use crate::events::{EventBus, Outcome, SimCtx, TickSystems};
 use crate::game::TickEvents;
+use crate::mathh::IVec3;
+use crate::mob::{Mob, MobCategory};
 use crate::player::Player;
 use crate::world::World;
 
@@ -50,11 +52,19 @@ struct ModMeta {
     module: Option<wasmtime::Module>,
 }
 
+struct HostileSpawnerRegistration {
+    instance: SharedInstance,
+    priority: i32,
+    callback_id: u32,
+    order: usize,
+}
+
 /// Every loaded mod instance, in pack load order.
 pub(crate) struct ModHost {
     instances: Vec<SharedInstance>,
     /// Parallel to `instances`.
     metas: Vec<ModMeta>,
+    hostile_spawners: Vec<HostileSpawnerRegistration>,
 }
 
 impl ModHost {
@@ -96,7 +106,11 @@ impl ModHost {
                 Err(e) => log::error!("mod '{id}' disabled for this session: {e}"),
             }
         }
-        Self { instances, metas }
+        Self {
+            instances,
+            metas,
+            hostile_spawners: Vec::new(),
+        }
     }
 
     /// Test helper: a host with one WAT guest registered under `mod_id` whose
@@ -123,6 +137,7 @@ impl ModHost {
                 id: mod_id.to_owned(),
                 module: Some(module),
             }],
+            hostile_spawners: Vec::new(),
         }
     }
 
@@ -142,6 +157,7 @@ impl ModHost {
                 .map(|i| Rc::new(RefCell::new(i)))
                 .collect(),
             metas,
+            hostile_spawners: Vec::new(),
         }
     }
 
@@ -160,6 +176,7 @@ impl ModHost {
         next_spatial_sound_handle: &mut u64,
     ) {
         let mut gen_hooks = gen::GenHooksBuilder::new(world.seed);
+        let mut hostile_order = self.hostile_spawners.len();
         for (shared, meta) in self.instances.iter().zip(&self.metas) {
             // Init runs outside any tick; give host calls a real context
             // anyway (CurrentTick is legal during init) via a scratch feed.
@@ -177,20 +194,34 @@ impl ModHost {
             };
             *next_spatial_sound_handle = feed.next_spatial_sound_handle();
             for registration in registrations {
-                if registration.is_gen() {
-                    match &meta.module {
-                        Some(module) => gen_hooks.add_registration(&meta.id, module, &registration),
+                match registration {
+                    Registration::HostileSpawner {
+                        priority,
+                        callback_id,
+                    } => {
+                        self.hostile_spawners.push(HostileSpawnerRegistration {
+                            instance: Rc::clone(shared),
+                            priority,
+                            callback_id,
+                            order: hostile_order,
+                        });
+                        hostile_order += 1;
+                    }
+                    other if other.is_gen() => match &meta.module {
+                        Some(module) => gen_hooks.add_registration(&meta.id, module, &other),
                         None => log::error!(
                             "mod '{}': worldgen hooks need a compiled module handle; \
                              registration dropped",
                             meta.id
                         ),
+                    },
+                    other => {
+                        apply_registration(shared, other, bus, systems);
                     }
-                } else {
-                    apply_registration(shared, registration, bus, systems);
                 }
             }
         }
+        self.hostile_spawners.sort_by_key(|r| (r.priority, r.order));
         gen::install(gen_hooks.build());
     }
 
@@ -220,6 +251,45 @@ impl ModHost {
         self.instances[i].borrow_mut().call_guest(ctx, &call);
     }
 
+    pub(crate) fn has_hostile_spawners(&self) -> bool {
+        !self.hostile_spawners.is_empty()
+    }
+
+    pub(crate) fn hostile_spawn_kind(
+        &self,
+        ctx: &mut SimCtx,
+        candidate: &HostileSpawnCandidate,
+    ) -> Option<Mob> {
+        for spawner in &self.hostile_spawners {
+            let call = GuestCall::HostileSpawnCandidate {
+                callback_id: spawner.callback_id,
+                candidate: candidate.clone(),
+            };
+            let reply = {
+                let mut inst = spawner.instance.borrow_mut();
+                inst.call_guest(ctx, &call)
+            };
+            let Some(reply) = reply else {
+                continue;
+            };
+            match reply {
+                GuestRet::HostileSpawn(Some(key)) => {
+                    if let Some(kind) = hostile_kind_for_key(ctx.world, &key, candidate) {
+                        return Some(kind);
+                    }
+                }
+                GuestRet::HostileSpawn(None) => {}
+                _ => {
+                    spawner
+                        .instance
+                        .borrow_mut()
+                        .disable("returned a non-hostile-spawn reply to a hostile spawn dispatch");
+                }
+            }
+        }
+        None
+    }
+
     #[cfg(test)]
     pub(crate) fn loaded(&self) -> usize {
         self.instances.len()
@@ -232,6 +302,29 @@ impl ModHost {
         let inst = self.instances[index].borrow();
         (inst.disabled(), inst.dispatches(), inst.stats())
     }
+}
+
+fn hostile_kind_for_key(
+    world: &World,
+    key: &str,
+    candidate: &HostileSpawnCandidate,
+) -> Option<Mob> {
+    let kind = crate::mob::defs()
+        .iter()
+        .position(|d| d.name == key)
+        .map(|i| Mob(i as u8))?;
+    let def = crate::mob::def(kind);
+    if def.category != MobCategory::Hostile {
+        return None;
+    }
+    if crate::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
+        return None;
+    }
+    if world.mobs().spawn_room_for(kind) == 0 {
+        return None;
+    }
+    let feet = IVec3::new(candidate.cell[0], candidate.cell[1], candidate.cell[2]);
+    crate::mob::spawn_body_fits_at(world, kind, feet).then_some(kind)
 }
 
 /// The `(mod id, wasm path)` pairs a session instantiates: every id-bearing
@@ -285,8 +378,9 @@ fn apply_registration(
         // never to the bus/scheduler.
         Registration::WorldgenFeature { .. }
         | Registration::StageReplacement { .. }
-        | Registration::Generator { .. } => {
-            unreachable!("gen registrations are routed to GenHooksBuilder")
+        | Registration::Generator { .. }
+        | Registration::HostileSpawner { .. } => {
+            unreachable!("non-system registrations are routed during ModHost::initialize")
         }
     }
 }

@@ -540,13 +540,21 @@ impl World {
         dt: f32,
         player_pos: Vec3,
         player_body: Option<crate::mob::Body>,
+        hostile_despawn_radius: Option<f32>,
     ) -> Vec<crate::mob::MobAttack> {
         if self.mobs.is_empty() {
             return Vec::new();
         }
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);
-        let attacks = mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
+        let attacks = mobs.tick(
+            dt,
+            self,
+            player_pos,
+            player_body,
+            freeze_unloaded,
+            hostile_despawn_radius,
+        );
         self.mobs = mobs;
         attacks
     }

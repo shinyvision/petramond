@@ -316,6 +316,21 @@ pub struct PlayerSnapshot {
     pub spectator: bool,
 }
 
+/// One core-selected candidate for programmatic hostile spawning. The engine
+/// owns physical site selection; registered hostile spawners decide whether a
+/// specific hostile species admits this site.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct HostileSpawnCandidate {
+    /// Feet position, centered in the candidate cell.
+    pub pos: [f32; 3],
+    /// Feet cell.
+    pub cell: [i32; 3],
+    /// Cached light channels on the 6-bit `0..=63` scale.
+    pub combined_light: u8,
+    pub sky_light: u8,
+    pub block_light: u8,
+}
+
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
 /// Phase 2b surface + the Phase 3b world/entity/player/KV calls (one match on
 /// the host, room to append).
@@ -577,6 +592,13 @@ pub enum HostCall {
     /// from mod state on load.
     /// → [`HostRet::Unit`].
     ShaderSetParam { key: String, value: [f32; 4] },
+
+    // --- Hostile spawning -------------------------------------------------
+    /// Register a hostile-spawn callback. The core engine supplies candidate
+    /// sites and enforces caps/body fit; the callback returns a hostile mob key
+    /// if this mod wants to spawn something there. Legal ONLY during `mod_init`.
+    /// → [`HostRet::Unit`].
+    RegisterHostileSpawner { callback_id: u32, priority: i32 },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -685,6 +707,14 @@ pub enum GuestCall {
         widget_id: String,
         pos: Option<[i32; 3]>,
     },
+
+    // --- Hostile spawning -------------------------------------------------
+    /// Ask a registered hostile spawner whether this candidate should produce
+    /// a hostile species. → [`GuestRet::HostileSpawn`].
+    HostileSpawnCandidate {
+        callback_id: u32,
+        candidate: HostileSpawnCandidate,
+    },
 }
 
 /// Guest → host reply for a [`GuestCall`].
@@ -709,6 +739,9 @@ pub enum GuestRet {
     /// Reply to a `Climate` [`GuestCall::GenStage`]: the 256-entry column
     /// biome map (`z*16 + x`). Must be exactly 256 valid biome ids.
     GenBiomes(Vec<u8>),
+    /// Reply to [`GuestCall::HostileSpawnCandidate`]: `Some(registry_key)` to
+    /// ask core to spawn that hostile species here, `None` to reject this site.
+    HostileSpawn(Option<String>),
 }
 
 /// Pack a guest-memory buffer address for the `u64` return lane of
@@ -903,6 +936,10 @@ mod tests {
             key: "llama:light".into(),
             value: [0.75, 0.0, 0.0, 1.0],
         });
+        roundtrip(HostCall::RegisterHostileSpawner {
+            callback_id: 7,
+            priority: -1,
+        });
         roundtrip(HostRet::GuiValue(Some(GuiValue::Str(
             "llama:diamond".into(),
         ))));
@@ -912,6 +949,17 @@ mod tests {
             kind_key: "wheel:wheel".into(),
             widget_id: "spin".into(),
             pos: Some([4, 65, -2]),
+        });
+        let candidate = HostileSpawnCandidate {
+            pos: [10.5, 64.0, -2.5],
+            cell: [10, 64, -3],
+            combined_light: 12,
+            sky_light: 8,
+            block_light: 12,
+        };
+        roundtrip(GuestCall::HostileSpawnCandidate {
+            callback_id: 7,
+            candidate: candidate.clone(),
         });
         roundtrip(EventPayload::ContainerOpened {
             kind: ContainerKind::Mod {
@@ -941,6 +989,8 @@ mod tests {
         roundtrip(GuestRet::GenWrites(vec![([1, 64, -3], BlockId(7))]));
         roundtrip(GuestRet::GenBlocks(vec![1, 0, 1]));
         roundtrip(GuestRet::GenBiomes(vec![4, 4, 5]));
+        roundtrip(GuestRet::HostileSpawn(Some("zombies:zombie".into())));
+        roundtrip(GuestRet::HostileSpawn(None));
         roundtrip(HostRet::Unit);
         roundtrip(HostRet::U64(u64::MAX));
         roundtrip(HostRet::Error("nope".into()));

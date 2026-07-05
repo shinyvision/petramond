@@ -294,7 +294,8 @@ fn a_killed_mob_ragdolls_then_despawns() {
     let player_body = crate::mob::Body::new(game.player.pos, player::HALF_W, player::HEIGHT);
     // 1.5 s ragdoll lifetime at 20 TPS = 30 ticks; run extra for margin.
     for _ in 0..50 {
-        game.world.tick_mobs(TICK_DT, player_pos, Some(player_body));
+        game.world
+            .tick_mobs(TICK_DT, player_pos, Some(player_body), None);
     }
     assert_eq!(
         game.world.mobs().len(),

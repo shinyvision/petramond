@@ -92,6 +92,18 @@ pub trait Mod: Default {
     /// session's state map via [`gui_state_set`] so the GUI's `label` /
     /// `rotimage` widgets redraw.
     fn gui_click(&mut self, _kind_key: &str, _widget_id: &str, _pos: Option<[i32; 3]>) {}
+
+    /// Core is asking whether this candidate should spawn one of this mod's
+    /// hostile species. Return a mob registry key to request a spawn, or `None`
+    /// to let core keep searching. Core still validates category, caps, and
+    /// physical body fit before spawning.
+    fn hostile_spawn_candidate(
+        &mut self,
+        _callback_id: u32,
+        _candidate: &HostileSpawnCandidate,
+    ) -> Option<String> {
+        None
+    }
 }
 
 /// Log a line through the engine's logger.
@@ -143,6 +155,18 @@ pub fn register_event_handler(event: EventKind, priority: i32, handler_id: u32) 
             event,
             priority,
             handler_id,
+        }),
+    );
+}
+
+/// Register a callback that core may ask for hostile spawns. Only legal during
+/// [`Mod::init`]; callbacks run in `(priority ascending, registration order)`.
+pub fn register_hostile_spawner(priority: i32, callback_id: u32) {
+    __rt::expect_unit(
+        "RegisterHostileSpawner",
+        __rt::host_call(&HostCall::RegisterHostileSpawner {
+            callback_id,
+            priority,
         }),
     );
 }
@@ -1024,6 +1048,12 @@ pub mod __rt {
                 mod_.gui_click(&kind_key, &widget_id, pos);
                 GuestRet::Unit
             }
+            GuestCall::HostileSpawnCandidate {
+                callback_id,
+                candidate,
+            } => GuestRet::HostileSpawn(
+                mod_.hostile_spawn_candidate(callback_id, &candidate),
+            ),
         };
         to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
     }

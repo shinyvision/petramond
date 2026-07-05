@@ -14,14 +14,16 @@
 //! [`MobDef`]: super::MobDef
 //! [`MobCategory`]: super::MobCategory
 
+use mod_api::HostileSpawnCandidate;
+
 use crate::biome::Biome;
 use crate::block::Block;
-use crate::chunk::{CHUNK_SX, CHUNK_SZ};
+use crate::chunk::{SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
 use crate::mathh::{IVec3, Vec3};
-use crate::world::World;
+use crate::world::{World, VERTICAL_LOAD_RADIUS};
 
 use super::path::{body_clear, is_foothold, PathParams};
-use super::{def, defs, Instance, Mob, MobRng};
+use super::{def, defs, Instance, Mob, MobCategory, MobRng};
 
 /// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
 const MIN_PLAYER_DIST: f32 = 50.0;
@@ -34,10 +36,22 @@ const GROUP_RADIUS: i32 = 4;
 /// Attempts per extra group member to find another nearby site satisfying the same
 /// species spawn rule.
 const GROUP_MEMBER_TRIES: u32 = 24;
+pub(crate) const HOSTILE_SPAWN_ATTEMPTS: u32 = 32;
+const HOSTILE_MIN_SPAWN_DIST: f32 = 25.0;
+const HOSTILE_MAX_SPAWN_DIST: f32 = 128.0;
+const HOSTILE_SPAWN_SALT: u64 = 0xA11C_0DE5_5A55_0001;
 
 /// A spawn the manager should perform: a species at a feet position, facing `yaw`.
 pub(super) struct Spawn {
     pub kind: Mob,
+    pub pos: Vec3,
+    pub yaw: f32,
+}
+
+/// A core-selected hostile spawn candidate plus the spawn transform core will use
+/// if a registered hostile spawner admits it.
+pub(crate) struct HostileSpawnSite {
+    pub candidate: HostileSpawnCandidate,
     pub pos: Vec3,
     pub yaw: f32,
 }
@@ -103,13 +117,7 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
     }
     // The ground must have collision AND the body must fit (clearance above the
     // feet) — exactly what a foothold test asserts.
-    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
-    let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
-    if !is_foothold(feet, params, &solid) {
-        return None;
-    }
-    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-    if !body_clear(feet, params, &water) {
+    if !body_fits_at(world, kind, feet) {
         return None;
     }
 
@@ -121,6 +129,129 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
     }
 
     Some(feet_pos)
+}
+
+/// Whether `kind` can physically stand with its feet in `feet`.
+pub(crate) fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
+    let d = def(kind);
+    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
+    if !is_foothold(feet, params, &solid) {
+        return false;
+    }
+    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+    body_clear(feet, params, &water)
+}
+
+pub(crate) fn hostile_cap_full(world: &World) -> bool {
+    (world
+        .mobs()
+        .instances()
+        .iter()
+        .filter(|m| def(m.kind).category == MobCategory::Hostile)
+        .count() as u32)
+        >= MobCategory::Hostile.cap()
+}
+
+pub(crate) fn hostile_attempt_sites(
+    world: &World,
+    player_pos: Vec3,
+    attempt: u32,
+) -> Vec<HostileSpawnSite> {
+    let (wx, wz) = hostile_candidate_column(world, player_pos, attempt);
+    hostile_column_candidates(world, player_pos, wx, wz)
+}
+
+fn hostile_candidate_column(world: &World, player_pos: Vec3, attempt: u32) -> (i32, i32) {
+    let seed = (world.seed as u64)
+        ^ world.current_tick().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (attempt as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
+        ^ HOSTILE_SPAWN_SALT;
+    let angle = unit_f32(splitmix(seed ^ 0xA5A5_A5A5_A5A5_A5A5)) * std::f32::consts::TAU;
+    let dist = HOSTILE_MIN_SPAWN_DIST
+        + unit_f32(splitmix(seed ^ 0x5A5A_5A5A_5A5A_5A5A))
+            * (HOSTILE_MAX_SPAWN_DIST - HOSTILE_MIN_SPAWN_DIST);
+    let (sin, cos) = angle.sin_cos();
+    (
+        (player_pos.x + dist * cos).floor() as i32,
+        (player_pos.z + dist * sin).floor() as i32,
+    )
+}
+
+fn hostile_column_candidates(
+    world: &World,
+    player_pos: Vec3,
+    wx: i32,
+    wz: i32,
+) -> Vec<HostileSpawnSite> {
+    let Some(range) = hostile_scan_y_range(player_pos) else {
+        return Vec::new();
+    };
+    range
+        .rev()
+        .filter_map(|y| hostile_candidate_at(world, player_pos, wx, y, wz))
+        .collect()
+}
+
+fn hostile_scan_y_range(player_pos: Vec3) -> Option<std::ops::RangeInclusive<i32>> {
+    let player_section = SectionPos::from_world(
+        player_pos.x.floor() as i32,
+        player_pos.y.floor() as i32,
+        player_pos.z.floor() as i32,
+    )?;
+    let lo_cy = (player_section.cy - VERTICAL_LOAD_RADIUS).max(SECTION_MIN_CY);
+    let hi_cy = (player_section.cy + VERTICAL_LOAD_RADIUS).min(SECTION_MAX_CY);
+    let lo = lo_cy * SECTION_SIZE as i32;
+    let hi = (hi_cy + 1) * SECTION_SIZE as i32 - 1;
+    Some(lo..=hi)
+}
+
+fn hostile_candidate_at(
+    world: &World,
+    player_pos: Vec3,
+    wx: i32,
+    y: i32,
+    wz: i32,
+) -> Option<HostileSpawnSite> {
+    if !body_cell_open(world, wx, y, wz)
+        || !body_cell_open(world, wx, y + 1, wz)
+        || !world.block_is_full_spawn_support(wx, y - 1, wz)
+    {
+        return None;
+    }
+    let pos = Vec3::new(wx as f32 + 0.5, y as f32, wz as f32 + 0.5);
+    Some(HostileSpawnSite {
+        candidate: HostileSpawnCandidate {
+            pos: [pos.x, pos.y, pos.z],
+            cell: [wx, y, wz],
+            combined_light: world.combined_light6_at_world(wx, y, wz),
+            sky_light: world.skylight6_at_world(wx, y, wz),
+            block_light: world.blocklight6_at_world(wx, y, wz),
+        },
+        pos,
+        yaw: yaw_away_from_player(player_pos, pos),
+    })
+}
+
+fn body_cell_open(world: &World, wx: i32, y: i32, wz: i32) -> bool {
+    world.placement_cell_open(IVec3::new(wx, y, wz)) && !world.water_cell_at(wx, y, wz)
+}
+
+fn yaw_away_from_player(player_pos: Vec3, spawn_pos: Vec3) -> f32 {
+    let dx = player_pos.x - spawn_pos.x;
+    let dz = player_pos.z - spawn_pos.z;
+    (-dx).atan2(-dz)
+}
+
+fn splitmix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn unit_f32(bits: u64) -> f32 {
+    ((bits >> 40) as u32) as f32 * (1.0 / (1u32 << 24) as f32)
 }
 
 fn nearby_spawn(
@@ -301,5 +432,42 @@ mod tests {
             spawn_site(&world, far_player(), Mob::Sheep, 8, 8).is_none(),
             "the ground below the water is solid, but the mob body would spawn in water"
         );
+    }
+
+    #[test]
+    fn hostile_column_scan_prefers_high_loaded_spawn_site() {
+        let mut world = World::new(1, 1);
+        world.insert_empty_column_for_test(crate::chunk::ChunkPos::new(0, 0));
+        for y in [47, 63] {
+            assert!(world.set_block_world(8, y, 8, Block::Grass));
+        }
+
+        let candidates = hostile_column_candidates(&world, Vec3::new(8.0, 64.0, 8.0), 8, 8);
+
+        assert_eq!(
+            candidates.first().map(|site| site.candidate.cell),
+            Some([8, 64, 8])
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|site| site.candidate.cell == [8, 48, 8]),
+            "lower sites remain available when higher candidates are rejected"
+        );
+    }
+
+    #[test]
+    fn hostile_sampled_columns_stay_in_the_spawn_ring() {
+        let world = World::new(11, 1);
+        let player_pos = Vec3::new(8.0, 64.0, 8.0);
+
+        for attempt in 0..HOSTILE_SPAWN_ATTEMPTS {
+            let (wx, wz) = hostile_candidate_column(&world, player_pos, attempt);
+            let dx = wx as f32 + 0.5 - player_pos.x;
+            let dz = wz as f32 + 0.5 - player_pos.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            assert!(dist >= HOSTILE_MIN_SPAWN_DIST - 1.0);
+            assert!(dist <= HOSTILE_MAX_SPAWN_DIST + 1.0);
+        }
     }
 }

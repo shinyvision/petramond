@@ -375,6 +375,7 @@ impl Instance {
         player_pos: Vec3,
         mob_index: usize,
         mobs: &[AiMob],
+        despawn_radius: Option<f32>,
         idle_anims: &[IdleAnimMeta],
         skeleton: &Skeleton,
     ) {
@@ -412,8 +413,10 @@ impl Instance {
 
         // Distance-despawn: a mob with a row-level radius is culled immediately once it
         // is outside that radius. Species with no radius persist while loaded.
-        if let Some(radius) = d.despawn_radius {
+        if let Some(radius) = despawn_radius {
             self.distance_despawned = (self.pos - player_pos).length_squared() >= radius * radius;
+        } else {
+            self.distance_despawned = false;
         }
 
         let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);

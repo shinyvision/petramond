@@ -284,7 +284,7 @@ mod tests {
                     }
                 }
             }
-            let mut w2 = {
+            let w2 = {
                 w.insert_chunk_for_test(ChunkPos::new(0, 0), a);
                 w.insert_chunk_for_test(ChunkPos::new(1, 0), b);
                 w

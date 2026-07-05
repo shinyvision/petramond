@@ -747,10 +747,10 @@ mod tests {
         let near = home + Vec3::new(4.0, 0.0, 0.0);
         let far = home + Vec3::new(500.0, 0.0, 0.0); // way past the despawn radius
         for _ in 0..40 {
-            mobs.tick(0.05, &world, near, None, false);
+            mobs.tick(0.05, &world, near, None, false, None);
         }
         assert_eq!(mobs.len(), 1, "a near player keeps the hostile mob alive");
-        mobs.tick(0.05, &world, far, None, false);
+        mobs.tick(0.05, &world, far, None, false, None);
         assert!(
             mobs.is_empty(),
             "a far player culls the hostile mob immediately"

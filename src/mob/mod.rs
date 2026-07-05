@@ -35,6 +35,10 @@ pub use instance::Instance;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, Mobs, ShearDrop};
 pub use push::Body;
+pub(crate) use spawn::{
+    body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_cap_full,
+    HOSTILE_SPAWN_ATTEMPTS,
+};
 
 use std::sync::LazyLock;
 
@@ -119,7 +123,7 @@ impl Mob {
 }
 
 /// Compatibility default for hostile rows that omit `despawn_radius`.
-const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
+pub(crate) const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
 
 /// The population group a species belongs to. Natural spawning caps each group
 /// independently across the loaded area (so the world can't fill with one kind),

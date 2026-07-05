@@ -119,6 +119,10 @@ pub(super) enum Registration {
     Generator {
         callback_id: u32,
     },
+    HostileSpawner {
+        priority: i32,
+        callback_id: u32,
+    },
 }
 
 impl Registration {
@@ -183,7 +187,7 @@ impl ModStoreData {
         if self.phase != Phase::Init {
             self.stats.rejected_registrations += 1;
             return HostRet::Error(
-                "tick systems and event handlers may only be registered during mod_init".into(),
+                "mod registrations may only be registered during mod_init".into(),
             );
         }
         self.stats.registered += 1;
@@ -312,6 +316,13 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             event,
             priority,
             handler_id,
+        }),
+        HostCall::RegisterHostileSpawner {
+            callback_id,
+            priority,
+        } => data.register(Registration::HostileSpawner {
+            priority,
+            callback_id,
         }),
         HostCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
         {

@@ -18,7 +18,7 @@ use crate::world::World;
 
 use super::brain::AiMob;
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{defs, model, push, spawn, Instance, Mob, MobRng, SavedMob};
+use super::{def, defs, model, push, spawn, Instance, Mob, MobCategory, MobRng, SavedMob};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -154,6 +154,11 @@ impl Mobs {
         true
     }
 
+    /// Remaining room for `kind` under its species and category spawn caps.
+    pub fn spawn_room_for(&self, kind: Mob) -> u32 {
+        spawn::room_for(&self.list, kind)
+    }
+
     /// Advance every mob by one game tick (passing each its species' idle-animation
     /// metadata + ragdoll skeleton) and refresh its cached skylight, then resolve soft
     /// entity pushing and remove any mob that should leave the live world: a finished
@@ -173,6 +178,8 @@ impl Mobs {
     /// not-yet-loaded chunk is frozen — not simulated, and excluded from pushing — until
     /// the unload harvests it into that chunk's record. This mirrors the dropped-item
     /// freeze and stops a mob from falling through missing terrain at the streamed edge.
+    /// `hostile_despawn_radius` temporarily caps hostile distance-despawn radii during
+    /// the nightfall pulse.
     pub fn tick(
         &mut self,
         dt: f32,
@@ -180,6 +187,7 @@ impl Mobs {
         player_pos: Vec3,
         player_body: Option<push::Body>,
         freeze_unloaded: bool,
+        hostile_despawn_radius: Option<f32>,
     ) -> Vec<MobAttack> {
         let ai_mobs: Vec<AiMob> = self
             .list
@@ -202,6 +210,7 @@ impl Mobs {
                 player_pos,
                 i,
                 &ai_mobs,
+                effective_despawn_radius(mob.kind, hostile_despawn_radius),
                 &meta.idle_anims,
                 &meta.skeleton,
             );
@@ -480,6 +489,15 @@ impl Mobs {
     }
 }
 
+fn effective_despawn_radius(kind: Mob, hostile_despawn_radius: Option<f32>) -> Option<f32> {
+    let d = def(kind);
+    let radius = d.despawn_radius?;
+    if d.category == MobCategory::Hostile {
+        return Some(hostile_despawn_radius.map_or(radius, |pulse| radius.min(pulse)));
+    }
+    Some(radius)
+}
+
 /// Strict AABB overlap with a small epsilon, so a block placed exactly flush against a
 /// mob (touching faces, not interpenetrating) is still allowed — only a genuine clip
 /// counts as an overlap.
@@ -625,7 +643,7 @@ mod tests {
         // The coat regrows on the tick, within the spec's rolled range.
         let mut ticks: u32 = 0;
         while mobs.instances()[0].is_shorn() {
-            mobs.tick(0.05, &world, far(), None, false);
+            mobs.tick(0.05, &world, far(), None, false, None);
             ticks += 1;
             assert!(
                 ticks <= spec.regrow_max,
@@ -691,7 +709,7 @@ mod tests {
         let mut gap = gap0;
         let mut last_step = f32::INFINITY;
         for _ in 0..40 {
-            mobs.tick(0.05, &world, far(), None, false);
+            mobs.tick(0.05, &world, far(), None, false, None);
             let next = horizontal_gap(&mobs);
             // No snap-back: the gap only ever grows — the jitter we were getting was the
             // gap oscillating as positions were snapped each tick.
@@ -762,7 +780,7 @@ mod tests {
         let spot = Vec3::new(8.0, 64.0, 8.0);
         assert!(mobs.spawn(Mob::Owl, spot, 0.0));
         let before = mobs.instances()[0].pos;
-        mobs.tick(0.05, &world, spot, None, false);
+        mobs.tick(0.05, &world, spot, None, false, None);
         let after = mobs.instances()[0].pos;
         assert_eq!(
             (before.x, before.z),
