@@ -295,6 +295,7 @@ mod tests {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let layer = r#"{ "blocks": [ { "block": "llama:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 99, "drops": [] } ] }"#;
+        let base_reg = parse(&base).expect("base table loads");
         let reg = parse_test_layers(&[&base, layer]).expect("layered table loads");
         assert_eq!(
             reg.defs[Block::Stone.id() as usize].hardness,
@@ -304,7 +305,10 @@ mod tests {
         // An override registers no new id.
         assert_eq!(reg.defs.len(), crate::block::ENGINE_BLOCK_NAMES.len());
         // Rows the layer does not name are untouched.
-        assert_eq!(reg.defs[Block::Dirt.id() as usize].hardness, 0.5);
+        assert_eq!(
+            reg.defs[Block::Dirt.id() as usize].hardness,
+            base_reg.defs[Block::Dirt.id() as usize].hardness
+        );
     }
 
     #[test]

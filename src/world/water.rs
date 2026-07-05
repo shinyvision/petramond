@@ -534,25 +534,8 @@ impl FluidSim {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-
-    /// A world with a 3x3 block of loaded chunks around the origin, a solid stone
-    /// floor at y=64, air above. Source/flow tests place water at y>=65.
-    fn flat_world() -> World {
-        let mut w = World::new(0, 1);
-        for cz in -1..=1 {
-            for cx in -1..=1 {
-                let mut c = Chunk::new(cx, cz);
-                for z in 0..CHUNK_SZ {
-                    for x in 0..CHUNK_SX {
-                        c.set_block(x, 64, z, Block::Stone);
-                    }
-                }
-                w.insert_chunk_for_test(ChunkPos::new(cx, cz), c);
-            }
-        }
-        w
-    }
+    // Source/flow tests place water at y>=65, above flat_world's stone floor.
+    use crate::world::testutil::flat_world;
 
     fn run_ticks(w: &mut World, n: u32) {
         // Water flow needs no recipes; an empty set keeps the furnace step a no-op.
