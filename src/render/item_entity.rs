@@ -15,7 +15,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::block_model::{push_block_item_cube_lit, BillboardBasis};
+use super::item_cube::{push_block_item_cube_lit, BillboardBasis};
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 use super::ItemEntityInstance;
@@ -80,7 +80,7 @@ pub fn build_item_entities(
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
                     let center = inst.pos
                         + Vec3::new(offset.x, BOB_BASE + bob(inst.spin) + offset.y, offset.z);
-                    super::block_model::push_billboard_world_lit(
+                    super::item_cube::push_billboard_world_lit(
                         verts,
                         indices,
                         tile,

@@ -22,7 +22,7 @@
 
 use glam::Vec3;
 
-use super::block_model::{push_box_faces_lit, push_cube_textured};
+use super::item_cube::{push_box_faces_lit, push_cube_textured};
 use super::BreakOverlayView;
 use crate::atlas::Tile;
 use crate::mesh::Vertex;
@@ -97,7 +97,7 @@ pub fn build_break_overlay(
             for outer in [true, false] {
                 let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
                 for &(min, max) in quads.iter().take(n) {
-                    super::block_model::push_cell_local_face(
+                    super::item_cube::push_cell_local_face(
                         verts,
                         indices,
                         tile,
@@ -120,7 +120,7 @@ pub fn build_break_overlay(
             for face in crate::mesh::face::Face::ALL {
                 let (quads, n) = crate::mesh::slab::layer_quads(state, slot, face);
                 for &(min, max) in quads.iter().take(n) {
-                    super::block_model::push_cell_local_face(
+                    super::item_cube::push_cell_local_face(
                         verts,
                         indices,
                         tile,

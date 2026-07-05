@@ -38,7 +38,7 @@ use crate::gui::SlotRect;
 use crate::item::{ItemRenderKind, ItemType};
 use crate::render::ui::icon::{flat_icon_mvp, iso_icon_mvp, model_icon_mvp};
 
-use super::super::block_model::{push_billboard_quad, push_block_item_cube};
+use super::super::item_cube::{push_billboard_quad, push_block_item_cube};
 use super::super::chest_model::push_chest_item_full;
 use super::super::item_model::{build_block_model_icon, ItemVertex};
 use crate::block::Block;

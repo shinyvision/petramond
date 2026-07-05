@@ -25,7 +25,7 @@ pub struct Vertex {
 
 /// Fold one vertex's attributes into the packed `u32` word — the SINGLE owner of
 /// the `Vertex::packed` bit layout. Everything that emits a mesh vertex (the chunk
-/// mesher's cube faces and cross-plants; `render::block_model` mirrors the same
+/// mesher's cube faces and cross-plants; `render::item_cube` mirrors the same
 /// field meanings) routes through here, so the layout is defined in exactly one
 /// place.
 ///

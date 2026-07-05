@@ -1,7 +1,7 @@
 use crate::block_state::LogAxis;
 
 /// Face direction enum. Shared by the chunk mesher (`mesh::builder`) and the
-/// dynamic-geometry builder (`render::block_model`): both pick faces from
+/// dynamic-geometry builder (`render::item_cube`): both pick faces from
 /// [`Face::ALL`], shade them via [`Face::shade_idx`], and wind their quads via
 /// [`Face::quad_box`], so the two stay byte-identical by construction.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -86,7 +86,7 @@ impl Face {
     /// The four corners of this face, CCW as seen from outside, spanning the
     /// arbitrary axis-aligned box `[min, max]` (per-axis extents). The unit-cell
     /// `quad_for(face, x, y, z)` is exactly this over `[(x,y,z), (x+1,y+1,z+1)]`;
-    /// `render::block_model` calls it with non-cube boxes (the chest's inset body
+    /// `render::item_cube` calls it with non-cube boxes (the chest's inset body
     /// and lid). Corner order (p0 bottom-left, p1 bottom-right, p2 top-right, p3
     /// top-left) matches the shader's `corner_uv`, so tiles map upright.
     pub(crate) fn quad_box(self, min: [f32; 3], max: [f32; 3]) -> [[f32; 3]; 4] {
@@ -197,7 +197,7 @@ pub(super) fn quad_for(face: Face, x: f32, y: f32, z: f32) -> [[f32; 3]; 4] {
 /// stand proud of the 14-wide trunk and read against the gap), while the top and bottom
 /// stay flush — the box's top cap therefore slightly overhangs the recessed sides, the
 /// canonical inset-cactus look. Shared by the chunk mesher and the icon / held / dropped
-/// cube (`render::block_model`) so a cactus reads the same in the world and in the hand.
+/// cube (`render::item_cube`) so a cactus reads the same in the world and in the hand.
 pub(crate) fn cactus_quad(face: Face, min: [f32; 3], max: [f32; 3]) -> [[f32; 3]; 4] {
     let inset_x = (max[0] - min[0]) / 16.0;
     let inset_z = (max[2] - min[2]) / 16.0;

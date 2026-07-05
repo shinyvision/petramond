@@ -15,7 +15,7 @@
 
 use glam::Vec3;
 
-use super::block_model::push_box_faces_lit_mirrored;
+use super::item_cube::push_box_faces_lit_mirrored;
 use super::DoorInstance;
 use crate::door::{self, THICKNESS};
 use crate::furnace::Facing;

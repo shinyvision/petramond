@@ -17,7 +17,7 @@
 
 use glam::Vec3;
 
-use super::block_model::push_box_faces_lit;
+use super::item_cube::push_box_faces_lit;
 use super::ChestInstance;
 use crate::atlas::Tile;
 use crate::furnace::Facing;

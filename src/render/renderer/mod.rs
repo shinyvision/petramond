@@ -23,7 +23,7 @@ use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
 
-use super::block_model::BillboardBasis;
+use super::item_cube::BillboardBasis;
 use super::break_overlay::build_break_overlay;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;

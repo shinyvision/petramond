@@ -13,7 +13,7 @@
 //!
 //! The classification itself is atlas-manifest data (each tile's `icon_tint`,
 //! defaulting to its in-world `tint`), so both this CPU path
-//! ([`super::block_model`] vertex packing) and `model3d.wgsl` (GPU composite)
+//! ([`super::item_cube`] vertex packing) and `model3d.wgsl` (GPU composite)
 //! stay in lock-step with the mesher by construction.
 
 use crate::atlas::{self, Tile, TileTint};

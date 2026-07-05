@@ -20,7 +20,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::block_model::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
+use super::item_cube::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
 use super::lighting::DynLight;
 use super::HeldItemView;
 use crate::atlas::Tile;

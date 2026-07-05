@@ -1,6 +1,6 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-mod block_model;
+mod item_cube;
 mod break_overlay;
 mod chest_model;
 mod crosshair;
@@ -30,7 +30,7 @@ pub use renderer::Renderer;
 pub(crate) use scene::Scene;
 
 #[cfg(test)]
-pub use block_model::SOLID_COLOR_FLAG;
+pub use item_cube::SOLID_COLOR_FLAG;
 
 use crate::block_state::HeldBlockState;
 use crate::item::ItemType;
