@@ -12,7 +12,7 @@
 //! always makes progress instead of standing still.
 
 use std::cmp::Reverse;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::BinaryHeap;
 
 use crate::mathh::{IVec3, Vec3};
@@ -434,6 +434,7 @@ fn reconstruct(came_from: &FxHashMap<IVec3, IVec3>, end: IVec3) -> Vec<IVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustc_hash::FxHashSet;
 
     /// A solid world from a predicate, with a floor plane at `y < floor_y` always
     /// solid so footholds exist. Extra solid cells are added via the set.

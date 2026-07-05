@@ -348,12 +348,219 @@ pub(super) fn create_pipeline_resources(
         label: Some("block shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/block.wgsl").into()),
     });
-    let sky_spec = super::shader_pack::active_sky_shader();
     let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("crosshair shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/crosshair.wgsl").into()),
     });
 
+    let shared = create_shared_bindings(
+        device,
+        uniform_buf,
+        atlas_view,
+        atlas_sampler,
+        array_view,
+        array_sampler,
+    );
+
+    // 32-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32) + packed2 (u32).
+    // Pipelines whose shaders ignore `packed2` (break overlay) share the layout; an
+    // attribute the shader doesn't consume is valid.
+    let vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 24,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 28,
+            shader_location: 3,
+        },
+    ];
+    let vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &vbuf_attrs,
+    };
+
+    // Vertex: pos (f32x3 @0) + uv (f32x2 @12) + shade (f32 @20) + tint (f32x3 @24)
+    // = 36 bytes (matches `ItemVertex`).
+    let item3d_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32,
+            offset: 20,
+            shader_location: 2,
+        },
+        // tint (foliage-green for fern / short grass, white otherwise)
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 24,
+            shader_location: 3,
+        },
+    ];
+    let item3d_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<super::item_model::ItemVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &item3d_vbuf_attrs,
+    };
+
+    let (opaque_pipe, transparent_pipe) = create_terrain_pipelines(
+        device,
+        format,
+        sample_count,
+        &shader,
+        &shared.array_layout,
+        &vbuf_layout,
+    );
+    let sky = create_sky_pipeline(
+        device,
+        queue,
+        format,
+        sample_count,
+        uniform_buf,
+        shader_params_buf,
+    );
+    let (outline_pipe, outline_bind, outline_vbuf) =
+        create_selection_pipeline(device, format, sample_count, uniform_buf);
+    let (crosshair_pipe, crosshair_vbuf) =
+        create_crosshair_pipeline(device, format, sample_count, &crosshair_shader);
+    let model3d = create_model3d_pipelines(
+        device,
+        format,
+        sample_count,
+        uniform_buf,
+        &shared.uv_rects_buf,
+        &shared.atlas_bgl,
+        &vbuf_layout,
+    );
+    let (item3d_pipe, item3d_mvp_bind, item3d_vbuf) = create_item3d_pipeline(
+        device,
+        format,
+        sample_count,
+        &shared.atlas_bgl,
+        &model3d.mvp_buf,
+        &item3d_vbuf_layout,
+    );
+    let (mob_pipe, mob_shader) = create_mob_pipeline(
+        device,
+        format,
+        sample_count,
+        &shared.layout,
+        &item3d_vbuf_layout,
+    );
+    let world_model_pipe =
+        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader);
+    let (break_pipe, break_vbuf, break_ibuf) =
+        create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
+    let entity_bufs = create_entity_model_buffers(device);
+    let (particle_pipe, particle_vbuf, particle_ibuf) =
+        create_particle_pipeline(device, format, sample_count, &shared.layout);
+    let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
+    let model_icon_pipe =
+        create_model_icon_pipeline(device, format, sample_count, &shared.atlas_bgl);
+
+    PipelineResources {
+        atlas_array_bind: shared.atlas_array_bind,
+        uniform_bind: shared.uniform_bind,
+        atlas_bind: shared.atlas_bind,
+        atlas_bgl: shared.atlas_bgl,
+        sky_pipe: sky.pipe,
+        sky_bind: sky.bind,
+        sky_texture_bind: sky.texture_bind,
+        sky_shader_param_keys: sky.shader_param_keys,
+        sky_light_param_key: sky.light_param_key,
+        opaque_pipe,
+        transparent_pipe,
+        outline_pipe,
+        outline_bind,
+        outline_vbuf,
+        crosshair_pipe,
+        crosshair_vbuf,
+        model3d_pipe: model3d.pipe,
+        model3d_hand_pipe: model3d.hand_pipe,
+        model3d_mvp_buf: model3d.mvp_buf,
+        model3d_mvp_bind: model3d.mvp_bind,
+        model3d_mvp_bgl: model3d.mvp_bgl,
+        uv_rects_buf: shared.uv_rects_buf,
+        model3d_vbuf: model3d.vbuf,
+        model3d_ibuf: model3d.ibuf,
+        item3d_pipe,
+        item3d_mvp_bind,
+        item3d_vbuf,
+        mob_pipe,
+        world_model_pipe,
+        break_pipe,
+        break_vbuf,
+        break_ibuf,
+        item_entity_vbuf: entity_bufs.item_entity_vbuf,
+        item_entity_ibuf: entity_bufs.item_entity_ibuf,
+        chest_vbuf: entity_bufs.chest_vbuf,
+        chest_ibuf: entity_bufs.chest_ibuf,
+        door_vbuf: entity_bufs.door_vbuf,
+        door_ibuf: entity_bufs.door_ibuf,
+        particle_pipe,
+        particle_vbuf,
+        particle_ibuf,
+        ui_pipe,
+        ui_vbuf,
+        model_icon_pipe,
+    }
+}
+
+/// Back-face-culled primitive state shared by the block-vertex passes
+/// (opaque/transparent terrain, model3d, break overlay).
+fn cull_back() -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        cull_mode: Some(wgpu::Face::Back),
+        ..Default::default()
+    }
+}
+
+/// Bind groups / layouts shared across the per-pipeline constructors: the
+/// uv-rect table, the frame-uniform group, the 2D atlas group, the block
+/// pipeline layout, and the terrain tile-array group + layout.
+struct SharedBindings {
+    uv_rects_buf: wgpu::Buffer,
+    uniform_bind: wgpu::BindGroup,
+    atlas_bgl: wgpu::BindGroupLayout,
+    atlas_bind: wgpu::BindGroup,
+    /// The block pipeline layout ([uniform_bgl, atlas_bgl]), reused by the
+    /// mob / world-model / break-overlay / particle passes.
+    layout: wgpu::PipelineLayout,
+    atlas_array_bind: wgpu::BindGroup,
+    /// The terrain pipeline layout ([uniform_bgl, array_bgl]) for the
+    /// opaque/transparent block passes.
+    array_layout: wgpu::PipelineLayout,
+}
+
+fn create_shared_bindings(
+    device: &wgpu::Device,
+    uniform_buf: &wgpu::Buffer,
+    atlas_view: &wgpu::TextureView,
+    atlas_sampler: &wgpu::Sampler,
+    array_view: &wgpu::TextureView,
+    array_sampler: &wgpu::Sampler,
+) -> SharedBindings {
     // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
     // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
     // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
@@ -498,37 +705,27 @@ pub(super) fn create_pipeline_resources(
         push_constant_ranges: &[],
     });
 
-    // 32-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32) + packed2 (u32).
-    // Pipelines whose shaders ignore `packed2` (break overlay) share the layout; an
-    // attribute the shader doesn't consume is valid.
-    let vbuf_attrs = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 12,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 24,
-            shader_location: 2,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 28,
-            shader_location: 3,
-        },
-    ];
-    let vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &vbuf_attrs,
-    };
+    SharedBindings {
+        uv_rects_buf,
+        uniform_bind,
+        atlas_bgl,
+        atlas_bind,
+        layout,
+        atlas_array_bind,
+        array_layout,
+    }
+}
 
+/// The opaque + transparent (water) terrain pipelines: the packed 32-byte
+/// block vertex over the tile-array pipeline layout.
+fn create_terrain_pipelines(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    shader: &wgpu::ShaderModule,
+    array_layout: &wgpu::PipelineLayout,
+    vbuf_layout: &wgpu::VertexBufferLayout,
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
     let opaque_targets = color_target(
         format,
         Some(wgpu::BlendState::REPLACE),
@@ -539,21 +736,16 @@ pub(super) fn create_pipeline_resources(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         wgpu::ColorWrites::ALL,
     );
-
-    let cull_back = wgpu::PrimitiveState {
-        cull_mode: Some(wgpu::Face::Back),
-        ..Default::default()
-    };
     let opaque_pipe = world_pipeline(
         device,
         "opaque pipe",
-        &array_layout,
-        &shader,
+        array_layout,
+        shader,
         "vs_main",
         "fs_opaque",
-        std::slice::from_ref(&vbuf_layout),
+        std::slice::from_ref(vbuf_layout),
         &opaque_targets,
-        cull_back,
+        cull_back(),
         Some(DepthPreset::WriteLess),
         sample_count,
     );
@@ -566,21 +758,41 @@ pub(super) fn create_pipeline_resources(
     let transparent_pipe = world_pipeline(
         device,
         "transparent pipe",
-        &array_layout,
-        &shader,
+        array_layout,
+        shader,
         "vs_main",
         "fs_transparent",
-        std::slice::from_ref(&vbuf_layout),
+        std::slice::from_ref(vbuf_layout),
         &transparent_targets,
-        cull_back,
+        cull_back(),
         Some(DepthPreset::ReadLess),
         sample_count,
     );
+    (opaque_pipe, transparent_pipe)
+}
 
-    // --- Sky-background pipeline. ---
-    // Uses a sky-specific group 0 (frame uniforms + mod shader params) and a
-    // fixed sky-texture group 1. It does not use terrain atlas resources or the
-    // block pipeline's uv-rect table.
+/// The values the sky pass hands back to [`PipelineResources`].
+struct SkyResources {
+    pipe: wgpu::RenderPipeline,
+    bind: wgpu::BindGroup,
+    texture_bind: wgpu::BindGroup,
+    shader_param_keys: Vec<String>,
+    light_param_key: Option<String>,
+}
+
+/// Sky-background pipeline.
+/// Uses a sky-specific group 0 (frame uniforms + mod shader params) and a
+/// fixed sky-texture group 1. It does not use terrain atlas resources or the
+/// block pipeline's uv-rect table.
+fn create_sky_pipeline(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    uniform_buf: &wgpu::Buffer,
+    shader_params_buf: &wgpu::Buffer,
+) -> SkyResources {
+    let sky_spec = super::shader_pack::active_sky_shader();
     let sky_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sky bgl"),
         entries: &[
@@ -753,10 +965,25 @@ pub(super) fn create_pipeline_resources(
         .as_ref()
         .and_then(|spec| spec.sky_light_param.clone());
 
-    // --- Selection-outline pipeline. ---
-    // Its own minimal bind-group layout (Uniforms at binding 0 only) so it
-    // doesn't couple to the block pipelines' uv_rects layout. Reuses the same
-    // uniform buffer for view_proj.
+    SkyResources {
+        pipe: sky_pipe,
+        bind: sky_bind,
+        texture_bind: sky_texture_bind,
+        shader_param_keys: sky_shader_param_keys,
+        light_param_key: sky_light_param_key,
+    }
+}
+
+/// Selection-outline pipeline.
+/// Its own minimal bind-group layout (Uniforms at binding 0 only) so it
+/// doesn't couple to the block pipelines' uv_rects layout. Reuses the same
+/// uniform buffer for view_proj.
+fn create_selection_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    uniform_buf: &wgpu::Buffer,
+) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
     let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("outline shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline.wgsl").into()),
@@ -827,11 +1054,19 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    (outline_pipe, outline_bind, outline_vbuf)
+}
 
-    // --- Center crosshair pipeline. ---
-    // The fragment shader outputs white and the color blend computes
-    // `white * (1 - dst) + dst * 0`, which inverts the pixels under the
-    // crosshair instead of drawing a fixed light/dark color.
+/// Center crosshair pipeline.
+/// The fragment shader outputs white and the color blend computes
+/// `white * (1 - dst) + dst * 0`, which inverts the pixels under the
+/// crosshair instead of drawing a fixed light/dark color.
+fn create_crosshair_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    crosshair_shader: &wgpu::ShaderModule,
+) -> (wgpu::RenderPipeline, wgpu::Buffer) {
     let crosshair_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("crosshair layout"),
         bind_group_layouts: &[],
@@ -865,7 +1100,7 @@ pub(super) fn create_pipeline_resources(
         device,
         "crosshair pipe",
         &crosshair_layout,
-        &crosshair_shader,
+        crosshair_shader,
         "vs_crosshair",
         "fs_crosshair",
         &[crosshair_vbuf_layout],
@@ -880,15 +1115,37 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    (crosshair_pipe, crosshair_vbuf)
+}
 
-    // --- model3d pipeline (isometric slot icons + first-person held block). ---
-    // group(0): a per-draw MVP mat4 via a DYNAMIC-OFFSET uniform (binding 0) plus
-    // the shared uv_rects table (binding 1, same as the block pipeline). group(1):
-    // the block atlas (reuse the atlas bgl shape). Full-bright, back-face culled,
-    // alpha-blended so flat sprite items cut out. Built in TWO depth variants from
-    // the SAME shader/layout: `model3d_pipe` (NO depth) for the depthless UI icon
-    // pass, and `model3d_hand_pipe` (depth test + write) for the hand pass, which
-    // now carries a cleared depth buffer so the held block self-sorts.
+/// The values the model3d pass hands back to [`PipelineResources`].
+struct Model3dResources {
+    pipe: wgpu::RenderPipeline,
+    hand_pipe: wgpu::RenderPipeline,
+    mvp_buf: wgpu::Buffer,
+    mvp_bind: wgpu::BindGroup,
+    mvp_bgl: wgpu::BindGroupLayout,
+    vbuf: wgpu::Buffer,
+    ibuf: wgpu::Buffer,
+}
+
+/// model3d pipeline (isometric slot icons + first-person held block).
+/// group(0): a per-draw MVP mat4 via a DYNAMIC-OFFSET uniform (binding 0) plus
+/// the shared uv_rects table (binding 1, same as the block pipeline). group(1):
+/// the block atlas (reuse the atlas bgl shape). Full-bright, back-face culled,
+/// alpha-blended so flat sprite items cut out. Built in TWO depth variants from
+/// the SAME shader/layout: `model3d_pipe` (NO depth) for the depthless UI icon
+/// pass, and `model3d_hand_pipe` (depth test + write) for the hand pass, which
+/// now carries a cleared depth buffer so the held block self-sorts.
+fn create_model3d_pipelines(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    uniform_buf: &wgpu::Buffer,
+    uv_rects_buf: &wgpu::Buffer,
+    atlas_bgl: &wgpu::BindGroupLayout,
+    vbuf_layout: &wgpu::VertexBufferLayout,
+) -> Model3dResources {
     let model3d_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("model3d shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/model3d.wgsl").into()),
@@ -962,14 +1219,9 @@ pub(super) fn create_pipeline_resources(
     });
     let model3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("model3d layout"),
-        bind_group_layouts: &[&model3d_mvp_bgl, &atlas_bgl],
+        bind_group_layouts: &[&model3d_mvp_bgl, atlas_bgl],
         push_constant_ranges: &[],
     });
-    let model3d_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &vbuf_attrs,
-    };
     let model3d_targets = color_target(
         format,
         Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -987,9 +1239,9 @@ pub(super) fn create_pipeline_resources(
         &model3d_shader,
         "vs_model",
         "fs_model",
-        std::slice::from_ref(&model3d_vbuf_layout),
+        std::slice::from_ref(vbuf_layout),
         &model3d_targets,
-        cull_back,
+        cull_back(),
         None,
         sample_count,
     );
@@ -1000,9 +1252,9 @@ pub(super) fn create_pipeline_resources(
         &model3d_shader,
         "vs_model",
         "fs_model",
-        std::slice::from_ref(&model3d_vbuf_layout),
+        std::slice::from_ref(vbuf_layout),
         &model3d_targets,
-        cull_back,
+        cull_back(),
         Some(DepthPreset::WriteLess),
         sample_count,
     );
@@ -1019,14 +1271,33 @@ pub(super) fn create_pipeline_resources(
         mapped_at_creation: false,
     });
 
-    // --- item3d pipeline (extruded first-person held item). ---
-    // group(0) = a per-draw MVP via a DYNAMIC-OFFSET uniform (binding 0) over the
-    // shared `model3d_mvp_buf` (reuses its 256-byte-slot pattern). group(1) = the
-    // block atlas (reuse the atlas bgl). Explicit per-vertex (pos, uv, shade) so
-    // the side walls can sample a single boundary texel's sub-UV (the model3d
-    // packed-vertex shader can only SELECT whole-tile UV corners). Full-bright,
-    // alpha-cutout, DOUBLE-SIDED (cull off so the back face + inner walls show),
-    // NO depth (drawn over the world in the hand pass), alpha-blended.
+    Model3dResources {
+        pipe: model3d_pipe,
+        hand_pipe: model3d_hand_pipe,
+        mvp_buf: model3d_mvp_buf,
+        mvp_bind: model3d_mvp_bind,
+        mvp_bgl: model3d_mvp_bgl,
+        vbuf: model3d_vbuf,
+        ibuf: model3d_ibuf,
+    }
+}
+
+/// item3d pipeline (extruded first-person held item).
+/// group(0) = a per-draw MVP via a DYNAMIC-OFFSET uniform (binding 0) over the
+/// shared `model3d_mvp_buf` (reuses its 256-byte-slot pattern). group(1) = the
+/// block atlas (reuse the atlas bgl). Explicit per-vertex (pos, uv, shade) so
+/// the side walls can sample a single boundary texel's sub-UV (the model3d
+/// packed-vertex shader can only SELECT whole-tile UV corners). Full-bright,
+/// alpha-cutout, DOUBLE-SIDED (cull off so the back face + inner walls show),
+/// NO depth (drawn over the world in the hand pass), alpha-blended.
+fn create_item3d_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    atlas_bgl: &wgpu::BindGroupLayout,
+    model3d_mvp_buf: &wgpu::Buffer,
+    item3d_vbuf_layout: &wgpu::VertexBufferLayout,
+) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
     let item3d_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("item3d shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/item3d.wgsl").into()),
@@ -1051,7 +1322,7 @@ pub(super) fn create_pipeline_resources(
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &model3d_mvp_buf,
+                buffer: model3d_mvp_buf,
                 offset: 0,
                 size: NonZeroU64::new(64),
             }),
@@ -1059,39 +1330,9 @@ pub(super) fn create_pipeline_resources(
     });
     let item3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("item3d layout"),
-        bind_group_layouts: &[&item3d_mvp_bgl, &atlas_bgl],
+        bind_group_layouts: &[&item3d_mvp_bgl, atlas_bgl],
         push_constant_ranges: &[],
     });
-    // Vertex: pos (f32x3 @0) + uv (f32x2 @12) + shade (f32 @20) + tint (f32x3 @24)
-    // = 36 bytes (matches `ItemVertex`).
-    let item3d_vbuf_attrs = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 12,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32,
-            offset: 20,
-            shader_location: 2,
-        },
-        // tint (foliage-green for fern / short grass, white otherwise)
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 24,
-            shader_location: 3,
-        },
-    ];
-    let item3d_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<super::item_model::ItemVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &item3d_vbuf_attrs,
-    };
     let item3d_targets = color_target(
         format,
         Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -1109,7 +1350,7 @@ pub(super) fn create_pipeline_resources(
         &item3d_shader,
         "vs_item",
         "fs_item",
-        std::slice::from_ref(&item3d_vbuf_layout),
+        std::slice::from_ref(item3d_vbuf_layout),
         &item3d_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
@@ -1121,15 +1362,34 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    (item3d_pipe, item3d_mvp_bind, item3d_vbuf)
+}
 
-    // --- mob pipeline (in-world animated entity models). ---
-    // Reuses the BLOCK pipeline layout (`layout` = [uniform_bgl, atlas_bgl]): group0
-    // is the world `view_proj` uniform (the shader reads only view_proj; the uv_rects
-    // binding in the layout is simply unused), group1 is an atlas-shaped texture+
-    // sampler — bound by the renderer to the ENTITY texture, not the block atlas.
-    // Same explicit-UV `ItemVertex` layout as item3d (the model carries arbitrary
-    // sub-rect UVs). REPLACE blend + cutout (opaque creature), depth test + WRITE,
-    // double-sided (cull off) so flat mob sub-cubes show from both sides.
+/// mob pipeline (in-world animated entity models).
+/// Reuses the BLOCK pipeline layout (`layout` = [uniform_bgl, atlas_bgl]): group0
+/// is the world `view_proj` uniform (the shader reads only view_proj; the uv_rects
+/// binding in the layout is simply unused), group1 is an atlas-shaped texture+
+/// sampler — bound by the renderer to the ENTITY texture, not the block atlas.
+/// Same explicit-UV `ItemVertex` layout as item3d (the model carries arbitrary
+/// sub-rect UVs). REPLACE blend + cutout (opaque creature), depth test + WRITE,
+/// double-sided (cull off) so flat mob sub-cubes show from both sides.
+///
+/// The mob pipeline is shared across species; each species' own vbuf/ibuf +
+/// bind group + DynamicDraw are built in the renderer by iterating `mob::defs()`
+/// (each species has a distinct texture, so geometry can't share one buffer).
+/// Also returns the mob shader module, which the world-model pipeline shares.
+fn create_mob_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    layout: &wgpu::PipelineLayout,
+    item3d_vbuf_layout: &wgpu::VertexBufferLayout,
+) -> (wgpu::RenderPipeline, wgpu::ShaderModule) {
+    let opaque_targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
     let mob_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("mob shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mob.wgsl").into()),
@@ -1137,24 +1397,35 @@ pub(super) fn create_pipeline_resources(
     let mob_pipe = world_pipeline(
         device,
         "mob pipe",
-        &layout,
+        layout,
         &mob_shader,
         "vs_mob",
         "fs_mob",
-        std::slice::from_ref(&item3d_vbuf_layout),
+        std::slice::from_ref(item3d_vbuf_layout),
         &opaque_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
         sample_count,
     );
-    // The mob pipeline is shared across species; each species' own vbuf/ibuf +
-    // bind group + DynamicDraw are built in the renderer by iterating `mob::defs()`
-    // (each species has a distinct texture, so geometry can't share one buffer).
+    (mob_pipe, mob_shader)
+}
 
-    // --- world-model pipeline (chunk bbmodel-block stream). ---
-    // `ModelVertex`: the ItemVertex attributes + a (sky, block) light pair at
-    // @location(4), so `fs_world_model` can scale the sky term by the sim's
-    // day/night state at draw time (chunk meshes don't rebake at sunset).
+/// world-model pipeline (chunk bbmodel-block stream).
+/// `ModelVertex`: the ItemVertex attributes + a (sky, block) light pair at
+/// @location(4), so `fs_world_model` can scale the sky term by the sim's
+/// day/night state at draw time (chunk meshes don't rebake at sunset).
+fn create_world_model_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    layout: &wgpu::PipelineLayout,
+    mob_shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    let opaque_targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
     let world_model_vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -1190,8 +1461,8 @@ pub(super) fn create_pipeline_resources(
     let world_model_pipe = world_pipeline(
         device,
         "world model pipe",
-        &layout,
-        &mob_shader,
+        layout,
+        mob_shader,
         "vs_world_model",
         "fs_world_model",
         std::slice::from_ref(&world_model_vbuf_layout),
@@ -1200,23 +1471,27 @@ pub(super) fn create_pipeline_resources(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
+    world_model_pipe
+}
 
-    // --- Break-overlay pipeline (the destroy crack). ---
-    // Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
-    // (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
-    // unchanged. Same 32-byte vertex as the block pipe. MULTIPLY-blended; depth
-    // LessEqual / no-write; the cube is built coincident with the block faces and a
-    // small polygon offset (BREAK_DEPTH_BIAS) wins the depth tie on the surface, so
-    // the crack reads cleanly with no inflation and no z-fighting.
+/// Break-overlay pipeline (the destroy crack).
+/// Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
+/// (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
+/// unchanged. Same 32-byte vertex as the block pipe. MULTIPLY-blended; depth
+/// LessEqual / no-write; the cube is built coincident with the block faces and a
+/// small polygon offset (BREAK_DEPTH_BIAS) wins the depth tie on the surface, so
+/// the crack reads cleanly with no inflation and no z-fighting.
+fn create_break_overlay_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    layout: &wgpu::PipelineLayout,
+    vbuf_layout: &wgpu::VertexBufferLayout,
+) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
     let break_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("break overlay shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/break_overlay.wgsl").into()),
     });
-    let break_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &vbuf_attrs,
-    };
     // MULTIPLY blend (result = src.rgb * dst.rgb): the crack fragment outputs WHITE
     // where the destroy tile is transparent (×1 = no change) and dark where the
     // crack texels are, so the cracks darken the block face instead of
@@ -1248,13 +1523,13 @@ pub(super) fn create_pipeline_resources(
     let break_pipe = world_pipeline(
         device,
         "break overlay pipe",
-        &layout,
+        layout,
         &break_shader,
         "vs_break",
         "fs_break",
-        std::slice::from_ref(&break_vbuf_layout),
+        std::slice::from_ref(vbuf_layout),
         &break_targets,
-        cull_back,
+        cull_back(),
         Some(DepthPreset::ReadLessEqualBiased),
         sample_count,
     );
@@ -1270,7 +1545,22 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    (break_pipe, break_vbuf, break_ibuf)
+}
 
+/// Dynamic vertex/index buffers for item-entity, chest, and door models (all
+/// drawn by the opaque pipeline; separate budgets so one kind can't starve
+/// another).
+struct EntityModelBuffers {
+    item_entity_vbuf: wgpu::Buffer,
+    item_entity_ibuf: wgpu::Buffer,
+    chest_vbuf: wgpu::Buffer,
+    chest_ibuf: wgpu::Buffer,
+    door_vbuf: wgpu::Buffer,
+    door_ibuf: wgpu::Buffer,
+}
+
+fn create_entity_model_buffers(device: &wgpu::Device) -> EntityModelBuffers {
     // Item-entity dynamic buffers (drawn by the opaque pipeline; separate from the
     // hand's model3d buffers so the hand pass doesn't clobber them).
     let item_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1313,12 +1603,28 @@ pub(super) fn create_pipeline_resources(
         mapped_at_creation: false,
     });
 
-    // --- Particle pipeline (tiny 3D textured cubes). ---
-    // Reuses the block `uniform_bgl` (group0) + `atlas_bgl` (group1) so it binds
-    // the renderer's existing `uniform_bind` / `atlas_bind`. Compact 40-byte
-    // particle vertex (pos + uv + tint + shade + alpha). Alpha CUTOUT (discard
-    // a<0.5 in the shader) so cubes are solid and DEPTH-WRITTEN — correctly
-    // occluded by terrain and visible from any angle including above. No blend.
+    EntityModelBuffers {
+        item_entity_vbuf,
+        item_entity_ibuf,
+        chest_vbuf,
+        chest_ibuf,
+        door_vbuf,
+        door_ibuf,
+    }
+}
+
+/// Particle pipeline (tiny 3D textured cubes).
+/// Reuses the block `uniform_bgl` (group0) + `atlas_bgl` (group1) so it binds
+/// the renderer's existing `uniform_bind` / `atlas_bind`. Compact 40-byte
+/// particle vertex (pos + uv + tint + shade + alpha). Alpha CUTOUT (discard
+/// a<0.5 in the shader) so cubes are solid and DEPTH-WRITTEN — correctly
+/// occluded by terrain and visible from any angle including above. No blend.
+fn create_particle_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    layout: &wgpu::PipelineLayout,
+) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
     let particle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("particle shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particles.wgsl").into()),
@@ -1362,7 +1668,7 @@ pub(super) fn create_pipeline_resources(
     let particle_pipe = world_pipeline(
         device,
         "particle pipe",
-        &layout,
+        layout,
         &particle_shader,
         "vs_particle",
         "fs_particle",
@@ -1385,13 +1691,20 @@ pub(super) fn create_pipeline_resources(
         contents: bytemuck::cast_slice(&super::particles::particle_indices()),
         usage: wgpu::BufferUsages::INDEX,
     });
+    (particle_pipe, particle_vbuf, particle_ibuf)
+}
 
-    // --- UI pipeline (2D HUD / inventory). ---
-    // group(0) is the SEPARATE gui sprite atlas (texture + sampler) — NOT the
-    // block atlas. Vertices are NDC pos (vec2) + uv (vec2) + color (vec4); the
-    // fragment shader outputs the vertex color for the solid sentinel (uv.x < 0)
-    // and otherwise samples the gui atlas * color. Alpha-blended, NO depth, drawn
-    // LAST so it sits over every world / hand / crosshair pass.
+/// UI pipeline (2D HUD / inventory).
+/// group(0) is the SEPARATE gui sprite atlas (texture + sampler) — NOT the
+/// block atlas. Vertices are NDC pos (vec2) + uv (vec2) + color (vec4); the
+/// fragment shader outputs the vertex color for the solid sentinel (uv.x < 0)
+/// and otherwise samples the gui atlas * color. Alpha-blended, NO depth, drawn
+/// LAST so it sits over every world / hand / crosshair pass.
+fn create_ui_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> (wgpu::RenderPipeline, wgpu::Buffer) {
     let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ui shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ui.wgsl").into()),
@@ -1470,21 +1783,29 @@ pub(super) fn create_pipeline_resources(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    (ui_pipe, ui_vbuf)
+}
 
-    // --- model-icon pipeline (bbmodel-block icon-atlas cells). ---
-    // Pass-through `ItemVertex` (positions already in clip space, the MVP baked in by
-    // `build_block_model_icon`) sampling the MODEL atlas at group(0). Depth test +
-    // WRITE: the double-sided model self-sorts by depth (the faces are also emitted
-    // far→near as a tiebreak). The same `item3d`/`mob` ItemVertex layout (pos f32x3 @0,
-    // uv f32x2 @12, shade f32 @20, tint f32x3 @24) feeds it, so the model-atlas
-    // validation test covers it. Used only to bake the model cells of the icon atlas.
+/// model-icon pipeline (bbmodel-block icon-atlas cells).
+/// Pass-through `ItemVertex` (positions already in clip space, the MVP baked in by
+/// `build_block_model_icon`) sampling the MODEL atlas at group(0). Depth test +
+/// WRITE: the double-sided model self-sorts by depth (the faces are also emitted
+/// far→near as a tiebreak). The same `item3d`/`mob` ItemVertex layout (pos f32x3 @0,
+/// uv f32x2 @12, shade f32 @20, tint f32x3 @24) feeds it, so the model-atlas
+/// validation test covers it. Used only to bake the model cells of the icon atlas.
+fn create_model_icon_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    atlas_bgl: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
     let model_icon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("model icon shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/model_icon.wgsl").into()),
     });
     let model_icon_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("model icon layout"),
-        bind_group_layouts: &[&atlas_bgl],
+        bind_group_layouts: &[atlas_bgl],
         push_constant_ranges: &[],
     });
     let model_icon_vbuf_attrs = [
@@ -1535,53 +1856,7 @@ pub(super) fn create_pipeline_resources(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
-
-    PipelineResources {
-        atlas_array_bind,
-        uniform_bind,
-        atlas_bind,
-        atlas_bgl,
-        sky_pipe,
-        sky_bind,
-        sky_texture_bind,
-        sky_shader_param_keys,
-        sky_light_param_key,
-        opaque_pipe,
-        transparent_pipe,
-        outline_pipe,
-        outline_bind,
-        outline_vbuf,
-        crosshair_pipe,
-        crosshair_vbuf,
-        model3d_pipe,
-        model3d_hand_pipe,
-        model3d_mvp_buf,
-        model3d_mvp_bind,
-        model3d_mvp_bgl,
-        uv_rects_buf,
-        model3d_vbuf,
-        model3d_ibuf,
-        item3d_pipe,
-        item3d_mvp_bind,
-        item3d_vbuf,
-        mob_pipe,
-        world_model_pipe,
-        break_pipe,
-        break_vbuf,
-        break_ibuf,
-        item_entity_vbuf,
-        item_entity_ibuf,
-        chest_vbuf,
-        chest_ibuf,
-        door_vbuf,
-        door_ibuf,
-        particle_pipe,
-        particle_vbuf,
-        particle_ibuf,
-        ui_pipe,
-        ui_vbuf,
-        model_icon_pipe,
-    }
+    model_icon_pipe
 }
 
 #[cfg(test)]
