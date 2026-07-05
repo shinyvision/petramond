@@ -790,64 +790,208 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     );
 }
 
-#[test]
-fn stair_faces_use_cell_local_uv_modes() {
-    use super::vertex::{
-        UV_MODE_NONE, UV_MODE_STAIR_NEG_X, UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X,
-        UV_MODE_STAIR_POS_Z, UV_MODE_STAIR_TOP,
-    };
-    use crate::furnace::Facing;
+/// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
+/// UV_MODE_CELL_LOCAL vertices.
+fn cell_uv16(v: &Vertex) -> (u32, u32) {
+    ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
+}
 
+/// Mesh a lone stair (with optional extra blocks) through the section path with
+/// uniform full skylight, so tests can probe stair-only geometry.
+fn mesh_stair_fixture(
+    blocks: &[((i32, i32, i32), Block)],
+    facings: &[((i32, i32, i32), crate::furnace::Facing)],
+) -> ChunkMesh {
     let pos = crate::chunk::SectionPos::new(0, 0, 0);
     let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::RedwoodStairs);
-    section.set_stair_facing(8, 8, 8, Facing::South);
-
-    let mesh = super::build_section_mesh(
+    for &((x, y, z), b) in blocks {
+        section.set_block(x as usize, y as usize, z as usize, b);
+    }
+    for &((x, y, z), f) in facings {
+        section.set_stair_facing(x as usize, y as usize, z as usize, f);
+    }
+    let blocks = blocks.to_vec();
+    let facings = facings.to_vec();
+    super::build_section_mesh(
         &section,
         pos,
-        |wx, wy, wz| {
-            if (wx, wy, wz) == (8, 8, 8) {
-                Block::RedwoodStairs.id()
-            } else {
-                Block::Air.id()
-            }
+        move |wx, wy, wz| {
+            blocks
+                .iter()
+                .find(|(p, _)| *p == (wx, wy, wz))
+                .map_or(Block::Air.id(), |(_, b)| b.id())
         },
-        |_, _, _| crate::furnace::Facing::North,
+        move |wx, wy, wz| {
+            facings
+                .iter()
+                .find(|(p, _)| *p == (wx, wy, wz))
+                .map_or(crate::furnace::Facing::North, |(_, f)| *f)
+        },
         |_, _, _| 0,
         |_, _| 0,
         |_, _, _| SKY_FULL,
         |_, _, _| 0,
         |_, _, _| true,
+    )
+}
+
+/// Every stair face carries cell-local UVs, and the exposed full bottom plane
+/// merges into ONE quad spanning one full tile — the underside must read as an
+/// uncut block face, not four restarted quadrants.
+#[test]
+fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
+    use super::vertex::UV_MODE_CELL_LOCAL;
+    use crate::furnace::Facing;
+
+    let mesh = mesh_stair_fixture(
+        &[((8, 8, 8), Block::RedwoodStairs)],
+        &[((8, 8, 8), Facing::South)],
     );
 
-    let expect_mode = |x: f32, y: f32, z: f32, mode: u32| {
+    assert!(!mesh.opaque.is_empty());
+    for v in &mesh.opaque {
+        assert_eq!(
+            uv_mode(v),
+            UV_MODE_CELL_LOCAL,
+            "every stair vertex must carry explicit cell-local UVs"
+        );
+    }
+
+    let bottom: Vec<_> = mesh
+        .opaque
+        .iter()
+        .filter(|v| shade_idx(v) == 3 && (v.pos[1] - 8.0).abs() < 1.0e-3)
+        .collect();
+    assert_eq!(
+        bottom.len(),
+        4,
+        "the full underside plane must merge into a single quad"
+    );
+    let mut uvs: Vec<(u32, u32)> = bottom.iter().map(|v| cell_uv16(v)).collect();
+    uvs.sort_unstable();
+    assert_eq!(
+        uvs,
+        vec![(0, 0), (0, 16), (16, 0), (16, 16)],
+        "the underside quad must span exactly one full tile"
+    );
+}
+
+/// The screenshot regression: a stair beside a wall must shade as one smooth
+/// gradient per plane. Same-position vertices of the same face kind must carry
+/// identical lighting and UVs (no seams inside a plane, including the L-shaped
+/// side faces), the tread top must be a single seam-free quad, and both top
+/// planes must darken toward the wall (the AO gradient survives, continuously).
+#[test]
+fn stair_plane_lighting_is_continuous_beside_a_wall() {
+    use crate::furnace::Facing;
+
+    let mesh = mesh_stair_fixture(
+        &[
+            ((8, 8, 8), Block::OakStairs),
+            ((7, 8, 8), Block::Stone),
+            ((7, 9, 8), Block::Stone),
+        ],
+        &[((8, 8, 8), Facing::South)],
+    );
+
+    // Continuity: group by (position, face kind); every group must agree on
+    // both packed words (AO + sky light + block light + cell UV).
+    let mut seen: std::collections::HashMap<([u32; 3], u32), (u32, u32)> =
+        std::collections::HashMap::new();
+    for v in &mesh.opaque {
+        let key = (v.pos.map(f32::to_bits), shade_idx(v));
+        // Ignore the per-quad corner index (bits 8..10); everything else —
+        // tile, AO, sky light, block light, cell UV — must agree.
+        let val = (v.packed & !(0x3 << 8), v.packed2);
+        if let Some(prev) = seen.insert(key, val) {
+            assert_eq!(
+                prev, val,
+                "coplanar stair vertices at {:?} must shade and texture identically",
+                v.pos
+            );
+        }
+    }
+
+    let tread: Vec<_> = mesh
+        .opaque
+        .iter()
+        .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 8.5).abs() < 1.0e-3)
+        .collect();
+    assert_eq!(
+        tread.len(),
+        4,
+        "the tread top must merge into a single quad (no mid-face seam)"
+    );
+
+    let ao = |v: &&Vertex| (v.packed >> 21) & 0x3;
+    for plane_y in [8.5, 9.0] {
+        let plane: Vec<_> = mesh
+            .opaque
+            .iter()
+            .filter(|v| shade_idx(v) == 0 && (v.pos[1] - plane_y).abs() < 1.0e-3)
+            .collect();
+        let wall_side = plane
+            .iter()
+            .filter(|v| (v.pos[0] - 8.0).abs() < 1.0e-3)
+            .map(ao)
+            .max()
+            .unwrap();
+        let open_side = plane
+            .iter()
+            .filter(|v| (v.pos[0] - 9.0).abs() < 1.0e-3)
+            .map(ao)
+            .min()
+            .unwrap();
+        assert!(
+            wall_side < open_side,
+            "top plane at y {plane_y} must darken toward the wall"
+        );
+    }
+}
+
+/// A stair is a full block with a chunk cut out: a face plane the cut does not
+/// touch (the underside) must shade corner-for-corner like the same face of a
+/// full cube in an identical neighbourhood.
+#[test]
+fn stair_underside_shades_like_a_full_block_bottom() {
+    use crate::furnace::Facing;
+
+    let mesh = mesh_stair_fixture(
+        &[
+            ((8, 8, 8), Block::OakStairs),
+            ((7, 7, 8), Block::Stone),
+            ((12, 8, 8), Block::Stone),
+            ((11, 7, 8), Block::Stone),
+        ],
+        &[((8, 8, 8), Facing::East)],
+    );
+
+    let ao_at = |x: f32, z: f32| -> u32 {
         let v = mesh
             .opaque
             .iter()
             .find(|v| {
-                (v.pos[0] - x).abs() < 1.0e-3
-                    && (v.pos[1] - y).abs() < 1.0e-3
+                shade_idx(v) == 3
+                    && (v.pos[1] - 8.0).abs() < 1.0e-3
+                    && (v.pos[0] - x).abs() < 1.0e-3
                     && (v.pos[2] - z).abs() < 1.0e-3
-                    && uv_mode(v) == mode
             })
-            .unwrap_or_else(|| panic!("no stair vertex at ({x}, {y}, {z}) with UV mode {mode}"));
-        assert_eq!(uv_mode(v), mode);
+            .unwrap_or_else(|| panic!("no bottom-face vertex at ({x}, 8, {z})"));
+        (v.packed >> 21) & 0x3
     };
 
-    expect_mode(9.0, 8.0, 8.0, UV_MODE_STAIR_POS_X);
-    expect_mode(8.0, 8.0, 8.0, UV_MODE_STAIR_NEG_X);
-    expect_mode(8.0, 8.0, 9.0, UV_MODE_STAIR_POS_Z);
-    expect_mode(8.0, 8.0, 8.0, UV_MODE_STAIR_NEG_Z);
-    expect_mode(8.0, 8.5, 9.0, UV_MODE_STAIR_TOP);
-    expect_mode(8.0, 9.0, 8.0, UV_MODE_STAIR_TOP);
-
+    for dz in [0.0, 1.0] {
+        for (stair_x, cube_x) in [(8.0, 12.0), (9.0, 13.0)] {
+            assert_eq!(
+                ao_at(stair_x, 8.0 + dz),
+                ao_at(cube_x, 8.0 + dz),
+                "stair underside corner ({stair_x}, {dz}) must match the full cube's"
+            );
+        }
+    }
     assert!(
-        mesh.opaque
-            .iter()
-            .filter(|v| (v.pos[1] - 8.0).abs() < 1.0e-3)
-            .any(|v| uv_mode(v) == UV_MODE_NONE),
-        "stair bottom faces should keep normal full-tile UVs"
+        ao_at(8.0, 8.0) < ao_at(9.0, 8.0),
+        "the occluder must actually differentiate the corners this test compares"
     );
 }
 

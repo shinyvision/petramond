@@ -37,16 +37,14 @@ const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 // Packed UV modes (bits 29..32):
 // - dynamic thin geometry crops a 3/16-deep face to a matching strip instead of
 //   squishing a whole 16px tile across a door edge.
-// - stair side/top faces sample from their position inside the block cell, so the
-//   lower half-step and full-height back half read as one continuous block.
+// - CELL_LOCAL faces (stairs) carry an explicit tile-local UV in packed2 bits
+//   6..11 / 11..16 (1/16ths), so a partial face samples the sub-rectangle of its
+//   tile matching its position in the cell and the shape reads as a full block
+//   with a chunk cut out.
 const THIN_SLICE: f32 = 3.0 / 16.0;
 const UV_MODE_THIN_U: u32 = 1u;
 const UV_MODE_THIN_V: u32 = 2u;
-const UV_MODE_STAIR_POS_X: u32 = 3u;
-const UV_MODE_STAIR_NEG_X: u32 = 4u;
-const UV_MODE_STAIR_POS_Z: u32 = 5u;
-const UV_MODE_STAIR_NEG_Z: u32 = 6u;
-const UV_MODE_STAIR_TOP: u32 = 7u;
+const UV_MODE_CELL_LOCAL: u32 = 3u;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // The terrain pipeline samples a tile texture ARRAY: layer = tile id, uv is tile-LOCAL
@@ -63,7 +61,8 @@ struct VsIn {
     // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = SKYlight,
     // 29..32 = UV mode.
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block (torch) light, rest reserved (zero).
+    // Second packed word: bits 0..6 = block (torch) light, 6..16 = cell-local uv
+    // (CELL_LOCAL mode only), rest reserved (zero).
     @location(3) packed2: u32,
 };
 
@@ -93,39 +92,13 @@ fn corner_local(corner: u32) -> vec2<f32> {
     return vec2<f32>(0.0, 0.0);
 }
 
-fn cell_axis_coord(axis: f32, upper: bool) -> f32 {
-    var v = axis - floor(axis);
-    if (upper && v < 0.001) { v = 1.0; }
-    return v;
-}
-
-fn stair_side_uv(corner: u32, pos: vec3<f32>, mode: u32) -> vec2<f32> {
-    let right = corner == 1u || corner == 2u;
-    let top = corner == 2u || corner == 3u;
-    let y = cell_axis_coord(pos.y, top);
-    var u01 = 0.0;
-    if (mode == UV_MODE_STAIR_POS_X) {
-        let z = cell_axis_coord(pos.z, !right);
-        u01 = 1.0 - z;
-    } else if (mode == UV_MODE_STAIR_NEG_X) {
-        let z = cell_axis_coord(pos.z, right);
-        u01 = z;
-    } else if (mode == UV_MODE_STAIR_POS_Z) {
-        let x = cell_axis_coord(pos.x, right);
-        u01 = x;
-    } else {
-        let x = cell_axis_coord(pos.x, !right);
-        u01 = 1.0 - x;
-    }
-    return vec2<f32>(u01, 1.0 - y);
-}
-
-fn stair_top_uv(corner: u32, pos: vec3<f32>) -> vec2<f32> {
-    let right = corner == 1u || corner == 2u;
-    let far_z = corner == 0u || corner == 1u;
-    let x = cell_axis_coord(pos.x, right);
-    let z = cell_axis_coord(pos.z, far_z);
-    return vec2<f32>(x, z);
+// Explicit tile-local UV carried in packed2 bits 6..11 (u) / 11..16 (v), in
+// 1/16ths of a tile. Read only for UV_MODE_CELL_LOCAL vertices.
+fn cell_local_uv(packed2: u32) -> vec2<f32> {
+    return vec2<f32>(
+        f32((packed2 >> 6u) & 0x1Fu),
+        f32((packed2 >> 11u) & 0x1Fu),
+    ) / 16.0;
 }
 
 @vertex
@@ -182,7 +155,7 @@ fn vs_main(in: VsIn) -> VsOut {
         }
     }
     // UV modes above the base packed face corner. Doors crop thin edge faces;
-    // stairs remap side/top faces to their cell-local X/Z/Y coordinates.
+    // stairs carry explicit cell-local UVs.
     if (uv_mode == UV_MODE_THIN_U || uv_mode == UV_MODE_THIN_V) {
         if (uv_mode == UV_MODE_THIN_U) {
             let lu = select(0.0, 1.0, corner == 1u || corner == 2u);
@@ -191,10 +164,8 @@ fn vs_main(in: VsIn) -> VsOut {
             let lv = select(0.0, 1.0, corner == 0u || corner == 1u);
             uv.y = lv * THIN_SLICE;
         }
-    } else if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
-        uv = stair_side_uv(corner, in.pos, uv_mode);
-    } else if (uv_mode == UV_MODE_STAIR_TOP) {
-        uv = stair_top_uv(corner, in.pos);
+    } else if (uv_mode == UV_MODE_CELL_LOCAL) {
+        uv = cell_local_uv(in.packed2);
     } else {
         // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
         // bits 12..20 so its layer tiles W×H across the merge under the REPEAT sampler;
@@ -210,13 +181,9 @@ fn vs_main(in: VsIn) -> VsOut {
     }
     out.uv = uv;
     out.layer = atile;
-    var uv2 = corner_local(corner);
-    if (uv_mode >= UV_MODE_STAIR_POS_X && uv_mode <= UV_MODE_STAIR_NEG_Z) {
-        uv2 = stair_side_uv(corner, in.pos, uv_mode);
-    } else if (uv_mode == UV_MODE_STAIR_TOP) {
-        uv2 = stair_top_uv(corner, in.pos);
-    }
-    out.uv2 = uv2;
+    // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
+    // plain corner uv is always correct here.
+    out.uv2 = corner_local(corner);
     out.overlay = (in.packed >> 20u) & 0x1u;
     out.overlay_layer = overlay_tile;
 

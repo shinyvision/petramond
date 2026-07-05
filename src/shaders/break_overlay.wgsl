@@ -8,10 +8,10 @@
 // the shared uv_rects table (binding 1) — the SAME bind group as the block
 // pipeline. group(1) is the block atlas (the destroy tiles live in it).
 //
-// Vertex format is the shared 32-byte mesh::Vertex (packed2 is unused here — the
-// crack needs no light). We only need uv reconstruction
-// (SELECT from uv_rects — never recompute), so this is a trimmed copy of the block
-// vertex stage. The crack cube is coincident with the block faces; the pipeline
+// Vertex format is the shared 32-byte mesh::Vertex (packed2's light bits are
+// unused here — the crack needs no light; its cell-local uv bits ARE read for
+// stair quads). We only need uv reconstruction (SELECT from uv_rects — never
+// recompute), so this is a trimmed copy of the block vertex stage. The crack cube is coincident with the block faces; the pipeline
 // draws it depth LessEqual / no-write with a small polygon offset toward the camera
 // (BREAK_DEPTH_BIAS in pipeline.rs) so the decal wins the depth tie cleanly — see
 // that constant for why the offset is needed (the mesher's per-AO diagonal flip).
@@ -30,10 +30,19 @@ struct Uniforms {
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
+// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 29..32): the vertex
+// carries an explicit tile-local UV in packed2 bits 6..11 / 11..16 (1/16ths).
+// Stair crack quads use it so the crack decal is continuous across the stair
+// instead of restarting the tile per quad.
+const UV_MODE_CELL_LOCAL: u32 = 3u;
+
 struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
     @location(2) packed: u32,
+    // Second packed word: bits 6..16 = cell-local uv (CELL_LOCAL mode only);
+    // the light bits are unused here (the crack needs no light).
+    @location(3) packed2: u32,
 };
 
 struct VsOut {
@@ -57,7 +66,17 @@ fn vs_break(in: VsIn) -> VsOut {
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     let tile = in.packed & 0xFFu;
     let corner = (in.packed >> 8u) & 0x3u;
-    out.uv = corner_uv(uv_rects[tile], corner);
+    let uv_mode = (in.packed >> 29u) & 0x7u;
+    let r = uv_rects[tile];
+    if (uv_mode == UV_MODE_CELL_LOCAL) {
+        let c = vec2<f32>(
+            f32((in.packed2 >> 6u) & 0x1Fu),
+            f32((in.packed2 >> 11u) & 0x1Fu),
+        ) / 16.0;
+        out.uv = mix(r.xy, r.zw, c);
+    } else {
+        out.uv = corner_uv(r, corner);
+    }
     // World-space camera distance, for the fog fade in the fragment stage (matches
     // block.wgsl so the crack fades on the same curve as the surface it sits on).
     out.dist = length(u.cam_pos.xyz - local_pos);

@@ -18,8 +18,6 @@ use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Fa
 use super::tint;
 use super::vertex::{
     pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
-    UV_MODE_STAIR_NEG_X, UV_MODE_STAIR_NEG_Z, UV_MODE_STAIR_POS_X, UV_MODE_STAIR_POS_Z,
-    UV_MODE_STAIR_TOP,
 };
 use super::water::{self, SideVsWater, WaterSurface};
 
@@ -658,7 +656,7 @@ fn section_geometry(
                         crate::stair::is_stair(block_at(p.x, p.y, p.z))
                             .then(|| neighbour_stair_facing(p.x, p.y, p.z))
                     });
-                    emit_stair_block(
+                    super::stair::emit_stair_block(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
@@ -1208,7 +1206,7 @@ fn chunk_geometry(
                     let ci = z * CHUNK_SX + x;
                     let tint_for = |tile: Tile| tints.tile(tile.world_tint(), ci);
                     let mask = crate::stair::mask(crate::block_model::DEFAULT_MODEL_FACING);
-                    emit_stair_block(
+                    super::stair::emit_stair_block(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
@@ -1513,151 +1511,6 @@ fn emit_model_block(
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_stair_block<B, L, K, T>(
-    opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
-    wx: i32,
-    wy: i32,
-    wz: i32,
-    mask: u8,
-    tiles: [Tile; 3],
-    tint_for: &T,
-    block_at: &B,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) where
-    B: Fn(i32, i32, i32) -> Block,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
-    T: Fn(Tile) -> [f32; 3],
-{
-    for iy in 0..2 {
-        for iz in 0..2 {
-            for ix in 0..2 {
-                if !crate::stair::half_cell_occupied(mask, ix, iy, iz) {
-                    continue;
-                }
-                let (min, max) = crate::stair::half_cell_bounds(ix, iy, iz);
-                for face in FACES {
-                    if crate::stair::adjacent_half_cell_occupied(mask, ix, iy, iz, face.dir()) {
-                        continue;
-                    }
-                    emit_stair_face(
-                        opaque,
-                        opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        min,
-                        max,
-                        face,
-                        tiles,
-                        tint_for,
-                        block_at,
-                        neighbour_light,
-                        neighbour_blocklight,
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_stair_face<B, L, K, T>(
-    opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
-    wx: i32,
-    wy: i32,
-    wz: i32,
-    min: [f32; 3],
-    max: [f32; 3],
-    face: Face,
-    tiles: [Tile; 3],
-    tint_for: &T,
-    block_at: &B,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) where
-    B: Fn(i32, i32, i32) -> Block,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
-    T: Fn(Tile) -> [f32; 3],
-{
-    if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
-        return;
-    }
-    let boundary = face_on_cell_boundary(face, min, max);
-    let (dx, dy, dz) = face.dir();
-    let (fx, fy, fz) = if boundary {
-        (wx + dx, wy + dy, wz + dz)
-    } else {
-        (wx, wy, wz)
-    };
-    if boundary && block_at(fx, fy, fz).is_opaque() {
-        return;
-    }
-
-    let tile = match face {
-        Face::PosY => tiles[0],
-        Face::NegY => tiles[1],
-        _ => tiles[2],
-    };
-    let uv_mode = stair_uv_mode(face);
-    let world_min = [wx as f32 + min[0], wy as f32 + min[1], wz as f32 + min[2]];
-    let world_max = [wx as f32 + max[0], wy as f32 + max[1], wz as f32 + max[2]];
-    let corners = face.quad_box(world_min, world_max);
-    // The underside is a closed face: if the cell below is dark, adjacent sky-lit
-    // cells must not smooth light onto it.
-    let smooth_light = face != Face::NegY;
-    emit_cube_face(
-        opaque,
-        opaque_idx,
-        corners,
-        tile,
-        0,
-        false,
-        uv_mode,
-        tint_for(tile),
-        face,
-        fx,
-        fy,
-        fz,
-        neighbour_light(fx, fy, fz) as u32,
-        neighbour_blocklight(fx, fy, fz) as u32,
-        smooth_light,
-        block_at,
-        neighbour_light,
-        neighbour_blocklight,
-    );
-}
-
-#[inline]
-fn stair_uv_mode(face: Face) -> u32 {
-    match face {
-        Face::PosX => UV_MODE_STAIR_POS_X,
-        Face::NegX => UV_MODE_STAIR_NEG_X,
-        Face::PosZ => UV_MODE_STAIR_POS_Z,
-        Face::NegZ => UV_MODE_STAIR_NEG_Z,
-        Face::PosY => UV_MODE_STAIR_TOP,
-        Face::NegY => UV_MODE_NONE,
-    }
-}
-
-#[inline]
-fn face_on_cell_boundary(face: Face, min: [f32; 3], max: [f32; 3]) -> bool {
-    const EPS: f32 = 1.0e-6;
-    match face {
-        Face::PosX => (max[0] - 1.0).abs() <= EPS,
-        Face::NegX => min[0].abs() <= EPS,
-        Face::PosY => (max[1] - 1.0).abs() <= EPS,
-        Face::NegY => min[1].abs() <= EPS,
-        Face::PosZ => (max[2] - 1.0).abs() <= EPS,
-        Face::NegZ => min[2].abs() <= EPS,
-    }
-}
-
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into TWO packed
 /// 6-bit brightness channels `(sky6, block6)` plus a 0..1 warm amount.
 /// `sum_sky`/`sum_block` are x2-scale sums over `denom = cnt * SKY_FULL` cells
@@ -1734,6 +1587,10 @@ fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, u32, f32) 
 /// before closing the section. The `corners` are already in world space (and
 /// water-warped); `face` drives shade + the AO neighbourhood; `(fx,fy,fz)`/`f_l`/`f_bl`
 /// are the front voxel and its pre-sampled light.
+///
+/// Only the legacy chunk mesher composes lighting + push this way; the section
+/// path calls `cube_face_lighting` / `push_cube_face` separately.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn emit_cube_face<B, L, K>(
     vbuf: &mut Vec<Vertex>,
@@ -1800,7 +1657,7 @@ where
 /// Split from the vertex push so the greedy mesher can test a face for flatness (all four
 /// corners equal — the merge condition) before deciding to emit it per-cell or merge it.
 #[allow(clippy::too_many_arguments)]
-fn cube_face_lighting<B, L, K>(
+pub(super) fn cube_face_lighting<B, L, K>(
     face: Face,
     fx: i32,
     fy: i32,

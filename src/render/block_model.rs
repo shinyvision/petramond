@@ -10,9 +10,9 @@
 //! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
 //! The vertex packs word 1 as
 //! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 SKYlight | 29..32 UV mode`
-//! and word 2 (`packed2`) as `0..6 block light | rest reserved`. For the textured
-//! path ([`cube_textured`], [`billboard_quad`]) we set the tile, corner, shade,
-//! AO = 3, skylight = 63.
+//! and word 2 (`packed2`) as `0..6 block light | 6..16 cell-local uv | rest
+//! reserved`. For the textured path ([`cube_textured`], [`billboard_quad`]) we set
+//! the tile, corner, shade, AO = 3, skylight = 63.
 //!
 //! ### Out-of-world foliage tint + grass-side overlay
 //! Icons / held items / dropped cubes have no biome context, so foliage greens
@@ -41,7 +41,7 @@ use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
 use crate::mesh::face::Face;
-use crate::mesh::{Vertex, UV_MODE_SHIFT};
+use crate::mesh::{pack_cell_uv, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
 use glam::Vec3;
 
@@ -332,33 +332,37 @@ fn push_stair_item_lit(
     size: f32,
     light: DynLight,
 ) {
-    let facing = crate::furnace::Facing::South;
-    let mask = crate::stair::mask(facing);
-    for iy in 0..2 {
-        for iz in 0..2 {
-            for ix in 0..2 {
-                if !crate::stair::half_cell_occupied(mask, ix, iy, iz) {
-                    continue;
-                }
-                let (min, max) = crate::stair::half_cell_bounds(ix, iy, iz);
-                for face in Face::ALL {
-                    if crate::stair::adjacent_half_cell_occupied(mask, ix, iy, iz, face.dir()) {
-                        continue;
-                    }
-                    push_stair_item_face(
-                        verts, indices, faces, origin, size, min, max, face, light,
-                    );
-                }
+    let mask = crate::stair::mask(crate::furnace::Facing::South);
+    for face in Face::ALL {
+        for outer in [true, false] {
+            let (quads, n) = crate::mesh::stair::plane_quads(mask, face, outer);
+            for &(min, max) in quads.iter().take(n) {
+                push_cell_local_face(
+                    verts,
+                    indices,
+                    faces[face as usize],
+                    origin,
+                    size,
+                    min,
+                    max,
+                    face,
+                    light,
+                );
             }
         }
     }
 }
 
+/// One `face` of the cell-local box `[min, max]` scaled into `[origin, origin +
+/// size]`: like [`push_quad`] but with cell-local UVs ([`UV_MODE_CELL_LOCAL`]),
+/// so a partial face samples the matching sub-rectangle of its tile. Shared by
+/// the stair item cube (hand / drop / icon) and the stair break-crack overlay,
+/// so a stair reads as a cut-out full block everywhere it is drawn.
 #[allow(clippy::too_many_arguments)]
-fn push_stair_item_face(
+pub(super) fn push_cell_local_face(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
-    faces: [Tile; 6],
+    tile: Tile,
     origin: Vec3,
     size: f32,
     min: [f32; 3],
@@ -366,21 +370,25 @@ fn push_stair_item_face(
     face: Face,
     light: DynLight,
 ) {
-    if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
-        return;
-    }
     let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
     let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
-    let tile = faces[face as usize];
     let mat = foliage_tint::face_material(tile);
-    push_quad(
-        verts,
-        indices,
-        face.quad_box(mn.to_array(), mx.to_array()),
-        mat.tint,
-        face_bits_textured_lit(mat, face, light.sky),
-        lighting::blocklight_word(light.block),
-    );
+    let bits =
+        face_bits_textured_lit(mat, face, light.sky) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
+    let word2 = lighting::blocklight_word(light.block);
+    let corners = face.quad_box(mn.to_array(), mx.to_array());
+    let local = face.quad_box(min, max);
+    let start = verts.len() as u32;
+    for (corner, pos) in corners.into_iter().enumerate() {
+        let [u, v] = crate::mesh::stair::cell_uv(face, local[corner]);
+        verts.push(Vertex {
+            pos,
+            tint: mat.tint,
+            packed: bits | ((corner as u32) << 8),
+            packed2: word2 | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
+        });
+    }
+    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
 /// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles

@@ -11,6 +11,7 @@ mod builder;
 pub(crate) mod face;
 #[cfg(test)]
 mod skylight;
+pub(crate) mod stair;
 mod tint;
 mod torch;
 mod vertex;
@@ -26,7 +27,9 @@ pub(crate) use builder::{build_section_mesh_from_pad, SectionMeshPad};
 #[cfg(test)]
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
 pub use vertex::{ChunkMesh, ModelVertex, Vertex, SHADES};
-pub(crate) use vertex::{UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V};
+pub(crate) use vertex::{
+    pack_cell_uv, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V,
+};
 
 #[cfg(test)]
 mod tests;

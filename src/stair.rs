@@ -5,7 +5,6 @@ use crate::furnace::Facing;
 use crate::mathh::{IVec3, Vec3};
 
 pub const MAX_BOXES: usize = 3;
-pub type LocalBoxList = ([([f32; 3], [f32; 3]); MAX_BOXES], u8);
 pub type WorldBoxList = ([(Vec3, Vec3); MAX_BOXES], u8);
 
 const H: f32 = 0.5;
@@ -95,16 +94,6 @@ pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> WorldBoxList {
             base + Vec3::new(b.min[0], b.min[1], b.min[2]),
             base + Vec3::new(b.max[0], b.max[1], b.max[2]),
         );
-    }
-    (out, len as u8)
-}
-
-#[inline]
-pub fn local_boxes(boxes: &[Aabb]) -> LocalBoxList {
-    let mut out = [([0.0; 3], [0.0; 3]); MAX_BOXES];
-    let len = boxes.len().min(MAX_BOXES);
-    for (dst, b) in out.iter_mut().zip(boxes.iter()).take(len) {
-        *dst = (b.min, b.max);
     }
     (out, len as u8)
 }

@@ -18,8 +18,8 @@ pub struct Vertex {
     /// it (selecting uv from the CPU-uploaded `tile_uv()` table — never recomputing
     /// — and light from `SHADES * AO`).
     pub packed: u32,
-    /// Second packed word, carrying the light channels the first word has no room
-    /// for. [`pack_vertex2`] is the sole owner of its bit layout.
+    /// Second packed word: block light plus the optional cell-local UV. See
+    /// [`pack_vertex2`] and [`pack_cell_uv`], the owners of its bit layout.
     pub packed2: u32,
 }
 
@@ -60,16 +60,30 @@ pub(crate) fn pack_vertex(
 }
 
 /// Fold the second-word attributes into `Vertex::packed2` — the SINGLE owner of
-/// that word's bit layout (mirrored by hand in `block.wgsl` and `model3d.wgsl`):
+/// that word's bit layout together with [`pack_cell_uv`] (mirrored by hand in
+/// `block.wgsl` and `model3d.wgsl`):
 ///
-///   0..6 block light (torches/furnaces, 0 dark..63 full) | 6..32 RESERVED (zero)
+///   0..6 block light (torches/furnaces, 0 dark..63 full)
+///   | 6..16 cell-local uv ([`pack_cell_uv`], read only in [`UV_MODE_CELL_LOCAL`])
+///   | 16..32 RESERVED (zero)
 ///
 /// The block channel is 6 bits like the sky channel so the shader's `block_term`
-/// mirrors the sky curve exactly; the remaining 26 bits are reserved for future
+/// mirrors the sky curve exactly; the remaining 16 bits are reserved for future
 /// per-vertex data and MUST stay zero until a new owner is documented here.
 #[inline]
 pub(crate) fn pack_vertex2(block_light: u32) -> u32 {
     block_light & 0x3F
+}
+
+/// Explicit tile-local UV in 1/16ths (0..=16), packed into `Vertex::packed2`
+/// bits 6..11 (u) and 11..16 (v). Shaders read it only when the vertex's UV mode
+/// is [`UV_MODE_CELL_LOCAL`]; partial faces (stairs) use it to sample the
+/// sub-rectangle of their tile matching the quad's position inside the cell, so
+/// the shape textures as a full block with a chunk cut out.
+#[inline]
+pub(crate) fn pack_cell_uv(u16ths: u32, v16ths: u32) -> u32 {
+    debug_assert!(u16ths <= 16 && v16ths <= 16);
+    (u16ths << 6) | (v16ths << 11)
 }
 
 /// Packed UV mode field, shared by `block.wgsl` and dynamic block geometry.
@@ -77,11 +91,8 @@ pub(crate) const UV_MODE_SHIFT: u32 = 29;
 pub(crate) const UV_MODE_NONE: u32 = 0;
 pub(crate) const UV_MODE_THIN_U: u32 = 1;
 pub(crate) const UV_MODE_THIN_V: u32 = 2;
-pub(crate) const UV_MODE_STAIR_POS_X: u32 = 3;
-pub(crate) const UV_MODE_STAIR_NEG_X: u32 = 4;
-pub(crate) const UV_MODE_STAIR_POS_Z: u32 = 5;
-pub(crate) const UV_MODE_STAIR_NEG_Z: u32 = 6;
-pub(crate) const UV_MODE_STAIR_TOP: u32 = 7;
+/// The vertex carries an explicit tile-local UV in `packed2` (see [`pack_cell_uv`]).
+pub(crate) const UV_MODE_CELL_LOCAL: u32 = 3;
 
 /// GPU vertex for the chunk's bbmodel-block geometry: EXPLICIT attributes
 /// (not the packed tile word), because a `.bbmodel` face carries an arbitrary

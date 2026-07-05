@@ -47,6 +47,12 @@ const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
 
+// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 29..32): the vertex
+// carries an explicit tile-local UV in packed2 bits 6..11 / 11..16 (1/16ths).
+// Stair item cubes use it so their partial faces sample the matching
+// sub-rectangle of the tile instead of restarting it per quad.
+const UV_MODE_CELL_LOCAL: u32 = 3u;
+
 @group(0) @binding(0) var<uniform> m: MvpUniform;
 // uv-rect table identical to block.wgsl: (u0,v0,u1,v1) per tile. SELECT only.
 @group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
@@ -59,9 +65,10 @@ struct VsIn {
     @location(1) tint: vec3<f32>,
     // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index, 12..20 = overlay
     // tile, 20 = flag (solid-color OR has grass-side overlay), 21..23 = AO,
-    // 23..29 = SKYlight, 29..32 = UV mode (unused by this transformed-item path).
+    // 23..29 = SKYlight, 29..32 = UV mode (only CELL_LOCAL is honoured here).
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block (torch) light, rest reserved (zero).
+    // Second packed word: bits 0..6 = block (torch) light, 6..16 = cell-local uv
+    // (CELL_LOCAL mode only), rest reserved (zero).
     @location(3) packed2: u32,
 };
 
@@ -111,11 +118,21 @@ fn vs_model(in: VsIn) -> VsOut {
     let overlay_tile = (in.packed >> 12u) & 0xFFu;
     let ao = (in.packed >> 21u) & 0x3u;
     let sky6 = (in.packed >> 23u) & 0x3Fu;
+    let uv_mode = (in.packed >> 29u) & 0x7u;
 
     // Inset the tile rect by half a texel before reconstructing the corner uv so
     // edge fragments of the magnified iso icons never sample the neighbour tile
     // (see inset_tile). Applied to BOTH the base uv and the grass-side overlay uv2.
-    out.uv = corner_uv(inset_tile(uv_rects[tile]), corner);
+    let r = inset_tile(uv_rects[tile]);
+    if (uv_mode == UV_MODE_CELL_LOCAL) {
+        let c = vec2<f32>(
+            f32((in.packed2 >> 6u) & 0x1Fu),
+            f32((in.packed2 >> 11u) & 0x1Fu),
+        ) / 16.0;
+        out.uv = mix(r.xy, r.zw, c);
+    } else {
+        out.uv = corner_uv(r, corner);
+    }
     out.uv2 = corner_uv(inset_tile(uv_rects[overlay_tile]), corner);
     // Mirror of block.wgsl lighting: directional shade * AO * max(sky term, block
     // term), with the same sky-scale/-colour lanes so the held block dims and

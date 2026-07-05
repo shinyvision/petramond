@@ -32,6 +32,17 @@ impl World {
         crate::stair::resolved_boxes(pos, facing, |p| self.stair_facing_if_stair(p))
     }
 
+    /// The corner-resolved high-half mask of the stair at `pos` — the same mask
+    /// the chunk mesher renders from, so mask consumers (the break-crack overlay)
+    /// derive exactly the meshed shape.
+    #[inline]
+    pub fn stair_mask_at(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        let facing = self.stair_facing_at(wx, wy, wz);
+        crate::stair::resolved_mask(IVec3::new(wx, wy, wz), facing, |p| {
+            self.stair_facing_if_stair(p)
+        })
+    }
+
     #[inline]
     fn stair_facing_if_stair(&self, pos: IVec3) -> Option<Facing> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
