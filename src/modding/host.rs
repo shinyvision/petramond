@@ -282,11 +282,67 @@ fn splitmix_next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// THE host-call switchboard: one match, room to grow (Phase 3 appends the
-/// world/entity/player surface). Calls that need the live simulation reach it
-/// through [`scope::with_active`]; everything else lives on the store.
+/// THE host-call switchboard: routes every ABI variant to its category
+/// handler below (exhaustive, so a new variant must pick a home here). Calls
+/// that need the live simulation reach it through [`scope::with_active`];
+/// everything else lives on the store.
 fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     data.stats.host_calls += 1;
+    match call {
+        HostCall::Log { .. }
+        | HostCall::CurrentTick
+        | HostCall::RngU64 { .. }
+        | HostCall::RegisterTickSystem { .. }
+        | HostCall::RegisterEventHandler { .. }
+        | HostCall::RegisterHostileSpawner { .. }
+        | HostCall::ShaderSetParam { .. } => handle_core_call(data, call),
+        HostCall::GetBlock { .. }
+        | HostCall::GetBlocks { .. }
+        | HostCall::SetBlock { .. }
+        | HostCall::SetBlocks { .. }
+        | HostCall::ScheduleTick { .. }
+        | HostCall::IsLoaded { .. }
+        | HostCall::LightAt { .. }
+        | HostCall::BlockIsFullSpawnSupport { .. } => handle_block_call(call),
+        HostCall::SpawnMob { .. }
+        | HostCall::MobsInRadius { .. }
+        | HostCall::HurtMob { .. }
+        | HostCall::DespawnMob { .. }
+        | HostCall::SpawnItem { .. } => handle_entity_call(&data.mod_id, call),
+        HostCall::PlayerState
+        | HostCall::DamagePlayer { .. }
+        | HostCall::ApplyKnockback { .. }
+        | HostCall::GiveItem { .. }
+        | HostCall::KillPlayer
+        | HostCall::SetHealth { .. }
+        | HostCall::Teleport { .. } => handle_player_call(&data.mod_id, call),
+        HostCall::EmitSound { .. }
+        | HostCall::SoundPlayAt { .. }
+        | HostCall::SoundPlayOnMob { .. }
+        | HostCall::SoundStop { .. } => handle_sound_call(&data.mod_id, call),
+        HostCall::WorldKvGet { .. }
+        | HostCall::WorldKvSet { .. }
+        | HostCall::WorldKvDelete { .. }
+        | HostCall::SectionKvGet { .. }
+        | HostCall::SectionKvSet { .. }
+        | HostCall::SectionKvDelete { .. }
+        | HostCall::MobKvGet { .. }
+        | HostCall::MobKvSet { .. }
+        | HostCall::MobKvDelete { .. } => handle_kv_call(&data.mod_id, call),
+        HostCall::ResolveBlock { .. }
+        | HostCall::RegisterWorldgenFeature { .. }
+        | HostCall::RegisterStageReplacement { .. }
+        | HostCall::RegisterGenerator { .. } => handle_worldgen_call(data, call),
+        HostCall::GuiStateSet { .. }
+        | HostCall::GuiStateGet { .. }
+        | HostCall::GuiOpen { .. }
+        | HostCall::GuiClose => handle_gui_call(&data.mod_id, call),
+    }
+}
+
+/// Store-side core calls: logging, the tick counter, RNG streams, the
+/// `mod_init` registration window, and shader params.
+fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     match call {
         HostCall::Log { msg } => {
             log::info!("[mod {}] {msg}", data.mod_id);
@@ -329,8 +385,13 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
         },
+        other => unreachable!("non-core call {other:?} routed to handle_core_call"),
+    }
+}
 
-        // --- Phase 3b: blocks (all sim-scoped, delegating to World) --------
+/// Phase 3b: blocks (all sim-scoped, delegating to World).
+fn handle_block_call(call: HostCall) -> HostRet {
+    match call {
         HostCall::GetBlock { pos } => sim_query(|ctx| {
             let p = to_ivec(pos);
             HostRet::Block(
@@ -391,8 +452,13 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             let p = to_ivec(pos);
             HostRet::Bool(ctx.world.block_is_full_spawn_support(p.x, p.y, p.z))
         }),
+        other => unreachable!("non-block call {other:?} routed to handle_block_call"),
+    }
+}
 
-        // --- Phase 3b: entities ---------------------------------------------
+/// Phase 3b: entities (mob spawn/query/hurt/despawn, item drops).
+fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
         HostCall::SpawnMob { key, pos, yaw } => match finite3(pos, "SpawnMob.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
@@ -401,7 +467,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                     .position(|d| d.name == key)
                     .map(|i| crate::mob::Mob(i as u8))
                 else {
-                    log::warn!("[mod {}] SpawnMob: unknown species '{key}'", data.mod_id);
+                    log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
                     return HostRet::Bool(false);
                 };
                 let spawned = ctx.world.spawn_mob(kind, pos, yaw);
@@ -462,7 +528,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
                 let Some(item) = item_by_key(&item_key) else {
-                    log::warn!("[mod {}] SpawnItem: unknown item '{item_key}'", data.mod_id);
+                    log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item_key}'");
                     return HostRet::Bool(false);
                 };
                 if count == 0 {
@@ -472,8 +538,14 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             }),
         },
+        other => unreachable!("non-entity call {other:?} routed to handle_entity_call"),
+    }
+}
 
-        // --- Phase 3b: player -------------------------------------------------
+/// Phase 3b: player (snapshot, damage/kill through the funnel, inventory,
+/// movement primitives).
+fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
         HostCall::PlayerState => sim_query(|ctx| {
             let p = &*ctx.player;
             HostRet::Player(PlayerSnapshot {
@@ -487,7 +559,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             })
         }),
         HostCall::DamagePlayer { amount } => {
-            let mod_id = intern_mod_id(&data.mod_id);
+            let mod_id = intern_mod_id(mod_id);
             sim_call(|ctx| {
                 ctx.queue
                     .push_action(ModAction::DamagePlayer { amount, mod_id })
@@ -499,14 +571,14 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         },
         HostCall::GiveItem { item_key, count } => sim_query(|ctx| {
             let Some(item) = item_by_key(&item_key) else {
-                log::warn!("[mod {}] GiveItem: unknown item '{item_key}'", data.mod_id);
+                log::warn!("[mod {mod_id}] GiveItem: unknown item '{item_key}'");
                 return HostRet::Bool(false);
             };
             give_item(ctx, item, count);
             HostRet::Bool(true)
         }),
         HostCall::KillPlayer => {
-            let mod_id = intern_mod_id(&data.mod_id);
+            let mod_id = intern_mod_id(mod_id);
             sim_call(|ctx| ctx.queue.push_action(ModAction::KillPlayer { mod_id }))
         }
         HostCall::SetHealth { value } => sim_call(|ctx| ctx.player.set_health(value)),
@@ -514,11 +586,17 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(pos) => sim_call(|ctx| ctx.player.teleport(pos)),
         },
+        other => unreachable!("non-player call {other:?} routed to handle_player_call"),
+    }
+}
 
-        // --- Phase 3b: sound ----------------------------------------------------
+/// Phase 3b: sound (one-shots plus the handle-based spatial commands; the sim
+/// never touches audio — everything rides `TickEvents` to the app layer).
+fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
         HostCall::EmitSound { key, pos } => sim_query(|ctx| {
             let Some(sound) = crate::audio::sound_by_name(&key) else {
-                log::warn!("[mod {}] EmitSound: unknown sound '{key}'", data.mod_id);
+                log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");
                 return HostRet::Bool(false);
             };
             // The sim never touches audio: the sound rides the NON-lossy tick
@@ -536,14 +614,11 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             pitch,
         } => sim_query(|ctx| {
             let Some(sound) = crate::audio::sound_by_name(&key) else {
-                log::warn!("[mod {}] SoundPlayAt: unknown sound '{key}'", data.mod_id);
+                log::warn!("[mod {mod_id}] SoundPlayAt: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
             if !spatial_sound_params_ok(pos, volume, pitch) {
-                log::warn!(
-                    "[mod {}] SoundPlayAt: rejected non-finite or negative parameter",
-                    data.mod_id
-                );
+                log::warn!("[mod {mod_id}] SoundPlayAt: rejected non-finite or negative parameter");
                 return HostRet::U64(0);
             }
             let handle = ctx.feed.alloc_spatial_sound_handle();
@@ -565,16 +640,12 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             pitch,
         } => sim_query(|ctx| {
             let Some(sound) = crate::audio::sound_by_name(&key) else {
-                log::warn!(
-                    "[mod {}] SoundPlayOnMob: unknown sound '{key}'",
-                    data.mod_id
-                );
+                log::warn!("[mod {mod_id}] SoundPlayOnMob: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
             if !spatial_sound_scalar_params_ok(volume, pitch) {
                 log::warn!(
-                    "[mod {}] SoundPlayOnMob: rejected non-finite or negative parameter",
-                    data.mod_id
+                    "[mod {mod_id}] SoundPlayOnMob: rejected non-finite or negative parameter"
                 );
                 return HostRet::U64(0);
             }
@@ -586,10 +657,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                 .find(|m| m.id() == mob_id && !m.is_dead())
                 .map(|m| m.pos)
             else {
-                log::warn!(
-                    "[mod {}] SoundPlayOnMob: no live mob with stable id {mob_id}",
-                    data.mod_id
-                );
+                log::warn!("[mod {mod_id}] SoundPlayOnMob: no live mob with stable id {mob_id}");
                 return HostRet::U64(0);
             };
             let handle = ctx.feed.alloc_spatial_sound_handle();
@@ -612,18 +680,24 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                     .push(crate::game::ModSpatialSoundCommand::Stop { handle });
             }
         }),
+        other => unreachable!("non-sound call {other:?} routed to handle_sound_call"),
+    }
+}
 
-        // --- Phase 3b: persistent KV -------------------------------------------
+/// Phase 3b: persistent KV (world / section-cell / mob surfaces; writes pass
+/// [`kv_write_guard`]).
+fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
         HostCall::WorldKvGet { key } => {
             sim_query(|ctx| HostRet::Bytes(ctx.world.mod_kv_get(&key).map(<[u8]>::to_vec)))
         }
         HostCall::WorldKvSet { key, value } => {
-            match kv_write_guard(&data.mod_id, &key, value.len()) {
+            match kv_write_guard(mod_id, &key, value.len()) {
                 Some(err) => err,
                 None => sim_call(|ctx| ctx.world.mod_kv_set(key, value)),
             }
         }
-        HostCall::WorldKvDelete { key } => match kv_write_guard(&data.mod_id, &key, 0) {
+        HostCall::WorldKvDelete { key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key))),
         },
@@ -636,7 +710,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             )
         }),
         HostCall::SectionKvSet { pos, key, value } => {
-            match kv_write_guard(&data.mod_id, &key, value.len()) {
+            match kv_write_guard(mod_id, &key, value.len()) {
                 Some(err) => err,
                 None => sim_query(|ctx| {
                     let p = to_ivec(pos);
@@ -644,7 +718,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                 }),
             }
         }
-        HostCall::SectionKvDelete { pos, key } => match kv_write_guard(&data.mod_id, &key, 0) {
+        HostCall::SectionKvDelete { pos, key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| {
                 let p = to_ivec(pos);
@@ -663,7 +737,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             mob_index,
             key,
             value,
-        } => match kv_write_guard(&data.mod_id, &key, value.len()) {
+        } => match kv_write_guard(mod_id, &key, value.len()) {
             Some(err) => err,
             None => sim_query(|ctx| {
                 HostRet::Bool(
@@ -673,14 +747,19 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
                 )
             }),
         },
-        HostCall::MobKvDelete { mob_index, key } => match kv_write_guard(&data.mod_id, &key, 0) {
+        HostCall::MobKvDelete { mob_index, key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| {
                 HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(mob_index as usize, &key))
             }),
         },
+        other => unreachable!("non-KV call {other:?} routed to handle_kv_call"),
+    }
+}
 
-        // --- Phase 4: worldgen hooks --------------------------------------------
+/// Phase 4: worldgen hooks (block-name resolution plus the gen registrations).
+fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
+    match call {
         // ResolveBlock reads only the process-wide registry, so it is legal on
         // ANY instance — worldgen worker instances (which never get a SimCtx)
         // resolve their block ids during their own `mod_init`.
@@ -706,10 +785,15 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         HostCall::RegisterGenerator { callback_id } => {
             data.register(Registration::Generator { callback_id })
         }
+        other => unreachable!("non-worldgen call {other:?} routed to handle_worldgen_call"),
+    }
+}
 
-        // --- Phase 5: mod GUIs ----------------------------------------------------
-        // State keys are mod-local: the map belongs to one GUI session (cleared
-        // on open/close), so unlike the persistent KV no prefix is enforced.
+/// Phase 5: mod GUIs (session state map plus open/close).
+/// State keys are mod-local: the map belongs to one GUI session (cleared
+/// on open/close), so unlike the persistent KV no prefix is enforced.
+fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
         HostCall::GuiStateSet { key, value } => sim_call(|ctx| {
             ctx.world
                 .gui_state_set(key, super::convert::gui_value(value))
@@ -725,10 +809,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
             let Some(kind) = crate::gui::resolve_kind(&kind_key).filter(|k| k.is_mod()) else {
-                log::warn!(
-                    "[mod {}] GuiOpen: unknown or non-mod gui kind '{kind_key}'",
-                    data.mod_id
-                );
+                log::warn!("[mod {mod_id}] GuiOpen: unknown or non-mod gui kind '{kind_key}'");
                 return HostRet::Bool(false);
             };
             sim_query(|ctx| {
@@ -737,6 +818,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             })
         }
         HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(ModAction::CloseGui)),
+        other => unreachable!("non-GUI call {other:?} routed to handle_gui_call"),
     }
 }
 
