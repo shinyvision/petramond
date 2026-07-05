@@ -38,22 +38,28 @@ impl World {
                     ..Chest::default()
                 },
             );
+            self.note_block_entity_change(pos);
         }
     }
 
     /// Remove and return the chest at a world position (block break), if any.
     pub fn take_chest(&mut self, pos: IVec3) -> Option<Chest> {
         let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
-        c.take_chest(lx, ly, lz)
+        let chest = c.take_chest(lx, ly, lz);
+        self.note_block_entity_change(pos);
+        chest
     }
 
     /// Append the render data — world position, facing, and sampled skylight — of
     /// every loaded chest to `out` (cleared first). The transient lid open angle is
-    /// filled in by the caller (it's client-side animation, not world state). Cheap
-    /// for the common chest-free world: each chunk early-outs on an empty chest map.
+    /// filled in by the caller (it's client-side animation, not world state). Visits
+    /// only the block-entity section index, not every loaded section.
     pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8, u8)>) {
         out.clear();
-        for section in self.sections.values() {
+        for sp in &self.block_entity_sections {
+            let Some(section) = self.sections.get(sp) else {
+                continue;
+            };
             let chests = section.chests();
             if chests.is_empty() {
                 continue;

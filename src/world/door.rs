@@ -74,7 +74,10 @@ impl World {
     /// `Game::door_swing_angle`.
     pub fn collect_doors(&self, out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>) {
         out.clear();
-        for section in self.sections.values() {
+        for sp in &self.block_entity_sections {
+            let Some(section) = self.sections.get(sp) else {
+                continue;
+            };
             let doors = section.doors();
             if doors.is_empty() {
                 continue;
@@ -182,6 +185,7 @@ impl World {
                 );
                 c.modified = true;
             }
+            self.note_block_entity_change(cell);
         }
         self.refresh_region(&[base, upper]);
         true
@@ -217,6 +221,7 @@ impl World {
                 chunk.set_block(lx, ly, lz, Block::Air); // also clears the door state
                 chunk.modified = true;
             }
+            self.note_block_entity_change(c);
         }
         self.refresh_region(&[lower, upper]);
         Some(vec![lower, upper])

@@ -594,6 +594,7 @@ impl World {
                         continue;
                     }
                     self.sections.insert(sp, section);
+                    self.refresh_block_entity_index(sp);
                     self.classify_deep_on_install(sp);
                     if self.stream_events_enabled {
                         self.stream_events.push(StreamEvent::Generated(sp));
@@ -799,6 +800,7 @@ impl World {
                 }
             }
             self.sections.insert(*sp, Arc::new(section));
+            self.refresh_block_entity_index(*sp);
             self.dropped_items.extend(entities);
             self.restore_mobs(mobs);
         }
@@ -1040,6 +1042,27 @@ fn copy_generated_water(chunk: &Chunk, cy: i32, section: &mut Section) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A block entity arriving through the saved-section overlay path (not a live
+    /// placement) must land in the block-entity index, or it renders/ticks as if
+    /// it didn't exist after a reload.
+    #[test]
+    fn overlaid_saved_section_keeps_its_block_entities_live() {
+        let mut world = World::new(0, 4);
+        let sp = SectionPos::new(0, 4, 0);
+        world.ensure_column(sp.chunk_pos());
+        // The generated base the overlay replaces.
+        world.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
+        // A saved section carrying a chest lands from disk.
+        let mut saved = Section::new(0, 4, 0);
+        saved.insert_chest(0, 0, 0, crate::chest::Chest::default());
+        world.pending_overlays.insert(sp, (saved, Vec::new(), Vec::new()));
+        world.apply_pending_overlays();
+
+        let mut out = Vec::new();
+        world.collect_chests(&mut out);
+        assert_eq!(out.len(), 1, "the overlaid chest must be collected");
+    }
 
     #[test]
     fn split_keeps_surface_blocks_and_adds_stone_below() {

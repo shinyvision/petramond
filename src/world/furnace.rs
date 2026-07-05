@@ -22,7 +22,16 @@ impl World {
     /// public entry point.
     pub(super) fn tick_furnaces(&mut self, recipes: &Recipes) {
         let mut relit = Vec::new();
-        for (&cpos, section) in self.sections.iter_mut() {
+        // Only indexed sections can hold a furnace; skip the Arc::make_mut
+        // (a potential copy-on-write clone) for chest/door-only ones.
+        let candidates: Vec<_> = self.block_entity_sections.iter().copied().collect();
+        for cpos in candidates {
+            let Some(section) = self.sections.get_mut(&cpos) else {
+                continue;
+            };
+            if section.furnaces().is_empty() {
+                continue;
+            }
             let section = std::sync::Arc::make_mut(section);
             for (lx, ly, lz) in section.tick_furnaces(|it| recipes.smelt(it)) {
                 relit.push((cpos, local_to_world(cpos, lx, ly, lz)));
@@ -64,13 +73,16 @@ impl World {
                     ..Furnace::default()
                 },
             );
+            self.note_block_entity_change(pos);
         }
     }
 
     /// Remove and return the furnace at a world position (block break), if any.
     pub fn take_furnace(&mut self, pos: IVec3) -> Option<Furnace> {
         let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
-        c.take_furnace(lx, ly, lz)
+        let furnace = c.take_furnace(lx, ly, lz);
+        self.note_block_entity_change(pos);
+        furnace
     }
 }
 

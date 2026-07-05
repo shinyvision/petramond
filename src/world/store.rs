@@ -196,6 +196,14 @@ pub struct World {
     /// Dirty deep sections parked because nothing can see them. Re-queued by the
     /// visibility refresh when they become reachable (or the player ring arrives).
     pub(super) hidden_parked: FxHashSet<SectionPos>,
+    /// Sections currently holding at least one chest, door, or furnace, so the
+    /// per-frame chest/door collection and the furnace tick visit only those
+    /// sections instead of scanning every loaded one (mirrors `mesh_columns`).
+    /// Maintained by [`refresh_block_entity_index`](Self::refresh_block_entity_index)
+    /// at every install/mutation point; may briefly over-approximate (an indexed
+    /// section whose last entity was cleared by a raw block edit costs one
+    /// `is_empty` check), never under-approximate.
+    pub(super) block_entity_sections: FxHashSet<SectionPos>,
     /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
     /// which re-runs the deep-visibility BFS before submitting work.
     pub(super) vis_dirty: bool,
@@ -273,6 +281,7 @@ impl World {
             deep_sections: FxHashSet::default(),
             visible_deep: FxHashSet::default(),
             hidden_parked: FxHashSet::default(),
+            block_entity_sections: FxHashSet::default(),
             vis_dirty: false,
             light_blocked_meshes: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
@@ -647,6 +656,7 @@ impl World {
                 .unwrap_or_else(|| Section::new(pos.cx, pos.cy, pos.cz));
             self.ensure_column(pos.chunk_pos());
             self.sections.insert(pos, Arc::new(section));
+            self.refresh_block_entity_index(pos);
         }
         true
     }
@@ -861,8 +871,31 @@ impl World {
         }
     }
 
+    /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the
+    /// section owning world cell `pos`.
+    pub(super) fn note_block_entity_change(&mut self, pos: crate::mathh::IVec3) {
+        if let Some(sp) = SectionPos::from_world(pos.x, pos.y, pos.z) {
+            self.refresh_block_entity_index(sp);
+        }
+    }
+
+    /// Keep [`block_entity_sections`](Self::block_entity_sections) in sync after
+    /// `pos`'s content may have changed (section install, chest/door/furnace
+    /// insert or removal).
+    pub(super) fn refresh_block_entity_index(&mut self, pos: SectionPos) {
+        let has = self.sections.get(&pos).is_some_and(|s| {
+            !s.chests().is_empty() || !s.doors().is_empty() || !s.furnaces().is_empty()
+        });
+        if has {
+            self.block_entity_sections.insert(pos);
+        } else {
+            self.block_entity_sections.remove(&pos);
+        }
+    }
+
     pub(super) fn remove_section(&mut self, pos: SectionPos) {
         self.sections.remove(&pos);
+        self.block_entity_sections.remove(&pos);
         self.awaited_overlays.remove(&pos);
         if self.remove_mesh(pos) {
             self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
@@ -884,6 +917,7 @@ impl World {
         for cy in Self::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections.remove(&sp);
+            self.block_entity_sections.remove(&sp);
             self.meshes.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
@@ -933,6 +967,7 @@ impl World {
     pub(crate) fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
+        self.refresh_block_entity_index(pos);
         self.queue_dirty_mesh(pos);
     }
 
