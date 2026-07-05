@@ -123,6 +123,11 @@ pub(super) enum Registration {
         priority: i32,
         callback_id: u32,
     },
+    BlockBehavior {
+        /// The namespaced `blocks.json` `behavior` key this mod handles.
+        key: String,
+        callback_id: u32,
+    },
 }
 
 impl Registration {
@@ -295,6 +300,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::RegisterTickSystem { .. }
         | HostCall::RegisterEventHandler { .. }
         | HostCall::RegisterHostileSpawner { .. }
+        | HostCall::RegisterBlockBehavior { .. }
         | HostCall::ShaderSetParam { .. } => handle_core_call(data, call),
         HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
@@ -380,6 +386,17 @@ fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             priority,
             callback_id,
         }),
+        HostCall::RegisterBlockBehavior { key, callback_id } => {
+            // A behavior key routes hooks back to its owner, so it must carry
+            // THIS mod's namespace (same ownership rule as catalog keys).
+            if !key_owned_by_namespace(&data.mod_id, &key) {
+                return HostRet::Error(format!(
+                    "block behavior key '{key}' must be namespaced '{}:name'",
+                    data.mod_id
+                ));
+            }
+            data.register(Registration::BlockBehavior { key, callback_id })
+        }
         HostCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
         {
             Some(e) => e,

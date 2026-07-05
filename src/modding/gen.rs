@@ -415,7 +415,8 @@ impl GenHooksBuilder {
             }
             Registration::TickSystem { .. }
             | Registration::EventHandler { .. }
-            | Registration::HostileSpawner { .. } => {}
+            | Registration::HostileSpawner { .. }
+            | Registration::BlockBehavior { .. } => {}
         }
     }
 

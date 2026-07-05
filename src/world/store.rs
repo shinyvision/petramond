@@ -225,6 +225,11 @@ pub struct World {
     pub(super) dropped_items: DroppedItems,
     /// Active mobs in currently-loaded sections.
     pub(super) mobs: Mobs,
+    /// Behavior hooks fired on mod-behavior blocks this tick (see
+    /// `block::behavior::wasm`), in fire order. Drained by the game right
+    /// after the world tick and dispatched to the owning mods; only blocks
+    /// whose rows declare a `mod_id:name` behavior ever enqueue here.
+    pub(super) mod_block_hooks: Vec<crate::block::behavior::ModBlockHook>,
     /// Section installs the per-frame streamer buffered for the tick-side event bus
     /// (`section_generated` / `section_loaded`); drained by the next game tick.
     pub(super) stream_events: Vec<super::stream::StreamEvent>,
@@ -290,6 +295,7 @@ impl World {
             save: None,
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
+            mod_block_hooks: Vec::new(),
             stream_events: Vec::new(),
             stream_events_enabled: false,
             environment: WorldEnvironment::default(),
@@ -869,6 +875,17 @@ impl World {
                 }
             }
         }
+    }
+
+    /// Queue a mod-behavior hook for post-tick dispatch (called by
+    /// `block::behavior::wasm`'s hooks, on the tick only).
+    pub fn queue_mod_block_hook(&mut self, hook: crate::block::behavior::ModBlockHook) {
+        self.mod_block_hooks.push(hook);
+    }
+
+    /// Drain the mod-behavior hooks fired this tick, in fire order.
+    pub fn take_mod_block_hooks(&mut self) -> Vec<crate::block::behavior::ModBlockHook> {
+        std::mem::take(&mut self.mod_block_hooks)
     }
 
     /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the

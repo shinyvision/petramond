@@ -599,6 +599,27 @@ pub enum HostCall {
     /// if this mod wants to spawn something there. Legal ONLY during `mod_init`.
     /// → [`HostRet::Unit`].
     RegisterHostileSpawner { callback_id: u32, priority: i32 },
+
+    // --- Block behaviors (Phase 2b, landed 2026-07-06) ---------------------
+    /// Register the reactive behavior for block rows whose `blocks.json`
+    /// `behavior` field is `key` — a `mod_id:name` owned by THIS pack. The
+    /// engine then dispatches [`GuestCall::BlockBehavior`] with `callback_id`
+    /// for every hook that fires on such a block. Legal ONLY during
+    /// `mod_init`. → [`HostRet::Unit`].
+    RegisterBlockBehavior { key: String, callback_id: u32 },
+}
+
+/// Which [`BlockBehavior`](GuestCall::BlockBehavior) hook fired — the mod-side
+/// mirror of the engine `BlockBehavior` trait's methods.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BlockHookKind {
+    /// The probabilistic per-section random tick (a few cells per section per
+    /// game tick). Mod-behavior blocks always receive random ticks.
+    RandomTick,
+    /// A scheduled tick previously requested via [`HostCall::ScheduleTick`].
+    ScheduledTick,
+    /// The cell or one of its 6 neighbours changed (the ANNOUNCE phase).
+    NeighborUpdate,
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -714,6 +735,18 @@ pub enum GuestCall {
     HostileSpawnCandidate {
         callback_id: u32,
         candidate: HostileSpawnCandidate,
+    },
+
+    // --- Block behaviors (Phase 2b, landed 2026-07-06) ---------------------
+    /// A hook fired on a block whose row's `behavior` the mod registered via
+    /// [`HostCall::RegisterBlockBehavior`]. Dispatched on the game tick, in
+    /// hook-fire order, right after the world's own scheduled/random ticks —
+    /// so a handler edits the world through sim host calls one dispatch step
+    /// later than an engine-compiled behavior would. → [`GuestRet::Unit`].
+    BlockBehavior {
+        callback_id: u32,
+        kind: BlockHookKind,
+        pos: [i32; 3],
     },
 }
 
@@ -960,6 +993,15 @@ mod tests {
         roundtrip(GuestCall::HostileSpawnCandidate {
             callback_id: 7,
             candidate: candidate.clone(),
+        });
+        roundtrip(HostCall::RegisterBlockBehavior {
+            key: "mymod:zapper".into(),
+            callback_id: 3,
+        });
+        roundtrip(GuestCall::BlockBehavior {
+            callback_id: 3,
+            kind: BlockHookKind::ScheduledTick,
+            pos: [4, 65, -2],
         });
         roundtrip(EventPayload::ContainerOpened {
             kind: ContainerKind::Mod {

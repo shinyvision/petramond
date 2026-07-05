@@ -104,6 +104,12 @@ pub trait Mod: Default {
     ) -> Option<String> {
         None
     }
+
+    /// A behavior hook fired on a block whose row's `behavior` key this mod
+    /// registered via [`register_block_behavior`]. Dispatched on the game
+    /// tick right after the world's own scheduled/random ticks; edit the
+    /// world through the sim host calls ([`set_block`], [`schedule_tick`], …).
+    fn block_hook(&mut self, _callback_id: u32, _kind: BlockHookKind, _pos: [i32; 3]) {}
 }
 
 /// Log a line through the engine's logger.
@@ -167,6 +173,20 @@ pub fn register_hostile_spawner(priority: i32, callback_id: u32) {
         __rt::host_call(&HostCall::RegisterHostileSpawner {
             callback_id,
             priority,
+        }),
+    );
+}
+
+/// Register the behavior handler for block rows whose `blocks.json`
+/// `behavior` field is `key` (must be this mod's own `mod_id:name`). Only
+/// legal during [`Mod::init`]; the engine echoes `callback_id` to
+/// [`Mod::block_hook`] for every hook that fires on such a block.
+pub fn register_block_behavior(key: &str, callback_id: u32) {
+    __rt::expect_unit(
+        "RegisterBlockBehavior",
+        __rt::host_call(&HostCall::RegisterBlockBehavior {
+            key: key.to_owned(),
+            callback_id,
         }),
     );
 }
@@ -1054,6 +1074,14 @@ pub mod __rt {
             } => GuestRet::HostileSpawn(
                 mod_.hostile_spawn_candidate(callback_id, &candidate),
             ),
+            GuestCall::BlockBehavior {
+                callback_id,
+                kind,
+                pos,
+            } => {
+                mod_.block_hook(callback_id, kind, pos);
+                GuestRet::Unit
+            }
         };
         to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
     }

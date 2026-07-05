@@ -344,6 +344,7 @@ impl Game {
         // → random ticks) is its own sealed contract; the stage wraps it whole.
         self.begin_stage(Stage::WorldScheduled, events);
         self.world.game_tick(&self.recipes);
+        self.dispatch_mod_block_hooks(events);
         self.end_stage(Stage::WorldScheduled, events);
 
         self.begin_stage(Stage::NaturalBreaks, events);
@@ -381,6 +382,31 @@ impl Game {
         }
         self.tick_mod_hostile_mob_spawns(events);
         self.end_stage(Stage::Spawning, events);
+    }
+
+    /// Forward the behavior hooks the world tick queued on mod-behavior blocks
+    /// (see `block::behavior::wasm`) to their owning mods, inside the same
+    /// stage window as the world tick that fired them. The queue is drained
+    /// unconditionally so it never carries over between ticks.
+    fn dispatch_mod_block_hooks(&mut self, events: &mut TickEvents) {
+        let hooks = self.world.take_mod_block_hooks();
+        if hooks.is_empty() || !self.mods.has_block_behaviors() {
+            return;
+        }
+        let Self {
+            world,
+            player,
+            mods,
+            bus,
+            ..
+        } = self;
+        let mut ctx = SimCtx {
+            world,
+            player,
+            feed: events,
+            queue: bus.queue_mut(),
+        };
+        mods.dispatch_block_hooks(&mut ctx, &hooks);
     }
 
     fn tick_mod_hostile_mob_spawns(&mut self, events: &mut TickEvents) {

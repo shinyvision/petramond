@@ -59,12 +59,20 @@ struct HostileSpawnerRegistration {
     order: usize,
 }
 
+struct BlockBehaviorRegistration {
+    instance: SharedInstance,
+    callback_id: u32,
+}
+
 /// Every loaded mod instance, in pack load order.
 pub(crate) struct ModHost {
     instances: Vec<SharedInstance>,
     /// Parallel to `instances`.
     metas: Vec<ModMeta>,
     hostile_spawners: Vec<HostileSpawnerRegistration>,
+    /// `blocks.json` `behavior` key (`mod_id:name`) → the owning mod's
+    /// handler, for routing [`ModBlockHook`](crate::block::behavior::ModBlockHook)s.
+    block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
 }
 
 impl ModHost {
@@ -110,6 +118,7 @@ impl ModHost {
             instances,
             metas,
             hostile_spawners: Vec::new(),
+            block_behaviors: std::collections::HashMap::new(),
         }
     }
 
@@ -138,6 +147,7 @@ impl ModHost {
                 module: Some(module),
             }],
             hostile_spawners: Vec::new(),
+            block_behaviors: std::collections::HashMap::new(),
         }
     }
 
@@ -158,6 +168,7 @@ impl ModHost {
                 .collect(),
             metas,
             hostile_spawners: Vec::new(),
+            block_behaviors: std::collections::HashMap::new(),
         }
     }
 
@@ -207,6 +218,27 @@ impl ModHost {
                         });
                         hostile_order += 1;
                     }
+                    Registration::BlockBehavior { key, callback_id } => {
+                        // Keys are namespace-validated at the host call; a
+                        // duplicate within one pack is a mod bug — last wins.
+                        if self
+                            .block_behaviors
+                            .insert(
+                                key.clone(),
+                                BlockBehaviorRegistration {
+                                    instance: Rc::clone(shared),
+                                    callback_id,
+                                },
+                            )
+                            .is_some()
+                        {
+                            log::warn!(
+                                "mod '{}': block behavior '{key}' registered twice; \
+                                 the later registration wins",
+                                meta.id
+                            );
+                        }
+                    }
                     other if other.is_gen() => match &meta.module {
                         Some(module) => gen_hooks.add_registration(&meta.id, module, &other),
                         None => log::error!(
@@ -253,6 +285,40 @@ impl ModHost {
 
     pub(crate) fn has_hostile_spawners(&self) -> bool {
         !self.hostile_spawners.is_empty()
+    }
+
+    pub(crate) fn has_block_behaviors(&self) -> bool {
+        !self.block_behaviors.is_empty()
+    }
+
+    /// Forward the world's queued mod-behavior hooks (drained after its
+    /// scheduled/random ticks, in fire order) to the mods that registered
+    /// their keys. A hook whose key no mod registered is dropped silently —
+    /// the block stays inert, exactly like a row pointing at a disabled
+    /// pack's behavior.
+    pub(crate) fn dispatch_block_hooks(
+        &self,
+        ctx: &mut SimCtx,
+        hooks: &[crate::block::behavior::ModBlockHook],
+    ) {
+        for hook in hooks {
+            let Some(reg) = self.block_behaviors.get(hook.key) else {
+                continue;
+            };
+            let call = GuestCall::BlockBehavior {
+                callback_id: reg.callback_id,
+                kind: hook.kind,
+                pos: [hook.pos.x, hook.pos.y, hook.pos.z],
+            };
+            let reply = reg.instance.borrow_mut().call_guest(ctx, &call);
+            match reply {
+                None | Some(GuestRet::Unit) => {}
+                Some(_) => reg
+                    .instance
+                    .borrow_mut()
+                    .disable("returned a non-unit reply to a block behavior dispatch"),
+            }
+        }
     }
 
     pub(crate) fn hostile_spawn_kind(
@@ -374,12 +440,13 @@ fn apply_registration(
             priority,
             handler_id,
         } => wire_event_handler(shared, event, priority, handler_id, bus),
-        // Gen registrations go to the worldgen hook config in `initialize`,
-        // never to the bus/scheduler.
+        // Gen/spawner/behavior registrations go to their own registries in
+        // `initialize`, never to the bus/scheduler.
         Registration::WorldgenFeature { .. }
         | Registration::StageReplacement { .. }
         | Registration::Generator { .. }
-        | Registration::HostileSpawner { .. } => {
+        | Registration::HostileSpawner { .. }
+        | Registration::BlockBehavior { .. } => {
             unreachable!("non-system registrations are routed during ModHost::initialize")
         }
     }

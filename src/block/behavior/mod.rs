@@ -24,6 +24,9 @@ mod dirt;
 mod grass;
 mod inert;
 mod leaves;
+mod wasm;
+
+pub use wasm::ModBlockHook;
 
 // The behaviour registry: one re-export per behaviour, so a data row points at a
 // flat `&behavior::NAME`. Behaviours that reach into world internals live under
@@ -81,8 +84,11 @@ pub trait BlockBehavior: Sync {
 
 /// Resolve a behaviour's data-file name (a `blocks.json` row's `behavior` field)
 /// to its singleton — the inverse of [`BlockBehavior::key`]. One arm per
-/// registered behaviour above; a new behaviour joins the data files by adding
-/// its arm here.
+/// registered engine behaviour above; a new engine behaviour joins the data
+/// files by adding its arm here. A NAMESPACED key (`mod_id:name`) resolves to
+/// a per-key [`wasm::WasmBehavior`] singleton that forwards every hook to the
+/// owning mod (see that module) — so a pack gives its block reactive behaviour
+/// by naming a key here and registering it via `RegisterBlockBehavior`.
 pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {
     Some(match name {
         "inert" => &INERT,
@@ -93,6 +99,12 @@ pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {
         "fragile" => &FRAGILE,
         "sapling" => &SAPLING,
         "door" => &DOOR,
+        // The reserved engine namespace never dispatches to a mod.
+        _ if crate::registry::namespace(name)
+            .is_some_and(|ns| ns != crate::registry::ENGINE_NAMESPACE) =>
+        {
+            wasm::interned(name)
+        }
         _ => return None,
     })
 }
