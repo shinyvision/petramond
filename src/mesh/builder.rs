@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use glam::{IVec3, Vec3};
 
 use crate::atlas::Tile;
@@ -13,15 +11,19 @@ use crate::chunk::{
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::furnace::Facing;
 use crate::section::Section;
-use crate::torch::{warm_amount, warm_tint};
+use crate::torch::warm_tint;
 
-use super::face::{cactus_quad, cross_quads, quad_for, should_flip, vertex_ao, Face, FACES};
+use super::face::{cactus_quad, cross_quads, quad_for, vertex_ao, Face, FACES};
 use super::tint;
-use super::vertex::{
-    pack_cell_uv, pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_CELL_LOCAL,
-    UV_MODE_NONE, UV_MODE_SHIFT,
-};
+use super::vertex::{pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE};
 use super::water::{self, SideVsWater, WaterSurface};
+
+#[cfg(test)]
+use super::face_emit::emit_cube_face;
+use super::face_emit::{
+    cube_face_lighting_pad, fold_light, fold_light_smooth, push_cube_face_with_cell_uvs,
+};
+use super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 
 /// The horizontal cube face a furnace's front points to, for its [`Facing`].
 #[inline]
@@ -114,12 +116,9 @@ impl MeshOptions {
 const SECTION_PAD: usize = SECTION_SIZE + 2;
 const BIOME_PAD_RADIUS: i32 = 2;
 const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
-// Long greedy edges can meet subdivided neighbour faces as T-junctions; a tiny tangent-only
-// overlap covers the rasterizer crack without moving the face plane or affecting water.
-const GREEDY_FACE_OVERLAP: f32 = 1.0 / 1024.0;
 
 #[inline]
-fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
+pub(super) fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
     (y * SECTION_PAD + z) * SECTION_PAD + x
 }
 
@@ -141,7 +140,7 @@ pub(crate) struct SectionMeshPad<'a> {
 
 impl SectionMeshPad<'_> {
     #[inline]
-    fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
+    pub(super) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
         Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
     }
 
@@ -1623,141 +1622,6 @@ fn emit_model_block(
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
 }
 
-/// Fold a cell's (or neighbourhood-summed) skylight + block-light into TWO packed
-/// 6-bit brightness channels `(sky6, block6)` plus a 0..1 warm amount.
-/// `sum_sky`/`sum_block` are x2-scale sums over `denom = cnt * SKY_FULL` cells
-/// (`cnt = 1`, `denom = SKY_FULL` for a single cell). The channels stay SEPARATE
-/// in the vertex (`packed` bits 23..29 = sky, `packed2` bits 0..6 = block) so the
-/// shader can dim the sky term without dimming torch light; the shader recombines
-/// with `max(sky_term, block_term)`. Because the per-channel quantizer is monotone
-/// non-decreasing, `max(sky6, block6) == quantize(max(sum_sky, sum_block))` — the
-/// value the single channel used to hold — so at identity scale the final light is
-/// bit-identical to the pre-split output. Warm comes from the shared
-/// [`warm_amount`](crate::torch::warm_amount) so static blocks and dynamic
-/// geometry warm identically.
-#[inline]
-fn fold_light(sum_sky: u32, sum_block: u32, denom: u32) -> (u32, u32, f32) {
-    let sky6 = ((sum_sky * 63 + denom / 2) / denom).min(63);
-    let block6 = ((sum_block * 63 + denom / 2) / denom).min(63);
-    // `warm_amount` is `block01 * (1 - sky01) * strength`, so no block-light means
-    // exactly 0.0 warmth — skip its two f32 divisions in the torch-free common case
-    // (nearly all daylit terrain). Byte-identical: the multiply by a zero block term
-    // yields +0.0, the same bits this returns.
-    let warm = if sum_block == 0 {
-        0.0
-    } else {
-        warm_amount(
-            sum_sky as f32 / denom as f32,
-            sum_block as f32 / denom as f32,
-        )
-    };
-    (sky6, block6, warm)
-}
-
-/// Like [`fold_light`] but for the per-corner smooth-light mean over `cnt` cells
-/// (`1..=4`). The divisor `cnt * SKY_FULL` is one of four constants, so matching on
-/// `cnt` lets the compiler lower each arm's integer division to a multiply-shift —
-/// removing the last per-corner division from the emit hot loop. Byte-identical to
-/// `fold_light(sum_sky, sum_block, cnt * SKY_FULL)`.
-#[inline]
-fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32, u32, f32) {
-    #[inline(always)]
-    fn quant(sum: u32, cnt: u32) -> u32 {
-        let v = sum * 63;
-        match cnt {
-            1 => (v + 15) / 30,
-            2 => (v + 30) / 60,
-            3 => (v + 45) / 90,
-            _ => (v + 60) / 120,
-        }
-        .min(63)
-    }
-    let sky6 = quant(sum_sky, cnt);
-    // The torch-free common case (nearly all terrain) skips the block-channel
-    // divide entirely: a zero sum quantizes to exactly 0.
-    let block6 = if sum_block == 0 {
-        0
-    } else {
-        quant(sum_block, cnt)
-    };
-    let warm = if sum_block == 0 {
-        0.0
-    } else {
-        let denom = cnt * SKY_FULL as u32;
-        warm_amount(
-            sum_sky as f32 / denom as f32,
-            sum_block as f32 / denom as f32,
-        )
-    };
-    (sky6, block6, warm)
-}
-
-/// Emit one resolved cube face: gather the shared 3×3 tangent-plane ring around the
-/// front voxel F once, derive each corner's AO + smooth light from it, push the four
-/// packed vertices, and append the (AO-symmetric, possibly flipped) triangulation.
-/// Returns the two triangles' six indices so the caller can add water's reverse winding
-/// before closing the section. The `corners` are already in world space (and
-/// water-warped); `face` drives shade + the AO neighbourhood; `(fx,fy,fz)`/`f_l`/`f_bl`
-/// are the front voxel and its pre-sampled light.
-///
-/// Only the legacy chunk mesher composes lighting + push this way; the section
-/// path calls `cube_face_lighting` / `push_cube_face` separately.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn emit_cube_face<B, L, K>(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    tint: [f32; 3],
-    face: Face,
-    fx: i32,
-    fy: i32,
-    fz: i32,
-    f_l: u32,
-    f_bl: u32,
-    smooth_light: bool,
-    block_at: &B,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) -> [u32; 6]
-where
-    B: Fn(i32, i32, i32) -> Block,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
-{
-    let (ao, light6, block6, warm) = cube_face_lighting(
-        face,
-        fx,
-        fy,
-        fz,
-        f_l,
-        f_bl,
-        smooth_light,
-        block_at,
-        neighbour_light,
-        neighbour_blocklight,
-    );
-    push_cube_face(
-        vbuf,
-        ibuf,
-        corners,
-        base_tile,
-        overlay,
-        has_overlay,
-        uv_mode,
-        tint,
-        face,
-        ao,
-        light6,
-        block6,
-        warm,
-    )
-}
-
 /// One cube face's per-corner AO + smooth light (skylight/block-light + warm amount),
 /// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
 /// four corners share these eight ring cells (each edge cell feeds two corners, each
@@ -1855,266 +1719,11 @@ where
     (ao, light6, block6, warm)
 }
 
-fn cube_face_lighting_pad(
-    pad: &SectionMeshPad<'_>,
-    face: Face,
-    fx: usize,
-    fy: usize,
-    fz: usize,
-    f_l: u32,
-    f_bl: u32,
-    smooth_light: bool,
-) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4]) {
-    let (ux, uy, uz) = face.ao_u();
-    let (vx, vy, vz) = face.ao_v();
-
-    let mut occ = [[false; 3]; 3];
-    let mut opq = [[false; 3]; 3];
-    let mut sky = [[0u32; 3]; 3];
-    let mut blk = [[0u32; 3]; 3];
-    for a in -1i32..=1 {
-        for b in -1i32..=1 {
-            if a == 0 && b == 0 {
-                continue;
-            }
-            let (cx, cy, cz) = (
-                (fx as i32 + a * ux + b * vx) as usize,
-                (fy as i32 + a * uy + b * vy) as usize,
-                (fz as i32 + a * uz + b * vz) as usize,
-            );
-            let cell = pad.block_at_pad(cx, cy, cz);
-            let i = mesh_pad_idx(cx, cy, cz);
-            let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            occ[ia][ib] = cell.occludes_ao();
-            if smooth_light {
-                opq[ia][ib] = cell.is_opaque();
-                if !opq[ia][ib] {
-                    sky[ia][ib] = pad.skylight[i] as u32;
-                    blk[ia][ib] = pad.blocklight[i] as u32;
-                }
-            }
-        }
-    }
-
-    let signs = face.ao_signs();
-    let mut ao = [3u32; 4];
-    let mut light6 = [0u32; 4];
-    let mut block6 = [0u32; 4];
-    let mut warm = [0f32; 4];
-    let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
-    for corner in 0..4 {
-        let (su, sv) = signs[corner];
-        let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
-        ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
-        if !smooth_light {
-            (light6[corner], block6[corner], warm[corner]) = flat;
-            continue;
-        }
-        let mut sum = f_l;
-        let mut sum_block = f_bl;
-        let mut cnt = 1u32;
-        if !opq[iu][1] {
-            sum += sky[iu][1];
-            sum_block += blk[iu][1];
-            cnt += 1;
-        }
-        if !opq[1][iv] {
-            sum += sky[1][iv];
-            sum_block += blk[1][iv];
-            cnt += 1;
-        }
-        if !opq[iu][iv] {
-            sum += sky[iu][iv];
-            sum_block += blk[iu][iv];
-            cnt += 1;
-        }
-        (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
-    }
-    (ao, light6, block6, warm)
-}
-
-/// Push one resolved cube face's four packed vertices (given precomputed per-corner
-/// lighting) + its (AO-symmetric, possibly flipped) triangulation. Returns the six indices
-/// so the caller can add water's reverse winding.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn push_cube_face(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    tint: [f32; 3],
-    face: Face,
-    ao: [u32; 4],
-    light6: [u32; 4],
-    block6: [u32; 4],
-    warm: [f32; 4],
-) -> [u32; 6] {
-    push_cube_face_with_cell_uvs(
-        vbuf,
-        ibuf,
-        corners,
-        base_tile,
-        overlay,
-        has_overlay,
-        uv_mode,
-        None,
-        tint,
-        face,
-        ao,
-        light6,
-        block6,
-        warm,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_cube_face_with_cell_uvs(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    cell_uvs: Option<[(u32, u32); 4]>,
-    tint: [f32; 3],
-    face: Face,
-    ao: [u32; 4],
-    light6: [u32; 4],
-    block6: [u32; 4],
-    warm: [f32; 4],
-) -> [u32; 6] {
-    let shade_idx = face.shade_idx();
-    let packed_uv_mode = if cell_uvs.is_some() {
-        UV_MODE_CELL_LOCAL
-    } else {
-        uv_mode
-    };
-    let start = vbuf.len() as u32;
-    for (corner, p) in corners.into_iter().enumerate() {
-        let explicit_uv = cell_uvs
-            .map(|uvs| {
-                let (u, v) = uvs[corner];
-                pack_cell_uv(u, v)
-            })
-            .unwrap_or(0);
-        vbuf.push(Vertex {
-            pos: p,
-            // Warm the face tint per corner by however much torch light reaches it,
-            // so the glow fades smoothly across the surface (0 warm = unchanged, so
-            // skip the multiply entirely — the torch-free common case).
-            tint: if warm[corner] == 0.0 {
-                tint
-            } else {
-                warm_tint(tint, warm[corner])
-            },
-            packed: pack_vertex(
-                base_tile.index() as u32,
-                corner as u32,
-                shade_idx,
-                overlay,
-                has_overlay,
-                ao[corner],
-                light6[corner],
-            ) | (packed_uv_mode << UV_MODE_SHIFT),
-            packed2: pack_vertex2(block6[corner]) | explicit_uv,
-        });
-    }
-    // Flip the triangulation so the split runs along the darker diagonal -- keeps
-    // the AO gradient symmetric (no bright bleed).
-    let tris: [u32; 6] = if should_flip(ao) {
-        [start, start + 1, start + 3, start + 1, start + 2, start + 3]
-    } else {
-        [start, start + 1, start + 2, start, start + 2, start + 3]
-    };
-    ibuf.extend_from_slice(&tris);
-    tris
-}
-
-/// A flat (uniform-across-corners) opaque cube face, recorded per (direction, cell) so a
-/// run of identical adjacent faces can collapse into ONE tiled quad (greedy meshing). Only
-/// faces whose four corners share the same AO + light + tint + tile qualify — then the merged
-/// quad, drawn flat with its layer tiled W×H (REPEAT sampler), is pixel-identical to the
-/// per-cell faces it replaces. `gen` matches the current build's generation for a live face
-/// (a generation counter avoids re-zeroing the whole 6×4096 scratch every section — the fixed
-/// cost that otherwise ~doubled meshing throughput; a stale entry from a prior build has an
-/// old `gen` and reads as absent).
-#[derive(Copy, Clone, PartialEq)]
-struct FlatFace {
-    gen: u32,
-    tile: u32,
-    ao: u32,
-    light6: u32,
-    /// Second light channel (block light) — merges require BOTH channels equal, so
-    /// a merged quad's `packed2` word is exact for every cell it replaces.
-    block6: u32,
-    tint: [f32; 3],
-}
-
-const FLAT_ABSENT: FlatFace = FlatFace {
-    gen: 0,
-    tile: 0,
-    ao: 0,
-    light6: 0,
-    block6: 0,
-    tint: [0.0; 3],
-};
-
-/// Reused per-thread greedy-merge scratch: a `FlatFace` per (face direction 0..6, cell), a
-/// per-slice merged-flag grid, the current build generation, and a deferred-face count per
-/// direction (to skip merging directions that received none). Thread-local + reused so meshing
-/// a section allocates nothing AND clears nothing (the `gen` bump retires the prior build).
-struct GreedyScratch {
-    faces: Vec<FlatFace>,
-    merged: Vec<bool>,
-    gen: u32,
-    /// Deferred-face count per (direction, slice), so the merge pass scans only the few slices
-    /// that actually received flat faces instead of all 6×16 (empty slices dominate — flat
-    /// faces cluster in the surface/floor layers).
-    slice_counts: [u32; FACES.len() * SECTION_SIZE],
-}
-
-impl GreedyScratch {
-    /// Retire the previous build and return this build's generation. No `faces` reset: a bumped
-    /// `gen` makes every prior entry read as absent. Only allocates on first use per thread, and
-    /// only re-zeroes on the (≈4-billion-build) `gen` wrap so a stale entry can't alias.
-    fn begin(&mut self) -> u32 {
-        if self.faces.len() != FACES.len() * SECTION_VOLUME {
-            self.faces = vec![FLAT_ABSENT; FACES.len() * SECTION_VOLUME];
-        }
-        if self.merged.len() != SECTION_SIZE * SECTION_SIZE {
-            self.merged = vec![false; SECTION_SIZE * SECTION_SIZE];
-        }
-        self.gen = self.gen.wrapping_add(1);
-        if self.gen == 0 {
-            self.gen = 1;
-            self.faces.fill(FLAT_ABSENT);
-        }
-        self.slice_counts = [0; FACES.len() * SECTION_SIZE];
-        self.gen
-    }
-}
-
-thread_local! {
-    static GREEDY: RefCell<GreedyScratch> = const {
-        RefCell::new(GreedyScratch {
-            faces: Vec::new(),
-            merged: Vec::new(),
-            gen: 0,
-            slice_counts: [0; FACES.len() * SECTION_SIZE],
-        })
-    };
-}
-
 /// A cube face's `(normal, U, V)` local axes (0=X, 1=Y, 2=Z), derived from `Face::quad_box`
 /// so the greedy slice's `(u,v)` grid and a merged quad's tiled UV (W tiles along U, H along
 /// V) align with `corner_local`: normal-X → U=Z,V=Y; normal-Y → U=X,V=Z; normal-Z → U=X,V=Y.
 #[inline]
-fn face_axes(face: Face) -> (usize, usize, usize) {
+pub(super) fn face_axes(face: Face) -> (usize, usize, usize) {
     match face {
         Face::PosX | Face::NegX => (0, 2, 1),
         Face::PosY | Face::NegY => (1, 0, 2),
@@ -2125,7 +1734,7 @@ fn face_axes(face: Face) -> (usize, usize, usize) {
 /// Index of a face in [`FACES`] — the per-direction plane in [`GreedyScratch::faces`]. Must
 /// match `FACES.into_iter().enumerate()` in [`emit_greedy_quads`].
 #[inline]
-fn face_index(face: Face) -> usize {
+pub(super) fn face_index(face: Face) -> usize {
     match face {
         Face::PosX => 0,
         Face::NegX => 1,
@@ -2134,148 +1743,6 @@ fn face_index(face: Face) -> usize {
         Face::PosZ => 4,
         Face::NegZ => 5,
     }
-}
-
-/// Greedy-merge every deferred flat face (in `scratch.faces`) into the fewest tiled quads and
-/// push them to the opaque buffers. For each direction and each 16-cell slice, it 2D-merges
-/// maximal rectangles of identical `FlatFace`s (extend width along U, then height along V),
-/// emitting one quad per rectangle with `(W-1, H-1)` packed so the shader tiles its layer.
-fn emit_greedy_quads(
-    scratch: &mut GreedyScratch,
-    opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
-    ox: i32,
-    oy: i32,
-    oz: i32,
-) {
-    let cur = scratch.gen;
-    let slice_counts = scratch.slice_counts;
-    let key_at = |faces: &[FlatFace],
-                  fi: usize,
-                  n: usize,
-                  s: usize,
-                  ua: usize,
-                  u: usize,
-                  va: usize,
-                  v: usize|
-     -> FlatFace {
-        let mut l = [0usize; 3];
-        l[n] = s;
-        l[ua] = u;
-        l[va] = v;
-        faces[fi * SECTION_VOLUME + section_idx(l[0], l[1], l[2])]
-    };
-    for (fi, face) in FACES.into_iter().enumerate() {
-        let (n, ua, va) = face_axes(face);
-        for s in 0..SECTION_SIZE {
-            if slice_counts[fi * SECTION_SIZE + s] == 0 {
-                continue; // no deferred faces in this slice — skip its 16×16 scan + fill.
-            }
-            scratch.merged.fill(false);
-            for v in 0..SECTION_SIZE {
-                for u in 0..SECTION_SIZE {
-                    if scratch.merged[v * SECTION_SIZE + u] {
-                        continue;
-                    }
-                    let key = key_at(&scratch.faces, fi, n, s, ua, u, va, v);
-                    if key.gen != cur {
-                        continue; // stale (prior build) or never written = absent.
-                    }
-                    // Extend the run along U while cells match and are unmerged.
-                    let mut w = 1;
-                    while u + w < SECTION_SIZE
-                        && !scratch.merged[v * SECTION_SIZE + u + w]
-                        && key_at(&scratch.faces, fi, n, s, ua, u + w, va, v) == key
-                    {
-                        w += 1;
-                    }
-                    // Extend along V while the whole W-wide row matches and is unmerged.
-                    let mut h = 1;
-                    'grow: while v + h < SECTION_SIZE {
-                        for k in 0..w {
-                            if scratch.merged[(v + h) * SECTION_SIZE + u + k]
-                                || key_at(&scratch.faces, fi, n, s, ua, u + k, va, v + h) != key
-                            {
-                                break 'grow;
-                            }
-                        }
-                        h += 1;
-                    }
-                    for dv in 0..h {
-                        for du in 0..w {
-                            scratch.merged[(v + dv) * SECTION_SIZE + u + du] = true;
-                        }
-                    }
-                    let mut lmin = [0i32; 3];
-                    let mut lmax = [0i32; 3];
-                    lmin[n] = s as i32;
-                    lmax[n] = s as i32 + 1;
-                    lmin[ua] = u as i32;
-                    lmax[ua] = (u + w) as i32;
-                    lmin[va] = v as i32;
-                    lmax[va] = (v + h) as i32;
-                    let min = [
-                        (ox + lmin[0]) as f32,
-                        (oy + lmin[1]) as f32,
-                        (oz + lmin[2]) as f32,
-                    ];
-                    let max = [
-                        (ox + lmax[0]) as f32,
-                        (oy + lmax[1]) as f32,
-                        (oz + lmax[2]) as f32,
-                    ];
-                    push_greedy_quad(opaque, opaque_idx, face, min, max, key, w as u32, h as u32);
-                }
-            }
-        }
-    }
-}
-
-/// Push one greedy-merged quad: four flat vertices over the world box `[min,max]` with the
-/// merge extents `(w,h)` packed into the overlay-tile bits (`(W-1) | (H-1)<<4`), which the
-/// block shader reads to tile the layer. Uniform AO ⇒ no diagonal flip (default winding).
-fn push_greedy_quad(
-    opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
-    face: Face,
-    min: [f32; 3],
-    max: [f32; 3],
-    key: FlatFace,
-    w: u32,
-    h: u32,
-) {
-    let (min, max) = overlap_greedy_box(face, min, max);
-    let corners = face.quad_box(min, max);
-    let shade_idx = face.shade_idx();
-    let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
-    let start = opaque.len() as u32;
-    for (corner, p) in corners.into_iter().enumerate() {
-        opaque.push(Vertex {
-            pos: p,
-            tint: key.tint,
-            packed: pack_vertex(
-                key.tile,
-                corner as u32,
-                shade_idx,
-                wh,
-                false,
-                key.ao,
-                key.light6,
-            ) | (UV_MODE_NONE << UV_MODE_SHIFT),
-            packed2: pack_vertex2(key.block6),
-        });
-    }
-    opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
-}
-
-#[inline]
-fn overlap_greedy_box(face: Face, mut min: [f32; 3], mut max: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let (_, u, v) = face_axes(face);
-    min[u] -= GREEDY_FACE_OVERLAP;
-    max[u] += GREEDY_FACE_OVERLAP;
-    min[v] -= GREEDY_FACE_OVERLAP;
-    max[v] += GREEDY_FACE_OVERLAP;
-    (min, max)
 }
 
 /// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)
@@ -2308,35 +1775,5 @@ fn emit_cross(
         }
         opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
         opaque_idx.extend_from_slice(&[start, start + 2, start + 1, start, start + 3, start + 2]);
-    }
-}
-
-#[cfg(test)]
-mod fold_light_tests {
-    use super::*;
-
-    /// The light-channel split's terrain identity: per-channel quantization is
-    /// monotone, so `max(sky6, block6)` reproduces the pre-split single channel
-    /// (`quantize(max(sums))`) exactly — the shader's `max(sky_term, block_term)`
-    /// at identity scale therefore matches the old fold bit-for-bit. Also pins
-    /// `fold_light_smooth`'s constant-divisor arms to `fold_light` byte parity.
-    #[test]
-    fn split_channels_reproduce_the_max_folded_single_channel() {
-        for cnt in 1u32..=4 {
-            let denom = cnt * SKY_FULL as u32;
-            for sky in 0..=denom {
-                for blk in 0..=denom {
-                    let (s6, b6, warm) = fold_light(sky, blk, denom);
-                    let old = ((sky.max(blk) * 63 + denom / 2) / denom).min(63);
-                    assert_eq!(s6.max(b6), old, "sky={sky} blk={blk} denom={denom}");
-                    let smooth = fold_light_smooth(sky, blk, cnt);
-                    assert_eq!(
-                        smooth,
-                        (s6, b6, warm),
-                        "smooth arm must stay byte-identical at cnt={cnt}"
-                    );
-                }
-            }
-        }
     }
 }

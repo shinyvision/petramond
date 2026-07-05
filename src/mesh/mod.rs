@@ -9,6 +9,8 @@
 
 mod builder;
 pub(crate) mod face;
+mod face_emit;
+mod greedy;
 pub(crate) mod plane;
 #[cfg(test)]
 mod skylight;
