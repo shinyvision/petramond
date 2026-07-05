@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE};
@@ -30,7 +30,7 @@ fn arc_idx(dcx: i32, dcy: i32, dcz: i32) -> usize {
 
 /// Take cheap shared handles plus sparse per-cell light state for `pos`'s 3x3x3
 /// neighbourhood. Runs on the main thread; dense buffers are assembled in the worker.
-pub(super) fn gather(pos: SectionPos, sections: &HashMap<SectionPos, Arc<Section>>) -> Snapshot {
+pub(super) fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Section>>) -> Snapshot {
     let mut blocks: BlockArcs = std::array::from_fn(|_| None);
     let mut states = Vec::new();
     for dcy in -1..=1 {
@@ -93,7 +93,7 @@ pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u8]) {
 /// Collect every block-light emitter in `pos`'s 3x3x3 section neighbourhood.
 pub(super) fn collect_emitters(
     pos: SectionPos,
-    sections: &HashMap<SectionPos, Arc<Section>>,
+    sections: &FxHashMap<SectionPos, Arc<Section>>,
 ) -> Vec<IVec3> {
     let mut emitters = Vec::new();
     for dcy in -1..=1 {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
@@ -23,7 +23,7 @@ const SKY_SEEP_REACH: i32 = (SKY_FULL / 2) as i32;
 const COVERED: i32 = i32::MAX;
 
 /// Decide how `pos`'s skylight resolves from the 3x3 column heightmaps alone.
-pub(super) fn plan(pos: SectionPos, columns: &HashMap<ChunkPos, Column>) -> SkyPlan {
+pub(super) fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyPlan {
     let (hmin, hmax) = cover_range(pos, columns);
     let oy = pos.origin_world().1;
     let top = oy + SECTION_SIZE as i32 - 1;
@@ -38,7 +38,7 @@ pub(super) fn plan(pos: SectionPos, columns: &HashMap<ChunkPos, Column>) -> SkyP
     }
 }
 
-fn cover_range(pos: SectionPos, columns: &HashMap<ChunkPos, Column>) -> (i32, i32) {
+fn cover_range(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> (i32, i32) {
     let (mut hmin, mut hmax) = (i32::MAX, i32::MIN);
     for dcz in -1..=1 {
         for dcx in -1..=1 {
@@ -58,7 +58,7 @@ fn cover_range(pos: SectionPos, columns: &HashMap<ChunkPos, Column>) -> (i32, i3
     }
 }
 
-fn gather_surface(pos: SectionPos, columns: &HashMap<ChunkPos, Column>) -> Box<[i32]> {
+fn gather_surface(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> Box<[i32]> {
     let mut surface = vec![COVERED; NBHD_AREA].into_boxed_slice();
     for dcz in -1..=1 {
         for dcx in -1..=1 {

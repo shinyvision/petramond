@@ -12,7 +12,8 @@
 //! always makes progress instead of standing still.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BinaryHeap;
 
 use crate::mathh::{IVec3, Vec3};
 
@@ -307,8 +308,8 @@ pub fn find_path(
         COST_DIAG * lo + COST_FLAT * (hi - lo)
     };
 
-    let mut g_score: HashMap<IVec3, u32> = HashMap::new();
-    let mut came_from: HashMap<IVec3, IVec3> = HashMap::new();
+    let mut g_score: FxHashMap<IVec3, u32> = FxHashMap::default();
+    let mut came_from: FxHashMap<IVec3, IVec3> = FxHashMap::default();
     let mut open: BinaryHeap<Reverse<(u32, u32, [i32; 3])>> = BinaryHeap::new();
 
     g_score.insert(start, 0);
@@ -419,7 +420,7 @@ fn neighbors(
 
 /// Walk `came_from` back from `end` to the start and return the cells in
 /// start→end order.
-fn reconstruct(came_from: &HashMap<IVec3, IVec3>, end: IVec3) -> Vec<IVec3> {
+fn reconstruct(came_from: &FxHashMap<IVec3, IVec3>, end: IVec3) -> Vec<IVec3> {
     let mut path = vec![end];
     let mut node = end;
     while let Some(&prev) = came_from.get(&node) {
@@ -438,13 +439,13 @@ mod tests {
     /// solid so footholds exist. Extra solid cells are added via the set.
     struct Stub {
         floor_y: i32,
-        solid: std::collections::HashSet<(i32, i32, i32)>,
+        solid: FxHashSet<(i32, i32, i32)>,
     }
     impl Stub {
         fn new(floor_y: i32) -> Self {
             Stub {
                 floor_y,
-                solid: std::collections::HashSet::new(),
+                solid: FxHashSet::default(),
             }
         }
         fn add(&mut self, c: IVec3) {

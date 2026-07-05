@@ -80,9 +80,9 @@ impl World {
     pub(super) fn refresh_deep_visibility(&mut self) {
         self.vis_dirty = false;
 
-        let mut visible: std::collections::HashSet<SectionPos> = std::collections::HashSet::new();
+        let mut visible: rustc_hash::FxHashSet<SectionPos> = rustc_hash::FxHashSet::default();
         let mut queue: VecDeque<SectionPos> = VecDeque::new();
-        let mut entered: std::collections::HashSet<SectionPos> = std::collections::HashSet::new();
+        let mut entered: rustc_hash::FxHashSet<SectionPos> = rustc_hash::FxHashSet::default();
 
         // Seeds: deep sections bordering the visible region (non-deep or absent
         // positions), plus the player ring.

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::chunk::{self, ChunkPos, SectionPos};
 
@@ -36,7 +36,7 @@ const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_m
 /// centre so the terrain around the player meshes before the edges.
 #[derive(Default)]
 pub(super) struct DirtyMeshQueue {
-    pending: HashSet<SectionPos>,
+    pending: FxHashSet<SectionPos>,
     /// Reused across frames so `pop_nearest_batch` doesn't allocate a fresh `Vec` the
     /// size of the whole backlog every call.
     scratch: Vec<SectionPos>,

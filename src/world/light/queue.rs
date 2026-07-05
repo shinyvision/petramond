@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SectionPos, SECTION_VOLUME};
@@ -12,7 +12,7 @@ use super::{flood, neighborhood, skylight};
 
 pub(in crate::world) struct LightBakeQueue {
     backend: Backend,
-    pending: HashMap<SectionPos, PendingLightBake>,
+    pending: FxHashMap<SectionPos, PendingLightBake>,
     next_id: u64,
 }
 
@@ -42,7 +42,7 @@ impl LightBakeQueue {
     pub fn new(pool: std::sync::Arc<crate::worker::JobPool>) -> Self {
         Self {
             backend: Backend::new(pool),
-            pending: HashMap::new(),
+            pending: FxHashMap::default(),
             next_id: 1,
         }
     }
@@ -52,8 +52,8 @@ impl LightBakeQueue {
         &mut self,
         key: i64,
         pos: SectionPos,
-        sections: &HashMap<SectionPos, Arc<Section>>,
-        columns: &HashMap<ChunkPos, Column>,
+        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        columns: &FxHashMap<ChunkPos, Column>,
     ) {
         if self.pending.contains_key(&pos) {
             return;

@@ -31,7 +31,8 @@
 //!   random-tickable are skipped wholesale via a per-section counter.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet, VecDeque};
+use rustc_hash::FxHashSet;
+use std::collections::{BinaryHeap, VecDeque};
 
 use crate::block::Block;
 use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
@@ -64,7 +65,7 @@ pub(super) struct TickState {
     tick: u64,
     /// Cells whose neighbourhood changed since the last tick, awaiting dispatch.
     update_queue: VecDeque<IVec3>,
-    update_set: HashSet<IVec3>,
+    update_set: FxHashSet<IVec3>,
     /// Pending scheduled ticks ordered by due tick, then by scheduling order
     /// (min-heap via `Reverse`); the position rides along in the entry.
     scheduled: BinaryHeap<ScheduledTick>,
@@ -72,7 +73,7 @@ pub(super) struct TickState {
     /// game tick execute in the order they were scheduled.
     scheduled_seq: u64,
     /// Positions with a scheduled tick already pending, for dedup.
-    scheduled_set: HashSet<IVec3>,
+    scheduled_set: FxHashSet<IVec3>,
     /// Blocks the simulation itself destroyed this tick (a fragile block losing its
     /// support, or one washed away by water), each as `(pos, block)`. Purely a
     /// hand-off to the presentation layer: `Game` drains it right after the tick (see

@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -146,38 +147,38 @@ pub struct World {
     /// per bake — assembling those neighbourhoods was a multi-millisecond per-frame spike
     /// while streaming. Mutation is copy-on-write via [`Arc::make_mut`]: a setter clones a
     /// section's storage only while a bake still holds the old handle.
-    pub(super) sections: HashMap<SectionPos, Arc<Section>>,
+    pub(super) sections: FxHashMap<SectionPos, Arc<Section>>,
     /// Per-column 2D data (biome, surface heightmap) shared by a vertical stack of
     /// sections. Cheap; ensured present whenever a section in the column loads.
-    pub(super) columns: HashMap<ChunkPos, Column>,
+    pub(super) columns: FxHashMap<ChunkPos, Column>,
     /// One GPU-ready mesh per section.
-    pub(super) meshes: HashMap<SectionPos, ChunkMesh>,
+    pub(super) meshes: FxHashMap<SectionPos, ChunkMesh>,
     /// XZ columns that currently have at least one CPU section mesh.
     /// Mirrors `meshes` so renderer retention does not scan the vertical range
     /// of every GPU column each frame.
-    pub(super) mesh_columns: HashSet<ChunkPos>,
+    pub(super) mesh_columns: FxHashSet<ChunkPos>,
     /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
     /// Kept explicitly so the renderer does not scan every section mesh each frame.
-    pub(super) mesh_upload_dirty_columns: HashSet<ChunkPos>,
+    pub(super) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
     pub worker: WorkerPool,
     /// Columns whose shared 2D gen data (`ColumnGen`) has landed: the source for
     /// submitting per-section jobs and sizing each column's vertical load window.
     /// Present for every loaded column; dropped when the column unloads.
-    pub(super) column_gen: HashMap<ChunkPos, Arc<ColumnGen>>,
+    pub(super) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
     /// Columns queued for the (heavy, once-per-column) `ColumnGen` job.
-    pub(super) pending: HashMap<ChunkPos, ()>,
+    pub(super) pending: FxHashMap<ChunkPos, ()>,
     /// Sections with an in-flight per-section gen job, so the streamer never submits a
     /// section twice while it is being generated.
-    pub(super) pending_sections: HashSet<SectionPos>,
+    pub(super) pending_sections: FxHashSet<SectionPos>,
     /// Saved (player-modified) sections read back from disk whose generated column has
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
-    pub(super) pending_overlays: HashMap<SectionPos, super::stream::LoadedOverlay>,
+    pub(super) pending_overlays: FxHashMap<SectionPos, super::stream::LoadedOverlay>,
     /// Sections whose saved record has been REQUESTED from the save thread but not
     /// answered yet. Until the answer lands (and any overlay applies) the section's
     /// true content is in flight: the sim guard blocks mutation and the harvest skips
     /// persisting it (see `world::sim_guard`).
-    pub(super) awaited_overlays: HashSet<SectionPos>,
+    pub(super) awaited_overlays: FxHashSet<SectionPos>,
     pub render_dist: i32,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
@@ -188,25 +189,25 @@ pub struct World {
     pub(super) dirty_meshes: DirtyMeshQueue,
     /// Loaded sections wholly below their column's surface retention band — only
     /// visible through cave openings (see `world::visibility`).
-    pub(super) deep_sections: HashSet<SectionPos>,
+    pub(super) deep_sections: FxHashSet<SectionPos>,
     /// The deep sections the last visibility refresh could reach from the visible
     /// region. Deep sections outside this set park instead of meshing.
-    pub(super) visible_deep: HashSet<SectionPos>,
+    pub(super) visible_deep: FxHashSet<SectionPos>,
     /// Dirty deep sections parked because nothing can see them. Re-queued by the
     /// visibility refresh when they become reachable (or the player ring arrives).
-    pub(super) hidden_parked: HashSet<SectionPos>,
+    pub(super) hidden_parked: FxHashSet<SectionPos>,
     /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
     /// which re-runs the deep-visibility BFS before submitting work.
     pub(super) vis_dirty: bool,
     /// Dirty meshes parked while async light bakes their sampling neighbourhood.
     /// They re-enter `dirty_meshes` only once the 3×3×3 light dependency set is clean.
-    pub(super) light_blocked_meshes: HashSet<SectionPos>,
+    pub(super) light_blocked_meshes: FxHashSet<SectionPos>,
     /// Freshly streamed sections that have never produced light or a mesh, parked
     /// until their generation neighbourhood settles (`gen_neighborhood_settled`) so
     /// their FIRST bake and mesh run once, not once per landing neighbour. Without
     /// this, contiguous streaming rebaked/remeshed each section many times (each
     /// ingest dirtied its whole 3×3×3).
-    pub(super) light_deferred: HashSet<SectionPos>,
+    pub(super) light_deferred: FxHashSet<SectionPos>,
     pub(super) last_load_target: Option<LoadTarget>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
@@ -252,29 +253,29 @@ impl World {
         let jobs = std::sync::Arc::new(JobPool::new(JobPool::default_threads()));
         Self {
             seed,
-            sections: HashMap::new(),
-            columns: HashMap::new(),
-            meshes: HashMap::new(),
-            mesh_columns: HashSet::new(),
-            mesh_upload_dirty_columns: HashSet::new(),
+            sections: FxHashMap::default(),
+            columns: FxHashMap::default(),
+            meshes: FxHashMap::default(),
+            mesh_columns: FxHashSet::default(),
+            mesh_upload_dirty_columns: FxHashSet::default(),
             worker: WorkerPool::new(jobs.clone()),
-            column_gen: HashMap::new(),
-            pending: HashMap::new(),
-            pending_sections: HashSet::new(),
-            pending_overlays: HashMap::new(),
-            awaited_overlays: HashSet::new(),
+            column_gen: FxHashMap::default(),
+            pending: FxHashMap::default(),
+            pending_sections: FxHashSet::default(),
+            pending_overlays: FxHashMap::default(),
+            awaited_overlays: FxHashSet::default(),
             render_dist,
             lighting_revision: 0,
             light_bakes: LightBakeQueue::new(jobs.clone()),
             mesh_pool: super::mesh_pool::MeshPool::new(jobs),
             mesh_jobs_in_flight: 0,
             dirty_meshes: DirtyMeshQueue::default(),
-            deep_sections: HashSet::new(),
-            visible_deep: HashSet::new(),
-            hidden_parked: HashSet::new(),
+            deep_sections: FxHashSet::default(),
+            visible_deep: FxHashSet::default(),
+            hidden_parked: FxHashSet::default(),
             vis_dirty: false,
-            light_blocked_meshes: HashSet::new(),
-            light_deferred: HashSet::new(),
+            light_blocked_meshes: FxHashSet::default(),
+            light_deferred: FxHashSet::default(),
             last_load_target: None,
             sim: TickState::new(seed),
             save: None,

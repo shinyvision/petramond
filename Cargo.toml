@@ -63,6 +63,10 @@ bincode = "1"
 # recording), kept lean like `image`/`noise`. Used by `crate::audio`.
 rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"] }
 mimalloc = "0.1.52"
+# Fast fixed-seed hasher for the per-voxel hot maps (world sections, A* scratch,
+# tick/mesh sets) — std's SipHash is a keyed cryptographic hash and its cost
+# shows up in collision/water/pathing loops that hit these maps per cell.
+rustc-hash = "2"
 # Per-thread scheduling priority (setpriority/gettid) for background worker pools.
 libc = "0.2"
 # Native desktop clipboard access for text fields.

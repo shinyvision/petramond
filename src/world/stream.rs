@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -665,7 +665,7 @@ impl World {
         //    UNIQUE affected set once and mark each section a single time, instead of
         //    O(54 × ingested) redundant marks.
         let mut affected: Vec<SectionPos> = Vec::new();
-        let mut seen: HashSet<SectionPos> = HashSet::new();
+        let mut seen: FxHashSet<SectionPos> = FxHashSet::default();
         for sp in &ingested {
             for dy in -1..=1 {
                 for dz in -1..=1 {
