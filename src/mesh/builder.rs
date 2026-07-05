@@ -1245,8 +1245,9 @@ fn chunk_geometry(
                     continue;
                 }
 
-                // Torch: a thin 3D pole (floor or wall-mounted), baked into the
-                // opaque pass with its orientation read from this chunk's torch map.
+                // Torch: a thin 3D pole, baked into the opaque pass. A fixture
+                // `Chunk` carries no torch orientations (only live `Section`s do),
+                // so the legacy path always renders the floor placement.
                 // Self-lit to at least its own emission so it stays visible/glowing
                 // even where skylight is 0; the surrounding warm glow is the
                 // block-light flood sampled by the cube faces below.
@@ -1260,7 +1261,7 @@ fn chunk_geometry(
                     let sky6 = ((cell_sky * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
                     let emit = block.light_emission() as u32;
                     let block6 = ((emit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
-                    let placement = chunk.torch_placement(x, y, z);
+                    let placement = crate::torch::TorchPlacement::default();
                     super::torch::emit_torch(
                         &mut opaque,
                         &mut opaque_idx,
@@ -1280,14 +1281,14 @@ fn chunk_geometry(
                 // bbmodel blocks: NOT packed into the legacy mesh. Their geometry rides
                 // the explicit-UV `model` stream (own texture/atlas), but they're still
                 // chunk-meshed here — baked once per remesh and lit at mesh time exactly
-                // like any block. A multi-block cell renders only ITS footprint cubes
-                // (the split by `model_offset`); a missing-neighbour face isn't culled
-                // (the block is non-opaque), so it reads as a placed object, not a cube.
+                // like any block. A fixture `Chunk` carries no per-cell model
+                // offsets/facings (only live `Section`s do), so the legacy path always
+                // renders the authored-origin cell, unrotated.
                 if let RenderShape::Model(kind) = block.render_shape() {
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
-                    let offset = chunk.model_offset(x, y, z);
-                    let facing = chunk.model_facing(x, y, z);
+                    let offset = [0u8; 3];
+                    let facing = crate::block_model::DEFAULT_MODEL_FACING;
                     let l = neighbour_light(wx, y as i32, wz) as u32;
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
                     let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
