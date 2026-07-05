@@ -35,8 +35,8 @@ impl Game {
             return true;
         }
         // Dispatch on the item's data-declared use (`"use"` in items.json).
-        // `Shear` acts at the earlier shear stage of `tick_place`; a `Pending`
-        // (`mod_id:`) handler waits for the WASM host (Phase 2b).
+        // `Shear` acts at the earlier shear stage of `tick_place`; mod items
+        // react to use through the `item_use_pre` event handled above.
         let used = match item.item_use() {
             Some(ItemUse::BucketFill) => self.try_fill_bucket(),
             Some(ItemUse::BucketPour) => self.try_pour_bucket(events),

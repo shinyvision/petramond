@@ -252,21 +252,17 @@ mod tests {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
         // A dynamic item linking to an engine block (any registered block name
-        // resolves the same way) and carrying an engine use handler + a
-        // pending namespaced one on a second item.
+        // resolves the same way) and carrying an engine use handler.
         let layer = r#"{"items": [
-            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "llama:stone", "use": "bucket_fill"},
-            {"item": "mymod:widget", "key": "mymod:widget", "name": "Widget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "sprite": "stick", "tags": [], "use": "mymod:zap"}
+            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "llama:stone", "use": "bucket_fill"}
         ]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("dynamic rows load");
         let engine = crate::item::ENGINE_ITEM_NAMES.len();
-        assert_eq!(defs.len(), engine + 2, "fresh ids past the engine set");
+        assert_eq!(defs.len(), engine + 1, "fresh id past the engine set");
         let gadget = &defs[engine];
         assert_eq!(gadget.item, ItemType(engine as u8));
         assert_eq!(gadget.block, Some(crate::block::Block::Stone));
         assert_eq!(gadget.item_use, Some(ItemUse::BucketFill));
-        let widget = &defs[engine + 1];
-        assert_eq!(widget.item_use, Some(ItemUse::Pending("mymod:zap")));
         // Engine rows are untouched.
         assert_eq!(defs[ItemType::Stone.id() as usize].item, ItemType::Stone);
     }
@@ -279,7 +275,8 @@ mod tests {
         let bare = r#"{"items": [{"item": "gadget", "key": "gadget", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
         let err = parse_test_layers(&[&base, bare]).expect_err("bare additions refused");
         assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
-        // An unknown bare use handler is a load error (namespaced ones dangle).
+        // An unknown use handler is a load error (there are only engine handlers;
+        // mods react to item use via the `item_use_pre` event).
         let bad_use = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "zap"}]}"#;
         let err = parse_test_layers(&[&base, bad_use]).expect_err("unknown use refused");
         assert!(err.contains("unknown use handler"), "{err}");

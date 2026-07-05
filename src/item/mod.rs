@@ -38,22 +38,17 @@ pub enum ItemUse {
     /// Shear the targeted mob (runs at the earlier shear stage, before block
     /// interaction — see `game::placement`'s `tick_place`).
     Shear,
-    /// A namespaced (`mod_id:key`) handler: recorded but inert until the WASM
-    /// host (Phase 2b) dispatches it.
-    Pending(&'static str),
 }
 
 impl ItemUse {
-    /// Resolve an `items.json` `use` key. Bare names must be engine handlers;
-    /// namespaced keys are allowed to dangle as [`Pending`](Self::Pending).
+    /// Resolve an `items.json` `use` key to an engine handler. There is no
+    /// namespaced (`mod_id:key`) form: a mod reacts to its item's use through
+    /// the `item_use_pre` event instead of declaring a handler.
     pub fn from_name(name: &str) -> Option<ItemUse> {
         Some(match name {
             "bucket_fill" => ItemUse::BucketFill,
             "bucket_pour" => ItemUse::BucketPour,
             "shear" => ItemUse::Shear,
-            _ if crate::registry::is_namespaced(name) => {
-                ItemUse::Pending(Box::leak(name.to_owned().into_boxed_str()))
-            }
             _ => return None,
         })
     }
