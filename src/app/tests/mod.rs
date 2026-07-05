@@ -1,5 +1,6 @@
 use super::App;
 use crate::camera::Camera;
+use crate::controls::PointerButton;
 use crate::game::Game;
 use crate::gui::MenuSlot;
 use crate::item::{ItemStack, ItemType};
@@ -18,21 +19,41 @@ impl App {
         self.game.as_mut().expect("test app has a loaded game")
     }
 
-    /// Route a screen click and then apply the latched container edit / drop, standing in
-    /// for the game tick that resolves it in play. Tests assert the resulting inventory /
-    /// world state right after, and a real tick interleaves between two clicks (applying
-    /// the first before the second is decided), so the per-click apply mirrors play.
+    /// Click the open document menu at the current cursor and then apply the
+    /// latched container edit / drop, standing in for the game tick that
+    /// resolves it in play. Returns whether a document menu consumed the click
+    /// (false with no menu open, so the click would fall through to gameplay).
     fn click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
-        let consumed = self.route_screen_click(screen, now);
-        self.game_mut().apply_latched_actions_for_test();
-        consumed
+        self.press_screen_for_test(screen, now, PointerButton::Primary)
     }
 
     /// Right-click counterpart of [`click_screen_for_test`](Self::click_screen_for_test).
     fn right_click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
-        let consumed = self.route_screen_right_click(screen, now);
+        self.press_screen_for_test(screen, now, PointerButton::Secondary)
+    }
+
+    fn press_screen_for_test(
+        &mut self,
+        screen: (u32, u32),
+        now: f64,
+        button: PointerButton,
+    ) -> bool {
+        if !self.screen.ui_open() {
+            return false;
+        }
+        let kind = self.doc_ui_kind().expect("open menu is document-backed");
+        self.set_pointer_button(button, true);
+        self.set_pointer_button(button, false);
+        self.drive_doc_menu(kind, screen, now);
         self.game_mut().apply_latched_actions_for_test();
-        consumed
+        true
+    }
+
+    /// Solve one input-free document frame for the open menu so its slot rects
+    /// are available on `self.ui.out()`.
+    fn solve_menu_frame_for_test(&mut self, screen: (u32, u32)) {
+        let kind = self.doc_ui_kind().expect("open menu is document-backed");
+        self.drive_doc_menu(kind, screen, 0.0);
     }
 }
 
@@ -49,45 +70,48 @@ fn app_with_grass() -> App {
     app
 }
 
-/// Brute-force a cursor pixel that the open GUI's hit-test resolves to `want`,
-/// using the REAL baked geometry so tests never pin manifest pixel positions.
-fn cursor_over_menu(screen: (u32, u32), kind: crate::gui::GuiKind, want: MenuSlot) -> (f32, f32) {
-    for y in 0..screen.1 {
-        for x in 0..screen.0 {
-            let c = (x as f32 + 0.5, y as f32 + 0.5);
-            if crate::gui::hit(kind, screen, c) == Some(want) {
-                return c;
-            }
+/// The cursor pixel over the slot cell the open menu's DOCUMENT resolves to
+/// `want`, from the real solved layout — tests never pin document pixel
+/// positions.
+fn cursor_over_menu(app: &mut App, screen: (u32, u32), want: MenuSlot) -> (f32, f32) {
+    app.solve_menu_frame_for_test(screen);
+    for slot in &app.ui.out().slots {
+        let hit = crate::gui::Role::from_key(&slot.role)
+            .and_then(|role| role.menu_slot(slot.index as usize));
+        if hit == Some(want) {
+            let r = slot.rect;
+            return (
+                r.x as f32 + r.w as f32 * 0.5,
+                r.y as f32 + r.h as f32 * 0.5,
+            );
         }
     }
-    panic!("no cursor position maps to {want:?} in {kind:?}");
+    panic!("no document slot cell maps to {want:?}");
 }
 
-fn cursor_over_slot(screen: (u32, u32), slot: usize) -> (f32, f32) {
-    cursor_over_menu(
-        screen,
-        crate::gui::GuiKind::Inventory,
-        MenuSlot::Inventory(slot),
-    )
+fn cursor_over_slot(app: &mut App, screen: (u32, u32), slot: usize) -> (f32, f32) {
+    cursor_over_menu(app, screen, MenuSlot::Inventory(slot))
 }
 
-fn cursor_over_craft(
-    screen: (u32, u32),
-    kind: crate::gui::GuiKind,
-    hit: crate::gui::CraftHit,
-) -> (f32, f32) {
-    cursor_over_menu(screen, kind, MenuSlot::Craft(hit))
+fn cursor_over_craft(app: &mut App, screen: (u32, u32), hit: crate::gui::CraftHit) -> (f32, f32) {
+    cursor_over_menu(app, screen, MenuSlot::Craft(hit))
 }
 
-/// A point inside the panel rectangle that is NOT over any slot.
-fn panel_gap_point(screen: (u32, u32)) -> (f32, f32) {
-    let kind = crate::gui::GuiKind::Inventory;
-    for y in 0..screen.1 {
-        for x in 0..screen.0 {
+/// A point inside the open menu's panel rectangle that is NOT over any slot.
+fn panel_gap_point(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
+    app.solve_menu_frame_for_test(screen);
+    let out = app.ui.out();
+    let panel = out.panel_rect;
+    for y in panel.y..panel.y + panel.h {
+        for x in panel.x..panel.x + panel.w {
             let c = (x as f32 + 0.5, y as f32 + 0.5);
-            if crate::gui::panel_contains(kind, screen, c)
-                && crate::gui::hit(kind, screen, c).is_none()
-            {
+            let on_slot = out.slots.iter().any(|s| {
+                c.0 >= s.rect.x as f32
+                    && c.0 < (s.rect.x + s.rect.w) as f32
+                    && c.1 >= s.rect.y as f32
+                    && c.1 < (s.rect.y + s.rect.h) as f32
+            });
+            if !on_slot {
                 return c;
             }
         }

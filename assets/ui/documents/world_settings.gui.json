@@ -1,0 +1,610 @@
+{
+  "format": 1,
+  "kind": "llama:world_settings",
+  "class": "screen",
+  "root": {
+    "type": "frame",
+    "layout": {
+      "w": 320,
+      "h": 250,
+      "pad": [
+        4,
+        2,
+        4,
+        4
+      ],
+      "margin": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "gap": 4,
+      "dir": "column",
+      "align": "stretch",
+      "justify": "start"
+    },
+    "style": "panel.large",
+    "children": [
+      {
+        "type": "row",
+        "layout": {
+          "w": {
+            "grow": 1
+          },
+          "h": "auto",
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 8,
+          "dir": "column",
+          "align": "center",
+          "justify": "center"
+        },
+        "children": [
+          {
+            "type": "label",
+            "text": "World Settings"
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "w": "auto",
+          "h": "auto",
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 5,
+          "dir": "column",
+          "align": "center",
+          "justify": "center"
+        },
+        "children": [
+          {
+            "type": "label",
+            "style": "label.muted",
+            "bind": {
+              "text": "world_name",
+              "visible": "not_renaming"
+            }
+          },
+          {
+            "id": "rename",
+            "type": "button",
+            "icon": "icon.edit",
+            "layout": {
+              "w": 18,
+              "h": 16,
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            },
+            "bind": {
+              "visible": "not_renaming"
+            }
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "w": "auto",
+          "h": "auto",
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 5,
+          "dir": "column",
+          "align": "center",
+          "justify": "start"
+        },
+        "bind": {
+          "visible": "renaming"
+        },
+        "children": [
+          {
+            "id": "rename_input",
+            "type": "text_input",
+            "max_chars": 48,
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            },
+            "bind": {
+              "text": "world_name"
+            }
+          },
+          {
+            "id": "rename_confirm",
+            "type": "button",
+            "text": "OK",
+            "layout": {
+              "w": 30,
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            },
+            "style": "button.success"
+          }
+        ]
+      },
+      {
+        "type": "image",
+        "image": "pixel.png",
+        "layout": {
+          "w": "auto",
+          "h": 1,
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            2,
+            0,
+            2
+          ],
+          "gap": 0,
+          "dir": "column",
+          "justify": "start"
+        },
+        "bind": {
+          "visible": "not_renaming"
+        }
+      },
+      {
+        "type": "label",
+        "text": "Mods",
+        "style": "label"
+      },
+      {
+        "type": "spacer",
+        "layout": {
+          "w": "auto",
+          "h": 1,
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 0,
+          "dir": "column",
+          "justify": "start"
+        }
+      },
+      {
+        "id": "mod_scroll",
+        "type": "scroll",
+        "axis": "vertical",
+        "layout": {
+          "w": "auto",
+          "h": {
+            "grow": 1
+          },
+          "pad": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 0,
+          "dir": "column",
+          "justify": "start",
+          "min_h": 36
+        },
+        "style": "panel.inset",
+        "children": [
+          {
+            "id": "mods",
+            "type": "list",
+            "layout": {
+              "w": "auto",
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 2,
+              "dir": "column",
+              "align": "stretch",
+              "justify": "start"
+            },
+            "bind": {
+              "items": "mod_rows",
+              "selected": "mod_sel"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "w": "auto",
+                  "h": "auto",
+                  "pad": [
+                    3,
+                    1,
+                    3,
+                    1
+                  ],
+                  "margin": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "gap": 8,
+                  "dir": "column",
+                  "align": "center",
+                  "justify": "start"
+                },
+                "style": "list.row",
+                "children": [
+                  {
+                    "type": "image",
+                    "image": "",
+                    "layout": {
+                      "w": 16,
+                      "h": 16,
+                      "pad": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "gap": 0,
+                      "dir": "column",
+                      "justify": "start"
+                    },
+                    "bind": {
+                      "visible": "has_icon",
+                      "image": "icon"
+                    }
+                  },
+                  {
+                    "type": "column",
+                    "layout": {
+                      "w": "auto",
+                      "h": "auto",
+                      "pad": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "gap": 2,
+                      "dir": "column",
+                      "justify": "start"
+                    },
+                    "children": [
+                      {
+                        "type": "row",
+                        "layout": {
+                          "w": "auto",
+                          "h": "auto",
+                          "pad": [
+                            0,
+                            0,
+                            0,
+                            0
+                          ],
+                          "margin": [
+                            0,
+                            0,
+                            0,
+                            0
+                          ],
+                          "gap": 5,
+                          "dir": "column",
+                          "align": "center",
+                          "justify": "start"
+                        },
+                        "children": [
+                          {
+                            "type": "label",
+                            "bind": {
+                              "text": "name"
+                            }
+                          },
+                          {
+                            "type": "badge",
+                            "bind": {
+                              "text": "version",
+                              "visible": "has_version"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "type": "label",
+                        "style": "label.muted",
+                        "bind": {
+                          "text": "desc"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "spacer",
+                    "layout": {
+                      "w": {
+                        "grow": 1
+                      },
+                      "h": "auto",
+                      "pad": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        0
+                      ],
+                      "gap": 0,
+                      "dir": "column",
+                      "justify": "start"
+                    }
+                  },
+                  {
+                    "id": "mod_on",
+                    "type": "toggle",
+                    "bind": {
+                      "value": "enabled",
+                      "enabled": "toggleable",
+                      "visible": "toggleable"
+                    }
+                  },
+                  {
+                    "type": "badge",
+                    "text": "always on",
+                    "bind": {
+                      "visible": "content_only"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "label",
+        "text": "No mod packs installed",
+        "bind": {
+          "visible": "no_mods"
+        }
+      },
+      {
+        "type": "alert",
+        "level": "info",
+        "text": "Changes to mods will apply the next time you load this world."
+      },
+      {
+        "type": "spacer",
+        "layout": {
+          "w": "auto",
+          "h": 2,
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 0,
+          "dir": "column",
+          "justify": "start"
+        }
+      },
+      {
+        "type": "row",
+        "layout": {
+          "w": "auto",
+          "h": "auto",
+          "pad": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "margin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "gap": 5,
+          "dir": "column",
+          "justify": "start"
+        },
+        "children": [
+          {
+            "id": "back",
+            "type": "button",
+            "text": "Back",
+            "layout": {
+              "w": 90,
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            }
+          },
+          {
+            "type": "spacer",
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            }
+          },
+          {
+            "id": "delete_world",
+            "type": "button",
+            "text": "Delete World",
+            "layout": {
+              "w": 110,
+              "h": "auto",
+              "pad": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "margin": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "gap": 0,
+              "dir": "column",
+              "justify": "start"
+            },
+            "style": "button.danger"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,357 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:world_select",
+    "class": "screen",
+    "root": {
+      "type": "column",
+      "layout": {
+        "w": 276,
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 2,
+        "dir": "column",
+        "align": "stretch",
+        "justify": "start",
+        "anchor": {
+          "h": "center",
+          "v": "center"
+        }
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "column",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "center",
+            "justify": "center"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Select World"
+            }
+          ]
+        },
+        {
+          "id": "world_scroll",
+          "type": "scroll",
+          "axis": "vertical",
+          "layout": {
+            "w": "auto",
+            "h": 96,
+            "pad": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "min_h": 36
+          },
+          "style": "panel.inset",
+          "children": [
+            {
+              "id": "worlds",
+              "type": "list",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "items": "worlds",
+                "selected": "world_sel"
+              },
+              "children": [
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      2,
+                      3,
+                      2
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "style": "list.row",
+                  "children": [
+                    {
+                      "type": "label",
+                      "bind": {
+                        "text": "name"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 2,
+            "dir": "column",
+            "justify": "start"
+          },
+          "children": [
+            {
+              "id": "play",
+              "type": "button",
+              "text": "PLAY",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "button.success",
+              "bind": {
+                "enabled": "has_selection"
+              }
+            },
+            {
+              "id": "settings",
+              "type": "button",
+              "text": "SETTINGS",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "bind": {
+                "enabled": "has_selection"
+              }
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 2,
+            "dir": "column",
+            "justify": "start"
+          },
+          "children": [
+            {
+              "id": "back",
+              "type": "button",
+              "text": "BACK",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "id": "create",
+              "type": "button",
+              "text": "CREATE",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "has_selection": {
+        "bool": true
+      },
+      "no_worlds": {
+        "bool": true
+      },
+      "world_sel": {
+        "i32": 0
+      },
+      "worlds": {
+        "list": [
+          {
+            "name": {
+              "str": "First item"
+            }
+          },
+          {
+            "name": {
+              "str": "Second item"
+            }
+          },
+          {
+            "name": {
+              "str": "Third item"
+            }
+          }
+        ]
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

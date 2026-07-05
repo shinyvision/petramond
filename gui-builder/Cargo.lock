@@ -1427,10 +1427,11 @@ dependencies = [
 
 [[package]]
 name = "gui-builder"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "image",
+ "llama-ui",
  "rfd",
  "serde",
  "serde_json",
@@ -1772,6 +1773,16 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+
+[[package]]
+name = "llama-ui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "image",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lock_api"

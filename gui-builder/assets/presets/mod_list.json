@@ -1,0 +1,25 @@
+{
+  "type": "scroll",
+  "id": "list_scroll",
+  "layout": { "h": 80 },
+  "children": [
+    {
+      "type": "list",
+      "id": "rows",
+      "bind": { "items": "rows", "selected": "row_sel" },
+      "children": [
+        {
+          "type": "row",
+          "style": "list.row",
+          "layout": { "pad": [4, 4, 4, 4], "gap": 6, "align": "center" },
+          "children": [
+            { "type": "label", "bind": { "text": "name" } },
+            { "type": "badge", "bind": { "text": "version" } },
+            { "type": "spacer", "layout": { "w": { "grow": 1 } } },
+            { "type": "toggle", "id": "row_on", "bind": { "value": "enabled" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -209,6 +209,15 @@ pub fn world_dir(name: &str) -> PathBuf {
     saves_dir().join(sanitize(name))
 }
 
+/// The save-directory name a world NAME creates. Idempotent — a directory
+/// name maps to itself, so open paths can take either at creation time. A
+/// world's directory NEVER changes after creation (renames touch only the
+/// `world.json` display name), so worlds must always be OPENED by
+/// `WorldInfo::dir_name`, never by display name.
+pub fn dir_name_for(name: &str) -> String {
+    sanitize(name)
+}
+
 /// Reduce a world name to a single safe path component.
 fn sanitize(name: &str) -> String {
     let s: String = name
@@ -284,6 +293,27 @@ pub fn list_worlds() -> std::io::Result<Vec<WorldInfo>> {
             .then_with(|| a.dir_name.cmp(&b.dir_name))
     });
     Ok(worlds)
+}
+
+/// Rename a world's DISPLAY name (`world.json`); the save directory keeps its
+/// original name so nothing references a moved path.
+pub fn rename_world(dir_name: &str, new_name: &str) -> std::io::Result<()> {
+    if !is_single_path_component(dir_name) {
+        return Err(std::io::Error::other("invalid world directory name"));
+    }
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+        return Err(std::io::Error::other("world name cannot be empty"));
+    }
+    let dir = saves_dir().join(dir_name);
+    if !dir.is_dir() {
+        return Err(std::io::Error::other("no such world"));
+    }
+    let metadata = serde_json::to_vec(&WorldMetadata {
+        name: new_name.to_string(),
+    })
+    .map_err(std::io::Error::other)?;
+    write_atomic(&dir.join("world.json"), &metadata)
 }
 
 pub fn delete_world(dir_name: &str) -> std::io::Result<()> {

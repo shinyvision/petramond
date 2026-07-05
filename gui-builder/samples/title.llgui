@@ -1,0 +1,119 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:title",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          10,
+          6,
+          10,
+          8
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 8,
+        "dir": "column",
+        "align": "center",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Llamacraft",
+          "scale": 3
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 8,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "start",
+          "type": "button",
+          "text": "Start Game",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "quit",
+          "type": "button",
+          "text": "Quit",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {},
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

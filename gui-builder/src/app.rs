@@ -1,513 +1,668 @@
-//! The eframe application: holds project + asset state, drives the panels, owns
-//! File operations, undo/redo history, snap settings, the drag-gesture state
-//! machine, and the layer-panel drag/rename state.
+//! The eframe application: menu/toolbar chrome, dock layout, selection +
+//! undo plumbing. Panels and the canvas live in their own modules and talk to
+//! the app through `App`'s small mutation API so every edit lands in history.
 
-use crate::assets::AssetLibrary;
-use crate::model::{AssetSpec, DropTarget, GuiType, LayerFit, LayerTag, Project, RectF};
-use crate::{bake, canvas, ui};
+use crate::bindings::{self, Catalog};
+use crate::doc_edit::{self, NodePath};
+use crate::history::History;
+use crate::panels;
+use crate::preview::DiskImages;
+use crate::project::Project;
+use crate::theme_src::{self, ThemeSource};
+use crate::{canvas, io, theme_bar};
 use eframe::egui;
+use llama_ui::{DocIssue, UiState};
 use std::path::PathBuf;
 
-/// What's currently selected (by stable id).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Selection {
-    Layer(u64),
-    Group(u64),
-    Slot(u64),
-}
-
-impl Selection {
-    pub fn id(self) -> u64 {
-        match self {
-            Selection::Layer(id) | Selection::Group(id) | Selection::Slot(id) => id,
-        }
-    }
-}
-
-/// An in-flight drag from the asset palette onto the canvas.
-pub enum DragPayload {
-    Asset {
-        spec: AssetSpec,
-        size: [usize; 2],
-        default_fit: LayerFit,
-        cover: bool,
-    },
-    Slot,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DragMode {
-    Move,
-    Resize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-/// An in-flight move/resize of a canvas item. For a group, `group_children`
-/// holds each child's starting rect so the whole group moves rigidly.
-pub struct DragMove {
-    pub sel: Selection,
-    pub mode: DragMode,
-    pub start_rect: RectF,
-    pub group_children: Vec<(u64, RectF)>,
-    pub raw_total: egui::Vec2,
-    pub shift_anchor: Option<egui::Vec2>,
-    pub axis: Option<Axis>,
-}
-
-/// A row being dragged within the layer panel.
-#[derive(Clone, Copy)]
-pub struct PanelItem {
-    pub id: u64,
-    pub is_group: bool,
-}
-
-/// Open state for the "tag layer" dialog: which layer, and the pending choice.
-#[derive(Clone)]
-pub struct TagDialog {
-    pub layer_id: u64,
-    pub choice: Option<LayerTag>,
-}
-
-#[derive(Clone)]
-struct Snapshot {
-    project: Project,
-    selection: Option<Selection>,
-}
-
-pub struct View {
-    pub zoom: f32,
-    pub pan: egui::Vec2,
+/// Forced widget states for the preview (applied to the selected node).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Forced {
+    pub hover: bool,
+    pub pressed: bool,
+    pub focus: bool,
 }
 
 pub struct App {
-    pub project: Project,
-    pub assets: AssetLibrary,
-    pub selection: Option<Selection>,
-    pub show_slots: bool,
-    pub view: View,
-    pub drag: Option<DragPayload>,
-    pub active_drag: Option<DragMove>,
-    pub panning: bool,
-
-    // Layer-panel interaction.
-    pub panel_drag: Option<PanelItem>,
-    pub renaming: Option<u64>,
-    pub rename_buf: String,
-    pub rename_focus: bool,
-
-    pub project_path: Option<PathBuf>,
+    pub proj: Project,
+    pub path: Option<PathBuf>,
+    pub last_dir: Option<PathBuf>,
+    pub dirty: bool,
+    /// Bumped whenever anything the preview reads changes (doc, sample state,
+    /// theme reload…). The canvas re-rasterizes only when this moves.
+    pub doc_rev: u64,
+    pub history: History,
+    pub sel: Option<NodePath>,
+    /// External (non-tree) selection happened: the tree scrolls the selected
+    /// row into view once.
+    pub tree_scroll_to_sel: bool,
+    /// Collapsed container rows in the doc tree (session-only; paths shift
+    /// with edits, which just re-expands moved rows).
+    pub tree_collapsed: std::collections::HashSet<NodePath>,
+    pub theme: ThemeSource,
+    /// The per-kind data catalog (`assets/ui/bindings.json`); `None` hides
+    /// binding pickers, seeding, and the Screen-data panel.
+    pub catalog: Option<Catalog>,
+    /// `Some(true)` forces the Screen-data header open once (new documents).
+    pub screen_data_force_open: Option<bool>,
+    pub images: DiskImages,
+    pub forced: Forced,
+    /// Editor chrome (selection outlines, badges) on the canvas.
+    pub overlay: bool,
+    // Sample-state JSON editor buffer.
+    pub sample_json: String,
+    pub sample_error: Option<String>,
+    pub sample_open: bool,
+    // New-with-custom-kind popup.
+    pub new_kind_open: bool,
+    pub new_kind_buf: String,
+    // Cached validation.
+    validation: Vec<DocIssue>,
+    validation_rev: Option<u64>,
+    /// Set by canvas double-click: the inspector focuses its text field.
+    pub focus_text_edit: bool,
     pub status: String,
-
-    pub snap_enabled: bool,
-    pub snap_step: i32,
-    pub show_snap_dialog: bool,
-    pub tag_dialog: Option<TagDialog>,
-
-    undo_stack: Vec<Snapshot>,
-    redo_stack: Vec<Snapshot>,
-    pending: Option<Snapshot>,
-
-    next_id: u64,
+    pub canvas_drag: Option<canvas::CanvasDrag>,
+    /// Cached preview raster (re-rasterized only when `canvas_tex_key` moves).
+    pub canvas_tex: Option<egui::TextureHandle>,
+    pub canvas_tex_key: Option<canvas::CanvasKey>,
+    last_title: String,
 }
 
-const UNDO_LIMIT: usize = 200;
-
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        crate::icons::install(&cc.egui_ctx);
-        // Labels shouldn't be text-selectable (only inputs are); this also stops
-        // dragging a layer row from highlighting its text.
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.interaction.selectable_labels = false;
-        cc.egui_ctx.set_style(style);
-
-        let project = Project::new(GuiType::Chest);
-        let next_id = project.max_id() + 1;
-        App {
-            assets: AssetLibrary::new(&cc.egui_ctx),
-            project,
-            selection: None,
-            show_slots: true,
-            view: View {
-                zoom: 1.0,
-                pan: egui::Vec2::ZERO,
-            },
-            drag: None,
-            active_drag: None,
-            panning: false,
-            panel_drag: None,
-            renaming: None,
-            rename_buf: String::new(),
-            rename_focus: false,
-            project_path: None,
-            status: "New chest GUI. Drag parts from the right; place slots; File ▾ to bake."
-                .to_string(),
-            snap_enabled: false,
-            snap_step: 8,
-            show_snap_dialog: false,
-            tag_dialog: None,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            pending: None,
-            next_id,
+    pub fn new(_cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> App {
+        let mut app = App {
+            proj: Project::new("llama:pause"),
+            path: None,
+            last_dir: None,
+            dirty: false,
+            doc_rev: 0,
+            history: History::new(),
+            sel: None,
+            tree_scroll_to_sel: false,
+            tree_collapsed: std::collections::HashSet::new(),
+            theme: theme_src::load(0),
+            catalog: Catalog::load(),
+            screen_data_force_open: None,
+            images: DiskImages::empty(),
+            forced: Forced::default(),
+            overlay: true,
+            sample_json: String::new(),
+            sample_error: None,
+            sample_open: false,
+            new_kind_open: false,
+            new_kind_buf: String::new(),
+            validation: Vec::new(),
+            validation_rev: None,
+            focus_text_edit: false,
+            status: "Ready".into(),
+            canvas_drag: None,
+            canvas_tex: None,
+            canvas_tex_key: None,
+            last_title: String::new(),
+        };
+        app.sync_sample_buffer();
+        if let Some(path) = open {
+            app.open_path(path);
         }
+        app
     }
 
-    pub fn alloc_id(&mut self) -> u64 {
-        self.next_id += 1;
-        self.next_id
+    // ---- mutation API (everything routes undo through here) -------------------
+
+    /// A discrete document edit: snapshots for undo, then applies `f`.
+    pub fn mutate(&mut self, f: impl FnOnce(&mut llama_ui::Document)) {
+        self.history.record(&self.proj.document);
+        f(&mut self.proj.document);
+        self.touch();
     }
 
-    pub fn selected_slot_idx(&self) -> Option<usize> {
-        match self.selection {
-            Some(Selection::Slot(id)) => self.project.slots.iter().position(|s| s.id == id),
-            _ => None,
-        }
+    /// Start (or continue) a coalescing gesture edit, then apply `f`.
+    pub fn gesture_mutate(&mut self, f: impl FnOnce(&mut llama_ui::Document)) {
+        self.history.begin_gesture(&self.proj.document);
+        f(&mut self.proj.document);
+        self.touch();
     }
 
-    // ---- Undo / redo -----------------------------------------------------
-
-    fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            project: self.project.clone(),
-            selection: self.selection,
-        }
-    }
-
-    pub fn begin_edit(&mut self) {
-        if self.pending.is_none() {
-            self.pending = Some(self.snapshot());
-        }
-    }
-
-    fn commit_edit(&mut self, pointer_down: bool) {
-        if pointer_down {
-            return;
-        }
-        if let Some(prev) = self.pending.take() {
-            if prev.project != self.project {
-                self.undo_stack.push(prev);
-                if self.undo_stack.len() > UNDO_LIMIT {
-                    self.undo_stack.remove(0);
-                }
-                self.redo_stack.clear();
-            }
-        }
-    }
-
-    pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo_stack.is_empty()
+    /// Mark preview inputs changed (also used for non-document changes like
+    /// sample state or preview settings).
+    pub fn touch(&mut self) {
+        self.doc_rev += 1;
+        self.dirty = true;
     }
 
     pub fn undo(&mut self) {
-        if let Some(prev) = self.undo_stack.pop() {
-            self.redo_stack.push(self.snapshot());
-            self.project = prev.project;
-            self.selection = prev.selection;
-            self.reset_transient();
-            self.status = "Undo".to_string();
+        if self.history.undo(&mut self.proj.document) {
+            self.after_history_jump();
         }
     }
 
     pub fn redo(&mut self) {
-        if let Some(next) = self.redo_stack.pop() {
-            self.undo_stack.push(self.snapshot());
-            self.project = next.project;
-            self.selection = next.selection;
-            self.reset_transient();
-            self.status = "Redo".to_string();
+        if self.history.redo(&mut self.proj.document) {
+            self.after_history_jump();
         }
     }
 
-    fn reset_transient(&mut self) {
-        self.pending = None;
-        self.active_drag = None;
-        self.panel_drag = None;
-        self.renaming = None;
-        self.rename_focus = false;
-        self.tag_dialog = None;
-    }
-
-    fn clear_history(&mut self) {
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-        self.reset_transient();
-    }
-
-    // ---- Tree edits ------------------------------------------------------
-
-    pub fn add_group(&mut self) {
-        self.begin_edit();
-        let id = self.alloc_id();
-        self.project.add_group(id);
-        self.selection = Some(Selection::Group(id));
-        self.status = "Added group".to_string();
-    }
-
-    pub fn duplicate(&mut self, id: u64) {
-        self.begin_edit();
-        let start = self.next_id + 1;
-        if let Some((new_id, used, is_group)) = self.project.duplicate(id, start) {
-            self.next_id += used;
-            self.selection = Some(if is_group {
-                Selection::Group(new_id)
-            } else {
-                Selection::Layer(new_id)
-            });
-            self.status = "Duplicated".to_string();
-        }
-    }
-
-    pub fn ungroup(&mut self, gid: u64) {
-        self.begin_edit();
-        self.project.ungroup(gid);
-        self.selection = None;
-        self.status = "Ungrouped".to_string();
-    }
-
-    pub fn move_panel(&mut self, id: u64, target: DropTarget) {
-        self.begin_edit();
-        self.project.move_item(id, target);
-    }
-
-    pub fn rename(&mut self, id: u64, name: String) {
-        self.begin_edit();
-        self.project.rename(id, name);
-    }
-
-    pub fn set_layer_tag(&mut self, id: u64, tag: Option<LayerTag>) {
-        self.begin_edit();
-        self.project.set_layer_tag(id, tag);
-        self.status = match tag {
-            Some(t) => format!("Tagged “{}”", t.label()),
-            None => "Removed tag".to_string(),
-        };
-    }
-
-    pub fn delete_selection(&mut self) {
-        match self.selection {
-            Some(Selection::Layer(id)) | Some(Selection::Group(id)) => {
-                self.begin_edit();
-                self.project.delete(id);
-                self.selection = None;
-                self.status = "Deleted".to_string();
-            }
-            Some(Selection::Slot(id)) => {
-                self.begin_edit();
-                self.project.slots.retain(|s| s.id != id);
-                self.selection = None;
-                self.status = "Deleted slot".to_string();
-            }
-            None => {}
-        }
-    }
-
-    // ---- File operations -------------------------------------------------
-
-    pub fn new_project(&mut self) {
-        let ty = self.project.gui_type;
-        self.project = Project::new(ty);
-        self.next_id = self.project.max_id() + 1;
-        self.selection = None;
-        self.project_path = None;
-        self.clear_history();
-        self.status = format!("New {} GUI.", ty.label());
-    }
-
-    pub fn open(&mut self, ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Llamacraft GUI", &["llgui"])
-            .pick_file()
-        else {
-            return;
-        };
-        match std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::from_str::<Project>(&s).map_err(|e| e.to_string()))
-        {
-            Ok(project) => {
-                self.project = project;
-                self.ensure_assets(ctx);
-                self.next_id = self.project.max_id() + 1;
-                self.selection = None;
-                self.clear_history();
-                self.status = format!("Opened {}", path.display());
-                self.project_path = Some(path);
-            }
-            Err(e) => self.status = format!("Open failed: {e}"),
-        }
-    }
-
-    pub fn save(&mut self, ctx: &egui::Context) {
-        if let Some(path) = self.project_path.clone() {
-            self.write_project(&path);
-        } else {
-            self.save_as(ctx);
-        }
-    }
-
-    pub fn save_as(&mut self, _ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Llamacraft GUI", &["llgui"])
-            .set_file_name("untitled.llgui")
-            .save_file()
-        else {
-            return;
-        };
-        let path = if path.extension().is_some() {
-            path
-        } else {
-            path.with_extension("llgui")
-        };
-        self.write_project(&path);
-        self.project_path = Some(path);
-    }
-
-    fn write_project(&mut self, path: &std::path::Path) {
-        match serde_json::to_string_pretty(&self.project)
-            .map_err(|e| e.to_string())
-            .and_then(|s| std::fs::write(path, s).map_err(|e| e.to_string()))
-        {
-            Ok(()) => self.status = format!("Saved {}", path.display()),
-            Err(e) => self.status = format!("Save failed: {e}"),
-        }
-    }
-
-    pub fn bake(&mut self, _ctx: &egui::Context) {
-        let stem = gui_file_stem(self.project.gui_type);
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("PNG", &["png"])
-            .set_file_name(format!("{stem}.png"))
-            .save_file()
-        else {
-            return;
-        };
-        match bake::bake_to_files(&self.project, &self.assets, &path) {
-            Ok(()) => {
-                let json = path.with_extension("json");
-                self.status = format!("Baked {} + {}", path.display(), json.display());
-            }
-            Err(e) => self.status = format!("Bake failed: {e}"),
-        }
-    }
-
-    fn ensure_assets(&mut self, ctx: &egui::Context) {
-        let mut specs: Vec<AssetSpec> = self
-            .project
-            .flat_layers()
-            .iter()
-            .map(|fl| fl.layer.asset.clone())
-            .collect();
-        if let Some(h) = &self.project.hover {
-            specs.push(h.asset.clone());
-        }
-        let mut missing = Vec::new();
-        for spec in specs {
-            if let Err(e) = self.assets.ensure(ctx, &spec) {
-                missing.push(e);
+    fn after_history_jump(&mut self) {
+        self.doc_rev += 1;
+        self.dirty = true;
+        // Selection may point at a node that no longer exists.
+        if let Some(sel) = &self.sel {
+            if doc_edit::node_at(&self.proj.document.root, sel).is_none() {
+                self.sel = None;
             }
         }
-        if !missing.is_empty() {
-            self.status = format!(
-                "Loaded with {} missing asset(s): {}",
-                missing.len(),
-                missing.join("; ")
-            );
+    }
+
+    /// Select from outside the tree panel (canvas, validation): also scrolls
+    /// the tree row into view so both views stay in sync.
+    pub fn select_external(&mut self, path: Option<NodePath>) {
+        self.sel = path;
+        self.tree_scroll_to_sel = true;
+    }
+
+    pub fn selected_node(&self) -> Option<&llama_ui::Node> {
+        doc_edit::node_at(&self.proj.document.root, self.sel.as_deref()?)
+    }
+
+    /// The preview `UiState`: the project's sample state plus non-destructive
+    /// catalog seeds for every key the author hasn't set — binding a list to
+    /// `worlds` shows rows immediately, without dirtying the file.
+    pub fn preview_state(&self) -> UiState {
+        let (mut state, _) = self.proj.sample_ui_state();
+        if let Some(info) = self.catalog.as_ref().and_then(|c| c.kind(&self.proj.document.kind)) {
+            bindings::apply_seeds(&mut state, info);
+        }
+        state
+    }
+
+    /// Cached validation for the current document + theme.
+    pub fn validation(&mut self) -> Vec<DocIssue> {
+        if self.validation_rev != Some(self.doc_rev) {
+            let contract = crate::contracts::contract_for(&self.proj.document.kind);
+            self.validation = self
+                .proj
+                .document
+                .validate(Some(self.theme.theme.as_ref()), Some(&contract));
+            // Builder-side extra: static images must resolve beside the
+            // project or they draw nothing, in game and preview alike.
+            let dir = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+            self.validation.extend(doc_edit::missing_image_issues(
+                &self.proj.document,
+                &|name| dir.as_ref().is_some_and(|d| d.join(name).is_file()),
+            ));
+            self.validation_rev = Some(self.doc_rev);
+        }
+        self.validation.clone()
+    }
+
+    // ---- file ops --------------------------------------------------------------
+
+    fn set_project(&mut self, proj: Project, path: Option<PathBuf>, status: String) {
+        self.proj = proj;
+        self.path = path.clone();
+        if let Some(p) = path {
+            self.last_dir = p.parent().map(PathBuf::from);
+        }
+        self.dirty = false;
+        self.doc_rev += 1;
+        self.history.clear();
+        self.sel = None;
+        self.tree_collapsed.clear();
+        self.canvas_drag = None;
+        self.sync_sample_buffer();
+        self.status = status;
+    }
+
+    pub fn new_project(&mut self, kind: &str) {
+        let mut proj = Project::new(kind);
+        // New documents persist their catalog seeds in sample_state so the
+        // file documents its own preview data.
+        if let Some(info) = self.catalog.as_ref().and_then(|c| c.kind(kind)) {
+            for (key, value) in bindings::seed_values(info) {
+                proj.editor
+                    .sample_state
+                    .entry(key)
+                    .or_insert_with(|| crate::project::value_to_json(&value));
+            }
+        }
+        self.set_project(proj, None, format!("New {kind} document"));
+        self.dirty = true;
+        // Teach the author what this screen can do.
+        self.screen_data_force_open = Some(true);
+    }
+
+    pub fn open_path(&mut self, path: PathBuf) {
+        match io::load_project(&path) {
+            Ok(p) => self.set_project(p, Some(path.clone()), format!("Opened {}", path.display())),
+            Err(e) => self.status = e,
         }
     }
 
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let typing = ctx.wants_keyboard_input();
-        let (save, open, new, bake, undo, redo, del, dup) = ctx.input(|i| {
-            let c = i.modifiers.command;
-            let shift = i.modifiers.shift;
-            (
-                c && i.key_pressed(egui::Key::S),
-                c && i.key_pressed(egui::Key::O),
-                c && i.key_pressed(egui::Key::N),
-                c && i.key_pressed(egui::Key::B),
-                c && !shift && i.key_pressed(egui::Key::Z),
-                (c && shift && i.key_pressed(egui::Key::Z)) || (c && i.key_pressed(egui::Key::Y)),
-                i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
-                c && i.key_pressed(egui::Key::D),
-            )
-        });
-        if new {
-            self.new_project();
+    fn open_dialog(&mut self) {
+        if let Some(path) = io::pick_open(&self.last_dir) {
+            self.open_path(path);
         }
-        if open {
-            self.open(ctx);
-        }
-        if save {
-            self.save(ctx);
-        }
-        if bake {
-            self.bake(ctx);
-        }
-        if !typing {
-            if undo {
-                self.undo();
-            }
-            if redo {
-                self.redo();
-            }
-            if del {
-                self.delete_selection();
-            }
-            if dup {
-                if let Some(sel) = self.selection {
-                    self.duplicate(sel.id());
+    }
+
+    fn save(&mut self) {
+        match &self.path {
+            Some(path) => {
+                let path = path.clone();
+                match io::save_project(&path, &self.proj) {
+                    Ok(()) => {
+                        self.dirty = false;
+                        // The project dir may have just come into existence
+                        // (save-as): image warnings must re-check against it.
+                        self.validation_rev = None;
+                        self.status = format!("Saved {}", path.display());
+                    }
+                    Err(e) => self.status = e,
                 }
             }
+            None => self.save_as(),
+        }
+    }
+
+    fn save_as(&mut self) {
+        let name = format!(
+            "{}.llgui",
+            self.proj.document.kind.split(':').last().unwrap_or("gui")
+        );
+        if let Some(path) = io::pick_save(&self.last_dir, &name) {
+            self.path = Some(path);
+            self.save();
+        }
+    }
+
+    fn import_legacy(&mut self) {
+        let Some(path) = io::pick_open(&self.last_dir) else { return };
+        match io::import_legacy(&path) {
+            Ok((proj, warnings)) => {
+                let n = warnings.len();
+                for w in &warnings {
+                    eprintln!("import: {w}");
+                }
+                self.set_project(
+                    proj,
+                    None,
+                    format!("Imported {} ({n} TODO items — see stderr)", path.display()),
+                );
+                self.dirty = true;
+            }
+            Err(e) => self.status = e,
+        }
+    }
+
+    fn export(&mut self) {
+        if let Some(path) = io::pick_export(&self.proj.document, &self.last_dir) {
+            let images_from = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+            match io::export_document(&path, &self.proj.document, images_from.as_deref()) {
+                Ok(copied) => {
+                    self.status = format!(
+                        "Exported {}{}",
+                        path.display(),
+                        if copied > 0 { format!(" (+{copied} images)") } else { String::new() }
+                    );
+                }
+                Err(e) => self.status = e,
+            }
+        }
+    }
+
+    // ---- sample state ------------------------------------------------------------
+
+    pub fn sync_sample_buffer(&mut self) {
+        self.sample_json =
+            serde_json::to_string_pretty(&self.proj.editor.sample_state).unwrap_or_default();
+        self.sample_error = None;
+    }
+
+    pub fn apply_sample_buffer(&mut self) {
+        match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&self.sample_json)
+        {
+            Ok(map) => {
+                self.proj.editor.sample_state = map;
+                self.sample_error = None;
+                // Surface tagged-value errors immediately.
+                let (_, errs) = self.proj.sample_ui_state();
+                if !errs.is_empty() {
+                    self.sample_error = Some(errs.join("; "));
+                }
+                self.touch();
+            }
+            Err(e) => self.sample_error = Some(e.to_string()),
+        }
+    }
+
+    // ---- edit actions ---------------------------------------------------------------
+
+    pub fn delete_selected(&mut self) {
+        let Some(path) = self.sel.clone() else { return };
+        if path.is_empty() {
+            self.status = "Cannot delete the root node".into();
+            return;
+        }
+        self.mutate(|doc| {
+            doc_edit::remove_at(&mut doc.root, &path);
+        });
+        self.sel = None;
+    }
+
+    pub fn duplicate_selected(&mut self) {
+        let Some(path) = self.sel.clone() else { return };
+        if path.is_empty() {
+            return;
+        }
+        let Some(node) = doc_edit::node_at(&self.proj.document.root, &path) else { return };
+        let mut copy = node.clone();
+        doc_edit::uniquify_ids(&self.proj.document, &mut copy);
+        let (last, parent) = path.split_last().unwrap();
+        let parent = parent.to_vec();
+        let index = *last + 1;
+        self.mutate(|doc| {
+            doc_edit::insert_at(&mut doc.root, &parent, index, copy);
+        });
+        let mut new_path = parent;
+        new_path.push(index);
+        self.sel = Some(new_path);
+    }
+
+    /// Insert `node` into the selected container (or the selection's parent,
+    /// or the root) and select it.
+    pub fn insert_node(&mut self, mut node: llama_ui::Node) {
+        doc_edit::uniquify_ids(&self.proj.document, &mut node);
+        let target: NodePath = match &self.sel {
+            Some(path) => match doc_edit::node_at(&self.proj.document.root, path) {
+                Some(n) if n.kind.is_container() => path.clone(),
+                Some(_) if !path.is_empty() => path[..path.len() - 1].to_vec(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let mut new_path = None;
+        self.mutate(|doc| {
+            let index = doc_edit::node_at(&doc.root, &target)
+                .map(|n| n.children.len())
+                .unwrap_or(0);
+            new_path = doc_edit::insert_at(&mut doc.root, &target, index, node);
+        });
+        if new_path.is_some() {
+            self.sel = new_path;
+        }
+    }
+
+    // ---- frame ------------------------------------------------------------------------
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        use egui::{Key, KeyboardShortcut, Modifiers};
+        const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Z);
+        const REDO: KeyboardShortcut =
+            KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Z);
+        const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::S);
+        const DUP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::D);
+        if ctx.input_mut(|i| i.consume_shortcut(&REDO)) {
+            self.redo();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&UNDO)) {
+            self.undo();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&SAVE)) {
+            self.save();
+        }
+        if !ctx.wants_keyboard_input() {
+            if ctx.input_mut(|i| i.consume_shortcut(&DUP)) {
+                self.duplicate_selected();
+            }
+            if ctx.input(|i| i.key_pressed(Key::Delete)) {
+                self.delete_selected();
+            }
+        }
+    }
+
+    fn menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    ui.menu_button("New", |ui| {
+                        for kind in crate::contracts::ENGINE_KINDS {
+                            if ui.button(*kind).clicked() {
+                                self.new_project(kind);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Mod kind…").clicked() {
+                            self.new_kind_open = true;
+                            ui.close_menu();
+                        }
+                    });
+                    if ui.button("Open…").clicked() {
+                        self.open_dialog();
+                        ui.close_menu();
+                    }
+                    ui.menu_button("Open Sample", |ui| {
+                        let samples = io::list_samples();
+                        if samples.is_empty() {
+                            ui.label(
+                                egui::RichText::new("none — run `gui-builder --make-samples`")
+                                    .weak(),
+                            );
+                        }
+                        for (stem, path) in samples {
+                            if ui.button(&stem).clicked() {
+                                self.open_path(path);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("Save").clicked() {
+                        self.save();
+                        ui.close_menu();
+                    }
+                    if ui.button("Save As…").clicked() {
+                        self.save_as();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Import Legacy .llgui…").clicked() {
+                        self.import_legacy();
+                        ui.close_menu();
+                    }
+                    if ui.button("Export .gui.json…").clicked() {
+                        self.export();
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .add_enabled(self.history.can_undo(), egui::Button::new("Undo"))
+                        .clicked()
+                    {
+                        self.undo();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(self.history.can_redo(), egui::Button::new("Redo"))
+                        .clicked()
+                    {
+                        self.redo();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Duplicate").clicked() {
+                        self.duplicate_selected();
+                        ui.close_menu();
+                    }
+                    if ui.button("Delete").clicked() {
+                        self.delete_selected();
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    for z in [1.0f32, 2.0, 3.0, 4.0, 6.0, 8.0] {
+                        if ui.button(format!("Zoom {z}x")).clicked() {
+                            self.proj.editor.zoom = z;
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut self.proj.editor.pixel_grid, "Pixel grid");
+                    ui.checkbox(&mut self.overlay, "Editor overlay");
+                });
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}{}",
+                        self.proj.document.kind,
+                        if self.dirty { " *" } else { "" }
+                    ))
+                    .weak(),
+                );
+            });
+        });
+    }
+
+    fn popups(&mut self, ctx: &egui::Context) {
+        if self.new_kind_open {
+            let mut open = self.new_kind_open;
+            let mut create = false;
+            egui::Window::new("New mod-kind document")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Kind key (modid:name):");
+                    ui.text_edit_singleline(&mut self.new_kind_buf);
+                    let ok = self.new_kind_buf.contains(':');
+                    if ui.add_enabled(ok, egui::Button::new("Create")).clicked() {
+                        create = true;
+                    }
+                });
+            self.new_kind_open = open;
+            if create {
+                let kind = self.new_kind_buf.clone();
+                self.new_project(&kind);
+                self.new_kind_open = false;
+            }
+        }
+        if self.sample_open {
+            let mut open = self.sample_open;
+            egui::Window::new("Sample state (tagged JSON)")
+                .open(&mut open)
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.label("Seeds the preview UiState. Values are tagged:");
+                    ui.monospace(r#"{"volume": {"f32": 75.0}, "on": {"bool": true}}"#);
+                    if ui
+                        .button("Insert example list entry")
+                        .on_hover_text("Appends a 'rows' list two documents' list bindings can read")
+                        .clicked()
+                    {
+                        let mut row = llama_ui::UiMap::new();
+                        row.insert("name".into(), llama_ui::UiValue::Str("Example".into()));
+                        row.insert("version".into(), llama_ui::UiValue::Str("v0.1.0".into()));
+                        row.insert("enabled".into(), llama_ui::UiValue::Bool(true));
+                        let list = llama_ui::UiValue::List(std::sync::Arc::new(vec![row]));
+                        self.proj
+                            .editor
+                            .sample_state
+                            .insert("rows".into(), crate::project::value_to_json(&list));
+                        self.sync_sample_buffer();
+                        self.touch();
+                    }
+                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.sample_json)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(12),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply").clicked() {
+                            self.apply_sample_buffer();
+                        }
+                        if ui.button("Revert").clicked() {
+                            self.sync_sample_buffer();
+                        }
+                    });
+                    if let Some(err) = &self.sample_error {
+                        ui.colored_label(egui::Color32::from_rgb(230, 110, 100), err.clone());
+                    }
+                });
+            self.sample_open = open;
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_shortcuts(ctx);
+        self.shortcuts(ctx);
+        self.menu_bar(ctx);
+        theme_bar::show(self, ctx);
+        self.popups(ctx);
 
-        ui::top_bar(self, ctx);
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(&self.status);
+        egui::TopBottomPanel::bottom("validation")
+            .resizable(true)
+            .default_height(130.0)
+            .show(ctx, |ui| {
+                if self.catalog.is_some() {
+                    ui.columns(2, |cols| {
+                        panels::validation::show(self, &mut cols[0]);
+                        panels::screen_data::show(self, &mut cols[1]);
+                    });
+                } else {
+                    panels::validation::show(self, ui);
+                }
             });
-        });
-        ui::right_panel(self, ctx);
-        ui::left_panel(self, ctx);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            canvas::show_canvas(self, ui);
-        });
-        ui::snap_dialog(self, ctx);
-        ui::tag_dialog(self, ctx);
+        egui::SidePanel::left("tree")
+            .resizable(true)
+            .default_width(260.0)
+            .show(ctx, |ui| {
+                let h = ui.available_height();
+                egui::ScrollArea::vertical()
+                    .id_salt("tree_scroll")
+                    .max_height(h * 0.6)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| panels::doc_tree::show(self, ui));
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("palette_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| panels::palette::show(self, ui));
+            });
+        egui::SidePanel::right("inspector")
+            .resizable(true)
+            .default_width(300.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| panels::inspector::show(self, ui));
+            });
+        egui::CentralPanel::default().show(ctx, |ui| canvas::show(self, ui));
 
-        let pointer_down = ctx.input(|i| i.pointer.any_down());
-        self.commit_edit(pointer_down);
-    }
-}
+        // Gestures end when the pointer releases, wherever it is.
+        if ctx.input(|i| !i.pointer.any_down()) {
+            self.history.end_gesture(&self.proj.document);
+            self.canvas_drag = None;
+        }
 
-pub fn gui_file_stem(ty: GuiType) -> &'static str {
-    match ty {
-        GuiType::Chest => "chest",
-        GuiType::Inventory => "inventory",
-        GuiType::CraftingTable => "crafting_table",
-        GuiType::Furnace => "furnace",
-        GuiType::Hotbar => "hotbar",
-        GuiType::FurnitureWorkbench => "furniture_workbench",
-        GuiType::Title => "title",
-        GuiType::WorldSelect => "world_select",
-        GuiType::CreateWorld => "create_world",
-        GuiType::DeleteWorld => "delete_world",
-        GuiType::Pause => "pause",
-        GuiType::Custom => "gui",
+        // Keep doc images fresh (the project dir may gain PNGs while open).
+        let dir = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+        self.images.refresh(&self.proj.document, dir.as_deref());
+
+        let title = format!(
+            "GUI Builder — {}{}",
+            self.path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| self.proj.document.kind.clone()),
+            if self.dirty { " *" } else { "" }
+        );
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
     }
 }

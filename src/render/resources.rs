@@ -3,9 +3,9 @@ use crate::chunk::SectionPos;
 use crate::mesh::{ChunkMesh, ModelVertex, Vertex};
 use crate::texture_mips::build_cutout_mips;
 
-/// Upload a baked data-driven GUI panel PNG (from the `gui-builder`) as its own
-/// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size — each
-/// baked panel is its own image, not a fixed atlas slot. See `crate::gui`.
+/// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
+/// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size —
+/// each PNG is its own image, not a fixed atlas slot.
 pub(super) fn create_gui_panel(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

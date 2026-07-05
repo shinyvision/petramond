@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy, TextClipboard};
+use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use crate::camera::Camera;
 use crate::controls::{
     control_from_key_code, text_key_from_named, Control, Modifiers, PointerButton,
@@ -67,7 +67,6 @@ struct NativeHost {
     /// only when screens open/close; reapplying it every redraw sends compositor work
     /// through the hot mouse-look path.
     cursor_policy: Option<CursorPolicy>,
-    clipboard: NativeClipboard,
     modifiers: Modifiers,
 }
 
@@ -89,7 +88,6 @@ impl NativeHost {
             perf_render_total: Duration::ZERO,
             perf_render_max: Duration::ZERO,
             cursor_policy: None,
-            clipboard: NativeClipboard::new(),
             modifiers: Modifiers::default(),
         }
     }
@@ -126,61 +124,9 @@ fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, curs
     if applied.is_none_or(|p| p.icon != cursor.icon) {
         window.set_cursor(match cursor.icon {
             AppCursorIcon::Default => WinitCursorIcon::Default,
-            AppCursorIcon::Text => WinitCursorIcon::Text,
         });
     }
     *applied = Some(cursor);
-}
-
-struct NativeClipboard {
-    inner: Option<arboard::Clipboard>,
-}
-
-impl NativeClipboard {
-    fn new() -> Self {
-        Self {
-            inner: match arboard::Clipboard::new() {
-                Ok(clipboard) => Some(clipboard),
-                Err(e) => {
-                    log::warn!("could not initialize clipboard: {e}");
-                    None
-                }
-            },
-        }
-    }
-
-    fn inner(&mut self) -> Option<&mut arboard::Clipboard> {
-        if self.inner.is_none() {
-            self.inner = arboard::Clipboard::new().ok();
-        }
-        self.inner.as_mut()
-    }
-}
-
-impl TextClipboard for NativeClipboard {
-    fn get_text(&mut self) -> Option<String> {
-        let clipboard = self.inner()?;
-        match clipboard.get_text() {
-            Ok(text) => Some(text),
-            Err(e) => {
-                log::warn!("could not read clipboard text: {e}");
-                None
-            }
-        }
-    }
-
-    fn set_text(&mut self, text: &str) -> bool {
-        let Some(clipboard) = self.inner() else {
-            return false;
-        };
-        match clipboard.set_text(text.to_string()) {
-            Ok(()) => true,
-            Err(e) => {
-                log::warn!("could not write clipboard text: {e}");
-                false
-            }
-        }
-    }
 }
 
 impl ApplicationHandler for NativeHost {
@@ -216,7 +162,7 @@ impl ApplicationHandler for NativeHost {
             self.app
                 .as_ref()
                 .unwrap()
-                .cursor_policy((size.width, size.height)),
+                .cursor_policy(),
         );
     }
 
@@ -253,7 +199,6 @@ impl ApplicationHandler for NativeHost {
                     ..
                 } = event;
                 let down = state == ElementState::Pressed;
-                let screen_size = renderer.screen_size();
                 if let PhysicalKey::Code(code) = physical_key {
                     if let Some(modifiers) = modifiers_after_key_event(self.modifiers, code, down) {
                         self.modifiers = modifiers;
@@ -263,18 +208,17 @@ impl ApplicationHandler for NativeHost {
                 if down {
                     let mut handled_shortcut = false;
                     if let PhysicalKey::Code(code) = physical_key {
-                        handled_shortcut =
-                            app.handle_text_shortcut_code(code, &mut self.clipboard, screen_size);
+                        handled_shortcut = app.handle_text_shortcut_code(code);
                     }
                     if !handled_shortcut {
                         if let Key::Named(named) = &logical_key {
                             if let Some(key) = text_key_from_named(named) {
-                                app.handle_text_key(key, screen_size);
+                                app.handle_text_key(key);
                             }
                         }
                         if !app.take_quit_requested() {
                             if let Some(text) = text.as_ref() {
-                                if !app.handle_text_input(text.as_str(), screen_size) {
+                                if !app.handle_text_input(text.as_str()) {
                                     // Text entry is opportunistic; non-text screens ignore it.
                                 }
                             }
@@ -337,7 +281,7 @@ impl ApplicationHandler for NativeHost {
                 apply_cursor_policy(
                     window,
                     &mut self.cursor_policy,
-                    app.cursor_policy(renderer.screen_size()),
+                    app.cursor_policy(),
                 );
                 // The host requests this once per `App::update`; the simulation itself
                 // advances in `about_to_wait`.

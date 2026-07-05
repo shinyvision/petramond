@@ -265,10 +265,21 @@ impl World {
         let Some((cpos, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
+        // Streaming-finality guard: never mutate a section whose gen result or saved
+        // overlay is still in flight (see `world::sim_guard`).
+        if !self.stream_writable(cpos) {
+            return false;
+        }
         if !self.sections.contains_key(&cpos) {
             // Water spilling into open air below/around a cliff materializes the section
             // it flows into; a dry-up (setting air) into nothing is a no-op.
             if block == Block::Air || !self.materialize_section(cpos) {
+                return false;
+            }
+            // The flow chose this cell reading the ABSENT section as air; the
+            // materialized base is authoritative and may hold terrain (or its own
+            // generated water) there. Only genuinely open cells accept the flow.
+            if block != Block::Air && self.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id() {
                 return false;
             }
         }

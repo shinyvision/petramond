@@ -1,0 +1,119 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:pause",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 8,
+        "dir": "column",
+        "align": "center",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Paused",
+          "scale": 2
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 2,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "resume",
+          "type": "button",
+          "text": "RESUME",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "save_quit",
+          "type": "button",
+          "text": "SAVE AND QUIT",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {},
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

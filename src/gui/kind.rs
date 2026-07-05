@@ -3,7 +3,7 @@
 //! [`GuiKind`] follows the Phase 2a newtype pattern: engine kinds are frozen
 //! low ids behind consts named exactly like the old enum variants, so existing
 //! expressions and const match patterns still compile; mod packs ADD kinds by
-//! declaring a namespaced `kind: "mod_id:name"` in a baked GUI manifest (or an
+//! declaring a namespaced `kind: "mod_id:name"` in a GUI document (or an
 //! `open_gui` block interaction), which interns the next free id. Kind ids are
 //! session-scoped and never persisted — the stable identity is the key string
 //! (events and the ABI speak keys, never ids).
@@ -15,10 +15,9 @@
 
 use std::sync::Mutex;
 
-/// Which GUI a baked manifest describes / a screen draws. Engine kinds are the
+/// Which GUI a document describes / a screen draws. Engine kinds are the
 /// consts below; mod kinds are interned at load. [`GuiKind::Other`] is the
-/// not-a-container sentinel (shell screens, unparseable manifest types) — it
-/// is never registered and owns no manifest.
+/// not-a-container sentinel — it is never registered and owns no document.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct GuiKind(u8);
 
@@ -30,6 +29,16 @@ impl GuiKind {
     pub const Furnace: GuiKind = GuiKind(3);
     pub const Hotbar: GuiKind = GuiKind(4);
     pub const FurnitureWorkbench: GuiKind = GuiKind(5);
+    // Document-backed shell screens (the GUI-document runtime; appended, ids
+    // are session-scoped so extending the table is safe).
+    pub const Title: GuiKind = GuiKind(6);
+    pub const WorldSelect: GuiKind = GuiKind(7);
+    pub const WorldSettings: GuiKind = GuiKind(8);
+    pub const CreateWorld: GuiKind = GuiKind(9);
+    pub const DeleteWorld: GuiKind = GuiKind(10);
+    pub const Pause: GuiKind = GuiKind(11);
+    /// Dev-only widget-catalog demo screen.
+    pub const Demo: GuiKind = GuiKind(12);
     /// The not-a-container sentinel; compares equal to no registered kind.
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
@@ -43,13 +52,20 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 6] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 13] = [
     "llama:chest",
     "llama:inventory",
     "llama:crafting_table",
     "llama:furnace",
     "llama:hotbar",
     "llama:furniture_workbench",
+    "llama:title",
+    "llama:world_select",
+    "llama:world_settings",
+    "llama:create_world",
+    "llama:delete_world",
+    "llama:pause",
+    "llama:demo",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

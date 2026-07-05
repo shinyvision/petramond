@@ -1,0 +1,212 @@
+{
+    "format": 1,
+    "kind": "llama:demo",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                4,
+                4,
+                4
+            ],
+            "gap": 6
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "GUI DOCUMENT DEMO"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 6,
+                    "align": "center"
+                },
+                "children": [
+                    {
+                        "type": "button",
+                        "id": "default",
+                        "text": "BUTTON"
+                    },
+                    {
+                        "type": "button",
+                        "id": "confirm",
+                        "text": "CONFIRM",
+                        "style": "button.success"
+                    },
+                    {
+                        "type": "button",
+                        "id": "delete",
+                        "text": "DELETE",
+                        "style": "button.danger"
+                    },
+                    {
+                        "type": "button",
+                        "id": "disabled",
+                        "text": "OFF",
+                        "bind": {
+                            "enabled": "never"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 8,
+                    "align": "center"
+                },
+                "children": [
+                    {
+                        "type": "checkbox",
+                        "id": "c1",
+                        "bind": {
+                            "value": "demo_on"
+                        }
+                    },
+                    {
+                        "type": "toggle",
+                        "id": "t1",
+                        "bind": {
+                            "value": "demo_on"
+                        }
+                    },
+                    {
+                        "type": "slider",
+                        "id": "vol",
+                        "min": 0.0,
+                        "max": 100.0,
+                        "bind": {
+                            "value": "demo_volume"
+                        },
+                        "layout": {
+                            "w": 90
+                        }
+                    },
+                    {
+                        "type": "badge",
+                        "text": "v0.1.0"
+                    }
+                ]
+            },
+            {
+                "type": "alert",
+                "level": "info",
+                "text": "Rendered by the llama-ui document runtime."
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 6
+                },
+                "children": [
+                    {
+                        "type": "text_input",
+                        "id": "name",
+                        "placeholder": "Type here...",
+                        "layout": {
+                            "w": 110
+                        }
+                    },
+                    {
+                        "type": "gauge",
+                        "id": "arrow",
+                        "mode": "grow_lr",
+                        "style": "gauge.arrow",
+                        "bind": {
+                            "value": "demo_cook"
+                        },
+                        "layout": {
+                            "w": 24,
+                            "h": 17
+                        }
+                    },
+                    {
+                        "type": "gauge",
+                        "id": "flame",
+                        "mode": "deplete_td",
+                        "style": "gauge.flame",
+                        "bind": {
+                            "value": "demo_burn"
+                        },
+                        "layout": {
+                            "w": 14,
+                            "h": 14
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "scroll",
+                "id": "list_scroll",
+                "layout": {
+                    "h": 62
+                },
+                "children": [
+                    {
+                        "type": "list",
+                        "id": "mods",
+                        "bind": {
+                            "items": "demo_rows",
+                            "selected": "demo_sel"
+                        },
+                        "children": [
+                            {
+                                "type": "row",
+                                "style": "list.row",
+                                "layout": {
+                                    "pad": [
+                                        1,
+                                        1,
+                                        1,
+                                        1
+                                    ],
+                                    "gap": 6,
+                                    "align": "center"
+                                },
+                                "children": [
+                                    {
+                                        "type": "label",
+                                        "bind": {
+                                            "text": "name"
+                                        }
+                                    },
+                                    {
+                                        "type": "badge",
+                                        "bind": {
+                                            "text": "version"
+                                        }
+                                    },
+                                    {
+                                        "type": "spacer",
+                                        "layout": {
+                                            "w": {
+                                                "grow": 1
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "type": "toggle",
+                                        "id": "row_on",
+                                        "bind": {
+                                            "value": "enabled"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "slot_grid",
+                "role": "demo_slots",
+                "cols": 9,
+                "rows": 1
+            }
+        ]
+    }
+}

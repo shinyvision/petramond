@@ -1,0 +1,745 @@
+{
+  "format": 1,
+  "atlas": "kit.png",
+  "palette": {
+    "text": "#E8EDF2",
+    "text_muted": "#93A3B1",
+    "text_disabled": "#5C6873",
+    "accent": "#57C956",
+    "danger": "#E4574F",
+    "selection": "#2E5C8A",
+    "dim": "#00000080"
+  },
+  "parts": {
+    "panel.large": {
+      "rect": [
+        0,
+        0,
+        44,
+        44
+      ],
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ]
+    },
+    "panel.inset": {
+      "rect": [
+        45,
+        0,
+        16,
+        16
+      ],
+      "slice": [
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    "section.titled": {
+      "rect": [
+        62,
+        0,
+        32,
+        32
+      ],
+      "slice": [
+        4,
+        15,
+        4,
+        4
+      ]
+    },
+    "button.default": {
+      "states": {
+        "default": {
+          "rect": [
+            95,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "hover": {
+          "rect": [
+            128,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "pressed": {
+          "rect": [
+            161,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "disabled": {
+          "rect": [
+            194,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text",
+      "pressed_label_offset": [
+        0,
+        1
+      ]
+    },
+    "button.success": {
+      "states": {
+        "default": {
+          "rect": [
+            0,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "hover": {
+          "rect": [
+            33,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "pressed": {
+          "rect": [
+            66,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "disabled": {
+          "rect": [
+            99,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text",
+      "pressed_label_offset": [
+        0,
+        1
+      ]
+    },
+    "button.danger": {
+      "states": {
+        "default": {
+          "rect": [
+            132,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "hover": {
+          "rect": [
+            165,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "pressed": {
+          "rect": [
+            198,
+            45,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "disabled": {
+          "rect": [
+            0,
+            66,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text",
+      "pressed_label_offset": [
+        0,
+        1
+      ]
+    },
+    "checkbox": {
+      "states": {
+        "off": {
+          "rect": [
+            33,
+            66,
+            12,
+            12
+          ]
+        },
+        "on": {
+          "rect": [
+            46,
+            66,
+            12,
+            12
+          ]
+        },
+        "disabled": {
+          "rect": [
+            59,
+            66,
+            12,
+            12
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "toggle": {
+      "states": {
+        "off": {
+          "rect": [
+            72,
+            66,
+            22,
+            12
+          ]
+        },
+        "on": {
+          "rect": [
+            95,
+            66,
+            22,
+            12
+          ]
+        },
+        "disabled": {
+          "rect": [
+            118,
+            66,
+            22,
+            12
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "slot": {
+      "states": {
+        "default": {
+          "rect": [
+            141,
+            66,
+            18,
+            18
+          ],
+          "slice": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "hover": {
+          "rect": [
+            160,
+            66,
+            18,
+            18
+          ],
+          "slice": [
+            1,
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "scrollbar.track": {
+      "rect": [
+        179,
+        66,
+        8,
+        24
+      ],
+      "slice": [
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    "scrollbar.thumb": {
+      "states": {
+        "default": {
+          "rect": [
+            188,
+            66,
+            8,
+            16
+          ],
+          "slice": [
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "hover": {
+          "rect": [
+            197,
+            66,
+            8,
+            16
+          ],
+          "slice": [
+            2,
+            2,
+            2,
+            2
+          ]
+        }
+      }
+    },
+    "slider.track": {
+      "rect": [
+        206,
+        66,
+        24,
+        6
+      ],
+      "slice": [
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    "slider.handle": {
+      "states": {
+        "default": {
+          "rect": [
+            231,
+            66,
+            9,
+            14
+          ]
+        },
+        "hover": {
+          "rect": [
+            241,
+            66,
+            9,
+            14
+          ]
+        },
+        "pressed": {
+          "rect": [
+            0,
+            91,
+            9,
+            14
+          ]
+        },
+        "disabled": {
+          "rect": [
+            10,
+            91,
+            9,
+            14
+          ]
+        }
+      }
+    },
+    "list.row": {
+      "states": {
+        "default": {
+          "rect": [
+            20,
+            91,
+            32,
+            26
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "hover": {
+          "rect": [
+            53,
+            91,
+            32,
+            26
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "selected": {
+          "rect": [
+            86,
+            91,
+            32,
+            26
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      }
+    },
+    "input": {
+      "states": {
+        "default": {
+          "rect": [
+            119,
+            91,
+            40,
+            18
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "focus": {
+          "rect": [
+            160,
+            91,
+            40,
+            18
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "disabled": {
+          "rect": [
+            201,
+            91,
+            40,
+            18
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "badge": {
+      "states": {
+        "default": {
+          "rect": [
+            0,
+            118,
+            16,
+            13
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "alert.info": {
+      "rect": [
+        17,
+        118,
+        26,
+        20
+      ],
+      "slice": [
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "alert.warning": {
+      "rect": [
+        44,
+        118,
+        26,
+        20
+      ],
+      "slice": [
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "alert.success": {
+      "rect": [
+        71,
+        118,
+        26,
+        20
+      ],
+      "slice": [
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "alert.danger": {
+      "rect": [
+        98,
+        118,
+        26,
+        20
+      ],
+      "slice": [
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "alert.info.icon": {
+      "rect": [
+        125,
+        118,
+        10,
+        10
+      ]
+    },
+    "alert.warning.icon": {
+      "rect": [
+        136,
+        118,
+        10,
+        10
+      ]
+    },
+    "alert.success.icon": {
+      "rect": [
+        147,
+        118,
+        10,
+        10
+      ]
+    },
+    "alert.danger.icon": {
+      "rect": [
+        158,
+        118,
+        10,
+        10
+      ]
+    },
+    "gauge.arrow": {
+      "states": {
+        "empty": {
+          "rect": [
+            169,
+            118,
+            24,
+            17
+          ]
+        },
+        "full": {
+          "rect": [
+            194,
+            118,
+            24,
+            17
+          ]
+        }
+      }
+    },
+    "gauge.flame": {
+      "states": {
+        "empty": {
+          "rect": [
+            219,
+            118,
+            14,
+            14
+          ]
+        },
+        "full": {
+          "rect": [
+            234,
+            118,
+            14,
+            14
+          ]
+        }
+      }
+    },
+    "label": {
+      "rect": [
+        249,
+        118,
+        1,
+        1
+      ]
+    },
+    "label.muted": {
+      "states": {
+        "default": {
+          "rect": [
+            249,
+            118,
+            1,
+            1
+          ]
+        }
+      },
+      "label_color": "text_muted"
+    },
+    "label.danger": {
+      "states": {
+        "default": {
+          "rect": [
+            249,
+            118,
+            1,
+            1
+          ]
+        }
+      },
+      "label_color": "danger"
+    },
+    "label.accent": {
+      "states": {
+        "default": {
+          "rect": [
+            249,
+            118,
+            1,
+            1
+          ]
+        }
+      },
+      "label_color": "accent"
+    },
+    "icon.edit": {
+      "rect": [
+        0,
+        144,
+        10,
+        10
+      ]
+    }
+  },
+  "metrics": {
+    "button_h": 20,
+    "button_pad": 6,
+    "row_h": 26,
+    "slot": 18,
+    "slot_gap": 0,
+    "scrollbar_w": 8,
+    "slider_w": 64,
+    "input_w": 64,
+    "badge_pad": 4
+  }
+}

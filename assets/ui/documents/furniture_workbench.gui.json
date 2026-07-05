@@ -1,0 +1,83 @@
+{
+    "format": 1,
+    "kind": "llama:furniture_workbench",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Furniture Workbench"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 12,
+                    "align": "start",
+                    "justify": "center"
+                },
+                "children": [
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 3,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Input"
+                            },
+                            {
+                                "type": "slot",
+                                "role": "workbench_input"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "slot_grid",
+                        "role": "workbench_result",
+                        "cols": 7,
+                        "rows": 3
+                    }
+                ]
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "slot_grid",
+                "role": "player_inv",
+                "cols": 9,
+                "rows": 3
+            },
+            {
+                "type": "slot_grid",
+                "role": "hotbar",
+                "cols": 9,
+                "rows": 1,
+                "layout": {
+                    "margin": [
+                        0,
+                        2,
+                        0,
+                        0
+                    ]
+                }
+            }
+        ]
+    }
+}

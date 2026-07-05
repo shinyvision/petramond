@@ -38,6 +38,7 @@ use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::crafting::Recipes;
 use crate::mathh::IVec3;
 
+use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
 use super::store::World;
 
 /// The six orthogonal neighbour offsets, used for block-update propagation.
@@ -147,7 +148,16 @@ impl World {
             due.push(pos);
         }
         for pos in due {
-            self.run_scheduled_tick(pos);
+            // Streaming-finality gate (see `world::sim_guard`): a behaviour must not
+            // act on reads of sections whose streamed content is still in flight or
+            // absent-and-lying. In-flight blockers resolve within ticks — retry;
+            // unloaded blockers only resolve on a load event — drop, and let the
+            // on-load water kick re-arm the flow when the terrain streams in.
+            match self.sim_readiness_at(pos) {
+                SimReadiness::Ready => self.run_scheduled_tick(pos),
+                SimReadiness::Wait => self.schedule_block_tick(pos, SIM_RETRY_DELAY),
+                SimReadiness::Drop => {}
+            }
         }
 
         // 2. Dispatch the block updates accumulated since the last tick (ANNOUNCE
@@ -157,7 +167,15 @@ impl World {
             let updates: Vec<IVec3> = self.sim.update_queue.drain(..).collect();
             self.sim.update_set.clear();
             for pos in updates {
-                self.dispatch_block_update(pos);
+                // Same streaming-finality gate as scheduled ticks; a Wait re-queues
+                // into the NEXT tick's batch (this tick's snapshot is already taken).
+                match self.sim_readiness_at(pos) {
+                    SimReadiness::Ready => self.dispatch_block_update(pos),
+                    SimReadiness::Wait => {
+                        self.queue_block_update(pos);
+                    }
+                    SimReadiness::Drop => {}
+                }
             }
         }
 
@@ -341,8 +359,12 @@ impl World {
 
         // Dispatch phase: the section-map borrow is released, so each behaviour is
         // free to edit the world (a decaying leaf sets air, which relights/remeshes).
+        // Random ticks are probabilistic, so the streaming-finality gate simply
+        // skips a cell whose neighbourhood is not final — same as not picking it.
         for pos in due {
-            self.run_random_tick(pos);
+            if self.sim_readiness_at(pos) == SimReadiness::Ready {
+                self.run_random_tick(pos);
+            }
         }
     }
 

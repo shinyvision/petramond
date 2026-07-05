@@ -128,12 +128,10 @@ impl App {
         } else if matches!(self.screen, AppScreen::Pause) {
             self.resume_game();
             true
-        } else if matches!(self.screen, AppScreen::CreateWorld) {
-            self.screen = AppScreen::WorldSelect;
-            self.clear_create_focus();
-            self.pointer.release_for_menu();
-            true
-        } else if matches!(self.screen, AppScreen::DeleteWorld) {
+        } else if matches!(
+            self.screen,
+            AppScreen::CreateWorld | AppScreen::DeleteWorld
+        ) {
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
             true

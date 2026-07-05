@@ -65,9 +65,9 @@ impl AppScreen {
         )
     }
 
-    /// Which baked GUI this screen draws: the open menu's kind, or `Hotbar` for the
-    /// HUD (gameplay). The single source of "which screen" for the data-driven GUI —
-    /// it selects both the rendered panel and the click hit-test's layout.
+    /// Which GUI this screen draws: the open menu's kind, or `Hotbar` for the
+    /// HUD (gameplay). The single source of "which screen" for the data-driven
+    /// GUI — it selects the document the runtime draws and hit-tests.
     #[inline]
     pub(super) fn gui_kind(self) -> crate::gui::GuiKind {
         use crate::gui::GuiKind;
@@ -96,10 +96,11 @@ impl AppScreen {
     }
 }
 
+/// Known polish gap: document text inputs don't request a Text (I-beam)
+/// cursor yet, so Default is currently the only icon.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CursorIcon {
     Default,
-    Text,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

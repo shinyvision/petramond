@@ -1,0 +1,108 @@
+{
+    "format": 1,
+    "kind": "llama:create_world",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "w": 240,
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6,
+            "align": "stretch"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Create New World",
+                "scale": 2
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "label",
+                "text": "World Name",
+                "style": "label.muted"
+            },
+            {
+                "type": "text_input",
+                "id": "create_name",
+                "placeholder": "My World",
+                "max_chars": 48,
+                "bind": {
+                    "text": "create_name"
+                }
+            },
+            {
+                "type": "label",
+                "text": "Name already exists",
+                "bind": {
+                    "visible": "name_exists"
+                },
+                "style": "label.danger"
+            },
+            {
+                "type": "label",
+                "text": "Seed",
+                "style": "label.muted"
+            },
+            {
+                "type": "text_input",
+                "id": "create_seed",
+                "placeholder": "Blank = random",
+                "max_chars": 48,
+                "bind": {
+                    "text": "create_seed"
+                }
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 4
+                }
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 5,
+                    "align": "stretch"
+                },
+                "children": [
+                    {
+                        "type": "button",
+                        "id": "create",
+                        "text": "Create",
+                        "style": "button.success",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        },
+                        "bind": {
+                            "enabled": "can_create"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "cancel",
+                        "text": "Cancel",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

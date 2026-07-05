@@ -1,8 +1,8 @@
 [package]
 name = "gui-builder"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Llamacraft data-driven GUI builder — compose GUI parts, place slots, bake PNG + JSON."
+description = "Llamacraft GUI document editor — author llama-ui *.gui.json documents with a pixel-exact live preview."
 license = "MIT"
 
 # Standalone: declare an empty workspace so this crate does NOT join the parent
@@ -14,6 +14,7 @@ name = "gui-builder"
 path = "src/main.rs"
 
 [dependencies]
+llama-ui = { path = "../llama-ui", features = ["raster"] }
 eframe = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }

@@ -173,6 +173,11 @@ pub struct World {
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
     pub(super) pending_overlays: HashMap<SectionPos, super::stream::LoadedOverlay>,
+    /// Sections whose saved record has been REQUESTED from the save thread but not
+    /// answered yet. Until the answer lands (and any overlay applies) the section's
+    /// true content is in flight: the sim guard blocks mutation and the harvest skips
+    /// persisting it (see `world::sim_guard`).
+    pub(super) awaited_overlays: HashSet<SectionPos>,
     pub render_dist: i32,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
@@ -257,6 +262,7 @@ impl World {
             pending: HashMap::new(),
             pending_sections: HashSet::new(),
             pending_overlays: HashMap::new(),
+            awaited_overlays: HashSet::new(),
             render_dist,
             lighting_revision: 0,
             light_bakes: LightBakeQueue::new(jobs.clone()),
@@ -474,6 +480,14 @@ impl World {
         if !self.sections.contains_key(&sp) {
             return None;
         }
+        // The section's true content is still in flight (its saved record has not
+        // been answered/applied yet): persisting the generated base now would
+        // overwrite the player's on-disk record with pre-overlay state. Skip; the
+        // record on disk stays authoritative. (Entities that wandered in are
+        // dropped with the unload — losing a wanderer beats corrupting a build.)
+        if self.awaited_overlays.contains(&sp) || self.pending_overlays.contains_key(&sp) {
+            return None;
+        }
         let entities = self.dropped_items.take_items_in_section(sp);
         let mobs = self.mobs.take_in_section(sp);
         let record_holds_entities = self
@@ -604,6 +618,12 @@ impl World {
     /// already loaded; returns `false` if `pos` is outside the world vertical range.
     pub(super) fn materialize_section(&mut self, pos: SectionPos) -> bool {
         if !SectionPos::cy_in_range(pos.cy) {
+            return false;
+        }
+        // A section with an in-flight gen job or saved overlay is not writable: a
+        // base materialized now would race the landing result, and a mutation of it
+        // could be persisted and permanently shadow the real content (sim guard).
+        if !self.stream_writable(pos) {
             return false;
         }
         if !self.sections.contains_key(&pos) {
@@ -834,6 +854,7 @@ impl World {
 
     pub(super) fn remove_section(&mut self, pos: SectionPos) {
         self.sections.remove(&pos);
+        self.awaited_overlays.remove(&pos);
         if self.remove_mesh(pos) {
             self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
         }
@@ -869,6 +890,7 @@ impl World {
         self.column_gen.remove(&pos);
         self.pending.remove(&pos);
         self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
+        self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
     }
 
     /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
@@ -888,6 +910,7 @@ impl World {
         self.pending.clear();
         self.pending_sections.clear();
         self.pending_overlays.clear();
+        self.awaited_overlays.clear();
     }
 
     /// All section coordinates of column `(cx,cz)` in the world vertical range.

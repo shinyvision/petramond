@@ -1,87 +1,30 @@
-use super::App;
 use crate::controls::PointerButton;
-use crate::gui::{GuiKind, MenuSlot};
+use crate::gui::MenuSlot;
 
-/// App-side GUI click router: converts the current menu hit-test into the small
-/// set of game actions App is allowed to apply.
+/// App-side GUI click state: double-click gather detection for the
+/// document-routed slot clicks (`drive_doc_menu`). The document runtime owns
+/// hit testing; this only decides whether a click is a gather.
 #[derive(Default, Debug)]
 pub(super) struct GuiRouter {
     double_click: DoubleClickStreak,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct GuiClick {
-    open: bool,
-    kind: GuiKind,
-    screen: (u32, u32),
-    cursor: (f32, f32),
-    button: PointerButton,
-    shift: bool,
-    now: f64,
-    cursor_has_stack: bool,
-}
+impl GuiRouter {
+    pub(super) fn reset_click_streak(&mut self) {
+        self.double_click.reset();
+    }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct RoutedGuiClick {
-    consumed: bool,
-    action: Option<GuiClickAction>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum GuiClickAction {
-    MenuClick {
+    /// Double-click gather detection for document-routed slot clicks (the
+    /// same streak the legacy hit-test path uses).
+    pub(super) fn doc_gather(
+        &mut self,
         slot: MenuSlot,
         button: PointerButton,
         shift: bool,
-        gather: bool,
-    },
-    ThrowCursorStack,
-    ThrowCursorOne,
-}
-
-impl GuiRouter {
-    fn route_click(&mut self, click: GuiClick) -> RoutedGuiClick {
-        if !click.open {
-            return RoutedGuiClick {
-                consumed: false,
-                action: None,
-            };
-        }
-
-        let action = match crate::gui::hit(click.kind, click.screen, click.cursor) {
-            Some(slot) => {
-                let gather = self.left_click_gather(
-                    slot,
-                    click.button,
-                    click.shift,
-                    click.now,
-                    click.cursor_has_stack,
-                );
-                Some(GuiClickAction::MenuClick {
-                    slot,
-                    button: click.button,
-                    shift: click.shift,
-                    gather,
-                })
-            }
-            None if !crate::gui::panel_contains(click.kind, click.screen, click.cursor) => {
-                self.reset_click_streak();
-                Some(match click.button {
-                    PointerButton::Primary => GuiClickAction::ThrowCursorStack,
-                    PointerButton::Secondary => GuiClickAction::ThrowCursorOne,
-                })
-            }
-            None => None,
-        };
-
-        RoutedGuiClick {
-            consumed: true,
-            action,
-        }
-    }
-
-    pub(super) fn reset_click_streak(&mut self) {
-        self.double_click.reset();
+        now: f64,
+        cursor_has_stack: bool,
+    ) -> bool {
+        self.left_click_gather(slot, button, shift, now, cursor_has_stack)
     }
 
     fn left_click_gather(
@@ -106,67 +49,6 @@ impl GuiRouter {
             None => {
                 self.reset_click_streak();
                 false
-            }
-        }
-    }
-}
-
-impl App {
-    /// Route a left-click to the open inventory. Returns whether it was consumed
-    /// (i.e. the inventory was open). No-op when closed. `now` timestamps the click
-    /// for double-click detection.
-    pub(super) fn route_screen_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        self.route_gui_click(screen, PointerButton::Primary, now)
-    }
-
-    /// Route a right-click to the open inventory. Returns whether it was consumed
-    /// (i.e. the inventory was open) — so a closed-inventory right-click falls
-    /// through to block placement. No-op when closed.
-    pub(super) fn route_screen_right_click(&mut self, screen: (u32, u32), now: f64) -> bool {
-        self.route_gui_click(screen, PointerButton::Secondary, now)
-    }
-
-    fn route_gui_click(&mut self, screen: (u32, u32), button: PointerButton, now: f64) -> bool {
-        let Some(game) = self.game.as_ref() else {
-            return false;
-        };
-        let routed = self.gui_router.route_click(GuiClick {
-            open: self.screen.ui_open(),
-            kind: self.screen.gui_kind(),
-            screen,
-            cursor: self.pointer.cursor(),
-            button,
-            shift: self.modifiers.shift,
-            now,
-            cursor_has_stack: game.cursor_has_stack(),
-        });
-        if let Some(action) = routed.action {
-            self.apply_gui_click_action(action);
-        }
-        routed.consumed
-    }
-
-    fn apply_gui_click_action(&mut self, action: GuiClickAction) {
-        match action {
-            GuiClickAction::MenuClick {
-                slot,
-                button,
-                shift,
-                gather,
-            } => {
-                if let Some(game) = self.game.as_mut() {
-                    game.menu_click(slot, button, shift, gather);
-                }
-            }
-            GuiClickAction::ThrowCursorStack => {
-                if let Some(game) = self.game.as_mut() {
-                    game.throw_cursor_stack();
-                }
-            }
-            GuiClickAction::ThrowCursorOne => {
-                if let Some(game) = self.game.as_mut() {
-                    game.throw_cursor_one();
-                }
             }
         }
     }

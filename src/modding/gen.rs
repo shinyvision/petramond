@@ -597,8 +597,8 @@ mod tests {
         let pack = root.join("mods/smoke");
         std::fs::create_dir_all(&pack).unwrap();
         let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mods-src/smoke/pack");
-        // Recursive: the pack ships subdirectories (textures/gui/baked since
-        // Phase 5), not just top-level catalogs.
+        // Recursive: the pack ships subdirectories (ui/documents etc.), not
+        // just top-level catalogs.
         fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
             std::fs::create_dir_all(dst).unwrap();
             for entry in std::fs::read_dir(src).unwrap() {

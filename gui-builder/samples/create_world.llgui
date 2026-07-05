@@ -1,0 +1,223 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:create_world",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": 240,
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 6,
+        "dir": "column",
+        "align": "stretch",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Create New World",
+          "scale": 2
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 2,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "type": "label",
+          "text": "World Name",
+          "style": "label.muted"
+        },
+        {
+          "id": "create_name",
+          "type": "text_input",
+          "placeholder": "My World",
+          "max_chars": 48,
+          "bind": {
+            "text": "create_name"
+          }
+        },
+        {
+          "type": "label",
+          "text": "Name already exists",
+          "style": "label.danger",
+          "bind": {
+            "visible": "name_exists"
+          }
+        },
+        {
+          "type": "label",
+          "text": "Seed",
+          "style": "label.muted"
+        },
+        {
+          "id": "create_seed",
+          "type": "text_input",
+          "placeholder": "Blank = random",
+          "max_chars": 48,
+          "bind": {
+            "text": "create_seed"
+          }
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 4,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "type": "row",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 5,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start"
+          },
+          "children": [
+            {
+              "id": "create",
+              "type": "button",
+              "text": "Create",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "button.success",
+              "bind": {
+                "enabled": "can_create"
+              }
+            },
+            {
+              "id": "cancel",
+              "type": "button",
+              "text": "Cancel",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "can_create": {
+        "bool": true
+      },
+      "create_name": {
+        "str": "Sample text"
+      },
+      "create_seed": {
+        "str": "Sample text"
+      },
+      "name_exists": {
+        "bool": true
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

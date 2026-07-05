@@ -19,6 +19,7 @@ mod model;
 mod query;
 mod render_handoff;
 pub(crate) mod sapling;
+mod sim_guard;
 mod stair;
 mod store;
 mod stream;

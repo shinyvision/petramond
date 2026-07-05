@@ -1,6 +1,6 @@
 use super::{app, app_with_grass, cursor_over_craft, cursor_over_slot, panel_gap_point};
 use crate::controls::{Control, Modifiers};
-use crate::gui::{CraftHit, GuiKind};
+use crate::gui::CraftHit;
 use crate::item::{ItemStack, ItemType};
 
 #[test]
@@ -13,13 +13,13 @@ fn craft_slot_clicks_route_through_to_crafting() {
     let screen = (1280u32, 720u32);
 
     // Pick the log up from inventory slot 0.
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.game().inventory().cursor().is_some());
 
     // Drop it into the first 2x2 craft input cell -> planks preview appears.
-    let cc = cursor_over_craft(screen, GuiKind::Inventory, CraftHit::Input(0));
+    let cc = cursor_over_craft(&mut app, screen, CraftHit::Input(0));
     app.set_cursor_position(cc.0, cc.1);
     app.click_screen_for_test(screen, 0.1);
     assert!(
@@ -32,7 +32,7 @@ fn craft_slot_clicks_route_through_to_crafting() {
     );
 
     // Click the result slot: 4 planks land on the cursor, ingredients consumed.
-    let rc = cursor_over_craft(screen, GuiKind::Inventory, CraftHit::Result);
+    let rc = cursor_over_craft(&mut app, screen, CraftHit::Result);
     app.set_cursor_position(rc.0, rc.1);
     app.click_screen_for_test(screen, 0.2);
     assert_eq!(
@@ -50,14 +50,10 @@ fn closing_a_menu_returns_craft_grid_items_to_inventory() {
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280u32, 720u32);
     // Move the logs onto the cursor and into a craft cell.
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
-    let cc = cursor_over_craft(
-        screen,
-        crate::gui::GuiKind::Inventory,
-        crate::gui::CraftHit::Input(0),
-    );
+    let cc = cursor_over_craft(&mut app, screen, crate::gui::CraftHit::Input(0));
     app.set_cursor_position(cc.0, cc.1);
     app.click_screen_for_test(screen, 0.1);
     // Close with Escape: the logs return to the inventory.
@@ -76,7 +72,7 @@ fn closing_a_menu_stashes_the_cursor_stack() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280u32, 720u32);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.game().inventory().cursor().is_some());
@@ -98,7 +94,7 @@ fn route_inventory_click_open_picks_up_slot_stack() {
     app.handle_control(Control::ToggleInventory, true);
     assert!(app.screen.inventory_open());
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
 
     assert!(app.game().inventory().cursor().is_none());
@@ -115,7 +111,7 @@ fn fast_double_click_keeps_stack_on_cursor_to_gather() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
 
     // First click picks the stack up; a second click within the double-click
@@ -138,7 +134,7 @@ fn slow_second_click_drops_the_stack_back() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
 
     // Two clicks spaced beyond the double-click window: the second is a normal
@@ -158,7 +154,7 @@ fn fast_click_on_a_different_slot_is_not_a_double_click() {
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
     // Pick up slot 0's stack.
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.game().inventory().cursor().is_some());
@@ -166,7 +162,7 @@ fn fast_click_on_a_different_slot_is_not_a_double_click() {
     // A fast click on a DIFFERENT slot is a normal drop, not a gather: the held
     // stack lands in the first (empty) main-grid slot.
     let dest = crate::inventory::HOTBAR_LEN;
-    let (dx, dy) = cursor_over_slot(screen, dest);
+    let (dx, dy) = cursor_over_slot(&mut app, screen, dest);
     app.set_cursor_position(dx, dy);
     app.click_screen_for_test(screen, 0.05);
     assert!(
@@ -192,7 +188,7 @@ fn route_inventory_right_click_splits_slot_stack() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     // Slot 0 starts at 64; right-click drags off the larger half (32).
     let consumed = app.right_click_screen_for_test(screen, 0.0);
@@ -219,7 +215,7 @@ fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
         shift: true,
     });
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     let item0 = app.game().inventory().slot(0).unwrap().item;
     app.click_screen_for_test(screen, 0.0);
@@ -244,7 +240,7 @@ fn route_click_outside_panel_throws_held_stack() {
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
     // Drag slot 0's stack onto the cursor.
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.game().inventory().cursor().is_some());
@@ -262,12 +258,12 @@ fn route_click_on_panel_background_does_not_throw() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    let (cx, cy) = cursor_over_slot(screen, 0);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0); // pick up the stack
     assert!(app.game().inventory().cursor().is_some());
     // A point inside the panel but on no slot: the held stack is kept.
-    let inside_panel_gap = panel_gap_point(screen);
+    let inside_panel_gap = panel_gap_point(&mut app, screen);
     app.set_cursor_position(inside_panel_gap.0, inside_panel_gap.1);
     app.click_screen_for_test(screen, 0.1);
     assert!(

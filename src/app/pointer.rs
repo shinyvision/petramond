@@ -67,26 +67,6 @@ impl PointerState {
         (self.cursor_x, self.cursor_y)
     }
 
-    pub(super) fn left_clicked(&self) -> bool {
-        self.left_click
-    }
-
-    pub(super) fn right_clicked(&self) -> bool {
-        self.right_click
-    }
-
-    pub(super) fn left_held(&self) -> bool {
-        self.left_held
-    }
-
-    pub(super) fn clear_left_click(&mut self) {
-        self.left_click = false;
-    }
-
-    pub(super) fn clear_right_click(&mut self) {
-        self.right_click = false;
-    }
-
     pub(super) fn clear_edges(&mut self) {
         self.left_click = false;
         self.right_click = false;
@@ -165,16 +145,42 @@ impl App {
 
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.pointer.set_cursor_position(x, y);
+        if self.doc_ui_kind().is_some() {
+            self.ui
+                .push_input(llama_ui::InputEvent::PointerMove { x, y });
+        }
     }
 
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
         self.pointer.set_button(button, down);
+        if self.doc_ui_kind().is_some() {
+            let (x, y) = self.pointer.cursor();
+            let button = match button {
+                PointerButton::Primary => llama_ui::PointerButton::Primary,
+                PointerButton::Secondary => llama_ui::PointerButton::Secondary,
+            };
+            self.ui.push_input(if down {
+                llama_ui::InputEvent::PointerDown {
+                    x,
+                    y,
+                    button,
+                    shift: self.modifiers.shift,
+                }
+            } else {
+                llama_ui::InputEvent::PointerUp { x, y, button }
+            });
+        }
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
-        if !self.adjust_world_scroll(delta) {
-            self.pointer.add_scroll_delta(delta);
+        if self.doc_ui_kind().is_some() {
+            // One wheel notch scrolls ~20 logical px, natural direction.
+            self.ui.push_input(llama_ui::InputEvent::Scroll {
+                delta: (delta * 20.0) as i32,
+            });
+            return;
         }
+        self.pointer.add_scroll_delta(delta);
     }
 
     pub fn release_pointer_buttons(&mut self) {

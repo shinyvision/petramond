@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "kind": "llama:hotbar",
+  "class": "hud",
+  "root": {
+    "type": "row",
+    "layout": {
+      "w": "auto",
+      "h": "auto",
+      "pad": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "margin": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "gap": 0,
+      "dir": "column",
+      "justify": "start",
+      "anchor": {
+        "h": "center",
+        "v": "end"
+      }
+    },
+    "style": "list.row",
+    "children": [
+      {
+        "type": "slot_grid",
+        "role": "hotbar",
+        "cols": 9,
+        "rows": 1,
+        "bind": {
+          "selected": "active_slot"
+        }
+      }
+    ]
+  }
+}

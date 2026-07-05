@@ -1,0 +1,48 @@
+{
+    "format": 1,
+    "kind": "llama:pause",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 8,
+            "align": "center"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Paused",
+                "scale": 2
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "button",
+                "id": "resume",
+                "text": "RESUME",
+                "layout": {
+                    "w": 110
+                }
+            },
+            {
+                "type": "button",
+                "id": "save_quit",
+                "text": "SAVE AND QUIT",
+                "layout": {
+                    "w": 110
+                }
+            }
+        ]
+    }
+}

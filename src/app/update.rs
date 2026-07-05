@@ -13,21 +13,25 @@ impl App {
         let screen_size = renderer.screen_size();
         self.recenter_pointer_if_pending(screen_size);
 
-        // Route inventory clicks before reading game input, so a right-click
-        // consumed by the open inventory never also fires block placement.
-        if self.pointer.left_clicked() && self.route_screen_click(screen_size, now) {
-            self.pointer.clear_left_click();
+        // Document-backed SHELL screens run their whole UI frame here (input
+        // → events → controller) and skip the simulation entirely; render
+        // only hands the built draw list over. The legacy click routers must
+        // not also fire on their invisible layouts.
+        if let Some(kind) = self.doc_shell_kind() {
+            self.audio.set_loop(None, now);
+            self.pointer.clear_edges();
+            self.drive_doc_ui(kind, screen_size, now);
+            return;
         }
-        if self.pointer.right_clicked() && self.route_screen_right_click(screen_size, now) {
-            self.pointer.clear_right_click();
-        }
-        if self.pointer.left_clicked() && self.route_shell_click(screen_size, now) {
-            self.pointer.clear_left_click();
-        }
-        if self.pointer.left_held() {
-            self.route_shell_drag(screen_size, now);
-        } else {
-            self.clear_shell_drag();
+
+        // Document-backed game MENUS (mod GUIs, containers) drive their UI
+        // frame here too — slot/widget clicks latch to the tick through the
+        // document runtime (there is no other click route) — and the
+        // simulation continues below. Clearing the pointer edges keeps a
+        // menu-consumed click from also firing block break/placement.
+        if let Some(kind) = self.doc_ui_kind() {
+            self.drive_doc_menu(kind, screen_size, now);
+            self.pointer.clear_edges();
         }
 
         if self.screen.shell_open() || self.game.is_none() {

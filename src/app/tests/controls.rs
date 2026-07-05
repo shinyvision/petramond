@@ -1,5 +1,4 @@
 use super::app;
-use crate::app::TextClipboard;
 use crate::app::{App, CursorIcon, CursorPolicy};
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton, TextKey};
@@ -14,7 +13,7 @@ fn app_starts_on_title_without_loading_a_game() {
     assert_eq!(app.screen, crate::app::AppScreen::Title);
     assert!(app.game.is_none(), "title screen does not preload a world");
     assert_eq!(
-        app.cursor_policy((1280, 720)),
+        app.cursor_policy(),
         CursorPolicy {
             grabbed: false,
             visible: true,
@@ -23,171 +22,203 @@ fn app_starts_on_title_without_loading_a_game() {
     );
 }
 
+/// World Settings is gated on a selection (the document binds `has_selection`),
+/// and it hosts the delete-world flow: settings → Delete World → confirmation,
+/// whose Cancel returns to world select with the selection intact.
 #[test]
-fn world_select_scrollbar_appears_only_when_worlds_overflow() {
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
-    app.worlds = test_worlds(5);
-
-    let screen = (1280, 720);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    assert!(snapshot.scrollbars.is_empty());
-
-    app.worlds = test_worlds(6);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    assert_eq!(snapshot.scrollbars.len(), 1);
-    assert_eq!(snapshot.rows.len(), 5);
-}
-
-#[test]
-fn world_select_scrollbar_track_click_scrolls_to_valid_end() {
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
-    app.worlds = test_worlds(12);
-
-    let screen = (1280, 720);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    let scrollbar = snapshot
-        .scrollbars
-        .first()
-        .expect("overflowing world list should expose a scrollbar");
-    app.set_cursor_position(
-        scrollbar.track.x + scrollbar.track.w * 0.5,
-        scrollbar.track.y + scrollbar.track.h - 0.5,
-    );
-    assert!(app.route_shell_click(screen, 0.0));
-
-    let visible = snapshot.rows.len();
-    assert_eq!(app.world_scroll, app.worlds.len().saturating_sub(visible));
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    assert_eq!(
-        snapshot.rows.first().map(|r| r.label.as_str()),
-        Some("world-7")
-    );
-}
-
-#[test]
-fn world_select_settings_requires_a_selected_world() {
+fn world_settings_requires_selection_and_hosts_the_delete_flow() {
+    use crate::gui::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
-
     let screen = (1280, 720);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    let settings = shell_button(&snapshot, "World Settings");
-    assert!(!settings.enabled);
 
+    // No selection: the (disabled) Settings button routes no click.
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.0);
+    click_doc_id(&mut app, "settings");
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.1);
+    assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
+
+    // With a selection it opens World Settings for that world.
     app.selected_world = Some(0);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    let settings = shell_button(&snapshot, "World Settings");
-    assert!(settings.enabled);
-}
-
-/// The delete flow moved behind World Settings: world-select -> settings
-/// screen (title + world name) -> its bottom-right Delete World button ->
-/// the unchanged confirmation window.
-#[test]
-fn world_settings_hosts_the_delete_confirmation_flow() {
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
-    app.worlds = test_worlds(1);
-    app.selected_world = Some(0);
-
-    let screen = (1280, 720);
-    click_shell_button(&mut app, screen, "World Settings");
-
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
+    click_doc_id(&mut app, "settings");
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.3);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSettings);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    assert!(snapshot.texts.iter().any(|text| text.text == "world-0"));
+    assert_eq!(
+        app.world_settings.as_ref().map(|s| s.world_name.as_str()),
+        Some("world-0")
+    );
 
-    click_shell_button(&mut app, screen, "Delete World");
-
+    // Its Delete World button opens the confirmation…
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.4);
+    click_doc_id(&mut app, "delete_world");
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.5);
     assert_eq!(app.screen, crate::app::AppScreen::DeleteWorld);
-    let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-    assert!(snapshot
-        .buttons
-        .iter()
-        .any(|button| button.label == "Cancel"));
-    assert!(snapshot.texts.iter().any(|text| text.text == "world-0"));
-}
 
-#[test]
-fn delete_world_confirmation_cancel_returns_to_world_select() {
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::DeleteWorld;
-    app.worlds = test_worlds(1);
-    app.selected_world = Some(0);
-
-    let screen = (1280, 720);
-    click_shell_button(&mut app, screen, "Cancel");
-
+    // …and Cancel returns to world select without losing the selection.
+    app.drive_doc_ui(GuiKind::DeleteWorld, screen, 0.6);
+    click_doc_id(&mut app, "cancel");
+    app.drive_doc_ui(GuiKind::DeleteWorld, screen, 0.7);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
     assert_eq!(app.selected_world, Some(0));
 }
 
+/// End-to-end plumbing for the document-backed create-world screen: platform
+/// text entry points route into the llama-ui runtime, the focused editor
+/// applies them, and the controller mirrors the text into bound state.
+/// (Editor semantics themselves are tested in llama-ui's text_edit suite.)
 #[test]
-fn create_world_text_input_moves_selects_and_replaces() {
+fn create_world_document_input_types_selects_and_uses_clipboard() {
+    use crate::gui::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
+    app.screen = crate::app::AppScreen::CreateWorld;
     let screen = (1280, 720);
-    click_shell_button(&mut app, screen, "Create New World");
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));
+    app.ui
+        .set_clipboard(Box::new(SharedClipboard(shared.clone())));
+    let drive = |app: &mut App, now: f64| app.drive_doc_ui(GuiKind::CreateWorld, screen, now);
 
-    assert!(app.handle_text_input("abcdef", screen));
-    app.handle_text_key(TextKey::ArrowLeft, screen);
-    app.handle_text_key(TextKey::ArrowLeft, screen);
+    // Solve one frame so the name input has a rect, then click to focus it.
+    drive(&mut app, 0.0);
+    let rect = app.ui.out().rect("create_name").expect("name input rect");
+    app.set_cursor_position((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.set_pointer_button(PointerButton::Primary, false);
+    assert!(app.handle_text_input("abcdef"));
+    drive(&mut app, 0.1);
+    assert_eq!(
+        app.ui.state_mut().get_str("create_name"),
+        Some("abcdef"),
+        "typed text mirrors into bound state"
+    );
+
+    // Shift+arrow selection replaced by typing, same as the legacy editor.
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.handle_text_key(TextKey::ArrowLeft);
     app.set_modifiers(Modifiers {
         ctrl: false,
         shift: true,
     });
-    app.handle_text_key(TextKey::ArrowLeft, screen);
-    app.handle_text_key(TextKey::ArrowLeft, screen);
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.handle_text_key(TextKey::ArrowLeft);
     app.set_modifiers(Modifiers::default());
+    assert!(app.handle_text_input("XY"));
+    drive(&mut app, 0.2);
+    assert_eq!(app.ui.state_mut().get_str("create_name"), Some("abXYef"));
 
-    assert!(app.handle_text_input("XY", screen));
-
-    assert_eq!(app.create_world_name.text(), "abXYef");
-}
-
-#[test]
-fn create_world_text_shortcuts_use_clipboard() {
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
-    let screen = (1280, 720);
-    click_shell_button(&mut app, screen, "Create New World");
-    app.handle_text_input("Copied World", screen);
+    // Clipboard shortcuts through the injected shared clipboard (AppUi owns
+    // the clipboard; the platform threads none through).
     app.set_modifiers(Modifiers {
         ctrl: true,
         shift: false,
     });
-    let mut clipboard = MemoryClipboard::default();
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyA));
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyC));
+    drive(&mut app, 0.3);
+    assert_eq!(shared.borrow().as_deref(), Some("abXYef"));
 
-    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyA, &mut clipboard, screen));
-    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyC, &mut clipboard, screen));
-    assert_eq!(clipboard.text.as_deref(), Some("Copied World"));
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyX));
+    drive(&mut app, 0.4);
+    assert_eq!(app.ui.state_mut().get_str("create_name"), Some(""));
 
-    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyX, &mut clipboard, screen));
-    assert_eq!(app.create_world_name.text(), "");
-
-    clipboard.text = Some("Pasted $#@!^{}".to_string());
-    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyV, &mut clipboard, screen));
-    assert_eq!(app.create_world_name.text(), "Pasted $#@!^{}");
+    *shared.borrow_mut() = Some("Pasted $#@!^{}".to_string());
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyV));
+    drive(&mut app, 0.5);
+    assert_eq!(
+        app.ui.state_mut().get_str("create_name"),
+        Some("Pasted $#@!^{}")
+    );
 }
 
+/// The document shell flow end-to-end through real pointer plumbing:
+/// title → (click Start Game) → world select → keyboard select → settings →
+/// back — every transition driven by the same App entry points the platform
+/// calls, resolved by the document runtime's hit-testing.
 #[test]
-fn create_world_input_hover_uses_text_cursor_icon() {
+fn document_shell_screens_flow_via_pointer_and_keys() {
+    use crate::gui::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.screen = crate::app::AppScreen::WorldSelect;
     let screen = (1280, 720);
-    click_shell_button(&mut app, screen, "Create New World");
-    let input = app
-        .shell_ui_snapshot(screen, (0.0, 0.0))
-        .inputs
-        .into_iter()
-        .next()
-        .expect("create world has an input");
-    app.set_cursor_position(input.rect.x + 2.0, input.rect.y + 2.0);
+    let click_id = click_doc_id;
 
-    assert_eq!(app.cursor_policy(screen).icon, CursorIcon::Text);
+    assert_eq!(app.doc_ui_kind(), Some(GuiKind::Title));
+    app.drive_doc_ui(GuiKind::Title, screen, 0.0);
+    click_id(&mut app, "start");
+    app.drive_doc_ui(GuiKind::Title, screen, 0.1);
+    assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
+
+    // World select with two stub worlds: keyboard selection enables Play.
+    app.worlds = test_worlds(2);
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
+    app.handle_text_key(TextKey::ArrowDown);
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.3);
+    assert_eq!(app.selected_world, Some(0));
+    app.handle_text_key(TextKey::ArrowDown);
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.4);
+    assert_eq!(app.selected_world, Some(1));
+
+    // Create → cancel round-trips; Back returns to the title.
+    click_id(&mut app, "create");
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.5);
+    assert_eq!(app.screen, crate::app::AppScreen::CreateWorld);
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.6);
+    click_id(&mut app, "cancel");
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.7);
+    assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.8);
+    click_id(&mut app, "back");
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.9);
+    assert_eq!(app.screen, crate::app::AppScreen::Title);
+}
+
+/// Renaming a world changes ONLY its display name; playing it must open the
+/// original save directory. (Regression: play once keyed on display name,
+/// silently starting a fresh world after a rename.)
+#[test]
+fn play_after_rename_opens_the_original_save_directory() {
+    let dir_name = "rename-regress-test";
+    let _ = crate::save::delete_world(dir_name);
+    crate::save::write_world_metadata(dir_name).expect("create world dir");
+    crate::save::rename_world(dir_name, "Renamed Display Name").expect("rename");
+
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    app.refresh_worlds();
+    let idx = app
+        .worlds
+        .iter()
+        .position(|w| w.dir_name == dir_name)
+        .expect("renamed world listed");
+    assert_eq!(app.worlds[idx].name, "Renamed Display Name");
+    app.selected_world = Some(idx);
+    app.play_selected_world();
+    assert!(app.game.is_some(), "world opened");
+    app.save_on_exit();
+    drop(app); // joins the save I/O thread; everything queued hits disk
+
+    assert!(
+        crate::save::world_dir(dir_name).join("level.dat").exists(),
+        "the ORIGINAL directory received the save"
+    );
+    assert!(
+        !crate::save::world_dir("Renamed Display Name").exists(),
+        "no fresh world appeared under the display name"
+    );
+    let _ = crate::save::delete_world(dir_name);
+}
+
+/// In-memory clipboard shared with the app's document UI (tests never touch
+/// the OS clipboard).
+struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+impl llama_ui::TextClipboard for SharedClipboard {
+    fn get_text(&mut self) -> Option<String> {
+        self.0.borrow().clone()
+    }
+    fn set_text(&mut self, text: &str) -> bool {
+        *self.0.borrow_mut() = Some(text.to_string());
+        true
+    }
 }
 
 #[test]
@@ -338,42 +369,15 @@ fn test_worlds(count: usize) -> Vec<WorldInfo> {
         .collect()
 }
 
-fn shell_button<'a>(
-    snapshot: &'a crate::gui::ShellUiSnapshot,
-    label: &str,
-) -> &'a crate::gui::ShellButton {
-    snapshot
-        .buttons
-        .iter()
-        .find(|button| button.label == label)
-        .unwrap_or_else(|| panic!("missing shell button '{label}'"))
-}
-
-fn click_shell_button(app: &mut App, screen: (u32, u32), label: &str) {
-    let (x, y) = {
-        let snapshot = app.shell_ui_snapshot(screen, (0.0, 0.0));
-        let button = shell_button(&snapshot, label);
-        (
-            button.rect.x + button.rect.w * 0.5,
-            button.rect.y + button.rect.h * 0.5,
-        )
-    };
-    app.set_cursor_position(x, y);
-    assert!(app.route_shell_click(screen, 0.0));
-}
-
-#[derive(Default)]
-struct MemoryClipboard {
-    text: Option<String>,
-}
-
-impl TextClipboard for MemoryClipboard {
-    fn get_text(&mut self) -> Option<String> {
-        self.text.clone()
-    }
-
-    fn set_text(&mut self, text: &str) -> bool {
-        self.text = Some(text.to_string());
-        true
-    }
+/// Queue a primary click on the document instance `id`, using the last solved
+/// frame's rect. The next `drive_doc_ui` frame resolves it.
+fn click_doc_id(app: &mut App, id: &str) {
+    let r = app
+        .ui
+        .out()
+        .rect(id)
+        .unwrap_or_else(|| panic!("no rect for '{id}'"));
+    app.set_cursor_position((r.x + r.w / 2) as f32, (r.y + r.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.set_pointer_button(PointerButton::Primary, false);
 }

@@ -1,0 +1,163 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:crafting_table",
+    "class": "container",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 6,
+        "dir": "column",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Crafting"
+        },
+        {
+          "type": "row",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 10,
+            "dir": "column",
+            "align": "center",
+            "justify": "center"
+          },
+          "children": [
+            {
+              "type": "slot_grid",
+              "role": "craft_input",
+              "cols": 3,
+              "rows": 3
+            },
+            {
+              "id": "craft_arrow",
+              "type": "gauge",
+              "mode": "grow_lr",
+              "layout": {
+                "w": 24,
+                "h": 17,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "gauge.arrow",
+              "bind": {
+                "value": "always_full"
+              }
+            },
+            {
+              "type": "slot",
+              "role": "craft_result"
+            }
+          ]
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 2,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "type": "slot_grid",
+          "role": "player_inv",
+          "cols": 9,
+          "rows": 3
+        },
+        {
+          "type": "slot_grid",
+          "role": "hotbar",
+          "cols": 9,
+          "rows": 1,
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              2,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {},
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

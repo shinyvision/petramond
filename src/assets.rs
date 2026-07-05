@@ -95,6 +95,12 @@ pub struct Pack {
     /// The pack's declared version string, for the save's mod-set record
     /// (`mods.json` — see `modding::modset`).
     pub version: Option<String>,
+    /// Human-readable description from `pack.json`, used by shell presentation.
+    pub description: String,
+    /// Short row copy for compact shell lists. Falls back to `description`.
+    pub summary: Option<String>,
+    /// Absolute path of the pack's icon PNG (for mod lists), when it ships one.
+    pub icon: Option<PathBuf>,
     /// Absolute path of the pack's compiled logic, when it ships one.
     pub wasm: Option<PathBuf>,
 }
@@ -134,8 +140,12 @@ struct PackManifest {
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     description: String,
+    #[serde(default)]
+    summary: Option<String>,
+    /// Pack-relative path of the pack's icon PNG, if any.
+    #[serde(default)]
+    icon: Option<String>,
     /// Pack-relative path of the compiled mod logic, if any.
     #[serde(default)]
     wasm: Option<String>,
@@ -230,6 +240,13 @@ fn discover_packs() -> Vec<Pack> {
                 name: m.name.clone(),
                 id: m.id.clone(),
                 version: m.version.clone(),
+                description: m.description.clone(),
+                summary: m.summary.clone(),
+                icon: m
+                    .icon
+                    .as_ref()
+                    .map(|i| dir.join(i))
+                    .filter(|p| p.is_file()),
                 wasm: m.wasm.as_ref().map(|w| dir.join(w)),
             }
         })

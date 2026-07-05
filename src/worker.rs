@@ -207,6 +207,13 @@ pub enum GenOutput {
         sp: SectionPos,
         section: Arc<Section>,
     },
+    /// The column job panicked (a worldgen bug at these coordinates). Reported —
+    /// not silently dropped — so the streamer clears its pending flag: a leaked
+    /// flag left the column permanently ungenerated (an invisible hole) and
+    /// permanently in-flight (freezing the sim guard around it).
+    ColumnFailed(ChunkPos),
+    /// The section job panicked; same contract as [`GenOutput::ColumnFailed`].
+    SectionFailed(SectionPos),
 }
 
 thread_local! {
@@ -260,8 +267,23 @@ impl WorkerPool {
 
     pub fn submit(&self, key: i64, job: GenJob) {
         let tx = self.tx_res.clone();
+        let failed = match &job {
+            GenJob::Column { pos, .. } => GenOutput::ColumnFailed(*pos),
+            GenJob::Section { sp, .. } => GenOutput::SectionFailed(*sp),
+        };
         self.pool.submit(key, move || {
-            let _ = tx.send(run_gen_job(job));
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_gen_job(job))) {
+                Ok(out) => {
+                    let _ = tx.send(out);
+                }
+                Err(_) => {
+                    // The per-thread generator may be mid-mutation; rebuild it
+                    // before the next job rather than trusting its caches.
+                    GENERATOR.with(|slot| *slot.borrow_mut() = None);
+                    eprintln!("worldgen job panicked; reporting failure");
+                    let _ = tx.send(failed);
+                }
+            }
         });
     }
 

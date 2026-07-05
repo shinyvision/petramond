@@ -1,6 +1,6 @@
 use crate::app::AppScreen;
 use crate::game::Game;
-use crate::gui::{ShellUiSnapshot, UiSnapshot};
+use crate::gui::UiSnapshot;
 use crate::item::{ItemStack, ItemType};
 
 pub(super) fn build(
@@ -8,14 +8,12 @@ pub(super) fn build(
     screen: AppScreen,
     screen_size: (u32, u32),
     cursor_px: (f32, f32),
-    shell: ShellUiSnapshot,
 ) -> UiSnapshot {
     let mut snapshot = UiSnapshot {
         open: screen.ui_open(),
         kind: screen.gui_kind(),
         screen: screen_size,
         cursor_px,
-        shell,
         ..Default::default()
     };
 

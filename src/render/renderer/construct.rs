@@ -269,10 +269,9 @@ async fn new_renderer_inner(
         mapped_at_creation: false,
     });
 
-    // Data-driven GUI textures: upload each baked PNG (panel + optional hover +
-    // each dynamic overlay) into its own bind group (reusing the gui-atlas bind
-    // layout) keyed by GuiTexId. Loaded from disk at runtime so re-baking +
-    // restarting picks them up with no recompile. See `crate::gui`.
+    // HUD heart atlas (empty | half | full, side by side). One texture for the whole
+    // health bar; the UI pass selects a cell per heart by UV. Loaded from disk at
+    // runtime into its own bind group (reusing the gui-atlas bind layout).
     let load_gui_bind = |path: &std::path::Path| -> Option<wgpu::BindGroup> {
         let bytes = std::fs::read(path).ok()?;
         let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
@@ -291,63 +290,16 @@ async fn new_renderer_inner(
             ],
         }))
     };
-    let mut gui_textures = std::collections::HashMap::new();
-    for (kind, path) in crate::gui::baked_panels() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::Panel(kind), bind);
-        }
-    }
-    for (kind, path) in crate::gui::baked_hovers() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::Hover(kind), bind);
-        }
-    }
-    for (kind, key, path) in crate::gui::baked_sprites() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::Sprite(kind, key), bind);
-        }
-    }
-    for (kind, path) in crate::gui::baked_shell_skins() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::Shell(kind), bind);
-        }
-    }
-    for (kind, path) in crate::gui::baked_shell_hovers() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::ShellHover(kind), bind);
-        }
-    }
-    for (kind, path) in crate::gui::baked_shell_scroll_thumbs() {
-        if let Some(bind) = load_gui_bind(&path) {
-            gui_textures.insert(GuiTexId::ShellScrollThumb(kind), bind);
-        }
-    }
-    // HUD heart atlas (empty | half | full, side by side). One texture for the whole
-    // health bar; the UI pass selects a cell per heart by UV. Loaded like any GUI PNG.
-    if let Some(bind) = load_gui_bind(std::path::Path::new(concat!(
+    let hearts_bind = load_gui_bind(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/assets/textures/gui/hearts.png"
-    ))) {
-        gui_textures.insert(GuiTexId::Hearts, bind);
-    }
-    let new_ui_quad_vbuf = |label| {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    };
-    let ui_panel_vbuf = new_ui_quad_vbuf("ui panel vbuf");
-    let ui_overlay_vbuf = new_ui_quad_vbuf("ui overlay vbuf");
-    let ui_hover_vbuf = new_ui_quad_vbuf("ui hover vbuf");
-    let ui_shell_vbuf = new_ui_quad_vbuf("ui shell vbuf");
-    let ui_shell_scroll_thumb_vbuf = new_ui_quad_vbuf("ui shell scroll thumb vbuf");
-    let ui_hearts_vbuf = new_ui_quad_vbuf("ui hearts vbuf");
-    let ui_static_text_vbuf = new_ui_quad_vbuf("ui static text vbuf");
-    let ui_glyph_text_vbuf = new_ui_quad_vbuf("ui glyph text vbuf");
-    let static_text_atlas = StaticTextAtlas::new(&device, &queue, &pipelines.atlas_bgl);
-    let glyph_text_atlas = GlyphTextAtlas::new(&device, &queue, &pipelines.atlas_bgl);
+    )));
+    let ui_hearts_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui hearts vbuf"),
+        size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     Renderer {
         surface,
@@ -480,31 +432,13 @@ async fn new_renderer_inner(
         particle_verts: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
         ui_texture_bgl: pipelines.atlas_bgl.clone(),
-        gui_textures,
+        hearts_bind,
+        doc_ui: super::doc_ui::DocUi::default(),
         ui_solid_vbuf: pipelines.ui_vbuf,
-        ui_dim_vertex_count: 0,
         ui_count_vertex_count: 0,
         ui_drag_count_vertex_count: 0,
-        ui_panel_vbuf,
-        ui_panel_vertex_count: 0,
-        ui_overlay_vbuf,
-        ui_overlay_vertex_count: 0,
-        ui_hover_vbuf,
-        ui_hover_vertex_count: 0,
-        ui_shell_vbuf,
-        ui_shell_vertex_count: 0,
-        ui_shell_scroll_thumb_vbuf,
-        ui_shell_scroll_thumb_vertex_count: 0,
         ui_hearts_vbuf,
         ui_hearts_vertex_count: 0,
-        static_text_atlas,
-        ui_static_text_vbuf,
-        ui_static_text_vertex_count: 0,
-        static_text_verts: Vec::new(),
-        glyph_text_atlas,
-        ui_glyph_text_vbuf,
-        ui_glyph_text_vertex_count: 0,
-        glyph_text_verts: Vec::new(),
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),

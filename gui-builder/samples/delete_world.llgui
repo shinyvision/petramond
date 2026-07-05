@@ -1,0 +1,135 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:delete_world",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": 220,
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 7,
+        "dir": "column",
+        "align": "center",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Delete World",
+          "scale": 2
+        },
+        {
+          "type": "label",
+          "bind": {
+            "text": "world_name"
+          }
+        },
+        {
+          "type": "label",
+          "text": "Delete this world?",
+          "style": "label.muted"
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 2,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "confirm",
+          "type": "button",
+          "text": "Delete World",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          },
+          "style": "button.danger"
+        },
+        {
+          "id": "cancel",
+          "type": "button",
+          "text": "Cancel",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "world_name": {
+        "str": "Sample text"
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

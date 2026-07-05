@@ -1,0 +1,5 @@
+{
+  "type": "alert",
+  "level": "info",
+  "text": "Something informative happened."
+}

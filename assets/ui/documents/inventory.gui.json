@@ -1,0 +1,83 @@
+{
+    "format": 1,
+    "kind": "llama:inventory",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Inventory"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 10,
+                    "align": "center",
+                    "justify": "end"
+                },
+                "children": [
+                    {
+                        "type": "slot_grid",
+                        "role": "craft_input",
+                        "cols": 2,
+                        "rows": 2
+                    },
+                    {
+                        "type": "gauge",
+                        "id": "craft_arrow",
+                        "mode": "grow_lr",
+                        "style": "gauge.arrow",
+                        "bind": {
+                            "value": "always_full"
+                        },
+                        "layout": {
+                            "w": 24,
+                            "h": 17
+                        }
+                    },
+                    {
+                        "type": "slot",
+                        "role": "craft_result"
+                    }
+                ]
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "slot_grid",
+                "role": "player_inv",
+                "cols": 9,
+                "rows": 3
+            },
+            {
+                "type": "slot_grid",
+                "role": "hotbar",
+                "cols": 9,
+                "rows": 1,
+                "layout": {
+                    "margin": [
+                        0,
+                        2,
+                        0,
+                        0
+                    ]
+                }
+            }
+        ]
+    }
+}

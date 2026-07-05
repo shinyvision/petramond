@@ -1,0 +1,107 @@
+{
+    "format": 1,
+    "kind": "llama:furnace",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Furnace"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 12,
+                    "align": "center",
+                    "justify": "center"
+                },
+                "children": [
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 3,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "slot",
+                                "role": "furnace_input"
+                            },
+                            {
+                                "type": "gauge",
+                                "id": "flame",
+                                "mode": "deplete_td",
+                                "style": "gauge.flame",
+                                "bind": {
+                                    "value": "burn01"
+                                },
+                                "layout": {
+                                    "w": 14,
+                                    "h": 14
+                                }
+                            },
+                            {
+                                "type": "slot",
+                                "role": "furnace_fuel"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "gauge",
+                        "id": "arrow",
+                        "mode": "grow_lr",
+                        "style": "gauge.arrow",
+                        "bind": {
+                            "value": "cook01"
+                        },
+                        "layout": {
+                            "w": 24,
+                            "h": 17
+                        }
+                    },
+                    {
+                        "type": "slot",
+                        "role": "furnace_output"
+                    }
+                ]
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "slot_grid",
+                "role": "player_inv",
+                "cols": 9,
+                "rows": 3
+            },
+            {
+                "type": "slot_grid",
+                "role": "hotbar",
+                "cols": 9,
+                "rows": 1,
+                "layout": {
+                    "margin": [
+                        0,
+                        2,
+                        0,
+                        0
+                    ]
+                }
+            }
+        ]
+    }
+}

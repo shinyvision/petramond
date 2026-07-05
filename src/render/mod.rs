@@ -19,7 +19,6 @@ mod resources;
 mod scene;
 mod selection;
 mod shader_pack;
-mod text_atlas;
 mod ui;
 mod ui_text;
 mod uniforms;

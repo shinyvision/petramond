@@ -1,0 +1,106 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "llama:chest",
+    "class": "container",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          4,
+          2,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 6,
+        "dir": "column",
+        "justify": "start"
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "label",
+          "text": "Chest"
+        },
+        {
+          "type": "slot_grid",
+          "role": "storage",
+          "cols": 9,
+          "rows": 3
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 2,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "type": "slot_grid",
+          "role": "player_inv",
+          "cols": 9,
+          "rows": 3
+        },
+        {
+          "type": "slot_grid",
+          "role": "hotbar",
+          "cols": 9,
+          "rows": 1,
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              2,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {},
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

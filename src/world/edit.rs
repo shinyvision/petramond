@@ -14,6 +14,13 @@ impl World {
         let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
             return false;
         };
+        // Streaming-finality guard: a section whose gen result or saved overlay is
+        // still in flight must not change — the landing result would clobber the
+        // write, or the write would be persisted over the player's on-disk record
+        // (see `world::sim_guard`). The blocked state resolves within a few frames.
+        if !self.stream_writable(pos) {
+            return false;
+        }
         if !self.sections.contains_key(&pos) {
             // Building into absent sky materializes an empty section. Editing an absent
             // generated-solid/water section materializes its generated base first, so the

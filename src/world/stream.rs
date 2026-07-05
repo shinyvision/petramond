@@ -213,7 +213,9 @@ impl World {
         dist > 0.0 && (dx as f32 * fx + dz as f32 * fz) / dist >= dot_min
     }
 
-    fn column_wanted(target: LoadTarget, pos: ChunkPos) -> bool {
+    /// `pub(super)` for the sim guard: an absent column that is wanted under the
+    /// current target counts as in-flight, not as never-coming.
+    pub(super) fn column_wanted(target: LoadTarget, pos: ChunkPos) -> bool {
         Self::column_in_shape(target, pos, 0, FORWARD_LOAD_DOT_MIN)
     }
 
@@ -413,6 +415,10 @@ impl World {
         if let Some(save) = self.save.as_ref() {
             if save.manifest_contains(sp) {
                 save.request_load(sp);
+                // The section's true content is now in flight until the save thread
+                // answers (and the overlay applies): the sim guard blocks mutation
+                // and the harvest skips persisting it meanwhile.
+                self.awaited_overlays.insert(sp);
             }
         }
     }
@@ -568,6 +574,16 @@ impl World {
                     new_columns += 1;
                     new_column_positions.push(pos);
                 }
+                // A panicked gen job: clear the pending flag so the position can be
+                // re-requested (or finally judged absent) instead of staying
+                // in-flight forever — which would both hide the terrain and freeze
+                // the sim guard around it.
+                GenOutput::ColumnFailed(pos) => {
+                    self.pending.remove(&pos);
+                }
+                GenOutput::SectionFailed(sp) => {
+                    self.pending_sections.remove(&sp);
+                }
                 GenOutput::Section { sp, section } => {
                     if !self.pending_sections.remove(&sp) {
                         continue;
@@ -597,6 +613,9 @@ impl World {
         //    blocks win over the generated base.
         while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
             let sp = loaded.pos;
+            // The save thread answered: the record is no longer in flight (whatever
+            // the answer), so the sim guard must not keep the section blocked.
+            self.awaited_overlays.remove(&sp);
             if !self.within_current_keep_radius(sp.chunk_pos()) {
                 continue;
             }
@@ -791,7 +810,19 @@ impl World {
     /// world coordinate (so it crosses section and column seams) and only flows into a
     /// neighbour that is actually loaded, so water never spills into a not-yet-streamed
     /// void.
-    fn queue_loaded_section_water_updates(&mut self, ingested: &[SectionPos]) {
+    ///
+    /// The kick is also the RE-ARM for simulation work the streaming-finality guard
+    /// dropped (`world::sim_guard`): whichever side of a water-air seam lands LAST
+    /// re-queues the contact, so no flow is permanently lost to gating. Three scans
+    /// per ingested section, each cheap in the bulk cases:
+    /// - water + air inside the section: the full interior scan (shores, waterfalls);
+    /// - water without air (ocean interior, water over a sealed floor): only the five
+    ///   outflow boundary planes, and only against a loaded neighbour that holds air —
+    ///   calm open ocean skips every plane by summary;
+    /// - any air: the five inflow boundary planes against loaded water-holding
+    ///   neighbours, queueing the NEIGHBOUR's water cell — the cross-seam case
+    ///   neither section's own water scan can see (its water, this section's air).
+    pub(super) fn queue_loaded_section_water_updates(&mut self, ingested: &[SectionPos]) {
         let air = Block::Air.id();
         let water = Block::Water.id();
         let mut updates: Vec<IVec3> = Vec::new();
@@ -799,40 +830,96 @@ impl World {
             let Some(section) = self.sections.get(sp) else {
                 continue;
             };
-            // Streamed water only needs a flow kick where it borders air: a section must
-            // hold BOTH water and air for any cell to flow. This skips the two bulk cases
-            // that made this a multi-ms poll spike over ocean — fully-submerged water
-            // sections (no air) and water-free sections (stone/air/land). Calm open ocean
-            // settles section-aligned at sea level (all-water below, all-air above), so it
-            // is skipped entirely; rivers/shores/waterfalls are mixed and still kicked.
-            if !section.has_water() || !section.has_air() {
-                continue;
-            }
-            let blocks = section.blocks_slice();
             let (ox, oy, oz) = sp.origin_world();
-            for ly in 0..SECTION_SIZE {
-                for lz in 0..SECTION_SIZE {
-                    for lx in 0..SECTION_SIZE {
-                        if blocks[section_idx(lx, ly, lz)] != water {
-                            continue;
+            let has_water = section.has_water();
+            let has_air = section.has_air();
+
+            if has_water && has_air {
+                let blocks = section.blocks_slice();
+                for ly in 0..SECTION_SIZE {
+                    for lz in 0..SECTION_SIZE {
+                        for lx in 0..SECTION_SIZE {
+                            if blocks[section_idx(lx, ly, lz)] != water {
+                                continue;
+                            }
+                            let wx = ox + lx as i32;
+                            let wy = oy + ly as i32;
+                            let wz = oz + lz as i32;
+                            // Down + the four horizontals (air above is a normal
+                            // surface and does not start flow).
+                            let neighbors = [
+                                (wx, wy - 1, wz),
+                                (wx - 1, wy, wz),
+                                (wx + 1, wy, wz),
+                                (wx, wy, wz - 1),
+                                (wx, wy, wz + 1),
+                            ];
+                            if neighbors.iter().any(|&(nx, ny, nz)| {
+                                self.section_loaded_at(nx, ny, nz)
+                                    && self.chunk_block(nx, ny, nz) == air
+                            }) {
+                                updates.push(IVec3::new(wx, wy, wz));
+                            }
                         }
-                        let wx = ox + lx as i32;
-                        let wy = oy + ly as i32;
-                        let wz = oz + lz as i32;
-                        // Down + the four horizontals (air above is a normal surface and
-                        // does not start flow).
-                        let neighbors = [
-                            (wx, wy - 1, wz),
-                            (wx - 1, wy, wz),
-                            (wx + 1, wy, wz),
-                            (wx, wy, wz - 1),
-                            (wx, wy, wz + 1),
-                        ];
-                        if neighbors.iter().any(|&(nx, ny, nz)| {
-                            self.section_loaded_at(nx, ny, nz)
-                                && self.chunk_block(nx, ny, nz) == air
-                        }) {
-                            updates.push(IVec3::new(wx, wy, wz));
+                    }
+                }
+            } else if has_water {
+                // No air inside: only boundary water can flow, and only outward
+                // through the five outflow faces.
+                let blocks = section.blocks_slice();
+                for &(dx, dy, dz) in &KICK_OUTFLOW_DIRS {
+                    let npos = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
+                    let Some(ns) = self.sections.get(&npos) else {
+                        continue; // absent: its own landing kick handles the seam
+                    };
+                    if !ns.has_air() {
+                        continue; // full water/stone plane cannot accept flow
+                    }
+                    for a in 0..SECTION_SIZE {
+                        for b in 0..SECTION_SIZE {
+                            let (lx, ly, lz) = boundary_cell(dx, dy, dz, a, b);
+                            if blocks[section_idx(lx, ly, lz)] != water {
+                                continue;
+                            }
+                            let (wx, wy, wz) = (
+                                ox + lx as i32 + dx,
+                                oy + ly as i32 + dy,
+                                oz + lz as i32 + dz,
+                            );
+                            if self.chunk_block(wx, wy, wz) == air {
+                                updates.push(IVec3::new(wx - dx, wy - dy, wz - dz));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if has_air {
+                // Water in a LOADED neighbour may now have this section's air to
+                // flow into: from above (falls in) or from the four sides.
+                let blocks = section.blocks_slice();
+                for &(dx, dy, dz) in &KICK_INFLOW_DIRS {
+                    let npos = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
+                    let Some(ns) = self.sections.get(&npos) else {
+                        continue;
+                    };
+                    if !ns.has_water() {
+                        continue;
+                    }
+                    for a in 0..SECTION_SIZE {
+                        for b in 0..SECTION_SIZE {
+                            let (lx, ly, lz) = boundary_cell(dx, dy, dz, a, b);
+                            if blocks[section_idx(lx, ly, lz)] != air {
+                                continue;
+                            }
+                            let (nx, ny, nz) = (
+                                ox + lx as i32 + dx,
+                                oy + ly as i32 + dy,
+                                oz + lz as i32 + dz,
+                            );
+                            if self.chunk_block(nx, ny, nz) == water {
+                                updates.push(IVec3::new(nx, ny, nz));
+                            }
                         }
                     }
                 }
@@ -841,6 +928,29 @@ impl World {
         for pos in updates {
             self.queue_block_update(pos);
         }
+    }
+}
+
+/// Water can leave a section down or sideways (never up).
+const KICK_OUTFLOW_DIRS: [(i32, i32, i32); 5] =
+    [(0, -1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)];
+/// Water can enter a section's air from above (falling) or from the sides
+/// (never rising from below).
+const KICK_INFLOW_DIRS: [(i32, i32, i32); 5] =
+    [(0, 1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)];
+
+/// The section-local cell on the boundary plane facing `(dx,dy,dz)`, indexed by
+/// the plane's two free axes `(a, b)`.
+#[inline]
+fn boundary_cell(dx: i32, dy: i32, dz: i32, a: usize, b: usize) -> (usize, usize, usize) {
+    let hi = SECTION_SIZE - 1;
+    match (dx, dy, dz) {
+        (1, 0, 0) => (hi, a, b),
+        (-1, 0, 0) => (0, a, b),
+        (0, 1, 0) => (a, hi, b),
+        (0, -1, 0) => (a, 0, b),
+        (0, 0, 1) => (a, b, hi),
+        _ => (a, b, 0),
     }
 }
 

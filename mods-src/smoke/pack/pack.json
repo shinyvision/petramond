@@ -3,5 +3,7 @@
   "id": "smoke",
   "version": "0.1.0",
   "description": "Phase 2b smoke-test mod: one namespaced block, a 200-tick heartbeat logger, a block_placed observer.",
+  "summary": "Adds smoke effects and particles.",
+  "icon": "icon.png",
   "wasm": "mod.wasm"
 }

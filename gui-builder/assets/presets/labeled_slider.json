@@ -1,0 +1,17 @@
+{
+  "type": "row",
+  "layout": { "gap": 8, "align": "center" },
+  "children": [
+    { "type": "label", "text": "Volume" },
+    { "type": "spacer", "layout": { "w": { "grow": 1 } } },
+    {
+      "type": "slider",
+      "id": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "step": 5.0,
+      "bind": { "value": "volume" },
+      "layout": { "w": 90 }
+    }
+  ]
+}

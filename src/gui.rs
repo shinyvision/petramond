@@ -1,14 +1,14 @@
-//! Neutral GUI/container value types and baked layout contracts shared by app,
-//! render, and deterministic container mutation.
+//! Neutral GUI/container value types shared by app, render, and deterministic
+//! container mutation.
 //!
-//! These types name logical GUI identities, hit-tested slots, and immutable view
-//! snapshots. They do not own renderer resources or container mutation; baked
-//! layout code maps pixels to these slot identities, and the game menu applies
-//! them on the tick.
+//! These types name logical GUI identities, slot roles, and immutable view
+//! snapshots. They do not own renderer resources or container mutation; the
+//! GUI-document runtime ([`documents`]) maps pixels to these slot identities,
+//! and the game menu applies them on the tick.
 
+pub(crate) mod doc_theme;
+pub(crate) mod documents;
 mod kind;
-mod layout;
-mod shell_skin;
 
 use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemStack, ItemType};
@@ -18,14 +18,6 @@ use std::sync::Arc;
 
 pub use kind::GuiKind;
 pub(crate) use kind::{intern_kind, intern_str, kind_key, resolve_kind};
-pub(crate) use layout::{
-    baked_hovers, baked_panels, baked_sprites, def, hit, panel_contains, GuiDef, LabelAlign,
-    OverlayMode, SpriteKey, WidgetDef,
-};
-pub(crate) use shell_skin::{
-    baked_shell_hovers, baked_shell_scroll_thumbs, baked_shell_skins, shell_def, ShellDef,
-    ShellKind, ShellRole,
-};
 
 /// One value of the open GUI session's state map: written by mods on the tick
 /// (`GuiStateSet`), read per frame by the renderer for `label` text, `rotimage`
@@ -117,6 +109,24 @@ pub(crate) enum Role {
 }
 
 impl Role {
+    /// Resolve a GUI-document role string (the document runtime speaks role
+    /// strings; the game owns the mapping to slot identities).
+    pub(crate) fn from_key(key: &str) -> Option<Role> {
+        Some(match key {
+            "storage" => Role::Storage,
+            "player_inv" => Role::PlayerInv,
+            "hotbar" => Role::Hotbar,
+            "craft_input" => Role::CraftInput,
+            "craft_result" => Role::CraftResult,
+            "furnace_input" => Role::FurnaceInput,
+            "furnace_fuel" => Role::FurnaceFuel,
+            "furnace_output" => Role::FurnaceOutput,
+            "workbench_input" => Role::WorkbenchInput,
+            "workbench_result" => Role::WorkbenchResult,
+            _ => return None,
+        })
+    }
+
     /// Map this role + its in-role index to the logical slot a click resolves to.
     /// `None` for decorative roles, so stray decorative manifest slots can never
     /// route a click.
@@ -147,15 +157,6 @@ pub struct SlotRect {
     pub h: f32,
 }
 
-impl SlotRect {
-    /// Whether physical-pixel point `(px, py)` lies within this slot's interior
-    /// (half-open: includes the top-left edge, excludes the bottom-right).
-    #[inline]
-    pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
-    }
-}
-
 /// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
 /// step per ~240 logical px of height (and ~320 of width), clamped to `1..=4`.
 pub fn gui_scale(screen: (u32, u32)) -> f32 {
@@ -163,97 +164,6 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     let by_h = (h / 240).max(1);
     let by_w = (w / 320).max(1);
     by_h.min(by_w).clamp(1, 4) as f32
-}
-
-pub(crate) const TEXT_GLYPH_W: u32 = 5;
-pub(crate) const TEXT_GLYPH_H: u32 = 7;
-pub(crate) const TEXT_GLYPH_ADVANCE: u32 = TEXT_GLYPH_W + 1;
-
-#[inline]
-pub(crate) fn shell_text_width_chars(chars: usize) -> u32 {
-    if chars == 0 {
-        0
-    } else {
-        chars as u32 * TEXT_GLYPH_ADVANCE - 1
-    }
-}
-
-pub(crate) fn shell_input_text_rect(rect: SlotRect, scale: f32) -> SlotRect {
-    let pad = 5.0 * scale;
-    SlotRect {
-        x: rect.x + pad,
-        y: rect.y,
-        w: (rect.w - pad * 2.0).max(0.0),
-        h: rect.h,
-    }
-}
-
-pub(crate) fn shell_input_visible_chars(rect: SlotRect, scale: f32) -> usize {
-    let cell = scale.max(1.0);
-    let text_rect = shell_input_text_rect(rect, scale);
-    let units = (text_rect.w / cell).floor();
-    if units < TEXT_GLYPH_W as f32 {
-        0
-    } else {
-        ((units + 1.0) / TEXT_GLYPH_ADVANCE as f32).floor() as usize
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum HoverFit {
-    Stretch,
-    Tile,
-    NineSlice {
-        src_l: f32,
-        src_r: f32,
-        src_t: f32,
-        src_b: f32,
-        dst_l: f32,
-        dst_r: f32,
-        dst_t: f32,
-        dst_b: f32,
-    },
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub(crate) enum HoverFitJson {
-    Stretch,
-    Tile,
-    NineSlice { l: f32, r: f32, t: f32, b: f32 },
-}
-
-impl Default for HoverFitJson {
-    fn default() -> Self {
-        HoverFitJson::NineSlice {
-            l: 4.0,
-            r: 4.0,
-            t: 4.0,
-            b: 4.0,
-        }
-    }
-}
-
-impl HoverFit {
-    pub(crate) fn from_json(fit: HoverFitJson, author_scale: f32) -> Self {
-        match fit {
-            HoverFitJson::Stretch => HoverFit::Stretch,
-            HoverFitJson::Tile => HoverFit::Tile,
-            HoverFitJson::NineSlice { l, r, t, b } => {
-                let s = author_scale.max(1.0);
-                HoverFit::NineSlice {
-                    src_l: l,
-                    src_r: r,
-                    src_t: t,
-                    src_b: b,
-                    dst_l: l / s,
-                    dst_r: r / s,
-                    dst_t: t / s,
-                    dst_b: b / s,
-                }
-            }
-        }
-    }
 }
 
 /// A furnace's view for the open furnace screen: its three slots plus the two
@@ -303,8 +213,8 @@ pub struct HealthView {
 #[derive(Clone, Debug)]
 pub struct UiSnapshot {
     pub open: bool,
-    /// Which baked GUI this frame draws — the open menu's kind, or `Hotbar` for the
-    /// HUD. Selects the panel/hover/overlay textures and the slot layout.
+    /// Which GUI this frame draws — the open menu's kind, or `Hotbar` for the
+    /// HUD.
     pub kind: GuiKind,
     pub screen: (u32, u32),
     pub cursor_px: (f32, f32),
@@ -334,7 +244,26 @@ pub struct UiSnapshot {
     /// fractions), or `None` when no mod GUI session is up. A cheap `Arc`
     /// clone of the tick-owned map.
     pub gui_state: Option<Arc<GuiStateMap>>,
-    pub shell: ShellUiSnapshot,
+    /// `Some` when a GUI DOCUMENT draws this frame's screen: the document's
+    /// solved slot cells (possibly empty). `build_ui` then emits ONLY the
+    /// game-owned content (item icons, counts, hearts, the drag stack) into
+    /// these rects and skips every legacy panel/shell group — the document
+    /// draw list owns all chrome.
+    pub doc_slots: Option<Arc<Vec<DocSlot>>>,
+}
+
+/// One document slot cell: the game role, in-role index, and physical rect.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocSlot {
+    pub(crate) role: Role,
+    pub(crate) index: u32,
+    pub(crate) rect: SlotRect,
+}
+
+impl DocSlot {
+    pub(crate) fn new(role: Role, index: u32, rect: SlotRect) -> DocSlot {
+        DocSlot { role, index, rect }
+    }
 }
 
 impl Default for UiSnapshot {
@@ -354,73 +283,7 @@ impl Default for UiSnapshot {
             workbench: None,
             health: None,
             gui_state: None,
-            shell: ShellUiSnapshot::default(),
+            doc_slots: None,
         }
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ShellUiSnapshot {
-    pub active: bool,
-    pub skin: Option<ShellKind>,
-    pub quads: Vec<ShellQuad>,
-    pub texts: Vec<ShellText>,
-    pub buttons: Vec<ShellButton>,
-    pub inputs: Vec<ShellInput>,
-    pub rows: Vec<ShellListRow>,
-    pub scrollbars: Vec<ShellScrollbar>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ShellQuad {
-    pub rect: SlotRect,
-    pub color: [f32; 4],
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShellText {
-    pub rect: SlotRect,
-    pub text: String,
-    pub color: [f32; 4],
-    pub cell_px: f32,
-    pub align: ShellTextAlign,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ShellTextAlign {
-    Left,
-    Center,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShellButton {
-    pub rect: SlotRect,
-    pub label: String,
-    pub enabled: bool,
-    pub hovered: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShellInput {
-    pub rect: SlotRect,
-    pub text: String,
-    pub placeholder: String,
-    pub active: bool,
-    pub cursor: usize,
-    pub selection: Option<(usize, usize)>,
-    pub show_cursor: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShellListRow {
-    pub rect: SlotRect,
-    pub label: String,
-    pub selected: bool,
-    pub hovered: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShellScrollbar {
-    pub track: SlotRect,
-    pub thumb: SlotRect,
 }

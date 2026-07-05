@@ -1,0 +1,48 @@
+{
+    "format": 1,
+    "kind": "llama:title",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                10,
+                6,
+                10,
+                8
+            ],
+            "gap": 8,
+            "align": "center"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Llamacraft",
+                "scale": 3
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 8
+                }
+            },
+            {
+                "type": "button",
+                "id": "start",
+                "text": "Start Game",
+                "layout": {
+                    "w": 130
+                }
+            },
+            {
+                "type": "button",
+                "id": "quit",
+                "text": "Quit",
+                "layout": {
+                    "w": 130
+                }
+            }
+        ]
+    }
+}

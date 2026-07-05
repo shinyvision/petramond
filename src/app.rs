@@ -13,7 +13,8 @@ mod presentation_events;
 mod render;
 mod screen;
 mod shell;
-mod text_input;
+mod shell_docs;
+mod ui_runtime;
 mod ui_snapshot;
 mod update;
 
@@ -21,12 +22,10 @@ use std::collections::HashMap;
 
 use screen::AppScreen;
 pub use screen::{CursorIcon, CursorPolicy};
-pub(crate) use text_input::TextClipboard;
 
 use crate::app::gui_router::GuiRouter;
 use crate::app::input::{ControlEvent, InputController};
 use crate::app::pointer::PointerState;
-use crate::app::text_input::TextInput;
 use crate::audio::Audio;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers};
@@ -62,6 +61,8 @@ pub struct App {
     input: InputController,
     pointer: PointerState,
     gui_router: GuiRouter,
+    /// GUI-document runtime driver (every screen is document-backed).
+    ui: ui_runtime::AppUi,
     screen: AppScreen,
     /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
     /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
@@ -75,15 +76,9 @@ pub struct App {
     hand: HandTriggers,
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
-    world_scroll: usize,
     /// The World Settings session for the selected world (`None` unless the
     /// screen is open): installed pack rows + the world's disabled set.
     world_settings: Option<shell::WorldSettingsSession>,
-    create_world_name: TextInput,
-    create_world_seed: TextInput,
-    focused_create_field: Option<shell::CreateField>,
-    dragged_create_field: Option<(shell::CreateField, usize)>,
-    shell_clicks: shell::ShellClickStreak,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
 }
@@ -122,19 +117,14 @@ impl App {
             input: InputController::default(),
             pointer: PointerState::default(),
             gui_router: GuiRouter::default(),
+            ui: ui_runtime::AppUi::new(),
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             last_render: now_seconds(),
             hand: HandTriggers::default(),
             worlds: Vec::new(),
             selected_world: None,
-            world_scroll: 0,
             world_settings: None,
-            create_world_name: TextInput::new(48),
-            create_world_seed: TextInput::new(48),
-            focused_create_field: None,
-            dragged_create_field: None,
-            shell_clicks: shell::ShellClickStreak::default(),
             quit_requested: false,
             renderer_world_clear_pending: true,
         };
@@ -158,13 +148,11 @@ impl App {
         }
     }
 
+    // Known polish gap: no Text (I-beam) cursor over document text inputs yet;
+    // every visible-cursor screen uses the default arrow.
     #[inline]
-    pub fn cursor_policy(&self, screen_size: (u32, u32)) -> CursorPolicy {
-        let mut policy = CursorPolicy::for_screen(self.screen);
-        if policy.visible && self.shell_text_cursor_hovered(screen_size) {
-            policy.icon = CursorIcon::Text;
-        }
-        policy
+    pub fn cursor_policy(&self) -> CursorPolicy {
+        CursorPolicy::for_screen(self.screen)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -224,6 +212,49 @@ impl App {
     /// Sprint/Sneak controls.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
+    }
+
+    /// Which GUI document backs the current screen, if any. Document-backed
+    /// screens draw + route input through the llama-ui runtime; a screen with
+    /// no loaded document draws (and routes) nothing.
+    pub(crate) fn doc_ui_kind(&self) -> Option<crate::gui::GuiKind> {
+        use crate::gui::GuiKind;
+        let kind = match self.screen {
+            AppScreen::Title if std::env::var_os("LLAMA_UI_DEMO").is_some() => GuiKind::Demo,
+            AppScreen::Title => GuiKind::Title,
+            AppScreen::WorldSelect => GuiKind::WorldSelect,
+            AppScreen::WorldSettings => GuiKind::WorldSettings,
+            AppScreen::CreateWorld => GuiKind::CreateWorld,
+            AppScreen::DeleteWorld => GuiKind::DeleteWorld,
+            AppScreen::Pause => GuiKind::Pause,
+            AppScreen::ModGui(kind) => kind,
+            AppScreen::Inventory => GuiKind::Inventory,
+            AppScreen::CraftingTable => GuiKind::CraftingTable,
+            AppScreen::Furnace => GuiKind::Furnace,
+            AppScreen::Chest => GuiKind::Chest,
+            AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
+            _ => return None,
+        };
+        ui_runtime::AppUi::doc_backed(kind).then_some(kind)
+    }
+
+    /// The subset of [`doc_ui_kind`](Self::doc_ui_kind) where the whole frame
+    /// belongs to the shell (no game simulation behind it). Game menus (mod
+    /// GUIs, containers) return `None` here — they drive their document UI
+    /// AND tick the game.
+    pub(crate) fn doc_shell_kind(&self) -> Option<crate::gui::GuiKind> {
+        if self.screen.ui_open() {
+            return None;
+        }
+        self.doc_ui_kind()
+    }
+
+    /// Whether the hotbar HUD draws from its GUI document this frame
+    /// (gameplay screen only; presentation-only, input stays with the game).
+    pub(crate) fn doc_hud_active(&self) -> bool {
+        matches!(self.screen, AppScreen::Game)
+            && self.game.is_some()
+            && ui_runtime::AppUi::doc_backed(crate::gui::GuiKind::Hotbar)
     }
 }
 

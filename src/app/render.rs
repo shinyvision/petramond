@@ -20,7 +20,28 @@ impl App {
             self.renderer_world_clear_pending = false;
         }
 
-        let shell = self.shell_ui_snapshot(screen_size, self.pointer.cursor());
+        // Document-backed screens draw the frame [`App::update`] already
+        // built (`drive_doc_ui`/`drive_doc_menu`); the hotbar HUD document is
+        // presentation-only, so it runs its (input-free) frame here.
+        let mut doc_kind = self.doc_ui_kind();
+        if doc_kind.is_none() && self.doc_hud_active() {
+            let kind = crate::gui::GuiKind::Hotbar;
+            self.ui.ensure_active(kind);
+            if let Some(game) = self.game.as_ref() {
+                let active = game.menu_read_model().inventory.active_slot();
+                self.ui
+                    .state_mut()
+                    .set("active_slot", llama_ui::UiValue::I32(active as i32));
+            }
+            self.ui.frame(kind, screen_size, now, false);
+            doc_kind = Some(kind);
+        }
+        if doc_kind.is_some() {
+            renderer.set_doc_ui(Some((&self.ui.out().draw, self.ui.image_paths())));
+        } else {
+            self.ui.deactivate();
+            renderer.set_doc_ui(None);
+        }
 
         let Some(game) = self.game.as_mut() else {
             self.audio.clear_spatial();
@@ -42,7 +63,6 @@ impl App {
                 self.screen,
                 screen_size,
                 self.pointer.cursor(),
-                shell,
             ));
             renderer.render();
             return;
@@ -162,13 +182,19 @@ impl App {
             self.scene.bake(&presentation);
         }
         self.scene.upload(renderer);
-        renderer.set_ui(ui_snapshot::build(
+        let mut ui = ui_snapshot::build(
             Some(game),
             self.screen,
             screen_size,
             self.pointer.cursor(),
-            shell,
-        ));
+        );
+        if doc_kind.is_some() {
+            // A document draws this screen's chrome: hand build_ui the
+            // document's slot cells so it emits ONLY the game content (icons,
+            // counts, hearts, drag stack) and skips every legacy group.
+            ui.doc_slots = Some(self.ui.doc_slots());
+        }
+        renderer.set_ui(ui);
 
         {
             let mut terrain = game.terrain_render_handoff();

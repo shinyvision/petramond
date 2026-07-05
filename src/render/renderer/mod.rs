@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 mod construct;
+mod doc_ui;
 mod dynamic_bake;
 mod dynamic_draw;
 mod frame_state;
@@ -39,7 +40,6 @@ use super::resources::{
     upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
-use super::text_atlas::{GlyphTextAtlas, StaticTextAtlas};
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
@@ -47,7 +47,7 @@ use super::{
     MobRenderInstance, ParticleInstance,
 };
 use crate::bbmodel::Model;
-use crate::gui::{GuiKind, ShellKind, SpriteKey, UiSnapshot};
+use crate::gui::UiSnapshot;
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 
@@ -75,24 +75,6 @@ fn aabb_distance_sq(p: glam::Vec3, min: glam::Vec3, max: glam::Vec3) -> f32 {
         0.0
     };
     dx * dx + dy * dy + dz * dz
-}
-
-/// Key into the renderer's data-driven GUI texture map: every baked PNG a GUI can
-/// draw — its panel, its hover/selection highlight, and each dynamic
-/// overlay/widget sprite — has its own bind group, looked up by (kind, key) so
-/// the UI pass binds the right texture per quad without any per-screen branching.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-enum GuiTexId {
-    Panel(GuiKind),
-    Hover(GuiKind),
-    /// An overlay/widget image, keyed by its interned file name.
-    Sprite(GuiKind, SpriteKey),
-    Shell(ShellKind),
-    ShellHover(ShellKind),
-    ShellScrollThumb(ShellKind),
-    /// The HUD heart atlas (one texture, cells empty | half | full). Not tied to a
-    /// [`GuiKind`] — it is HUD chrome drawn over the hotbar, independent of any panel.
-    Hearts,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -325,50 +307,26 @@ pub struct Renderer {
     /// UI pipeline (2D HUD / inventory). Every UI quad is drawn with it; group(0)
     /// binds whichever baked texture (or the icon atlas) the quad samples.
     ui_pipe: wgpu::RenderPipeline,
-    /// Texture+sampler bind layout used by every UI texture, including runtime text
-    /// atlases.
+    /// Texture+sampler bind layout used by every UI texture (doc-UI images,
+    /// the heart atlas).
     ui_texture_bgl: wgpu::BindGroupLayout,
-    /// Every baked GUI texture (panel / hover / overlay) as its own bind group,
-    /// keyed by [`GuiTexId`]. Loaded from disk at init; the UI pass looks each up
-    /// by the open kind. See `crate::gui`.
-    gui_textures: std::collections::HashMap<GuiTexId, wgpu::BindGroup>,
-    /// Solid-color quads (the menu dim backdrop + all stack-count digits) packed
-    /// into one buffer: dim `[0, dim)`, then normal counts, then drag counts. Drawn
-    /// with the icon-atlas bind (the solid sentinel skips the sampler anyway).
+    /// The HUD heart atlas (one texture, cells empty | half | full) as its own
+    /// bind group, or `None` when the PNG is missing. HUD chrome drawn over
+    /// the hotbar, independent of any document.
+    hearts_bind: Option<wgpu::BindGroup>,
+    /// GUI-document draw path (llama-ui DrawList upload + batches): every
+    /// screen's chrome. See `doc_ui`.
+    doc_ui: doc_ui::DocUi,
+    /// Solid-color quads (all stack-count digits) packed into one buffer:
+    /// normal counts `[0, counts)`, then drag counts. Drawn with the
+    /// icon-atlas bind (the solid sentinel skips the sampler anyway).
     ui_solid_vbuf: wgpu::Buffer,
-    ui_dim_vertex_count: u32,
     ui_count_vertex_count: u32,
     ui_drag_count_vertex_count: u32,
-    /// The baked panel-PNG quad for the open GUI + its vertex count.
-    ui_panel_vbuf: wgpu::Buffer,
-    ui_panel_vertex_count: u32,
-    /// Dynamic overlay quads (furnace gauges) concatenated; `ui_build.overlay_spans`
-    /// says how to slice + bind them per [`OverlayTag`].
-    ui_overlay_vbuf: wgpu::Buffer,
-    ui_overlay_vertex_count: u32,
-    /// The hover / selection highlight quad + its vertex count.
-    ui_hover_vbuf: wgpu::Buffer,
-    ui_hover_vertex_count: u32,
-    /// Builder-baked app-shell skin quad + its vertex count.
-    ui_shell_vbuf: wgpu::Buffer,
-    ui_shell_vertex_count: u32,
-    /// Builder-baked app-shell scrollbar thumb quad + its vertex count.
-    ui_shell_scroll_thumb_vbuf: wgpu::Buffer,
-    ui_shell_scroll_thumb_vertex_count: u32,
     /// HUD heart quads (bottom-left health bar) + their vertex count. Sampled from the
-    /// [`GuiTexId::Hearts`] atlas; empty for a spectator or behind an open menu.
+    /// heart atlas; empty for a spectator or behind an open menu.
     ui_hearts_vbuf: wgpu::Buffer,
     ui_hearts_vertex_count: u32,
-    /// Runtime atlas of rasterized static shell text runs.
-    static_text_atlas: StaticTextAtlas,
-    ui_static_text_vbuf: wgpu::Buffer,
-    ui_static_text_vertex_count: u32,
-    static_text_verts: Vec<UiVertex>,
-    /// Runtime glyph atlas for editable/dynamic shell text.
-    glyph_text_atlas: GlyphTextAtlas,
-    ui_glyph_text_vbuf: wgpu::Buffer,
-    ui_glyph_text_vertex_count: u32,
-    glyph_text_verts: Vec<UiVertex>,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
