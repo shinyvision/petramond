@@ -56,6 +56,11 @@ impl World {
         if block.render_shape() == RenderShape::Slab {
             return self.slab_boxes_at(wx, wy, wz);
         }
+        // A pane's post + arms are resolved from its current neighbours (no stored
+        // state) — see `world::pane` / `crate::pane`.
+        if block.render_shape() == RenderShape::Pane {
+            return self.pane_boxes_at(IVec3::new(wx, wy, wz));
+        }
         // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
         // open — both read from the chunk door state (see `world::door` / `crate::door`).
         if block.render_shape() == RenderShape::Door {
@@ -86,6 +91,20 @@ impl World {
         }
         if block.render_shape() == RenderShape::Slab {
             return self.slab_visual_aabb_at(wx, wy, wz);
+        }
+        // A pane targets the union of its resolved post + arms, so the outline and
+        // break overlay hug the connected shape rather than the whole cell.
+        if block.render_shape() == RenderShape::Pane {
+            let boxes = self.pane_boxes_at(IVec3::new(wx, wy, wz));
+            let mut mn = [f32::INFINITY; 3];
+            let mut mx = [f32::NEG_INFINITY; 3];
+            for b in boxes {
+                for i in 0..3 {
+                    mn[i] = mn[i].min(b.min[i]);
+                    mx[i] = mx[i].max(b.max[i]);
+                }
+            }
+            return Some((mn, mx));
         }
         // A door targets the thin slab where it actually is (closed/open edge), so the
         // raycast + break overlay hug the panel rather than the whole cell.

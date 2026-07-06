@@ -178,6 +178,8 @@ pub(crate) const ENGINE_ITEM_NAMES: &[&str] = &[
     "llama:cobblestone_slab",
     "llama:stone_slab",
     "llama:dirt_slab",
+    "llama:glass",
+    "llama:glass_pane",
 ];
 
 /// The JSON-loaded item table. Loads exactly once, on first access; the loader

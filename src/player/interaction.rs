@@ -106,6 +106,14 @@ impl Player {
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
+        } else if hit_block.render_shape() == RenderShape::Pane {
+            // A pane outlines its resolved post + arm runs, so the wireframe hugs
+            // the connected shape the mesher drew, not the bare-post default.
+            let (boxes, len) =
+                crate::pane::world_boxes(hit.block, world.pane_boxes_at(hit.block));
+            hit.outline = SelectionShape::Boxes {
+                boxes: SelectionBoxes { boxes, len },
+            };
         }
         Some((hit, dist))
     }
@@ -389,6 +397,23 @@ fn precise_shape_hit(
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .slab_boxes_at(pos.x, pos.y, pos.z)
+            .iter()
+            .filter_map(|b| {
+                ray_vs_aabb_hit(
+                    eye,
+                    dir,
+                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
+                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                )
+            })
+            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    // A pane is picked against its resolved post + arm runs (neighbour-derived,
+    // like the stair's corner boxes), so the ray connects where the glass is.
+    if block.render_shape() == RenderShape::Pane {
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return world
+            .pane_boxes_at(pos)
             .iter()
             .filter_map(|b| {
                 ray_vs_aabb_hit(

@@ -7,6 +7,12 @@
 //! `give_up_radius` (≥ `radius`), so a player skirting the aggro edge doesn't flicker
 //! the mob between hunting and roaming.
 //!
+//! Engagement additionally requires collision line of sight ([`los`]) from the mob's
+//! body to the player: a player fully behind colliding blocks (walls, leaves, any
+//! future glass) never aggros mobs through them. Sight only gates the START of a
+//! chase — an engaged chase persists on distance alone, so breaking sight mid-hunt
+//! (ducking behind a wall) does not shake a mob that already saw you.
+//!
 //! The goal is a *valid mob foothold* near the player (the same navigation-foothold
 //! test the pathfinder uses), scanned vertically around the player's feet. A player
 //! with no standable cell nearby (flying, deep water) yields no goal, and the merge
@@ -14,10 +20,11 @@
 
 use serde::Deserialize;
 
-use crate::mathh::IVec3;
+use crate::mathh::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::path::{is_navigation_foothold, PathParams};
+use super::los;
 
 /// How many cells above/below the player's feet cell to scan for a mob-standable
 /// goal (covers a player on a ledge lip, in shallow water, or mid-jump).
@@ -70,7 +77,12 @@ impl AiBehavior for ChasePlayerAi {
                 self.chasing = false;
             }
         } else if d2 <= self.radius * self.radius {
-            self.chasing = true;
+            // Sight gates engagement only; the engaged branch above never re-checks
+            // it, so a wall between mob and player can't shake an ongoing chase.
+            let body = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
+            if los::line_clear(ctx.world, body, ctx.player_pos) {
+                self.chasing = true;
+            }
         }
         if !self.chasing {
             return BehaviorOutput::default();
@@ -219,6 +231,45 @@ mod tests {
             ai.tick(&mut ctx(&world, &mut rng, mob, airborne)).goal,
             None,
             "no standable cell near the player -> the chase emits nothing"
+        );
+    }
+
+    #[test]
+    fn blocked_sight_gates_engagement_but_never_breaks_an_engaged_chase() {
+        let mut world = flat_world();
+        let mut rng = MobRng::new(1);
+        let mut ai = ChasePlayerAi::new(10.0, 14.0);
+        let mob = Vec3::new(2.5, 64.0, 2.5);
+        let player = Vec3::new(7.5, 64.9, 2.5);
+
+        // A colliding wall (leaves — sight is collision, not opacity) between them.
+        for y in 64..=66 {
+            assert!(world.set_block_world(5, y, 2, Block::OakLeaves));
+        }
+        assert_eq!(
+            ai.tick(&mut ctx(&world, &mut rng, mob, player)).goal,
+            None,
+            "an in-radius player behind colliding blocks does not engage the chase"
+        );
+
+        // Open the wall: sight is clear, the chase engages.
+        for y in 64..=66 {
+            assert!(world.set_block_world(5, y, 2, Block::Air));
+        }
+        assert!(ai
+            .tick(&mut ctx(&world, &mut rng, mob, player))
+            .goal
+            .is_some());
+
+        // Rebuild the wall: the engaged chase persists on distance alone.
+        for y in 64..=66 {
+            assert!(world.set_block_world(5, y, 2, Block::OakLeaves));
+        }
+        assert!(
+            ai.tick(&mut ctx(&world, &mut rng, mob, player))
+                .goal
+                .is_some(),
+            "breaking sight does not shake an engaged chase"
         );
     }
 

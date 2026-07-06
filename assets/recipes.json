@@ -888,6 +888,23 @@
       "result": "llama:stone"
     },
     {
+      "type": "smelting",
+      "ingredient": "llama:sand",
+      "result": "llama:glass"
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "GGG",
+        "GGG"
+      ],
+      "key": {
+        "G": "llama:glass"
+      },
+      "result": "llama:glass_pane",
+      "count": 16
+    },
+    {
       "type": "furniture",
       "input": "llama:oak_planks",
       "result": "llama:oak_door",

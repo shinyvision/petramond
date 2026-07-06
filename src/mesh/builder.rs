@@ -253,8 +253,11 @@ fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
 
 #[inline]
 fn pad_cube_fast_candidate(block: Block) -> bool {
+    // Glass stays on the per-face path: its glass-vs-glass cull (interior faces
+    // of a glass wall) isn't representable in the opaque-rows exposure masks.
     block != Block::Water
         && block != Block::Cactus
+        && block != Block::Glass
         && block.render_shape() == RenderShape::Cube
         && block != Block::Chest
 }
@@ -781,6 +784,64 @@ fn section_geometry(
                     continue;
                 }
 
+                if shape == RenderShape::Pane {
+                    // [top, bottom, side] tiles = [edge, edge, glass].
+                    let [edge_tile, _bottom, glass_tile] = block.tiles();
+                    // A neighbour stair's resolved corner shape decides whether its
+                    // face toward the pane is complete — same neighbour-of-neighbour
+                    // read the stair's own corner resolution does.
+                    let stair_shape_at = |q: IVec3| {
+                        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
+                            crate::stair::is_stair(block_at(r.x, r.y, r.z))
+                                .then(|| neighbour_stair_state(r.x, r.y, r.z))
+                        })
+                    };
+                    let pane_mask_at = |p: IVec3| {
+                        crate::pane::resolved_mask(
+                            p,
+                            |q| block_at(q.x, q.y, q.z),
+                            &stair_shape_at,
+                            |q| slab_full_at(q.x, q.y, q.z),
+                        )
+                    };
+                    let vertical = |dy: i32| {
+                        let vb = block_at(wx, wy + dy, wz);
+                        if vb == block {
+                            super::pane::PaneVertical::Pane(pane_mask_at(IVec3::new(
+                                wx,
+                                wy + dy,
+                                wz,
+                            )))
+                        } else if vb.is_opaque()
+                            || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
+                        {
+                            super::pane::PaneVertical::Solid
+                        } else {
+                            super::pane::PaneVertical::Open
+                        }
+                    };
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    super::pane::emit_pane_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        pane_mask_at(IVec3::new(wx, wy, wz)),
+                        vertical(1),
+                        vertical(-1),
+                        glass_tile,
+                        edge_tile,
+                        tint_tile(glass_tile.world_tint(), ci),
+                        sky6,
+                        block6,
+                        warm,
+                    );
+                    continue;
+                }
+
                 // A same-material full slab stack IS the material's full cube: fall
                 // through to the cube path (fast path + greedy merge included) so it
                 // culls, lights, and merges like one. Partial cells and mixed-material
@@ -959,6 +1020,11 @@ fn section_geometry(
                         && block == Block::OakLeaves
                         && nb == Block::OakLeaves
                     {
+                        continue;
+                    }
+                    // Two adjacent glass blocks share no visible face: cull both
+                    // sides so a glass wall reads as one pane, not stacked frames.
+                    if block == Block::Glass && nb == Block::Glass {
                         continue;
                     }
                     let mut water_exposed_step = false;
@@ -1378,6 +1444,58 @@ fn chunk_geometry(
                     continue;
                 }
 
+                // Panes mirror the production dispatch with this legacy path's
+                // simplifications (default stair shapes, no slab states).
+                if block.render_shape() == RenderShape::Pane {
+                    let [edge_tile, _bottom, glass_tile] = block.tiles();
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let wy = y as i32;
+                    let ci = z * CHUNK_SX + x;
+                    let pane_mask_at = |p: IVec3| {
+                        crate::pane::resolved_mask(
+                            p,
+                            |q| block_at(q.x, q.y, q.z),
+                            |_| crate::stair::StairShape::default(),
+                            |_| false,
+                        )
+                    };
+                    let vertical = |dy: i32| {
+                        let vb = block_at(wx, wy + dy, wz);
+                        if vb == block {
+                            super::pane::PaneVertical::Pane(pane_mask_at(IVec3::new(
+                                wx,
+                                wy + dy,
+                                wz,
+                            )))
+                        } else if vb.is_opaque() {
+                            super::pane::PaneVertical::Solid
+                        } else {
+                            super::pane::PaneVertical::Open
+                        }
+                    };
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    super::pane::emit_pane_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        pane_mask_at(IVec3::new(wx, wy, wz)),
+                        vertical(1),
+                        vertical(-1),
+                        glass_tile,
+                        edge_tile,
+                        tints.tile(glass_tile.world_tint(), ci),
+                        sky6,
+                        block6,
+                        warm,
+                    );
+                    continue;
+                }
+
                 // Only water is alpha-blended; leaves render in the OPAQUE pass
                 // (crisp/cutout, no see-through ghosting) per the "fully opaque" rule.
                 let is_water = block == Block::Water;
@@ -1470,6 +1588,11 @@ fn chunk_geometry(
                         && block == Block::OakLeaves
                         && nb == Block::OakLeaves
                     {
+                        continue;
+                    }
+                    // Two adjacent glass blocks share no visible face: cull both
+                    // sides so a glass wall reads as one pane, not stacked frames.
+                    if block == Block::Glass && nb == Block::Glass {
                         continue;
                     }
                     // Set on the one water-water side face we DON'T cull: a

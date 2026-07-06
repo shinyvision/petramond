@@ -150,6 +150,8 @@ pub(crate) const ENGINE_BLOCK_NAMES: &[&str] = &[
     "llama:cobblestone_slab",
     "llama:stone_slab",
     "llama:dirt_slab",
+    "llama:glass",
+    "llama:glass_pane",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any

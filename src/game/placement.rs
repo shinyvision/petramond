@@ -314,6 +314,24 @@ impl Game {
             return None;
         }
 
+        // A pane occupies only its resolved post + arms, so the overlap gate tests
+        // those thin boxes (a player standing beside the centre line doesn't block
+        // it the way a full cube would). No stored state: the connections are
+        // re-resolved from neighbours wherever the shape is read.
+        if block.render_shape() == RenderShape::Pane {
+            if !self.world.placement_cell_open(p) {
+                return None;
+            }
+            let boxes = self.world.pane_boxes_at(p);
+            let blocked = self.player.intersects_block_boxes(p, boxes)
+                || self.world.mobs().any_overlapping_boxes(p, boxes);
+            if !blocked && self.world.set_block_world(p.x, p.y, p.z, block) {
+                self.player.inventory.decrement_selected();
+                return Some(p);
+            }
+            return None;
+        }
+
         // Substrate gate: a block that roots in a particular ground — a flower in soil, a
         // cactus in sand, a mushroom on soil or stone — places only when the cell directly
         // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost

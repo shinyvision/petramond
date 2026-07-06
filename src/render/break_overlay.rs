@@ -134,6 +134,23 @@ pub fn build_break_overlay(
                 }
             }
         }
+    } else if let Some(mask) = view.pane_mask {
+        // A pane cracks over the SAME post/arm faces the chunk mesher emitted
+        // (cell-local UVs), so the crack reads as a full block's decal with the
+        // open parts cut out — like stairs and slabs, not a box around the cell.
+        crate::mesh::pane::shape_faces(mask, |min, max, face, _, _, _| {
+            super::item_cube::push_cell_local_face(
+                verts,
+                indices,
+                tile,
+                base,
+                1.0,
+                min,
+                max,
+                face,
+                super::lighting::DynLight::FULL,
+            );
+        });
     } else {
         match view.visual_box {
             // A non-full-cube block (the chest) cracks over its inset visual box.
@@ -198,6 +215,7 @@ mod tests {
             visual_box: None,
             stair_shape: None,
             slab_state: None,
+            pane_mask: None,
             model: None,
             stage: 4,
         };
@@ -240,6 +258,7 @@ mod tests {
             visual_box: None,
             stair_shape: Some(shape),
             slab_state: None,
+            pane_mask: None,
             model: None,
             stage: 5,
         };
@@ -304,6 +323,7 @@ mod tests {
             visual_box: None,
             stair_shape: None,
             slab_state: Some(state),
+            pane_mask: None,
             model: None,
             stage: 6,
         };
@@ -369,6 +389,7 @@ mod tests {
             visual_box: None,
             stair_shape: None,
             slab_state: None,
+            pane_mask: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
@@ -629,6 +650,7 @@ mod tests {
             visual_box: None,
             stair_shape: None,
             slab_state: None,
+            pane_mask: None,
             model: None,
             stage: 0,
         };

@@ -13,6 +13,7 @@
 mod chase;
 mod head_look;
 mod idle_anim;
+mod los;
 mod melee;
 mod wander;
 mod wasm;

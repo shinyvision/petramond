@@ -2541,7 +2541,8 @@
       ],
       "tags": [
         "fragile",
-        "roots_in_sand"
+        "roots_in_sand",
+        "no_pane_connect"
       ],
       "behavior": "fragile",
       "interaction": "none",
@@ -3428,7 +3429,9 @@
         "solid",
         "directional_view"
       ],
-      "tags": [],
+      "tags": [
+        "no_pane_connect"
+      ],
       "behavior": "inert",
       "interaction": "open_chest",
       "collision": [
@@ -5088,6 +5091,67 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "block": "llama:glass",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "glass",
+        "glass",
+        "glass"
+      ],
+      "material": "none",
+      "harvest_tier": 0,
+      "hardness": 0.3,
+      "drops": []
+    },
+    {
+      "block": "llama:glass_pane",
+      "shape": "pane",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "glass_pane_top",
+        "glass_pane_top",
+        "glass"
+      ],
+      "material": "none",
+      "harvest_tier": 0,
+      "hardness": 0.3,
+      "drops": []
     }
   ]
 }

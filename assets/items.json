@@ -58,7 +58,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [
+        "smeltable"
+      ]
     },
     {
       "item": "llama:snow",
@@ -2014,6 +2016,31 @@
         "yaw": 1.8,
         "roll": 0
       },
+      "tags": []
+    },
+    {
+      "item": "llama:glass",
+      "key": "llama:glass",
+      "name": "Glass",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "llama:glass_pane",
+      "key": "llama:glass_pane",
+      "name": "Glass Pane",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "glass",
       "tags": []
     }
   ]

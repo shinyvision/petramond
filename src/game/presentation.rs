@@ -33,6 +33,10 @@ pub struct BreakOverlayView {
     /// the chunk mesher emitted (`mesh::slab::layer_quads`), so the decal is
     /// cropped to the occupied halves rather than stretched over them.
     pub slab_state: Option<crate::block_state::SlabState>,
+    /// A pane's resolved connection mask: the crack rebuilds the exact post/arm
+    /// faces the chunk mesher emitted (`mesh::pane::shape_faces`), so the decal
+    /// hugs the connected shape rather than a box around it.
+    pub pane_mask: Option<u8>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
@@ -377,15 +381,22 @@ fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
         let stair_shape = (block_type.render_shape() == RenderShape::Stair)
             .then(|| game.world.stair_shape_at(block.x, block.y, block.z));
         let slab_state = game.world.slab_state_if_slab(block);
+        let pane_mask = (block_type.render_shape() == RenderShape::Pane)
+            .then(|| game.world.pane_mask_at(block));
         BreakOverlayView {
             block,
-            visual_box: if model.is_some() || stair_shape.is_some() || slab_state.is_some() {
+            visual_box: if model.is_some()
+                || stair_shape.is_some()
+                || slab_state.is_some()
+                || pane_mask.is_some()
+            {
                 None
             } else {
                 game.world.selection_box_at(block.x, block.y, block.z)
             },
             stair_shape,
             slab_state,
+            pane_mask,
             model,
             stage,
         }

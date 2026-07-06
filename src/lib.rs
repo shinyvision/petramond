@@ -41,6 +41,7 @@ mod mesh;
 mod mining;
 mod mob;
 mod modding;
+mod pane;
 pub mod platform;
 mod player;
 mod registry;

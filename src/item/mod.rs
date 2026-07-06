@@ -228,6 +228,8 @@ impl ItemType {
     pub const CobblestoneSlab: ItemType = ItemType(154);
     pub const StoneSlab: ItemType = ItemType(155);
     pub const DirtSlab: ItemType = ItemType(156);
+    pub const Glass: ItemType = ItemType(157);
+    pub const GlassPane: ItemType = ItemType(158);
 }
 
 impl std::fmt::Debug for ItemType {
@@ -535,6 +537,8 @@ impl ItemType {
             Block::CobblestoneSlab => ItemType::CobblestoneSlab,
             Block::StoneSlab => ItemType::StoneSlab,
             Block::DirtSlab => ItemType::DirtSlab,
+            Block::Glass => ItemType::Glass,
+            Block::GlassPane => ItemType::GlassPane,
             _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
             // A pack-registered block: its item declares the link via its
             // row's `block` field. No linked item -> Air (nothing to hold).
@@ -598,6 +602,8 @@ impl ItemType {
             ItemType::CobblestoneSlab => Some(Block::CobblestoneSlab),
             ItemType::StoneSlab => Some(Block::StoneSlab),
             ItemType::DirtSlab => Some(Block::DirtSlab),
+            ItemType::Glass => Some(Block::Glass),
+            ItemType::GlassPane => Some(Block::GlassPane),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             // Engine item-only items carry no link; a pack item's row may
             // (`"block": "mod:key"` in items.json).
@@ -697,6 +703,10 @@ impl ItemType {
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
                 // the cropped per-face tiles the in-world pole uses.
                 RenderShape::Torch => ItemRenderKind::Sprite(self.item_sprite()),
+                // A pane shows the flat glass tile as its icon and an extruded
+                // sprite in-hand — the in-world post/arm shape only exists once
+                // placed among neighbours.
+                RenderShape::Pane => ItemRenderKind::Sprite(self.item_sprite()),
                 // A bbmodel block renders its actual baked model everywhere it's shown.
                 RenderShape::Model(kind) => ItemRenderKind::Model(kind),
                 // A door shows its flat door icon (the `_door_item` art), not the
@@ -1048,6 +1058,12 @@ mod tests {
                     assert!(
                         matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
                         "{block:?} door renders as a flat sprite"
+                    );
+                }
+                RenderShape::Pane => {
+                    assert!(
+                        matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                        "{block:?} pane renders as a flat sprite"
                     );
                 }
             }

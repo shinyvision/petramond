@@ -164,6 +164,8 @@ impl Block {
     pub const CobblestoneSlab: Block = Block(128);
     pub const StoneSlab: Block = Block(129);
     pub const DirtSlab: Block = Block(130);
+    pub const Glass: Block = Block(131);
+    pub const GlassPane: Block = Block(132);
 }
 
 impl std::fmt::Debug for Block {
@@ -247,6 +249,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "roots_in_soil",
     "roots_in_sand",
     "roots_in_stone",
+    "no_pane_connect",
 ]);
 
 impl BlockTag {
@@ -299,6 +302,12 @@ impl BlockTag {
     /// mushrooms carry it ALONGSIDE [`ROOTS_IN_SOIL`](BlockTag::ROOTS_IN_SOIL), so they
     /// take to soil OR stone; the `RootsIn*` tags combine (see [`Block::can_root_on`]).
     pub const ROOTS_IN_STONE: BlockTag = BlockTag(10);
+    /// A block a glass pane never joins toward, even though its row would
+    /// otherwise qualify — cube rows whose REAL shape is not the full cell (the
+    /// inset cactus and chest). Panes connect by meeting a complete 1x1 face
+    /// (see `crate::pane`); this tag is the per-row opt-out for blocks whose
+    /// cube row overstates their geometry.
+    pub const NO_PANE_CONNECT: BlockTag = BlockTag(11);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {
@@ -328,6 +337,12 @@ pub enum RenderShape {
     /// to two material-bearing layers, so a cell can hold mixed slabs without adding a
     /// registry row for every material pair.
     Slab,
+    /// A chunk-meshed glass pane: a thin full-height post that grows arms toward
+    /// the horizontal neighbours it connects to. The connection mask is NOT
+    /// stored state — it is resolved from the current neighbours wherever the
+    /// shape is needed (collision, selection, meshing), like stair corners. See
+    /// `crate::pane` for the connection rules and boxes.
+    Pane,
     Model(BlockModelKind),
     /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT
     /// chunk-meshed — it is drawn each frame as a dynamic hinged model (see
@@ -410,6 +425,9 @@ impl Block {
         }
         if self.def().shape == RenderShape::Slab {
             return crate::slab::default_boxes();
+        }
+        if self.def().shape == RenderShape::Pane {
+            return crate::pane::boxes_for_mask(0);
         }
         self.def().collision
     }
