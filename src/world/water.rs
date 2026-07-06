@@ -290,6 +290,7 @@ impl World {
             s.set_water(lx, ly, lz, block, meta);
             s.modified = true;
         }
+        self.refresh_particle_emitter_index(cpos);
         if self.update_column_height_after_set(pos.x, pos.y, pos.z, block != Block::Air) {
             self.mark_heightmap_light_dirty_around(cpos.chunk_pos());
         }

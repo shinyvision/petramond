@@ -44,6 +44,7 @@ impl Renderer {
         self.frustum = Frustum::from_view_proj(view_proj);
         self.cam_pos = cam.pos;
         self.render_origin = render_origin;
+        self.visual_time = time;
         // Camera right/up axes for world-space billboards (item sprites + dust):
         // a quad spanned by these always faces the viewer.
         self.billboard_basis = BillboardBasis {
@@ -216,6 +217,13 @@ impl Renderer {
         self.model_particles.extend_from_slice(v);
     }
 
+    /// Store loaded block-row particle emitters for this frame. The renderer derives
+    /// transient translucent cubes from these in `bake_world_instances`.
+    pub fn set_particle_emitters(&mut self, v: &[ParticleEmitterInstance]) {
+        self.particle_emitters.clear();
+        self.particle_emitters.extend_from_slice(v);
+    }
+
     /// Store the already-owned UI state needed for this frame's UI pass.
     pub fn set_ui(&mut self, v: UiSnapshot) {
         self.ui = v;
@@ -243,9 +251,12 @@ impl Renderer {
         self.chest_draw.index_count = 0;
         self.door_draw.index_count = 0;
         self.particle_draw.vertex_count = 0;
+        self.emitter_particle_draw.vertex_count = 0;
         self.item_entities.clear();
         self.particles.clear();
         self.model_particles.clear();
+        self.particle_emitters.clear();
+        self.particle_emitter_visible.clear();
         self.chests.clear();
         self.doors.clear();
         self.mobs.clear();

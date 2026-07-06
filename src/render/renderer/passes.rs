@@ -499,6 +499,27 @@ impl Renderer {
                 }
             }
         }
+        // TRANSLUCENT BLOCK-EMITTER PARTICLES: solid-color cube particles from block
+        // rows (torch flame cubes and mod emitters). They draw after water with alpha
+        // blending, depth test but no write, and back-face culling in the pipeline so
+        // transparency never exposes the whole cube shell.
+        if self.emitter_particle_draw.vertex_count > 0 {
+            let verts_per_cube = crate::render::particles::VERTS_PER_CUBE as u32;
+            let idx_per_cube = crate::render::particles::INDICES_PER_CUBE as u32;
+            let cubes = self.emitter_particle_draw.vertex_count / verts_per_cube;
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.depth,
+                "emitter particle pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            self.emitter_particle_draw
+                .draw(&mut pass, cubes * idx_per_cube);
+        }
         // Selection outline, after particles: load color + depth, depth-test (no
         // write) so it draws over terrain/water at the targeted block but stays
         // occluded behind nearer geometry.

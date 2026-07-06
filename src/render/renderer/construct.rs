@@ -492,6 +492,12 @@ async fn new_renderer_inner(
         ),
         item_model_entity_verts: Vec::new(),
         item_model_entity_indices: Vec::new(),
+        emitter_particle_draw: DynamicVertexDraw::new(
+            pipelines.emitter_particle_pipe,
+            pipelines.emitter_particle_vbuf,
+            pipelines.particle_ibuf.clone(),
+            crate::render::particles::MAX_PARTICLE_VERTICES as u64,
+        ),
         particle_draw: DynamicVertexDraw::new(
             pipelines.particle_pipe,
             pipelines.particle_vbuf,
@@ -508,6 +514,7 @@ async fn new_renderer_inner(
         frustum: Frustum::permissive(),
         cam_pos: glam::Vec3::ZERO,
         render_origin: glam::Vec3::ZERO,
+        visual_time: 0.0,
         far_leaf_lod_state: HashMap::new(),
         clear_color: [0.60, 0.82, 1.00],
         last_stats: RenderStats::default(),
@@ -522,6 +529,8 @@ async fn new_renderer_inner(
         item_entities: Vec::new(),
         particles: Vec::new(),
         model_particles: Vec::new(),
+        particle_emitters: Vec::new(),
+        particle_emitter_visible: Vec::new(),
         particle_block_vertex_count: 0,
         ui: UiSnapshot::default(),
         billboard_basis: BillboardBasis {
@@ -537,6 +546,8 @@ async fn new_renderer_inner(
         door_visible: Vec::new(),
         mobs: Vec::new(),
         particle_verts: Vec::new(),
+        emitter_particle_verts: Vec::new(),
+        emitter_particle_scratch: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
         ui_texture_bgl: pipelines.atlas_bgl.clone(),
         hearts_bind,

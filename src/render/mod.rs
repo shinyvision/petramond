@@ -219,7 +219,7 @@ struct DoorInstance {
     blocklight: u8,
 }
 
-/// A single particle billboard to draw this frame. `uv_min` / `uv_size` are
+/// A single terrain particle cube to draw this frame. `uv_min` / `uv_size` are
 /// **absolute** atlas coordinates (sub-tile patch), produced by
 /// `crate::entity::Particle::atlas_uv`, so the particle pass samples the block
 /// atlas directly with no further tile lookup.
@@ -234,10 +234,21 @@ pub struct ParticleInstance {
     /// grass/leaf fleck, white otherwise), from `crate::entity::Particle::tint`.
     pub tint: [f32; 3],
     pub alpha: f32,
-    /// World-space billboard size (side length).
+    /// World-space cube size (side length).
     pub size: f32,
     /// 6-bit skylight sampled from the world at the particle position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
+    pub blocklight: u8,
+}
+
+/// One loaded block-row particle emitter to draw this frame. The renderer turns this
+/// declarative row into transient translucent cube particles; no state is persisted.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ParticleEmitterInstance {
+    pub origin: Vec3,
+    pub emitter: crate::block::BlockParticleEmitter,
+    pub seed: u64,
+    pub skylight: u8,
     pub blocklight: u8,
 }

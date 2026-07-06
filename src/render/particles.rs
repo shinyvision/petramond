@@ -1,4 +1,4 @@
-//! Tiny 3D particle cubes (mining dust + break bursts).
+//! Tiny 3D particle cubes.
 //!
 //! Each [`ParticleInstance`] (world pos + **absolute** atlas uv patch + tint +
 //! alpha + size) is expanded into a small textured CUBE each frame (NOT a
@@ -15,11 +15,16 @@
 //! occluded by terrain, visible from above, and mutually self-sorting. Particles
 //! fade near end-of-life by SHRINKING the cube (alpha is folded into the cutout).
 //!
+//! Block-row emitters reuse the same vertex format but bake solid-colour cubes for
+//! a separate alpha-blended pipeline. Those cubes are presentation-only, sorted
+//! far-to-near before vertex emission, and back-face culled by the render pipeline
+//! so tiny transparent flames do not reveal all six faces at once.
+//!
 //! Geometry is capped to a fixed vertex budget so the dynamic buffer never grows;
 //! excess particles in a frame are dropped (transient dust, visually harmless).
 
 use super::lighting::{self, DynLight, LightEnv};
-use super::ParticleInstance;
+use super::{ParticleEmitterInstance, ParticleInstance};
 use glam::Vec3;
 
 /// Compact particle vertex: world position + absolute atlas uv + RGB tint +
@@ -166,6 +171,159 @@ pub fn build_particles_split(
     (verts.len() as u32, block_verts)
 }
 
+/// A generated translucent cube particle, sorted by centre distance before vertices
+/// are emitted so alpha blending is stable enough for tiny cube puffs.
+pub(in crate::render) struct TransparentParticleCube {
+    pos: Vec3,
+    color: [f32; 3],
+    alpha: f32,
+    size: f32,
+    dist_sq: f32,
+}
+
+/// Max active translucent particles one block emitter may contribute in a frame.
+/// The row's rate/lifetime control the normal count; this clamp prevents a malformed
+/// or intentionally huge mod row from consuming the whole fixed vertex buffer.
+const MAX_ACTIVE_PER_EMITTER: usize = 32;
+
+#[derive(Copy, Clone)]
+struct EmitterSchedule {
+    base_gap: f32,
+    jitter: f32,
+    phase: f32,
+    max_rate: f32,
+}
+
+/// Build alpha-blended solid-color cubes for block-row particle emitters. The
+/// generated particle rows are deterministic functions of `(emitter seed, time)`,
+/// so no persistent particle state is needed: a particle moves up, shrinks, fades,
+/// and disappears entirely on the render side.
+pub fn build_transparent_emitter_particles(
+    emitters: &[ParticleEmitterInstance],
+    time: f32,
+    cam_pos: Vec3,
+    env: LightEnv,
+    verts: &mut Vec<ParticleVertex>,
+    scratch: &mut Vec<TransparentParticleCube>,
+) -> u32 {
+    verts.clear();
+    scratch.clear();
+    for inst in emitters {
+        append_emitter_particles(inst, time, cam_pos, env, scratch);
+        if scratch.len() >= MAX_PARTICLE_CUBES {
+            break;
+        }
+    }
+    scratch.sort_by(|a, b| b.dist_sq.total_cmp(&a.dist_sq));
+    for p in scratch.iter() {
+        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
+            break;
+        }
+        push_colored_particle_cube(p, verts);
+    }
+    verts.len() as u32
+}
+
+fn append_emitter_particles(
+    inst: &ParticleEmitterInstance,
+    time: f32,
+    cam_pos: Vec3,
+    env: LightEnv,
+    out: &mut Vec<TransparentParticleCube>,
+) {
+    let e = inst.emitter;
+    let max_lifetime = e.lifetime[1].max(e.lifetime[0]);
+    let schedule = emitter_schedule(inst.seed, e.rate);
+    let active =
+        ((schedule.max_rate * max_lifetime).ceil() as usize + 6).min(MAX_ACTIVE_PER_EMITTER);
+    let latest = ((time - schedule.phase) / schedule.base_gap).floor() as i64 + 2;
+    let light = if e.fullbright {
+        [1.0, 1.0, 1.0]
+    } else {
+        lighting::light_rgb(
+            DynLight {
+                sky: inst.skylight,
+                block: inst.blocklight,
+            },
+            env,
+        )
+    };
+    for back in 0..active {
+        if out.len() >= MAX_PARTICLE_CUBES {
+            break;
+        }
+        let seq = latest - back as i64;
+        let birth = emitter_birth_time(inst.seed, schedule, seq);
+        let age = time - birth;
+        if age < 0.0 {
+            continue;
+        }
+        let seed = inst
+            .seed
+            .wrapping_add((seq as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let lifetime = lerp_range(e.lifetime, rand01(seed ^ 0x11));
+        if age >= lifetime {
+            continue;
+        }
+        let t = (age / lifetime).clamp(0.0, 1.0);
+        let fade = 1.0 - t;
+        let size = lerp_range(e.size, rand01(seed ^ 0x22)) * fade;
+        let alpha = lerp_range(e.alpha, rand01(seed ^ 0x33)) * fade * fade;
+        if size <= 0.001 || alpha <= 0.001 {
+            continue;
+        }
+
+        let spawn_box = Vec3::from_array(e.spawn_box);
+        let jitter = Vec3::new(
+            rand_signed(seed ^ 0x44) * spawn_box.x,
+            rand_signed(seed ^ 0x55) * spawn_box.y,
+            rand_signed(seed ^ 0x66) * spawn_box.z,
+        );
+        let velocity_jitter = Vec3::from_array(e.velocity_jitter);
+        let velocity = Vec3::from_array(e.velocity)
+            + Vec3::new(
+                rand_signed(seed ^ 0x77) * velocity_jitter.x,
+                rand_signed(seed ^ 0x88) * velocity_jitter.y,
+                rand_signed(seed ^ 0x99) * velocity_jitter.z,
+            );
+        let pos = inst.origin + jitter + velocity * age;
+        let mix = rand01(seed ^ 0xAA);
+        let base = [
+            lerp(e.color[0][0], e.color[1][0], mix),
+            lerp(e.color[0][1], e.color[1][1], mix),
+            lerp(e.color[0][2], e.color[1][2], mix),
+        ];
+        let color = [base[0] * light[0], base[1] * light[1], base[2] * light[2]];
+        out.push(TransparentParticleCube {
+            pos,
+            color,
+            alpha,
+            size,
+            dist_sq: (cam_pos - pos).length_squared(),
+        });
+    }
+}
+
+fn emitter_schedule(seed: u64, rate: [f32; 2]) -> EmitterSchedule {
+    let min_rate = rate[0];
+    let max_rate = rate[1];
+    let fastest_gap = 1.0 / max_rate;
+    let slowest_gap = 1.0 / min_rate;
+    let base_gap = (fastest_gap + slowest_gap) * 0.5;
+    let jitter = (slowest_gap - fastest_gap) * 0.25;
+    EmitterSchedule {
+        base_gap,
+        jitter,
+        phase: rand01(seed ^ 0xA5A5_517C_D1E5_F00D) * base_gap,
+        max_rate,
+    }
+}
+
+fn emitter_birth_time(seed: u64, schedule: EmitterSchedule, seq: i64) -> f32 {
+    let jitter = rand_signed(seed ^ (seq as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
+    schedule.phase + seq as f32 * schedule.base_gap + jitter * schedule.jitter
+}
+
 /// Append one particle's textured cube (24 verts) to `verts`. Every face samples the
 /// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
 /// shaded per-face. The caller does the capacity + alpha gating.
@@ -219,6 +377,46 @@ fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<Pa
     }
 }
 
+fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {
+    let h = inst.size * 0.5;
+    let c = inst.pos;
+    for face in &FACES {
+        let r = face.right * h;
+        let up = face.up * h;
+        let fc = c + face.right.cross(face.up) * h;
+        let corners = [fc - r - up, fc + r - up, fc + r + up, fc - r + up];
+        for pos in corners {
+            verts.push(ParticleVertex {
+                pos: pos.to_array(),
+                uv: [0.0, 0.0],
+                tint: inst.color,
+                shade: face.shade,
+                alpha: inst.alpha,
+            });
+        }
+    }
+}
+
+#[inline]
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+#[inline]
+fn lerp_range(range: [f32; 2], t: f32) -> f32 {
+    lerp(range[0], range[1], t)
+}
+
+#[inline]
+fn rand01(seed: u64) -> f32 {
+    crate::entity::hash01(seed)
+}
+
+#[inline]
+fn rand_signed(seed: u64) -> f32 {
+    crate::entity::hash_signed(seed)
+}
+
 /// The static index buffer for [`MAX_PARTICLE_CUBES`] cubes (six faces, two
 /// triangles each, CCW: 0,1,2, 0,2,3 per face). Built once and uploaded at
 /// startup; draws use the slice matching the live cube count.
@@ -250,6 +448,50 @@ mod tests {
             skylight: lighting::FULL_SKYLIGHT,
             blocklight: 0,
         }
+    }
+
+    fn emitter_inst() -> ParticleEmitterInstance {
+        ParticleEmitterInstance {
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            emitter: crate::block::BlockParticleEmitter {
+                anchor: crate::block::ParticleEmitterAnchor::BlockTop,
+                origin: [0.5, 1.0, 0.5],
+                offset: [0.0, 0.0, 0.0],
+                rate: [1.0, 1.0],
+                lifetime: [1.0, 1.0],
+                size: [0.2, 0.2],
+                spawn_box: [0.0, 0.0, 0.0],
+                velocity: [0.0, 1.0, 0.0],
+                velocity_jitter: [0.0, 0.0, 0.0],
+                color: [[1.0, 0.5, 0.0], [1.0, 1.0, 0.0]],
+                alpha: [0.8, 0.8],
+                fullbright: true,
+            },
+            seed: 0x1234_5678_9ABC_DEF0,
+            skylight: 0,
+            blocklight: 0,
+        }
+    }
+
+    fn one_live_emitter_time(inst: &ParticleEmitterInstance, age: f32) -> f32 {
+        let schedule = emitter_schedule(inst.seed, inst.emitter.rate);
+        // Sequence 10 keeps the test time positive for every phase in [0, 1).
+        emitter_birth_time(inst.seed, schedule, 10) + age
+    }
+
+    fn vertex_center(v: &[ParticleVertex]) -> Vec3 {
+        let sum = v.iter().fold(Vec3::ZERO, |acc, p| acc + Vec3::from(p.pos));
+        sum / v.len() as f32
+    }
+
+    fn x_extent(v: &[ParticleVertex]) -> f32 {
+        let min_x = v.iter().map(|p| p.pos[0]).fold(f32::INFINITY, f32::min);
+        let max_x = v.iter().map(|p| p.pos[0]).fold(f32::NEG_INFINITY, f32::max);
+        max_x - min_x
+    }
+
+    fn max_alpha(v: &[ParticleVertex]) -> f32 {
+        v.iter().map(|p| p.alpha).fold(0.0, f32::max)
     }
 
     #[test]
@@ -316,6 +558,70 @@ mod tests {
         let expect = lighting::light_rgb(DynLight { sky: 0, block: 0 }, LightEnv::IDENTITY);
         assert_eq!(v[2 * 4].tint, expect, "unlit sample dims the tint");
         assert!(expect[0] < 1.0);
+    }
+
+    #[test]
+    fn block_emitter_particles_rise_shrink_and_fade() {
+        let inst = emitter_inst();
+        let mut young = Vec::new();
+        let mut old = Vec::new();
+        let mut scratch = Vec::new();
+
+        let young_n = build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            one_live_emitter_time(&inst, 0.25),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut young,
+            &mut scratch,
+        );
+        let old_n = build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            one_live_emitter_time(&inst, 0.75),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut old,
+            &mut scratch,
+        );
+
+        assert_eq!(young_n as usize, VERTS_PER_CUBE);
+        assert_eq!(old_n as usize, VERTS_PER_CUBE);
+        assert!(
+            vertex_center(&old).y > vertex_center(&young).y,
+            "emitter particles move upward over their lifetime"
+        );
+        assert!(
+            x_extent(&old) < x_extent(&young),
+            "emitter particles shrink as they age"
+        );
+        assert!(
+            max_alpha(&old) < max_alpha(&young),
+            "emitter particles fade as they age"
+        );
+    }
+
+    #[test]
+    fn block_emitter_rate_range_jitters_spawn_intervals() {
+        let seed = 0xCAFE_BABE_F00D_1234;
+        let schedule = emitter_schedule(seed, [1.0, 2.0]);
+        let mut saw_variation = false;
+        let mut prev = emitter_birth_time(seed, schedule, 0);
+
+        for seq in 1..64 {
+            let birth = emitter_birth_time(seed, schedule, seq);
+            let gap = birth - prev;
+            assert!(
+                (0.5..=1.0).contains(&gap),
+                "rate range 1.0-2.0 should produce gaps in 0.5-1.0 seconds, got {gap}"
+            );
+            saw_variation |= (gap - schedule.base_gap).abs() > 0.01;
+            prev = birth;
+        }
+
+        assert!(
+            saw_variation,
+            "range emitters should not spawn on a fixed cadence"
+        );
     }
 
     #[test]

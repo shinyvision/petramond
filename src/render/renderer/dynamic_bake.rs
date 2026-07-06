@@ -467,7 +467,7 @@ impl Renderer {
             },
         );
 
-        // Tiny 3D particle cubes into the reusable vbuf (static quad ibuf): block-atlas
+        // Tiny 3D particle cubes into the reusable vbuf (static cube ibuf): block-atlas
         // flecks first, then bbmodel-block (model-atlas) flecks, so the draw splits at one
         // contiguous index boundary (`particle_block_vertex_count`).
         let particles = &self.particles;
@@ -484,5 +484,56 @@ impl Renderer {
         } else {
             block_v
         };
+
+        // Block-row particle emitters (torch flames and mod-content emitters): cull the
+        // emitter envelope first, then synthesize alpha-blended cubes sorted far-to-near.
+        self.particle_emitter_visible.clear();
+        let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
+        let fog_sq = fog * fog;
+        for inst in &self.particle_emitters {
+            let (min, max) = emitter_world_bounds(inst);
+            if !visible_world_aabb(min, max) {
+                continue;
+            }
+            if aabb_distance_sq(self.cam_pos, min, max) > fog_sq {
+                continue;
+            }
+            self.particle_emitter_visible.push(*inst);
+        }
+        self.particle_emitter_visible.sort_by(|a, b| {
+            let da = (a.origin - self.cam_pos).length_squared();
+            let db = (b.origin - self.cam_pos).length_squared();
+            da.total_cmp(&db)
+        });
+        let emitters = &self.particle_emitter_visible;
+        let time = self.visual_time;
+        let cam_pos = self.cam_pos;
+        self.emitter_particle_draw
+            .bake(&self.queue, &mut self.emitter_particle_verts, |verts| {
+                build_transparent_emitter_particles(
+                    emitters,
+                    time,
+                    cam_pos,
+                    env,
+                    verts,
+                    &mut self.emitter_particle_scratch,
+                )
+            });
     }
+}
+
+fn emitter_world_bounds(inst: &ParticleEmitterInstance) -> (glam::Vec3, glam::Vec3) {
+    let e = inst.emitter;
+    let max_life = e.lifetime[1].max(e.lifetime[0]);
+    let max_size = e.size[1].max(e.size[0]);
+    let velocity = glam::Vec3::from_array(e.velocity);
+    let jitter = glam::Vec3::from_array(e.velocity_jitter);
+    let travel = glam::Vec3::new(
+        velocity.x.abs() + jitter.x,
+        velocity.y.abs() + jitter.y,
+        velocity.z.abs() + jitter.z,
+    ) * max_life;
+    let spawn = glam::Vec3::from_array(e.spawn_box);
+    let extent = spawn + travel + glam::Vec3::splat(max_size + 0.05);
+    (inst.origin - extent, inst.origin + extent)
 }

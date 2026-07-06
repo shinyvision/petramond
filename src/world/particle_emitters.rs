@@ -1,0 +1,92 @@
+//! Presentation collection for block-row particle emitters.
+//!
+//! A block's emitter is immutable row data (`blocks.json`). The world only answers
+//! which loaded cells have such a row and where the emitter anchor is in world space;
+//! the renderer derives transient particles from that. This keeps visual particles
+//! out of simulation, saves, and the fixed tick.
+
+use crate::block::{Block, BlockParticleEmitter, ParticleEmitterAnchor};
+use crate::chunk::{section_local, SectionPos};
+use crate::mathh::{voxel_at, IVec3, Vec3};
+use crate::torch::POLE_HEIGHT;
+
+use super::store::World;
+
+impl World {
+    /// Append `(world_origin, emitter, deterministic_seed, sky6, block6)` for every
+    /// loaded block cell whose row declares a particle emitter. Visits only the
+    /// maintained `particle_emitter_sections` index, then scans that section's dense
+    /// block ids.
+    pub fn collect_particle_emitters(
+        &self,
+        out: &mut Vec<(Vec3, BlockParticleEmitter, u64, u8, u8)>,
+    ) {
+        out.clear();
+        for sp in &self.particle_emitter_sections {
+            let Some(section) = self.sections.get(sp) else {
+                continue;
+            };
+            if !section.has_particle_emitters() {
+                continue;
+            }
+            let (ox, oy, oz) = section.origin_world();
+            for (idx, &id) in section.blocks_slice().iter().enumerate() {
+                let block = Block::from_id(id);
+                let Some(emitter) = block.particle_emitter() else {
+                    continue;
+                };
+                let (lx, ly, lz) = section_local(idx);
+                let cell = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
+                let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
+                let origin = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local;
+                let sample = voxel_at(origin);
+                let (sky, block_light, _) =
+                    self.dynamic_light_at_world(sample.x, sample.y, sample.z);
+                out.push((
+                    origin,
+                    emitter,
+                    emitter_seed(*sp, idx as u16, block),
+                    sky,
+                    block_light,
+                ));
+            }
+        }
+    }
+}
+
+fn emitter_anchor_local(
+    emitter: BlockParticleEmitter,
+    block: Block,
+    section: &crate::section::Section,
+    lx: usize,
+    ly: usize,
+    lz: usize,
+) -> Vec3 {
+    let base = match emitter.anchor {
+        ParticleEmitterAnchor::BlockTop => Vec3::new(0.5, 1.0, 0.5),
+        ParticleEmitterAnchor::BlockCenter => Vec3::splat(0.5),
+        ParticleEmitterAnchor::Local => Vec3::from_array(emitter.origin),
+        ParticleEmitterAnchor::TorchTop => {
+            if block.render_shape() == crate::block::RenderShape::Torch {
+                section
+                    .torch_placement(lx, ly, lz)
+                    .model_transform()
+                    .transform_point3(Vec3::new(0.0, POLE_HEIGHT, 0.0))
+            } else {
+                Vec3::new(0.5, 1.0, 0.5)
+            }
+        }
+    };
+    base + Vec3::from_array(emitter.offset)
+}
+
+fn emitter_seed(sp: SectionPos, local_idx: u16, block: Block) -> u64 {
+    let mut x = (sp.cx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (sp.cy as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+        ^ (sp.cz as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
+        ^ ((local_idx as u64) << 8)
+        ^ block.id() as u64;
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}

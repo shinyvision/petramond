@@ -1,4 +1,5 @@
-// particles: tiny 3D textured cubes (mining dust + break bursts).
+// particles: tiny 3D cubes. Mining/break particles are textured cutout cubes;
+// block-row emitters use the transparent solid-color fragment entry below.
 //
 // Cubes are built CPU-side (world-space, 6 faces each) with a compact per-vertex
 // format: pos + ABSOLUTE atlas uv + RGB tint + per-face shade + alpha. group(0) is
@@ -83,4 +84,15 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
     color = mix(color, u.fog_color.rgb, f);
     return vec4<f32>(color, 1.0);
+}
+
+@fragment
+fn fs_particle_transparent(in: VsOut) -> @location(0) vec4<f32> {
+    var color = in.tint * in.shade;
+    if (u.fog.w > 0.5) {
+        color = color * WATER_TINT;
+    }
+    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    color = mix(color, u.fog_color.rgb, f);
+    return vec4<f32>(color, clamp(in.alpha, 0.0, 1.0));
 }

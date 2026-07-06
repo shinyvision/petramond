@@ -249,6 +249,7 @@ impl World {
         for &c in cells {
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
                 if seen.insert(pos) {
+                    self.refresh_particle_emitter_index(pos);
                     self.mark_dirty_neighborhood(pos, true);
                 }
             }

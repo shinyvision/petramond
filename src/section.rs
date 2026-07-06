@@ -114,6 +114,9 @@ pub struct Section {
     /// Count of cells whose emitted mesh can use biome tint. `0` lets meshing skip the
     /// biome halo/tint precompute for stone/cave/building sections.
     biome_tint_count: u32,
+    /// Count of cells whose block row declares a visual particle emitter. `0` lets
+    /// presentation skip this section when collecting ambient block emitters.
+    particle_emitter_count: u32,
 }
 
 impl Section {
@@ -139,6 +142,7 @@ impl Section {
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,
+            particle_emitter_count: 0,
         }
     }
 
@@ -366,16 +370,25 @@ impl Section {
             (true, false) => self.biome_tint_count -= 1,
             _ => {}
         }
+        match (
+            Self::id_has_particle_emitter(old_id),
+            Self::id_has_particle_emitter(new_id),
+        ) {
+            (false, true) => self.particle_emitter_count += 1,
+            (true, false) => self.particle_emitter_count -= 1,
+            _ => {}
+        }
     }
 
-    /// Recount opaque + non-air + water + mesh hint cells — for a bulk load that fills
-    /// `blocks` directly.
+    /// Recount opaque + non-air + water + mesh/presentation hint cells — for a bulk
+    /// load that fills `blocks` directly.
     pub fn recompute_opaque_count(&mut self) {
         let water_id = Block::Water.id();
         let mut opaque = 0u32;
         let mut non_air = 0u32;
         let mut water = 0u32;
         let mut biome_tint = 0u32;
+        let mut particle_emitters = 0u32;
         for &id in self.blocks.iter() {
             if Block::from_id(id).is_opaque() {
                 opaque += 1;
@@ -389,11 +402,15 @@ impl Section {
             if Self::id_uses_biome_tint(id) {
                 biome_tint += 1;
             }
+            if Self::id_has_particle_emitter(id) {
+                particle_emitters += 1;
+            }
         }
         self.opaque_count = opaque;
         self.non_air_count = non_air;
         self.water_count = water;
         self.biome_tint_count = biome_tint;
+        self.particle_emitter_count = particle_emitters;
 
         let mut planes = [0u16; 6];
         let hi = SECTION_SIZE - 1;
@@ -472,6 +489,12 @@ impl Section {
         self.biome_tint_count > 0
     }
 
+    /// Whether this section contains any block-row particle emitter.
+    #[inline]
+    pub fn has_particle_emitters(&self) -> bool {
+        self.particle_emitter_count > 0
+    }
+
     /// Whether the section holds any air cell.
     #[inline]
     pub fn has_air(&self) -> bool {
@@ -505,6 +528,11 @@ impl Section {
             block,
             Block::Grass | Block::Water | Block::ShortGrass | Block::Fern
         ) || block.has_tag(BlockTag::LEAVES)
+    }
+
+    #[inline]
+    fn id_has_particle_emitter(id: u8) -> bool {
+        Block::from_id(id).particle_emitter().is_some()
     }
 
     #[cfg(all(test, feature = "worldgen-tests"))]
@@ -843,6 +871,7 @@ impl Section {
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,
+            particle_emitter_count: 0,
         };
         s.recompute_random_tick_count();
         s.recompute_opaque_count();
@@ -877,5 +906,24 @@ mod tests {
         section.blocks_slice_mut()[0] = Block::OakLeaves.id();
         section.recompute_opaque_count();
         assert!(section.has_biome_tint_blocks());
+    }
+
+    #[test]
+    fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
+        let mut section = Section::new(0, 0, 0);
+        assert!(!section.has_particle_emitters());
+
+        section.set_block(1, 1, 1, Block::Stone);
+        assert!(!section.has_particle_emitters());
+
+        section.set_block(1, 1, 1, Block::Torch);
+        assert!(section.has_particle_emitters());
+
+        section.set_block(1, 1, 1, Block::Air);
+        assert!(!section.has_particle_emitters());
+
+        section.blocks_slice_mut()[0] = Block::Torch.id();
+        section.recompute_opaque_count();
+        assert!(section.has_particle_emitters());
     }
 }

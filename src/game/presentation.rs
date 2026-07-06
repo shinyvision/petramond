@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::{IVec3, Quat, Vec3};
 
 use crate::atlas::Tile;
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, BlockParticleEmitter, RenderShape};
 use crate::block_model::BlockModelKind;
 use crate::door::DoorState;
 use crate::furnace::Facing;
@@ -91,6 +91,15 @@ pub(crate) struct ParticlePresentation {
     pub(crate) blocklight: u8,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct ParticleEmitterPresentation {
+    pub(crate) origin: Vec3,
+    pub(crate) emitter: BlockParticleEmitter,
+    pub(crate) seed: u64,
+    pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MobPresentation {
     pub(crate) id: u64,
@@ -142,6 +151,7 @@ pub(crate) struct GamePresentation<'a> {
     pub(crate) tick_alpha: f32,
     pub(crate) item_entities: &'a [DroppedItemPresentation],
     pub(crate) particles: &'a [ParticlePresentation],
+    pub(crate) particle_emitters: &'a [ParticleEmitterPresentation],
     pub(crate) chests: &'a [ChestPresentation],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
@@ -154,6 +164,8 @@ pub(crate) struct GamePresentation<'a> {
 pub(crate) struct GamePresentationScratch {
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
+    particle_emitter_rows: Vec<(Vec3, BlockParticleEmitter, u64, u8, u8)>,
+    particle_emitters: Vec<ParticleEmitterPresentation>,
     chest_rows: Vec<(IVec3, Facing, u8, u8)>,
     door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>,
     chests: Vec<ChestPresentation>,
@@ -170,6 +182,7 @@ impl GamePresentationScratch {
         let tick_alpha = game.tick_alpha();
         self.collect_item_entities(game);
         self.collect_particles(game);
+        self.collect_particle_emitters(game);
         self.collect_chests(game);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
@@ -178,6 +191,7 @@ impl GamePresentationScratch {
             tick_alpha,
             item_entities: &self.item_entities,
             particles: &self.particles,
+            particle_emitters: &self.particle_emitters,
             chests: &self.chests,
             doors: &self.doors,
             mobs: &self.mobs,
@@ -229,6 +243,22 @@ impl GamePresentationScratch {
                     blocklight: particle.blocklight,
                 }
             }));
+    }
+
+    fn collect_particle_emitters(&mut self, game: &Game) {
+        game.world
+            .collect_particle_emitters(&mut self.particle_emitter_rows);
+        self.particle_emitters.clear();
+        self.particle_emitters
+            .extend(self.particle_emitter_rows.iter().map(
+                |&(origin, emitter, seed, skylight, blocklight)| ParticleEmitterPresentation {
+                    origin,
+                    emitter,
+                    seed,
+                    skylight,
+                    blocklight,
+                },
+            ));
     }
 
     fn collect_chests(&mut self, game: &Game) {

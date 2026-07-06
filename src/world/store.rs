@@ -204,6 +204,10 @@ pub struct World {
     /// section whose last entity was cleared by a raw block edit costs one
     /// `is_empty` check), never under-approximate.
     pub(super) block_entity_sections: FxHashSet<SectionPos>,
+    /// Sections currently holding at least one block-row particle emitter. Kept separate
+    /// from `block_entity_sections` so torch-heavy scenes do not make chest/door/furnace
+    /// collection visit unrelated sections.
+    pub(super) particle_emitter_sections: FxHashSet<SectionPos>,
     /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
     /// which re-runs the deep-visibility BFS before submitting work.
     pub(super) vis_dirty: bool,
@@ -287,6 +291,7 @@ impl World {
             visible_deep: FxHashSet::default(),
             hidden_parked: FxHashSet::default(),
             block_entity_sections: FxHashSet::default(),
+            particle_emitter_sections: FxHashSet::default(),
             vis_dirty: false,
             light_blocked_meshes: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
@@ -655,6 +660,7 @@ impl World {
             self.ensure_column(pos.chunk_pos());
             self.sections.insert(pos, Arc::new(section));
             self.refresh_block_entity_index(pos);
+            self.refresh_particle_emitter_index(pos);
         }
         true
     }
@@ -902,9 +908,24 @@ impl World {
         }
     }
 
+    /// Keep [`particle_emitter_sections`](Self::particle_emitter_sections) in sync after
+    /// `pos`'s block ids may have changed.
+    pub(super) fn refresh_particle_emitter_index(&mut self, pos: SectionPos) {
+        let has = self
+            .sections
+            .get(&pos)
+            .is_some_and(|s| s.has_particle_emitters());
+        if has {
+            self.particle_emitter_sections.insert(pos);
+        } else {
+            self.particle_emitter_sections.remove(&pos);
+        }
+    }
+
     pub(super) fn remove_section(&mut self, pos: SectionPos) {
         self.sections.remove(&pos);
         self.block_entity_sections.remove(&pos);
+        self.particle_emitter_sections.remove(&pos);
         self.awaited_overlays.remove(&pos);
         if self.remove_mesh(pos) {
             self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
@@ -927,6 +948,7 @@ impl World {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections.remove(&sp);
             self.block_entity_sections.remove(&sp);
+            self.particle_emitter_sections.remove(&sp);
             self.meshes.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
@@ -952,6 +974,8 @@ impl World {
         self.deep_sections.clear();
         self.visible_deep.clear();
         self.hidden_parked.clear();
+        self.block_entity_sections.clear();
+        self.particle_emitter_sections.clear();
         self.columns.clear();
         self.column_gen.clear();
         self.meshes.clear();
@@ -977,6 +1001,7 @@ impl World {
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
         self.refresh_block_entity_index(pos);
+        self.refresh_particle_emitter_index(pos);
         self.queue_dirty_mesh(pos);
     }
 
@@ -997,6 +1022,7 @@ impl World {
         for (cy, section) in sections {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections.insert(sp, Arc::new(section));
+            self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
         }
     }
@@ -1013,6 +1039,7 @@ impl World {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
+            self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
         }
     }

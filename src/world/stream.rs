@@ -595,6 +595,7 @@ impl World {
                     }
                     self.sections.insert(sp, section);
                     self.refresh_block_entity_index(sp);
+                    self.refresh_particle_emitter_index(sp);
                     self.classify_deep_on_install(sp);
                     if self.stream_events_enabled {
                         self.stream_events.push(StreamEvent::Generated(sp));
@@ -801,6 +802,7 @@ impl World {
             }
             self.sections.insert(*sp, Arc::new(section));
             self.refresh_block_entity_index(*sp);
+            self.refresh_particle_emitter_index(*sp);
             self.dropped_items.extend(entities);
             self.restore_mobs(mobs);
         }

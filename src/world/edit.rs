@@ -40,6 +40,7 @@ impl World {
             s.set_block(lx, ly, lz, b);
             s.modified = true;
         }
+        self.refresh_particle_emitter_index(pos);
         if self.update_column_height_after_set(wx, wy, wz, b != Block::Air) {
             self.mark_heightmap_light_dirty_around(pos.chunk_pos());
         }
@@ -79,6 +80,7 @@ impl World {
         section.set_block(lx, ly, lz, block);
         section.set_log_axis(lx, ly, lz, axis);
         section.modified = true;
+        self.refresh_particle_emitter_index(section_pos);
         if self.update_column_height_after_set(pos.x, pos.y, pos.z, true) {
             self.mark_heightmap_light_dirty_around(section_pos.chunk_pos());
         }

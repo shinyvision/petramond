@@ -28,6 +28,10 @@ pub(super) struct BlockDef {
     /// Block-light radiated when active, on the x2 scale (`0` = non-emitter). See
     /// [`Block::light_emission`](super::Block::light_emission).
     pub emission: u8,
+    /// Optional visual-only cube particle emitter declared by this block row. This is
+    /// presentation data: it never changes simulation state and is intentionally
+    /// available to mod content through `blocks.json`.
+    pub particle_emitter: Option<BlockParticleEmitter>,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
     /// Mining material class (drives tool requirement + future tool tiers).
@@ -40,6 +44,88 @@ pub(super) struct BlockDef {
     pub hardness: f32,
     /// What this block yields when harvested. `DropSpec::NONE` = no drop.
     pub drop: DropSpec,
+}
+
+/// Where a block-row particle emitter starts from inside the occupied cell.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleEmitterAnchor {
+    /// Top center of the block cell: `(0.5, 1.0, 0.5)`.
+    BlockTop,
+    /// Center of the block cell: `(0.5, 0.5, 0.5)`.
+    BlockCenter,
+    /// The `origin` vector from the emitter row.
+    Local,
+    /// The actual rendered torch pole tip, including wall-torch tilt.
+    TorchTop,
+}
+
+/// Visual-only cube particle emitter data owned by a block definition.
+///
+/// A content pack opts in by adding `particle_emitter` to its `blocks.json` row.
+/// The renderer derives short-lived particles from this immutable row and loaded
+/// block positions; no particle state is saved and no mod code needs to run.
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockParticleEmitter {
+    /// Emitter anchor. Defaults to top center for ordinary block emitters.
+    #[serde(default = "default_particle_anchor")]
+    pub anchor: ParticleEmitterAnchor,
+    /// Cell-local origin used when `anchor = "local"`.
+    #[serde(default = "default_particle_origin")]
+    pub origin: [f32; 3],
+    /// Offset added after anchor resolution, in block units.
+    #[serde(default)]
+    pub offset: [f32; 3],
+    /// Inclusive min/max particles spawned per second. JSON may use a single number
+    /// for a fixed-rate emitter or `[min, max]` for irregular spawn timing.
+    #[serde(deserialize_with = "deserialize_particle_rate")]
+    pub rate: [f32; 2],
+    /// Inclusive min/max particle lifetime in seconds.
+    pub lifetime: [f32; 2],
+    /// Inclusive min/max cube edge length in block units.
+    pub size: [f32; 2],
+    /// Spawn jitter half-extents around the anchor, in block units.
+    #[serde(default)]
+    pub spawn_box: [f32; 3],
+    /// Base particle velocity, in blocks per second.
+    #[serde(default)]
+    pub velocity: [f32; 3],
+    /// Per-axis random velocity jitter, in blocks per second.
+    #[serde(default)]
+    pub velocity_jitter: [f32; 3],
+    /// RGB color endpoints; each particle chooses a deterministic mix between them.
+    pub color: [[f32; 3]; 2],
+    /// Inclusive min/max starting alpha. Lifetime fade multiplies this to zero.
+    pub alpha: [f32; 2],
+    /// If true, particle colors are not dimmed by sampled world light.
+    #[serde(default)]
+    pub fullbright: bool,
+}
+
+fn default_particle_anchor() -> ParticleEmitterAnchor {
+    ParticleEmitterAnchor::BlockTop
+}
+
+fn default_particle_origin() -> [f32; 3] {
+    [0.5, 1.0, 0.5]
+}
+
+fn deserialize_particle_rate<'de, D>(deserializer: D) -> Result<[f32; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Rate {
+        Fixed(f32),
+        Range([f32; 2]),
+    }
+
+    Ok(match <Rate as serde::Deserialize>::deserialize(deserializer)? {
+        Rate::Fixed(rate) => [rate, rate],
+        Rate::Range(range) => range,
+    })
 }
 
 /// Mining material class of a block — an internal mining-grouping key (drives the

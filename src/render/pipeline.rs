@@ -310,12 +310,18 @@ pub(super) struct PipelineResources {
     pub door_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for door models.
     pub door_ibuf: wgpu::Buffer,
-    /// Particle pipeline: camera-facing billboards. Reuses the block `uniform_bind`
-    /// + `atlas_bind`, alpha-blended, depth-test (Load) / no-write.
+    /// Cutout terrain-particle cube pipeline. Reuses the block `uniform_bind`
+    /// + `atlas_bind`, depth-tests, and depth-writes.
     pub particle_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for particle quads (rewritten in place per frame).
+    /// Translucent block-emitter particle pipeline: solid-color cube particles, alpha
+    /// blended, depth-tested without writes, and back-face culled so transparency never
+    /// exposes all six cube faces at once.
+    pub emitter_particle_pipe: wgpu::RenderPipeline,
+    /// Reusable dynamic vbuf for cutout particle cubes (rewritten in place per frame).
     pub particle_vbuf: wgpu::Buffer,
-    /// Static ibuf for particle quads (6 per quad), uploaded once.
+    /// Reusable dynamic vbuf for translucent block-emitter particles.
+    pub emitter_particle_vbuf: wgpu::Buffer,
+    /// Static ibuf for particle cubes, uploaded once.
     pub particle_ibuf: wgpu::Buffer,
     /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Alpha-blended,
     /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
@@ -473,8 +479,7 @@ pub(super) fn create_pipeline_resources(
     let (break_pipe, break_vbuf, break_ibuf) =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
     let entity_bufs = create_entity_model_buffers(device);
-    let (particle_pipe, particle_vbuf, particle_ibuf) =
-        create_particle_pipeline(device, format, sample_count, &shared.layout);
+    let particles = create_particle_pipeline(device, format, sample_count, &shared.layout);
     let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
     let model_icon_pipe =
         create_model_icon_pipeline(device, format, sample_count, &shared.atlas_bgl);
@@ -518,9 +523,11 @@ pub(super) fn create_pipeline_resources(
         chest_ibuf: entity_bufs.chest_ibuf,
         door_vbuf: entity_bufs.door_vbuf,
         door_ibuf: entity_bufs.door_ibuf,
-        particle_pipe,
-        particle_vbuf,
-        particle_ibuf,
+        particle_pipe: particles.pipe,
+        emitter_particle_pipe: particles.emitter_pipe,
+        particle_vbuf: particles.vbuf,
+        emitter_particle_vbuf: particles.emitter_vbuf,
+        particle_ibuf: particles.ibuf,
         ui_pipe,
         ui_vbuf,
         model_icon_pipe,
@@ -1613,18 +1620,23 @@ fn create_entity_model_buffers(device: &wgpu::Device) -> EntityModelBuffers {
     }
 }
 
-/// Particle pipeline (tiny 3D textured cubes).
-/// Reuses the block `uniform_bgl` (group0) + `atlas_bgl` (group1) so it binds
-/// the renderer's existing `uniform_bind` / `atlas_bind`. Compact 40-byte
-/// particle vertex (pos + uv + tint + shade + alpha). Alpha CUTOUT (discard
-/// a<0.5 in the shader) so cubes are solid and DEPTH-WRITTEN — correctly
-/// occluded by terrain and visible from any angle including above. No blend.
+struct ParticlePipelineResources {
+    pipe: wgpu::RenderPipeline,
+    emitter_pipe: wgpu::RenderPipeline,
+    vbuf: wgpu::Buffer,
+    emitter_vbuf: wgpu::Buffer,
+    ibuf: wgpu::Buffer,
+}
+
+/// Particle pipelines (tiny 3D cubes). Mining/break particles use alpha cutout and
+/// depth writes. Block-row emitter particles use solid vertex colors, alpha blending,
+/// depth read-only, and back-face culling.
 fn create_particle_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
     sample_count: u32,
     layout: &wgpu::PipelineLayout,
-) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
+) -> ParticlePipelineResources {
     let particle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("particle shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particles.wgsl").into()),
@@ -1678,8 +1690,33 @@ fn create_particle_pipeline(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
+    let emitter_targets = color_target(
+        format,
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
+    let emitter_pipe = world_pipeline(
+        device,
+        "emitter particle pipe",
+        layout,
+        &particle_shader,
+        "vs_particle",
+        "fs_particle_transparent",
+        std::slice::from_ref(&particle_vbuf_layout),
+        &emitter_targets,
+        cull_back(),
+        Some(DepthPreset::ReadLess),
+        sample_count,
+    );
     let particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("particle vbuf"),
+        size: (super::particles::MAX_PARTICLE_VERTICES
+            * std::mem::size_of::<super::particles::ParticleVertex>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let emitter_particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("emitter particle vbuf"),
         size: (super::particles::MAX_PARTICLE_VERTICES
             * std::mem::size_of::<super::particles::ParticleVertex>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -1691,7 +1728,13 @@ fn create_particle_pipeline(
         contents: bytemuck::cast_slice(&super::particles::particle_indices()),
         usage: wgpu::BufferUsages::INDEX,
     });
-    (particle_pipe, particle_vbuf, particle_ibuf)
+    ParticlePipelineResources {
+        pipe: particle_pipe,
+        emitter_pipe,
+        vbuf: particle_vbuf,
+        emitter_vbuf: emitter_particle_vbuf,
+        ibuf: particle_ibuf,
+    }
 }
 
 /// UI pipeline (2D HUD / inventory).

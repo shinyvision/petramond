@@ -16,6 +16,7 @@ mod light;
 mod mesh_pool;
 mod mesh_queue;
 mod model;
+mod particle_emitters;
 mod query;
 mod render_handoff;
 pub(crate) mod sapling;

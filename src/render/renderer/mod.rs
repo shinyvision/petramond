@@ -33,7 +33,7 @@ use super::item_cube::BillboardBasis;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
-use super::particles::build_particles_split;
+use super::particles::{build_particles_split, build_transparent_emitter_particles};
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
     create_atlas, create_atlas_array, create_depth, create_gui_panel, create_model_texture,
@@ -44,7 +44,7 @@ use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
-    MobRenderInstance, ParticleInstance, PlayerRenderInstance,
+    MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
 };
 use crate::bbmodel::Model;
 use crate::gui::UiSnapshot;
@@ -256,6 +256,9 @@ pub struct Renderer {
     /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
     /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
     particle_draw: DynamicVertexDraw,
+    /// Translucent block-emitter particles: same cube vertex format as mining dust,
+    /// but a separate alpha-blended pipeline/vbuf so cutout dust remains unchanged.
+    emitter_particle_draw: DynamicVertexDraw,
     depth: wgpu::TextureView,
     terrain_columns: HashMap<ChunkPos, GpuColumnMesh>,
     /// Reusable sorted upload worklist for dirty terrain columns. Filled from the
@@ -282,6 +285,9 @@ pub struct Renderer {
     /// Snapped world-space origin subtracted by world shaders before applying the
     /// camera matrix, keeping GPU transform math camera-local far from spawn.
     render_origin: glam::Vec3,
+    /// Visual time from the current frame uniforms, used by presentation-only
+    /// render effects such as block-row particle emitters.
+    visual_time: f32,
     /// Sections currently drawing the far leaf mesh. Stored only for active far-LOD
     /// sections so the transition has hysteresis instead of flipping at one threshold.
     far_leaf_lod_state: HashMap<SectionPos, bool>,
@@ -310,6 +316,10 @@ pub struct Renderer {
     /// Model-atlas particle cubes (bbmodel-block flecks) to draw this frame — baked into
     /// the SAME particle vbuf after the block cubes, then drawn with the model atlas bound.
     model_particles: Vec<ParticleInstance>,
+    /// Loaded block-row particle emitters to synthesize into translucent cube particles.
+    particle_emitters: Vec<ParticleEmitterInstance>,
+    /// Frustum/fog-visible subset of `particle_emitters`.
+    particle_emitter_visible: Vec<ParticleEmitterInstance>,
     /// Vertex count of the BLOCK-atlas portion of `particle_draw` this frame (the split
     /// point: `[0..this)` draws with the block atlas, the rest with the model atlas).
     particle_block_vertex_count: u32,
@@ -338,6 +348,10 @@ pub struct Renderer {
     mobs: Vec<MobRenderInstance>,
     /// Reusable CPU staging for baked particle vertices.
     particle_verts: Vec<super::particles::ParticleVertex>,
+    /// Reusable CPU staging for translucent emitter-particle vertices.
+    emitter_particle_verts: Vec<super::particles::ParticleVertex>,
+    /// Reusable generated translucent particle rows, sorted far-to-near before vertex bake.
+    emitter_particle_scratch: Vec<super::particles::TransparentParticleCube>,
     /// UI pipeline (2D HUD / inventory). Every UI quad is drawn with it; group(0)
     /// binds whichever baked texture (or the icon atlas) the quad samples.
     ui_pipe: wgpu::RenderPipeline,

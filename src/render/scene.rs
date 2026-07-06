@@ -14,12 +14,12 @@
 use glam::Vec3;
 
 use super::{
-    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance,
-    PlayerRenderInstance, Renderer,
+    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance,
+    ParticleInstance, PlayerRenderInstance, Renderer,
 };
 use crate::game::presentation::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
-    MobPresentation, ParticleAtlas, ParticlePresentation,
+    MobPresentation, ParticleAtlas, ParticleEmitterPresentation, ParticlePresentation,
 };
 
 /// Per-frame presentation translation state, owned by the App. Holds the renderer's
@@ -34,6 +34,8 @@ pub(crate) struct Scene {
     /// Baked model-atlas particle cubes (bbmodel-block flecks) for this frame — drawn in
     /// the same pass but bound to the model atlas.
     model_particles: Vec<ParticleInstance>,
+    /// Baked block-row particle emitters for this frame.
+    particle_emitters: Vec<ParticleEmitterInstance>,
     /// Baked placed-chest instances for this frame.
     chests: Vec<ChestInstance>,
     /// Baked placed-door instances for this frame.
@@ -60,6 +62,7 @@ impl Scene {
         self.item_entities.clear();
         self.particles.clear();
         self.model_particles.clear();
+        self.particle_emitters.clear();
         self.chests.clear();
         self.doors.clear();
         self.mobs.clear();
@@ -84,6 +87,7 @@ impl Scene {
             &mut self.particles,
             &mut self.model_particles,
         );
+        bake_particle_emitters(presentation.particle_emitters, &mut self.particle_emitters);
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
@@ -163,6 +167,7 @@ impl Scene {
         renderer.set_player(self.player);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
+        renderer.set_particle_emitters(&self.particle_emitters);
     }
 }
 
@@ -248,6 +253,20 @@ fn bake_particles(
             ParticleAtlas::Model => model_out.push(inst),
         }
     }
+}
+
+fn bake_particle_emitters(
+    emitters: &[ParticleEmitterPresentation],
+    out: &mut Vec<ParticleEmitterInstance>,
+) {
+    out.clear();
+    out.extend(emitters.iter().map(|e| ParticleEmitterInstance {
+        origin: e.origin,
+        emitter: e.emitter,
+        seed: e.seed,
+        skylight: e.skylight,
+        blocklight: e.blocklight,
+    }));
 }
 
 #[cfg(test)]

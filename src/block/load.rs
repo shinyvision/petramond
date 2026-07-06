@@ -25,7 +25,7 @@ use crate::atlas::Tile;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
 
-use super::definition::{BlockDef, BlockFlags, BlockMaterial};
+use super::definition::{BlockDef, BlockFlags, BlockMaterial, BlockParticleEmitter};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
 
 #[derive(Serialize, Deserialize)]
@@ -55,6 +55,8 @@ pub(super) struct RawBlockDef {
     pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
     pub emission: u8,
+    #[serde(default)]
+    pub particle_emitter: Option<BlockParticleEmitter>,
     pub tiles: [String; 3],
     pub material: BlockMaterial,
     pub harvest_tier: u8,
@@ -255,6 +257,9 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
+    if let Some(emitter) = &r.particle_emitter {
+        validate_particle_emitter(emitter)?;
+    }
     Ok(BlockDef {
         block,
         flags,
@@ -264,12 +269,77 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         shape: r.shape,
         collision: leak(r.collision),
         emission: r.emission,
+        particle_emitter: r.particle_emitter,
         tiles,
         material: r.material,
         harvest_tier: r.harvest_tier,
         hardness: r.hardness as f32,
         drop: DropSpec { drops: leak(drops) },
     })
+}
+
+fn validate_particle_emitter(e: &BlockParticleEmitter) -> Result<(), String> {
+    let finite = |label: &str, value: f32| -> Result<(), String> {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(format!("particle_emitter.{label} must be finite"))
+        }
+    };
+    let ordered_positive = |label: &str, range: [f32; 2]| -> Result<(), String> {
+        finite(&format!("{label}[0]"), range[0])?;
+        finite(&format!("{label}[1]"), range[1])?;
+        if range[0] <= 0.0 || range[1] <= 0.0 {
+            return Err(format!("particle_emitter.{label} values must be > 0"));
+        }
+        if range[0] > range[1] {
+            return Err(format!("particle_emitter.{label} min must be <= max"));
+        }
+        Ok(())
+    };
+    ordered_positive("rate", e.rate)?;
+    ordered_positive("lifetime", e.lifetime)?;
+    ordered_positive("size", e.size)?;
+
+    for (label, values) in [
+        ("origin", e.origin.as_slice()),
+        ("offset", e.offset.as_slice()),
+        ("spawn_box", e.spawn_box.as_slice()),
+        ("velocity", e.velocity.as_slice()),
+        ("velocity_jitter", e.velocity_jitter.as_slice()),
+    ] {
+        for (i, &value) in values.iter().enumerate() {
+            finite(&format!("{label}[{i}]"), value)?;
+        }
+    }
+    for (label, values) in [
+        ("spawn_box", e.spawn_box),
+        ("velocity_jitter", e.velocity_jitter),
+    ] {
+        for (i, value) in values.into_iter().enumerate() {
+            if value < 0.0 {
+                return Err(format!("particle_emitter.{label}[{i}] must be >= 0"));
+            }
+        }
+    }
+    for (endpoint, color) in e.color.into_iter().enumerate() {
+        for (channel, value) in color.into_iter().enumerate() {
+            finite(&format!("color[{endpoint}][{channel}]"), value)?;
+            if !(0.0..=1.0).contains(&value) {
+                return Err("particle_emitter.color channels must be in 0..=1".into());
+            }
+        }
+    }
+    for (i, value) in e.alpha.into_iter().enumerate() {
+        finite(&format!("alpha[{i}]"), value)?;
+        if !(0.0..=1.0).contains(&value) {
+            return Err("particle_emitter.alpha values must be in 0..=1".into());
+        }
+    }
+    if e.alpha[0] > e.alpha[1] {
+        return Err("particle_emitter.alpha min must be <= max".into());
+    }
+    Ok(())
 }
 
 /// The table loads exactly once per process (a `LazyLock` in `data`), so its
@@ -340,6 +410,30 @@ mod tests {
         assert_eq!(def.drop.drops[0].item, ItemType::Cobblestone);
         // Engine ids are untouched by the addition.
         assert_eq!(reg.defs[Block::Stone.id() as usize].block, Block::Stone);
+    }
+
+    #[test]
+    fn namespaced_block_rows_can_declare_particle_emitters() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "mymod:spark", "shape": "cube", "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "particle_emitter": { "anchor": "block_top", "rate": [1.0, 2.0], "lifetime": [0.2, 0.4], "size": [0.02, 0.05], "spawn_box": [0.1, 0.0, 0.1], "velocity": [0.0, 0.2, 0.0], "velocity_jitter": [0.03, 0.02, 0.03], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6], "fullbright": true }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
+        let reg = parse_test_layers(&[&base, layer]).expect("particle emitter row loads");
+        let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
+        assert!(
+            def.particle_emitter.is_some(),
+            "dynamic block row carries its emitter into the loaded definition"
+        );
+    }
+
+    #[test]
+    fn particle_emitter_rows_validate_ranges() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "mymod:bad_spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": { "rate": 2.0, "lifetime": [0.5, 0.2], "size": [0.02, 0.05], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6] }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let err = parse_test_layers(&[&base, layer])
+            .err()
+            .expect("reversed lifetime is rejected");
+        assert!(err.contains("particle_emitter.lifetime"), "{err}");
     }
 
     #[test]

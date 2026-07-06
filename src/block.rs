@@ -16,6 +16,7 @@ mod sounds;
 pub use behavior::BlockBehavior;
 pub(crate) use data::ENGINE_BLOCK_NAMES;
 pub(crate) use definition::BlockMaterial;
+pub use definition::{BlockParticleEmitter, ParticleEmitterAnchor};
 pub use sounds::BlockSoundAction;
 
 /// A registered block, identified by its opaque runtime id. Engine blocks own
@@ -569,6 +570,14 @@ impl Block {
     #[inline]
     pub fn light_emission(self) -> u8 {
         self.def().emission
+    }
+
+    /// Optional visual-only particle emitter declared on this block's data row.
+    /// Content packs can add these through `blocks.json`; the client presentation
+    /// layer turns loaded cells into transient render particles.
+    #[inline]
+    pub fn particle_emitter(self) -> Option<BlockParticleEmitter> {
+        self.def().particle_emitter
     }
 
     /// A cell a placement may overwrite in place: empty air, water (building into
