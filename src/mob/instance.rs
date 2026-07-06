@@ -61,6 +61,13 @@ const WATER_CURRENT_SPEED: f32 = 0.75;
 /// How fast the head turns toward its look target (rad/s) — deliberately slow so the
 /// head pans rather than snaps.
 const HEAD_TURN_RATE: f32 = 4.0;
+/// A mob with a despawn radius that is farther than this from the player is also
+/// eligible for *random* despawn each tick — the churn that recycles far unseen
+/// hostiles (deep cave spawns) so the population cap keeps freeing room for new
+/// spawns near the player. Inside this distance only the hard radius applies.
+const RANDOM_DESPAWN_MIN_DIST: f32 = 32.0;
+/// Per-tick random-despawn chance once eligible: ~40 s expected lifetime at 20 TPS.
+const RANDOM_DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 
 /// A live mob. Render-facing fields (`pos`/`yaw`/`anim_time`/`moving`/`skylight` and
 /// their `prev_*` snapshots) are public for the scene adapter; the AI/physics state
@@ -412,9 +419,13 @@ impl Instance {
         self.shear_regrow = self.shear_regrow.saturating_sub(1);
 
         // Distance-despawn: a mob with a row-level radius is culled immediately once it
-        // is outside that radius. Species with no radius persist while loaded.
+        // is outside that radius, and randomly once beyond the eligibility distance.
+        // Species with no radius persist while loaded.
         if let Some(radius) = despawn_radius {
-            self.distance_despawned = (self.pos - player_pos).length_squared() >= radius * radius;
+            let dist2 = (self.pos - player_pos).length_squared();
+            // The roll is drawn only when eligible, so a near mob's brain RNG
+            // stream is untouched by this rule.
+            self.distance_despawned = despawn_now(dist2, radius, || self.rng.next_f32());
         } else {
             self.distance_despawned = false;
         }
@@ -810,6 +821,18 @@ fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec
     Vec3::new(vel.x + nx * add, vel.y, vel.z + nz * add)
 }
 
+/// The per-tick despawn decision for a mob with despawn radius `radius` at squared
+/// player distance `dist2`: certain at/beyond the hard radius, a small random chance
+/// (`roll`, drawn lazily in `[0, 1)`) once beyond the eligibility distance, never
+/// closer than that. Factored out pure so the eligibility rules are tested without
+/// simulating a mob.
+fn despawn_now(dist2: f32, radius: f32, roll: impl FnOnce() -> f32) -> bool {
+    if dist2 >= radius * radius {
+        return true;
+    }
+    dist2 >= RANDOM_DESPAWN_MIN_DIST * RANDOM_DESPAWN_MIN_DIST && roll() < RANDOM_DESPAWN_CHANCE
+}
+
 /// Bridge a cell-solid bool stub into the shared collision box source (a full cube per
 /// solid cell), so the kinematics tests keep driving body physics with a simple `solid`
 /// predicate while it routes through the same `collision::resolve_body` as production.
@@ -841,6 +864,20 @@ mod tests {
 
     fn sheep_def() -> &'static MobDef {
         def(Mob::Sheep)
+    }
+
+    #[test]
+    fn despawn_is_certain_at_radius_random_when_far_never_when_near() {
+        let r = 128.0;
+        // At/beyond the hard radius: certain, no roll consumed.
+        assert!(despawn_now(r * r, r, || unreachable!("no roll at the hard radius")));
+        // Beyond the eligibility distance but inside the radius: decided by the roll.
+        let far2 = (RANDOM_DESPAWN_MIN_DIST + 1.0).powi(2);
+        assert!(despawn_now(far2, r, || 0.0));
+        assert!(!despawn_now(far2, r, || RANDOM_DESPAWN_CHANCE));
+        // Near the player: never, and the RNG stream is untouched.
+        let near2 = (RANDOM_DESPAWN_MIN_DIST - 1.0).powi(2);
+        assert!(!despawn_now(near2, r, || unreachable!("no roll near the player")));
     }
 
     #[test]

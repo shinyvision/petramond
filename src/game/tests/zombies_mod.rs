@@ -169,7 +169,7 @@ fn zombie_sunburn_inner() {
     }
 
     install_chunk(&mut game, 0, 0, SKY_FULL, 0);
-    install_chunk(&mut game, 2, 0, 0, SKY_FULL);
+    install_chunk(&mut game, 3, 0, 0, SKY_FULL);
 
     let mut sun_ids = Vec::new();
     for x in [2.5, 5.5, 8.5, 11.5] {
@@ -181,12 +181,15 @@ fn zombie_sunburn_inner() {
             sun_ids.push(game.world.mobs().instances().last().unwrap().id());
         }
     }
+    // The dark controls must survive the whole loop: keep them outside the
+    // chase radius (so they stay in their block-lit chunk) but inside the
+    // random-despawn eligibility distance (so they can't be culled).
     let mut dark_ids = Vec::new();
     for z in [4.5, 7.5, 10.5, 13.5] {
         assert!(game
             .world
             .mobs_mut()
-            .spawn(zombie, Vec3::new(40.5, 64.0, z), 0.0));
+            .spawn(zombie, Vec3::new(52.5, 64.0, z), 0.0));
         dark_ids.push(game.world.mobs().instances().last().unwrap().id());
     }
 

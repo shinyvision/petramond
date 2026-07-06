@@ -21,6 +21,7 @@ mod world_select;
 mod world_settings;
 
 use super::App;
+use crate::audio::Sound;
 use crate::gui::GuiKind;
 use llama_ui::UiState;
 
@@ -29,6 +30,13 @@ fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
     let mut state = std::mem::take(app.ui.state_mut());
     f(app, &mut state);
     *app.ui.state_mut() = state;
+}
+
+fn is_shell_activation(ev: &llama_ui::UiEvent) -> bool {
+    matches!(
+        ev,
+        llama_ui::UiEvent::Click { .. } | llama_ui::UiEvent::Toggle { .. }
+    )
 }
 
 impl App {
@@ -72,6 +80,9 @@ impl App {
         self.ui.frame(kind, screen, now, dim);
         let events = self.ui.take_events();
         for ev in events {
+            if is_shell_activation(&ev) {
+                self.audio.play(Sound::UiClick);
+            }
             match kind {
                 GuiKind::Demo => {
                     super::ui_runtime::demo::apply_one(self.ui.state_mut(), &ev);

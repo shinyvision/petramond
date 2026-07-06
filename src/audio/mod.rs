@@ -108,6 +108,8 @@ pub struct Audio {
     /// xorshift64 state for per-play pitch jitter. Presentation-only randomness,
     /// seeded from the wall clock so runs differ; only the sequence matters.
     rng: u64,
+    #[cfg(test)]
+    played: Vec<Sound>,
     /// The sound currently repeating (e.g. mining) and the wall-clock time its next
     /// trigger is due. Driven per-frame by [`set_loop`](Self::set_loop).
     loop_sound: Option<Sound>,
@@ -165,10 +167,17 @@ impl Audio {
             buffers,
             master_gain: 1.0,
             rng: seed_rng(),
+            #[cfg(test)]
+            played: Vec::new(),
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_played_for_test(&mut self) -> Vec<Sound> {
+        std::mem::take(&mut self.played)
     }
 
     /// Drive a repeating sound (e.g. the mining "punch"). Call every frame with the
@@ -340,6 +349,8 @@ impl Audio {
         if count == 0 {
             return;
         }
+        #[cfg(test)]
+        self.played.push(sound);
         // All randomness up front — the only `&mut self` use, so the buffer borrow
         // below doesn't conflict: a random variant (so a repeated sound isn't the
         // same clip) plus the per-play pitch jitter.
@@ -447,6 +458,7 @@ mod tests {
             buffers: Vec::new(),
             master_gain: 1.0,
             rng: seed,
+            played: Vec::new(),
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),

@@ -363,10 +363,7 @@ impl Game {
             .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
 
         self.begin_stage(Stage::Mobs, events);
-        let hostile_despawn_radius = super::daynight::night_pulse_despawn_radius(&self.world);
-        let attacks =
-            self.world
-                .tick_mobs(TICK_DT, player_pos, player_body, hostile_despawn_radius);
+        let attacks = self.world.tick_mobs(TICK_DT, player_pos, player_body);
         // Mob→player combat resolves right after the mobs moved: each strike runs
         // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
         // an applied strike knocks the player back.

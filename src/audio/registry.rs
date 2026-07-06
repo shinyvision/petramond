@@ -57,6 +57,8 @@ impl Sound {
     pub const DirtPlace: Sound = Sound(13);
     /// The player took damage (any source) — player feedback, non-positional.
     pub const PlayerHurt: Sound = Sound(14);
+    /// A shell/UI button or toggle was activated.
+    pub const UiClick: Sound = Sound(15);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -77,6 +79,7 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "llama:dirt_break",
     "llama:dirt_place",
     "llama:player_hurt",
+    "llama:ui_click",
 ];
 
 impl std::fmt::Debug for Sound {

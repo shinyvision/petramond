@@ -1,5 +1,6 @@
-use super::app;
+use super::{app, app_with_grass, cursor_over_slot};
 use crate::app::{App, CursorIcon, CursorPolicy};
+use crate::audio::Sound;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton, TextKey};
 use crate::mathh::Vec3;
@@ -170,6 +171,38 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     click_id(&mut app, "back");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.9);
     assert_eq!(app.screen, crate::app::AppScreen::Title);
+}
+
+#[test]
+fn shell_button_and_toggle_activations_play_ui_click_sound() {
+    use crate::gui::GuiKind;
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+
+    app.drive_doc_ui(GuiKind::Title, screen, 0.0);
+    app.audio.take_played_for_test();
+    click_doc_id(&mut app, "start");
+    app.drive_doc_ui(GuiKind::Title, screen, 0.1);
+    assert_eq!(app.audio.take_played_for_test(), vec![Sound::UiClick]);
+
+    app.drive_doc_ui(GuiKind::Demo, screen, 0.2);
+    app.audio.take_played_for_test();
+    click_doc_id(&mut app, "t1");
+    app.drive_doc_ui(GuiKind::Demo, screen, 0.3);
+    assert_eq!(app.audio.take_played_for_test(), vec![Sound::UiClick]);
+}
+
+#[test]
+fn document_game_menu_clicks_do_not_play_shell_ui_click_sound() {
+    let mut app = app_with_grass();
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280, 720);
+    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
+
+    app.audio.take_played_for_test();
+    app.set_cursor_position(cx, cy);
+    assert!(app.click_screen_for_test(screen, 0.0));
+    assert!(app.audio.take_played_for_test().is_empty());
 }
 
 /// Renaming a world changes ONLY its display name; playing it must open the

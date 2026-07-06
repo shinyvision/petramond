@@ -4,7 +4,6 @@
 //! surfaces mods use. The `llama:*` keys are engine-owned public surface.
 
 use crate::events::{Attach, Stage, TickSystems};
-use crate::mob::DEFAULT_HOSTILE_DESPAWN_RADIUS;
 use crate::world::World;
 
 /// Full day-night cycle length in game ticks (10 minutes at 20 TPS).
@@ -12,8 +11,6 @@ pub(crate) const CYCLE_TICKS: u64 = 12_000;
 /// Clock offset of "early morning" within a day (fraction 0.05, just after
 /// sunrise) — both the fresh-world start and where sleeping skips to.
 const FRESH_CLOCK: u64 = 600;
-pub(super) const NIGHT_PULSE_DESPAWN_RADIUS: f32 = 96.0;
-pub(super) const NIGHT_PULSE_DESPAWN_DURATION: u64 = 200;
 const TRANSITION: f32 = 0.04;
 const NIGHT_SKY_SCALE: f32 = 0.04;
 const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
@@ -110,12 +107,6 @@ pub(super) fn is_night(world: &World) -> bool {
     world.mod_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
 }
 
-pub(super) fn night_pulse_despawn_radius(world: &World) -> Option<f32> {
-    read_clock(world)
-        .or_else(|| read_time(world).map(|t| clock_from_fraction(t, FRESH_CLOCK)))
-        .and_then(night_pulse_despawn_radius_at)
-}
-
 /// Skip the clock to early morning of the NEXT day (sleeping through the
 /// night — or the day). Written as a `llama:clock` KV like any external write;
 /// the core cycle adopts it on its next tick (clock writes win exactly).
@@ -158,32 +149,6 @@ fn day_fraction(clock: u64) -> f32 {
     (clock % CYCLE_TICKS) as f32 / CYCLE_TICKS as f32
 }
 
-fn night_pulse_despawn_radius_at(clock: u64) -> Option<f32> {
-    let phase = clock % CYCLE_TICKS;
-    let night = CYCLE_TICKS / 2;
-    let start = night.saturating_sub(NIGHT_PULSE_DESPAWN_DURATION);
-    let end = night + NIGHT_PULSE_DESPAWN_DURATION;
-    if phase < start || phase > end {
-        return None;
-    }
-    // Briefly frees hostile mob-cap space for surface spawns around nightfall.
-    if phase <= night {
-        let t = (phase - start) as f32 / NIGHT_PULSE_DESPAWN_DURATION as f32;
-        Some(lerp(
-            DEFAULT_HOSTILE_DESPAWN_RADIUS,
-            NIGHT_PULSE_DESPAWN_RADIUS,
-            t,
-        ))
-    } else {
-        let t = (phase - night) as f32 / NIGHT_PULSE_DESPAWN_DURATION as f32;
-        Some(lerp(
-            NIGHT_PULSE_DESPAWN_RADIUS,
-            DEFAULT_HOSTILE_DESPAWN_RADIUS,
-            t,
-        ))
-    }
-}
-
 fn daylight(t: f32) -> f32 {
     let h = (std::f32::consts::PI * TRANSITION).sin();
     smoothstep(-h, h, (std::f32::consts::TAU * t).sin())
@@ -219,31 +184,6 @@ mod tests {
             world.mod_kv_get(CLOCK_KEY),
             Some(&(CYCLE_TICKS + FRESH_CLOCK).to_le_bytes()[..]),
             "the skip writes the adopted llama:clock format"
-        );
-    }
-
-    #[test]
-    fn night_pulse_contracts_then_restores_hostile_despawn_radius() {
-        let night = CYCLE_TICKS / 2;
-        assert_eq!(
-            night_pulse_despawn_radius_at(night - NIGHT_PULSE_DESPAWN_DURATION - 1),
-            None
-        );
-        assert_eq!(
-            night_pulse_despawn_radius_at(night - NIGHT_PULSE_DESPAWN_DURATION),
-            Some(DEFAULT_HOSTILE_DESPAWN_RADIUS)
-        );
-        assert_eq!(
-            night_pulse_despawn_radius_at(night),
-            Some(NIGHT_PULSE_DESPAWN_RADIUS)
-        );
-        assert_eq!(
-            night_pulse_despawn_radius_at(night + NIGHT_PULSE_DESPAWN_DURATION),
-            Some(DEFAULT_HOSTILE_DESPAWN_RADIUS)
-        );
-        assert_eq!(
-            night_pulse_despawn_radius_at(night + NIGHT_PULSE_DESPAWN_DURATION + 1),
-            None
         );
     }
 

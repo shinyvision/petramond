@@ -39,6 +39,15 @@
       "category": "ui"
     },
     {
+      "sound": "llama:ui_click",
+      "variants": [
+        "sounds/click.ogg"
+      ],
+      "gain": 0.7,
+      "pitch_variation": 0.03,
+      "category": "ui"
+    },
+    {
       "sound": "llama:door_open",
       "variants": [
         "sounds/door_open.ogg"
