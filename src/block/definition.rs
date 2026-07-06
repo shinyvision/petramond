@@ -122,10 +122,12 @@ where
         Range([f32; 2]),
     }
 
-    Ok(match <Rate as serde::Deserialize>::deserialize(deserializer)? {
-        Rate::Fixed(rate) => [rate, rate],
-        Rate::Range(range) => range,
-    })
+    Ok(
+        match <Rate as serde::Deserialize>::deserialize(deserializer)? {
+            Rate::Fixed(rate) => [rate, rate],
+            Rate::Range(range) => range,
+        },
+    )
 }
 
 /// Mining material class of a block — an internal mining-grouping key (drives the

@@ -1116,7 +1116,10 @@ mod tests {
 
         world.awaited_overlays.clear();
         let spawned: usize = (0..200).map(|_| world.spawn_mobs_tick(player).len()).sum();
-        assert!(spawned > 0, "spawning never resumed after the census settled");
+        assert!(
+            spawned > 0,
+            "spawning never resumed after the census settled"
+        );
     }
 
     #[test]

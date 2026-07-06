@@ -366,6 +366,131 @@ fn slabs_stack_vertically_with_mixed_materials() {
 }
 
 #[test]
+fn torch_places_on_the_flat_side_of_a_stair() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let stair = IVec3::new(4, 64, 4);
+    assert!(game.world.place_stair(
+        stair,
+        Block::OakStairs,
+        StairState::new(Facing::East, StairHalf::Bottom)
+    ));
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::Torch, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(stair, -IVec3::X));
+    assert!(game.try_place_for_test(), "torch places on stair back");
+
+    let torch = stair - IVec3::X;
+    assert_eq!(
+        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::Torch
+    );
+    assert_eq!(
+        game.world.torch_placement(torch),
+        crate::torch::TorchPlacement::West
+    );
+}
+
+#[test]
+fn torch_does_not_place_on_the_open_side_of_a_stair() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let stair = IVec3::new(4, 64, 4);
+    assert!(game.world.place_stair(
+        stair,
+        Block::OakStairs,
+        StairState::new(Facing::East, StairHalf::Bottom)
+    ));
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::Torch, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(stair, IVec3::X));
+    assert!(
+        !game.try_place_for_test(),
+        "stair open side is not a full torch support face"
+    );
+
+    let torch = stair + IVec3::X;
+    assert_eq!(
+        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::Air
+    );
+}
+
+#[test]
+fn torch_does_not_place_on_the_side_of_a_single_slab() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let slab = IVec3::new(4, 64, 4);
+    assert!(game.world.place_slab_layer(
+        slab,
+        Block::DirtSlab,
+        crate::slab::SlabSlot {
+            split: SlabSplit::Y,
+            index: 0,
+        }
+    ));
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::Torch, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(slab, IVec3::X));
+    assert!(
+        !game.try_place_for_test(),
+        "single slab side is not a full torch support face"
+    );
+
+    let torch = slab + IVec3::X;
+    assert_eq!(
+        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::Air
+    );
+}
+
+#[test]
+fn torch_places_on_the_side_of_a_full_slab_stack() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let slab = IVec3::new(4, 64, 4);
+    for (block, index) in [(Block::DirtSlab, 0), (Block::CobblestoneSlab, 1)] {
+        assert!(game.world.place_slab_layer(
+            slab,
+            block,
+            crate::slab::SlabSlot {
+                split: SlabSplit::Y,
+                index,
+            }
+        ));
+    }
+
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(ItemType::Torch, 1));
+    game.player.inventory = inv;
+    game.player.inventory.set_active(0);
+    game.look = Some(hit(slab, IVec3::X));
+    assert!(
+        game.try_place_for_test(),
+        "full slab stack supports wall torch"
+    );
+
+    let torch = slab + IVec3::X;
+    assert_eq!(
+        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::Torch
+    );
+}
+
+#[test]
 fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
     let mut game = game();
     install_empty_chunk(&mut game);

@@ -129,6 +129,11 @@ impl TorchPlacement {
         }
     }
 
+    /// The outward normal of the support face this torch is mounted to.
+    pub fn support_normal(self) -> IVec3 {
+        self.lean().unwrap_or(IVec3::new(0, 1, 0))
+    }
+
     /// The horizontal unit direction a wall torch leans toward (away from its wall);
     /// `None` for a floor torch.
     fn lean(self) -> Option<IVec3> {

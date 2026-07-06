@@ -870,14 +870,18 @@ mod tests {
     fn despawn_is_certain_at_radius_random_when_far_never_when_near() {
         let r = 128.0;
         // At/beyond the hard radius: certain, no roll consumed.
-        assert!(despawn_now(r * r, r, || unreachable!("no roll at the hard radius")));
+        assert!(despawn_now(r * r, r, || unreachable!(
+            "no roll at the hard radius"
+        )));
         // Beyond the eligibility distance but inside the radius: decided by the roll.
         let far2 = (RANDOM_DESPAWN_MIN_DIST + 1.0).powi(2);
         assert!(despawn_now(far2, r, || 0.0));
         assert!(!despawn_now(far2, r, || RANDOM_DESPAWN_CHANCE));
         // Near the player: never, and the RNG stream is untouched.
         let near2 = (RANDOM_DESPAWN_MIN_DIST - 1.0).powi(2);
-        assert!(!despawn_now(near2, r, || unreachable!("no roll near the player")));
+        assert!(!despawn_now(near2, r, || unreachable!(
+            "no roll near the player"
+        )));
     }
 
     #[test]

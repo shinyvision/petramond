@@ -59,24 +59,19 @@ impl BlockBehavior for Fragile {
 pub static FRAGILE: Fragile = Fragile;
 
 impl World {
-    /// The cell that must stay solid to hold up the fragile block at `pos`: the wall a
-    /// wall-torch leans on (read from its recorded mount in the chunk's torch map),
-    /// otherwise the block directly below. The torch branch is the one non-data-driven
-    /// case the task calls out — a wall-torch's support is sideways, not beneath it.
-    fn fragile_support_cell(&self, pos: IVec3, block: Block) -> IVec3 {
-        if block == Block::Torch {
-            self.torch_placement(pos).support_cell(pos)
-        } else {
-            pos - IVec3::new(0, 1, 0)
-        }
+    /// The cell that must stay solid to hold up non-torch fragile blocks.
+    fn fragile_ground_cell(&self, pos: IVec3) -> IVec3 {
+        pos - IVec3::new(0, 1, 0)
     }
 
-    /// Whether the fragile block at `pos` still has something to stand on: its support
-    /// cell holds a full opaque block. This matches the torch placement rule (a torch
-    /// needs an opaque face) and keeps plants on solid ground, so digging the support
-    /// out — or flooding it — is exactly what drops the block.
+    /// Whether the fragile block at `pos` still has something to stand on: plants use
+    /// the old full-opaque ground rule, while torches use the same mounted-face test
+    /// as placement.
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-        let s = self.fragile_support_cell(pos, block);
+        if block == Block::Torch {
+            return self.torch_supported_at(pos, self.torch_placement(pos));
+        }
+        let s = self.fragile_ground_cell(pos);
         self.physics_block(s.x, s.y, s.z).is_opaque()
     }
 }
@@ -84,8 +79,10 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_state::{StairHalf, StairState};
     use crate::chunk::{Chunk, ChunkPos};
     use crate::crafting::Recipes;
+    use crate::furnace::Facing;
     use crate::torch::TorchPlacement;
 
     /// A world with one empty loaded chunk at the origin.
@@ -195,5 +192,21 @@ mod tests {
         );
         let breaks = w.take_natural_breaks();
         assert!(breaks.iter().any(|&(p, b)| p == torch && b == Block::Torch));
+    }
+
+    #[test]
+    fn a_wall_torch_on_a_stair_flat_side_survives_support_rechecks() {
+        let mut w = world();
+        let stair = IVec3::new(8, 66, 8);
+        assert!(w.place_stair(
+            stair,
+            Block::OakStairs,
+            StairState::new(Facing::East, StairHalf::Bottom)
+        ));
+        let torch = stair - IVec3::X;
+        w.set_block_world(torch.x, torch.y, torch.z, Block::Torch);
+        w.insert_torch(torch, TorchPlacement::West);
+        run_ticks(&mut w, 2);
+        assert_eq!(block(&w, torch), Block::Torch, "stair back holds torch");
     }
 }

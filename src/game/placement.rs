@@ -182,9 +182,9 @@ impl Game {
             }
         }
 
-        // A torch only mounts on a floor or wall (never a ceiling) and needs a full solid
-        // face to attach to. Resolve that up front so an invalid spot is a no-op (the
-        // click neither places nor consumes the torch) rather than leaving a floating one.
+        // A torch only mounts on a floor or wall (never a ceiling) and needs a usable
+        // support face. Resolve that up front so an invalid spot is a no-op (the click
+        // neither places nor consumes the torch) rather than leaving a floating one.
         // When REPLACING a plant the torch always drops to the FLOOR of that cell — so
         // right-clicking grass from any angle, even its side, stands a floor torch where
         // the grass was instead of failing on the side face's would-be wall mount.
@@ -194,8 +194,7 @@ impl Game {
             } else {
                 TorchPlacement::from_place_normal(h.normal)?
             };
-            let s = tp.support_cell(p);
-            if !self.world.physics_block(s.x, s.y, s.z).is_opaque() {
+            if !self.world.torch_supported_at(p, tp) {
                 return None;
             }
             Some(tp)
