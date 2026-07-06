@@ -779,6 +779,26 @@ impl World {
         }
     }
 
+    /// Whether the live mob list is a complete census of the loaded area's mobs.
+    ///
+    /// Saved mobs ride in section records and only rejoin the live list when their
+    /// record is applied (`apply_pending_overlays`). Until then the list undercounts,
+    /// so anything comparing it against a population cap (natural spawning) must hold
+    /// off — otherwise every join refills the caps during the streaming window and the
+    /// saved mobs then land on top (a per-session population ratchet).
+    ///
+    /// The census is complete when nothing that can still carry an uncounted saved mob
+    /// is outstanding: no saved record awaited from disk or buffered unapplied, and no
+    /// column gen in flight (a column's manifest records are only requested once its
+    /// gen data installs — see `submit_section_job`). Wanted-but-unsubmitted columns
+    /// can't hide here: `request_missing_columns` runs every target update and poll,
+    /// so a missing wanted column always shows up in `pending` first.
+    pub fn mob_census_settled(&self) -> bool {
+        self.pending.is_empty()
+            && self.awaited_overlays.is_empty()
+            && self.pending_overlays.is_empty()
+    }
+
     /// Overlay every buffered saved section whose generated section is present: replace
     /// it with the saved blocks and restore its drops/mobs. Heightmap refresh is left to
     /// the caller (`poll` recomputes every touched column once). Returns the overlaid
@@ -1066,6 +1086,37 @@ mod tests {
         let mut out = Vec::new();
         world.collect_chests(&mut out);
         assert_eq!(out.len(), 1, "the overlaid chest must be collected");
+    }
+
+    /// Natural spawning must not run while saved mob records are still streaming
+    /// in: the caps compare against the live list, which undercounts until every
+    /// record is applied — spawning through that window duplicates the population
+    /// on every world join.
+    #[test]
+    fn natural_spawning_waits_for_the_saved_mob_census() {
+        let mut world = World::new(0, 1);
+        let mut chunk = Chunk::new(0, 0);
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                chunk.set_block(x, 64, z, Block::Grass);
+                chunk.set_biome(x, z, crate::biome::Biome::Plains.id());
+            }
+        }
+        world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 1));
+        let player = crate::mathh::Vec3::new(1000.0, 1000.0, 1000.0);
+
+        world.awaited_overlays.insert(SectionPos::new(0, 4, 0));
+        for _ in 0..200 {
+            assert!(
+                world.spawn_mobs_tick(player).is_empty(),
+                "spawned while a saved mob record was still in flight"
+            );
+        }
+
+        world.awaited_overlays.clear();
+        let spawned: usize = (0..200).map(|_| world.spawn_mobs_tick(player).len()).sum();
+        assert!(spawned > 0, "spawning never resumed after the census settled");
     }
 
     #[test]

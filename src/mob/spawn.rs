@@ -7,6 +7,10 @@
 //! (biome + the block it stands on). If everything passes it returns the [`Spawn`]s
 //! for the manager to apply; otherwise the tick simply spawns nothing.
 //!
+//! No attempt runs while `World::mob_census_settled` is false: mobs saved in
+//! still-streaming section records aren't in the live list yet, so the caps would
+//! read empty and be refilled on every world join.
+//!
 //! The population caps live elsewhere as data: per-species on the [`MobDef`] row, and
 //! per-category on [`MobCategory`]. This module only enforces them, and only the
 //! site/arithmetic logic that's worth pinning is factored out pure and tested below.
@@ -65,6 +69,13 @@ pub(super) fn attempt(
     rng: &mut MobRng,
     room_for: impl Fn(Mob) -> u32,
 ) -> Option<Vec<Spawn>> {
+    // The caps compare against the live mob list, which undercounts while saved
+    // mobs are still streaming in with their section records. Spawning through
+    // that window refills the caps on top of the mobs about to be restored —
+    // a per-session population ratchet.
+    if !world.mob_census_settled() {
+        return None;
+    }
     let (cx, cz, render_dist) = world.loaded_area()?;
     // Inset by a chunk so the column (and the neighbours a footing/biome read may
     // touch) are loaded — unloaded reads would just fail the attempt anyway.

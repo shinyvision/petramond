@@ -347,7 +347,10 @@ impl Mobs {
     /// Mobs that leave the loaded area are no longer dropped here — they are saved into
     /// their chunk as it unloads (see [`take_in_chunk`](Self::take_in_chunk)) and reload
     /// with it. Because the unload harvests them out of the live set, the set still only
-    /// holds loaded-area mobs, so the "in the loaded area" caps stay honest.
+    /// holds loaded-area mobs, so the "in the loaded area" caps stay honest — provided
+    /// the area is actually loaded: while saved records are still streaming back in,
+    /// the attempt holds off entirely (`World::mob_census_settled`), or every join
+    /// would refill the caps before the saved mobs restore.
     pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) -> Vec<(Mob, Vec3)> {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
