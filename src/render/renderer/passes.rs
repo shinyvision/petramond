@@ -358,7 +358,11 @@ impl Renderer {
         // group(1) (not the block atlas); the mob pipeline (set by each DynamicDraw)
         // uses explicit-UV vertices so a model's arbitrary sub-rect UVs sample its
         // own sheet.
-        if self.mob_gpu.iter().any(|g| g.draw.index_count > 0) {
+        if self.mob_gpu.iter().any(|g| g.draw.index_count > 0)
+            || self.player_gpu.draw.index_count > 0
+            || self.player_item_draw.index_count > 0
+            || self.player_block_item_draw.index_count > 0
+        {
             let mut pass = color_depth_pass(
                 enc,
                 view,
@@ -374,6 +378,26 @@ impl Renderer {
                 }
                 pass.set_bind_group(1, &g.bind, &[]);
                 g.draw.draw(&mut pass);
+            }
+            // Third-person player body (its own skin texture, same mob pipeline)…
+            if self.player_gpu.draw.index_count > 0 {
+                pass.set_bind_group(1, &self.player_gpu.bind, &[]);
+                self.player_gpu.draw.draw(&mut pass);
+            }
+            // …its extruded-sprite / bbmodel held item (2D atlas vs model atlas)…
+            if self.player_item_draw.index_count > 0 {
+                let atlas = if self.player_item_is_model {
+                    &self.model_atlas_bind
+                } else {
+                    &self.atlas_bind
+                };
+                pass.set_bind_group(1, atlas, &[]);
+                self.player_item_draw.draw(&mut pass);
+            }
+            // …or its held block mini-cube (opaque pipeline + terrain atlas array).
+            if self.player_block_item_draw.index_count > 0 {
+                pass.set_bind_group(1, &self.atlas_array_bind, &[]);
+                self.player_block_item_draw.draw(&mut pass);
             }
         }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn

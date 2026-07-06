@@ -44,7 +44,7 @@ use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
-    MobRenderInstance, ParticleInstance,
+    MobRenderInstance, ParticleInstance, PlayerRenderInstance,
 };
 use crate::bbmodel::Model;
 use crate::gui::UiSnapshot;
@@ -115,6 +115,17 @@ struct MobGpu {
     /// Frustum-visible subset of this species' instances this frame.
     visible: Vec<MobRenderInstance>,
     /// Reused CPU staging for this species' baked geometry.
+    verts: Vec<ItemVertex>,
+    indices: Vec<u32>,
+}
+
+/// GPU resources for the third-person player body: the precached player model,
+/// its skin texture bind, and a dynamic draw over the shared mob pipeline — a
+/// single-instance sibling of [`MobGpu`].
+struct PlayerGpu {
+    model: &'static Model,
+    bind: wgpu::BindGroup,
+    draw: DynamicDraw,
     verts: Vec<ItemVertex>,
     indices: Vec<u32>,
 }
@@ -211,6 +222,23 @@ pub struct Renderer {
     /// order). Built once from `mob::defs()`; each frame the visible mobs are
     /// grouped here by species, baked, and drawn in the mob pass.
     mob_gpu: Vec<MobGpu>,
+    /// Third-person player body resources (drawn in the mob pass when
+    /// `player_view` is set).
+    player_gpu: PlayerGpu,
+    /// The third-person player to draw this frame (`None` in first person).
+    player_view: Option<PlayerRenderInstance>,
+    /// The third-person held item's explicit-UV stream (extruded sprite OR baked
+    /// bbmodel — mutually exclusive), attached to the posed right hand. Rides the
+    /// mob-layout pipeline; the draw binds the 2D atlas or the model atlas per
+    /// `player_item_is_model`.
+    player_item_draw: DynamicDraw,
+    player_item_is_model: bool,
+    player_item_verts: Vec<super::item_model::ItemVertex>,
+    player_item_indices: Vec<u32>,
+    /// The third-person held BLOCK mini-cube (packed block vertices, opaque
+    /// pipeline + terrain atlas array), CPU-transformed to the hand like dropped
+    /// item cubes.
+    player_block_item_draw: DynamicDraw,
     /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
     /// pass plus the combined model atlas bound at group(1). The geometry itself lives
     /// in packed terrain columns as per-section model ranges, so there's no per-frame

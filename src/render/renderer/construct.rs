@@ -200,6 +200,98 @@ async fn new_renderer_inner(
         })
         .collect();
 
+    // Third-person player body: the precached player model gets the same shape of
+    // resources as one mob species (own skin texture bind + dynamic draw over the
+    // shared mob pipeline), plus two small held-item draws attached to its hand:
+    // an explicit-UV stream (extruded sprite / bbmodel item) and a packed
+    // block-vertex stream (held block mini-cube on the opaque pipeline).
+    const PLAYER_ITEM_VERTICES: u64 = 8192;
+    const PLAYER_ITEM_INDICES: u64 = 12288;
+    let player_gpu = {
+        let model = crate::player::model::player_model();
+        let (_texture, view, sampler) = create_model_texture(
+            &device,
+            &queue,
+            &model.texture_rgba,
+            model.tex_w,
+            model.tex_h,
+        );
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("player atlas bg"),
+            layout: &pipelines.atlas_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("player vbuf"),
+            size: PLAYER_ITEM_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("player ibuf"),
+            size: PLAYER_ITEM_INDICES * 4,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        PlayerGpu {
+            model,
+            bind,
+            draw: DynamicDraw::new(
+                pipelines.mob_pipe.clone(),
+                vbuf,
+                ibuf,
+                PLAYER_ITEM_VERTICES,
+                PLAYER_ITEM_INDICES,
+            ),
+            verts: Vec::new(),
+            indices: Vec::new(),
+        }
+    };
+    let player_dyn_buffers = |label: &str, vert_size: u64| {
+        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: PLAYER_ITEM_VERTICES * vert_size,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: PLAYER_ITEM_INDICES * 4,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        (vbuf, ibuf)
+    };
+    let (player_item_vbuf, player_item_ibuf) =
+        player_dyn_buffers("player item", std::mem::size_of::<ItemVertex>() as u64);
+    let (player_block_item_vbuf, player_block_item_ibuf) = player_dyn_buffers(
+        "player block item",
+        std::mem::size_of::<crate::mesh::Vertex>() as u64,
+    );
+    let player_item_draw = DynamicDraw::new(
+        pipelines.mob_pipe.clone(),
+        player_item_vbuf,
+        player_item_ibuf,
+        PLAYER_ITEM_VERTICES,
+        PLAYER_ITEM_INDICES,
+    );
+    let player_block_item_draw = DynamicDraw::new(
+        pipelines.opaque_pipe.clone(),
+        player_block_item_vbuf,
+        player_block_item_ibuf,
+        PLAYER_ITEM_VERTICES,
+        PLAYER_ITEM_INDICES,
+    );
+
     // bbmodel-block ("model") render resources: the combined model atlas (all kinds'
     // textures packed into one sheet — see `block_model::atlas`) uploaded as its own GPU
     // texture, bound at group(1) over the same atlas layout the mob pass uses, and the
@@ -381,6 +473,13 @@ async fn new_renderer_inner(
             crate::render::pipeline::MAX_DOOR_INDICES,
         ),
         mob_gpu,
+        player_gpu,
+        player_view: None,
+        player_item_draw,
+        player_item_is_model: false,
+        player_item_verts: Vec::new(),
+        player_item_indices: Vec::new(),
+        player_block_item_draw,
         model_pipe: model_pipe.clone(),
         world_model_pipe,
         model_atlas_bind,

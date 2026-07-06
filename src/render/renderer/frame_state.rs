@@ -196,6 +196,12 @@ impl Renderer {
         self.mobs.extend_from_slice(v);
     }
 
+    /// Store the third-person player body to draw this frame (`None` in first
+    /// person — the body, and its held item, then draw nothing).
+    pub fn set_player(&mut self, v: Option<PlayerRenderInstance>) {
+        self.player_view = v;
+    }
+
     /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
     pub fn set_particles(&mut self, v: &[ParticleInstance]) {
         self.particles.clear();
@@ -247,6 +253,10 @@ impl Renderer {
             mob.draw.index_count = 0;
             mob.visible.clear();
         }
+        self.player_view = None;
+        self.player_gpu.draw.index_count = 0;
+        self.player_item_draw.index_count = 0;
+        self.player_block_item_draw.index_count = 0;
     }
 
     /// Synchronize GPU meshes with the terrain CPU meshes.

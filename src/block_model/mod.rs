@@ -334,7 +334,8 @@ impl CompiledAsset for BlockModel {
     /// (incl. rotation/scale pivots) + the authored display pivot. (v1 had no
     /// collision/bounds; v2 no display; v3 predates the multi-texture sheet; v4 the
     /// display pivots; v5 dropped group rest poses; each bump rebuilds stale caches.)
-    const FORMAT_VERSION: u32 = 6;
+    /// v7: the shared loader bakes element `inflate` into the cube box.
+    const FORMAT_VERSION: u32 = 7;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 

@@ -334,6 +334,123 @@ impl Renderer {
                 });
         }
 
+        // Third-person player body + its held item. The body poses walk + head-look
+        // + the right-arm swing (the same HeldItemView swing state the first-person
+        // hand plays) and returns the posed right-hand transform; the held item is
+        // baked attached to it, per render kind: a block mini-cube rides the packed
+        // opaque stream (CPU-transformed like dropped cubes), an extruded sprite or
+        // a bbmodel item rides the explicit-UV stream with the matching atlas.
+        self.player_gpu.draw.index_count = 0;
+        self.player_item_draw.index_count = 0;
+        self.player_block_item_draw.index_count = 0;
+        let player_visible = self.player_view.filter(|p| {
+            let pad = glam::Vec3::new(1.0, 2.2, 1.0);
+            visible_world_aabb(p.pos - pad, p.pos + pad)
+        });
+        if let Some(inst) = player_visible {
+            let held = self.held_item;
+            let light = crate::render::lighting::DynLight {
+                sky: inst.skylight,
+                block: inst.blocklight,
+            };
+            let model = self.player_gpu.model;
+            let mut hand = glam::Mat4::IDENTITY;
+            {
+                let queue = &self.queue;
+                let g = &mut self.player_gpu;
+                g.draw
+                    .bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
+                        let (count, h) = crate::render::player_model::build_player_body(
+                            model,
+                            env,
+                            &inst,
+                            held.swing,
+                            held.swing_scale,
+                            verts,
+                            indices,
+                        );
+                        hand = h;
+                        count
+                    });
+            }
+            // A sleeper's hands are empty — the held item would poke through the bed.
+            let held_item = (!inst.sleeping).then_some(held.item).flatten();
+            match held_item.map(|it| it.render_kind()) {
+                Some(crate::item::ItemRenderKind::BlockCube(block)) => {
+                    let m = crate::render::player_model::held_block_transform(hand);
+                    let state = held.block_state;
+                    self.player_block_item_draw.bake(
+                        &self.queue,
+                        &mut self.item_entity_verts,
+                        &mut self.item_entity_indices,
+                        |verts, indices| {
+                            verts.clear();
+                            indices.clear();
+                            if block == crate::block::Block::Chest {
+                                crate::render::chest_model::push_chest_item(
+                                    verts,
+                                    indices,
+                                    glam::Vec3::splat(-0.5),
+                                    1.0,
+                                    light,
+                                );
+                            } else {
+                                crate::render::item_cube::push_block_item_cube_lit_with_state(
+                                    verts,
+                                    indices,
+                                    block,
+                                    state,
+                                    glam::Vec3::splat(-0.5),
+                                    1.0,
+                                    light,
+                                );
+                            }
+                            crate::render::player_model::transform_positions(verts, 0, m);
+                            indices.len() as u32
+                        },
+                    );
+                }
+                Some(crate::item::ItemRenderKind::Sprite(tile)) => {
+                    let m = crate::render::player_model::held_sprite_transform(hand);
+                    self.player_item_is_model = false;
+                    self.player_item_draw.bake(
+                        &self.queue,
+                        &mut self.player_item_verts,
+                        &mut self.player_item_indices,
+                        |verts, indices| {
+                            // The extrusion is a non-indexed triangle list; give it
+                            // sequential indices to ride the indexed draw.
+                            let count = crate::render::item_model::build_extruded_item_lit(
+                                tile, light, env, verts,
+                            );
+                            crate::render::player_model::transform_item_positions(verts, 0, m);
+                            indices.clear();
+                            indices.extend(0..count);
+                            count
+                        },
+                    );
+                }
+                Some(crate::item::ItemRenderKind::Model(kind)) => {
+                    let m = crate::render::player_model::held_model_transform(hand, kind);
+                    self.player_item_is_model = true;
+                    self.player_item_draw.bake(
+                        &self.queue,
+                        &mut self.player_item_verts,
+                        &mut self.player_item_indices,
+                        |verts, indices| {
+                            verts.clear();
+                            indices.clear();
+                            crate::render::item_model::build_block_model_item(
+                                kind, m, light, env, 0, None, verts, indices,
+                            );
+                            indices.len() as u32
+                        },
+                    );
+                }
+                None => {}
+            }
+        }
+
         // Break-overlay (destroy crack) cube, when a block is targeted.
         let break_overlay = self.break_overlay;
         self.break_draw.bake(

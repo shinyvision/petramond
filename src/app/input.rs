@@ -12,6 +12,7 @@ pub enum ControlEvent {
     /// here — keeping the drop key independent of the sprint binding.
     DropItem,
     RotateHeldBlock,
+    TogglePerspective,
 }
 
 #[derive(Default)]
@@ -28,6 +29,7 @@ pub struct InputController {
     inventory_toggle_held: bool,
     drop_item_held: bool,
     rotate_held_block_held: bool,
+    toggle_perspective_held: bool,
 }
 
 impl InputController {
@@ -83,6 +85,11 @@ impl InputController {
                 let edge = down && !self.rotate_held_block_held;
                 self.rotate_held_block_held = down;
                 edge.then_some(ControlEvent::RotateHeldBlock)
+            }
+            Control::TogglePerspective => {
+                let edge = down && !self.toggle_perspective_held;
+                self.toggle_perspective_held = down;
+                edge.then_some(ControlEvent::TogglePerspective)
             }
         };
 

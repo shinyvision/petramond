@@ -36,8 +36,9 @@ const COAT_CUBE_NAME: &str = "wool";
 const HURT_RED: [f32; 3] = [1.0, 0.25, 0.25];
 
 /// The vertex tint for a mob flashing `hurt` (0..1): white at rest, fading toward
-/// [`HURT_RED`] at full intensity.
-fn hurt_tint(hurt: f32) -> [f32; 3] {
+/// [`HURT_RED`] at full intensity. Shared with the third-person player body so
+/// taking damage flashes the player exactly like a hurt mob.
+pub(super) fn hurt_tint(hurt: f32) -> [f32; 3] {
     let h = hurt.clamp(0.0, 1.0);
     [
         NO_TINT[0] + (HURT_RED[0] - NO_TINT[0]) * h,
@@ -148,9 +149,10 @@ pub fn build_mob_instances(
 
 /// Append one textured cube face (4 verts / 6 indices) transformed by `m`. Skips
 /// degenerate (zero-area) faces — flat sub-cubes (legs/tail) have only one pair of
-/// faces with area, and the rest collapse to lines.
+/// faces with area, and the rest collapse to lines. Shared with the third-person
+/// player bake ([`super::player_model`]).
 #[allow(clippy::too_many_arguments)]
-fn push_face(
+pub(super) fn push_face(
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
     m: Mat4,

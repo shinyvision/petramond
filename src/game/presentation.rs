@@ -115,6 +115,29 @@ pub(crate) struct MobPresentation {
     pub(crate) ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
 }
 
+/// The local player's third-person body for this frame, or absent in first person.
+/// Player movement/look are per-frame (already smooth), so unlike mobs there are
+/// no prev/current pairs to interpolate.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct PlayerPresentation {
+    /// Feet centre (model `y=0`).
+    pub(crate) pos: Vec3,
+    /// Body facing yaw (engine yaw space).
+    pub(crate) body_yaw: f32,
+    /// Head yaw relative to the body (radians) and look pitch.
+    pub(crate) head_yaw: f32,
+    pub(crate) head_pitch: f32,
+    /// Seconds into the walk animation.
+    pub(crate) anim_time: f32,
+    /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
+    pub(crate) walk_weight: f32,
+    /// Asleep in a bed: the body renders lying on its back, feet at `pos`,
+    /// head toward `body_yaw`.
+    pub(crate) sleeping: bool,
+    pub(crate) skylight: u8,
+    pub(crate) blocklight: u8,
+}
+
 pub(crate) struct GamePresentation<'a> {
     pub(crate) tick_alpha: f32,
     pub(crate) item_entities: &'a [DroppedItemPresentation],
@@ -122,6 +145,7 @@ pub(crate) struct GamePresentation<'a> {
     pub(crate) chests: &'a [ChestPresentation],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
+    pub(crate) player: Option<PlayerPresentation>,
     pub(crate) held_item_light: (u8, u8, u8),
     pub(crate) break_overlay: Option<BreakOverlayView>,
 }
@@ -157,6 +181,7 @@ impl GamePresentationScratch {
             chests: &self.chests,
             doors: &self.doors,
             mobs: &self.mobs,
+            player: collect_player(game),
             held_item_light: game.held_item_light(),
             break_overlay: mining_break_overlay(game),
         }
@@ -268,6 +293,42 @@ impl GamePresentationScratch {
                 }),
         );
     }
+}
+
+/// The third-person body row, when the view is active. The body-yaw follow rule
+/// keeps `yaw - body_yaw` within the head limit, so the relative head yaw needs
+/// no re-wrapping here.
+fn collect_player(game: &Game) -> Option<PlayerPresentation> {
+    // The body draws only once the boom camera is actually placed — never on a
+    // frame whose render camera is still the first-person eye (inside the head).
+    if !game.third_person_enabled() || game.third_person.cam.is_none() {
+        return None;
+    }
+    let (skylight, blocklight, _warm) = game.held_item_light();
+    // The body shares the first-person camera's auto-step vertical easing (a
+    // negative, settling lag) so stepping up a ledge glides instead of popping.
+    let mut pos = game.player.pos;
+    pos.y += game.camera_step_y_offset;
+    let sleeping = game.sleep.is_some();
+    if sleeping {
+        // The sleeper stands at the bed-group CENTRE; the lying model's feet
+        // anchor shifts back toward the foot end so the head lands on the pillow
+        // (bed length 2, model ~1.85 → feet ~0.925 behind centre).
+        let head_yaw = game.third_person.body_yaw;
+        pos.x -= head_yaw.sin() * 0.925;
+        pos.z -= head_yaw.cos() * 0.925;
+    }
+    Some(PlayerPresentation {
+        pos,
+        body_yaw: game.third_person.body_yaw,
+        head_yaw: game.player.yaw - game.third_person.body_yaw,
+        head_pitch: game.player.pitch,
+        anim_time: game.third_person.anim_time,
+        walk_weight: game.third_person.walk_weight,
+        sleeping,
+        skylight,
+        blocklight,
+    })
 }
 
 fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {

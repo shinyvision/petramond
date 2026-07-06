@@ -22,6 +22,8 @@ pub enum Control {
     DropItem,
     /// Toggle the held block's placement/render state when it supports rotation.
     RotateHeldBlock,
+    /// Toggle between the first-person and third-person camera.
+    TogglePerspective,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -77,6 +79,8 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
         KeyCode::KeyQ => Some(Control::DropItem),
         KeyCode::KeyR => Some(Control::RotateHeldBlock),
+        // Plain V only — Ctrl+V stays the text-input paste shortcut.
+        KeyCode::KeyV => Some(Control::TogglePerspective),
         KeyCode::Escape => Some(Control::CloseScreen),
         KeyCode::Digit1 => Some(Control::SelectHotbar(0)),
         KeyCode::Digit2 => Some(Control::SelectHotbar(1)),

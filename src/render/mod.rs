@@ -14,6 +14,7 @@ mod lighting;
 mod mob_model;
 mod particles;
 mod pipeline;
+mod player_model;
 mod renderer;
 mod resources;
 mod scene;
@@ -140,6 +141,36 @@ pub struct MobRenderInstance {
     /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
     /// visible instance into its per-species batch stays cheap.
     pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
+}
+
+/// The local player's third-person body to draw this frame (absent in first
+/// person): the compiled `player.bbmodel` at `pos` (feet), body facing
+/// `body_yaw` with the head turned `head_yaw`/`head_pitch` relative to it,
+/// walking (`moving`) at `anim_time` into the authored walk cycle. The held
+/// item and its punch swing come from the renderer's own `HeldItemView` state —
+/// the same animation the first-person hand plays.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PlayerRenderInstance {
+    /// World position of the feet (model `y=0`).
+    pub pos: Vec3,
+    /// Body facing yaw in radians (engine yaw space).
+    pub body_yaw: f32,
+    /// Head yaw relative to the body, and look pitch (radians).
+    pub head_yaw: f32,
+    pub head_pitch: f32,
+    /// Seconds into the walk animation.
+    pub anim_time: f32,
+    /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased by the
+    /// game so starts/stops transition instead of snapping.
+    pub walk_weight: f32,
+    /// Asleep in a bed: render lying on the back, feet at `pos`, head toward
+    /// `body_yaw`; head-look and the arm swing are suppressed.
+    pub sleeping: bool,
+    /// Hurt-flash intensity `[0, 1]` — tints the body red like a hurt mob.
+    pub hurt: f32,
+    /// 6-bit two-channel light sampled at the player.
+    pub skylight: u8,
+    pub blocklight: u8,
 }
 
 /// A placed chest to draw in the world this frame: an inset body box plus a lid

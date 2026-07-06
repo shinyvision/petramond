@@ -165,6 +165,34 @@ impl Model {
         }
     }
 
+    /// The bone with the given authored name, if the model has one.
+    pub fn bone_named(&self, name: &str) -> Option<usize> {
+        self.bones.iter().position(|b| b.name == name)
+    }
+
+    /// COMPOSE `rot` onto `bone`'s posed transform, rotating about the bone's posed
+    /// pivot, and carry the same delta through all descendant bones — the layered
+    /// counterpart of [`apply_head_look`](Self::apply_head_look) (which REPLACES the
+    /// pose). Use it to stack a gameplay override (an arm swing) on top of whatever
+    /// animation is already posing the bone, so a punch composes with the walk cycle
+    /// instead of freezing it.
+    pub fn apply_bone_rotation(&self, pose: &mut [Mat4], bone: usize, rot: Quat) {
+        let Some(b) = self.bones.get(bone) else {
+            return;
+        };
+        let Some(posed) = pose.get(bone).copied() else {
+            return;
+        };
+        let pivot = posed.transform_point3(b.pivot);
+        let delta =
+            Mat4::from_translation(pivot) * Mat4::from_quat(rot) * Mat4::from_translation(-pivot);
+        for i in 0..pose.len().min(self.bones.len()) {
+            if i == bone || self.is_descendant_of(i, bone) {
+                pose[i] = delta * pose[i];
+            }
+        }
+    }
+
     fn is_descendant_of(&self, mut child: usize, ancestor: usize) -> bool {
         while let Some(parent) = self.bones.get(child).and_then(|b| b.parent) {
             if parent == ancestor {
@@ -229,9 +257,17 @@ impl Model {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                let from = arr3(e.get("from")).unwrap_or(Vec3::ZERO);
-                let to = arr3(e.get("to")).unwrap_or(Vec3::ZERO);
+                let mut from = arr3(e.get("from")).unwrap_or(Vec3::ZERO);
+                let mut to = arr3(e.get("to")).unwrap_or(Vec3::ZERO);
                 let origin = arr3(e.get("origin")).unwrap_or(from);
+                // Blockbench `inflate` grows every face outward by that amount
+                // (UVs unchanged) — how skin overlay layers (hat/jacket/sleeves)
+                // float slightly off the base cube instead of z-fighting it.
+                let inflate = e.get("inflate").and_then(num).unwrap_or(0.0);
+                if inflate != 0.0 {
+                    from -= Vec3::splat(inflate);
+                    to += Vec3::splat(inflate);
+                }
                 let rotation = arr3(e.get("rotation")).unwrap_or(Vec3::ZERO);
                 let faces = parse_faces(e.get("faces"), &sheet);
                 let uuid = e
@@ -319,6 +355,15 @@ impl Model {
     /// model-space cube vertex to get its posed model-space position (before the
     /// caller's scale/yaw/translate to the world).
     pub fn pose(&self, anim: &Animation, time: f32) -> Vec<Mat4> {
+        self.pose_scaled(anim, time, 1.0)
+    }
+
+    /// [`pose`](Self::pose) with the sampled animation rotations scaled by
+    /// `weight` (`1.0` = the full animation, `0.0` = exactly the rest pose) —
+    /// the blend a body uses to ease between standing and its walk cycle
+    /// instead of snapping. Scaling the euler track is exact for the same
+    /// reason the loader's XYZ order is: the authored tracks are per-axis.
+    pub fn pose_scaled(&self, anim: &Animation, time: f32, weight: f32) -> Vec<Mat4> {
         let t = if anim.length <= 0.0 {
             0.0
         } else if anim.looping {
@@ -328,8 +373,9 @@ impl Model {
             // final frame instead of wrapping back to the start.
             time.clamp(0.0, anim.length)
         };
+        let w = weight.clamp(0.0, 1.0);
         // Each bone's LOCAL transform: rotate about its pivot by the authored rest
-        // euler plus the sampled animation euler.
+        // euler plus the sampled (weighted) animation euler.
         let local: Vec<Mat4> = self
             .bones
             .iter()
@@ -340,7 +386,7 @@ impl Model {
                     .get(&i)
                     .map(|kfs| sample_track(kfs, t))
                     .unwrap_or(Vec3::ZERO);
-                bone_transform(b, rot)
+                bone_transform(b, rot * w)
             })
             .collect();
 
@@ -377,9 +423,10 @@ impl CompiledAsset for Model {
     const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
     /// v4: bones (including rest rotations) + cubes (per-face UV, element name) +
     /// named rotation animations + the RGBA texture — since v4 the texture is the
-    /// combined multi-texture sheet with face UVs remapped into it.
+    /// combined multi-texture sheet with face UVs remapped into it. v5: element
+    /// `inflate` baked into the cube box (skin overlay layers stop z-fighting).
     /// Bump on any change to these fields or to [`Model::load`]'s output.
-    const FORMAT_VERSION: u32 = 4;
+    const FORMAT_VERSION: u32 = 5;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 
@@ -900,6 +947,39 @@ mod tests {
         assert_eq!(uv_b, [0.0, 0.5, 1.0, 1.0]);
     }
 
+    /// Overlay layers (a skin's hat/jacket/sleeves) author the SAME box as their
+    /// base cube plus an `inflate`; dropping it makes the two coincident and
+    /// z-fight. The loader must bake inflate into the box (UVs untouched).
+    #[test]
+    fn element_inflate_grows_the_cube_box() {
+        let tex = one_pixel_texture([255, 255, 255, 255]);
+        let src = format!(
+            r#"{{
+                "resolution": {{ "width": 16, "height": 16 }},
+                "textures": [{{ "uv_width": 16, "uv_height": 16, "source": "{tex}" }}],
+                "elements": [
+                    {{ "uuid": "base", "type": "cube", "from": [0,0,0], "to": [4,4,4],
+                       "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }},
+                    {{ "uuid": "layer", "type": "cube", "from": [0,0,0], "to": [4,4,4],
+                       "inflate": 0.25,
+                       "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }}
+                ],
+                "outliner": ["base", "layer"]
+            }}"#
+        );
+        let m = Model::load(&src).expect("inflated model parses");
+        assert_eq!(m.cubes[0].from, Vec3::ZERO, "base box untouched");
+        assert_eq!(m.cubes[0].to, Vec3::splat(4.0));
+        assert_eq!(
+            m.cubes[1].from,
+            Vec3::splat(-0.25),
+            "inflate grows every face outward"
+        );
+        assert_eq!(m.cubes[1].to, Vec3::splat(4.25));
+        // UVs are NOT rescaled by inflate.
+        assert_eq!(m.cubes[0].faces[2], m.cubes[1].faces[2]);
+    }
+
     #[test]
     fn parses_cubes_bones_and_texture() {
         let m = owl();
@@ -1087,6 +1167,49 @@ mod tests {
             !pose[ear].abs_diff_eq(ear_before, 1e-5),
             "head-look carries through descendant bones"
         );
+    }
+
+    #[test]
+    fn bone_rotation_composes_over_the_pose_and_propagates() {
+        // Unlike head-look (which replaces), apply_bone_rotation must COMPOSE: the
+        // rotated head keeps its animated/rest orientation plus the delta, the pivot
+        // stays fixed, and descendants (the ear) carry the delta too.
+        let m = sheep();
+        let head = m.head_bone().expect("sheep has a head bone");
+        let ear = m
+            .bones
+            .iter()
+            .position(|b| b.name == "ear_left")
+            .expect("sheep has a child ear bone");
+
+        let mut pose = m.rest_pose();
+        let head_before = pose[head];
+        let ear_before = pose[ear];
+        let pivot = m.bones[head].pivot;
+        let pivot_world_before = head_before.transform_point3(pivot);
+        m.apply_bone_rotation(&mut pose, head, Quat::from_rotation_x(0.6));
+
+        assert!(
+            !pose[head].abs_diff_eq(head_before, 1e-5),
+            "the delta rotates the bone"
+        );
+        assert!(
+            pose[head]
+                .transform_point3(pivot)
+                .abs_diff_eq(pivot_world_before, 1e-4),
+            "the rotation is about the bone's posed pivot"
+        );
+        assert!(
+            !pose[ear].abs_diff_eq(ear_before, 1e-5),
+            "the delta carries through descendant bones"
+        );
+
+        // Composability: a zero rotation is a no-op (pure compose, no replace).
+        let mut pose2 = m.rest_pose();
+        m.apply_bone_rotation(&mut pose2, head, Quat::IDENTITY);
+        for (a, b) in pose2.iter().zip(m.rest_pose().iter()) {
+            assert!(a.abs_diff_eq(*b, 1e-6), "identity delta leaves the pose");
+        }
     }
 
     #[test]

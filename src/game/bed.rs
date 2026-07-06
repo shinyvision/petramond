@@ -69,6 +69,17 @@ impl Game {
         self.request_open_sleep = true;
     }
 
+    /// While sleeping, the engine yaw pointing from the bed's base (foot) cell
+    /// toward its pillow cell — the direction the lying third-person body's head
+    /// faces. `None` while awake or if the bed vanished mid-sleep.
+    pub(super) fn sleep_head_yaw(&self) -> Option<f32> {
+        let base = self.sleep.as_ref()?.base;
+        let (_, _, cells) = self.world.model_group(base)?;
+        let other = cells.iter().copied().find(|c| *c != base)?;
+        let d = other - base;
+        Some((d.x as f32).atan2(d.z as f32))
+    }
+
     /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
     pub fn request_wake(&mut self) {
         self.wake_requested = true;

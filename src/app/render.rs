@@ -72,8 +72,11 @@ impl App {
         self.sleep_interact_hand_t = (self.sleep_interact_hand_t - dt).max(0.0);
         let hand_visible = match self.screen {
             crate::app::AppScreen::Pause | crate::app::AppScreen::Dead => false,
-            crate::app::AppScreen::Sleeping => self.sleep_interact_hand_t > 0.0,
-            _ => true,
+            crate::app::AppScreen::Sleeping => {
+                self.sleep_interact_hand_t > 0.0 && !game.third_person_enabled()
+            }
+            // Third person shows the whole body instead of the floating hand.
+            _ => !game.third_person_enabled(),
         };
         renderer.set_hand_visible(hand_visible);
 
@@ -196,7 +199,8 @@ impl App {
             }
             self.audio
                 .update_spatial(listener, &self.spatial_mob_positions);
-            self.scene.bake(&presentation);
+            // The hurt vignette envelope doubles as the body's red hurt flash.
+            self.scene.bake(&presentation, shake.flash);
         }
         self.scene.upload(renderer);
         let mut ui =

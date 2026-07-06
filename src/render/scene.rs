@@ -14,7 +14,8 @@
 use glam::Vec3;
 
 use super::{
-    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance, Renderer,
+    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleInstance,
+    PlayerRenderInstance, Renderer,
 };
 use crate::game::presentation::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
@@ -39,6 +40,9 @@ pub(crate) struct Scene {
     doors: Vec<DoorInstance>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
+    /// The third-person player body for this frame (`None` in first person).
+    /// Player state is per-frame already, so it passes through uninterpolated.
+    player: Option<PlayerRenderInstance>,
     /// Two-channel light + warm-tint amount for the first-person hand / held
     /// item, sampled at the camera each frame so it brightens AND warms near
     /// torches (and torch light keeps it lit at night).
@@ -59,6 +63,7 @@ impl Scene {
         self.chests.clear();
         self.doors.clear();
         self.mobs.clear();
+        self.player = None;
         self.held_item_skylight = 0;
         self.held_item_blocklight = 0;
         self.held_item_warm = 0;
@@ -66,8 +71,10 @@ impl Scene {
 
     /// Translate the current presentation snapshot into this scene's reused buffers.
     /// Dropped items' cached skylight is kept fresh by the sim's per-tick light refresh,
-    /// so baking just reads it here.
-    pub(crate) fn bake(&mut self, presentation: &GamePresentation<'_>) {
+    /// so baking just reads it here. `player_hurt` is the App's hurt-flash envelope
+    /// (`0..1`, the same one driving the screen vignette) applied to the third-person
+    /// body so taking damage flashes it red like a hurt mob.
+    pub(crate) fn bake(&mut self, presentation: &GamePresentation<'_>, player_hurt: f32) {
         // Items and mobs both simulate on the fixed game tick; `alpha` blends the
         // previous and current tick poses so they move smoothly at any frame rate.
         let alpha = presentation.tick_alpha;
@@ -80,6 +87,18 @@ impl Scene {
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
+        self.player = presentation.player.map(|p| PlayerRenderInstance {
+            pos: p.pos,
+            body_yaw: p.body_yaw,
+            head_yaw: p.head_yaw,
+            head_pitch: p.head_pitch,
+            anim_time: p.anim_time,
+            walk_weight: p.walk_weight,
+            sleeping: p.sleeping,
+            hurt: player_hurt,
+            skylight: p.skylight,
+            blocklight: p.blocklight,
+        });
         (
             self.held_item_skylight,
             self.held_item_blocklight,
@@ -141,6 +160,7 @@ impl Scene {
         renderer.set_chests(&self.chests);
         renderer.set_doors(&self.doors);
         renderer.set_mobs(&self.mobs);
+        renderer.set_player(self.player);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
     }

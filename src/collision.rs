@@ -215,6 +215,85 @@ where
     (tx, tz)
 }
 
+/// The farthest a point may travel from `start` along unit `dir` (up to `max_dist`)
+/// while keeping `pad` clearance from every collision box — the third-person camera
+/// boom. Equivalent to sweeping a `2·pad` cube along the segment: each box is expanded
+/// by `pad` (Minkowski) and the segment is slab-clipped against it; the nearest entry
+/// distance wins. Returns `max_dist` when nothing blocks, and `0.0` when the start is
+/// already inside an expanded box (the camera stays at the eye rather than clipping).
+pub fn clamp_padded_segment<F>(
+    start: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+    pad: f32,
+    boxes_fn: F,
+) -> f32
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    if max_dist <= 0.0 {
+        return 0.0;
+    }
+    let end = [
+        start[0] + dir[0] * max_dist,
+        start[1] + dir[1] * max_dist,
+        start[2] + dir[2] * max_dist,
+    ];
+    // Broad phase: every cell the padded segment's AABB touches.
+    let mut lo = [0i32; 3];
+    let mut hi = [0i32; 3];
+    for i in 0..3 {
+        lo[i] = (start[i].min(end[i]) - pad).floor() as i32;
+        hi[i] = (start[i].max(end[i]) + pad).floor() as i32;
+    }
+
+    let mut travel = max_dist;
+    for cx in lo[0]..=hi[0] {
+        for cy in lo[1]..=hi[1] {
+            for cz in lo[2]..=hi[2] {
+                let cell = [cx as f32, cy as f32, cz as f32];
+                for b in boxes_fn(cx, cy, cz) {
+                    // Slab-clip the ray against the pad-expanded box.
+                    let mut t_enter = 0.0f32;
+                    let mut t_exit = travel;
+                    let mut miss = false;
+                    for i in 0..3 {
+                        let bmin = cell[i] + b.min[i] - pad;
+                        let bmax = cell[i] + b.max[i] + pad;
+                        if dir[i].abs() < 1e-8 {
+                            if start[i] < bmin || start[i] > bmax {
+                                miss = true;
+                                break;
+                            }
+                            continue;
+                        }
+                        let inv = 1.0 / dir[i];
+                        let (t0, t1) = {
+                            let a = (bmin - start[i]) * inv;
+                            let b = (bmax - start[i]) * inv;
+                            if a < b {
+                                (a, b)
+                            } else {
+                                (b, a)
+                            }
+                        };
+                        t_enter = t_enter.max(t0);
+                        t_exit = t_exit.min(t1);
+                        if t_enter > t_exit {
+                            miss = true;
+                            break;
+                        }
+                    }
+                    if !miss {
+                        travel = travel.min(t_enter.max(0.0));
+                    }
+                }
+            }
+        }
+    }
+    travel
+}
+
 /// Is point `p` inside any collision box of its cell? The particle test — a particle is a
 /// point, not a body, so it stops the instant it enters a real box (a leg/top), passing
 /// through the empty margin of an inset/model cell. EPS keeps a point exactly on a face
@@ -382,6 +461,49 @@ mod tests {
             step_horizontal([0.2, 1.0, 0.2], [0.8, 2.0, 0.8], 0.5, 0.0, 0.0, half_step);
         assert!(hit_x3, "no step-up when not grounded");
         assert!(moved3[1] < 1e-3, "no rise when step disabled");
+    }
+
+    #[test]
+    fn padded_segment_clamps_at_a_wall_and_passes_free_air() {
+        // A boom retreating along -Z from (0.5, 0.5, 0.5) toward the full cube at
+        // cell z = -3 (its near face is world z = -2): with pad 0.2 the clamp is
+        // where the padded point meets z = -2 + 0.2 → travel 0.5 - (-1.8) = 2.3.
+        let wall = |_x: i32, _y: i32, z: i32| if z == -3 { FULL } else { &[][..] };
+        let d = clamp_padded_segment([0.5, 0.5, 0.5], [0.0, 0.0, -1.0], 4.0, 0.2, wall);
+        assert!((d - 2.3).abs() < 1e-3, "clamped just before the wall: {d}");
+
+        // Free air: the full boom length comes back.
+        let free =
+            clamp_padded_segment(
+                [0.5, 0.5, 0.5],
+                [0.0, 0.0, -1.0],
+                4.0,
+                0.2,
+                |_, _, _| &[][..],
+            );
+        assert!((free - 4.0).abs() < 1e-6, "unblocked boom is full length");
+    }
+
+    #[test]
+    fn padded_segment_respects_partial_shapes_and_a_solid_start() {
+        // The inset box occupies y ∈ [0, 0.875]: a boom passing OVER it (y = 1.2,
+        // pad 0.1 → clearance above 0.975) is unblocked, exactly like the swept
+        // body respecting a model's real shape.
+        let over =
+            clamp_padded_segment([0.5, 1.2, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
+        assert!(
+            (over - 4.0).abs() < 1e-6,
+            "passes over the inset top: {over}"
+        );
+        // The same boom at y = 0.5 runs straight into it.
+        let into =
+            clamp_padded_segment([0.5, 0.5, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
+        assert!(into < 4.0 - 1e-3, "blocked through the box: {into}");
+
+        // Starting already inside an expanded box clamps to zero, never negative.
+        let inside =
+            clamp_padded_segment([0.5, 0.5, 0.5], [0.0, 0.0, -1.0], 4.0, 0.2, one_cell(FULL));
+        assert_eq!(inside, 0.0, "a start inside solid stays at the eye");
     }
 
     #[test]

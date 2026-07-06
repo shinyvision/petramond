@@ -231,6 +231,14 @@ impl App {
                 }
                 true
             }
+            ControlEvent::TogglePerspective => {
+                if self.screen.gameplay_enabled() {
+                    if let Some(game) = self.game.as_mut() {
+                        game.toggle_third_person();
+                    }
+                }
+                true
+            }
         }
     }
 

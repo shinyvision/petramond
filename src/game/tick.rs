@@ -222,6 +222,7 @@ impl Game {
         self.apply_mob_push(dt);
         self.tick_world();
         self.refresh_target();
+        self.update_third_person(dt);
 
         self.capture_intent(input);
         let mut events = self.run_fixed_ticks(dt);

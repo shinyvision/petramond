@@ -26,6 +26,7 @@
 
 mod collision;
 mod interaction;
+pub mod model;
 mod movement;
 mod state;
 
@@ -35,5 +36,5 @@ mod tests;
 pub(crate) use interaction::ray_vs_aabb;
 pub use interaction::{RaycastHit, REACH};
 pub use state::{
-    BedSpawn, Input, Player, PlayerMode, DT_MAX, HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,
+    BedSpawn, Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,
 };

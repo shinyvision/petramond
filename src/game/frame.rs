@@ -32,7 +32,9 @@ impl Game {
     pub(crate) fn client_frame(&self, now: f64) -> ClientFrame<'_> {
         let mining = self.mining.is_mining();
         ClientFrame {
-            camera: &self.cam,
+            // The third-person boom camera when active; the first-person eye
+            // otherwise. Sim consumers keep reading `self.cam` directly.
+            camera: self.render_camera(),
             environment: self.environment(now),
             selection: self.look.map(|h| h.outline),
             held_item: ClientHeldItem {

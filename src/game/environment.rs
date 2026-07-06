@@ -29,7 +29,9 @@ pub(crate) struct GameEnvironment {
 
 impl Game {
     pub(super) fn environment(&self, now: f64) -> GameEnvironment {
-        let eye = self.cam.pos;
+        // Fog/underwater follow the RENDERED camera: a third-person boom dipping
+        // into water must show underwater fog even while the player's eye is dry.
+        let eye = self.render_camera().pos;
         let underwater = camera_eye_underwater(&self.world, eye);
         let env = self.world.environment();
 

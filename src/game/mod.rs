@@ -22,6 +22,7 @@ mod placement;
 pub(crate) mod presentation;
 mod session;
 mod terrain_render;
+mod third_person;
 mod tick;
 
 use std::collections::HashMap;
@@ -68,6 +69,9 @@ pub struct Game {
     /// feet and collision state update immediately; only the camera eases upward.
     camera_step_y_offset: f32,
     last_player_eye_y: f32,
+    /// Third-person view state (boom camera + body pose). `cam` above stays the
+    /// authoritative first-person eye for every sim consumer; see `third_person.rs`.
+    third_person: third_person::ThirdPerson,
     world: World,
     fallback_world: SurfaceDensitySystem,
     player: Player,
