@@ -545,6 +545,14 @@ impl Block {
         data::flags(self.id()).is_opaque()
     }
 
+    /// Shape-class test the mesher runs per lighting-ring cell; the dense flag
+    /// table answers it without a `def()` big-table read. Loader-derived from
+    /// `shape == slab`, so it cannot disagree with [`render_shape`](Self::render_shape).
+    #[inline]
+    pub fn is_slab(self) -> bool {
+        data::flags(self.id()).is_slab()
+    }
+
     /// Does this block cast ambient occlusion? Full opaque cubes always do, and
     /// leaves also occlude — onto adjacent leaves and within a canopy — so dense
     /// foliage gets internal AO depth instead of reading flat. Unlike `is_opaque`,

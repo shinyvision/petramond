@@ -144,6 +144,20 @@ impl SectionMeshPad<'_> {
         Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
     }
 
+    /// A slab cell with BOTH halves filled renders as a full block: it culls
+    /// adjacent faces and occludes AO/light exactly like an opaque cube (the
+    /// closure paths make the same test through `neighbour_slab_state`).
+    #[inline]
+    pub(super) fn full_slab_stack_at_pad(
+        &self,
+        block: Block,
+        px: usize,
+        py: usize,
+        pz: usize,
+    ) -> bool {
+        block.is_slab() && self.slab_states[mesh_pad_idx(px, py, pz)].is_full()
+    }
+
     #[inline]
     fn world_idx(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> Option<usize> {
         let (px, py, pz) = (wx - (ox - 1), wy - (oy - 1), wz - (oz - 1));
@@ -268,7 +282,8 @@ fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
         for pz in 0..SECTION_PAD {
             let mut row = 0u32;
             for px in 0..SECTION_PAD {
-                if pad.block_at_pad(px, py, pz).is_opaque() {
+                let block = pad.block_at_pad(px, py, pz);
+                if block.is_opaque() || pad.full_slab_stack_at_pad(block, px, py, pz) {
                     row |= 1u32 << px;
                 }
             }
@@ -282,7 +297,16 @@ fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
             let mut row = 0u32;
             for lx in 0..SECTION_SIZE {
                 let block = pad.block_at_pad(lx + 1, ly + 1, lz + 1);
-                if block == Block::Air || !pad_cube_fast_candidate(block) {
+                if block == Block::Air {
+                    continue;
+                }
+                // Same-material full slab stacks take the cube fast path too; this
+                // MUST match the slab-branch fall-through in `section_geometry`.
+                let slab_as_cube = block.is_slab()
+                    && crate::slab::is_uniform_full_stack(
+                        pad.slab_states[mesh_pad_idx(lx + 1, ly + 1, lz + 1)],
+                    );
+                if !pad_cube_fast_candidate(block) && !slab_as_cube {
                     continue;
                 }
                 row |= 1u32 << lx;
@@ -599,6 +623,12 @@ fn section_geometry(
         crate::slab::is_slab(block)
             .then(|| crate::slab::normalize_state(block, neighbour_slab_state(wx, wy, wz)))
     };
+    // "Cell holds a full slab stack" — callers gate on `is_slab` first (dense flag)
+    // so this only pays a state lookup on actual slab cells. Full stacks cull and
+    // occlude AO/light like opaque cubes; no normalize needed (a normalized default
+    // is a single layer, never full).
+    let slab_full_at =
+        |wx: i32, wy: i32, wz: i32| -> bool { neighbour_slab_state(wx, wy, wz).is_full() };
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 { neighbour_water(wx, wy, wz) };
     let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
         if block_at(wx, wy, wz) != Block::Water {
@@ -744,29 +774,40 @@ fn section_geometry(
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
+                        &slab_full_at,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
                     continue;
                 }
 
+                // A same-material full slab stack IS the material's full cube: fall
+                // through to the cube path (fast path + greedy merge included) so it
+                // culls, lights, and merges like one. Partial cells and mixed-material
+                // full stacks keep the per-layer emitter (preserving each layer's
+                // texture); full stacks of either kind still cull/occlude as opaque
+                // via `slab_full_at`.
+                let mut slab_as_cube = false;
                 if shape == RenderShape::Slab {
-                    let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
                     let state = crate::slab::normalize_state(block, section.slab_state(lx, ly, lz));
-                    super::slab::emit_slab_block(
-                        &mut opaque,
-                        &mut opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        state,
-                        &tint_for,
-                        &block_at,
-                        &slab_at,
-                        &neighbour_light,
-                        &neighbour_blocklight,
-                    );
-                    continue;
+                    slab_as_cube = crate::slab::is_uniform_full_stack(state);
+                    if !slab_as_cube {
+                        let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
+                        super::slab::emit_slab_block(
+                            &mut opaque,
+                            &mut opaque_idx,
+                            wx,
+                            wy,
+                            wz,
+                            state,
+                            &tint_for,
+                            &block_at,
+                            &slab_at,
+                            &neighbour_light,
+                            &neighbour_blocklight,
+                        );
+                        continue;
+                    }
                 }
 
                 let is_water = block == Block::Water;
@@ -794,7 +835,7 @@ fn section_geometry(
                 });
 
                 if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
-                    if pad_cube_fast_candidate(block) {
+                    if pad_cube_fast_candidate(block) || slab_as_cube {
                         let cell = section_idx(lx, ly, lz);
                         for face in FACES {
                             if !mask_has(exposed, face, cell) {
@@ -854,7 +895,7 @@ fn section_geometry(
                                 && warm[1] == warm[2]
                                 && warm[2] == warm[3];
                             if overlay_tile.is_none()
-                                && block.is_opaque()
+                                && (block.is_opaque() || slab_as_cube)
                                 && flat
                                 && log_uvs.is_none()
                             {
@@ -907,7 +948,8 @@ fn section_geometry(
                     let is_water_top = is_water && matches!(face, Face::PosY);
                     let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
                     let is_cactus_side = block == Block::Cactus && is_side;
-                    if nb.is_opaque() && !is_water_top && !is_cactus_side {
+                    let nb_solid = nb.is_opaque() || (nb.is_slab() && slab_full_at(nwx, nwy, nwz));
+                    if nb_solid && !is_water_top && !is_cactus_side {
                         continue;
                     }
                     if is_water && is_side && !neighbour_loaded(nwx, nwy, nwz) {
@@ -987,6 +1029,7 @@ fn section_geometry(
                         f_bl,
                         true,
                         &block_at,
+                        &slab_full_at,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
@@ -1008,7 +1051,7 @@ fn section_geometry(
                         && warm[2] == warm[3];
                     if !is_water
                         && overlay_tile.is_none()
-                        && block.is_opaque()
+                        && (block.is_opaque() || slab_as_cube)
                         && flat
                         && log_uvs.is_none()
                     {
@@ -1328,6 +1371,7 @@ fn chunk_geometry(
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
+                        &|_, _, _| false,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
@@ -1634,7 +1678,7 @@ fn emit_model_block(
 /// Split from the vertex push so the greedy mesher can test a face for flatness (all four
 /// corners equal — the merge condition) before deciding to emit it per-cell or merge it.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn cube_face_lighting<B, L, K>(
+pub(super) fn cube_face_lighting<B, S, L, K>(
     face: Face,
     fx: i32,
     fy: i32,
@@ -1643,11 +1687,13 @@ pub(super) fn cube_face_lighting<B, L, K>(
     f_bl: u32,
     smooth_light: bool,
     block_at: &B,
+    slab_full_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
 ) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
 where
     B: Fn(i32, i32, i32) -> Block,
+    S: Fn(i32, i32, i32) -> bool,
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
 {
@@ -1670,9 +1716,14 @@ where
             );
             let cell = block_at(cx, cy, cz);
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            occ[ia][ib] = cell.occludes_ao();
+            // A full slab stack occludes AO and carries no light, exactly like an
+            // opaque cube — without this it darkens corners twice (it blocks the
+            // light flood, then still enters the smooth-light mean as a dark open
+            // cell). The dense `is_slab` flag gates the state lookup.
+            let full_stack = cell.is_slab() && slab_full_at(cx, cy, cz);
+            occ[ia][ib] = cell.occludes_ao() || full_stack;
             if smooth_light {
-                opq[ia][ib] = cell.is_opaque();
+                opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
                     sky[ia][ib] = neighbour_light(cx, cy, cz) as u32;
                     blk[ia][ib] = neighbour_blocklight(cx, cy, cz) as u32;

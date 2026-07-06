@@ -1,8 +1,8 @@
 use super::face::{should_flip, vertex_ao};
 use super::*;
 use crate::block::Block;
-use crate::block_state::{LogAxis, SlabState, StairHalf, StairState};
-use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
+use crate::block_state::{LogAxis, SlabSplit, SlabState, StairHalf, StairState};
+use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE, SKY_FULL};
 
 /// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
 /// drawn in both windings, and does NOT cull its supporting block's faces.
@@ -792,6 +792,174 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     );
 }
 
+/// Mesh a section standalone: all lookups answer from the section itself, air /
+/// full sky / no block light outside it.
+fn mesh_section_standalone(section: &crate::section::Section) -> ChunkMesh {
+    let in_bounds = |wx: i32, wy: i32, wz: i32| {
+        (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+    };
+    super::build_section_mesh(
+        section,
+        crate::chunk::SectionPos::new(0, 0, 0),
+        |wx, wy, wz| {
+            if in_bounds(wx, wy, wz) {
+                section.block_raw(wx as usize, wy as usize, wz as usize)
+            } else {
+                Block::Air.id()
+            }
+        },
+        |wx, wy, wz| {
+            if in_bounds(wx, wy, wz) {
+                section.stair_state(wx as usize, wy as usize, wz as usize)
+            } else {
+                StairState::default()
+            }
+        },
+        |wx, wy, wz| {
+            if in_bounds(wx, wy, wz) {
+                section.slab_state(wx as usize, wy as usize, wz as usize)
+            } else {
+                SlabState::EMPTY
+            }
+        },
+        |_, _, _| 0,
+        |_, _| 0,
+        |_, _, _| SKY_FULL,
+        |_, _, _| 0,
+        |_, _, _| true,
+    )
+}
+
+/// A full slab stack of ONE material must mesh exactly like the full cube block:
+/// same quads, same culling (the floor face under it disappears), same AO onto
+/// the surrounding floor, same greedy merging — the tile id is the only thing
+/// allowed to differ, so it is masked out of the comparison.
+#[test]
+fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
+    let build = |cube: bool| {
+        let mut section = crate::section::Section::new(0, 0, 0);
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                section.set_block(x, 0, z, Block::Dirt);
+            }
+        }
+        if cube {
+            section.set_block(5, 1, 5, Block::Stone);
+        } else {
+            section.set_block(5, 1, 5, Block::StoneSlab);
+            section.set_slab_state(
+                5,
+                1,
+                5,
+                SlabState {
+                    split: SlabSplit::Y,
+                    layers: [Block::StoneSlab, Block::StoneSlab],
+                },
+            );
+        }
+        mesh_section_standalone(&section)
+    };
+    let scrub_tile = |mesh: &ChunkMesh| -> Vec<Vertex> {
+        mesh.opaque
+            .iter()
+            .map(|v| Vertex {
+                packed: v.packed & !0xFF,
+                ..*v
+            })
+            .collect()
+    };
+
+    let slab = build(false);
+    let cube = build(true);
+    assert!(!slab.opaque.is_empty());
+    assert_eq!(
+        bytemuck::cast_slice::<Vertex, u8>(&scrub_tile(&slab)),
+        bytemuck::cast_slice::<Vertex, u8>(&scrub_tile(&cube)),
+        "a same-material full stack must emit the full cube block's exact mesh"
+    );
+    assert_eq!(slab.opaque_idx, cube.opaque_idx);
+}
+
+/// A mixed-material full stack still covers the whole cell like a full block but
+/// keeps each layer's texture: full caps textured by the fronting layer, split
+/// side faces carrying both materials' side tiles.
+#[test]
+fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::StoneSlab);
+    section.set_slab_state(
+        8,
+        8,
+        8,
+        SlabState {
+            split: SlabSplit::Y,
+            layers: [Block::StoneSlab, Block::DirtSlab],
+        },
+    );
+    let mesh = mesh_section_standalone(&section);
+
+    // Full-cell cover: 2 full caps + 4 sides x 2 half quads = 10 quads.
+    assert_eq!(mesh.opaque.len(), 40, "mixed stack should emit 10 quads");
+    let tiles_at = |pred: &dyn Fn(&Vertex) -> bool| -> std::collections::HashSet<u32> {
+        mesh.opaque
+            .iter()
+            .filter(|v| pred(v))
+            .map(|v| v.packed & 0xFF)
+            .collect()
+    };
+    let top = tiles_at(&|v| shade_idx(v) == 0);
+    let bottom = tiles_at(&|v| shade_idx(v) == 3);
+    let sides = tiles_at(&|v| shade_idx(v) != 0 && shade_idx(v) != 3);
+    assert_eq!(
+        top,
+        [Block::DirtSlab.tiles()[0].index() as u32].into(),
+        "top cap must use the upper layer's top tile"
+    );
+    assert_eq!(
+        bottom,
+        [Block::StoneSlab.tiles()[1].index() as u32].into(),
+        "bottom cap must use the lower layer's bottom tile"
+    );
+    assert_eq!(
+        sides,
+        [
+            Block::StoneSlab.tiles()[2].index() as u32,
+            Block::DirtSlab.tiles()[2].index() as u32,
+        ]
+        .into(),
+        "side faces must keep both layers' side tiles"
+    );
+}
+
+/// Full stacks cull like opaque cubes, in BOTH directions: the boundary between
+/// a full (mixed) stack and an adjacent opaque cube must emit no quad at all.
+#[test]
+fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
+    let mut section = crate::section::Section::new(0, 0, 0);
+    section.set_block(8, 8, 8, Block::StoneSlab);
+    section.set_slab_state(
+        8,
+        8,
+        8,
+        SlabState {
+            split: SlabSplit::Y,
+            layers: [Block::StoneSlab, Block::DirtSlab],
+        },
+    );
+    section.set_block(9, 8, 8, Block::Stone);
+    let mesh = mesh_section_standalone(&section);
+
+    for quad in mesh.opaque.chunks(4) {
+        assert!(
+            !quad.iter().all(|v| (v.pos[0] - 9.0).abs() < 1e-3),
+            "no quad may sit on the stack/cube boundary plane (stack side {:?})",
+            quad.iter().map(|v| v.pos).collect::<Vec<_>>()
+        );
+    }
+}
+
 /// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
 /// UV_MODE_CELL_LOCAL vertices.
 fn cell_uv16(v: &Vertex) -> (u32, u32) {
@@ -1410,6 +1578,31 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(7, 1, 2, Block::Cactus);
     section.set_block(8, 1, 2, Block::OakStairs);
     section.set_stair_facing(8, 1, 2, Facing::South);
+    // Slabs: single layer, same-material full stack (cube fast path), mixed full
+    // stack, and an opaque cube against the mixed stack (both-way culling).
+    section.set_block(9, 1, 2, Block::OakSlab);
+    section.set_slab_state(9, 1, 2, SlabState::single(SlabSplit::Y, 0, Block::OakSlab));
+    section.set_block(10, 1, 2, Block::StoneSlab);
+    section.set_slab_state(
+        10,
+        1,
+        2,
+        SlabState {
+            split: SlabSplit::Y,
+            layers: [Block::StoneSlab, Block::StoneSlab],
+        },
+    );
+    section.set_block(11, 1, 2, Block::StoneSlab);
+    section.set_slab_state(
+        11,
+        1,
+        2,
+        SlabState {
+            split: SlabSplit::Y,
+            layers: [Block::DirtSlab, Block::StoneSlab],
+        },
+    );
+    section.set_block(12, 1, 2, Block::Stone);
 
     let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if (0..SECTION_SIZE as i32).contains(&wx)

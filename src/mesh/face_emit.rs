@@ -131,6 +131,7 @@ where
         f_bl,
         smooth_light,
         block_at,
+        &|_, _, _| false,
         neighbour_light,
         neighbour_blocklight,
     );
@@ -181,9 +182,12 @@ pub(super) fn cube_face_lighting_pad(
             let cell = pad.block_at_pad(cx, cy, cz);
             let i = mesh_pad_idx(cx, cy, cz);
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            occ[ia][ib] = cell.occludes_ao();
+            // Full slab stacks occlude AO/light like opaque cubes — mirrors the
+            // closure-path gather in `cube_face_lighting` (byte parity).
+            let full_stack = pad.full_slab_stack_at_pad(cell, cx, cy, cz);
+            occ[ia][ib] = cell.occludes_ao() || full_stack;
             if smooth_light {
-                opq[ia][ib] = cell.is_opaque();
+                opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
                     sky[ia][ib] = pad.skylight[i] as u32;
                     blk[ia][ib] = pad.blocklight[i] as u32;

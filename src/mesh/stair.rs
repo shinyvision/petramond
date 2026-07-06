@@ -87,7 +87,7 @@ pub(crate) fn plane_quads(shape: StairShape, face: Face, outer: bool) -> PlaneQu
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn emit_stair_block<B, L, K, T>(
+pub(super) fn emit_stair_block<B, S, L, K, T>(
     opaque: &mut Vec<Vertex>,
     opaque_idx: &mut Vec<u32>,
     wx: i32,
@@ -97,10 +97,12 @@ pub(super) fn emit_stair_block<B, L, K, T>(
     tiles: [Tile; 3],
     tint_for: &T,
     block_at: &B,
+    slab_full_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
 ) where
     B: Fn(i32, i32, i32) -> Block,
+    S: Fn(i32, i32, i32) -> bool,
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
     T: Fn(Tile) -> [f32; 3],
@@ -119,6 +121,7 @@ pub(super) fn emit_stair_block<B, L, K, T>(
                 tiles,
                 tint_for,
                 block_at,
+                slab_full_at,
                 neighbour_light,
                 neighbour_blocklight,
             );
@@ -130,7 +133,7 @@ pub(super) fn emit_stair_block<B, L, K, T>(
 /// neighbour cell (and is culled whole against an opaque neighbour, exactly
 /// like a full cube face), the mid plane fronts the stair's own cell.
 #[allow(clippy::too_many_arguments)]
-fn emit_face_plane<B, L, K, T>(
+fn emit_face_plane<B, S, L, K, T>(
     opaque: &mut Vec<Vertex>,
     opaque_idx: &mut Vec<u32>,
     wx: i32,
@@ -142,10 +145,12 @@ fn emit_face_plane<B, L, K, T>(
     tiles: [Tile; 3],
     tint_for: &T,
     block_at: &B,
+    slab_full_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
 ) where
     B: Fn(i32, i32, i32) -> Block,
+    S: Fn(i32, i32, i32) -> bool,
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
     T: Fn(Tile) -> [f32; 3],
@@ -161,8 +166,13 @@ fn emit_face_plane<B, L, K, T>(
     } else {
         (wx, wy, wz)
     };
-    if outer && block_at(fx, fy, fz).is_opaque() {
-        return;
+    if outer {
+        let nb = block_at(fx, fy, fz);
+        // A full slab stack in the neighbour cell hides this boundary plane
+        // exactly like an opaque cube would.
+        if nb.is_opaque() || (nb.is_slab() && slab_full_at(fx, fy, fz)) {
+            return;
+        }
     }
 
     // The underside is a closed face: if the cell below the stair is dark,
@@ -177,6 +187,7 @@ fn emit_face_plane<B, L, K, T>(
         neighbour_blocklight(fx, fy, fz) as u32,
         smooth_light,
         block_at,
+        slab_full_at,
         neighbour_light,
         neighbour_blocklight,
     );

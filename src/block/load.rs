@@ -235,6 +235,10 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     for f in &r.flags {
         flags = flags.with(f.to_flag());
     }
+    // Derived, not row-listed: the shape class the mesher needs as a dense flag.
+    if matches!(r.shape, RenderShape::Slab) {
+        flags = flags.with(BlockFlags::SLAB);
+    }
     let drops: Vec<Drop> = r
         .drops
         .iter()

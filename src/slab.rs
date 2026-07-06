@@ -1,7 +1,7 @@
 //! Slab shape, stacking state, and material helpers shared by placement,
 //! collision, selection, lighting, meshing, and item drops.
 
-use crate::block::{Aabb, Block, RenderShape};
+use crate::block::{Aabb, Block};
 use crate::block_state::{SlabSplit, SlabState};
 use crate::furnace::Facing;
 use crate::item::{ItemStack, ItemType};
@@ -49,7 +49,7 @@ impl SlabRotation {
 
 #[inline]
 pub fn is_slab(block: Block) -> bool {
-    block.render_shape() == RenderShape::Slab
+    block.is_slab()
 }
 
 #[inline]
@@ -64,6 +64,15 @@ pub fn normalize_state(block: Block, state: SlabState) -> SlabState {
     } else {
         state
     }
+}
+
+/// A full stack of the SAME slab material is visually the material's full cube,
+/// so the mesher routes it down the ordinary cube path (fast path + greedy merge
+/// included). Mixed full stacks keep the per-layer emitter to preserve each
+/// layer's texture, but still cull/occlude like a full block.
+#[inline]
+pub fn is_uniform_full_stack(state: SlabState) -> bool {
+    state.is_full() && state.layers[0] == state.layers[1]
 }
 
 #[inline]

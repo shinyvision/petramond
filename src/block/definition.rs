@@ -152,13 +152,16 @@ pub(super) struct BlockFlags(u8);
 
 impl BlockFlags {
     /// No material properties at all (air). Replaceability is no longer a flag —
-    /// it migrated to [`BlockTag::REPLACEABLE`](super::BlockTag::REPLACEABLE) — so
-    /// air carries no flags; bit `1 << 4` is now unused.
+    /// it migrated to [`BlockTag::REPLACEABLE`](super::BlockTag::REPLACEABLE).
     pub const NONE: BlockFlags = BlockFlags(0);
     pub const SOLID: BlockFlags = BlockFlags(1 << 0);
     pub const OPAQUE: BlockFlags = BlockFlags(1 << 1);
     pub const AO_OCCLUDER: BlockFlags = BlockFlags(1 << 2);
     pub const TRANSPARENT: BlockFlags = BlockFlags(1 << 3);
+    /// Derived by the loader from `shape == slab`, never listed in a data row. The
+    /// mesher's per-ring-cell "is this a full slab stack" test needs the shape class
+    /// without a `def()` big-table read, same rationale as the rest of this table.
+    pub const SLAB: BlockFlags = BlockFlags(1 << 4);
     pub const DIRECTIONAL_VIEW: BlockFlags = BlockFlags(1 << 5);
 
     #[inline]
@@ -189,6 +192,11 @@ impl BlockFlags {
     #[inline]
     pub const fn is_directional_view(self) -> bool {
         self.contains(BlockFlags::DIRECTIONAL_VIEW)
+    }
+
+    #[inline]
+    pub const fn is_slab(self) -> bool {
+        self.contains(BlockFlags::SLAB)
     }
 
     #[inline]
