@@ -6,7 +6,7 @@
 //! `walk_weight` (so starts/stops ease instead of snapping — [`Model::pose_scaled`]),
 //! the swing's body twist on the `body` bone, the head-look override on the
 //! `head` bone (compensated for the twist so the gaze stays put), then the
-//! right-arm attack swing COMPOSED onto `right_shoulder` via
+//! held-arm attack swing COMPOSED onto the visual-right shoulder via
 //! [`Model::apply_bone_rotation`] — so a punch layers over the walk cycle
 //! instead of replacing it. The swing phase is the same
 //! `HeldItemView::swing`/`swing_scale` state machine the first-person hand uses,
@@ -28,9 +28,14 @@ use crate::bbmodel::{euler_quat, Model};
 use crate::mesh::face::Face;
 use crate::player::model::PLAYER_MODEL_SCALE;
 
-/// The grip point in model pixels, in the right-arm rest frame: centred in the
-/// fist (the lower arm spans x −8..−4, ends at y 12), a touch toward the front.
-const HAND_GRIP_PX: Vec3 = Vec3::new(-6.0, 11.0, -1.5);
+/// The grip point in model pixels, in the visual-right arm's rest frame: centred
+/// in the fist (the lower arm spans x 4..8, ends at y 12), a touch toward the
+/// front. The authored model is rotated by π to face engine-forward; under this
+/// engine's camera convention that makes the authored left arm the visual right
+/// hand in third person.
+const HAND_GRIP_PX: Vec3 = Vec3::new(6.0, 11.0, -1.5);
+const HELD_SHOULDER_BONE: &str = "left_shoulder";
+const HELD_ELBOW_BONE: &str = "left_elbow";
 
 /// World-space size (blocks) of the held sprite-item slab.
 const SPRITE_WORLD_SIZE: f32 = 0.60;
@@ -42,8 +47,8 @@ const BLOCK_WORLD_SIZE: f32 = 0.30;
 const LIE_LIFT: f32 = 2.2 * PLAYER_MODEL_SCALE;
 
 /// Bake the player body posed for this frame. Returns the emitted index count
-/// plus the right-hand world transform (model-pixel units under the placed,
-/// scaled body) for attaching the held item.
+/// plus the visual right-hand world transform (model-pixel units under the
+/// placed, scaled body) for attaching the held item.
 pub(super) fn build_player_body(
     model: &Model,
     env: LightEnv,
@@ -80,8 +85,10 @@ pub(super) fn build_player_body(
     // twists with the punch, the head compensates so the gaze stays fixed, and
     // the arm raise composes over whatever the walk pose put on the shoulder.
     let s = swing.clamp(0.0, 1.0);
+    // Negative: the twist must wind the HELD (visual-right) shoulder back then
+    // drive it forward; like the roll below, it mirrors with the arm swap.
     let twist = if swing > 0.0 {
-        (s.sqrt() * std::f32::consts::TAU).sin() * 0.2 * swing_scale
+        (s.sqrt() * std::f32::consts::TAU).sin() * -0.2 * swing_scale
     } else {
         0.0
     };
@@ -96,16 +103,18 @@ pub(super) fn build_player_body(
         }
     }
     if swing > 0.0 {
-        if let Some(shoulder) = model.bone_named("right_shoulder") {
+        if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
             // Quartic-eased raise + the look-pitch term, then the arm follows the
             // body twist at 2× total (1× inherited from the body bone + 1× here).
             let eased = 1.0 - (1.0 - s).powi(4);
             let raise = (eased * std::f32::consts::PI).sin() * 1.2;
             let pitch_term = (s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
             let roll = (s * std::f32::consts::PI).sin() * 0.4;
+            // The visual right arm is the authored left arm after the yaw+π
+            // placement, so the shoulder roll mirrors the authored-right swing.
             let rot = Quat::from_rotation_x((raise + pitch_term) * swing_scale)
                 * Quat::from_rotation_y(twist)
-                * Quat::from_rotation_z(roll * swing_scale);
+                * Quat::from_rotation_z(-roll * swing_scale);
             model.apply_bone_rotation(&mut pose, shoulder, rot);
         }
     }
@@ -118,7 +127,7 @@ pub(super) fn build_player_body(
 }
 
 /// Emit every cube of the posed model under `global`, lit and hurt-tinted, and
-/// return the index count plus the right-hand world transform.
+/// return the index count plus the visual right-hand world transform.
 fn bake_cubes(
     model: &Model,
     pose: &[Mat4],
@@ -151,8 +160,8 @@ fn bake_cubes(
     }
 
     let hand_bone = model
-        .bone_named("right_elbow")
-        .or_else(|| model.bone_named("right_shoulder"));
+        .bone_named(HELD_ELBOW_BONE)
+        .or_else(|| model.bone_named(HELD_SHOULDER_BONE));
     let hand = global
         * hand_bone
             .and_then(|b| pose.get(b).copied())
@@ -261,6 +270,20 @@ mod tests {
         v
     }
 
+    fn hand(inst: &PlayerRenderInstance, swing: f32) -> Mat4 {
+        let (mut v, mut i) = (Vec::new(), Vec::new());
+        let (_, hand) = build_player_body(
+            player_model(),
+            LightEnv::IDENTITY,
+            inst,
+            swing,
+            1.0,
+            &mut v,
+            &mut i,
+        );
+        hand
+    }
+
     #[test]
     fn body_bakes_and_walk_swings_layer_with_the_punch() {
         // Rest pose bakes geometry standing at the feet.
@@ -346,6 +369,39 @@ mod tests {
         assert!(
             full.iter().zip(&half).any(|(a, b)| a.pos != b.pos),
             "half blend differs from the full cycle"
+        );
+    }
+
+    #[test]
+    fn held_grip_is_on_the_visual_right_side() {
+        let inst = instance();
+        let grip = hand(&inst, 0.0).transform_point3(HAND_GRIP_PX);
+        assert!(
+            grip.x < inst.pos.x,
+            "yaw 0 player-right is camera-right/world -X, grip at {grip:?}"
+        );
+    }
+
+    #[test]
+    fn held_swing_moves_visual_right_hand_toward_center() {
+        let inst = instance();
+        let rest = hand(&inst, 0.0).transform_point3(HAND_GRIP_PX);
+        for swing in [0.1, 0.25, 0.4, 0.5, 0.75, 0.9] {
+            let grip = hand(&inst, swing).transform_point3(HAND_GRIP_PX);
+            assert!(
+                grip.x > rest.x,
+                "visual right-hand swing should punch inward, not hook farther right at {swing}: {grip:?} vs {rest:?}"
+            );
+            assert!(
+                grip.z > rest.z,
+                "visual right-hand swing should still punch forward at {swing}: {grip:?} vs {rest:?}"
+            );
+        }
+
+        let done = hand(&inst, 1.0).transform_point3(HAND_GRIP_PX);
+        assert!(
+            (done - rest).length() < 0.001,
+            "swing phase 1.0 should return to rest: {done:?} vs {rest:?}"
         );
     }
 }
