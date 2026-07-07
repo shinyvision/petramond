@@ -229,8 +229,12 @@ pub fn shader_set_param(key: &str, value: [f32; 4]) {
 
 // --- Phase 3b: blocks -------------------------------------------------------
 
-/// The block at a world cell, or `None` when its section is unloaded / the
-/// cell is outside the world's vertical range. Air is `Some(BlockId(0))`.
+/// The block at a world cell, or `None` when its section is unloaded, still
+/// STREAMING IN (a gen job or the player's saved record has not finished
+/// landing — reading the half-streamed content would lie), or the cell is
+/// outside the world's vertical range. Treat `None` as "state frozen, retry
+/// later"; never as evidence about what the cell holds. Air is
+/// `Some(BlockId(0))`.
 pub fn get_block(pos: [i32; 3]) -> Option<BlockId> {
     match __rt::host_call(&HostCall::GetBlock { pos }) {
         HostRet::Block(b) => b,
@@ -286,7 +290,9 @@ pub fn schedule_tick(pos: [i32; 3], delay: u64) {
     );
 }
 
-/// Whether the section owning the cell is currently loaded.
+/// Whether the section owning the cell is currently loaded AND its streamed
+/// content is final (see [`get_block`] — a section mid-stream reads as not
+/// loaded).
 pub fn is_loaded(pos: [i32; 3]) -> bool {
     match __rt::host_call(&HostCall::IsLoaded { pos }) {
         HostRet::Bool(loaded) => loaded,

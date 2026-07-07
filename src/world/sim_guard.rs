@@ -31,6 +31,7 @@
 //! on-load water kick when that terrain streams in
 //! (`world::stream::queue_loaded_section_water_updates`).
 
+use crate::block::Block;
 use crate::chunk::{SectionPos, SECTION_SIZE};
 use crate::mathh::IVec3;
 use crate::section::SectionSummary;
@@ -77,6 +78,29 @@ impl World {
         !self.pending_sections.contains(&sp)
             && !self.awaited_overlays.contains(&sp)
             && !self.pending_overlays.contains_key(&sp)
+    }
+
+    /// Block read for the mod ABI (`GetBlock`/`GetBlocks`): `None` not only
+    /// for unloaded sections but also while the section's streamed content is
+    /// not final (in-flight gen job or saved overlay). During that window a
+    /// plain read LIES — the generated base is visible before the player's
+    /// saved record overlays it — and a mod deciding from it corrupts its own
+    /// state (the kitchen oven pruned every placed oven from its world-KV
+    /// list this way). `None` means "state frozen, try again later", which is
+    /// exactly right for both truly-unloaded and still-streaming sections.
+    pub fn block_if_stream_final(&self, wx: i32, wy: i32, wz: i32) -> Option<Block> {
+        let sp = SectionPos::from_world(wx, wy, wz)?;
+        if !self.stream_writable(sp) {
+            return None;
+        }
+        self.block_if_loaded(wx, wy, wz)
+    }
+
+    /// `IsLoaded` for the mod ABI: loaded AND stream-final, matching
+    /// [`Self::block_if_stream_final`].
+    pub fn section_stream_final_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        SectionPos::from_world(wx, wy, wz)
+            .is_some_and(|sp| self.sections.contains_key(&sp) && self.stream_writable(sp))
     }
 
     /// `quiet` short-circuits the three in-flight probes when the caller
@@ -245,6 +269,36 @@ mod tests {
         );
         w.awaited_overlays.remove(&sp);
         assert!(w.harvest_section_snapshot(sp).is_some());
+    }
+
+    #[test]
+    fn mod_reads_and_cell_kv_writes_treat_an_in_flight_overlay_as_unloaded() {
+        // The reload race that broke the kitchen oven: a generated base
+        // section is installed while the player's saved record (with the mod
+        // block) is still landing from disk. A mod read there must say
+        // "unloaded" (state frozen), never show the generated base — the oven
+        // pruned itself from its world-KV list off exactly that lie.
+        let mut w = flat_world();
+        let sp = SectionPos::new(0, 4, 0);
+
+        assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
+        assert!(w.section_stream_final_at(8, 64, 8));
+
+        w.awaited_overlays.insert(sp);
+        assert_eq!(
+            w.block_if_stream_final(8, 64, 8),
+            None,
+            "a half-streamed section leaked its generated base to a mod read"
+        );
+        assert!(!w.section_stream_final_at(8, 64, 8));
+        assert!(
+            !w.cell_kv_set(8, 64, 8, "kitchen:state".into(), vec![1]),
+            "a cell-KV write raced the in-flight overlay"
+        );
+
+        w.awaited_overlays.remove(&sp);
+        assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
+        assert!(w.cell_kv_set(8, 64, 8, "kitchen:state".into(), vec![1]));
     }
 
     #[test]

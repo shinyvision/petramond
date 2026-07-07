@@ -432,7 +432,10 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 let p = ctx.world.container_anchor(to_ivec(pos));
                 // A mod owns only its own blocks' containers: the block at
                 // `pos` must be registered to the caller's namespace.
-                let Some(block) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
+                // Stream-final read: a half-streamed cell shows the generated
+                // base (a foreign block) — that must be "not stored", not a
+                // namespace violation.
+                let Some(block) = ctx.world.block_if_stream_final(p.x, p.y, p.z) else {
                     return HostRet::Bool(false);
                 };
                 let block_name = crate::registry::names()
@@ -578,7 +581,11 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 let mod_id = mod_id.to_owned();
                 sim_query(move |ctx| {
                     let p = to_ivec(pos);
-                    let Some(old) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
+                    // Stream-final read: while a saved overlay is in flight
+                    // the cell shows the generated base — a foreign block —
+                    // which must read as "unloaded", not as a namespace
+                    // violation.
+                    let Some(old) = ctx.world.block_if_stream_final(p.x, p.y, p.z) else {
                         return HostRet::Bool(false);
                     };
                     let old_name = crate::registry::names()
@@ -595,11 +602,14 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
+        // Mod reads report None ("unloaded") while a section's streamed
+        // content is not final — a half-streamed read would show the
+        // generated base where the player's saved record is about to land.
         HostCall::GetBlock { pos } => sim_query(|ctx| {
             let p = to_ivec(pos);
             HostRet::Block(
                 ctx.world
-                    .block_if_loaded(p.x, p.y, p.z)
+                    .block_if_stream_final(p.x, p.y, p.z)
                     .map(|b| mod_api::BlockId(b.id())),
             )
         }),
@@ -610,7 +620,7 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(|&pos| {
                         let p = to_ivec(pos);
                         ctx.world
-                            .block_if_loaded(p.x, p.y, p.z)
+                            .block_if_stream_final(p.x, p.y, p.z)
                             .map(|b| mod_api::BlockId(b.id()))
                     })
                     .collect(),
@@ -641,7 +651,7 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         HostCall::IsLoaded { pos } => sim_query(|ctx| {
             let p = to_ivec(pos);
-            HostRet::Bool(ctx.world.section_loaded_at(p.x, p.y, p.z))
+            HostRet::Bool(ctx.world.section_stream_final_at(p.x, p.y, p.z))
         }),
         HostCall::LightAt { pos } => sim_query(|ctx| {
             let p = to_ivec(pos);

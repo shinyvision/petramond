@@ -296,6 +296,15 @@ impl Mod for Kitchen {
                 if let ContainerKind::Mod { key } = kind {
                     if key == KIND_KEY {
                         self.open_session = *pos;
+                        // Self-heal the registry: an oven missing from the
+                        // list (a wrongly-pruned or otherwise lost entry)
+                        // re-registers the moment its GUI is opened.
+                        if let Some(anchor) = *pos {
+                            if !self.ovens.contains(&anchor) {
+                                self.ovens.push(anchor);
+                                self.store_oven_list();
+                            }
+                        }
                     }
                 }
             }
@@ -325,7 +334,10 @@ impl Mod for Kitchen {
         let mut pruned = false;
         for (pos, block) in positions.into_iter().zip(blocks) {
             match block {
-                // Unloaded: state is frozen on disk, exactly like a furnace.
+                // Unloaded or still streaming in: state is frozen on disk,
+                // exactly like a furnace. Only a real foreign-block read may
+                // prune — the host guarantees half-streamed sections read as
+                // None, never as their pre-overlay generated base.
                 None => continue,
                 // A listed anchor is ours in EITHER visual state.
                 Some(b) if b == oven_block || Some(b) == self.lit_block => live.push(pos),

@@ -49,8 +49,13 @@ impl World {
     }
 
     /// Store a cell KV entry; marks the section modified so the data persists.
-    /// `false` = the owning section is unloaded / out of range (nothing stored).
+    /// `false` = the owning section is unloaded / out of range / not
+    /// stream-final (a write racing an in-flight saved overlay would be
+    /// clobbered when it lands — refuse, like `set_block_world`).
     pub fn cell_kv_set(&mut self, wx: i32, wy: i32, wz: i32, key: String, value: Vec<u8>) -> bool {
+        if !self.cell_kv_writable(wx, wy, wz) {
+            return false;
+        }
         let Some((s, lx, ly, lz)) = self.chunk_at_world_mut(wx, wy, wz) else {
             return false;
         };
@@ -62,6 +67,9 @@ impl World {
     /// Remove a cell KV entry; returns whether it was present. A removal marks
     /// the section modified so the stale on-disk record is rewritten.
     pub fn cell_kv_remove(&mut self, wx: i32, wy: i32, wz: i32, key: &str) -> bool {
+        if !self.cell_kv_writable(wx, wy, wz) {
+            return false;
+        }
         let Some((s, lx, ly, lz)) = self.chunk_at_world_mut(wx, wy, wz) else {
             return false;
         };
@@ -70,6 +78,10 @@ impl World {
             s.modified = true;
         }
         removed
+    }
+
+    fn cell_kv_writable(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        crate::chunk::SectionPos::from_world(wx, wy, wz).is_some_and(|sp| self.stream_writable(sp))
     }
 
     // ---- Phase 5: the open mod GUI session's state map ----------------------
