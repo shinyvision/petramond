@@ -1490,15 +1490,7 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
 
     let mut chunk = Chunk::new(0, 0);
     chunk.set_block(8, 64, 8, Block::Furnace);
-    chunk.insert_furnace(
-        8,
-        64,
-        8,
-        Furnace {
-            facing: Facing::East,
-            ..Default::default()
-        },
-    );
+    chunk.insert_furnace(8, 64, 8, Furnace::default(), Facing::East);
 
     let count = |mesh: &ChunkMesh, tile: Tile| {
         mesh.opaque
@@ -1527,7 +1519,16 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     );
 
     // Lit: the facing face swaps to the glowing front; the sides do not glow.
-    chunk.furnace_at_mut(8, 64, 8).unwrap().burn_remaining = 100;
+    chunk.insert_furnace(
+        8,
+        64,
+        8,
+        Furnace {
+            burn_remaining: 100,
+            ..Default::default()
+        },
+        Facing::East,
+    );
     chunk.dirty = true;
     let lit = build_mesh(&chunk, air, biome0, light);
     assert_eq!(
@@ -1644,11 +1645,11 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         1,
         2,
         Furnace {
-            facing: Facing::East,
             burn_remaining: 10,
             ..Default::default()
         },
     );
+    section.insert_entity_facing(6, 1, 2, Facing::East);
     section.set_block(7, 1, 2, Block::Cactus);
     section.set_block(8, 1, 2, Block::OakStairs);
     section.set_stair_facing(8, 1, 2, Facing::South);

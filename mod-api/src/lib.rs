@@ -614,6 +614,53 @@ pub enum HostCall {
     /// dispatches [`GuestCall::AiNode`] with `callback_id` once per owning
     /// mob per game tick. Legal ONLY during `mod_init`. → [`HostRet::Unit`].
     RegisterAiNode { key: String, callback_id: u32 },
+
+    // --- Mod container slots (landed 2026-07-07) ----------------------------
+    /// Read every slot of the mod container at `pos` (the engine-backed item
+    /// storage behind a mod GUI document's `container` role slots; multi-cell
+    /// model blocks key it at the group's base cell — the `block_placed`
+    /// anchor). `None` when the section is unloaded or no container exists
+    /// there yet (one is created when the GUI first opens, or by the first
+    /// `ContainerSet`). → [`HostRet::ContainerSlots`].
+    ContainerGet { pos: [i32; 3] },
+    /// Write container slots at `pos` as `(slot index, stack)` entries, batched
+    /// per the message-level ABI rule. Creates/grows the container as needed
+    /// (never shrinks; slot indices past the engine cap are rejected). The
+    /// block at `pos` must be registered to THIS mod's namespace — a mod owns
+    /// only its own blocks' containers (reads may cross namespaces). Unknown
+    /// item keys reject the call. → [`HostRet::Bool`] (`false` = unloaded).
+    ContainerSet {
+        pos: [i32; 3],
+        slots: Vec<(u32, Option<ItemSlotData>)>,
+    },
+    /// Read one item's registry data: stack cap, fuel burn ticks, and tag
+    /// names — the same rows engine mechanics read, so mod logic (a fuel-fired
+    /// oven, a filtering hopper) composes with pack-added items for free.
+    /// `None` = unknown key. → [`HostRet::ItemInfo`].
+    ItemInfo { key: String },
+    /// The loaded machine-processing result for one input item key under a
+    /// recipe `class` (`"llama:smelting"` = the furnace's table; a mod machine
+    /// names its own, e.g. `"kitchen:cooking"`), from the same layered
+    /// `recipes.json` catalog engine machines cook from — any pack's rows for
+    /// that class included. `None` = no recipe. → [`HostRet::ItemSlot`].
+    RecipeResult { class: String, key: String },
+}
+
+/// One item stack crossing the ABI: the item's stable registry key + count.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ItemSlotData {
+    pub key: String,
+    pub count: u8,
+}
+
+/// One item's registry data (see [`HostCall::ItemInfo`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ItemInfoData {
+    pub max_stack: u8,
+    /// Furnace-fuel burn duration in game ticks; `0` = not a fuel.
+    pub fuel_burn_ticks: u32,
+    /// The item's tag names (engine tags bare, pack tags namespaced).
+    pub tags: Vec<String>,
 }
 
 /// Which [`BlockBehavior`](GuestCall::BlockBehavior) hook fired — the mod-side
@@ -656,6 +703,13 @@ pub enum HostRet {
     Bytes(Option<Vec<u8>>),
     /// [`HostCall::GuiStateGet`]: `None` = key absent.
     GuiValue(Option<GuiValue>),
+    /// [`HostCall::ContainerGet`]: every slot in index order; `None` = no
+    /// container / unloaded.
+    ContainerSlots(Option<Vec<Option<ItemSlotData>>>),
+    /// [`HostCall::ItemInfo`]: `None` = unknown item key.
+    ItemInfo(Option<ItemInfoData>),
+    /// [`HostCall::RecipeResult`]: `None` = no recipe for that input.
+    ItemSlot(Option<ItemSlotData>),
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine

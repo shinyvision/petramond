@@ -75,7 +75,7 @@ impl ContainerMenu {
     /// edits. Defensively creates an empty chest if the block lacks one (placement
     /// always inserts one, so this is belt-and-braces).
     pub(in crate::game) fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
-        if world.chest_at(pos).is_none() {
+        if world.container_at(pos).is_none() {
             world.insert_chest(pos, crate::furnace::Facing::default());
         }
         self.target = ContainerTarget::Chest(pos);
@@ -98,11 +98,23 @@ impl ContainerMenu {
     /// Begin a mod GUI session for `kind`, opened from `pos` (`None` for a
     /// programmatic open). The state map lives on the world; `Game`'s open
     /// funnel clears it around this call.
+    ///
+    /// A slot-bearing kind (its document declares `container` slots) gets its
+    /// backing storage here: `pos` is canonicalized to the block's container
+    /// anchor (multi-cell model blocks share ONE container at the group base,
+    /// whichever cell was clicked) and a container sized to the document is
+    /// created — or grown, never shrunk — at it.
     pub(in crate::game) fn open_mod_gui(
         &mut self,
+        world: &mut World,
         kind: crate::gui::GuiKind,
         pos: Option<crate::mathh::IVec3>,
     ) {
+        let pos = pos.map(|p| world.container_anchor(p));
+        let specs = crate::gui::documents::container_slot_specs(kind);
+        if let (Some(p), false) = (pos, specs.is_empty()) {
+            world.ensure_container(p, specs.len());
+        }
         self.target = ContainerTarget::ModGui { kind, pos };
     }
 

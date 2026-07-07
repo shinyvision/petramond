@@ -1,0 +1,20 @@
+{
+  "recipes": [
+    {
+      "type": "shaped",
+      "pattern": [
+        "CCC",
+        "IFI",
+        "PPP"
+      ],
+      "key": {
+        "C": "llama:cobblestone",
+        "I": "llama:iron_ingot",
+        "F": "llama:furnace",
+        "P": "#llama:planks"
+      },
+      "result": "kitchen:oven",
+      "count": 1
+    }
+  ]
+}

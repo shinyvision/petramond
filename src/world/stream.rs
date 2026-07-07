@@ -1076,7 +1076,14 @@ mod tests {
         world.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
         // A saved section carrying a chest lands from disk.
         let mut saved = Section::new(0, 4, 0);
-        saved.insert_chest(0, 0, 0, crate::chest::Chest::default());
+        saved.set_block(0, 0, 0, crate::block::Block::Chest);
+        saved.insert_container(
+            0,
+            0,
+            0,
+            crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS),
+        );
+        saved.insert_entity_facing(0, 0, 0, crate::furnace::Facing::default());
         world
             .pending_overlays
             .insert(sp, (saved, Vec::new(), Vec::new()));

@@ -243,6 +243,11 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
         // The result grid carries a craftable flag (greyed when not), so it's drawn
         // specially in `push_doc_game_content` rather than through this mapping.
         Role::WorkbenchResult => None,
+        Role::Container => ui
+            .container
+            .as_ref()
+            .and_then(|c| c.slots.get(i).copied().flatten())
+            .map(stack),
         Role::Generic | Role::Other => None,
     }
 }

@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "item": "kitchen:oven",
+      "key": "kitchen:oven",
+      "name": "Kitchen Oven",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "tags": [],
+      "block": "kitchen:oven"
+    }
+  ]
+}

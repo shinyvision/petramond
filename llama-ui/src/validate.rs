@@ -142,7 +142,7 @@ fn walk<'a>(
                 issue("list needs an 'items' binding".into());
             }
         }
-        NodeKind::Slot { role } | NodeKind::SlotGrid { role, .. } if role.is_empty() => {
+        NodeKind::Slot { role, .. } | NodeKind::SlotGrid { role, .. } if role.is_empty() => {
             issue("empty slot role".into());
         }
         NodeKind::SlotGrid { cols, rows, .. } => {

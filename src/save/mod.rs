@@ -8,10 +8,10 @@
 //! drains loaded sections via [`WorldSave::poll_loaded`], mirroring the section-gen
 //! worker pool.
 
-mod chest;
 mod codec;
 pub mod entities;
 mod furnace;
+mod container;
 pub mod level;
 pub mod mobs;
 pub(crate) mod palette;

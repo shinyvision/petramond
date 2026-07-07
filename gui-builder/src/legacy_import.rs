@@ -177,9 +177,9 @@ fn convert(legacy: &LegacyProject) -> Imported {
             | "furnace_input" | "furnace_fuel" | "furnace_output" | "workbench_input"
             | "workbench_result" => {
                 let kind = if cols * rows <= 1 {
-                    NodeKind::Slot { role: slot.role.clone() }
+                    NodeKind::Slot { role: slot.role.clone(), accepts: Vec::new(), take_only: false }
                 } else {
-                    NodeKind::SlotGrid { role: slot.role.clone(), cols, rows }
+                    NodeKind::SlotGrid { role: slot.role.clone(), cols, rows, accepts: Vec::new(), take_only: false }
                 };
                 let mut n = Node::leaf(kind);
                 n.layout = abs_layout(slot.rect, false);

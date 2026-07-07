@@ -66,16 +66,18 @@ impl App {
     }
 
     pub(super) fn latch_game_event_hand_triggers(&mut self, events: &GameEvents) {
-        let opened_interactable = opened_interactable(events);
         if events.bed_interacted {
             self.sleep_interact_hand_t = super::SLEEP_INTERACT_HAND_SECS;
         }
 
         self.hand.broke |= events.broke_block.is_some();
+        // `interacted` is the sim's own "a block interaction consumed the
+        // click" verdict, so every interaction — engine screens, mod GUIs,
+        // doors, beds — jabs by default with no per-kind list here.
         self.hand.placed |= events.placed_block.is_some()
             || events.threw_item
             || events.used_item
-            || opened_interactable;
+            || events.interacted;
         self.hand.swung |= events.swung_hand;
     }
 }
@@ -83,13 +85,4 @@ impl App {
 fn mod_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
     let dist = (pos - ear).length();
     sound.distance_gain(dist)
-}
-
-fn opened_interactable(events: &GameEvents) -> bool {
-    events.open_crafting_table
-        || events.open_furnace.is_some()
-        || events.open_chest.is_some()
-        || events.open_furniture_workbench.is_some()
-        || events.toggled_door.is_some()
-        || events.bed_interacted
 }

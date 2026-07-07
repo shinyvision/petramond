@@ -83,6 +83,11 @@ pub enum MenuSlot {
     Chest(usize),
     /// A furniture-workbench slot: the input block, or a take-only result cell.
     Workbench(WorkbenchHit),
+    /// A mod GUI's `container` role slot index, backed by the
+    /// [`Container`](crate::container::Container) at the session's
+    /// opening block. Slot semantics (filters, take-only) come from the
+    /// document's slot nodes.
+    Container(usize),
     /// A manifest `button` widget (mod GUIs). Latches like every slot click;
     /// the tick dispatches it to the kind's owning mod as a `gui_click`.
     Widget(WidgetId),
@@ -104,6 +109,8 @@ pub(crate) enum Role {
     FurnaceOutput,
     WorkbenchInput,
     WorkbenchResult,
+    /// A mod GUI's generic container slots (role string `container`).
+    Container,
     #[serde(other)]
     Other,
 }
@@ -123,6 +130,7 @@ impl Role {
             "furnace_output" => Role::FurnaceOutput,
             "workbench_input" => Role::WorkbenchInput,
             "workbench_result" => Role::WorkbenchResult,
+            "container" => Role::Container,
             _ => return None,
         })
     }
@@ -142,6 +150,7 @@ impl Role {
             Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
             Role::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
             Role::WorkbenchResult => MenuSlot::Workbench(WorkbenchHit::Result(i)),
+            Role::Container => MenuSlot::Container(i),
             Role::Generic | Role::Other => return None,
         })
     }
@@ -185,7 +194,15 @@ pub struct FurnaceView {
 /// borrow.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ChestView {
-    pub slots: [Option<ItemStack>; crate::chest::CHEST_SLOTS],
+    pub slots: [Option<ItemStack>; crate::world::chest::CHEST_SLOTS],
+}
+
+/// An open mod container's view: its slots row-major in document order (the
+/// in-role `container` index). Owned (slot counts vary per document), rebuilt
+/// per frame from the world like the chest view.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ContainerView {
+    pub slots: Vec<Option<ItemStack>>,
 }
 
 /// A furniture workbench's view for its open screen: the placed input block and
@@ -237,6 +254,9 @@ pub struct UiSnapshot {
     /// The open furniture workbench's input + offered results, or `None`. When `Some`,
     /// the workbench panel is drawn with the result grid (greyed where not craftable).
     pub workbench: Option<WorkbenchView>,
+    /// The open mod GUI's container slots, or `None` when the open session is
+    /// not a slot-bearing mod GUI.
+    pub container: Option<ContainerView>,
     /// The player's health for the bottom-left hearts, or `None` to hide the bar
     /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
     pub health: Option<HealthView>,
@@ -284,6 +304,7 @@ impl Default for UiSnapshot {
             furnace: None,
             chest: None,
             workbench: None,
+            container: None,
             health: None,
             gui_state: None,
             doc_slots: None,

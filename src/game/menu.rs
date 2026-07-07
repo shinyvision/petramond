@@ -7,7 +7,7 @@
 use crate::controls::PointerButton;
 use crate::crafting::CraftGrid;
 use crate::events::{ContainerKind, PostEvent, SimCtx};
-use crate::gui::{ChestView, FurnaceView, GuiStateMap, MenuSlot, WorkbenchView};
+use crate::gui::{ChestView, FurnaceView, GuiStateMap, MenuSlot, ContainerView, WorkbenchView};
 use crate::inventory::Inventory;
 use crate::mathh::IVec3;
 
@@ -25,6 +25,9 @@ pub struct MenuReadModel<'a> {
     /// The open mod GUI's state map (a shared snapshot), or `None` when the
     /// open session is not a mod GUI.
     pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
+    /// The open mod GUI's container slots, or `None` when the session is not
+    /// a slot-bearing mod GUI.
+    pub container: Option<ContainerView>,
 }
 
 impl Game {
@@ -51,6 +54,7 @@ impl Game {
             workbench: self.menu.open_workbench_view(&self.recipes),
             gui_state: matches!(self.menu.target(), ContainerTarget::ModGui { .. })
                 .then(|| self.world.gui_state_snapshot()),
+            container: self.menu.open_container_view(&self.world),
         }
     }
 
@@ -155,7 +159,7 @@ impl Game {
     /// cleared here so no session can read a predecessor's values.
     pub fn open_mod_gui_screen(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
         self.world.gui_state_clear();
-        self.menu.open_mod_gui(kind, pos);
+        self.menu.open_mod_gui(&mut self.world, kind, pos);
         self.emit_container_opened();
     }
 

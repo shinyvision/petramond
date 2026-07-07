@@ -1,0 +1,9 @@
+{
+  "name": "Medieval Kitchen",
+  "id": "kitchen",
+  "version": "0.1.0",
+  "description": "Cooking addon content: a craftable kitchen oven that cooks like a furnace. The start of farming-and-cooking content for worlds that want it.",
+  "summary": "Adds a craftable kitchen oven.",
+  "icon": "icon.png",
+  "wasm": "mod.wasm"
+}

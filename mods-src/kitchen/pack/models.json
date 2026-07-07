@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "key": "kitchen:oven",
+      "model_file": "models/kitchen_oven.bbmodel",
+      "cells": [2, 3, 2],
+      "orientation": "left_to_right"
+    }
+  ]
+}

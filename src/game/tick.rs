@@ -123,6 +123,12 @@ pub struct GameEvents {
     /// The player right-clicked a bed this frame. This fires even in daytime,
     /// when the click sets the spawn point but does not start sleep.
     pub bed_interacted: bool,
+    /// The player's right-click was CONSUMED by a block interaction this frame
+    /// (any `try_open_interactable` capability: container screens, mod GUIs,
+    /// doors, beds, a mod cancelling `block_interact`…). Set at the sim's one
+    /// decision point, so the interact hand jab is the DEFAULT for every
+    /// interaction — present and future — with no per-kind enumeration.
+    pub interacted: bool,
     /// The held item's own right-click use fired this frame (a bucket scooping
     /// or pouring water) — plays the same hand jab as placing.
     pub used_item: bool,
@@ -165,6 +171,7 @@ pub(crate) struct TickEvents {
     pub(crate) threw_item: bool,
     pub(crate) used_item: bool,
     pub(crate) bed_interacted: bool,
+    pub(crate) interacted: bool,
     pub(crate) player_damaged: bool,
     pub(crate) player_died: bool,
     pub(crate) sleep_ended: bool,
@@ -191,6 +198,7 @@ impl TickEvents {
             threw_item: false,
             used_item: false,
             bed_interacted: false,
+            interacted: false,
             player_damaged: false,
             player_died: false,
             sleep_ended: false,
@@ -250,6 +258,7 @@ impl Game {
             close_mod_gui: std::mem::take(&mut self.request_close_mod_gui),
             toggled_door: self.toggled_door.take(),
             bed_interacted: events.bed_interacted,
+            interacted: events.interacted,
             used_item: events.used_item,
             player_damaged: events.player_damaged,
             player_died: events.player_died,

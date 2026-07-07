@@ -349,6 +349,107 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }
         | HostCall::GuiClose => handle_gui_call(&data.mod_id, call),
+        HostCall::ContainerGet { .. }
+        | HostCall::ContainerSet { .. }
+        | HostCall::ItemInfo { .. }
+        | HostCall::RecipeResult { .. } => handle_container_call(&data.mod_id, call),
+    }
+}
+
+/// Mod container slots + the item/recipe registry reads that make furnace-like
+/// mod logic possible without duplicating engine data.
+fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
+    match call {
+        HostCall::ContainerGet { pos } => sim_query(|ctx| {
+            let p = to_ivec(pos);
+            HostRet::ContainerSlots(ctx.world.container_at(p).map(|c| {
+                c.slots
+                    .iter()
+                    .map(|slot| slot.map(item_slot_data))
+                    .collect()
+            }))
+        }),
+        HostCall::ContainerSet { pos, slots } => {
+            // Resolve+validate every entry BEFORE any write, so a bad entry
+            // can't leave a half-applied batch.
+            let mut writes: Vec<(usize, Option<crate::item::ItemStack>)> = Vec::new();
+            for (i, slot) in &slots {
+                let i = *i as usize;
+                if i >= crate::container::MAX_CONTAINER_SLOTS {
+                    return HostRet::Error(format!(
+                        "ContainerSet: slot {i} is past the cap ({})",
+                        crate::container::MAX_CONTAINER_SLOTS
+                    ));
+                }
+                let stack = match slot {
+                    None => None,
+                    Some(data) => {
+                        let Some(item) = item_by_key(&data.key) else {
+                            return HostRet::Error(format!(
+                                "ContainerSet: unknown item '{}'",
+                                data.key
+                            ));
+                        };
+                        (data.count > 0)
+                            .then(|| crate::item::ItemStack::new(item, data.count))
+                    }
+                };
+                writes.push((i, stack));
+            }
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                let p = to_ivec(pos);
+                // A mod owns only its own blocks' containers: the block at
+                // `pos` must be registered to the caller's namespace.
+                let Some(block) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
+                    return HostRet::Bool(false);
+                };
+                let block_name = crate::registry::names().blocks.name(block.id()).unwrap_or("?");
+                if !key_owned_by_namespace(&mod_id, block_name) {
+                    return HostRet::Error(format!(
+                        "ContainerSet: block '{block_name}' at {pos:?} is not owned by mod \
+                         '{mod_id}' (writes are namespace-guarded; reads may cross)"
+                    ));
+                }
+                let len = writes.iter().map(|(i, _)| i + 1).max().unwrap_or(0);
+                if !ctx.world.ensure_container(p, len) {
+                    return HostRet::Bool(false);
+                }
+                if let Some(container) = ctx.world.container_at_mut(p) {
+                    for (i, stack) in writes {
+                        container.slots[i] = stack;
+                    }
+                }
+                ctx.world.mark_chunk_modified(p);
+                HostRet::Bool(true)
+            })
+        }
+        HostCall::ItemInfo { key } => HostRet::ItemInfo(item_by_key(&key).map(|item| {
+            mod_api::ItemInfoData {
+                max_stack: item.max_stack_size(),
+                fuel_burn_ticks: item.fuel_burn_ticks() as u32,
+                tags: item.tags().iter().map(|t| t.name().to_owned()).collect(),
+            }
+        })),
+        HostCall::RecipeResult { class, key } => {
+            let Some(recipes) = crate::modding::active_recipes() else {
+                log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
+                return HostRet::ItemSlot(None);
+            };
+            let Some(item) = item_by_key(&key) else {
+                return HostRet::ItemSlot(None);
+            };
+            HostRet::ItemSlot(recipes.process(&class, item).map(item_slot_data))
+        }
+        other => unreachable!("non-container call {other:?} routed to handle_container_call"),
+    }
+}
+
+/// An engine stack as its ABI crossing (registry key + count).
+fn item_slot_data(stack: crate::item::ItemStack) -> mod_api::ItemSlotData {
+    mod_api::ItemSlotData {
+        key: stack.item.key().to_owned(),
+        count: stack.count,
     }
 }
 

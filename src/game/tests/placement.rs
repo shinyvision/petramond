@@ -47,6 +47,10 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
             events.placed_block.is_none(),
             "{block:?} should interact, not place"
         );
+        // Every consumed interaction reports through the generic flag, so the
+        // interact hand jab is the default for ALL interactables — a new
+        // interaction kind must not need remembering in the presentation.
+        assert!(events.interacted, "{block:?} should report interacted");
         match expected {
             ExpectedOpen::CraftingTable => {
                 assert!(game.request_open_table, "{block:?} should open crafting");

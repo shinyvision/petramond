@@ -883,7 +883,7 @@ fn section_geometry(
                     } else {
                         crate::atlas::engine().furnace_front
                     };
-                    (facing_face(section.furnace_facing(lx, ly, lz)), front)
+                    (facing_face(section.entity_facing(lx, ly, lz)), front)
                 });
                 let base_x = wx as f32;
                 let base_z = wz as f32;

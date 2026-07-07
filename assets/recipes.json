@@ -868,27 +868,32 @@
       "count": 1
     },
     {
-      "type": "smelting",
+      "type": "processing",
+      "class": "llama:smelting",
       "ingredient": "llama:raw_iron",
       "result": "llama:iron_ingot"
     },
     {
-      "type": "smelting",
+      "type": "processing",
+      "class": "llama:smelting",
       "ingredient": "llama:raw_copper",
       "result": "llama:copper_ingot"
     },
     {
-      "type": "smelting",
+      "type": "processing",
+      "class": "llama:smelting",
       "ingredient": "llama:raw_gold",
       "result": "llama:gold_ingot"
     },
     {
-      "type": "smelting",
+      "type": "processing",
+      "class": "llama:smelting",
       "ingredient": "llama:cobblestone",
       "result": "llama:stone"
     },
     {
-      "type": "smelting",
+      "type": "processing",
+      "class": "llama:smelting",
       "ingredient": "llama:sand",
       "result": "llama:glass"
     },

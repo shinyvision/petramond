@@ -1,0 +1,12 @@
+[package]
+name = "kitchen"
+version = "0.1.0"
+edition = "2021"
+description = "Cooking addon: a craftable multi-cell kitchen oven that smelts like a furnace through the mod container-slot API (fuel below, food above, output beside)."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

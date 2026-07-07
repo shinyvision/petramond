@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "block": "kitchen:oven",
+      "shape": { "model": "kitchen:oven" },
+      "flags": ["solid", "directional_view"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": { "open_gui": "kitchen:oven" },
+      "collision": [],
+      "emission": 0,
+      "tiles": ["stone", "stone", "stone"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.5,
+      "drops": [{ "item": "kitchen:oven", "min": 1, "max": 1, "chance": 1.0 }]
+    }
+  ]
+}

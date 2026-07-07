@@ -103,11 +103,11 @@ pub struct Chunk {
     /// water is all-source (meta 0), so worldgen output never allocates it;
     /// only test fixtures with flowing water do.
     water: Option<Box<[u8]>>,
-    /// Furnace block-entities, keyed by local block index (`idx(x,y,z)` fits a
-    /// u16). Worldgen never produces block entities; this survives solely for
-    /// the legacy whole-column mesh tests (furnace front texture).
+    /// Furnace fixtures `(state, facing)`, keyed by local block index
+    /// (`idx(x,y,z)` fits a u16). Worldgen never produces block entities; this
+    /// survives solely for the legacy whole-column mesh tests (front texture).
     #[cfg(test)]
-    furnaces: HashMap<u16, Furnace>,
+    furnaces: HashMap<u16, (Furnace, Facing)>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -370,25 +370,11 @@ impl Chunk {
         idx(x, y, z) as u16
     }
 
-    /// The furnace stored at a local voxel, if any.
+    /// Install a furnace fixture (state + facing) at a local voxel.
     #[cfg(test)]
-    #[inline]
-    pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
-        self.furnaces.get(&Self::block_entity_key(x, y, z))
-    }
-
-    /// Mutable handle to the furnace at a local voxel.
-    #[cfg(test)]
-    #[inline]
-    pub fn furnace_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Furnace> {
-        self.furnaces.get_mut(&Self::block_entity_key(x, y, z))
-    }
-
-    /// Install `furnace` at a local voxel.
-    #[cfg(test)]
-    pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace) {
+    pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace, facing: Facing) {
         self.furnaces
-            .insert(Self::block_entity_key(x, y, z), furnace);
+            .insert(Self::block_entity_key(x, y, z), (furnace, facing));
     }
 
     /// Whether the furnace at a local voxel is currently lit — read by the legacy
@@ -396,7 +382,9 @@ impl Chunk {
     #[cfg(test)]
     #[inline]
     pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
-        self.furnace_at(x, y, z).is_some_and(Furnace::is_lit)
+        self.furnaces
+            .get(&Self::block_entity_key(x, y, z))
+            .is_some_and(|(f, _)| f.is_lit())
     }
 
     /// The facing of the furnace at a local voxel (which way its front points), or
@@ -404,8 +392,9 @@ impl Chunk {
     #[cfg(test)]
     #[inline]
     pub fn furnace_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.furnace_at(x, y, z)
-            .map_or(Facing::default(), |f| f.facing)
+        self.furnaces
+            .get(&Self::block_entity_key(x, y, z))
+            .map_or(Facing::default(), |(_, facing)| *facing)
     }
 }
 

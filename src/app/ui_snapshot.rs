@@ -30,6 +30,7 @@ pub(super) fn build(
     snapshot.furnace = menu.furnace;
     snapshot.chest = menu.chest;
     snapshot.workbench = menu.workbench;
+    snapshot.container = menu.container;
     snapshot.gui_state = menu.gui_state;
     snapshot.health = game.player_health();
 

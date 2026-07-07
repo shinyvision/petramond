@@ -3,7 +3,7 @@
 # from the engine workspace (different target, different profiles).
 [workspace]
 resolver = "2"
-members = ["smoke", "wheel", "zombies"]
+members = ["kitchen", "smoke", "wheel", "zombies"]
 
 # Guests are size-sensitive and must abort (trap) on panic — the host treats a
 # trap as "disable the mod for this session, keep ticking".

@@ -1,0 +1,46 @@
+{
+    "format": 1,
+    "kind": "kitchen:oven",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": { "pad": [4, 2, 4, 4], "gap": 6 },
+        "children": [
+            { "type": "label", "text": "Kitchen Oven" },
+            {
+                "type": "row",
+                "layout": { "gap": 12, "align": "center", "justify": "center" },
+                "children": [
+                    {
+                        "type": "column",
+                        "layout": { "gap": 3, "align": "center" },
+                        "children": [
+                            { "type": "slot", "role": "container", "accepts": ["kitchen:cookable"] },
+                            {
+                                "type": "gauge", "id": "flame",
+                                "mode": "deplete_td", "style": "gauge.flame",
+                                "bind": { "value": "kitchen:burn01" },
+                                "layout": { "w": 14, "h": 14 }
+                            },
+                            { "type": "slot", "role": "container", "accepts": ["fuel"] }
+                        ]
+                    },
+                    {
+                        "type": "gauge", "id": "arrow",
+                        "mode": "grow_lr", "style": "gauge.arrow",
+                        "bind": { "value": "kitchen:cook01" },
+                        "layout": { "w": 24, "h": 17 }
+                    },
+                    { "type": "slot", "role": "container", "take_only": true }
+                ]
+            },
+            { "type": "spacer", "layout": { "h": 2 } },
+            { "type": "slot_grid", "role": "player_inv", "cols": 9, "rows": 3 },
+            {
+                "type": "slot_grid", "role": "hotbar", "cols": 9, "rows": 1,
+                "layout": { "margin": [0, 2, 0, 0] }
+            }
+        ]
+    }
+}

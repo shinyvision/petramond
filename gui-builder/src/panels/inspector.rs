@@ -497,10 +497,10 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
-        NodeKind::Slot { role } => {
+        NodeKind::Slot { role, .. } => {
             string_prop(ui, "role", role, t);
         }
-        NodeKind::SlotGrid { role, cols, rows } => {
+        NodeKind::SlotGrid { role, cols, rows, .. } => {
             string_prop(ui, "role", role, t);
             ui.horizontal(|ui| {
                 ui.label("cols");

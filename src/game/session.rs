@@ -76,7 +76,14 @@ impl Game {
             door_swings: HashMap::new(),
             tick_accumulator: 0.0,
             autosave_t: 0.0,
-            recipes: load_recipes_for(&disabled_mods),
+            recipes: {
+                // The mod host answers `SmeltResult` from the same loaded
+                // catalog the engine cooks from — install a shared snapshot
+                // (the process-wide pattern gen hooks use).
+                let recipes = load_recipes_for(&disabled_mods);
+                crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
+                recipes
+            },
             loot: load_loot(),
             menu: ContainerMenu::new(),
             request_open_table: false,

@@ -26,6 +26,22 @@ pub(crate) mod manifest;
 pub(crate) mod modset;
 mod scope;
 
+/// The session's loaded recipe catalog, shared with the host so `SmeltResult`
+/// answers from the exact table the engine cooks from (same process-wide
+/// install pattern as [`gen`]; replaced by each `Game::new`).
+static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<crate::crafting::Recipes>>> =
+    std::sync::RwLock::new(None);
+
+/// Install the session's recipe snapshot (called by `Game::new`).
+pub(crate) fn install_recipes(recipes: std::sync::Arc<crate::crafting::Recipes>) {
+    *ACTIVE_RECIPES.write().unwrap() = Some(recipes);
+}
+
+/// The installed recipe snapshot, if a session has published one.
+pub(crate) fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes>> {
+    ACTIVE_RECIPES.read().unwrap().clone()
+}
+
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;

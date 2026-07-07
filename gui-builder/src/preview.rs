@@ -201,7 +201,7 @@ pub fn layout_rects(
             continue;
         };
         let slot_role = match &inst.node.kind {
-            llama_ui::NodeKind::Slot { role } | llama_ui::NodeKind::SlotGrid { role, .. } => {
+            llama_ui::NodeKind::Slot { role, .. } | llama_ui::NodeKind::SlotGrid { role, .. } => {
                 Some(role.clone())
             }
             _ => None,

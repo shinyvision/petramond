@@ -39,9 +39,12 @@ impl GuiRouter {
             _ if shift || button != PointerButton::Primary => None,
             MenuSlot::Inventory(i) => Some(i),
             MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
+            // Mod container slots skip the gather streak (like the furnace's
+            // semantic slots): the double-click sweep is a plain-storage read.
             MenuSlot::Craft(_)
             | MenuSlot::Furnace(_)
             | MenuSlot::Workbench(_)
+            | MenuSlot::Container(_)
             | MenuSlot::Widget(_) => None,
         };
         match streak_key {

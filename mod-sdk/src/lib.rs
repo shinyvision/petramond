@@ -651,6 +651,52 @@ pub fn gui_state_get(key: &str) -> Option<GuiValue> {
     }
 }
 
+/// Read every slot of the mod container at `pos` — the engine-backed item
+/// storage behind a mod GUI document's `container` role slots. Multi-cell
+/// model blocks key it at the group's base cell (the `block_placed` anchor).
+/// `None` = unloaded section or no container exists there yet.
+pub fn container_get(pos: [i32; 3]) -> Option<Vec<Option<ItemSlotData>>> {
+    match __rt::host_call(&HostCall::ContainerGet { pos }) {
+        HostRet::ContainerSlots(slots) => slots,
+        other => panic!("ContainerGet returned {other:?}"),
+    }
+}
+
+/// Write container slots at `pos` as `(slot index, stack)` entries (one
+/// batched call — never loop per slot). Creates/grows the container as
+/// needed. The block at `pos` must be one of THIS mod's own registered
+/// blocks. `false` = section unloaded.
+pub fn container_set(pos: [i32; 3], slots: Vec<(u32, Option<ItemSlotData>)>) -> bool {
+    match __rt::host_call(&HostCall::ContainerSet { pos, slots }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("ContainerSet returned {other:?}"),
+    }
+}
+
+/// One item's registry data (stack cap, fuel burn ticks, tags), from the same
+/// rows engine mechanics read. `None` = unknown key. Registry data is
+/// session-stable — cache it mod-side instead of re-asking per tick.
+pub fn item_info(key: &str) -> Option<ItemInfoData> {
+    match __rt::host_call(&HostCall::ItemInfo { key: key.into() }) {
+        HostRet::ItemInfo(info) => info,
+        other => panic!("ItemInfo returned {other:?}"),
+    }
+}
+
+/// The loaded machine-processing result for one input item key under a recipe
+/// `class` (the same layered catalog engine machines cook from — the furnace
+/// consumes `"llama:smelting"`; name your machine's own class and any pack can
+/// add recipes for it). `None` = no recipe.
+pub fn recipe_result(class: &str, key: &str) -> Option<ItemSlotData> {
+    match __rt::host_call(&HostCall::RecipeResult {
+        class: class.into(),
+        key: key.into(),
+    }) {
+        HostRet::ItemSlot(slot) => slot,
+        other => panic!("RecipeResult returned {other:?}"),
+    }
+}
+
 /// Ask the app shell to open the mod GUI registered under `kind_key` (a baked
 /// manifest or an `open_gui` block row must have registered it). The screen
 /// opens after this tick, only from gameplay. `false` = unknown/non-mod kind.

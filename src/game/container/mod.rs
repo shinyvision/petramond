@@ -2,6 +2,7 @@ mod chest;
 mod crafting;
 mod dispatch;
 mod furnace;
+mod generic;
 mod state;
 mod target;
 mod workbench;
@@ -139,7 +140,7 @@ mod tests {
         menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
         assert!(inv.slot(0).is_none(), "coal left the inventory");
         assert_eq!(
-            world.furnace_at(pos).unwrap().fuel,
+            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_FUEL],
             Some(ItemStack::new(ItemType::Coal, 5)),
             "coal went to the fuel slot"
         );
@@ -148,7 +149,7 @@ mod tests {
         menu.furnace_shift_from_inventory(&mut world, &mut inv, 1);
         assert!(inv.slot(1).is_none(), "raw iron left the inventory");
         assert_eq!(
-            world.furnace_at(pos).unwrap().input,
+            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_INPUT],
             Some(ItemStack::new(ItemType::RawIron, 3)),
             "raw iron went to the input slot"
         );
@@ -157,9 +158,10 @@ mod tests {
         // back to the ordinary hotbar->main-grid shuffle.
         menu.furnace_shift_from_inventory(&mut world, &mut inv, 2);
         assert!(inv.slot(2).is_none(), "plank moved out of the hotbar slot");
-        let f = world.furnace_at(pos).unwrap();
-        assert_ne!(f.input.map(|s| s.item), Some(ItemType::OakPlanks));
-        assert_ne!(f.fuel.map(|s| s.item), Some(ItemType::OakPlanks));
+        let c = world.container_at(pos).unwrap();
+        for slot in &c.slots {
+            assert_ne!(slot.map(|s| s.item), Some(ItemType::OakPlanks));
+        }
         // It landed in the main grid (first slot of the 27-slot region).
         assert_eq!(
             inv.slot(crate::inventory::HOTBAR_LEN).map(|s| s.item),
@@ -175,7 +177,8 @@ mod tests {
         world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         world.insert_furnace(pos, Facing::North);
         // Seed the fuel slot with some coal already.
-        world.furnace_at_mut(pos).unwrap().fuel = Some(ItemStack::new(ItemType::Coal, 60));
+        world.container_at_mut(pos).unwrap().slots[crate::furnace::SLOT_FUEL] =
+            Some(ItemStack::new(ItemType::Coal, 60));
         menu.open_furnace_screen(&mut world, pos);
 
         let mut inv = Inventory::new();
@@ -183,7 +186,12 @@ mod tests {
         menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
 
         // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
-        assert_eq!(world.furnace_at(pos).unwrap().fuel.unwrap().count, 64);
+        assert_eq!(
+            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_FUEL]
+                .unwrap()
+                .count,
+            64
+        );
         assert_eq!(inv.slot(0).map(|s| s.count), Some(6));
     }
     fn place_in_workbench_input(

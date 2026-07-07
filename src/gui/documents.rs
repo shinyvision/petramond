@@ -12,6 +12,7 @@
 //! restart.
 
 use super::GuiKind;
+use crate::container::{SlotSpec, MAX_CONTAINER_SLOTS};
 use llama_ui::{Document, SlotContract};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,10 @@ pub(crate) struct DocEntry {
     /// first-reference order): the index is the `TexId::DocImage` id both
     /// layout (natural sizes) and the renderer (bind groups) use.
     pub images: Arc<Vec<DocImageRef>>,
+    /// A mod document's `container` role slot semantics, in-role index order
+    /// (empty for engine kinds and widgets-only mod GUIs). Resolved once at
+    /// load from the slot nodes' `accepts`/`take_only` fields.
+    pub container_slots: Arc<Vec<SlotSpec>>,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +46,7 @@ pub(crate) struct DocImageRef {
 pub(crate) struct DocRef {
     pub doc: Arc<Document>,
     pub images: Arc<Vec<DocImageRef>>,
+    pub container_slots: Arc<Vec<SlotSpec>>,
 }
 
 struct Registry {
@@ -74,11 +80,90 @@ pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
         .map(|e| DocRef {
             doc: e.doc.clone(),
             images: e.images.clone(),
+            container_slots: e.container_slots.clone(),
         })
 }
 
-/// The engine's slot expectations per kind. Mod and shell kinds carry no
-/// role slots (mod GUIs are widgets-only; shell screens have no item slots).
+/// A mod document's `container` role slot semantics, in-role index order.
+/// Empty for engine kinds, widgets-only mod GUIs, and unknown kinds.
+pub(crate) fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
+    doc_for(kind)
+        .map(|d| d.container_slots)
+        .unwrap_or_default()
+}
+
+/// The slot contract a MOD document earns from its own declarations: mod
+/// kinds may declare generic `container` slots (engine-backed mod-owned
+/// storage, capped), plus the standard `player_inv`/`hotbar` grids with the
+/// engine counts. Any other role is refused — a mod document can never name
+/// an engine block-entity's roles. `Err` skips the document loudly at load.
+fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
+    // The engine grids' sizes come from the inventory layout itself.
+    const MAIN_GRID: usize = crate::inventory::TOTAL_SLOTS - crate::inventory::HOTBAR_LEN;
+    const HOTBAR: usize = crate::inventory::HOTBAR_LEN;
+    let mut roles: Vec<(String, usize)> = Vec::new();
+    for (role, count) in doc.role_slots() {
+        match role.as_str() {
+            "container" if count <= MAX_CONTAINER_SLOTS => {}
+            "container" => {
+                return Err(format!(
+                    "declares {count} container slots; the cap is {MAX_CONTAINER_SLOTS}"
+                ))
+            }
+            "player_inv" if count == MAIN_GRID => {}
+            "hotbar" if count == HOTBAR => {}
+            "player_inv" | "hotbar" => {
+                return Err(format!(
+                    "role '{role}' declares {count} slots; the engine grids are \
+                     player_inv:{MAIN_GRID} and hotbar:{HOTBAR}"
+                ))
+            }
+            _ => {
+                return Err(format!(
+                    "role '{role}' is not available to mod documents (allowed: container, \
+                     player_inv, hotbar)"
+                ))
+            }
+        }
+        roles.push((role, count));
+    }
+    Ok(SlotContract { roles })
+}
+
+/// A mod document's `container` slot semantics in in-role index order,
+/// resolving the slot nodes' `accepts` tag names against the item-tag
+/// registry. Unknown tag names are a document error (`Err` skips it loudly).
+fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
+    let mut specs = Vec::new();
+    for cell in doc.slot_semantics() {
+        if cell.role != "container" {
+            if !cell.accepts.is_empty() || cell.take_only {
+                return Err(format!(
+                    "role '{}' carries accepts/take_only; slot semantics apply only to \
+                     'container' slots",
+                    cell.role
+                ));
+            }
+            continue;
+        }
+        let mut tags = Vec::new();
+        for name in &cell.accepts {
+            match crate::item::ItemTag::from_key(name) {
+                Some(tag) => tags.push(tag),
+                None => return Err(format!("unknown item tag '{name}' in a slot's accepts")),
+            }
+        }
+        specs.push(SlotSpec {
+            accepts: tags,
+            take_only: cell.take_only,
+        });
+    }
+    Ok(specs)
+}
+
+/// The engine's slot expectations per kind. Mod kinds derive their contract
+/// from their own document via [`mod_contract_for`]; shell kinds carry no
+/// role slots.
 pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
         GuiKind::Chest => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
@@ -196,7 +281,17 @@ fn load() -> Registry {
             eprintln!("gui: ignoring {} — {e}", found.json.display());
             continue;
         }
-        let contract = contract_for(kind);
+        let contract = if kind.is_mod() {
+            match mod_contract_for(&doc) {
+                Ok(contract) => contract,
+                Err(e) => {
+                    eprintln!("gui: ignoring {} — {e}", found.json.display());
+                    continue;
+                }
+            }
+        } else {
+            contract_for(kind)
+        };
         let issues = doc.validate(Some(theme.as_ref()), Some(&contract));
         if !issues.is_empty() {
             for issue in &issues {
@@ -204,6 +299,13 @@ fn load() -> Registry {
             }
             continue;
         }
+        let container_slots = match doc_container_specs(&doc) {
+            Ok(specs) => specs,
+            Err(e) => {
+                eprintln!("gui: ignoring {} — {e}", found.json.display());
+                continue;
+            }
+        };
         // Collect referenced images (resolved beside the document) with
         // their pixel sizes for layout naturals.
         let mut images: Vec<DocImageRef> = Vec::new();
@@ -213,7 +315,10 @@ fn load() -> Registry {
                 llama_ui::NodeKind::Rotimage { image, .. } => image,
                 _ => return,
             };
-            if images.iter().any(|i| &i.name == name) {
+            // An empty static name is the runtime-bound pattern (`bind.image`
+            // supplies the art, e.g. the world-settings pack icons) — there is
+            // no file to resolve beside the document.
+            if name.is_empty() || images.iter().any(|i| &i.name == name) {
                 return;
             }
             let path = found.dir.join(name);
@@ -233,6 +338,7 @@ fn load() -> Registry {
             kind,
             doc: Arc::new(doc),
             images: Arc::new(images),
+            container_slots: Arc::new(container_slots),
         });
     }
     Registry {

@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
-use super::recipe::{FurnitureRecipe, Ingredient, Recipe, Recipes, SmeltingRecipe};
+use super::recipe::{FurnitureRecipe, Ingredient, ProcessingRecipe, Recipe, Recipes};
 
 /// Embedded fallback, so the game always has recipes even when run outside the
 /// project tree. The on-disk copy, when found, takes priority.
@@ -39,8 +39,12 @@ enum RawRecipe {
         #[serde(default = "one")]
         count: u8,
     },
-    /// A furnace smelt: one `ingredient` item produces `result`.
-    Smelting {
+    /// A machine-processing recipe: one `ingredient` item produces `result`
+    /// in machines consuming the namespaced `class` (`llama:smelting` = the
+    /// furnace; a mod machine names its own, e.g. `kitchen:cooking`). Any pack
+    /// may target any class — that composition is the point.
+    Processing {
+        class: String,
         ingredient: String,
         result: String,
         #[serde(default = "one")]
@@ -60,11 +64,11 @@ enum RawRecipe {
     },
 }
 
-/// A converted recipe sorted into the grid list, the smelting table, or the
+/// A converted recipe sorted into the grid list, the processing table, or the
 /// furniture-workbench table.
 enum Converted {
     Grid(Recipe),
-    Smelt(SmeltingRecipe),
+    Processing(ProcessingRecipe),
     Furniture(FurnitureRecipe),
 }
 
@@ -91,15 +95,15 @@ pub fn load_recipes() -> Recipes {
 /// process-wide.
 pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Recipes {
     let mut grid = Vec::new();
-    let mut smelting = Vec::new();
+    let mut processing = Vec::new();
     let mut furniture = Vec::new();
     for text in read_recipes_layers() {
         let (g, s, f) = parse_for(&text, disabled);
         grid.extend(g);
-        smelting.extend(s);
+        processing.extend(s);
         furniture.extend(f);
     }
-    Recipes::new(grid, smelting, furniture)
+    Recipes::new(grid, processing, furniture)
 }
 
 fn read_recipes_layers() -> Vec<String> {
@@ -115,14 +119,14 @@ fn read_recipes_layers() -> Vec<String> {
 }
 
 #[cfg(test)]
-fn parse(text: &str) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {
+fn parse(text: &str) -> (Vec<Recipe>, Vec<ProcessingRecipe>, Vec<FurnitureRecipe>) {
     parse_for(text, &std::collections::BTreeSet::new())
 }
 
 fn parse_for(
     text: &str,
     disabled: &std::collections::BTreeSet<String>,
-) -> (Vec<Recipe>, Vec<SmeltingRecipe>, Vec<FurnitureRecipe>) {
+) -> (Vec<Recipe>, Vec<ProcessingRecipe>, Vec<FurnitureRecipe>) {
     let file: RawFile = match serde_json::from_str(text) {
         Ok(f) => f,
         Err(e) => {
@@ -131,7 +135,7 @@ fn parse_for(
         }
     };
     let mut grid = Vec::new();
-    let mut smelting = Vec::new();
+    let mut processing = Vec::new();
     let mut furniture = Vec::new();
     for (i, raw) in file.recipes.into_iter().enumerate() {
         if let Some(ns) = disabled_namespace_in(&raw, disabled) {
@@ -140,12 +144,12 @@ fn parse_for(
         }
         match convert(raw) {
             Ok(Converted::Grid(r)) => grid.push(r),
-            Ok(Converted::Smelt(r)) => smelting.push(r),
+            Ok(Converted::Processing(r)) => processing.push(r),
             Ok(Converted::Furniture(r)) => furniture.push(r),
             Err(e) => log::error!("skipping recipe #{i}: {e}"),
         }
     }
-    (grid, smelting, furniture)
+    (grid, processing, furniture)
 }
 
 /// The first disabled mod id `raw`'s result or ingredient keys reference, or
@@ -172,24 +176,39 @@ fn disabled_namespace_in<'a>(
         RawRecipe::Shaped { key, result, .. } => {
             key.values().find_map(|s| hit(s)).or_else(|| hit(result))
         }
-        RawRecipe::Smelting {
-            ingredient, result, ..
-        } => hit(ingredient).or_else(|| hit(result)),
+        RawRecipe::Processing {
+            class,
+            ingredient,
+            result,
+            ..
+        } => hit(class).or_else(|| hit(ingredient)).or_else(|| hit(result)),
         RawRecipe::Furniture { input, result, .. } => hit(input).or_else(|| hit(result)),
     }
 }
 
 fn convert(raw: RawRecipe) -> Result<Converted, String> {
     match raw {
-        RawRecipe::Smelting {
+        RawRecipe::Processing {
+            class,
             ingredient,
             result,
             count,
         } => {
+            // Class keys are public machine selectors — namespaced like every
+            // other public key (a bare typo must not mint a machine class).
+            if !crate::registry::is_namespaced(&class) {
+                return Err(format!(
+                    "processing class '{class}' must be namespaced ('mod_id:name')"
+                ));
+            }
             let input = item_from_key(&ingredient)
-                .ok_or_else(|| format!("unknown smelting ingredient '{ingredient}'"))?;
+                .ok_or_else(|| format!("unknown processing ingredient '{ingredient}'"))?;
             let result = item_stack(&result, count)?;
-            Ok(Converted::Smelt(SmeltingRecipe { input, result }))
+            Ok(Converted::Processing(ProcessingRecipe {
+                class,
+                input,
+                result,
+            }))
         }
         RawRecipe::Furniture {
             input,
@@ -309,36 +328,49 @@ mod tests {
     #[test]
     fn embedded_recipes_parse_without_error() {
         // The shipped recipes.json must convert fully (no skipped recipes).
-        let (grid, smelting, furniture) = parse(EMBEDDED);
+        let (grid, processing, furniture) = parse(EMBEDDED);
         let raw: RawFile = serde_json::from_str(EMBEDDED).expect("valid json");
         assert_eq!(
-            grid.len() + smelting.len() + furniture.len(),
+            grid.len() + processing.len() + furniture.len(),
             raw.recipes.len(),
             "every shipped recipe should convert"
         );
         // Sanity: at least the 8 plank recipes + table + sticks + 2 pickaxes + furnace.
         assert!(grid.len() >= 13);
         // Iron + copper smelting at minimum.
-        assert!(smelting.len() >= 2);
+        assert!(processing.len() >= 2);
         // The 8 plank → door furniture recipes.
         assert!(furniture.len() >= 8);
     }
 
     #[test]
-    fn smelting_recipes_parse_and_skip_unknown() {
+    fn processing_recipes_parse_by_class_and_skip_bad_rows() {
         let text = r#"{ "recipes": [
-            { "type": "smelting", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" },
-            { "type": "smelting", "ingredient": "mystery", "result": "llama:iron_ingot" }
+            { "type": "processing", "class": "llama:smelting", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" },
+            { "type": "processing", "class": "kitchen:cooking", "ingredient": "llama:raw_iron", "result": "llama:coal" },
+            { "type": "processing", "class": "llama:smelting", "ingredient": "mystery", "result": "llama:iron_ingot" },
+            { "type": "processing", "class": "bareclass", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" }
         ] }"#;
-        let (grid, smelting, _furniture) = parse(text);
+        let (grid, processing, _furniture) = parse(text);
         assert!(grid.is_empty());
         assert_eq!(
-            smelting.len(),
-            1,
-            "the unknown-ingredient recipe is skipped"
+            processing.len(),
+            2,
+            "unknown-ingredient and bare-class rows are skipped"
         );
-        assert_eq!(smelting[0].input, ItemType::RawIron);
-        assert_eq!(smelting[0].result, ItemStack::new(ItemType::IronIngot, 1));
+        // Same input, different machines, different products: the class is
+        // the lookup key that keeps an oven from smelting ore.
+        let recipes = Recipes::new(Vec::new(), processing, Vec::new());
+        assert_eq!(
+            recipes.process("llama:smelting", ItemType::RawIron),
+            Some(ItemStack::new(ItemType::IronIngot, 1))
+        );
+        assert_eq!(recipes.smelt(ItemType::RawIron).unwrap().item, ItemType::IronIngot);
+        assert_eq!(
+            recipes.process("kitchen:cooking", ItemType::RawIron),
+            Some(ItemStack::new(ItemType::Coal, 1))
+        );
+        assert_eq!(recipes.process("other:class", ItemType::RawIron), None);
     }
 
     #[test]
@@ -348,10 +380,10 @@ mod tests {
             { "type": "furniture", "input": "llama:spruce_planks", "result": "llama:spruce_door", "cost": 6 },
             { "type": "furniture", "input": "mystery", "result": "llama:oak_door" }
         ] }"#;
-        let (grid, smelting, furniture) = parse(text);
-        assert!(grid.is_empty() && smelting.is_empty());
+        let (grid, processing, furniture) = parse(text);
+        assert!(grid.is_empty() && processing.is_empty());
         assert_eq!(furniture.len(), 2, "the unknown-input recipe is skipped");
-        let recipes = Recipes::new(grid, smelting, furniture);
+        let recipes = Recipes::new(grid, processing, furniture);
         // The workbench offers oak_door for oak_planks (cost 1) and nothing for a log.
         let oak: Vec<_> = recipes.furniture_for(ItemType::OakPlanks).collect();
         assert_eq!(oak.len(), 1);
@@ -439,10 +471,10 @@ mod tests {
         );
     }
 
-    /// Per-world disabled mods: a recipe is dropped when its RESULT or any
-    /// INGREDIENT (shaped key, shapeless list, smelt input, furniture input —
-    /// `#tag` keys included) is namespaced to a disabled mod id; engine
-    /// `llama:*` keys and other namespaces pass.
+    /// Per-world disabled mods: a recipe is dropped when its RESULT, any
+    /// INGREDIENT (shaped key, shapeless list, processing input, furniture
+    /// input — `#tag` keys included), or its processing CLASS is namespaced to
+    /// a disabled mod id; engine `llama:*` keys and other namespaces pass.
     #[test]
     fn recipes_touching_a_disabled_namespace_are_filtered() {
         let disabled: std::collections::BTreeSet<String> = ["wheel".to_owned()].into();
@@ -453,7 +485,8 @@ mod tests {
             r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "llama:stick" }"##,
             r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "llama:stick" }"##,
             r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "llama:stick" }"##,
-            r##"{ "type": "smelting", "ingredient": "wheel:wheel_of_fortune", "result": "llama:coal" }"##,
+            r##"{ "type": "processing", "class": "llama:smelting", "ingredient": "wheel:wheel_of_fortune", "result": "llama:coal" }"##,
+            r##"{ "type": "processing", "class": "wheel:spinning", "ingredient": "llama:coal", "result": "llama:stick" }"##,
             r##"{ "type": "furniture", "input": "llama:oak_planks", "result": "wheel:wheel_of_fortune" }"##,
         ];
         for json in hits {
@@ -481,9 +514,9 @@ mod tests {
             { "type": "shaped", "pattern": ["X"], "key": {}, "result": "llama:stick" }
         ] }"#;
         // Only the first (valid) recipe survives; the other two are skipped.
-        let (grid, smelting, furniture) = parse(text);
+        let (grid, processing, furniture) = parse(text);
         assert_eq!(grid.len(), 1);
-        assert!(smelting.is_empty());
+        assert!(processing.is_empty());
         assert!(furniture.is_empty());
     }
 }

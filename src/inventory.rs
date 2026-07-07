@@ -69,14 +69,6 @@ impl Inventory {
         self.slots.get_mut(i)
     }
     #[inline]
-    pub fn hotbar(&self, i: usize) -> Option<&ItemStack> {
-        if i < HOTBAR_LEN {
-            self.slot(i)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn active_slot(&self) -> u8 {
         self.active
     }
@@ -105,19 +97,6 @@ impl Inventory {
         if let Some(stack) = slot.take() {
             *slot = self.add(stack);
         }
-    }
-    pub fn take_selected_one(&mut self) -> Option<ItemStack> {
-        let i = self.active as usize;
-        let stack = self.slots[i].as_mut()?;
-        let item = stack.item;
-        stack.count -= 1;
-        if stack.count == 0 {
-            self.slots[i] = None;
-        }
-        Some(ItemStack::new(item, 1))
-    }
-    pub fn take_selected_all(&mut self) -> Option<ItemStack> {
-        self.slots[self.active as usize].take()
     }
     pub fn decrement_selected(&mut self) {
         let i = self.active as usize;
@@ -163,15 +142,6 @@ impl Inventory {
     }
     pub fn take_cursor(&mut self) -> Option<ItemStack> {
         self.cursor.take()
-    }
-    pub fn take_cursor_one(&mut self) -> Option<ItemStack> {
-        let cur = self.cursor.as_mut()?;
-        let item = cur.item;
-        cur.count -= 1;
-        if cur.count == 0 {
-            self.cursor = None;
-        }
-        Some(ItemStack::new(item, 1))
     }
     pub fn stash_cursor_in_inventory(&mut self) -> Option<ItemStack> {
         let stack = self.cursor.take()?;
@@ -326,19 +296,6 @@ impl Inventory {
         }
         room.min(want) as u8
     }
-    pub fn try_stack_onto_cursor(&mut self, stack: ItemStack) -> bool {
-        match &mut self.cursor {
-            None => {
-                self.cursor = Some(stack);
-                true
-            }
-            Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
-                cur.count += stack.count;
-                true
-            }
-            _ => false,
-        }
-    }
     pub fn shift_move_slot(&mut self, i: usize) {
         if i >= TOTAL_SLOTS {
             return;
@@ -354,9 +311,6 @@ impl Inventory {
         };
         // Whatever doesn't fit in the destination region stays in the source slot.
         self.slots[i] = self.add_to_range(stack, start, end);
-    }
-    pub fn is_empty(&self) -> bool {
-        self.cursor.is_none() && self.slots.iter().all(Option::is_none)
     }
     pub fn raw_slots(&self) -> &[Option<ItemStack>; TOTAL_SLOTS] {
         &self.slots
@@ -392,7 +346,6 @@ mod tests {
         for i in 0..TOTAL_SLOTS {
             assert!(inv.slot(i).is_none(), "slot {i} should be empty");
         }
-        assert!(inv.is_empty());
     }
 
     #[test]
@@ -702,20 +655,6 @@ mod tests {
         assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 1)));
     }
 
-    #[test]
-    fn is_empty_reports_cursor_and_slots() {
-        let mut inv = Inventory::new();
-        for i in 0..TOTAL_SLOTS {
-            inv.slots[i] = None;
-        }
-        assert!(inv.is_empty());
-        inv.cursor = Some(item(ItemType::Dirt, 1));
-        assert!(!inv.is_empty());
-        inv.cursor = None;
-        inv.slots[10] = Some(item(ItemType::Dirt, 1));
-        assert!(!inv.is_empty());
-    }
-
     fn empty_inv() -> Inventory {
         let mut inv = Inventory::new();
         for i in 0..TOTAL_SLOTS {
@@ -894,43 +833,13 @@ mod tests {
     }
 
     #[test]
-    fn take_cursor_all_and_one() {
+    fn take_cursor_takes_the_whole_stack() {
         let mut inv = empty_inv();
         inv.cursor = Some(item(ItemType::Dirt, 3));
-        assert_eq!(inv.take_cursor_one(), Some(item(ItemType::Dirt, 1)));
-        assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 2)));
-        assert_eq!(inv.take_cursor(), Some(item(ItemType::Dirt, 2)));
+        assert_eq!(inv.take_cursor(), Some(item(ItemType::Dirt, 3)));
         assert!(inv.cursor().is_none());
-        // Empty cursor: both are None.
+        // Empty cursor: None.
         assert!(inv.take_cursor().is_none());
-        assert!(inv.take_cursor_one().is_none());
-        // Taking the last item clears the cursor.
-        inv.cursor = Some(item(ItemType::Stone, 1));
-        assert_eq!(inv.take_cursor_one(), Some(item(ItemType::Stone, 1)));
-        assert!(inv.cursor().is_none());
-    }
-
-    #[test]
-    fn take_selected_one_and_all_from_active_slot() {
-        let mut inv = empty_inv();
-        inv.slots[2] = Some(item(ItemType::Stone, 3));
-        inv.set_active(2);
-        assert_eq!(inv.take_selected_one(), Some(item(ItemType::Stone, 1)));
-        assert_eq!(inv.slot(2), Some(&item(ItemType::Stone, 2)));
-        assert_eq!(inv.take_selected_all(), Some(item(ItemType::Stone, 2)));
-        assert!(inv.slot(2).is_none());
-        // Empty active slot: both return None.
-        assert!(inv.take_selected_one().is_none());
-        assert!(inv.take_selected_all().is_none());
-    }
-
-    #[test]
-    fn take_selected_one_clears_slot_at_zero() {
-        let mut inv = empty_inv();
-        inv.slots[0] = Some(item(ItemType::Dirt, 1));
-        inv.set_active(0);
-        assert_eq!(inv.take_selected_one(), Some(item(ItemType::Dirt, 1)));
-        assert!(inv.slot(0).is_none());
     }
 
     #[test]
@@ -1051,20 +960,4 @@ mod tests {
         assert_eq!(inv.fits_count(item(ItemType::Dirt, 0)), 0);
     }
 
-    #[test]
-    fn try_stack_onto_cursor_rules() {
-        let mut inv = empty_inv();
-        // Empty cursor takes the stack.
-        assert!(inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
-        assert_eq!(inv.cursor(), Some(&item(ItemType::OakPlanks, 4)));
-        // Same item with room stacks on.
-        assert!(inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
-        assert_eq!(inv.cursor().unwrap().count, 8);
-        // A different item is refused.
-        assert!(!inv.try_stack_onto_cursor(item(ItemType::Stick, 1)));
-        // No room for the WHOLE batch is refused (62 + 4 > 64).
-        inv.cursor = Some(item(ItemType::OakPlanks, 62));
-        assert!(!inv.try_stack_onto_cursor(item(ItemType::OakPlanks, 4)));
-        assert_eq!(inv.cursor().unwrap().count, 62);
-    }
 }

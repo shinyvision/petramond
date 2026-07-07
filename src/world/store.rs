@@ -895,11 +895,14 @@ impl World {
     }
 
     /// Keep [`block_entity_sections`](Self::block_entity_sections) in sync after
-    /// `pos`'s content may have changed (section install, chest/door/furnace
+    /// `pos`'s content may have changed (section install, container/door/furnace
     /// insert or removal).
     pub(super) fn refresh_block_entity_index(&mut self, pos: SectionPos) {
         let has = self.sections.get(&pos).is_some_and(|s| {
-            !s.chests().is_empty() || !s.doors().is_empty() || !s.furnaces().is_empty()
+            !s.containers().is_empty()
+                || !s.doors().is_empty()
+                || !s.furnaces().is_empty()
+                || !s.entity_facings().is_empty()
         });
         if has {
             self.block_entity_sections.insert(pos);

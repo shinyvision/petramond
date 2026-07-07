@@ -23,6 +23,9 @@ impl Game {
             return;
         }
         let interacted = !self.intent_sneak && self.try_open_interactable(events);
+        // The one place every consumed interaction passes through: the interact
+        // hand jab defaults ON for all of them (see `GameEvents::interacted`).
+        events.interacted |= interacted;
         if !interacted {
             // The held item's own use (a bucket) comes before block placement; an
             // item with a use has no block to place, so the two never compete.

@@ -4,7 +4,7 @@
 //! Gen is off-thread: see `worker` module. The facade keeps the public `World`
 //! API stable while the implementation is split by responsibility.
 
-mod chest;
+pub(crate) mod chest;
 pub(crate) mod door;
 mod edit;
 mod entities;
@@ -15,6 +15,7 @@ mod kv;
 mod light;
 mod mesh_pool;
 mod mesh_queue;
+mod container;
 mod model;
 mod pane;
 mod particle_emitters;

@@ -6,7 +6,7 @@ pub use load::load_recipes;
 pub use load::load_recipes_for;
 pub use recipe::Recipes;
 #[cfg(test)]
-pub use recipe::{FurnitureRecipe, SmeltingRecipe};
+pub use recipe::{FurnitureRecipe, ProcessingRecipe, SMELTING_CLASS};
 
 use crate::item::ItemStack;
 pub const MAX_GRID: usize = 3;

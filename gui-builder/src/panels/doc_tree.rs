@@ -81,8 +81,8 @@ fn label_of(node: &Node) -> String {
         s.push_str(&format!(" #{id}"));
     }
     match &node.kind {
-        NodeKind::Slot { role } => s.push_str(&format!(" [{role}]")),
-        NodeKind::SlotGrid { role, cols, rows } => {
+        NodeKind::Slot { role, .. } => s.push_str(&format!(" [{role}]")),
+        NodeKind::SlotGrid { role, cols, rows, .. } => {
             s.push_str(&format!(" [{role} {cols}x{rows}]"))
         }
         NodeKind::Label { text, .. }

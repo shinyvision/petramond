@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use crate::block::{Block, BlockTag};
 use crate::block_state::{BlockStates, LogAxis, SlabState, StairHalf, StairState};
-use crate::chest::Chest;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::door::DoorState;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
+use crate::container::Container;
 use crate::torch::TorchPlacement;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -58,11 +58,18 @@ pub struct Section {
     pub cz: i32,
     blocks: Arc<[u8]>,
     states: BlockStates,
-    /// Furnace block-entities, keyed by section-local block index (`section_idx`,
-    /// max 4095 — fits `u16`). Empty for the common section.
+    /// Furnace machine state (burn/cook counters), keyed by section-local
+    /// block index (`section_idx`, max 4095 — fits `u16`). A furnace's SLOTS
+    /// live in [`containers`](Self::containers) under the same key. Empty for
+    /// the common section.
     furnaces: HashMap<u16, Furnace>,
-    /// Chest block-entities, keyed like [`furnaces`](Self::furnaces).
-    chests: HashMap<u16, Chest>,
+    /// Generic item-slot containers — chests, furnaces, and mod container
+    /// blocks all store their stacks here, keyed like
+    /// [`furnaces`](Self::furnaces). Empty for the common section.
+    containers: HashMap<u16, Container>,
+    /// Which way a facing block-entity (chest, furnace) points, keyed like
+    /// [`furnaces`](Self::furnaces).
+    entity_facings: HashMap<u16, Facing>,
     pub dirty: bool,
     /// Set true by runtime edits, never by generation, so only player-touched
     /// sections are written to disk.
@@ -121,7 +128,8 @@ impl Section {
             blocks: vec![0u8; SECTION_VOLUME].into(),
             states: BlockStates::new(),
             furnaces: HashMap::new(),
-            chests: HashMap::new(),
+            containers: HashMap::new(),
+            entity_facings: HashMap::new(),
             dirty: true,
             modified: false,
             skylight: None,
@@ -715,15 +723,23 @@ impl Section {
         removed
     }
 
-    #[inline]
-    pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
-        self.furnace_at(x, y, z).is_some_and(Furnace::is_lit)
+    /// The furnace state and its container slots at one cell, split-borrowed
+    /// (they live in sibling maps under the same key).
+    pub fn furnace_parts_mut(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+    ) -> Option<(&mut Furnace, &mut Container)> {
+        let key = Self::block_entity_key(x, y, z);
+        let furnace = self.furnaces.get_mut(&key)?;
+        let container = self.containers.get_mut(&key)?;
+        Some((furnace, container))
     }
 
     #[inline]
-    pub fn furnace_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.furnace_at(x, y, z)
-            .map_or(Facing::default(), |f| f.facing)
+    pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
+        self.furnace_at(x, y, z).is_some_and(Furnace::is_lit)
     }
 
     #[inline]
@@ -731,23 +747,58 @@ impl Section {
         &self.furnaces
     }
 
+    /// Which way the facing block-entity (chest, furnace) at a cell points.
     #[inline]
-    pub fn chest_at(&self, x: usize, y: usize, z: usize) -> Option<&Chest> {
-        self.chests.get(&Self::block_entity_key(x, y, z))
+    pub fn entity_facing(&self, x: usize, y: usize, z: usize) -> Facing {
+        self.entity_facings
+            .get(&Self::block_entity_key(x, y, z))
+            .copied()
+            .unwrap_or_default()
     }
 
-    #[inline]
-    pub fn chest_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Chest> {
-        self.chests.get_mut(&Self::block_entity_key(x, y, z))
-    }
-
-    pub fn insert_chest(&mut self, x: usize, y: usize, z: usize, chest: Chest) {
-        self.chests.insert(Self::block_entity_key(x, y, z), chest);
+    pub fn insert_entity_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
+        self.entity_facings
+            .insert(Self::block_entity_key(x, y, z), facing);
         self.modified = true;
     }
 
-    pub fn take_chest(&mut self, x: usize, y: usize, z: usize) -> Option<Chest> {
-        let removed = self.chests.remove(&Self::block_entity_key(x, y, z));
+    pub fn take_entity_facing(&mut self, x: usize, y: usize, z: usize) {
+        if self
+            .entity_facings
+            .remove(&Self::block_entity_key(x, y, z))
+            .is_some()
+        {
+            self.modified = true;
+        }
+    }
+
+    #[inline]
+    pub fn entity_facings(&self) -> &HashMap<u16, Facing> {
+        &self.entity_facings
+    }
+
+    #[inline]
+    pub fn container_at(&self, x: usize, y: usize, z: usize) -> Option<&Container> {
+        self.containers.get(&Self::block_entity_key(x, y, z))
+    }
+
+    #[inline]
+    pub fn container_at_mut(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+    ) -> Option<&mut Container> {
+        self.containers.get_mut(&Self::block_entity_key(x, y, z))
+    }
+
+    pub fn insert_container(&mut self, x: usize, y: usize, z: usize, c: Container) {
+        self.containers.insert(Self::block_entity_key(x, y, z), c);
+        self.modified = true;
+    }
+
+    pub fn take_container(&mut self, x: usize, y: usize, z: usize) -> Option<Container> {
+        let removed = self.containers.remove(&Self::block_entity_key(x, y, z));
         if removed.is_some() {
             self.modified = true;
         }
@@ -755,8 +806,8 @@ impl Section {
     }
 
     #[inline]
-    pub fn chests(&self) -> &HashMap<u16, Chest> {
-        &self.chests
+    pub fn containers(&self) -> &HashMap<u16, Container> {
+        &self.containers
     }
 
     #[inline]
@@ -793,8 +844,13 @@ impl Section {
         let mut changed = false;
         let mut relit = Vec::new();
         for (&key, f) in self.furnaces.iter_mut() {
+            // The furnace's slots live in the shared container map under the
+            // same key (sibling field — disjoint borrow).
+            let Some(container) = self.containers.get_mut(&key) else {
+                continue;
+            };
             let was_lit = f.is_lit();
-            if f.tick(&smelt) {
+            if f.tick(&mut container.slots, &smelt) {
                 changed = true;
             }
             if f.is_lit() != was_lit {
@@ -820,7 +876,8 @@ impl Section {
         blocks: Box<[u8]>,
         water: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
-        chests: HashMap<u16, Chest>,
+        containers: HashMap<u16, Container>,
+        entity_facings: HashMap<u16, Facing>,
         torches: HashMap<u16, TorchPlacement>,
         model_cells: HashMap<u16, [u8; 3]>,
         model_facings: HashMap<u16, Facing>,
@@ -849,7 +906,8 @@ impl Section {
                 cell_kv,
             ),
             furnaces,
-            chests,
+            containers,
+            entity_facings,
             dirty: true,
             modified: false,
             skylight: None,

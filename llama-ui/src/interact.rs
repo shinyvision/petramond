@@ -32,8 +32,10 @@ pub(crate) fn collect_slots(tree: &InstTree<'_>) -> Vec<SlotRef> {
     let mut out = Vec::new();
     for (i, inst) in tree.insts.iter().enumerate() {
         let (role, n) = match &inst.node.kind {
-            NodeKind::Slot { role } => (role, 1),
-            NodeKind::SlotGrid { role, cols, rows } => (role, cols * rows),
+            NodeKind::Slot { role, .. } => (role, 1),
+            NodeKind::SlotGrid {
+                role, cols, rows, ..
+            } => (role, cols * rows),
             _ => continue,
         };
         let base = match counts.iter_mut().find(|(r, _)| r == role) {

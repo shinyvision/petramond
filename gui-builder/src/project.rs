@@ -88,9 +88,9 @@ impl Project {
         for (role, count) in &contract.roles {
             let (cols, rows) = contracts::default_grid(*count);
             root.children.push(Node::leaf(if *count == 1 {
-                NodeKind::Slot { role: role.clone() }
+                NodeKind::Slot { role: role.clone(), accepts: Vec::new(), take_only: false }
             } else {
-                NodeKind::SlotGrid { role: role.clone(), cols, rows }
+                NodeKind::SlotGrid { role: role.clone(), cols, rows, accepts: Vec::new(), take_only: false }
             }));
         }
         Project {

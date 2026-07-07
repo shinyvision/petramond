@@ -1,22 +1,26 @@
 //! Furnace block-entities at the world level: the per-tick smelting fan-out and
-//! world-coordinate access to the chunk-owned furnace maps.
+//! world-coordinate access to the section-owned furnace state.
 //!
-//! Furnaces live on their chunk (see [`crate::chunk::Chunk`]), so these are thin
-//! world↔chunk coordinate wrappers plus the tick driver that supplies the recipe
-//! set the storage layer is kept ignorant of.
+//! A furnace is machine state ([`Furnace`]) plus slots in the block's generic
+//! [`Container`](crate::container::Container) plus an entity facing — three
+//! sibling section maps under one key. These are thin world↔section coordinate
+//! wrappers plus the tick driver that supplies the recipe set the storage
+//! layer is kept ignorant of.
 
 use crate::chunk::{SectionPos, SECTION_SIZE};
+use crate::container::Container;
 use crate::crafting::Recipes;
-use crate::furnace::{Facing, Furnace};
+use crate::furnace::{Facing, Furnace, FURNACE_SLOTS};
 use crate::mathh::IVec3;
 
 use super::store::World;
 
 impl World {
     /// Advance every loaded furnace by one game tick, smelting per `recipes`.
-    /// Furnaces are chunk-owned, so this fans out to each chunk, then promotes
-    /// lit-state flips to world-coordinate mesh invalidation and block updates.
-    /// Cheap for the common furnace-free chunk (an empty-map early-out).
+    /// Furnaces are section-owned, so this fans out to each section, then
+    /// promotes lit-state flips to world-coordinate mesh invalidation and block
+    /// updates. Cheap for the common furnace-free section (an empty-map
+    /// early-out).
     ///
     /// One step of the per-tick sequence owned by [`World::game_tick`]; not a
     /// public entry point.
@@ -48,39 +52,38 @@ impl World {
         }
     }
 
-    /// The furnace at a world block position, if one is stored there.
+    /// The furnace state at a world block position, if one is stored there.
     pub fn furnace_at(&self, pos: IVec3) -> Option<&Furnace> {
         let (c, lx, ly, lz) = self.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.furnace_at(lx, ly, lz)
     }
 
-    /// Mutable handle to the furnace at a world block position (GUI edits).
-    pub fn furnace_at_mut(&mut self, pos: IVec3) -> Option<&mut Furnace> {
+    /// The furnace state and its container slots at a world position,
+    /// split-borrowed for GUI edits and the furnace view.
+    pub fn furnace_parts_mut(&mut self, pos: IVec3) -> Option<(&mut Furnace, &mut Container)> {
         let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
-        c.furnace_at_mut(lx, ly, lz)
+        c.furnace_parts_mut(lx, ly, lz)
     }
 
-    /// Install an empty furnace facing `facing` at a freshly placed furnace block.
-    /// No-op if the owning chunk is not loaded or `y` is out of range.
+    /// Install an empty furnace facing `facing` at a freshly placed furnace
+    /// block: default machine state, an empty 3-slot container, and the
+    /// facing. No-op if the owning chunk is not loaded or `y` is out of range.
     pub fn insert_furnace(&mut self, pos: IVec3, facing: Facing) {
         if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-            c.insert_furnace(
-                lx,
-                ly,
-                lz,
-                Furnace {
-                    facing,
-                    ..Furnace::default()
-                },
-            );
+            c.insert_furnace(lx, ly, lz, Furnace::default());
+            c.insert_container(lx, ly, lz, Container::with_len(FURNACE_SLOTS));
+            c.insert_entity_facing(lx, ly, lz, facing);
             self.note_block_entity_change(pos);
         }
     }
 
-    /// Remove and return the furnace at a world position (block break), if any.
+    /// Remove the furnace at a world position (block break): its machine state
+    /// and facing. The block's container (the slots) is scattered by the
+    /// generic break path, not here.
     pub fn take_furnace(&mut self, pos: IVec3) -> Option<Furnace> {
         let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         let furnace = c.take_furnace(lx, ly, lz);
+        c.take_entity_facing(lx, ly, lz);
         self.note_block_entity_change(pos);
         furnace
     }
@@ -102,7 +105,8 @@ mod tests {
     use crate::atlas::Tile;
     use crate::block::Block;
     use crate::chunk::{SectionPos, SECTION_VOLUME};
-    use crate::crafting::SmeltingRecipe;
+    use crate::crafting::{ProcessingRecipe, SMELTING_CLASS};
+    use crate::furnace::{SLOT_FUEL, SLOT_INPUT};
     use crate::item::{ItemStack, ItemType};
     use crate::mesh::ChunkMesh;
     use crate::section::Section;
@@ -110,7 +114,8 @@ mod tests {
     fn furnace_recipes() -> Recipes {
         Recipes::new(
             Vec::new(),
-            vec![SmeltingRecipe {
+            vec![ProcessingRecipe {
+                class: SMELTING_CLASS.to_owned(),
                 input: ItemType::RawIron,
                 result: ItemStack::new(ItemType::IronIngot, 1),
             }],
@@ -118,13 +123,14 @@ mod tests {
         )
     }
 
-    fn fueled_furnace() -> Furnace {
-        Furnace {
-            input: Some(ItemStack::new(ItemType::RawIron, 1)),
-            fuel: Some(ItemStack::new(ItemType::Coal, 1)),
-            facing: Facing::East,
-            ..Default::default()
-        }
+    /// Install a fueled furnace (state + slots + facing) at a section-local cell.
+    fn insert_fueled_furnace(section: &mut Section, x: usize, y: usize, z: usize) {
+        section.insert_furnace(x, y, z, Furnace::default());
+        let mut container = Container::with_len(FURNACE_SLOTS);
+        container.slots[SLOT_INPUT] = Some(ItemStack::new(ItemType::RawIron, 1));
+        container.slots[SLOT_FUEL] = Some(ItemStack::new(ItemType::Coal, 1));
+        section.insert_container(x, y, z, container);
+        section.insert_entity_facing(x, y, z, Facing::East);
     }
 
     fn block(world: &World, x: i32, y: i32, z: i32) -> Block {
@@ -156,7 +162,7 @@ mod tests {
         let spos = SectionPos::new(0, 4, 0);
         let mut section = Section::new(spos.cx, spos.cy, spos.cz);
         section.set_block(8, 0, 8, Block::Furnace);
-        section.insert_furnace(8, 0, 8, fueled_furnace());
+        insert_fueled_furnace(&mut section, 8, 0, 8);
         section.set_skylight(vec![0u8; SECTION_VOLUME].into()); // settle light
 
         let mut world = World::new(0, 0);
@@ -194,7 +200,7 @@ mod tests {
         }
         section.set_block(8, 1, 8, Block::Water); // source water at world (8,65,8)
         section.set_block(9, 1, 8, Block::Furnace);
-        section.insert_furnace(9, 1, 8, fueled_furnace()); // world (9,65,8)
+        insert_fueled_furnace(&mut section, 9, 1, 8); // world (9,65,8)
 
         let mut world = World::new(0, 0);
         world.insert_section_for_test(spos, section);

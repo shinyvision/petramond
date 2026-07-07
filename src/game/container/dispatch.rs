@@ -42,6 +42,9 @@ impl ContainerMenu {
                         ContainerTarget::FurnitureWorkbench => {
                             self.workbench_shift_from_inventory(inv, recipes, i)
                         }
+                        ContainerTarget::ModGui { .. } => {
+                            self.container_shift_from_inventory(world, inv, i)
+                        }
                         _ => inv.shift_move_slot(i),
                     }
                 } else if gather {
@@ -138,6 +141,18 @@ impl ContainerMenu {
                 // Results are take-only: craft the i-th offered recipe (shift -> inv).
                 WorkbenchHit::Result(i) => self.workbench_take_result(inv, recipes, i, shift),
             },
+            MenuSlot::Container(i) => {
+                if shift {
+                    self.container_shift_slot(world, inv, i);
+                } else {
+                    self.container_click_slot(
+                        world,
+                        inv,
+                        i,
+                        button == PointerButton::Secondary,
+                    );
+                }
+            }
             // Widget clicks mutate no container: `Game::tick_menu` intercepts
             // them before this decode and dispatches to the owning mod.
             MenuSlot::Widget(_) => {}

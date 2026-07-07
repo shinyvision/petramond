@@ -53,6 +53,10 @@ fn sleep_overlay_closes_when_the_tick_reports_the_sleep_ended() {
 fn bed_interaction_latches_hand_jab_for_sleep_overlay() {
     let mut app = app();
     let mut ev = events();
+    // The sim reports every consumed block interaction through `interacted`
+    // (the generic jab default); `bed_interacted` rides along for the sleep
+    // overlay's hand-visibility timer.
+    ev.interacted = true;
     ev.bed_interacted = true;
     ev.open_sleep = true;
 

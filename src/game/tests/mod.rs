@@ -7,6 +7,7 @@ mod combat_entities;
 mod drops;
 mod events;
 mod item_use;
+mod kitchen_mod;
 mod menu;
 mod placement;
 mod wheel_mod;

@@ -129,16 +129,28 @@ pub enum NodeKind {
     },
     /// Repeats its single template child once per item in `bind.items`.
     List,
-    /// One host-mapped slot (item cell) of `role`.
+    /// One host-mapped slot (item cell) of `role`. `accepts` and `take_only`
+    /// are host-interpreted slot semantics carried verbatim (the document
+    /// runtime ignores them): which item groups quick-moves may route into
+    /// this slot, and whether clicks may only remove from it (an output).
     Slot {
         role: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        accepts: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_only: bool,
     },
     /// A `cols`×`rows` grid of `role` slots, generated row-major — the in-role
-    /// index ↔ cell order contract holds by construction.
+    /// index ↔ cell order contract holds by construction. `accepts`/`take_only`
+    /// apply to every cell of the grid (see [`NodeKind::Slot`]).
     SlotGrid {
         role: String,
         cols: u32,
         rows: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        accepts: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_only: bool,
     },
     /// A 0..=1 fill gauge (furnace arrow/flame; mod gauges).
     Gauge {
@@ -517,14 +529,60 @@ impl Document {
             None => out.push((role.to_owned(), n)),
         };
         self.root.visit(&mut |node| match &node.kind {
-            NodeKind::Slot { role } => add(role, 1),
-            NodeKind::SlotGrid { role, cols, rows } => {
-                add(role, (*cols as usize) * (*rows as usize))
+            NodeKind::Slot { role, .. } => add(role, 1),
+            NodeKind::SlotGrid {
+                role, cols, rows, ..
+            } => add(role, (*cols as usize) * (*rows as usize)),
+            _ => {}
+        });
+        out
+    }
+
+    /// Every slot cell's host-interpreted semantics in document order, one
+    /// entry PER CELL (a grid repeats its semantics for each cell). Parallel
+    /// to the cell order behind [`Self::role_slots`], so a host can zip
+    /// in-role indices against these.
+    pub fn slot_semantics(&self) -> Vec<SlotSemantics> {
+        let mut out = Vec::new();
+        self.root.visit(&mut |node| match &node.kind {
+            NodeKind::Slot {
+                role,
+                accepts,
+                take_only,
+            } => out.push(SlotSemantics {
+                role: role.clone(),
+                accepts: accepts.clone(),
+                take_only: *take_only,
+            }),
+            NodeKind::SlotGrid {
+                role,
+                cols,
+                rows,
+                accepts,
+                take_only,
+            } => {
+                for _ in 0..(*cols as usize) * (*rows as usize) {
+                    out.push(SlotSemantics {
+                        role: role.clone(),
+                        accepts: accepts.clone(),
+                        take_only: *take_only,
+                    });
+                }
             }
             _ => {}
         });
         out
     }
+}
+
+/// One slot cell's host-interpreted semantics, as declared on its `slot` /
+/// `slot_grid` node (see [`NodeKind::Slot`] — the document runtime carries
+/// these verbatim; only the host gives them meaning).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlotSemantics {
+    pub role: String,
+    pub accepts: Vec<String>,
+    pub take_only: bool,
 }
 
 impl Node {

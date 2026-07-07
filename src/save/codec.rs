@@ -11,13 +11,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
 use crate::block_state::{LogAxis, SlabState, StairState};
-use crate::chest::Chest;
 use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::door::DoorState;
 use crate::entity::DroppedItem;
 use crate::furnace::{Facing, Furnace};
 use crate::item::{ItemStack, ItemType};
 use crate::mob::SavedMob;
+use crate::container::Container;
 use crate::section::Section;
 use crate::torch::TorchPlacement;
 
@@ -27,13 +27,18 @@ use crate::torch::TorchPlacement;
 /// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`);
 /// v3 widens it again with the per-mob mod KV map (default-empty for older records).
 /// v4 appends a third flags byte for slab layer state.
-const SECTION_REC_VERSION: u8 = 4;
+/// v5 unifies all slot storage into one generic container list (chests,
+/// furnaces, mod containers), splits the furnace record into pure machine
+/// state, and adds the shared entity-facing list. v5 is a CLEAN BREAK
+/// (`SECTION_REC_MIN_VERSION` = 5): pre-v5 records do not load — the game is
+/// unreleased, dev worlds regenerate (see WIKI/project-rules.md).
+const SECTION_REC_VERSION: u8 = 5;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 1;
+const SECTION_REC_MIN_VERSION: u8 = 5;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
-const FLAG_HAS_CHESTS: u8 = 0x08;
+const FLAG_HAS_ENTITY_FACINGS: u8 = 0x08;
 const FLAG_HAS_TORCHES: u8 = 0x10;
 const FLAG_HAS_MOBS: u8 = 0x20;
 const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
@@ -44,6 +49,7 @@ const FLAG2_HAS_DOORS: u8 = 0x02;
 const FLAG2_HAS_STAIRS: u8 = 0x04;
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
 const FLAG2_HAS_LOG_AXES: u8 = 0x10;
+const FLAG2_HAS_CONTAINERS: u8 = 0x20;
 /// Third flags byte (section-record v4+). `0` for older records.
 const FLAG3_HAS_SLABS: u8 = 0x01;
 
@@ -58,12 +64,16 @@ pub struct SectionSnapshot {
     /// Item entities resting in this section, captured at save time so their
     /// lifetime timers persist with it. Empty for the common case.
     pub entities: Vec<DroppedItem>,
-    /// Furnace block-entities in this section, keyed by section-local block index, so
-    /// their contents + smelting progress persist. Empty for the common section.
+    /// Furnace machine state (burn/cook counters) in this section, keyed by
+    /// section-local block index. The slots live in [`containers`](Self::containers).
+    /// Empty for the common section.
     pub furnaces: HashMap<u16, Furnace>,
-    /// Chest block-entities in this section, keyed by section-local block index, so
-    /// their contents persist. Empty for the common section.
-    pub chests: HashMap<u16, Chest>,
+    /// Generic item-slot containers (chests, furnaces, mod container blocks),
+    /// keyed by section-local block index. Empty for the common section.
+    pub containers: HashMap<u16, Container>,
+    /// Facing block-entity orientations (chests, furnaces), keyed by
+    /// section-local block index. Empty for the common section.
+    pub entity_facings: HashMap<u16, Facing>,
     /// Torch orientations in this section, keyed by section-local block index, so a
     /// wall vs floor torch reloads the way it was placed. Empty for the common section.
     pub torches: HashMap<u16, TorchPlacement>,
@@ -113,7 +123,8 @@ impl SectionSnapshot {
             water: s.water_slice().map(Box::from),
             entities: Vec::new(),
             furnaces: s.furnaces().clone(),
-            chests: s.chests().clone(),
+            containers: s.containers().clone(),
+            entity_facings: s.entity_facings().clone(),
             torches: s.torches().clone(),
             model_cells: s.model_cells().clone(),
             model_facings: s.model_facings().clone(),
@@ -323,8 +334,8 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.furnaces.is_empty() {
         flags |= FLAG_HAS_FURNACES;
     }
-    if !s.chests.is_empty() {
-        flags |= FLAG_HAS_CHESTS;
+    if !s.entity_facings.is_empty() {
+        flags |= FLAG_HAS_ENTITY_FACINGS;
     }
     if !s.torches.is_empty() {
         flags |= FLAG_HAS_TORCHES;
@@ -354,6 +365,9 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.log_axes.is_empty() {
         flags2 |= FLAG2_HAS_LOG_AXES;
     }
+    if !s.containers.is_empty() {
+        flags2 |= FLAG2_HAS_CONTAINERS;
+    }
     let mut flags3 = 0u8;
     if !s.slab_states.is_empty() {
         flags3 |= FLAG3_HAS_SLABS;
@@ -374,8 +388,10 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.furnaces.is_empty() {
         super::furnace::put_furnaces(&mut payload, &s.furnaces);
     }
-    if !s.chests.is_empty() {
-        super::chest::put_chests(&mut payload, &s.chests);
+    if !s.entity_facings.is_empty() {
+        put_indexed(&mut payload, &s.entity_facings, 1, |buf, facing| {
+            put_u8(buf, facing.to_u8());
+        });
     }
     if !s.torches.is_empty() {
         super::torch::put_torches(&mut payload, &s.torches);
@@ -425,6 +441,9 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
             put_u8(buf, axis.to_u8());
         });
     }
+    if !s.containers.is_empty() {
+        super::container::put_containers(&mut payload, &s.containers);
+    }
     if !s.slab_states.is_empty() {
         put_indexed(&mut payload, &s.slab_states, 3, |buf, state| {
             put_u8(buf, state.encode_meta());
@@ -450,7 +469,7 @@ pub fn decode_section(
     }
     let flags = r.u8()?;
     let flags2 = r.u8()?;
-    let flags3 = if version >= 4 { r.u8()? } else { 0 };
+    let flags3 = r.u8()?;
     let pal = super::palette::active();
     let blocks: Box<[u8]> = r
         .bytes(SECTION_VOLUME)?
@@ -472,8 +491,8 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
-    let chests = if flags & FLAG_HAS_CHESTS != 0 {
-        super::chest::get_chests(&mut r)?
+    let entity_facings = if flags & FLAG_HAS_ENTITY_FACINGS != 0 {
+        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
     } else {
         HashMap::new()
     };
@@ -522,6 +541,11 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
+    let containers = if flags2 & FLAG2_HAS_CONTAINERS != 0 {
+        super::container::get_containers(&mut r)?
+    } else {
+        HashMap::new()
+    };
     let slab_states = if flags3 & FLAG3_HAS_SLABS != 0 {
         get_indexed(&mut r, |r| {
             let meta = r.u8()?;
@@ -540,7 +564,8 @@ pub fn decode_section(
             blocks,
             water,
             furnaces,
-            chests,
+            containers,
+            entity_facings,
             torches,
             model_cells,
             model_facings,
@@ -642,6 +667,7 @@ mod tests {
 
     #[test]
     fn section_record_roundtrips_furnaces() {
+        use crate::furnace::{FURNACE_SLOTS, SLOT_FUEL, SLOT_INPUT};
         let mut s = sec(1, 4, 1);
         s.set_block(2, 1, 3, Block::Furnace);
         s.insert_furnace(
@@ -649,15 +675,16 @@ mod tests {
             1,
             3,
             crate::furnace::Furnace {
-                input: Some(ItemStack::new(ItemType::RawCopper, 12)),
-                fuel: Some(ItemStack::new(ItemType::Coal, 1)),
-                output: None,
                 cook_progress: 200,
                 burn_remaining: 1000,
                 burn_max: 4800,
-                facing: crate::furnace::Facing::West,
             },
         );
+        let mut container = crate::container::Container::with_len(FURNACE_SLOTS);
+        container.slots[SLOT_INPUT] = Some(ItemStack::new(ItemType::RawCopper, 12));
+        container.slots[SLOT_FUEL] = Some(ItemStack::new(ItemType::Coal, 1));
+        s.insert_container(2, 1, 3, container);
+        s.insert_entity_facing(2, 1, 3, crate::furnace::Facing::West);
 
         let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, _entities, _mobs) =
@@ -665,36 +692,44 @@ mod tests {
 
         assert_eq!(back.block_raw(2, 1, 3), Block::Furnace.id());
         let f = back.furnace_at(2, 1, 3).expect("furnace restored");
-        assert_eq!(f.input, Some(ItemStack::new(ItemType::RawCopper, 12)));
-        assert_eq!(f.fuel, Some(ItemStack::new(ItemType::Coal, 1)));
         assert_eq!(f.cook_progress, 200);
         assert_eq!(f.burn_remaining, 1000);
-        assert_eq!(f.facing, crate::furnace::Facing::West, "facing persists");
         assert!(f.is_lit(), "a saved burning furnace reloads lit");
+        let c = back.container_at(2, 1, 3).expect("slots restored");
+        assert_eq!(c.slots[SLOT_INPUT], Some(ItemStack::new(ItemType::RawCopper, 12)));
+        assert_eq!(c.slots[SLOT_FUEL], Some(ItemStack::new(ItemType::Coal, 1)));
+        assert_eq!(
+            back.entity_facing(2, 1, 3),
+            crate::furnace::Facing::West,
+            "facing persists"
+        );
     }
 
     #[test]
     fn section_record_roundtrips_chests() {
         let mut s = sec(4, 4, -2);
         s.set_block(9, 2, 1, Block::Chest);
-        let mut chest = crate::chest::Chest {
-            facing: crate::furnace::Facing::South,
-            ..crate::chest::Chest::default()
-        };
+        let mut chest =
+            crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
         chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
         chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
-        s.insert_chest(9, 2, 1, chest);
+        s.insert_container(9, 2, 1, chest);
+        s.insert_entity_facing(9, 2, 1, crate::furnace::Facing::South);
 
         let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, _entities, _mobs) =
             decode_section(SectionPos::new(4, 4, -2), &blob).expect("decodes");
 
         assert_eq!(back.block_raw(9, 2, 1), Block::Chest.id());
-        let got = back.chest_at(9, 2, 1).expect("chest restored");
+        let got = back.container_at(9, 2, 1).expect("chest restored");
         assert_eq!(got.slots[0], Some(ItemStack::new(ItemType::Stone, 64)));
         assert_eq!(got.slots[26], Some(ItemStack::new(ItemType::OakLog, 5)));
         assert_eq!(got.slots[5], None);
-        assert_eq!(got.facing, crate::furnace::Facing::South, "facing persists");
+        assert_eq!(
+            back.entity_facing(9, 2, 1),
+            crate::furnace::Facing::South,
+            "facing persists"
+        );
     }
 
     #[test]

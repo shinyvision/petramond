@@ -7,11 +7,18 @@
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
-/// A smelting recipe: one `input` item produces `result` when smelted in a
-/// furnace. Looked up by input item (see [`Recipes::smelt`]). Separate from the
-/// grid [`Recipe`]s because it isn't matched over a crafting grid.
-#[derive(Clone, Copy, Debug)]
-pub struct SmeltingRecipe {
+/// The furnace's processing-recipe class (see [`ProcessingRecipe::class`]).
+pub const SMELTING_CLASS: &str = "llama:smelting";
+
+/// A machine-processing recipe: one `input` item produces `result` when
+/// processed by the machine consuming `class` — the furnace smelts
+/// [`SMELTING_CLASS`] rows, a mod machine (the kitchen oven) consumes its own
+/// namespaced class. Looked up by `(class, input)` (see [`Recipes::process`]).
+/// Separate from the grid [`Recipe`]s because it isn't matched over a grid.
+#[derive(Clone, Debug)]
+pub struct ProcessingRecipe {
+    /// Namespaced class key: which machine kind consumes this recipe.
+    pub class: String,
     pub input: ItemType,
     pub result: ItemStack,
 }
@@ -88,24 +95,24 @@ impl Recipe {
 }
 
 /// The loaded recipe set: grid (crafting) recipes searched in declaration order,
-/// the smelting table looked up by input item, and the furniture-workbench recipes
-/// looked up by their input block.
-#[derive(Default)]
+/// the machine-processing table looked up by (class, input item), and the
+/// furniture-workbench recipes looked up by their input block.
+#[derive(Clone, Default)]
 pub struct Recipes {
     list: Vec<Recipe>,
-    smelting: Vec<SmeltingRecipe>,
+    processing: Vec<ProcessingRecipe>,
     furniture: Vec<FurnitureRecipe>,
 }
 
 impl Recipes {
     pub fn new(
         list: Vec<Recipe>,
-        smelting: Vec<SmeltingRecipe>,
+        processing: Vec<ProcessingRecipe>,
         furniture: Vec<FurnitureRecipe>,
     ) -> Self {
         Recipes {
             list,
-            smelting,
+            processing,
             furniture,
         }
     }
@@ -125,12 +132,18 @@ impl Recipes {
         self.list.iter().find_map(|r| r.matches(grid, cols))
     }
 
-    /// The smelted product of `input`, or `None` if it has no smelting recipe.
-    pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
-        self.smelting
+    /// The product `class` machines make from `input`, or `None` if that
+    /// class has no recipe for it.
+    pub fn process(&self, class: &str, input: ItemType) -> Option<ItemStack> {
+        self.processing
             .iter()
-            .find(|r| r.input == input)
+            .find(|r| r.class == class && r.input == input)
             .map(|r| r.result)
+    }
+
+    /// [`process`](Self::process) for the furnace's [`SMELTING_CLASS`].
+    pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
+        self.process(SMELTING_CLASS, input)
     }
 
     /// Every furniture-workbench recipe whose input is `input`, in declaration order —

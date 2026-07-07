@@ -328,6 +328,12 @@ impl ItemTag {
         ITEM_TAGS.resolve(key).ok().map(ItemTag)
     }
 
+    /// The registered name for this tag (engine tags bare, pack tags
+    /// namespaced) — the inverse of [`from_key`](Self::from_key).
+    pub fn name(self) -> &'static str {
+        ITEM_TAGS.name(self.0)
+    }
+
     /// Loader-side [`from_key`](Self::from_key) that surfaces the error text.
     pub(crate) fn resolve(name: &str) -> Result<ItemTag, String> {
         ITEM_TAGS.resolve(name).map(ItemTag)
@@ -647,6 +653,12 @@ impl ItemType {
     #[inline]
     pub fn has_tag(self, tag: ItemTag) -> bool {
         self.def().tags.contains(&tag)
+    }
+
+    /// Every tag this item carries (see [`has_tag`](Self::has_tag)).
+    #[inline]
+    pub fn tags(self) -> &'static [ItemTag] {
+        self.def().tags
     }
 
     /// Maximum number of this item per stack. Durable items never stack (one per

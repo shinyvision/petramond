@@ -61,7 +61,7 @@ impl Game {
     /// unbreakable — the block stays; the spent mining progress is the cost), then
     /// clear the block, scatter block-entity contents + harvested drops, spawn the
     /// burst, and queue `block_broken`.
-    fn finish_player_break(&mut self, event: BreakEvent, events: &mut TickEvents) {
+    pub(super) fn finish_player_break(&mut self, event: BreakEvent, events: &mut TickEvents) {
         {
             let mut pre = BlockBreakPre {
                 pos: event.pos,
@@ -89,6 +89,10 @@ impl Game {
         let (sky, blk, warm) = break_light(&self.world, event.pos, hit_normal);
         let slab_drops = (event.block.render_shape() == RenderShape::Slab)
             .then(|| self.world.slab_drop_stacks_at(event.pos));
+        // A mod container is keyed at the block's container anchor — resolved
+        // BEFORE the removal below clears the model-group metadata the anchor
+        // lookup needs (same ordering constraint as the bed spawn point).
+        let container_pos = self.world.container_anchor(event.pos);
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
         if matches!(event.block.render_shape(), RenderShape::Model(_)) {
@@ -107,25 +111,22 @@ impl Game {
             self.world
                 .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
         }
-        // A broken furnace scatters whatever it held, regardless of tool (the
-        // furnace ITEM still needs a pickaxe — handled by spawn_drops below).
+        // Forget the broken block's entity records: the furnace's machine
+        // state + facing, a chest's facing, a torch's orientation.
         if event.block == Block::Furnace {
-            if let Some(f) = self.world.take_furnace(event.pos) {
-                for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
-                    self.spawn_item_stack(event.pos, stack, (sky, blk));
-                }
-            }
+            self.world.take_furnace(event.pos);
         } else if event.block == Block::Chest {
-            // A broken chest scatters its whole contents, regardless of tool.
-            if let Some(chest) = self.world.take_chest(event.pos) {
-                for stack in chest.slots.into_iter().flatten() {
-                    self.spawn_item_stack(event.pos, stack, (sky, blk));
-                }
-            }
+            self.world.take_chest_facing(event.pos);
         } else if event.block == Block::Torch {
-            // A torch has no contents — just forget its recorded orientation so
-            // the freed cell carries no stale block-entity state.
             self.world.take_torch(event.pos);
+        }
+        // ANY broken container block — chest, furnace, or a mod's — scatters
+        // its whole contents, regardless of tool (the block ITEM's own drop
+        // still gates on harvest via spawn_drops below).
+        if let Some(container) = self.world.take_container(container_pos) {
+            for stack in container.slots.into_iter().flatten() {
+                self.spawn_item_stack(event.pos, stack, (sky, blk));
+            }
         }
         // A bbmodel block has no block-atlas tile, so its burst samples its own
         // texture (the model atlas); every other block uses its face tiles.
