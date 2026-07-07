@@ -135,6 +135,24 @@ impl Game {
         }
     }
 
+    /// Step the player's active status effects one game tick (durations count
+    /// down; interval behaviors such as regeneration apply on their
+    /// boundaries). Spectators keep ticking their durations too — an effect is
+    /// wall-clock-like state, not a survival consequence — but healing a full
+    /// or dead player is already a no-op inside [`crate::player::Player`].
+    pub(super) fn tick_effects(&mut self) {
+        self.player.tick_effects();
+    }
+
+    /// The player's active status effects for the HUD icon row, in application
+    /// order. Empty for a spectator — the row hides with the hearts.
+    pub fn player_effect_icons(&self) -> Vec<crate::effect::Effect> {
+        if self.player.is_spectator() {
+            return Vec::new();
+        }
+        self.player.effects().iter().map(|e| e.effect).collect()
+    }
+
     /// The player's health for the HUD hearts, or `None` when there is no survival
     /// bar to draw (a floating spectator). `(current, max)` in half-heart points.
     pub fn player_health(&self) -> Option<HealthView> {

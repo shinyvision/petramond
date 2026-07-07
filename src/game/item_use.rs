@@ -13,7 +13,89 @@ use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
 use crate::player::Player;
 
+/// The in-progress eat: which food item is being eaten and for how many ticks
+/// the button has been held on it. Tick-owned on [`Game`]; aborted the moment
+/// the button lifts or the hotbar selection changes.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(super) struct EatingState {
+    pub item: ItemType,
+    pub progress: u32,
+}
+
 impl Game {
+    /// Start eating the held food item on a consumed secondary click. Returns
+    /// `true` when the click belonged to food (whether the eat started, was
+    /// cancelled by a mod, or was already running) so placement never fires
+    /// from a food click. Fires `item_use_pre` at the START — a cancel eats
+    /// the click, not the food.
+    pub(super) fn try_start_eating(&mut self, events: &mut TickEvents) -> bool {
+        let Some(item) = self.player.inventory.selected().map(|s| s.item) else {
+            return false;
+        };
+        if item.food().is_none() || self.player.is_spectator() {
+            return false;
+        }
+        if self.eating.is_some_and(|e| e.item == item) {
+            return true; // re-click mid-eat: consumed, nothing restarts
+        }
+        let mut pre = ItemUsePre {
+            item,
+            target: self.look.map(|h| h.block),
+        };
+        if self
+            .bus
+            .item_use_pre(&mut self.world, &mut self.player, events, &mut pre)
+            == Outcome::Cancel
+        {
+            self.bus.emit(PostEvent::ItemUsed { item });
+            return true;
+        }
+        self.eating = Some(EatingState { item, progress: 0 });
+        true
+    }
+
+    /// Advance the in-progress eat one tick (runs every tick, click or not):
+    /// abort when the button lifted or the selection changed; consume the item
+    /// and grant its effects when the hold reaches the row's `eat_ticks`.
+    pub(super) fn advance_eating(&mut self, _events: &mut TickEvents) {
+        let Some(eat) = self.eating else {
+            return;
+        };
+        let held = self.player.inventory.selected().map(|s| s.item);
+        if !self.intent_use_held || held != Some(eat.item) {
+            self.eating = None;
+            return;
+        }
+        let Some(food) = eat.item.food() else {
+            self.eating = None;
+            return;
+        };
+        let progress = eat.progress + 1;
+        if progress < food.eat_ticks {
+            self.eating = Some(EatingState {
+                item: eat.item,
+                progress,
+            });
+            return;
+        }
+        // Done: the food leaves the hotbar and its effects land, atomically on
+        // this tick.
+        self.eating = None;
+        self.player.inventory.decrement_selected();
+        for &(effect, ticks) in food.effects {
+            self.player.apply_effect(effect, ticks);
+        }
+        self.bus.emit(PostEvent::ItemUsed { item: eat.item });
+    }
+
+    /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`
+    /// when nothing is being eaten — the presentation's chew-animation driver.
+    pub fn eating_progress(&self) -> Option<f32> {
+        let eat = self.eating?;
+        let ticks = eat.item.food()?.eat_ticks.max(1);
+        Some(eat.progress as f32 / ticks as f32)
+    }
+
     /// Apply the held item's own right-click use, if it has one. Returns `true`
     /// when the click was consumed: the world and the held item changed together.
     pub(super) fn try_use_item(&mut self, events: &mut TickEvents) -> bool {

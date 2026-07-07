@@ -5,8 +5,10 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
-use crate::block::{Block, BlockParticleEmitter, ParticleEmitterAnchor};
+use crate::block::{Block, BlockParticleEmitter, ParticleEmitterAnchor, RenderShape};
+use crate::block_model::{self, BlockModelKind};
 use crate::chunk::{section_local, SectionPos};
+use crate::furnace::Facing;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::torch::POLE_HEIGHT;
 
@@ -37,8 +39,20 @@ impl World {
                 };
                 let (lx, ly, lz) = section_local(idx);
                 let cell = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
-                let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
-                let origin = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local;
+                let origin = if let RenderShape::Model(kind) = block.render_shape() {
+                    // A multi-cell model emits ONCE per placed group (from its
+                    // authored-origin cell), at the FOOTPRINT-space anchor
+                    // rotated by the placed facing — never once per occupied
+                    // cell, which would wrap a 2×3×2 oven in twelve flames.
+                    if section.model_offset(lx, ly, lz) != [0, 0, 0] {
+                        continue;
+                    }
+                    let facing = section.model_facing(lx, ly, lz);
+                    model_emitter_origin(emitter, kind, cell, facing)
+                } else {
+                    let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
+                    Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local
+                };
                 let sample = voxel_at(origin);
                 let (sky, block_light, _) =
                     self.dynamic_light_at_world(sample.x, sample.y, sample.z);
@@ -52,6 +66,32 @@ impl World {
             }
         }
     }
+}
+
+/// World-space emitter origin for a model block: anchors resolve in FOOTPRINT
+/// space (`local` origins are authored footprint coordinates, in blocks, and
+/// may exceed the unit cell; `block_top`/`block_center` span the whole
+/// footprint box), then rotate/translate through the same placement transform
+/// the mesher uses, so the flame sits on the model whichever way it faces.
+fn model_emitter_origin(
+    emitter: BlockParticleEmitter,
+    kind: BlockModelKind,
+    origin_cell: IVec3,
+    facing: Facing,
+) -> Vec3 {
+    let fp = block_model::def(kind).cells;
+    let (fx, fy, fz) = (fp[0] as f32, fp[1] as f32, fp[2] as f32);
+    let anchor = match emitter.anchor {
+        ParticleEmitterAnchor::Local => Vec3::from_array(emitter.origin),
+        ParticleEmitterAnchor::BlockCenter => Vec3::new(fx * 0.5, fy * 0.5, fz * 0.5),
+        // TorchTop is torch-shaped-block data; on a model it degrades to the top.
+        ParticleEmitterAnchor::BlockTop | ParticleEmitterAnchor::TorchTop => {
+            Vec3::new(fx * 0.5, fy, fz * 0.5)
+        }
+    };
+    let base = block_model::base_from_cell(origin_cell, kind, [0, 0, 0], facing);
+    let m = block_model::placement_transform(base, kind, facing);
+    m.transform_point3(anchor + Vec3::from_array(emitter.offset))
 }
 
 fn emitter_anchor_local(

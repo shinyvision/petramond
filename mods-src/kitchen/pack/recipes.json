@@ -15,6 +15,12 @@
       },
       "result": "kitchen:oven",
       "count": 1
+    },
+    {
+      "type": "processing",
+      "class": "kitchen:cooking",
+      "ingredient": "kitchen:raw_mutton",
+      "result": "kitchen:cooked_mutton"
     }
   ]
 }

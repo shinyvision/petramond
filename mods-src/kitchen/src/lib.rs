@@ -24,14 +24,29 @@
 //! its OWN recipe class: `kitchen:cooking` rows in any pack's recipes.json
 //! (via `recipe_result`), never the furnace's `llama:smelting` table — an
 //! oven cooks food, it does not smelt ore. Fuel data comes from `item_info`.
-//! Food packs add `kitchen:cooking` recipes + the `kitchen:cookable` item tag
+//! Any pack adds `kitchen:cooking` recipes + the `kitchen:cookable` item tag
 //! and the oven picks them up with no code change here or in the engine.
+//!
+//! Shipped food: sheep drop 1–2 `kitchen:raw_mutton` (this pack's
+//! `loot_tables.json` layer replaces the sheep table — pure data), which cooks
+//! into `kitchen:cooked_mutton`; eating that grants `llama:regeneration`
+//! (engine status effect, 1200 ticks) through the item row's `food` data.
+//!
+//! While burning, the oven flips to the `kitchen:oven_lit` block row (same
+//! authored model; the unlit row hides the `fire` cube via `hidden_parts`) —
+//! glow and underside fire particles are that row's data. The flip goes
+//! through `swap_model_block`, which preserves the container and cell KV.
 
 use mod_sdk::*;
 use std::collections::HashMap;
 
 const KIND_KEY: &str = "kitchen:oven";
 const OVEN_BLOCK_KEY: &str = "kitchen:oven";
+/// The lit variant: the same authored model with the `fire` cube visible,
+/// block-light emission, and the underside fire particle emitter — all pack
+/// data on its rows. The mod's only job is swapping the placed block between
+/// the two on burn transitions (`swap_model_block` keeps container + state).
+const LIT_BLOCK_KEY: &str = "kitchen:oven_lit";
 const OVEN_LIST_KEY: &str = "kitchen:ovens";
 const STATE_KEY: &str = "kitchen:state";
 
@@ -85,6 +100,9 @@ impl OvenState {
 #[derive(Default)]
 struct Kitchen {
     oven_block: Option<BlockId>,
+    /// The lit visual variant (`kitchen:oven_lit`), when the pack ships it.
+    /// `None` degrades to cooking with no visual flip, never to not cooking.
+    lit_block: Option<BlockId>,
     /// Placed oven anchors, in placement order (the deterministic tick order).
     ovens: Vec<[i32; 3]>,
     /// The oven whose GUI session is open, if any (gauge publish gate).
@@ -155,6 +173,7 @@ impl Kitchen {
         let before_state = state;
         let before_slots = slots.clone();
 
+        let was_lit = state.burn_remaining > 0;
         if state.burn_remaining > 0 {
             state.burn_remaining -= 1;
         }
@@ -219,6 +238,16 @@ impl Kitchen {
         if state != before_state {
             section_kv_set(pos, STATE_KEY, state.encode());
         }
+        // Flip the placed block between the unlit/lit rows on burn transitions
+        // only (the swap is engine-idempotent, but there is no reason to cross
+        // the ABI 20×/s per oven). The fire cube, glow, and fire particles are
+        // all data on the lit row.
+        let now_lit = state.burn_remaining > 0;
+        if was_lit != now_lit {
+            if let (Some(oven), Some(lit)) = (self.oven_block, self.lit_block) {
+                swap_model_block(pos, if now_lit { lit } else { oven });
+            }
+        }
         if self.open_session == Some(pos) {
             gui_state_set(
                 "kitchen:cook01",
@@ -240,6 +269,10 @@ impl Mod for Kitchen {
         if self.oven_block.is_none() {
             log("kitchen: oven block not registered; the mod stays idle");
             return;
+        }
+        self.lit_block = resolve_block(LIT_BLOCK_KEY);
+        if self.lit_block.is_none() {
+            log("kitchen: lit oven block not registered; ovens cook without the visual flip");
         }
         self.load_oven_list();
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
@@ -295,7 +328,8 @@ impl Mod for Kitchen {
             match block {
                 // Unloaded: state is frozen on disk, exactly like a furnace.
                 None => continue,
-                Some(b) if b == oven_block => self.step_oven(pos),
+                // A listed anchor is ours in EITHER visual state.
+                Some(b) if b == oven_block || Some(b) == self.lit_block => self.step_oven(pos),
                 Some(_) => {
                     self.ovens.retain(|p| *p != pos);
                     pruned = true;

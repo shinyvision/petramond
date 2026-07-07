@@ -81,6 +81,10 @@ pub struct Player {
     pub inventory: crate::inventory::Inventory,
     /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
+    /// Active status effects, in application order (deterministic iteration).
+    /// Stepped once per game tick by `Game::tick_effects`; persisted by
+    /// registry name in `level.dat`.
+    effects: Vec<crate::effect::ActiveEffect>,
 }
 
 impl Player {
@@ -98,6 +102,7 @@ impl Player {
             fall_distance: 0.0,
             inventory: crate::inventory::Inventory::new(),
             bed_spawn: None,
+            effects: Vec::new(),
         }
     }
 
@@ -119,6 +124,68 @@ impl Player {
         if points > 0 {
             self.health = (self.health - points).max(0);
         }
+    }
+
+    /// Add `points` half-hearts, capped at [`MAX_HEALTH`]. A no-op for a
+    /// non-positive amount AND for a dead player (0 health) — healing never
+    /// resurrects; respawn owns that transition. Call on the tick.
+    pub fn heal(&mut self, points: i32) {
+        if points > 0 && self.health > 0 {
+            self.health = (self.health + points).min(MAX_HEALTH);
+        }
+    }
+
+    /// Active status effects in application order.
+    #[inline]
+    pub fn effects(&self) -> &[crate::effect::ActiveEffect] {
+        &self.effects
+    }
+
+    /// Grant `effect` for `ticks`. An already-active effect is overwritten with
+    /// the new duration (keeping its original slot in the application order);
+    /// zero ticks removes it. Call on the tick.
+    pub fn apply_effect(&mut self, effect: crate::effect::Effect, ticks: u32) {
+        if ticks == 0 {
+            self.remove_effect(effect);
+            return;
+        }
+        match self.effects.iter_mut().find(|e| e.effect == effect) {
+            Some(e) => e.remaining = ticks,
+            None => self
+                .effects
+                .push(crate::effect::ActiveEffect { effect, remaining: ticks }),
+        }
+    }
+
+    /// Remove `effect` if active.
+    pub fn remove_effect(&mut self, effect: crate::effect::Effect) {
+        self.effects.retain(|e| e.effect != effect);
+    }
+
+    /// Clear every active effect (death/respawn starts a fresh life).
+    pub fn clear_effects(&mut self) {
+        self.effects.clear();
+    }
+
+    /// Step every active effect one game tick: count down, apply interval
+    /// behaviors on their boundaries, drop expired entries. Only `Game`'s tick
+    /// should call this.
+    pub(crate) fn tick_effects(&mut self) {
+        let mut heal_total = 0;
+        for e in &mut self.effects {
+            e.remaining -= 1;
+            if let crate::effect::EffectBehavior::Regen { interval, amount } =
+                e.effect.def().behavior
+            {
+                // Boundaries land every `interval` ticks after application,
+                // including one at expiry (remaining == 0).
+                if e.remaining % interval == 0 {
+                    heal_total += amount;
+                }
+            }
+        }
+        self.effects.retain(|e| e.remaining > 0);
+        self.heal(heal_total);
     }
 
     /// Add a knockback impulse to the velocity — a mob strike's shove (and, later,

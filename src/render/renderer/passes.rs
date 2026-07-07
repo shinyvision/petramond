@@ -623,6 +623,7 @@ impl Renderer {
         // texture; solid quads bind the icon atlas (the solid sentinel skips
         // the sampler, so any layout-compatible texture works).
         if self.ui_hearts_vertex_count > 0
+            || self.ui_effects_vertex_count > 0
             || self.icon_quad_vertex_count > 0
             || self.ui_vignette_vertex_count > 0
             || !self.doc_ui.batches.is_empty()
@@ -652,6 +653,15 @@ impl Renderer {
                     pass.set_bind_group(0, bind, &[]);
                     pass.set_vertex_buffer(0, self.ui_hearts_vbuf.slice(..));
                     pass.draw(0..self.ui_hearts_vertex_count, 0..1);
+                }
+            }
+            // 2b) Status-effect icons (framed row above the hearts), one draw
+            //     from the composed effect strip.
+            if self.ui_effects_vertex_count > 0 {
+                if let Some(bind) = self.effects_bind.as_ref() {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, self.ui_effects_vbuf.slice(..));
+                    pass.draw(0..self.ui_effects_vertex_count, 0..1);
                 }
             }
             // 3) Per-slot item icons (icon atlas), one bind + one draw.

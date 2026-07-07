@@ -4,6 +4,7 @@ mod break_overlay;
 mod chest_model;
 mod crosshair;
 mod door_model;
+mod effect_icons;
 mod foliage_tint;
 mod hand;
 mod hand_animator;
@@ -52,6 +53,17 @@ pub struct HeldItemView {
     /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
     /// the gentler place jab. Ignored when `swing == 0.0`.
     pub swing_scale: f32,
+    /// 0..1 EAT pose blend: how far the held food is carried from its rest
+    /// anchor up to the mouth (eased in at eat start, back out on finish or
+    /// abort). `0.0` on ordinary frames.
+    pub eat: f32,
+    /// Signed nibble oscillator (−1..1) while eating — the bite rhythm layered
+    /// over the mouth carry. Consumers scale it by [`eat`](Self::eat).
+    pub eat_bob: f32,
+    /// 0..1 smoothed EAT PROGRESS: while the food wiggles at the mouth, it
+    /// slowly closes the remaining DEPTH toward the camera as this rises — the
+    /// bite-by-bite approach. Screen-position carry stays on [`eat`](Self::eat).
+    pub eat_near: f32,
 }
 
 impl Default for HeldItemView {
@@ -61,6 +73,9 @@ impl Default for HeldItemView {
             block_state: HeldBlockState::None,
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         }
     }
 }
@@ -80,6 +95,10 @@ pub struct HeldItemFrame {
     /// True on the frame the player swings to attack — a mob hit or a punch at the
     /// air — which plays a full-strength one-shot swing (like a block break).
     pub swung: bool,
+    /// Level: a food item is mid-eat, carrying the eat's progress in `[0, 1)`.
+    /// The animator raises the food quickly at the start, then drifts it the
+    /// rest of the way to the mouth as the progress advances.
+    pub eating: Option<f32>,
     pub dt: f32,
 }
 

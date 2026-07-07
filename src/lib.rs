@@ -28,6 +28,7 @@ mod column;
 mod controls;
 mod crafting;
 mod door;
+mod effect;
 mod entity;
 mod events;
 mod furnace;

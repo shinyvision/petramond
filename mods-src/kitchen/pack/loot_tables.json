@@ -1,0 +1,7 @@
+{
+  "tables": {
+    "llama:sheep": [
+      { "item": "kitchen:raw_mutton", "min": 1, "max": 2 }
+    ]
+  }
+}

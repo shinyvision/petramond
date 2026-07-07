@@ -260,6 +260,10 @@ pub struct UiSnapshot {
     /// The player's health for the bottom-left hearts, or `None` to hide the bar
     /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
     pub health: Option<HealthView>,
+    /// The player's active status effects, in application order — the framed
+    /// icon row drawn directly above the hearts (hidden with them). Empty for
+    /// a spectator or when nothing is active.
+    pub effects: Vec<crate::effect::Effect>,
     /// The open mod GUI's state map (labels / rotimage angles / overlay
     /// fractions), or `None` when no mod GUI session is up. A cheap `Arc`
     /// clone of the tick-owned map.
@@ -273,6 +277,11 @@ pub struct UiSnapshot {
     /// Hurt-flash strength in `[0, 1]`: `build_ui` draws a subtle red edge
     /// vignette scaled by it. `0.0` = none (the common frame).
     pub hurt_flash: f32,
+    /// An active heart-wiggle burst, or `None`: `(lo, hi, t)` — hearts
+    /// overlapping the half-heart point range `[lo, hi)` (the points a heal
+    /// added or a hit removed) shake, `t` seconds (wall clock) into the burst.
+    /// Set by the app presentation layer; the sim knows nothing of it.
+    pub heart_wiggle: Option<(i32, i32, f32)>,
 }
 
 /// One document slot cell: the game role, in-role index, and physical rect.
@@ -306,9 +315,11 @@ impl Default for UiSnapshot {
             workbench: None,
             container: None,
             health: None,
+            effects: Vec::new(),
             gui_state: None,
             doc_slots: None,
             hurt_flash: 0.0,
+            heart_wiggle: None,
         }
     }
 }

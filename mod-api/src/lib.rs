@@ -476,7 +476,9 @@ pub enum HostCall {
     /// block position). `Bytes(None)` when absent OR the section is unloaded.
     /// → [`HostRet::Bytes`].
     SectionKvGet { pos: [i32; 3], key: String },
-    /// `false` = the section is unloaded (nothing stored). → [`HostRet::Bool`].
+    /// `false` = the section is unloaded (nothing stored). Cell KV is
+    /// per-BLOCK state: breaking/replacing the cell's block clears it (a
+    /// `SwapModelBlock` flip carries it across). → [`HostRet::Bool`].
     SectionKvSet {
         pos: [i32; 3],
         key: String,
@@ -644,6 +646,32 @@ pub enum HostCall {
     /// `recipes.json` catalog engine machines cook from — any pack's rows for
     /// that class included. `None` = no recipe. → [`HostRet::ItemSlot`].
     RecipeResult { class: String, key: String },
+
+    // --- Player status effects (landed 2026-07-07) --------------------------
+    /// Grant the player the status effect registered under `key` (an
+    /// `effects.json` row — engine `llama:*` rows and every pack's rows alike)
+    /// for `ticks` game ticks. An already-active effect is OVERWRITTEN with
+    /// the new duration; `ticks == 0` removes it. Like `SetHealth` this is a
+    /// state primitive: no events fire. → [`HostRet::Bool`] (`false` =
+    /// unknown effect key).
+    EffectApply { key: String, ticks: u32 },
+    /// Remove the status effect `key` from the player if active. →
+    /// [`HostRet::Bool`] (`false` = unknown effect key).
+    EffectRemove { key: String },
+    /// Read the player's active status effects, in application order. →
+    /// [`HostRet::Effects`].
+    EffectsActive,
+
+    // --- Model-block state swap (landed 2026-07-07) --------------------------
+    /// Swap the placed multi-cell MODEL block group at `pos` (any of its
+    /// cells) to `block` — another model block sharing the exact same oriented
+    /// footprint, e.g. the lit/unlit variants of a machine. Ids are rewritten
+    /// in place: the engine-backed container, facing, and section cell KV all
+    /// survive, and the region relights (an emission difference glows like a
+    /// furnace lighting). BOTH blocks must be registered to THIS mod's
+    /// namespace. → [`HostRet::Bool`] (`false` = not a model group there,
+    /// footprint mismatch, or unloaded).
+    SwapModelBlock { pos: [i32; 3], block: BlockId },
 }
 
 /// One item stack crossing the ABI: the item's stable registry key + count.
@@ -710,6 +738,17 @@ pub enum HostRet {
     ItemInfo(Option<ItemInfoData>),
     /// [`HostCall::RecipeResult`]: `None` = no recipe for that input.
     ItemSlot(Option<ItemSlotData>),
+    /// [`HostCall::EffectsActive`]: the player's active status effects.
+    Effects(Vec<EffectStateData>),
+}
+
+/// One active status effect crossing the ABI (see [`HostCall::EffectsActive`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EffectStateData {
+    /// The effect's registry key (`"llama:regeneration"`, `"mod_id:haste"`).
+    pub key: String,
+    /// Remaining game ticks.
+    pub remaining: u32,
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine

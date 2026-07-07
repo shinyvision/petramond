@@ -20,6 +20,7 @@ impl Renderer {
         self.ui_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
         self.ui_hearts_vertex_count = 0;
+        self.ui_effects_vertex_count = 0;
         self.ui_vignette_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
@@ -56,6 +57,13 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.ui_hearts_vbuf, 0, bytemuck::cast_slice(hearts));
             self.ui_hearts_vertex_count = hearts.len() as u32;
+        }
+
+        let effects = &self.ui_build.effects;
+        if !effects.is_empty() && effects.len() <= cap {
+            self.queue
+                .write_buffer(&self.ui_effects_vbuf, 0, bytemuck::cast_slice(effects));
+            self.ui_effects_vertex_count = effects.len() as u32;
         }
 
         // Hurt vignette (fixed 24-vertex frame; the buffer is sized for it).

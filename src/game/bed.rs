@@ -161,6 +161,8 @@ impl Game {
         self.player.teleport(target);
         self.player.vel = Vec3::ZERO;
         self.player.set_health(MAX_HEALTH);
+        // A fresh life starts clean: lingering status effects die with the body.
+        self.player.clear_effects();
         events.respawned = true;
     }
 

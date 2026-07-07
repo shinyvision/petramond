@@ -223,6 +223,55 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
 }
 
 #[test]
+fn status_effects_heal_on_interval_boundaries_and_expire() {
+    use crate::effect::{Effect, EffectBehavior};
+    // Derive the cadence from the loaded row — the contract under test is the
+    // boundary/expiry behavior, never the freely-editable interval/amount.
+    let EffectBehavior::Regen { interval, amount } = Effect::Regeneration.def().behavior else {
+        panic!("regeneration is an interval-heal behavior");
+    };
+
+    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    pl.set_health(2);
+    pl.apply_effect(Effect::Regeneration, interval * 2);
+    for _ in 0..interval {
+        pl.tick_effects();
+    }
+    assert_eq!(pl.health(), 2 + amount, "the first boundary heals exactly once");
+    for _ in 0..interval {
+        pl.tick_effects();
+    }
+    assert_eq!(
+        pl.health(),
+        2 + amount * 2,
+        "the expiry tick is itself a boundary heal"
+    );
+    assert!(pl.effects().is_empty(), "the effect expired");
+
+    // Re-applying overwrites the duration (in place); zero removes; heal caps.
+    pl.apply_effect(Effect::Regeneration, 10);
+    pl.apply_effect(Effect::Regeneration, interval * 5);
+    assert_eq!(pl.effects()[0].remaining, interval * 5);
+    pl.apply_effect(Effect::Regeneration, 0);
+    assert!(pl.effects().is_empty(), "zero ticks removes the effect");
+    pl.set_health(MAX_HEALTH);
+    pl.apply_effect(Effect::Regeneration, interval);
+    for _ in 0..interval {
+        pl.tick_effects();
+    }
+    assert_eq!(pl.health(), MAX_HEALTH, "healing clamps at full");
+
+    // A dead player never regenerates back to life — respawn owns that.
+    let mut dead = p(Vec3::new(0.0, 64.0, 0.0));
+    dead.set_health(0);
+    dead.apply_effect(Effect::Regeneration, interval);
+    for _ in 0..interval {
+        dead.tick_effects();
+    }
+    assert_eq!(dead.health(), 0, "healing never resurrects");
+}
+
+#[test]
 fn spectator_clips_through_solids_and_flies_in_3d() {
     let solid_wall_and_ceiling = |x: i32, y: i32, _z: i32| x >= 1 || y >= 65;
     let mut pl = p(Vec3::new(0.0, 64.0, 0.0));

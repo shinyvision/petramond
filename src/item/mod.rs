@@ -375,6 +375,18 @@ impl ToolKind {
     }
 }
 
+/// Edible-item data (`"food"` in `items.json`): the held-button eat duration
+/// and the status effects granted when the eat completes. Read from an item
+/// via [`ItemType::food`]; the eat itself runs on the tick (see
+/// `crate::game::item_use`).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FoodDef {
+    /// Game ticks of held secondary button before the item is consumed.
+    pub eat_ticks: u32,
+    /// `(effect, duration ticks)` granted on being eaten.
+    pub effects: &'static [(crate::effect::Effect, u32)],
+}
+
 /// A mining tool: its [`kind`](Self::kind) and material `tier` (`1` = wooden,
 /// `2` = stone, `3` = iron, `4` = diamond). Read from an item via
 /// [`ItemType::tool`]; the mining model (see [`crate::mining`]) keys both the
@@ -644,6 +656,13 @@ impl ItemType {
     #[inline]
     pub fn item_use(self) -> Option<ItemUse> {
         self.def().item_use
+    }
+
+    /// This item's edible data (`"food"` in `items.json`), or `None` for
+    /// non-food. Which items are edible is row data, like fuel and tools.
+    #[inline]
+    pub fn food(self) -> Option<FoodDef> {
+        self.def().food
     }
 
     /// Whether this item belongs to `tag`. Membership is item data — each item's
@@ -1027,6 +1046,12 @@ mod tests {
     fn render_kind_matches_render_shape() {
         for &block in Block::all() {
             let item = ItemType::from_block(block);
+            // A dynamic block with no linked item (e.g. a machine's lit
+            // variant) maps to Air — there is no item whose render kind could
+            // mirror the block's shape.
+            if item == ItemType::Air && block != Block::Air {
+                continue;
+            }
             match block.render_shape() {
                 RenderShape::Cube => {
                     assert_eq!(

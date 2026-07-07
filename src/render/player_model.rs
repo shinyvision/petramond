@@ -55,6 +55,8 @@ pub(super) fn build_player_body(
     inst: &PlayerRenderInstance,
     swing: f32,
     swing_scale: f32,
+    eat: f32,
+    eat_bob: f32,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4) {
@@ -115,6 +117,16 @@ pub(super) fn build_player_body(
             let rot = Quat::from_rotation_x((raise + pitch_term) * swing_scale)
                 * Quat::from_rotation_y(twist)
                 * Quat::from_rotation_z(-roll * swing_scale);
+            model.apply_bone_rotation(&mut pose, shoulder, rot);
+        }
+    }
+    // Eating: hold the forearm up so the food sits at the mouth (following the
+    // gaze pitch like the swing does), bobbing with each bite. Blended by the
+    // shared `eat` channel, so start/finish/abort ease exactly like first person.
+    if eat > 0.0 {
+        if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
+            let raise = 1.35 + (inst.head_pitch + 0.7) * 0.35;
+            let rot = Quat::from_rotation_x(eat * (raise + eat_bob * 0.04));
             model.apply_bone_rotation(&mut pose, shoulder, rot);
         }
     }
@@ -263,6 +275,8 @@ mod tests {
             inst,
             swing,
             1.0,
+            0.0,
+            0.0,
             &mut v,
             &mut i,
         );
@@ -278,6 +292,8 @@ mod tests {
             inst,
             swing,
             1.0,
+            0.0,
+            0.0,
             &mut v,
             &mut i,
         );

@@ -381,6 +381,13 @@ pub struct Renderer {
     /// heart atlas; empty for a spectator or behind an open menu.
     ui_hearts_vbuf: wgpu::Buffer,
     ui_hearts_vertex_count: u32,
+    /// The status-effect icon strip (one framed cell per REGISTERED effect,
+    /// composed at construction — see `render::effect_icons`) as its own bind
+    /// group, or `None` when the frame art is missing.
+    effects_bind: Option<wgpu::BindGroup>,
+    /// HUD status-effect icon quads (the row above the hearts) + vertex count.
+    ui_effects_vbuf: wgpu::Buffer,
+    ui_effects_vertex_count: u32,
     /// Hurt-flash red edge vignette (solid gradient quads) + vertex count.
     /// Drawn first in the UI pass; zero on a calm frame.
     ui_vignette_vbuf: wgpu::Buffer,

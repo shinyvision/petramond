@@ -1,0 +1,6 @@
+{
+  "tiles": [
+    { "name": "kitchen:raw_mutton", "file": "raw_mutton.png" },
+    { "name": "kitchen:cooked_mutton", "file": "cooked_mutton.png" }
+  ]
+}

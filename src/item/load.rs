@@ -59,6 +59,35 @@ pub(super) struct RawItemDef {
     /// The mining tool this item acts as; absent = not a tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<RawTool>,
+    /// Edible-item data (hold right mouse to eat); absent = not food.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub food: Option<RawFood>,
+}
+
+/// A food declaration in `items.json`: how long the eat takes and which
+/// status effects it grants on being eaten.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawFood {
+    /// Game ticks of held-button eating before the item is consumed.
+    #[serde(default = "default_eat_ticks")]
+    pub eat_ticks: u32,
+    /// Status effects granted when the eat completes.
+    #[serde(default)]
+    pub effects: Vec<RawFoodEffect>,
+}
+
+/// One granted effect: an `effects.json` registry key + duration in ticks.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawFoodEffect {
+    pub effect: String,
+    pub ticks: u32,
+}
+
+/// 3 seconds at 20 TPS — the standard bite.
+fn default_eat_ticks() -> u32 {
+    60
 }
 
 fn u16_is_zero(v: &u16) -> bool {
@@ -205,6 +234,27 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         .iter()
         .map(|t| ItemTag::resolve(t))
         .collect::<Result<_, String>>()?;
+    let food = match &r.food {
+        Some(f) => {
+            if f.eat_ticks == 0 {
+                return Err("food eat_ticks must be positive".to_owned());
+            }
+            let effects: Vec<(crate::effect::Effect, u32)> = f
+                .effects
+                .iter()
+                .map(|e| {
+                    crate::effect::by_name(&e.effect)
+                        .map(|fx| (fx, e.ticks))
+                        .ok_or_else(|| format!("unknown food effect '{}'", e.effect))
+                })
+                .collect::<Result<_, String>>()?;
+            Some(super::FoodDef {
+                eat_ticks: f.eat_ticks,
+                effects: Box::leak(effects.into_boxed_slice()),
+            })
+        }
+        None => None,
+    };
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
@@ -221,6 +271,7 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         item_use,
         fuel_burn_ticks: r.fuel_burn_ticks,
         tool,
+        food,
     })
 }
 

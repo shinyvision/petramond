@@ -88,6 +88,14 @@ pub struct App {
     /// Seconds left to keep the hand visible over the sleep overlay after the
     /// bed interaction jab starts. Presentation-only.
     sleep_interact_hand_t: f32,
+    /// The HUD health drawn last frame, for change detection: any difference
+    /// starts a heart wiggle. `None` while no bar is drawn (shell/spectator),
+    /// so re-entering never wiggles from a stale comparison. Presentation-only.
+    prev_heart_health: Option<i32>,
+    /// The active heart-wiggle burst: the CHANGED half-heart range plus its
+    /// wall-clock start (the 200 ms window is real time, not ticks — a paused
+    /// or slowed sim must not stretch it). Presentation-only.
+    heart_wiggle: Option<HeartWiggle>,
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     /// The World Settings session for the selected world (`None` unless the
@@ -96,6 +104,19 @@ pub struct App {
     quit_requested: bool,
     renderer_world_clear_pending: bool,
 }
+
+/// One heart-wiggle burst: hearts overlapping `[lo, hi)` (half-heart points —
+/// the points gained by a heal or lost to a hit) shake for
+/// [`HEART_WIGGLE_SECS`] of wall-clock time from `started`.
+#[derive(Copy, Clone)]
+struct HeartWiggle {
+    lo: i32,
+    hi: i32,
+    started: f64,
+}
+
+/// How long a changed heart wiggles, in REAL seconds (per design: not ticks).
+const HEART_WIGGLE_SECS: f64 = 0.2;
 
 /// One-shot first-person hand-animation triggers, latched by [`App::update`] and
 /// consumed by the next [`App::render`]. OR-merged across updates so none is dropped
@@ -138,6 +159,8 @@ impl App {
             hand: HandTriggers::default(),
             hurt_shake_t: 0.0,
             sleep_interact_hand_t: 0.0,
+            prev_heart_health: None,
+            heart_wiggle: None,
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,

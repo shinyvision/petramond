@@ -19,12 +19,33 @@ const PLACE_SWING_SCALE: f32 = 0.62;
 // A place jab must be softer than a full mining punch — guard at compile time.
 const _: () = assert!(PLACE_SWING_SCALE < 1.0);
 
+/// Bites per second while eating — the nibble rhythm layered over the
+/// mouth-carry pose (see [`HeldItemView::eat_bob`]).
+const EAT_CHEW_HZ: f32 = 4.6;
+/// Seconds for the held food to make its INITIAL raise when an eat starts…
+const EAT_BLEND_IN_S: f32 = 0.14;
+/// …and to drop back down when it ends (finish or abort) — slightly quicker
+/// so a cancelled bite snaps back responsively without popping.
+const EAT_BLEND_OUT_S: f32 = 0.10;
+/// Smoothing window for the progress-driven approach (`eat_near`): sim
+/// progress steps at 20 TPS; easing over this many seconds hides the
+/// stair-steps without lagging the 3-second drift noticeably.
+const EAT_NEAR_EASE_S: f32 = 0.09;
+
 #[derive(Copy, Clone, Debug)]
 pub(super) struct HeldItemAnimator {
     swing_t: f32,
     swing_finishing: bool,
     /// Amplitude of the swing currently in flight (see [`HeldItemView::swing_scale`]).
     swing_scale: f32,
+    /// 0..1 mouth-carry blend (see [`HeldItemView::eat`]), eased toward 1 while
+    /// the sim reports an eat and back to 0 after.
+    eat_blend: f32,
+    /// Smoothed copy of the sim's eat progress (see [`HeldItemView::eat_near`]):
+    /// the slow toward-the-camera approach while the food sits at the mouth.
+    eat_near: f32,
+    /// Nibble oscillator phase, advanced only while eating.
+    eat_phase: f32,
 }
 
 impl Default for HeldItemAnimator {
@@ -33,6 +54,9 @@ impl Default for HeldItemAnimator {
             swing_t: 0.0,
             swing_finishing: false,
             swing_scale: 1.0,
+            eat_blend: 0.0,
+            eat_near: 0.0,
+            eat_phase: 0.0,
         }
     }
 }
@@ -49,6 +73,29 @@ impl HeldItemAnimator {
             self.swing_t = 0.0;
             self.swing_finishing = true;
             self.swing_scale = PLACE_SWING_SCALE;
+        }
+
+        // The EAT pose rides its own channels (mouth carry + nibble), never the
+        // punch: swinging the food around does not read as eating. The blend
+        // carries the item to its mouth SPOT quickly (start/finish/abort all
+        // glide); `eat_near` then tracks the sim's progress so the food, while
+        // wiggling in place, slowly closes the remaining DEPTH toward the
+        // camera over the whole eat.
+        if let Some(progress) = frame.eating {
+            self.eat_blend = (self.eat_blend + dt / EAT_BLEND_IN_S).min(1.0);
+            self.eat_phase = (self.eat_phase + dt * EAT_CHEW_HZ).fract();
+            let target = progress.clamp(0.0, 1.0);
+            // Never retreat: the food only ever approaches (a new eat starts
+            // from 0 anyway, via the reset below).
+            let eased =
+                self.eat_near + (target - self.eat_near) * (dt / EAT_NEAR_EASE_S).min(1.0);
+            self.eat_near = eased.max(self.eat_near).min(1.0);
+        } else {
+            self.eat_blend = (self.eat_blend - dt / EAT_BLEND_OUT_S).max(0.0);
+            if self.eat_blend == 0.0 {
+                self.eat_phase = 0.0;
+                self.eat_near = 0.0;
+            }
         }
 
         if frame.mining {
@@ -74,11 +121,18 @@ impl HeldItemAnimator {
             }
         }
 
+        // Smoothstep the blend so the raise/drop settle gently at both ends;
+        // the nibble is a plain sine — its amplitude is already gated by `eat`
+        // at the consumer, as is the `eat_near` approach.
+        let e = self.eat_blend * self.eat_blend * (3.0 - 2.0 * self.eat_blend);
         HeldItemView {
             item: frame.item,
             block_state: frame.block_state,
             swing: self.swing_t,
             swing_scale: self.swing_scale,
+            eat: e,
+            eat_bob: (self.eat_phase * std::f32::consts::TAU).sin(),
+            eat_near: self.eat_near,
         }
     }
 }
@@ -101,6 +155,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -115,6 +170,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 0.5 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -131,6 +187,7 @@ mod tests {
             broke_block: true,
             placed: false,
             swung: false,
+            eating: None,
             dt: 0.0,
         });
         assert_eq!(
@@ -145,6 +202,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -159,6 +217,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -174,6 +233,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: true,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         assert!(started.swing > 0.0, "an attack begins a swing");
@@ -190,6 +250,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0, "the attack swing completes");
@@ -205,6 +266,7 @@ mod tests {
             broke_block: false,
             placed: true,
             swung: false,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         // A place starts a one-shot swing at the reduced place amplitude (softer
@@ -221,6 +283,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -238,6 +301,7 @@ mod tests {
             broke_block: false,
             placed: true,
             swung: false,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         assert_eq!(
@@ -252,6 +316,70 @@ mod tests {
     }
 
     #[test]
+    fn animator_eat_rides_its_own_channels_not_the_swing() {
+        let mut anim = HeldItemAnimator::default();
+        let eat_frame = |dt: f32, progress: f32| HeldItemFrame {
+            item: Some(ItemType::Stone),
+            block_state: Default::default(),
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: false,
+            eating: Some(progress),
+            dt,
+        };
+
+        // The raise eases in (not a snap), never plays the punch, and settles
+        // at the FULL mouth spot regardless of progress — the progress drives
+        // only the toward-the-camera approach, not the screen carry.
+        let first = anim.update(eat_frame(1.0 / 60.0, 0.0));
+        assert!(first.eat > 0.0 && first.eat < 1.0, "carry eases in");
+        assert_eq!(first.swing, 0.0, "eating never plays the punch channel");
+        let raised = anim.update(eat_frame(1.0, 0.0));
+        assert_eq!(raised.eat, 1.0, "the raise settles at the mouth spot");
+        assert!(
+            raised.eat_near < 0.05,
+            "no camera approach yet at progress 0, got {}",
+            raised.eat_near
+        );
+
+        // The approach tracks the sim's progress monotonically, reaching the
+        // camera-nearest seat only at the end of the eat.
+        let mid = anim.update(eat_frame(1.0, 0.5));
+        assert!(
+            (mid.eat_near - 0.5).abs() < 1e-3,
+            "half-eaten food is halfway through its approach, got {}",
+            mid.eat_near
+        );
+        let done = anim.update(eat_frame(1.0, 1.0));
+        assert!(
+            (done.eat_near - 1.0).abs() < 1e-3,
+            "the last bite happens nearest the camera, got {}",
+            done.eat_near
+        );
+
+        // The nibble oscillates sign over a bite period.
+        let a = anim.update(eat_frame(0.5 / EAT_CHEW_HZ, 1.0)).eat_bob;
+        let b = anim.update(eat_frame(0.5 / EAT_CHEW_HZ, 1.0)).eat_bob;
+        assert!(
+            a.signum() != b.signum() || (a - b).abs() > 0.5,
+            "the bite rhythm oscillates: {a} vs {b}"
+        );
+
+        // Ending the eat eases the carry back out to rest.
+        let releasing = anim.update(HeldItemFrame {
+            eating: None,
+            ..eat_frame(1.0 / 60.0, 1.0)
+        });
+        assert!(releasing.eat < 1.0, "release starts easing out");
+        let rested = anim.update(HeldItemFrame {
+            eating: None,
+            ..eat_frame(1.0, 1.0)
+        });
+        assert_eq!(rested.eat, 0.0, "the carry returns fully to rest");
+    }
+
+    #[test]
     fn animator_mining_punch_is_full_strength() {
         let mut anim = HeldItemAnimator::default();
         let view = anim.update(HeldItemFrame {
@@ -261,6 +389,7 @@ mod tests {
             broke_block: false,
             placed: false,
             swung: false,
+            eating: None,
             dt: 1.0 / 60.0,
         });
         assert_eq!(view.swing_scale, 1.0, "mining is the full-strength punch");

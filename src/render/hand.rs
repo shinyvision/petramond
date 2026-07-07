@@ -331,10 +331,38 @@ fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
 
 /// Seat the held item at `rest` (view units) and fold in the mining-punch swing, its
 /// translation throw scaled by `throw_scale` so an item seated nearer the camera
-/// (the bbmodel anchor) jabs proportionally, not across the whole screen.
+/// (the bbmodel anchor) jabs proportionally, not across the whole screen. The EAT
+/// pose (mouth carry + nibble) composes here too, so every held render kind
+/// (block cube, extruded sprite, bbmodel) eats identically.
 fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
     let mut pos = rest;
     let mut rot = Quat::IDENTITY;
+
+    if view.eat > 0.0 {
+        let e = view.eat;
+        // Carry the food from its rest anchor up to the MOUTH: toward the
+        // screen centre (x, y toward 0) and nearer the camera (z toward 0) —
+        // where the first-person face is. Component scaling of the rest anchor
+        // keeps the carry aspect- and seat-independent (the bbmodel anchor
+        // sits at a different depth than the legacy one). While the food
+        // wiggles there, `eat_near` slides the whole mouth point ALONG THE
+        // VIEW RAY toward the camera (uniform scale of the view-space point =
+        // screen position stays put, the food just looms closer bite by bite).
+        let mouth = Vec3::new(rest.x * 0.16, rest.y * 0.34, rest.z * 0.74)
+            * (1.0 - 0.28 * view.eat_near);
+        let carry = mouth - rest;
+        pos += carry * e;
+        // Each bite nudges the item a touch further into the mouth (positive
+        // half of the oscillator only — bites push, they don't pull).
+        let bite = view.eat_bob * e;
+        pos += carry.normalize_or_zero() * (0.022 * bite.max(0.0));
+        // Tip the item up toward the face and turn it inward, rocking gently
+        // with the bite rhythm — the munching read, distinct from any punch.
+        let eat_rot = Quat::from_rotation_y(radians(34.0 * e))
+            * Quat::from_rotation_x(radians(-56.0 * e + 4.0 * bite))
+            * Quat::from_rotation_z(radians(5.0 * bite));
+        rot = eat_rot * rot;
+    }
 
     if view.swing > 0.0 {
         let s = view.swing.clamp(0.0, 1.0);
@@ -374,6 +402,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -398,6 +429,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -416,6 +450,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
 
@@ -444,6 +481,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -572,6 +612,9 @@ mod tests {
                 block_state: Default::default(),
                 swing: 0.0,
                 swing_scale: 1.0,
+                eat: 0.0,
+                eat_bob: 0.0,
+                eat_near: 0.0,
             };
             let (kind, mvp) = held_model(&view, aspect).expect("model item");
             raster_held_cell(kind, mvp, (w, h), row, &mut color);
@@ -597,6 +640,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
         assert_eq!(tile, crate::atlas::Tile::named("poppy"));
@@ -624,12 +670,18 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let bare = HeldItemView {
             item: None,
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&block, 1.5, &mut v, &mut i);
@@ -696,6 +748,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         for screen in screens {
@@ -736,6 +791,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         let mvp = build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -798,6 +856,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let early_view = HeldItemView {
             swing: 0.25,
@@ -864,6 +925,9 @@ mod tests {
             block_state: Default::default(),
             swing,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let fist = |swing| bare_arm_placement(&view(swing), aspect).transform_point3(fist_local);
         let shoulder =
@@ -902,6 +966,9 @@ mod tests {
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,
+            eat: 0.0,
+            eat_bob: 0.0,
+            eat_near: 0.0,
         };
         let mid_punch = HeldItemView { swing: 0.5, ..rest };
         // A reduced amplitude (< 1.0) stands in for the softer place jab so the
@@ -933,21 +1000,30 @@ mod tests {
         use crate::item::ItemType;
         use glam::Vec4;
 
+        // (item, texture, eat blend, bite phase, approach) — the eat rows
+        // preview the mouth-carry pose (mid-carry, full, and full at the end
+        // of the toward-the-camera approach).
         let targets = [
-            (ItemType::StonePickaxe, "stone_pickaxe.png"),
-            (ItemType::Poppy, "poppy.png"),
+            (ItemType::StonePickaxe, "stone_pickaxe.png", 0.0, 0.0, 0.0),
+            (ItemType::Poppy, "poppy.png", 0.0, 0.0, 0.0),
+            (ItemType::Poppy, "poppy.png", 0.5, 0.6, 0.0),
+            (ItemType::Poppy, "poppy.png", 1.0, 0.9, 0.0),
+            (ItemType::Poppy, "poppy.png", 1.0, -0.9, 1.0),
         ];
         const W: usize = 1280;
         const H: usize = 720;
         let aspect = W as f32 / H as f32;
         let bg = [74u8, 100, 64];
 
-        for (item, file) in targets {
+        for (item, file, eat, eat_bob, eat_near) in targets {
             let view = HeldItemView {
                 item: Some(item),
                 block_state: Default::default(),
                 swing: 0.0,
                 swing_scale: 1.0,
+                eat,
+                eat_bob,
+                eat_near,
             };
             let (tile, mvp) = held_sprite(&view, aspect).expect("sprite item");
             let mut verts = Vec::new();
@@ -1040,7 +1116,13 @@ mod tests {
                     }
                 }
             }
-            let name = format!("{item:?}").to_lowercase();
+            let name = if eat > 0.0 {
+                let bite = if eat_bob >= 0.0 { "in" } else { "out" };
+                let near = if eat_near > 0.0 { "_near" } else { "" };
+                format!("{item:?}_eat{:.0}_bite_{bite}{near}", eat * 100.0).to_lowercase()
+            } else {
+                format!("{item:?}").to_lowercase()
+            };
             let full = format!("/tmp/held_{name}.png");
             image::save_buffer(&full, &color, W as u32, H as u32, image::ColorType::Rgb8)
                 .expect("save full");

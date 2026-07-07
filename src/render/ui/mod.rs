@@ -71,11 +71,15 @@ pub struct UiBuild {
     /// The hurt-flash edge vignette (solid, per-vertex alpha gradient), drawn
     /// under everything else in the UI pass. Empty on a calm frame.
     pub vignette: Vec<UiVertex>,
+    /// HUD status-effect icons (framed row above the hearts), sampling the
+    /// composed effect strip. Empty when nothing is active or behind a menu.
+    pub effects: Vec<UiVertex>,
 }
 
 impl UiBuild {
     fn clear(&mut self) {
         self.hearts.clear();
+        self.effects.clear();
         self.icon_quads.clear();
         self.dim_icon_quads.clear();
         self.counts.clear();
@@ -182,8 +186,9 @@ fn push_doc_game_content(
     // HUD hearts only under the hotbar HUD, never behind menus/shell screens.
     if !ui.open && ui.kind == GuiKind::Hotbar {
         if let Some(health) = ui.health {
-            push_hearts(&mut build.hearts, screen, health, scale);
+            push_hearts(&mut build.hearts, screen, health, ui.heart_wiggle, scale);
         }
+        push_effects(&mut build.effects, screen, &ui.effects, scale);
     }
 
     // Cursor-held stack (drag/drop), front-most — only with a menu open.
@@ -256,10 +261,17 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
 /// empty container, then a full or half heart laid over it per the current health, so a
 /// damaged heart shows the container through its missing portion — the vanilla read.
 /// Scaled with the rest of the HUD. Called only for the [`GuiKind::Hotbar`] HUD.
+///
+/// `wiggle` is the app's active heart-wiggle burst (`(lo, hi, t)` — see
+/// [`crate::gui::UiSnapshot::heart_wiggle`]): the hearts whose half-heart
+/// points a heal just added or a hit just removed jitter fast for its
+/// wall-clock window, so the change catches the eye at the exact hearts it
+/// happened to.
 fn push_hearts(
     out: &mut Vec<UiVertex>,
     screen: (u32, u32),
     health: crate::gui::HealthView,
+    wiggle: Option<(i32, i32, f32)>,
     scale: f32,
 ) {
     let hearts = (health.max / 2).max(0);
@@ -270,6 +282,18 @@ fn push_hearts(
     let step = HEART_STEP * scale;
     let margin = HEART_MARGIN * scale;
     let y = screen.1 as f32 - margin - size;
+    // Two incommensurate high frequencies (~29/24 Hz) so the burst reads as a
+    // fast jitter rather than a bounce; amplitude ~1 logical px.
+    let wiggle_offset = |i: i32| -> (f32, f32) {
+        let Some((lo, hi, t)) = wiggle else {
+            return (0.0, 0.0);
+        };
+        // Heart `i` covers half-heart points [2i, 2i + 2).
+        if 2 * i >= hi || 2 * i + 2 <= lo {
+            return (0.0, 0.0);
+        }
+        ((t * 183.0).sin() * 0.7 * scale, (t * 149.0).cos() * scale)
+    };
     // Atlas cell `c` (0 empty, 1 half, 2 full) as top-left / bottom-right uv corners.
     let cell_uv = |c: i32| -> ([f32; 2], [f32; 2]) {
         let u0 = c as f32 * HEART_CELL_U;
@@ -277,7 +301,9 @@ fn push_hearts(
     };
     let current = health.current.clamp(0, health.max);
     for i in 0..hearts {
-        let x = margin + i as f32 * step;
+        let (dx, dy) = wiggle_offset(i);
+        let x = margin + i as f32 * step + dx;
+        let y = y + dy;
         let (tl, br) = cell_uv(0);
         push_quad_uv(out, screen, x, y, size, size, tl, br, WHITE);
         // 2 points = full heart, 1 = half, 0 = just the empty container.
@@ -288,6 +314,33 @@ fn push_hearts(
         };
         let (tl, br) = cell_uv(cell);
         push_quad_uv(out, screen, x, y, size, size, tl, br, WHITE);
+    }
+}
+
+/// Emit the status-effect icon row directly above the hearts: one cell per
+/// active effect (in application order), each sampling its id-keyed cell of
+/// the composed effect strip (frame + icon pre-composited — see
+/// `render::effect_icons`). Called only for the [`GuiKind::Hotbar`] HUD.
+fn push_effects(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    effects: &[crate::effect::Effect],
+    scale: f32,
+) {
+    if effects.is_empty() {
+        return;
+    }
+    let cell = crate::render::effect_icons::CELL_PX as f32 * scale;
+    let gap = 2.0 * scale;
+    let margin = HEART_MARGIN * scale;
+    // Sits `gap` above the heart bar's top edge.
+    let y = screen.1 as f32 - margin - HEART_PX * scale - gap - cell;
+    let strip_cells = crate::effect::defs().len() as f32;
+    for (i, effect) in effects.iter().enumerate() {
+        let x = margin + i as f32 * (cell + gap);
+        let u0 = effect.0 as f32 / strip_cells;
+        let u1 = (effect.0 as f32 + 1.0) / strip_cells;
+        push_quad_uv(out, screen, x, y, cell, cell, [u0, 0.0], [u1, 1.0], WHITE);
     }
 }
 

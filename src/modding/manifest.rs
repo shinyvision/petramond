@@ -173,18 +173,19 @@ pub(crate) fn resolve_load_order(
 }
 
 /// Collect every registration-relevant catalog key the pack at `dir` states —
-/// the row keys of the registry catalogs (blocks/items/sounds/models/mobs) plus
-/// atlas tile names. Used for namespace-prefix validation before the pack is
+/// the row keys of the registry catalogs (blocks/items/sounds/models/mobs/
+/// effects) plus atlas tile names. Used for namespace-prefix validation before the pack is
 /// admitted to the overlay. A malformed catalog is an error (the pack gets
 /// disabled rather than panicking the registry bootstrap later).
 pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, String> {
     // (file, array field, key field) for every catalog whose row keys register.
-    const CATALOGS: [(&str, &str, &str); 6] = [
+    const CATALOGS: [(&str, &str, &str); 7] = [
         ("blocks.json", "blocks", "block"),
         ("items.json", "items", "item"),
         ("sounds.json", "sounds", "sound"),
         ("models.json", "models", "key"),
         ("mobs.json", "mobs", "mob"),
+        ("effects.json", "effects", "effect"),
         ("textures/atlas.json", "tiles", "name"),
     ];
     let mut keys = Vec::new();

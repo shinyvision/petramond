@@ -10,11 +10,17 @@ impl Game {
     /// Placement / interaction, on the tick: consume a buffered secondary-button press
     /// once. Right-clicking a placed interactable block uses its block-owned capability
     /// rather than placing into the cell — unless sneaking, which falls through so the
-    /// player can still build against it.
+    /// player can still build against it. An in-progress EAT (held button on a food
+    /// item) advances every tick, click or not.
     pub(super) fn tick_place(&mut self, events: &mut TickEvents) {
-        if !std::mem::take(&mut self.pending_place) {
-            return;
+        if std::mem::take(&mut self.pending_place) {
+            self.place_click(events);
         }
+        self.advance_eating(events);
+    }
+
+    /// Resolve one consumed secondary-button press.
+    fn place_click(&mut self, events: &mut TickEvents) {
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
         // while a mob is targeted `self.look` is None, so the block paths below
         // would no-op anyway.
@@ -27,6 +33,11 @@ impl Game {
         // hand jab defaults ON for all of them (see `GameEvents::interacted`).
         events.interacted |= interacted;
         if !interacted {
+            // Food comes next: a click on a food item starts (or re-affirms) the
+            // eat and never falls through to use/placement.
+            if self.try_start_eating(events) {
+                return;
+            }
             // The held item's own use (a bucket) comes before block placement; an
             // item with a use has no block to place, so the two never compete.
             if self.try_use_item(events) {

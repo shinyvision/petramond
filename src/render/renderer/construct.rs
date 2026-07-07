@@ -396,6 +396,33 @@ async fn new_renderer_inner(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    // Status-effect icon strip: composed on the CPU from the shared frame +
+    // each registered effect's icon (engine and pack rows alike), uploaded
+    // once — the HUD indexes cells by effect id like hearts index their atlas.
+    let effects_bind = crate::render::effect_icons::compose_atlas().map(|img| {
+        let (_tex, view, sampler) =
+            crate::render::resources::create_rgba_nearest(&device, &queue, &img, "effect icons");
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("effect icons bind"),
+            layout: &pipelines.atlas_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        })
+    });
+    let ui_effects_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui effects vbuf"),
+        size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
     // Hurt vignette: four gradient bands = 24 vertices; a small fixed buffer.
     let ui_vignette_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ui vignette vbuf"),
@@ -566,6 +593,9 @@ async fn new_renderer_inner(
         ui_drag_count_vertex_count: 0,
         ui_hearts_vbuf,
         ui_hearts_vertex_count: 0,
+        effects_bind,
+        ui_effects_vbuf,
+        ui_effects_vertex_count: 0,
         ui_vignette_vbuf,
         ui_vignette_vertex_count: 0,
         icon_atlas,

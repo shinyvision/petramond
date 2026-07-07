@@ -17,6 +17,7 @@ pub(super) struct PointerState {
     left_click: bool,
     right_click: bool,
     left_held: bool,
+    right_held: bool,
     scroll_delta: f32,
     cursor_x: f32,
     cursor_y: f32,
@@ -47,9 +48,12 @@ impl PointerState {
             }
             (PointerButton::Secondary, true) => {
                 self.right_click = true;
+                self.right_held = true;
                 self.grabbing = true;
             }
-            (PointerButton::Secondary, false) => {}
+            (PointerButton::Secondary, false) => {
+                self.right_held = false;
+            }
         }
     }
 
@@ -57,6 +61,7 @@ impl PointerState {
         self.left_click = false;
         self.right_click = false;
         self.left_held = false;
+        self.right_held = false;
     }
 
     fn add_scroll_delta(&mut self, delta: f32) {
@@ -129,6 +134,7 @@ impl PointerState {
             break_held: self.left_held,
             attack_clicked: self.left_click,
             place_clicked: self.right_click,
+            use_held: self.right_held,
         }
     }
 

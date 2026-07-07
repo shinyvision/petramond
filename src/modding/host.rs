@@ -315,7 +315,8 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::ScheduleTick { .. }
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
-        | HostCall::BlockIsFullSpawnSupport { .. } => handle_block_call(call),
+        | HostCall::BlockIsFullSpawnSupport { .. }
+        | HostCall::SwapModelBlock { .. } => handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::HurtMob { .. }
@@ -327,7 +328,10 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::GiveItem { .. }
         | HostCall::KillPlayer
         | HostCall::SetHealth { .. }
-        | HostCall::Teleport { .. } => handle_player_call(&data.mod_id, call),
+        | HostCall::Teleport { .. }
+        | HostCall::EffectApply { .. }
+        | HostCall::EffectRemove { .. }
+        | HostCall::EffectsActive => handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
@@ -523,8 +527,37 @@ fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
 }
 
 /// Phase 3b: blocks (all sim-scoped, delegating to World).
-fn handle_block_call(call: HostCall) -> HostRet {
+fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
+        HostCall::SwapModelBlock { pos, block } => match checked_block(block) {
+            Err(e) => e,
+            Ok(b) => {
+                // Both sides of the swap must be the caller's own blocks: this
+                // is a machine flipping ITS placed variant, never a tool for
+                // rewriting someone else's content.
+                let new_name = crate::registry::names().blocks.name(b.id()).unwrap_or("?");
+                if !key_owned_by_namespace(mod_id, new_name) {
+                    return HostRet::Error(format!(
+                        "SwapModelBlock: block '{new_name}' is not owned by mod '{mod_id}'"
+                    ));
+                }
+                let mod_id = mod_id.to_owned();
+                sim_query(move |ctx| {
+                    let p = to_ivec(pos);
+                    let Some(old) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
+                        return HostRet::Bool(false);
+                    };
+                    let old_name = crate::registry::names().blocks.name(old.id()).unwrap_or("?");
+                    if !key_owned_by_namespace(&mod_id, old_name) {
+                        return HostRet::Error(format!(
+                            "SwapModelBlock: block '{old_name}' at {pos:?} is not owned by mod \
+                             '{mod_id}'"
+                        ));
+                    }
+                    HostRet::Bool(ctx.world.swap_model_block(p, b))
+                })
+            }
+        },
         HostCall::GetBlock { pos } => sim_query(|ctx| {
             let p = to_ivec(pos);
             HostRet::Block(
@@ -719,6 +752,37 @@ fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(pos) => sim_call(|ctx| ctx.player.teleport(pos)),
         },
+        // Status effects are player-state primitives like SetHealth: direct
+        // mutation, no events. Unknown keys are forgiving (Bool(false)) — a
+        // typo'd key is not a protocol break.
+        HostCall::EffectApply { key, ticks } => sim_query(|ctx| {
+            let Some(effect) = crate::effect::by_name(&key) else {
+                log::warn!("[mod {mod_id}] EffectApply: unknown effect '{key}'");
+                return HostRet::Bool(false);
+            };
+            ctx.player.apply_effect(effect, ticks);
+            HostRet::Bool(true)
+        }),
+        HostCall::EffectRemove { key } => sim_query(|ctx| {
+            let Some(effect) = crate::effect::by_name(&key) else {
+                log::warn!("[mod {mod_id}] EffectRemove: unknown effect '{key}'");
+                return HostRet::Bool(false);
+            };
+            ctx.player.remove_effect(effect);
+            HostRet::Bool(true)
+        }),
+        HostCall::EffectsActive => sim_query(|ctx| {
+            HostRet::Effects(
+                ctx.player
+                    .effects()
+                    .iter()
+                    .map(|e| mod_api::EffectStateData {
+                        key: e.effect.def().name.to_owned(),
+                        remaining: e.remaining,
+                    })
+                    .collect(),
+            )
+        }),
         other => unreachable!("non-player call {other:?} routed to handle_player_call"),
     }
 }

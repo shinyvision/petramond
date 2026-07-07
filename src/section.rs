@@ -681,6 +681,17 @@ impl Section {
         self.states.cell_kv()
     }
 
+    /// Detach one cell's whole mod-KV map — the state-preserving half of a
+    /// model-block swap (see `World::swap_model_block`).
+    pub fn cell_kv_take(&mut self, x: usize, y: usize, z: usize) -> Option<BTreeMap<String, Vec<u8>>> {
+        self.states.cell_kv_take(x, y, z)
+    }
+
+    /// Re-attach a map detached by [`cell_kv_take`](Self::cell_kv_take).
+    pub fn cell_kv_restore(&mut self, x: usize, y: usize, z: usize, map: BTreeMap<String, Vec<u8>>) {
+        self.states.cell_kv_restore(x, y, z, map);
+    }
+
     pub fn stair_states(&self) -> &HashMap<u16, StairState> {
         self.states.stair_states()
     }

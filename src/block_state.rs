@@ -290,6 +290,13 @@ impl BlockStates {
         self.clear_slab(idx);
         self.clear_log_axis(idx);
         self.clear_torch(idx);
+        // Mod cell KV is per-BLOCK state like everything above: a broken
+        // machine's burn state must die with the block — air holds no data.
+        // (A same-footprint model swap that must KEEP the state carries it
+        // across explicitly — see `World::swap_model_block`. A disabled mod's
+        // KV is untouched by this: its sections load their KV wholesale, not
+        // through per-cell block writes.)
+        self.cell_kv.remove(&(idx as u16));
     }
 
     #[inline]
@@ -530,5 +537,30 @@ impl BlockStates {
     #[inline]
     pub(crate) fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
         &self.cell_kv
+    }
+
+    /// Detach one cell's whole mod-KV map, for a state-PRESERVING block swap
+    /// (`set_block` clears cell KV like every other per-cell state, so a swap
+    /// that must keep it takes it out first and restores it after).
+    pub(crate) fn cell_kv_take(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+    ) -> Option<BTreeMap<String, Vec<u8>>> {
+        self.cell_kv.remove(&Self::key(x, y, z))
+    }
+
+    /// Re-attach a map detached by [`cell_kv_take`](Self::cell_kv_take).
+    pub(crate) fn cell_kv_restore(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+        map: BTreeMap<String, Vec<u8>>,
+    ) {
+        if !map.is_empty() {
+            self.cell_kv.insert(Self::key(x, y, z), map);
+        }
     }
 }

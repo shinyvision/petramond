@@ -252,6 +252,7 @@ mod tests {
     #[test]
     fn ray_pick_continues_past_transparent_near_face() {
         let cube = ModelCube {
+            name: String::new(),
             from: Vec3::ZERO,
             to: Vec3::ONE,
             origin: Vec3::ZERO,

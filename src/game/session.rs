@@ -64,12 +64,14 @@ impl Game {
             mining_dust_t: 0.0,
             attack_cooldown: 0,
             intent_break_held: false,
+            intent_use_held: false,
             intent_sneak: false,
             intent_gameplay: false,
             pending_attack: false,
             pending_place: false,
             held_rotation_item: None,
             held_block_rotation: 0,
+            eating: None,
             drop_queue: DropQueue::default(),
             pending_menu_clicks: Vec::new(),
             chest_lids: HashMap::new(),
@@ -194,6 +196,14 @@ fn restore_player(level: &LevelData) -> Player {
     player.set_health(level.player_health);
     player.inventory = level.inventory.clone();
     player.bed_spawn = level.bed_spawn;
+    // Effects persist by registry name; a name the session doesn't know (its
+    // mod was removed/disabled) is dropped with a warning, never an error.
+    for (name, remaining) in &level.effects {
+        match crate::effect::by_name(name) {
+            Some(effect) => player.apply_effect(effect, *remaining),
+            None => log::warn!("level.dat: dropping unknown status effect '{name}'"),
+        }
+    }
     player
 }
 

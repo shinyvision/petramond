@@ -40,6 +40,8 @@ pub struct GameInput {
     pub attack_clicked: bool,
     /// Edge state: secondary button pressed for placement.
     pub place_clicked: bool,
+    /// Level state: secondary button held — sustains an in-progress eat.
+    pub use_held: bool,
 }
 
 /// One sound a mod emitted on the tick (`EmitSound` HostCall): resolved to a
@@ -278,11 +280,13 @@ impl Game {
         if !input.gameplay_enabled {
             // Menu focus drops queued action edges so clicks cannot fire behind screens.
             self.intent_break_held = false;
+            self.intent_use_held = false;
             self.pending_attack = false;
             self.pending_place = false;
             return;
         }
         self.intent_break_held = input.break_held;
+        self.intent_use_held = input.use_held;
         if input.attack_clicked {
             self.pending_attack = true;
         }
@@ -345,6 +349,10 @@ impl Game {
 
         self.begin_stage(Stage::PlayerDamage, events);
         self.tick_fall_damage(events);
+        // Status effects ride the same stage: they are pure player-state
+        // steps (regen heals, durations count down) on the tick, after damage
+        // so a same-tick hit lands before the heal.
+        self.tick_effects();
         // Sleeping and respawn ride the same stage: both are pure player-state
         // transitions (teleport, health restore, time skip) on the tick.
         self.tick_bed_and_respawn(events);

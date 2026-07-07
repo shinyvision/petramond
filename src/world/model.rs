@@ -242,6 +242,57 @@ impl World {
         ))
     }
 
+    /// Swap the whole multi-block group at `pos` to `new_block` — another model
+    /// block whose ORIENTED FOOTPRINT matches the current group's exactly (the
+    /// lit/unlit machine pair sharing one authored model). Block ids are
+    /// rewritten in place and the model offsets + facing re-recorded; the
+    /// anchor-keyed container, entity facings, and mod cell KV are untouched,
+    /// so a cooking machine keeps its slots and state across the flip. The
+    /// region relights + remeshes once — an emission difference between the two
+    /// rows re-floods exactly like the furnace's lit flip. Returns `false`
+    /// when `pos` is not a model-group cell, `new_block` is not a model block,
+    /// or the footprints differ (nothing is written).
+    pub fn swap_model_block(&mut self, pos: IVec3, new_block: Block) -> bool {
+        let Some((kind, base, cells)) = self.model_group(pos) else {
+            return false;
+        };
+        let RenderShape::Model(new_kind) = new_block.render_shape() else {
+            return false;
+        };
+        if Block::from_id(self.chunk_block(pos.x, pos.y, pos.z)) == new_block {
+            return true; // already there — an idempotent no-op
+        }
+        let facing = self.model_facing_at(pos.x, pos.y, pos.z);
+        let new_cells = block_model::oriented_footprint_cells(base, new_kind, facing);
+        // Compare the actual occupied cell sets, not just the declared boxes: a
+        // non-rectangular footprint's occupancy comes from the geometry split.
+        if new_cells.len() != cells.len() || new_cells.iter().any(|(c, _)| !cells.contains(c)) {
+            return false;
+        }
+        let _ = kind;
+        for &(c, off) in &new_cells {
+            let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
+                return false;
+            };
+            // `set_block` clears the cell's model state AND its mod cell KV
+            // (per-cell state dies with the block) — a swap is the same placed
+            // machine changing costume, so both are carried across explicitly.
+            let kv = chunk.cell_kv_take(lx, ly, lz);
+            chunk.set_block(lx, ly, lz, new_block);
+            if off != [0, 0, 0] {
+                chunk.set_model_offset(lx, ly, lz, off);
+            }
+            chunk.set_model_facing(lx, ly, lz, facing);
+            if let Some(kv) = kv {
+                chunk.cell_kv_restore(lx, ly, lz, kv);
+            }
+            chunk.modified = true;
+        }
+        let positions: Vec<IVec3> = new_cells.into_iter().map(|(cell, _)| cell).collect();
+        self.refresh_region(&positions);
+        true
+    }
+
     /// Break the whole multi-block `pos` belongs to: set every footprint cell to air
     /// (clearing its offset) and relight + remesh the region once. Returns the cells
     /// removed (for drops/particles), or `None` if `pos` isn't a model block. The
@@ -383,6 +434,67 @@ mod tests {
         assert!(
             !w.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench),
             "an occupied footprint cell must fail the gate"
+        );
+    }
+
+    #[test]
+    fn block_writes_clear_the_cells_mod_kv() {
+        let mut w = world_with_empty_chunk();
+
+        // Plain block replacement: the cell's mod KV dies with the block —
+        // air holds no block data. The neighbour's KV is untouched.
+        let pos = IVec3::new(5, 64, 5);
+        let neighbour = IVec3::new(6, 64, 5);
+        w.set_block_world(pos.x, pos.y, pos.z, Block::Stone);
+        w.set_block_world(neighbour.x, neighbour.y, neighbour.z, Block::Stone);
+        assert!(w.cell_kv_set(pos.x, pos.y, pos.z, "farm:moisture".into(), vec![9]));
+        assert!(w.cell_kv_set(neighbour.x, neighbour.y, neighbour.z, "farm:moisture".into(), vec![1]));
+        w.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+        assert!(
+            w.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture").is_none(),
+            "a replaced block takes its cell KV with it"
+        );
+        assert_eq!(
+            w.cell_kv_get(neighbour.x, neighbour.y, neighbour.z, "farm:moisture"),
+            Some(&[1u8][..]),
+            "the neighbour's KV is untouched"
+        );
+
+        // Breaking a model group clears the anchor's KV too (a broken
+        // machine's burn state must not haunt the next one placed there).
+        let origin = IVec3::new(9, 64, 5);
+        assert!(w.place_model_block(origin, WB));
+        assert!(w.cell_kv_set(origin.x, origin.y, origin.z, "kitchen:state".into(), vec![1, 2, 3]));
+        w.remove_model_block(origin).expect("removes the group");
+        assert!(
+            w.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state").is_none(),
+            "breaking a model block clears its anchor's cell KV"
+        );
+    }
+
+    #[test]
+    fn swap_model_block_guards_shape_and_footprint() {
+        let mut w = world_with_empty_chunk();
+        let origin = IVec3::new(5, 64, 5);
+        assert!(w.place_model_block(origin, WB));
+        assert!(
+            !w.swap_model_block(origin, Block::Stone),
+            "a non-model target refuses"
+        );
+        assert!(
+            !w.swap_model_block(origin, Block::Bed),
+            "a footprint-mismatched model refuses"
+        );
+        assert!(
+            w.swap_model_block(origin, WB),
+            "swapping to the current block is an idempotent success"
+        );
+        let (_, base, cells) = w.model_group(origin).expect("the group survives");
+        assert_eq!(base, origin);
+        assert_eq!(cells.len(), 4, "nothing about the footprint changed");
+        assert!(
+            !w.swap_model_block(origin + IVec3::new(0, 3, 0), WB),
+            "a non-model cell refuses"
         );
     }
 

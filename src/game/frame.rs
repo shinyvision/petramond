@@ -19,12 +19,16 @@ pub(crate) struct ClientFrame<'a> {
     pub(crate) held_item: ClientHeldItem,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClientHeldItem {
     pub(crate) item: Option<ItemType>,
     pub(crate) block_state: HeldBlockState,
     pub(crate) mining: bool,
     pub(crate) mining_block: Option<Block>,
+    /// A food item is mid-eat (held secondary button): the eat's progress in
+    /// `[0, 1)` — the animation carries the food deeper toward the mouth as it
+    /// advances. `None` on ordinary frames.
+    pub(crate) eating: Option<f32>,
 }
 
 impl Game {
@@ -42,6 +46,7 @@ impl Game {
                 block_state: self.held_block_state(),
                 mining,
                 mining_block: mining.then(|| self.mining.block()).flatten(),
+                eating: self.eating_progress(),
             },
         }
     }

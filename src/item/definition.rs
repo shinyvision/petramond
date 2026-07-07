@@ -46,4 +46,6 @@ pub(super) struct ItemDef {
     pub fuel_burn_ticks: u16,
     /// The mining tool this item acts as (`"tool": {kind, tier}`), or `None`.
     pub tool: Option<Tool>,
+    /// Edible-item data (`"food"` in `items.json`), or `None` for non-food.
+    pub food: Option<super::FoodDef>,
 }

@@ -366,6 +366,8 @@ impl Renderer {
                             &inst,
                             held.swing,
                             held.swing_scale,
+                            held.eat,
+                            held.eat_bob,
                             verts,
                             indices,
                         );

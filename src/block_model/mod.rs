@@ -71,6 +71,10 @@ pub const DEFAULT_MODEL_FACING: Facing = Facing::North;
 /// them in footprint space with atlas-remapped UVs.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelCube {
+    /// The authored Blockbench element name — preserved because names carry
+    /// per-ROW meaning: a `models.json` row may list `hidden_parts` by name
+    /// (the unlit oven hides its `fire` cube; see [`BlockModel::hide_parts`]).
+    pub name: String,
     pub from: Vec3,
     pub to: Vec3,
     /// Pivot for this cube's static `rotation`.
@@ -257,6 +261,7 @@ impl BlockModel {
                 let pose = rest.get(c.bone).copied().unwrap_or(Mat4::IDENTITY);
                 if pose.abs_diff_eq(Mat4::IDENTITY, 1e-6) {
                     return ModelCube {
+                        name: c.name.clone(),
                         from: c.from,
                         to: c.to,
                         origin: c.origin,
@@ -275,6 +280,7 @@ impl BlockModel {
                 let origin = pose.transform_point3(c.origin);
                 let shift = origin - c.origin;
                 ModelCube {
+                    name: c.name.clone(),
                     from: c.from + shift,
                     to: c.to + shift,
                     origin,
@@ -283,33 +289,7 @@ impl BlockModel {
                 }
             })
             .collect();
-        // Collision = one posed AABB per SOLID cube (skip flat/degenerate — a zero-extent
-        // cube is decoration, not a wall). Bounds = the whole model's tight box.
-        let mut collision = Vec::new();
-        let mut bmn = Vec3::splat(f32::INFINITY);
-        let mut bmx = Vec3::splat(f32::NEG_INFINITY);
-        for c in &cubes {
-            let (mn, mx) = posed_cube_bounds(c);
-            bmn = bmn.min(mn);
-            bmx = bmx.max(mx);
-            if (mx - mn).min_element() > 1e-4 {
-                collision.push(Aabb {
-                    min: mn.to_array(),
-                    max: mx.to_array(),
-                });
-            }
-        }
-        let bounds = if bmn.is_finite() {
-            Aabb {
-                min: bmn.to_array(),
-                max: bmx.to_array(),
-            }
-        } else {
-            Aabb {
-                min: [0.0; 3],
-                max: [1.0; 3],
-            }
-        };
+        let (collision, bounds) = bake_collision_bounds(&cubes);
         BlockModel {
             cubes,
             texture_rgba: m.texture_rgba.clone(),
@@ -323,6 +303,56 @@ impl BlockModel {
             display_pivot: [0.0, 8.0, 0.0],
         }
     }
+
+    /// Drop the cubes named in `hidden` and re-bake collision + bounds from
+    /// what remains — the per-ROW `hidden_parts` filter, applied AFTER the
+    /// cache load (two `models.json` rows may share one authored file, e.g. a
+    /// machine's lit/unlit variants toggling a `fire` cube; the compiled
+    /// `.llblock` always holds the full model). A name matching no cube warns:
+    /// a typo must not silently show the part.
+    fn hide_parts(&mut self, hidden: &[&str], row_key: &str) {
+        for h in hidden {
+            if !self.cubes.iter().any(|c| c.name == *h) {
+                log::warn!("block model '{row_key}': hidden part '{h}' matches no cube");
+            }
+        }
+        self.cubes.retain(|c| !hidden.contains(&c.name.as_str()));
+        let (collision, bounds) = bake_collision_bounds(&self.cubes);
+        self.collision = collision;
+        self.bounds = bounds;
+    }
+}
+
+/// Collision = one posed AABB per SOLID cube (skip flat/degenerate — a
+/// zero-extent cube is decoration, not a wall). Bounds = the tight box over
+/// all cubes (a cube-less model degrades to the unit cell).
+fn bake_collision_bounds(cubes: &[ModelCube]) -> (Vec<Aabb>, Aabb) {
+    let mut collision = Vec::new();
+    let mut bmn = Vec3::splat(f32::INFINITY);
+    let mut bmx = Vec3::splat(f32::NEG_INFINITY);
+    for c in cubes {
+        let (mn, mx) = posed_cube_bounds(c);
+        bmn = bmn.min(mn);
+        bmx = bmx.max(mx);
+        if (mx - mn).min_element() > 1e-4 {
+            collision.push(Aabb {
+                min: mn.to_array(),
+                max: mx.to_array(),
+            });
+        }
+    }
+    let bounds = if bmn.is_finite() {
+        Aabb {
+            min: bmn.to_array(),
+            max: bmx.to_array(),
+        }
+    } else {
+        Aabb {
+            min: [0.0; 3],
+            max: [1.0; 3],
+        }
+    };
+    (collision, bounds)
 }
 
 impl CompiledAsset for BlockModel {
@@ -335,7 +365,9 @@ impl CompiledAsset for BlockModel {
     /// collision/bounds; v2 no display; v3 predates the multi-texture sheet; v4 the
     /// display pivots; v5 dropped group rest poses; each bump rebuilds stale caches.)
     /// v7: the shared loader bakes element `inflate` into the cube box.
-    const FORMAT_VERSION: u32 = 7;
+    /// v8: cubes carry their authored element NAME (per-row `hidden_parts`
+    /// filtering needs it).
+    const FORMAT_VERSION: u32 = 8;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 
@@ -496,6 +528,10 @@ pub struct BlockModelDef {
     /// How the model turns to meet the placing player (workbench across the view,
     /// bed away from it).
     pub orientation: PlacementOrientation,
+    /// Authored cube NAMES this row hides (applied after the cache load, so
+    /// several rows can share one `.bbmodel` with different parts visible —
+    /// the lit/unlit machine pattern). Empty for most rows.
+    pub hidden_parts: &'static [&'static str],
 }
 
 /// One model row as written in `models.json`.
@@ -506,6 +542,8 @@ struct RawModelDef {
     model_file: String,
     cells: [u8; 3],
     orientation: PlacementOrientation,
+    #[serde(default)]
+    hidden_parts: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -556,12 +594,18 @@ fn parse_layers(texts: &[&str]) -> Result<Vec<BlockModelDef>, String> {
         let id = names
             .id(&r.key)
             .ok_or_else(|| format!("unregistered block model '{}'", r.key))?;
+        let hidden_parts: Vec<&'static str> = r
+            .hidden_parts
+            .into_iter()
+            .map(|p| &*Box::leak(p.into_boxed_str()))
+            .collect();
         rows[id as usize] = Some(BlockModelDef {
             key: Box::leak(r.key.into_boxed_str()),
             model_file: Box::leak(r.model_file.into_boxed_str()),
             cells: r.cells,
             collision: CollisionSpec::FromModel,
             orientation: r.orientation,
+            hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
         });
     }
     rows.into_iter()
@@ -598,10 +642,18 @@ static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
                 );
                 return BlockModel::empty();
             };
-            crate::asset_cache::load_or_compile::<BlockModel>(d.key, &src).unwrap_or_else(|e| {
-                log::error!("block model precache failed for {k:?}: {e}");
-                BlockModel::empty()
-            })
+            let mut model = crate::asset_cache::load_or_compile::<BlockModel>(d.key, &src)
+                .unwrap_or_else(|e| {
+                    log::error!("block model precache failed for {k:?}: {e}");
+                    BlockModel::empty()
+                });
+            // The cache always holds the FULL model; the row's part filter is
+            // applied on top so rows sharing one file stay one cache entry each
+            // (the cache is keyed by row key) with independent visibility.
+            if !d.hidden_parts.is_empty() {
+                model.hide_parts(d.hidden_parts, d.key);
+            }
+            model
         })
         .collect()
 });
@@ -759,6 +811,7 @@ impl ModelInstance {
             .cubes
             .iter()
             .map(|c| ModelCube {
+                name: c.name.clone(),
                 from: to_fp(c.from),
                 to: to_fp(c.to),
                 origin: to_fp(c.origin),
@@ -1249,6 +1302,7 @@ mod tests {
     #[test]
     fn flat_model_cubes_emit_one_biased_surface_face() {
         let cube = ModelCube {
+            name: String::new(),
             from: Vec3::new(0.0, 0.5, 0.0),
             to: Vec3::new(1.0, 0.5, 1.0),
             origin: Vec3::ZERO,
@@ -1256,6 +1310,7 @@ mod tests {
             faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
         };
         let support = ModelCube {
+            name: String::new(),
             from: Vec3::ZERO,
             to: Vec3::new(1.0, 0.5, 1.0),
             origin: Vec3::ZERO,
@@ -1275,6 +1330,7 @@ mod tests {
     #[test]
     fn flat_model_cubes_bias_away_from_backing_surface() {
         let poster = ModelCube {
+            name: String::new(),
             from: Vec3::new(0.0, 0.0, 0.5),
             to: Vec3::new(1.0, 1.0, 0.5),
             origin: Vec3::ZERO,
@@ -1282,6 +1338,7 @@ mod tests {
             faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
         };
         let backing = ModelCube {
+            name: String::new(),
             from: Vec3::new(0.0, 0.0, 0.5),
             to: Vec3::new(1.0, 1.0, 0.75),
             origin: Vec3::ZERO,
@@ -1299,6 +1356,7 @@ mod tests {
     #[test]
     fn unsupported_flat_model_cubes_fall_back_to_authored_positive_face() {
         let mut cube = ModelCube {
+            name: String::new(),
             from: Vec3::new(0.0, 0.5, 0.0),
             to: Vec3::new(1.0, 0.5, 1.0),
             origin: Vec3::ZERO,
@@ -1321,6 +1379,7 @@ mod tests {
     #[test]
     fn thick_model_cubes_emit_all_faces_without_bias() {
         let cube = ModelCube {
+            name: String::new(),
             from: Vec3::ZERO,
             to: Vec3::ONE,
             origin: Vec3::ZERO,

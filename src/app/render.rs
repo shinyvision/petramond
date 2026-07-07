@@ -44,6 +44,10 @@ impl App {
         }
 
         let Some(game) = self.game.as_mut() else {
+            // No session, no health bar: a fresh world must never wiggle off a
+            // comparison against the previous session's last health.
+            self.prev_heart_health = None;
+            self.heart_wiggle = None;
             self.audio.clear_spatial();
             self.spatial_sound_commands.clear();
             self.spatial_mob_positions.clear();
@@ -118,6 +122,7 @@ impl App {
                 broke_block: hand.broke,
                 placed: hand.placed,
                 swung: hand.swung,
+                eating: frame.held_item.eating,
                 dt,
             });
         }
@@ -206,6 +211,12 @@ impl App {
         let mut ui =
             ui_snapshot::build(Some(game), self.screen, screen_size, self.pointer.cursor());
         ui.hurt_flash = shake.flash;
+        ui.heart_wiggle = heart_wiggle_frame(
+            &mut self.prev_heart_health,
+            &mut self.heart_wiggle,
+            ui.health,
+            now,
+        );
         if doc_kind.is_some() {
             // A document draws this screen's chrome: hand build_ui the
             // document's slot cells so it emits ONLY the game content (icons,
@@ -220,6 +231,42 @@ impl App {
         }
         renderer.render();
     }
+
+}
+
+/// Frame-side heart-wiggle bookkeeping: ANY change in the HUD health — a
+/// regen heal, fall damage, a mob hit, whatever the source — starts a
+/// [`HEART_WIGGLE_SECS`](super::HEART_WIGGLE_SECS) wall-clock wiggle on
+/// exactly the hearts whose half-heart points changed. Returns this frame's
+/// snapshot payload (`(lo, hi, seconds into the burst)`), or `None` when
+/// nothing wiggles. A free function over the two state fields so it composes
+/// with the long-lived `self.game` borrow in `render`.
+fn heart_wiggle_frame(
+    prev_health: &mut Option<i32>,
+    wiggle: &mut Option<super::HeartWiggle>,
+    health: Option<crate::gui::HealthView>,
+    now: f64,
+) -> Option<(i32, i32, f32)> {
+    let current = health.map(|h| h.current);
+    // Both sides must exist: entering/leaving spectator (or the bar first
+    // appearing at world join) is not a heal.
+    if let (Some(prev), Some(cur)) = (*prev_health, current) {
+        if cur != prev {
+            *wiggle = Some(super::HeartWiggle {
+                lo: cur.min(prev),
+                hi: cur.max(prev),
+                started: now,
+            });
+        }
+    }
+    *prev_health = current;
+    let w = (*wiggle)?;
+    let t = now - w.started;
+    if t >= super::HEART_WIGGLE_SECS {
+        *wiggle = None;
+        return None;
+    }
+    Some((w.lo, w.hi, t as f32))
 }
 
 /// The hurt-shake offsets for this frame: camera look jitter (radians), a hand

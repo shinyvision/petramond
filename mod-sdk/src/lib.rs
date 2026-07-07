@@ -255,6 +255,19 @@ pub fn set_block(pos: [i32; 3], block: BlockId) -> bool {
     }
 }
 
+/// Swap the placed multi-cell MODEL block group at `pos` (any of its cells) to
+/// `block` — another model block sharing the exact same oriented footprint
+/// (e.g. a machine's lit/unlit variants). Its container, facing, and section
+/// cell KV survive; the region relights (emission differences glow). Both
+/// blocks must be this mod's own. `false` = no model group there, footprint
+/// mismatch, or unloaded.
+pub fn swap_model_block(pos: [i32; 3], block: BlockId) -> bool {
+    match __rt::host_call(&HostCall::SwapModelBlock { pos, block }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("SwapModelBlock returned {other:?}"),
+    }
+}
+
 /// Batched [`set_block`]; returns how many cells were actually set. Each write
 /// still pays its own relight/remesh — batch the ABI crossing, not a floodfill.
 pub fn set_blocks(blocks: Vec<([i32; 3], BlockId)>) -> u64 {
@@ -422,6 +435,38 @@ pub fn teleport(pos: [f32; 3]) {
     __rt::expect_unit("Teleport", __rt::host_call(&HostCall::Teleport { pos }));
 }
 
+/// Grant the player the status effect `key` (an `effects.json` row — engine
+/// `llama:*` rows and every pack's rows alike) for `ticks` game ticks. An
+/// already-active effect is overwritten with the new duration; `0` removes it.
+/// A state primitive like [`set_health`] — no events fire. `false` = unknown
+/// effect key.
+pub fn effect_apply(key: &str, ticks: u32) -> bool {
+    match __rt::host_call(&HostCall::EffectApply {
+        key: key.into(),
+        ticks,
+    }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("EffectApply returned {other:?}"),
+    }
+}
+
+/// Remove the status effect `key` from the player if active. `false` =
+/// unknown effect key.
+pub fn effect_remove(key: &str) -> bool {
+    match __rt::host_call(&HostCall::EffectRemove { key: key.into() }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("EffectRemove returned {other:?}"),
+    }
+}
+
+/// The player's active status effects, in application order.
+pub fn effects_active() -> Vec<EffectStateData> {
+    match __rt::host_call(&HostCall::EffectsActive) {
+        HostRet::Effects(effects) => effects,
+        other => panic!("EffectsActive returned {other:?}"),
+    }
+}
+
 // --- Phase 3b: sound ----------------------------------------------------------
 
 /// Play a sound by `sounds.json` key. `pos` attenuates by the sound row's
@@ -523,7 +568,10 @@ pub fn section_kv_get(pos: [i32; 3], key: &str) -> Option<Vec<u8>> {
 }
 
 /// Write a per-cell KV entry (own-namespace key required). `false` = the
-/// owning section is unloaded (nothing stored).
+/// owning section is unloaded (nothing stored). Cell KV is per-BLOCK state:
+/// it dies with the block when the cell is broken/replaced (a
+/// `swap_model_block` flip carries it across) — never rely on it outliving
+/// your placed block.
 pub fn section_kv_set(pos: [i32; 3], key: &str, value: Vec<u8>) -> bool {
     match __rt::host_call(&HostCall::SectionKvSet {
         pos,

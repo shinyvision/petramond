@@ -41,7 +41,7 @@ pub(super) fn create_solid_rgba_texture(
 
 /// Shared single-mip sRGB upload + nearest ClampToEdge sampler for arbitrary
 /// standalone RGBA images.
-fn create_rgba_nearest(
+pub(super) fn create_rgba_nearest(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     img: &image::RgbaImage,

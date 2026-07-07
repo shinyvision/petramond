@@ -33,6 +33,7 @@ pub(super) fn build(
     snapshot.container = menu.container;
     snapshot.gui_state = menu.gui_state;
     snapshot.health = game.player_health();
+    snapshot.effects = game.player_effect_icons();
 
     for (i, slot) in snapshot.slots.iter_mut().enumerate() {
         *slot = inv.slot(i).copied().map(stack_tuple);

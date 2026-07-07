@@ -102,6 +102,8 @@ pub struct Game {
     /// input is still read per-frame. ---
     /// Primary button held this frame (mine the looked-at block); re-sampled each frame.
     intent_break_held: bool,
+    /// Secondary button held this frame (sustains an in-progress eat); re-sampled.
+    intent_use_held: bool,
     /// Sneaking this frame (gates right-click interact vs. place); re-sampled each frame.
     intent_sneak: bool,
     /// Gameplay input is live this frame (false while a screen owns focus); re-sampled.
@@ -114,6 +116,10 @@ pub struct Game {
     pending_place: bool,
     held_rotation_item: Option<ItemType>,
     held_block_rotation: u8,
+    /// The in-progress eat (held secondary button on a food item), or `None`.
+    /// Tick-owned: started/advanced/aborted in `tick_place`; the presentation
+    /// reads its progress for the chew animation.
+    eating: Option<item_use::EatingState>,
     /// Item-drop intents latched by input/menu cleanup and applied on the next fixed
     /// tick. Gameplay-visible inventory/cursor mutation and entity spawning happen
     /// together in [`tick_drops`](Self::tick_drops).
