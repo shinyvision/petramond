@@ -17,7 +17,7 @@
 use llamacraft::tooling::biome::Biome;
 use llamacraft::tooling::block::Block;
 use llamacraft::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use llamacraft::tooling::worldgen::generate_chunk;
+use llamacraft::tooling::worldgen::{generate_chunk, macro_surface_map};
 
 /// Highest non-air block in a column + its Y.
 fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
@@ -534,6 +534,29 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, view cam=({cam_x},{cam_y},{cam_z}))");
 }
 
+/// Km-scale overview: biome colour shaded by the base-height relief, sampled
+/// from the climate graph on a stride grid (no chunk generation, so an
+/// 8192-block window renders in seconds). Mountain belts, valley networks and
+/// coast shapes are only visible at this scale.
+fn render_macro(seed: u32, out: &str, stride: i32) {
+    let side = 512usize;
+    let map = macro_surface_map(seed, side, stride.max(1));
+    let mut buf = vec![0u8; side * side * 3];
+    for i in 0..side * side {
+        let mut col = biome_color(map.biomes[i]);
+        let shade = (0.55 + 0.010 * (map.heights[i] - 58.0) as f32).clamp(0.40, 1.45);
+        for c in &mut col {
+            *c = (*c as f32 * shade).clamp(0.0, 255.0) as u8;
+        }
+        buf[i * 3..i * 3 + 3].copy_from_slice(&col);
+    }
+    save(out, &buf, side, side);
+    println!(
+        "wrote {out} ({side}x{side}, seed {seed:#x}, macro stride {stride} = {} blocks/edge)",
+        side as i32 * stride
+    );
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let seed: u32 = args
@@ -554,6 +577,10 @@ fn main() {
 
     match mode.as_str() {
         "biome" => render_topdown(seed, &out, true),
+        // macro <stride>: km-scale biome+relief overview straight from the
+        // climate graph (no chunk gen) — 512 samples/edge, default stride 16
+        // blocks ⇒ an 8192-block window. For world-structure verification.
+        "macro" => render_macro(seed, &out, arg.unwrap_or(16)),
         "side" => render_side(seed, &out, arg.unwrap_or(0), zoom, center_x, proj),
         "shade" => render_shaded(
             seed,

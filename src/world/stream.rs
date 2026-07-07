@@ -681,9 +681,8 @@ impl World {
             }
         }
         for &sp in &affected {
-            // A fully-enclosed opaque section has no visible faces and needs no light, so
-            // settle it immediately instead of queuing work. This also drops a stale border
-            // mesh from when the section was previously at the loaded edge.
+            // An all-air section (the sky band) emits nothing, so settle it immediately
+            // instead of queuing mesh work for it.
             if self.clear_mesh_if_section_produces_no_mesh(sp) {
                 continue;
             }

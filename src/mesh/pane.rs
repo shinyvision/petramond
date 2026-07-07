@@ -18,7 +18,9 @@ use crate::torch::warm_tint;
 
 use super::face::Face;
 use super::plane::cell_uv;
-use super::vertex::{pack_cell_uv, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL};
+use super::vertex::{
+    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
+};
 use super::UV_MODE_SHIFT;
 
 /// What sits directly above/below a pane cell, for per-segment cap culling.
@@ -211,7 +213,8 @@ fn push_face(
                 sky6,
             ) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
             packed2: pack_vertex2(block6)
-                | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
+                | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32)
+                | pack_normal_code(face.normal_code()),
         });
     }
     ibuf.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

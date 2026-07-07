@@ -103,6 +103,8 @@ async fn new_renderer_inner(
             // White sky colour at init = identity; the icon-atlas bake reads
             // this buffer, so baked UI icons stay untinted.
             sky_color: [1.0, 1.0, 1.0, 0.0],
+            // Late-morning sun at full daylight until the sim writes llama:time.
+            sun_dir: super::frame_state::sun_uniform(None),
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -126,6 +128,9 @@ async fn new_renderer_inner(
         &atlas_array_sampler,
     );
     let depth = create_depth(&device, width, height);
+    let scene_color = create_scene_color(&device, width, height, format);
+    let grade_bind =
+        super::super::pipeline::create_grade_bind(&device, &pipelines.grade_bgl, &scene_color);
 
     // Item entities + chests draw through the EXISTING opaque pipeline; clone its
     // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
@@ -414,6 +419,10 @@ async fn new_renderer_inner(
         sky_color: [1.0, 1.0, 1.0],
         opaque_pipe: pipelines.opaque_pipe,
         transparent_pipe: pipelines.transparent_pipe,
+        scene_color,
+        grade_pipe: pipelines.grade_pipe,
+        grade_bgl: pipelines.grade_bgl,
+        grade_bind,
         outline_pipe: pipelines.outline_pipe,
         outline_bind: pipelines.outline_bind,
         outline_vbuf: pipelines.outline_vbuf,
@@ -585,6 +594,12 @@ impl Renderer {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
         self.depth = create_depth(&self.device, width, height);
+        self.scene_color = create_scene_color(&self.device, width, height, self.config.format);
+        self.grade_bind = super::super::pipeline::create_grade_bind(
+            &self.device,
+            &self.grade_bgl,
+            &self.scene_color,
+        );
         self.crosshair_drawn_size = (0, 0);
     }
 }

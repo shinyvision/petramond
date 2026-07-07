@@ -166,7 +166,7 @@ impl Renderer {
     pub(super) fn encode_passes(
         &self,
         enc: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        swapchain: &wgpu::TextureView,
         order: &[VisibleSection],
         opaque_columns: &[(f32, ChunkPos)],
         model_columns: &[(f32, ChunkPos)],
@@ -174,6 +174,11 @@ impl Renderer {
         any_model_visible: bool,
         any_transparent_visible: bool,
     ) {
+        // The world (sky → … → hand) renders into the offscreen scene target;
+        // the grade pass then reads it and writes the swapchain, and screen
+        // chrome (crosshair, UI) draws over the graded image so its colours
+        // stay exact.
+        let view = &self.scene_color;
         let cc = self.clear_color;
         // SKY PASS: full-screen background triangle. The sky shader owns
         // celestials and any day/night colour. The ONLY pass that CLEARS color
@@ -582,11 +587,27 @@ impl Renderer {
                 pass.draw(0..self.item3d_vertex_count, 0..1);
             }
         }
+        // GRADE PASS: full-screen colour grade of the finished world image,
+        // scene texture → swapchain (see grade.wgsl). Everything after this
+        // draws ungraded over the graded world.
+        {
+            let mut pass = color_depth_pass(
+                enc,
+                swapchain,
+                &self.depth,
+                "grade pass",
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
+            pass.set_pipeline(&self.grade_pipe);
+            pass.set_bind_group(0, &self.grade_bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
         // CROSSHAIR PASS: the center invert-blend crosshair. Color Load, NO depth.
         if self.crosshair_vertex_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
-                view,
+                swapchain,
                 &self.depth,
                 "crosshair pass",
                 wgpu::LoadOp::Load,
@@ -606,8 +627,14 @@ impl Renderer {
             || self.ui_vignette_vertex_count > 0
             || !self.doc_ui.batches.is_empty()
         {
-            let mut pass =
-                color_depth_pass(enc, view, &self.depth, "ui pass", wgpu::LoadOp::Load, None);
+            let mut pass = color_depth_pass(
+                enc,
+                swapchain,
+                &self.depth,
+                "ui pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
             pass.set_pipeline(&self.ui_pipe);
             // 0) Hurt-flash edge vignette, under all chrome (solid gradient
             //    quads; the solid sentinel skips the sampler, any bind works).
@@ -642,7 +669,7 @@ impl Renderer {
         {
             let mut pass = color_depth_pass(
                 enc,
-                view,
+                swapchain,
                 &self.depth,
                 "ui overlay / drag pass",
                 wgpu::LoadOp::Load,

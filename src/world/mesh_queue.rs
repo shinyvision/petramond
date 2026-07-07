@@ -121,12 +121,6 @@ impl World {
             if !self.sections.contains_key(&pos) {
                 continue;
             }
-            // Deep-stone fast path: a fully-opaque section walled in by fully-opaque
-            // neighbours has no visible faces. Skip meshing, lighting, GPU upload, and
-            // drawing it entirely (drop any stale mesh) — it stays stored so the visible
-            // sections above cull against it and the player can still dig in. Carving air
-            // into it or a neighbour re-dirties it (`set_block_world`'s neighbourhood mark),
-            // bringing it back through here as a real mesh.
             // Hidden deep section: nothing can see it — park it out of the hot
             // queue (its light parks with it, since light is mesh-demanded). The
             // visibility refresh re-queues it the moment a sightline can reach it.
@@ -134,6 +128,8 @@ impl World {
                 self.hidden_parked.insert(pos);
                 continue;
             }
+            // All-air sections emit nothing: settle them (dropping any ghost mesh)
+            // instead of meshing.
             if self.clear_mesh_if_section_produces_no_mesh(pos) {
                 if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
@@ -173,40 +169,12 @@ impl World {
     }
 
     /// Whether `pos` produces no visible geometry, so meshing/lighting/drawing it is pure
-    /// waste: it is either entirely air (emits nothing), or SEALED — every neighbour's
-    /// 16×16 plane adjoining it is fully opaque. A section's mesh can only be seen
-    /// through a non-opaque cell in one of those planes: a sightline into its interior
-    /// air must cross one, and a boundary face is only emitted (and only viewable) where
-    /// the adjoining neighbour cell is non-opaque. The centre's own content is
-    /// irrelevant, so buried MIXED sections (sealed caves, water lenses) settle too, not
-    /// just solid stone. Re-exposure is already wired: any edit or newly streamed
-    /// neighbour re-dirties the full 3×3×3, which re-runs this test. Neighbours answer
-    /// from an exact plane scan when loaded (with counter fast paths) or from generated
-    /// section summaries; truly unknown neighbours still count as open.
+    /// waste: it is entirely air (the empty-sky band) and emits nothing. This is the exact
+    /// counter-based case ONLY. The neighbour-plane "sealed section" skip that used to
+    /// live here was removed on 2026-07-06 after playtests traced black (unlit) faces to
+    /// section culling — do not reintroduce it here; see WIKI/rendering-performance.md.
     pub(super) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
-        let Some(s) = self.sections.get(&pos) else {
-            return false;
-        };
-        if s.is_empty_air() {
-            return true;
-        }
-        const FACES: [(i32, i32, i32); 6] = [
-            (1, 0, 0),
-            (-1, 0, 0),
-            (0, 1, 0),
-            (0, -1, 0),
-            (0, 0, 1),
-            (0, 0, -1),
-        ];
-        FACES.iter().all(|&(dx, dy, dz)| {
-            let npos = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-            match self.sections.get(&npos) {
-                // The neighbour plane adjoining the centre faces the opposite way
-                // to the outward step direction.
-                Some(n) => n.face_plane_fully_opaque(-dx, -dy, -dz),
-                None => self.section_summary(npos).is_full_opaque(),
-            }
-        })
+        self.sections.get(&pos).is_some_and(|s| s.is_empty_air())
     }
 
     /// Clear stale render output for a section that now intentionally emits no mesh.
@@ -478,10 +446,9 @@ mod tests {
 
     use crate::biome::Biome;
     use crate::block::Block;
-    use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
+    use crate::chunk::SectionPos;
     use crate::section::Section;
     use crate::world::store::LoadTarget;
-    use crate::worldgen::driver::ChunkGenerator;
 
     use super::{DirtyMeshQueue, World};
 
@@ -496,13 +463,6 @@ mod tests {
     fn insert_solid_section(world: &mut World, pos: SectionPos) {
         world.ensure_column(pos.chunk_pos());
         world.sections.insert(pos, Arc::new(solid_section(pos)));
-    }
-
-    fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
-        world.ensure_column(pos);
-        world
-            .column_gen
-            .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
     }
 
     #[test]
@@ -577,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn no_mesh_transition_removes_stale_border_mesh() {
+    fn all_air_transition_removes_stale_ghost_mesh() {
         let mut world = World::new(0, 0);
         let center = SectionPos::new(0, 0, 0);
         insert_solid_section(&mut world, center);
@@ -589,33 +549,28 @@ mod tests {
             "a solid section with missing neighbours meshes its exposed border"
         );
 
-        for (dx, dy, dz) in [
-            (1, 0, 0),
-            (-1, 0, 0),
-            (0, 1, 0),
-            (0, -1, 0),
-            (0, 0, 1),
-            (0, 0, -1),
-        ] {
-            let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
-            insert_solid_section(&mut world, pos);
-        }
-
-        let before_revision = world.sections.get(&center).unwrap().mesh_revision;
+        // Mine the section out entirely: all-air emits nothing.
+        let before_revision = {
+            let s = world.section_mut(center).unwrap();
+            s.blocks_slice_mut().fill(Block::Air.id());
+            s.recompute_random_tick_count();
+            s.recompute_opaque_count();
+            s.mesh_revision
+        };
         assert!(
             world.clear_mesh_if_section_produces_no_mesh(center),
-            "the enclosed section should settle to no render output"
+            "the all-air section should settle to no render output"
         );
         assert!(
             world
                 .sections
                 .get(&center)
                 .is_some_and(|s| s.mesh_revision > before_revision),
-            "settling to no-mesh must invalidate in-flight exposed-border jobs"
+            "settling to no-mesh must invalidate in-flight jobs built from the old blocks"
         );
         assert!(
             !world.meshes.contains_key(&center),
-            "stale exposed-border mesh must be removed"
+            "stale ghost mesh must be removed"
         );
         assert!(
             world
@@ -626,36 +581,27 @@ mod tests {
     }
 
     #[test]
-    fn generated_full_opaque_summaries_enclose_solid_section_with_loaded_vertical_neighbors() {
-        let seed = 0x51EED;
-        let generator = ChunkGenerator::new(seed);
-        let mut world = World::new(seed, 0);
-        let center = SectionPos::new(0, SECTION_MIN_CY + 1, 0);
+    fn buried_mixed_sections_are_not_sealed_away() {
+        // Regression guard for the removed neighbour-plane "sealed section" skip: a
+        // buried section between solid neighbours must still schedule mesh+light work
+        // (its light is a seam-sampling dependency for meshed neighbours; skipping it
+        // rendered adjoining faces black).
+        let mut world = World::new(0, 0);
+        let center = SectionPos::new(0, 0, 0);
         insert_solid_section(&mut world, center);
-        insert_solid_section(&mut world, SectionPos::new(0, center.cy - 1, 0));
-        insert_solid_section(&mut world, SectionPos::new(0, center.cy + 1, 0));
-
-        for pos in [
-            ChunkPos::new(0, 0),
-            ChunkPos::new(1, 0),
-            ChunkPos::new(-1, 0),
-            ChunkPos::new(0, 1),
-            ChunkPos::new(0, -1),
+        for (dx, dy, dz) in [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
         ] {
-            install_column_summary(&mut world, &generator, pos);
+            insert_solid_section(&mut world, SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz));
         }
-
         assert!(
-            world.section_produces_no_mesh(center),
-            "known-solid generated horizontal summaries should suppress loaded-edge deep stone"
-        );
-        assert!(
-            world.clear_mesh_if_section_produces_no_mesh(center),
-            "summary-enclosed deep stone should settle without meshing"
-        );
-        assert!(
-            !world.meshes.contains_key(&center),
-            "summary-enclosed deep stone must not leave render output"
+            !world.section_produces_no_mesh(center),
+            "only all-air sections settle to no output; enclosure must not seal a section"
         );
     }
 }

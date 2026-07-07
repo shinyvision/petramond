@@ -8,7 +8,9 @@ use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::builder::face_axes;
 use super::face::{Face, FACES};
-use super::vertex::{pack_vertex, pack_vertex2, Vertex, UV_MODE_NONE, UV_MODE_SHIFT};
+use super::vertex::{
+    pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
+};
 
 // Long greedy edges can meet subdivided neighbour faces as T-junctions; a tiny tangent-only
 // overlap covers the rasterizer crack without moving the face plane or affecting water.
@@ -215,7 +217,7 @@ fn push_greedy_quad(
                 key.ao,
                 key.light6,
             ) | (UV_MODE_NONE << UV_MODE_SHIFT),
-            packed2: pack_vertex2(key.block6),
+            packed2: pack_vertex2(key.block6) | pack_normal_code(face.normal_code()),
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

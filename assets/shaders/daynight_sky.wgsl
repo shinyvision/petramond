@@ -99,17 +99,47 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
     let night = 1.0 - daylight;
     let ray = sky_ray(in.ndc);
 
-    let horizon = u.fog_color.rgb;
-    let day_zenith = vec3<f32>(0.18, 0.46, 1.0);
-    let night_zenith = vec3<f32>(0.006, 0.010, 0.032);
-    let zenith = mix(night_zenith, day_zenith * sky_scale * u.sky_color.rgb, daylight);
-    let up = clamp(ray.y, 0.0, 1.0);
-    let grad_t = smoothstep(0.0, 0.9, pow(up, 0.72));
-    var color = mix(horizon, zenith, grad_t);
-
     let angle = TAU * day_fraction;
     let sun_dir = normalize(vec3<f32>(cos(angle), sin(angle), ARC_TILT));
     let moon_dir = normalize(vec3<f32>(-cos(angle), -sin(angle), ARC_TILT));
+    let toward = max(dot(ray, sun_dir), 0.0);
+
+    // Twilight: strongest with the sun at the horizon, gone once it is well up
+    // or well below. Drives the dawn/dusk horizon warmth.
+    let twilight = (1.0 - smoothstep(0.0, 0.35, abs(sun_dir.y)))
+        * smoothstep(-0.30, 0.02, sun_dir.y);
+
+    // Horizon: the biome fog colour pushed toward its own hue and lifted, then
+    // warmed toward the sun (mirror of atmosphere.wgsl's haze-colour formula
+    // and sun-glow constants — keep in sync, so the terrain haze meets the sky
+    // invisibly), then pushed toward peach around sunrise/sunset on the sun's
+    // side of the sky.
+    let fog_luma = dot(u.fog_color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    var haze = (u.fog_color.rgb
+        + (u.fog_color.rgb - vec3<f32>(fog_luma)) * vec3<f32>(0.0, 0.12, 0.55)) * 1.04;
+    // Hue-preserving gamut clip — mirror of atmosphere.wgsl.
+    haze /= max(1.0, max(haze.r, max(haze.g, haze.b)));
+    let glow = pow(toward, 8.0) * daylight * 0.70;
+    var horizon = mix(haze, haze * vec3<f32>(1.22, 1.04, 0.84), glow);
+    let twilight_tint = vec3<f32>(1.05, 0.62, 0.38);
+    let tw_facing = twilight * (0.25 + 0.75 * pow(toward, 2.0));
+    horizon = mix(horizon, twilight_tint * max(max(horizon.r, horizon.g), horizon.b), tw_facing);
+
+    // Three-stop gradient: horizon → a lighter airy belt just above it → the
+    // deep zenith. The belt is what keeps the sky luminous instead of a flat
+    // two-colour ramp.
+    let day_zenith = vec3<f32>(0.14, 0.42, 1.0);
+    let night_zenith = vec3<f32>(0.006, 0.010, 0.032);
+    let day_belt = vec3<f32>(0.38, 0.64, 1.0);
+    let night_belt = vec3<f32>(0.012, 0.018, 0.052);
+    let day_light = sky_scale * u.sky_color.rgb;
+    let zenith = mix(night_zenith, day_zenith * day_light, daylight);
+    let belt = mix(night_belt, day_belt * day_light, daylight);
+    let up = clamp(ray.y, 0.0, 1.0);
+    let up_pow = pow(up, 0.62);
+    let t_belt = smoothstep(0.0, 0.30, up_pow);
+    let t_zenith = smoothstep(0.28, 0.95, up_pow);
+    var color = mix(mix(horizon, belt, t_belt), zenith, t_zenith);
 
     let sun_sprite = sprite_uv(ray, sun_dir, SUN_RADIUS);
     let sun_sample = textureSample(sun_tex, sun_samp, sun_sprite.uv);

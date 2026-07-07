@@ -27,6 +27,8 @@ struct Uniforms {
     // rgb = sim-owned sky light COLOUR (white = identity; night tints subtly
     // blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,
+    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
+    sun_dir: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -49,8 +51,11 @@ struct VsOut {
     @location(0) uv:    vec2<f32>,
     @location(1) shade: f32,
     @location(2) tint:  vec3<f32>,
-    // Distance from the camera, for the same distance fog the world uses.
-    @location(3) dist:  f32,
+    // Fragment − camera in render-local space: distance AND view direction for
+    // the same atmosphere the world uses.
+    @location(3) view:  vec3<f32>,
+    // Absolute world height, for the atmosphere's altitude thinning.
+    @location(4) world_y: f32,
 };
 
 @vertex
@@ -63,7 +68,8 @@ fn vs_mob(in: VsIn) -> VsOut {
     out.uv = in.uv;
     out.shade = in.shade;
     out.tint = in.tint;
-    out.dist = length(u.cam_pos.xyz - local_pos);
+    out.view = local_pos - u.cam_pos.xyz;
+    out.world_y = in.pos.y;
     return out;
 }
 
@@ -74,15 +80,26 @@ fn fs_mob(in: VsOut) -> @location(0) vec4<f32> {
     // zero-area faces never paint stray pixels.
     if (tex_color.a < 0.5) { discard; }
     var color = tex_color.rgb * in.shade * in.tint;
-    // Underwater: the same blue darkening multiply the world applies, so a submerged
-    // mob doesn't stay vividly lit against the murk.
+    // Underwater: the same blue darkening multiply + tight linear murk the world
+    // applies, so a submerged mob doesn't stay vividly lit against the murk.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
-    // Distance fog (underwater swaps in a short, murky-blue fog on the CPU), so a mob
-    // fades into the fog exactly like the blocks behind it.
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    let out = mix(color, u.fog_color.rgb, f);
+    // The same atmosphere as the terrain, so a mob hazes out with the blocks
+    // behind it.
+    let out = atmosphere_apply(
+        color,
+        in.view,
+        in.world_y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(out, 1.0);
 }
 
@@ -111,8 +128,9 @@ struct WmOut {
     @location(0) uv:    vec2<f32>,
     @location(1) shade: f32,
     @location(2) tint:  vec3<f32>,
-    @location(3) dist:  f32,
+    @location(3) view:  vec3<f32>,
     @location(4) light: vec2<f32>,
+    @location(5) world_y: f32,
 };
 
 @vertex
@@ -123,7 +141,8 @@ fn vs_world_model(in: WmIn) -> WmOut {
     out.uv = in.uv;
     out.shade = in.shade;
     out.tint = in.tint;
-    out.dist = length(u.cam_pos.xyz - local_pos);
+    out.view = local_pos - u.cam_pos.xyz;
+    out.world_y = in.pos.y;
     out.light = in.light;
     return out;
 }
@@ -140,8 +159,19 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     var color = tex_color.rgb * in.shade * in.tint * lit;
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    let out = mix(color, u.fog_color.rgb, f);
+    let out = atmosphere_apply(
+        color,
+        in.view,
+        in.world_y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(out, 1.0);
 }

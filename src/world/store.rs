@@ -23,7 +23,7 @@ use super::light::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
 use super::tick::TickState;
 
-pub const RENDER_DIST: i32 = 16;
+pub const RENDER_DIST: i32 = 32;
 
 /// Vertical load radius (in 16³ sections) around the player's section: the world
 /// streams a flattened cylinder — a Euclidean horizontal disc of columns × this many

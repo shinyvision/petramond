@@ -184,8 +184,11 @@ mod tests {
     }
 
     fn assert_close(a: [f32; 3], b: [f32; 3]) {
+        // Tolerance is f32 summed-area drift, not exactness: the SAT subtracts
+        // large running sums, so the last bits depend on the palette values
+        // themselves. Real algorithmic breakage differs at percent level.
         for i in 0..3 {
-            assert!((a[i] - b[i]).abs() < 0.00001, "{a:?} != {b:?}");
+            assert!((a[i] - b[i]).abs() < 0.0001, "{a:?} != {b:?}");
         }
     }
 

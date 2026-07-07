@@ -19,6 +19,10 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
+    water_anim: vec4<u32>,
+    sky_color: vec4<f32>,
+    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
+    sun_dir: vec4<f32>,
 };
 
 // Underwater multiply tint — kept in sync with block.wgsl so dust submerged with
@@ -46,7 +50,11 @@ struct VsOut {
     @location(1) tint: vec3<f32>,
     @location(2) shade: f32,
     @location(3) alpha: f32,
-    @location(4) dist: f32,
+    // Fragment − camera in render-local space: distance AND view direction for
+    // the same atmosphere the world uses.
+    @location(4) view: vec3<f32>,
+    // Absolute world height, for the atmosphere's altitude thinning.
+    @location(5) world_y: f32,
 };
 
 @vertex
@@ -58,8 +66,8 @@ fn vs_particle(in: VsIn) -> VsOut {
     out.tint = in.tint;
     out.shade = in.shade;
     out.alpha = in.alpha;
-    // World-space camera distance, for the fog fade in the fragment stage.
-    out.dist = length(u.cam_pos.xyz - local_pos);
+    out.view = local_pos - u.cam_pos.xyz;
+    out.world_y = in.pos.y;
     return out;
 }
 
@@ -74,15 +82,25 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     // shade = per-face directional shading; tint multiplies the atlas colour
     // (white = no change; foliage-green greens a grass/leaf fleck).
     var color = tex.rgb * in.tint * in.shade;
-    // Submerged with the player: blue darkening to match the underwater terrain.
+    // Submerged with the player: blue darkening + tight murk fog to match the
+    // underwater terrain; in air, the same atmosphere as the terrain, so a break
+    // burst hazes out with the surrounding blocks instead of staying crisp.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
-    // Fog fade toward fog_color on the same curve as the terrain (block.wgsl), so a
-    // break burst fades into the (tight blue underwater, or distance) fog with the
-    // surrounding blocks instead of staying crisp in the murk.
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    color = mix(color, u.fog_color.rgb, f);
+    color = atmosphere_apply(
+        color,
+        in.view,
+        in.world_y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(color, 1.0);
 }
 
@@ -91,8 +109,19 @@ fn fs_particle_transparent(in: VsOut) -> @location(0) vec4<f32> {
     var color = in.tint * in.shade;
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), clamp(in.alpha, 0.0, 1.0));
     }
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    color = mix(color, u.fog_color.rgb, f);
+    color = atmosphere_apply(
+        color,
+        in.view,
+        in.world_y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(color, clamp(in.alpha, 0.0, 1.0));
 }

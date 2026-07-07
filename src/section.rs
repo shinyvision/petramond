@@ -31,11 +31,6 @@ pub enum SectionSummary {
 
 impl SectionSummary {
     #[inline]
-    pub fn is_full_opaque(self) -> bool {
-        matches!(self, SectionSummary::FullOpaque)
-    }
-
-    #[inline]
     pub fn virtual_block(self) -> Block {
         match self {
             SectionSummary::FullOpaque => Block::Stone,
@@ -92,16 +87,14 @@ pub struct Section {
     /// incrementally by every setter; the simulation skips the section when `0`.
     random_tick_count: u32,
     /// Count of OPAQUE cells. Maintained incrementally like `random_tick_count`. When it
-    /// equals the section volume the section is fully solid: enclosed by other fully-solid
-    /// sections it has no visible faces, so meshing, lighting, GPU upload, and per-frame
-    /// drawing can all be skipped (the deep-stone fast path) until something carves air
-    /// into it or a neighbour.
+    /// equals the section volume the section is fully solid: its cells carry no light, so
+    /// neighbours' mesh jobs skip waiting on (and requesting) its light bake.
     opaque_count: u32,
     /// Opaque cells per 16×16 boundary plane, order [+X, −X, +Y, −Y, +Z, −Z].
     /// A count of 256 means that face of the section is fully walled: no sightline
     /// can cross it and every boundary face behind it is culled. Maintained by the
-    /// setters and `recompute_opaque_count`; read by the sealed-section skip and
-    /// the deep-section visibility BFS as O(1) plane-openness.
+    /// setters and `recompute_opaque_count`; read by the deep-section visibility
+    /// BFS as O(1) plane-openness.
     plane_opaque: [u16; 6],
     /// Count of NON-AIR cells. `0` ⇒ the section is empty air, which emits no mesh faces
     /// at all (air draws nothing; solid neighbours draw their own faces toward it), so it
@@ -447,9 +440,8 @@ impl Section {
 
     /// Whether this section's 16×16 boundary plane facing `(dx,dy,dz)` (one unit axis
     /// step) is fully opaque. A fully-opaque plane admits no sightline across that face
-    /// and culls every boundary face behind it, so six such planes seal the adjoining
-    /// section — the buried-section mesh/light skip builds on this. O(1) from the
-    /// per-plane counters.
+    /// and culls every boundary face behind it; the deep-section visibility BFS treats
+    /// such planes as closed. O(1) from the per-plane counters.
     #[inline]
     pub fn face_plane_fully_opaque(&self, dx: i32, dy: i32, dz: i32) -> bool {
         const PLANE_AREA: u16 = (SECTION_SIZE * SECTION_SIZE) as u16;

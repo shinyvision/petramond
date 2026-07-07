@@ -48,6 +48,22 @@ impl Face {
         }
     }
 
+    /// Face-normal code for `Vertex::packed2` bits 16..19 (see
+    /// [`super::vertex::pack_normal_code`]): 1..=6 in `Face::ALL` order. Code 0
+    /// is reserved for "neutral" geometry with no meaningful world-space face
+    /// direction (cross plants, torches, dynamic props) — the shader falls back
+    /// to the classic `SHADES` table for it instead of sun N·L shading.
+    pub(crate) fn normal_code(self) -> u32 {
+        match self {
+            Face::PosX => 1,
+            Face::NegX => 2,
+            Face::PosY => 3,
+            Face::NegY => 4,
+            Face::PosZ => 5,
+            Face::NegZ => 6,
+        }
+    }
+
     /// First tangent axis (unit vector) used when sampling AO occluders -- one of
     /// the two world axes perpendicular to the face normal.
     pub(super) fn ao_u(self) -> (i32, i32, i32) {

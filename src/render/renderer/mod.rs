@@ -37,7 +37,7 @@ use super::particles::{build_particles_split, build_transparent_emitter_particle
 use super::pipeline::create_pipeline_resources;
 use super::resources::{
     create_atlas, create_atlas_array, create_depth, create_gui_panel, create_model_texture,
-    upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
+    create_scene_color, upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
@@ -149,6 +149,12 @@ pub struct Renderer {
     sky_color: [f32; 3],
     opaque_pipe: wgpu::RenderPipeline,
     transparent_pipe: wgpu::RenderPipeline,
+    /// Offscreen scene-colour target the world passes render into; the grade
+    /// pass reads it and writes the swapchain. Recreated with `depth` on resize.
+    scene_color: wgpu::TextureView,
+    grade_pipe: wgpu::RenderPipeline,
+    grade_bgl: wgpu::BindGroupLayout,
+    grade_bind: wgpu::BindGroup,
     /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
     outline_pipe: wgpu::RenderPipeline,
     outline_bind: wgpu::BindGroup,

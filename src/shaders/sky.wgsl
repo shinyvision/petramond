@@ -1,6 +1,8 @@
-// Full-screen sky background. The horizon starts at the current biome fog colour
-// so distant terrain and sky meet cleanly; upward view rays blend into a deeper
-// blue.
+// Full-screen sky background (the BUILTIN fallback — packs normally replace it
+// with daynight_sky.wgsl). The horizon starts at the current biome fog colour so
+// distant terrain and sky meet cleanly; upward view rays blend into a deeper
+// blue. pipeline.rs prepends atmosphere.wgsl so the horizon warms toward the sun
+// with the same glow the terrain haze uses.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -11,6 +13,7 @@ struct Uniforms {
     render_origin: vec4<f32>,
     water_anim: vec4<u32>,
     sky_color: vec4<f32>, // rgb = sim sky-light colour (white = identity)
+    sun_dir: vec4<f32>,   // xyz = unit sun direction, w = daylight [0,1]
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -51,8 +54,10 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
     // scale AND tints by the sky colour (game::environment); the zenith dims/
     // tints here by the same lanes (fog_color.w, sky_color.rgb) so the whole
     // gradient darkens coherently at night. Exact identity at scale 1.0 + white.
-    let horizon = u.fog_color.rgb;
-    let zenith = vec3<f32>(0.18, 0.46, 1.0) * u.fog_color.w * u.sky_color.rgb;
+    // Warmed toward the sun with the terrain haze's glow so the fog seam at the
+    // terrain limit stays invisible looking sunward.
+    let horizon = atmosphere_haze_color(ray, u.fog_color.rgb, u.sun_dir.xyz, u.sun_dir.w);
+    let zenith = vec3<f32>(0.14, 0.42, 1.0) * u.fog_color.w * u.sky_color.rgb;
     let up = clamp(ray.y, 0.0, 1.0);
     let t = smoothstep(0.0, 0.85, pow(up, 0.72));
     let color = mix(horizon, zenith, t);

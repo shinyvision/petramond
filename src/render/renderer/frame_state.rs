@@ -16,6 +16,28 @@ const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 6;
 const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);
 const RENDER_ORIGIN_GRID: f32 = 16.0;
 
+/// Tilt of the sun/moon arc out of the east–west vertical plane. Mirror of
+/// `ARC_TILT` in `assets/shaders/daynight_sky.wgsl` — keep in sync, or the
+/// terrain haze's sun-glow drifts off the drawn sun sprite.
+const SUN_ARC_TILT: f32 = 0.15;
+
+/// The atmosphere's sun lane: unit sun direction (xyz) + daylight (w), derived
+/// from the engine-owned `llama:time` shader param (`[fraction, daylight,
+/// moon_phase, 0]`, see WIKI/day-night.md) with the same arc formula as
+/// `daynight_sky.wgsl`. Without a day/night cycle the sun holds late morning at
+/// full daylight.
+pub(super) fn sun_uniform(
+    shader_params: Option<&crate::world::environment::ShaderParamMap>,
+) -> [f32; 4] {
+    let (fraction, daylight) = shader_params
+        .and_then(|params| params.get("llama:time"))
+        .map(|time| (time[0].fract(), time[1].clamp(0.0, 1.0)))
+        .unwrap_or((0.25, 1.0));
+    let angle = std::f32::consts::TAU * fraction;
+    let dir = glam::Vec3::new(angle.cos(), angle.sin(), SUN_ARC_TILT).normalize();
+    [dir.x, dir.y, dir.z, daylight]
+}
+
 #[inline]
 fn render_origin_for_camera(pos: glam::Vec3) -> glam::Vec3 {
     (pos / RENDER_ORIGIN_GRID).floor() * RENDER_ORIGIN_GRID
@@ -105,6 +127,7 @@ impl Renderer {
                 effective_sky_color[2],
                 0.0,
             ],
+            sun_dir: sun_uniform(shader_params),
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));

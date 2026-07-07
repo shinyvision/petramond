@@ -1,11 +1,12 @@
 //! Foliage placers — build a tree's leaves around the trunk's attach points.
 //!
-//! Each placer is a *family* of canopy shape (broadleaf blob, conifer cone,
-//! droopy swamp, flat umbrella). The per-tree differences — width, raggedness,
-//! drip chance — are FIELDS on the placer, so a new look is a data row in
-//! `data::features` (a new `BlobFoliage { .. }`), not a new impl. A genuinely
-//! new *shape* (different layer profile, entangled branches) is a new placer or
-//! a bespoke `Feature` instead.
+//! Each placer is a *family* of canopy shape (conifer cone, droopy swamp, flat
+//! umbrella). The per-tree differences — width, raggedness, drip chance — are
+//! FIELDS on the placer, so a new look is a data row in `data::features`, not a
+//! new impl. A genuinely new *shape* (different layer profile, entangled
+//! branches) is a new placer or a bespoke `Feature` instead. Broadleaf trees
+//! (oak/birch/jungle/dark-oak/cherry) no longer use a placer pair at all — they
+//! are `tree::CanopyTreeFeature` skeletons.
 //!
 //! Iteration order and the per-cell RNG draws are fixed so cross-chunk seam
 //! replay stays deterministic (a tree rooted in a neighbour materialises
@@ -54,53 +55,6 @@ fn leaf_layer(
 fn plus_ring(ctx: &mut FeatureCtx, cx: i32, y: i32, cz: i32, leaf: Block) {
     for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
         ctx.set_leaf(IVec3::new(cx + dx, y, cz + dz), leaf);
-    }
-}
-
-/// Broadleaf-oak-style blob canopy: four square leaf layers attaching one block
-/// ABOVE the top log (`topY = topLog + 1`), running `topY-3 ..= topY`. The two
-/// BOTTOM layers use `base_radius`, the two TOP layers use `top_radius` (a
-/// fuller, rounder blob than a single wide layer). The ONLY cells ever removed
-/// are the four extreme corners (`|dx|==r && |dz|==r`): always on the very top
-/// layer, and with probability `corner_cut` on the others. (We deliberately do
-/// NOT trim the whole outer ring — that over-thins the canopy into a scraggly
-/// look.) Shared by oak/birch (small) and jungle/dark-oak/cherry (large); a new
-/// width or raggedness is a new data row, not a new impl.
-///
-/// `base_radius` / `top_radius` must be ≥ 1.
-pub struct BlobFoliage {
-    pub base_radius: i32,
-    pub top_radius: i32,
-    pub corner_cut: f32,
-}
-
-impl FoliagePlacer for BlobFoliage {
-    fn place(&self, ctx: &mut FeatureCtx, attach: &[IVec3], leaf: Block, rng: &mut FeatureRng) {
-        let a = attach[0];
-        let top_y = a.y + 1; // leaves attach one block above the highest log
-                             // (dy from top, layer radius) bottom→top: wide, wide, narrow, narrow.
-        let layers = [
-            (-3, self.base_radius),
-            (-2, self.base_radius),
-            (-1, self.top_radius),
-            (0, self.top_radius),
-        ];
-        for (dy, lr) in layers {
-            let y = top_y + dy;
-            let is_top = dy == 0;
-            for lx in -lr..=lr {
-                for lz in -lr..=lr {
-                    if lx.abs() == lr && lz.abs() == lr {
-                        // Only the 4 extreme corners are removable: always on the
-                        // top layer, `corner_cut` elsewhere (one draw per corner).
-                        if is_top || rng.chance(self.corner_cut) {
-                            continue;
-                        }
-                    }
-                    ctx.set_leaf(IVec3::new(a.x + lx, y, a.z + lz), leaf);
-                }
-            }
-        }
     }
 }
 

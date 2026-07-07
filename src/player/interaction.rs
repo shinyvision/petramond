@@ -109,8 +109,7 @@ impl Player {
         } else if hit_block.render_shape() == RenderShape::Pane {
             // A pane outlines its resolved post + arm runs, so the wireframe hugs
             // the connected shape the mesher drew, not the bare-post default.
-            let (boxes, len) =
-                crate::pane::world_boxes(hit.block, world.pane_boxes_at(hit.block));
+            let (boxes, len) = crate::pane::world_boxes(hit.block, world.pane_boxes_at(hit.block));
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };

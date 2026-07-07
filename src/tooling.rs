@@ -50,6 +50,57 @@ pub mod worldgen {
         crate::worldgen::generate_chunk(seed, cx, cz)
     }
 
+    /// A kilometre-scale surface overview sampled straight from the climate
+    /// graph (no chunk generation): per grid point the classified biome id and
+    /// the base surface height. `side` points per edge, `stride` blocks apart,
+    /// centred on the origin — for verifying world-scale structure (mountain
+    /// belts, valley networks) that a chunk-sized genmap window cannot show.
+    pub struct MacroSurfaceMap {
+        pub side: usize,
+        pub biomes: Vec<u8>,
+        pub heights: Vec<f64>,
+    }
+
+    pub fn macro_surface_map(seed: u32, side: usize, stride: i32) -> MacroSurfaceMap {
+        use crate::worldgen::biome::climate::{
+            BiomeClimateIndex, ClimateSampleCell, ClimateSampler,
+        };
+        use crate::worldgen::density::terrain::{channels, TerrainDensitySpec};
+        use crate::worldgen::graph::SamplePoint;
+
+        let graph = TerrainDensitySpec::default_surface().build_graph(seed);
+        let index = BiomeClimateIndex::default_surface();
+        let sampler = ClimateSampler::new(graph.graph());
+        let half = (side as i32 / 2) * stride;
+        let mut biomes = Vec::with_capacity(side * side);
+        let mut heights = Vec::with_capacity(side * side);
+        for gz in 0..side as i32 {
+            for gx in 0..side as i32 {
+                let wx = gx * stride - half;
+                let wz = gz * stride - half;
+                let biome = sampler
+                    .sample_surface_cell(ClimateSampleCell::surface(wx, wz))
+                    .and_then(|sample| index.classify_surface(sample.climate))
+                    .map(|b| b as u8)
+                    .unwrap_or(0);
+                let height = graph
+                    .graph()
+                    .evaluate_channel(
+                        channels::BASE_HEIGHT,
+                        SamplePoint::new(f64::from(wx), 0.0, f64::from(wz)),
+                    )
+                    .unwrap_or(0.0);
+                biomes.push(biome);
+                heights.push(height);
+            }
+        }
+        MacroSurfaceMap {
+            side,
+            biomes,
+            heights,
+        }
+    }
+
     pub fn feature_preview_names() -> &'static [&'static str] {
         &[
             "redwood",

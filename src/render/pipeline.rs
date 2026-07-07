@@ -234,6 +234,11 @@ pub(super) struct PipelineResources {
     pub sky_light_param_key: Option<String>,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
+    /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
+    /// the swapchain (see `grade.wgsl`). The bind group over the scene view is
+    /// built by [`create_grade_bind`] (and rebuilt on resize).
+    pub grade_pipe: wgpu::RenderPipeline,
+    pub grade_bgl: wgpu::BindGroupLayout,
     pub outline_pipe: wgpu::RenderPipeline,
     pub outline_bind: wgpu::BindGroup,
     pub outline_vbuf: wgpu::Buffer,
@@ -352,7 +357,14 @@ pub(super) fn create_pipeline_resources(
 ) -> PipelineResources {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("block shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/block.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("../shaders/cel.wgsl"),
+                include_str!("../shaders/atmosphere.wgsl"),
+                include_str!("../shaders/block.wgsl")
+            )
+            .into(),
+        ),
     });
     let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("crosshair shader"),
@@ -483,6 +495,7 @@ pub(super) fn create_pipeline_resources(
     let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
     let model_icon_pipe =
         create_model_icon_pipeline(device, format, sample_count, &shared.atlas_bgl);
+    let (grade_pipe, grade_bgl) = create_grade_pipeline(device, format, sample_count);
 
     PipelineResources {
         atlas_array_bind: shared.atlas_array_bind,
@@ -496,6 +509,8 @@ pub(super) fn create_pipeline_resources(
         sky_light_param_key: sky.light_param_key,
         opaque_pipe,
         transparent_pipe,
+        grade_pipe,
+        grade_bgl,
         outline_pipe,
         outline_bind,
         outline_vbuf,
@@ -925,7 +940,14 @@ fn create_sky_pipeline(
     );
     let builtin_sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("built-in sky shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("../shaders/cel.wgsl"),
+                include_str!("../shaders/atmosphere.wgsl"),
+                include_str!("../shaders/sky.wgsl")
+            )
+            .into(),
+        ),
     });
     let sky_pipe_for = |shader: &wgpu::ShaderModule| {
         world_pipeline(
@@ -979,6 +1001,85 @@ fn create_sky_pipeline(
         shader_param_keys: sky_shader_param_keys,
         light_param_key: sky_light_param_key,
     }
+}
+
+/// Full-screen colour-grade pipeline (`grade.wgsl`): one texture binding (the
+/// offscreen scene target, read with `textureLoad` — no sampler), no vertex
+/// buffers, no depth. Draws AFTER the world's hand pass and BEFORE the
+/// crosshair/UI passes so screen chrome stays ungraded.
+fn create_grade_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("grade shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grade.wgsl").into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("grade bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("grade layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+    let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("grade pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_grade"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_grade"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    });
+    (pipe, bgl)
+}
+
+/// The grade pass's bind group over the current offscreen scene view. Rebuilt
+/// whenever the scene texture is recreated (init + every resize).
+pub(super) fn create_grade_bind(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    scene_view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("grade bind"),
+        layout: bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(scene_view),
+        }],
+    })
 }
 
 /// Selection-outline pipeline.
@@ -1399,7 +1500,14 @@ fn create_mob_pipeline(
     );
     let mob_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("mob shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mob.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("../shaders/cel.wgsl"),
+                include_str!("../shaders/atmosphere.wgsl"),
+                include_str!("../shaders/mob.wgsl")
+            )
+            .into(),
+        ),
     });
     let mob_pipe = world_pipeline(
         device,
@@ -1497,7 +1605,14 @@ fn create_break_overlay_pipeline(
 ) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
     let break_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("break overlay shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/break_overlay.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("../shaders/cel.wgsl"),
+                include_str!("../shaders/atmosphere.wgsl"),
+                include_str!("../shaders/break_overlay.wgsl")
+            )
+            .into(),
+        ),
     });
     // MULTIPLY blend (result = src.rgb * dst.rgb): the crack fragment outputs WHITE
     // where the destroy tile is transparent (×1 = no change) and dark where the
@@ -1639,7 +1754,14 @@ fn create_particle_pipeline(
 ) -> ParticlePipelineResources {
     let particle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("particle shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particles.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("../shaders/cel.wgsl"),
+                include_str!("../shaders/atmosphere.wgsl"),
+                include_str!("../shaders/particles.wgsl")
+            )
+            .into(),
+        ),
     });
     let particle_vbuf_attrs = [
         wgpu::VertexAttribute {

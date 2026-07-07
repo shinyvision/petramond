@@ -13,7 +13,8 @@ use super::builder::cube_face_lighting;
 use super::builder::{mesh_pad_idx, SectionMeshPad};
 use super::face::{should_flip, vertex_ao, Face};
 use super::vertex::{
-    pack_cell_uv, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
+    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
+    UV_MODE_SHIFT,
 };
 
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into TWO packed
@@ -321,7 +322,9 @@ pub(super) fn push_cube_face_with_cell_uvs(
                 ao[corner],
                 light6[corner],
             ) | (packed_uv_mode << UV_MODE_SHIFT),
-            packed2: pack_vertex2(block6[corner]) | explicit_uv,
+            packed2: pack_vertex2(block6[corner])
+                | explicit_uv
+                | pack_normal_code(face.normal_code()),
         });
     }
     // Flip the triangulation so the split runs along the darker diagonal -- keeps

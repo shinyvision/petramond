@@ -233,7 +233,11 @@ mod tests {
     fn panes_connect_to_panes_and_full_cubes_but_not_air_or_plants() {
         let east = IVec3::new(1, 0, 0);
         assert_eq!(
-            mask_with(|p| if p == east { Block::GlassPane } else { Block::Air }),
+            mask_with(|p| if p == east {
+                Block::GlassPane
+            } else {
+                Block::Air
+            }),
             EAST
         );
         assert_eq!(
@@ -271,7 +275,13 @@ mod tests {
         let mask_for = |facing| {
             resolved_mask(
                 IVec3::ZERO,
-                |p| if p == east { Block::OakStairs } else { Block::Air },
+                |p| {
+                    if p == east {
+                        Block::OakStairs
+                    } else {
+                        Block::Air
+                    }
+                },
                 |_| crate::stair::shape(StairState::new(facing, StairHalf::Bottom)),
                 |_| false,
             )
@@ -288,7 +298,13 @@ mod tests {
         let mask_for = |full: bool| {
             resolved_mask(
                 IVec3::ZERO,
-                |p| if p == east { Block::OakSlab } else { Block::Air },
+                |p| {
+                    if p == east {
+                        Block::OakSlab
+                    } else {
+                        Block::Air
+                    }
+                },
                 |_| StairShape::default(),
                 |_| full,
             )
@@ -307,10 +323,26 @@ mod tests {
                     .iter()
                     .any(|b| b.min[axis] <= lo + 1e-6 && b.max[axis] >= hi - 1e-6)
             };
-            assert_eq!(mask & WEST != 0, reaches(0.0, LO, 0), "west, mask {mask:04b}");
-            assert_eq!(mask & EAST != 0, reaches(HI, 1.0, 0), "east, mask {mask:04b}");
-            assert_eq!(mask & NORTH != 0, reaches(0.0, LO, 2), "north, mask {mask:04b}");
-            assert_eq!(mask & SOUTH != 0, reaches(HI, 1.0, 2), "south, mask {mask:04b}");
+            assert_eq!(
+                mask & WEST != 0,
+                reaches(0.0, LO, 0),
+                "west, mask {mask:04b}"
+            );
+            assert_eq!(
+                mask & EAST != 0,
+                reaches(HI, 1.0, 0),
+                "east, mask {mask:04b}"
+            );
+            assert_eq!(
+                mask & NORTH != 0,
+                reaches(0.0, LO, 2),
+                "north, mask {mask:04b}"
+            );
+            assert_eq!(
+                mask & SOUTH != 0,
+                reaches(HI, 1.0, 2),
+                "south, mask {mask:04b}"
+            );
             for b in boxes {
                 for a in 0..3 {
                     assert!(b.min[a] >= 0.0 && b.max[a] <= 1.0 && b.min[a] < b.max[a]);

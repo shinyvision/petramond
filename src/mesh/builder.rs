@@ -812,8 +812,7 @@ fn section_geometry(
                                 wy + dy,
                                 wz,
                             )))
-                        } else if vb.is_opaque()
-                            || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
+                        } else if vb.is_opaque() || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
                         {
                             super::pane::PaneVertical::Solid
                         } else {

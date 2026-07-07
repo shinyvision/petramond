@@ -49,6 +49,8 @@ struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) dist: f32,
+    // Absolute world height, for the atmosphere's altitude thinning.
+    @location(2) world_y: f32,
 };
 
 // Same corner mapping as block.wgsl: 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
@@ -80,6 +82,7 @@ fn vs_break(in: VsIn) -> VsOut {
     // World-space camera distance, for the fog fade in the fragment stage (matches
     // block.wgsl so the crack fades on the same curve as the surface it sits on).
     out.dist = length(u.cam_pos.xyz - local_pos);
+    out.world_y = in.pos.y;
     return out;
 }
 
@@ -92,11 +95,23 @@ fn fs_break(in: VsOut) -> @location(0) vec4<f32> {
     // blend preserves the destination alpha).
     let tex = textureSample(atlas, samp, in.uv);
     var crack = mix(vec3<f32>(1.0), tex.rgb, tex.a);
-    // Fog fade: the block underneath has already faded toward fog_color (mix in
-    // block.wgsl), incl. the tight blue underwater fog. Fade the crack's darkening
-    // toward 1.0 (multiply identity) on that same fog curve so it melts into the
-    // murk with the surface instead of staying a hard dark pattern floating in fog.
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    // Fog fade: the block underneath has already hazed toward the atmosphere
+    // (block.wgsl), or toward the tight linear murk underwater. Fade the crack's
+    // darkening toward 1.0 (multiply identity) by the same total amount so it
+    // melts into the haze with the surface instead of staying a hard dark
+    // pattern floating in fog.
+    var f: f32;
+    if (u.fog.w > 0.5) {
+        f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    } else {
+        f = atmosphere_amount(
+            in.dist,
+            u.fog.x,
+            u.fog.y,
+            in.world_y,
+            u.cam_pos.y + u.render_origin.y,
+        );
+    }
     crack = mix(crack, vec3<f32>(1.0), f);
     return vec4<f32>(crack, 1.0);
 }

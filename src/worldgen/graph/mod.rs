@@ -109,16 +109,20 @@ enum Node {
     Min(NodeId, NodeId),
     #[cfg(test)]
     Max(NodeId, NodeId),
-    #[cfg(test)]
     Abs(NodeId),
     RidgeFold(NodeId),
-    #[cfg(test)]
+    /// Soft terracing of a height-domain input: steps of `step` blocks with a
+    /// twice-sharpened smoothstep riser (cliffy treads, no hard discontinuity
+    /// so the C1 lattice reconstruction stays artifact-free).
+    Terrace {
+        input: NodeId,
+        step: f64,
+    },
     Clamp {
         input: NodeId,
         min: f64,
         max: f64,
     },
-    #[cfg(test)]
     Lerp {
         a: NodeId,
         b: NodeId,
@@ -165,16 +169,17 @@ impl Node {
             Self::Min(a, b) => Self::Min(a.with_graph(graph_id), b.with_graph(graph_id)),
             #[cfg(test)]
             Self::Max(a, b) => Self::Max(a.with_graph(graph_id), b.with_graph(graph_id)),
-            #[cfg(test)]
             Self::Abs(input) => Self::Abs(input.with_graph(graph_id)),
             Self::RidgeFold(input) => Self::RidgeFold(input.with_graph(graph_id)),
-            #[cfg(test)]
+            Self::Terrace { input, step } => Self::Terrace {
+                input: input.with_graph(graph_id),
+                step,
+            },
             Self::Clamp { input, min, max } => Self::Clamp {
                 input: input.with_graph(graph_id),
                 min,
                 max,
             },
-            #[cfg(test)]
             Self::Lerp { a, b, t } => Self::Lerp {
                 a: a.with_graph(graph_id),
                 b: b.with_graph(graph_id),
@@ -382,7 +387,6 @@ impl ScalarGraph {
         self.push(Node::Max(a, b))
     }
 
-    #[cfg(test)]
     pub(crate) fn abs(&mut self, input: NodeId) -> NodeId {
         self.assert_existing_node(input, "abs input");
         self.push(Node::Abs(input))
@@ -393,13 +397,16 @@ impl ScalarGraph {
         self.push(Node::RidgeFold(input))
     }
 
-    #[cfg(test)]
+    pub(crate) fn terrace(&mut self, input: NodeId, step: f64) -> NodeId {
+        self.assert_existing_node(input, "terrace input");
+        self.push(Node::Terrace { input, step })
+    }
+
     pub(crate) fn clamp(&mut self, input: NodeId, min: f64, max: f64) -> NodeId {
         self.assert_existing_node(input, "clamp input");
         self.push(Node::Clamp { input, min, max })
     }
 
-    #[cfg(test)]
     pub(crate) fn lerp(&mut self, a: NodeId, b: NodeId, t: NodeId) -> NodeId {
         self.assert_existing_node(a, "lerp first input");
         self.assert_existing_node(b, "lerp second input");
@@ -559,16 +566,16 @@ impl ScalarGraph {
             Node::Max(a, b) => self
                 .evaluate_node_uncached(*a, point)
                 .max(self.evaluate_node_uncached(*b, point)),
-            #[cfg(test)]
             Node::Abs(input) => self.evaluate_node_uncached(*input, point).abs(),
             Node::RidgeFold(input) => ridge_fold_value(self.evaluate_node_uncached(*input, point)),
-            #[cfg(test)]
+            Node::Terrace { input, step } => {
+                terrace_value(self.evaluate_node_uncached(*input, point), *step)
+            }
             Node::Clamp { input, min, max } => {
                 let lo = (*min).min(*max);
                 let hi = (*min).max(*max);
                 self.evaluate_node_uncached(*input, point).clamp(lo, hi)
             }
-            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 let a = self.evaluate_node_uncached(*a, point);
                 let b = self.evaluate_node_uncached(*b, point);
@@ -661,19 +668,19 @@ impl ScalarGraph {
             Node::Max(a, b) => self
                 .evaluate_node_cached_inner(*a, point, cache)
                 .max(self.evaluate_node_cached_inner(*b, point, cache)),
-            #[cfg(test)]
             Node::Abs(input) => self.evaluate_node_cached_inner(*input, point, cache).abs(),
             Node::RidgeFold(input) => {
                 ridge_fold_value(self.evaluate_node_cached_inner(*input, point, cache))
             }
-            #[cfg(test)]
+            Node::Terrace { input, step } => {
+                terrace_value(self.evaluate_node_cached_inner(*input, point, cache), *step)
+            }
             Node::Clamp { input, min, max } => {
                 let lo = (*min).min(*max);
                 let hi = (*min).max(*max);
                 self.evaluate_node_cached_inner(*input, point, cache)
                     .clamp(lo, hi)
             }
-            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 let a = self.evaluate_node_cached_inner(*a, point, cache);
                 let b = self.evaluate_node_cached_inner(*b, point, cache);
@@ -752,10 +759,8 @@ impl ScalarGraph {
             Node::Min(a, b) | Node::Max(a, b) => {
                 self.node_depends_on_y(*a) || self.node_depends_on_y(*b)
             }
-            Node::RidgeFold(input) => self.node_depends_on_y(*input),
-            #[cfg(test)]
+            Node::RidgeFold(input) | Node::Terrace { input, .. } => self.node_depends_on_y(*input),
             Node::Abs(input) | Node::Clamp { input, .. } => self.node_depends_on_y(*input),
-            #[cfg(test)]
             Node::Lerp { a, b, t } => {
                 self.node_depends_on_y(*a)
                     || self.node_depends_on_y(*b)
@@ -816,6 +821,16 @@ fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
     }
 }
 
+/// Terrace a height value into `step`-block treads: the riser is a smoothstep
+/// applied twice, so treads are near-flat with steep (but C1) risers.
+fn terrace_value(height: f64, step: f64) -> f64 {
+    let cell = (height / step).floor();
+    let t = height / step - cell;
+    let s = t * t * (3.0 - 2.0 * t);
+    let s = s * s * (3.0 - 2.0 * s);
+    (cell + s) * step
+}
+
 pub(crate) fn ridge_fold_value(variance: f64) -> f64 {
     1.0 - ((3.0 * variance.abs()) - 2.0).abs()
 }
@@ -849,6 +864,30 @@ mod tests {
     use std::fmt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    /// Terracing a heightfield must stay monotone (a non-monotone height map
+    /// strands floating terrain) and must preserve tread-corner heights so the
+    /// overall elevation trend survives.
+    #[test]
+    fn terrace_value_is_monotone_and_tread_anchored() {
+        let step = 8.0;
+        let mut prev = terrace_value(-64.0, step);
+        let mut h = -64.0 + 0.05;
+        while h < 256.0 {
+            let t = terrace_value(h, step);
+            assert!(
+                t >= prev - 1e-12,
+                "terrace must be monotone: f({h}) = {t} < previous {prev}"
+            );
+            prev = t;
+            h += 0.05;
+        }
+        // Exact tread anchors: multiples of the step map to themselves.
+        for k in -8..=32 {
+            let anchor = k as f64 * step;
+            assert!((terrace_value(anchor, step) - anchor).abs() < 1e-9);
+        }
+    }
 
     #[derive(Clone)]
     struct LinearField;

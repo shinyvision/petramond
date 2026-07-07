@@ -384,6 +384,26 @@ pub(crate) mod climate_fields {
         omin: -7,
         amplitudes: &[1.0, 2.0, 1.0, 0.0, 0.0, 0.0],
     };
+    /// OUR field, not a reference port: the mountain crag detail the stylized
+    /// silhouette folds into high, low-erosion terrain (see `terrain.rs`).
+    /// Two octaves at ~128/64-block periods — deliberately broad so ridge
+    /// crests are walkable crests, never one-block pillar fields (the pillar
+    /// trap, WIKI/worldgen.md). The salt is an arbitrary fixed fork of our own.
+    pub(crate) const CRAG: ClimateFieldParams = ClimateFieldParams {
+        salt: (0x11a3_c0de_5eed_2026, 0x0707_beef_cafe_f00d),
+        omin: -5,
+        amplitudes: &[1.0, 1.0],
+    };
+    /// OUR field: the world-structure spine noise. Its zero lines (after the
+    /// ridged fold in `terrain.rs`) become kilometres-long mountain-range
+    /// spines that UPLIFT the continentality/erosion channels, so ranges and
+    /// their mountain biomes form connected belts instead of blobs. Two
+    /// octaves at ~4096/2048-block periods; arbitrary fixed salt of our own.
+    pub(crate) const STRUCTURE: ClimateFieldParams = ClimateFieldParams {
+        salt: (0x5a11_e175_0f00_ba12, 0x9e3d_77aa_1234_c001),
+        omin: -10,
+        amplitudes: &[1.0],
+    };
 }
 
 /// Build a climate field's double-Perlin noise for a world seed, exactly as the

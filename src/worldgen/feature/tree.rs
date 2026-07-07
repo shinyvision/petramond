@@ -103,6 +103,96 @@ impl Feature for GiantOakFeature {
     }
 }
 
+/// Skeleton broadleaf tree — the stylized canopy silhouette (storybook look,
+/// WIKI/visual-style.md): a single trunk that forks into a few limbs, each limb
+/// tipped with a rounded leaf clump, under a rounded central crown. The
+/// overlapping clumps read as one irregular puffy canopy instead of the boxy
+/// stacked-square blob. One struct expresses every broadleaf species (oak,
+/// birch, jungle, dark oak, cherry) as data — width, limb count, clump size —
+/// in `data::features`.
+///
+/// Determinism/seam contract: draw order is fixed (height, then per-limb
+/// [jitter, reach, rise, tip radius, blob rounds], then crown rounds), limbs
+/// spread by golden-angle offsets from one base-angle draw, so a neighbour
+/// chunk replays the tree identically. Horizontal footprint is bounded by
+/// `reach.1 + tip_radius.1` — keep that ≤ `proto::MARGIN`. Leaf-decay support:
+/// every clump is centred on its limb's tip log, so no leaf exceeds the decay
+/// flood's log distance.
+pub struct CanopyTreeFeature {
+    pub log: Block,
+    pub leaf: Block,
+    /// {min,max} trunk height (logs).
+    pub height: (i32, i32),
+    /// Fraction of the trunk below the first limb (0.5 = limbs on the top half).
+    pub split: f32,
+    /// {min,max} limb count.
+    pub limbs: (i32, i32),
+    /// {min,max} horizontal limb reach in blocks.
+    pub reach: (i32, i32),
+    /// {min,max} radius of each limb-tip leaf clump.
+    pub tip_radius: (i32, i32),
+    /// Radius of the central crown clump over the trunk top.
+    pub crown_radius: i32,
+    /// Corner-rounding chance for every clump (see `leaf_blob_rounded`).
+    pub round: f32,
+}
+
+/// Golden angle (radians): successive limbs fan out evenly without aligning.
+const GOLDEN_ANGLE: f32 = 2.399_963_1;
+
+impl Feature for CanopyTreeFeature {
+    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
+        use std::f32::consts::TAU;
+        let (x, y, z) = (origin.x, origin.y, origin.z);
+        let height = sample_height(self.height, rng);
+        let top = y + height - 1;
+        let split_y = y + ((height as f32) * self.split).floor() as i32;
+
+        for h in y..=top {
+            ctx.set_log(IVec3::new(x, h, z), self.log);
+        }
+
+        // Limbs fork off the upper trunk, evenly spaced with jitter, fanning by
+        // golden-angle steps from one random base angle.
+        let limbs = sample_height(self.limbs, rng);
+        let base_angle = rng.next_f32() * TAU;
+        let span = (top - 1 - split_y).max(0);
+        for i in 0..limbs {
+            let t = if limbs > 1 {
+                i as f32 / (limbs - 1) as f32
+            } else {
+                0.5
+            };
+            // The limb forks somewhere on the upper trunk, but its leaf clump
+            // always lands at canopy height (top−1 .. top+1): the clumps overlap
+            // each other and the crown into ONE puffy mass with lobes, instead
+            // of scattering down the trunk.
+            let node_y = (split_y + (span as f32 * t).round() as i32 + rng.next_i32(-1, 1))
+                .clamp(split_y, top - 1);
+            let angle = base_angle + i as f32 * GOLDEN_ANGLE;
+            let reach = sample_height(self.reach, rng);
+            let tip = IVec3::new(
+                x + (angle.cos() * reach as f32).round() as i32,
+                top - 1 + rng.next_i32(0, 2),
+                z + (angle.sin() * reach as f32).round() as i32,
+            );
+            let tip_r = sample_height(self.tip_radius, rng);
+            log_line(ctx, IVec3::new(x, node_y, z), tip, self.log);
+            shapes::leaf_blob_rounded(ctx, tip, tip_r, self.leaf, self.round, rng);
+        }
+
+        // Rounded central crown over the trunk top ties the clumps together.
+        shapes::leaf_blob_rounded(
+            ctx,
+            IVec3::new(x, top, z),
+            self.crown_radius,
+            self.leaf,
+            self.round,
+            rng,
+        );
+    }
+}
+
 /// Huge redwood: a flared multi-block trunk that tapers upward, long upper limbs
 /// with leaf masses, and a narrow high crown. Materials are placeholders (oak
 /// log/leaf) until dedicated redwood assets exist.

@@ -116,10 +116,10 @@ fn pane_arms_connect_and_bury_shared_end_faces() {
             .all(|v| (v.pos[0] - boundary).abs() < f32::EPSILON),
         "sanity: vertices exist off the boundary plane"
     );
-    let quad_on_boundary = m_pair.opaque.chunks(4).any(|q| {
-        q.iter()
-            .all(|v| (v.pos[0] - boundary).abs() < f32::EPSILON)
-    });
+    let quad_on_boundary = m_pair
+        .opaque
+        .chunks(4)
+        .any(|q| q.iter().all(|v| (v.pos[0] - boundary).abs() < f32::EPSILON));
     assert!(
         !quad_on_boundary,
         "no quad may lie in the shared cell-boundary plane"

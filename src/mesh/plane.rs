@@ -7,7 +7,9 @@ use crate::atlas::Tile;
 use crate::torch::warm_tint;
 
 use super::face::{should_flip, Face};
-use super::vertex::{pack_cell_uv, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL};
+use super::vertex::{
+    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
+};
 use super::UV_MODE_SHIFT;
 
 /// The tile-local UV of a point inside a block cell, per face, matching the
@@ -98,7 +100,8 @@ pub(super) fn push_plane_quad(
                 sky6,
             ) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
             packed2: pack_vertex2(block6)
-                | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
+                | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32)
+                | pack_normal_code(face.normal_code()),
         });
     }
     let tris: [u32; 6] = if should_flip(quad_ao) {

@@ -65,14 +65,24 @@ pub(crate) fn pack_vertex(
 ///
 ///   0..6 block light (torches/furnaces, 0 dark..63 full)
 ///   | 6..16 cell-local uv ([`pack_cell_uv`], read only in [`UV_MODE_CELL_LOCAL`])
-///   | 16..32 RESERVED (zero)
+///   | 16..19 face-normal code ([`pack_normal_code`])
+///   | 19..32 RESERVED (zero)
 ///
 /// The block channel is 6 bits like the sky channel so the shader's `block_term`
-/// mirrors the sky curve exactly; the remaining 16 bits are reserved for future
+/// mirrors the sky curve exactly; the remaining 13 bits are reserved for future
 /// per-vertex data and MUST stay zero until a new owner is documented here.
 #[inline]
 pub(crate) fn pack_vertex2(block_light: u32) -> u32 {
     block_light & 0x3F
+}
+
+/// Face-normal code, packed into `Vertex::packed2` bits 16..19: 0 = neutral (no
+/// world-space face direction — the shader keeps the classic `SHADES` shading),
+/// 1..=6 = [`super::face::Face::normal_code`] for sun-directional N·L shading in
+/// `block.wgsl`.
+#[inline]
+pub(crate) fn pack_normal_code(code: u32) -> u32 {
+    (code & 0x7) << 16
 }
 
 /// Explicit tile-local UV in 1/16ths (0..=16), packed into `Vertex::packed2`

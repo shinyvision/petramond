@@ -1,5 +1,9 @@
-pub const FOG_START: f32 = 14.0 * 16.0;
-pub const FOG_END: f32 = 16.0 * 16.0;
+/// Terminal fog band: the smoothstep ramp of `atmosphere.wgsl`'s terminal term.
+/// The band starts earlier than the old linear fog so terrain dissolves into the
+/// haze gradually; FOG_END is a hard contract — the atmosphere reaches exactly
+/// 1.0 there, and terrain visibility is fog-distance culled against it.
+pub const FOG_START: f32 = 12.0 * 32.0;
+pub const FOG_END: f32 = 16.0 * 32.0;
 
 /// Underwater fog band (blocks): pulled in tight so submerged visibility is short
 /// and distant terrain dissolves into the murky water colour.
@@ -41,6 +45,12 @@ pub struct Uniforms {
     /// `w` is reserved (0). Appended after `water_anim` so shaders declaring a
     /// prefix of this struct stay layout-compatible.
     pub sky_color: [f32; 4],
+    /// `xyz` = the unit sun direction (derived from the engine-owned
+    /// `llama:time` day fraction with the same arc formula as
+    /// `daynight_sky.wgsl`); `w` = daylight in `[0,1]` (1 = full day). Read by
+    /// the atmosphere haze (`atmosphere.wgsl`) so terrain fog warms toward the
+    /// sun the sky shader draws. Appended last for prefix layout compatibility.
+    pub sun_dir: [f32; 4],
 }
 
 #[repr(C, align(16))]

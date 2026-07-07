@@ -1,4 +1,5 @@
-// Block vertex/fragment shader with fog + directional face shading.
+// Block vertex/fragment shader with atmosphere haze + directional face shading.
+// pipeline.rs prepends atmosphere.wgsl (the shared haze model) to this source.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -13,6 +14,8 @@ struct Uniforms {
     // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
     // subtly blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,
+    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
+    sun_dir: vec4<f32>,
 };
 
 // Flipbook playback speed (frames/second) for still vs flowing water. Flowing
@@ -72,7 +75,9 @@ struct VsOut {
     // Per-channel light: the sky term is tinted by the sim's sky colour, the
     // block term is not, so the two can differ per channel at night.
     @location(1) light: vec3<f32>,
-    @location(2) dist: f32,
+    // Fragment − camera in render-local space (unnormalized): distance AND view
+    // direction for the atmosphere in one interpolant.
+    @location(2) view: vec3<f32>,
     @location(3) tint: vec3<f32>,
     @location(4) uv2: vec2<f32>,
     @location(5) @interpolate(flat) overlay: u32,
@@ -80,7 +85,31 @@ struct VsOut {
     // Texture-array layers (tile ids): the base tile and the overlay tile. Flat.
     @location(7) @interpolate(flat) layer: u32,
     @location(8) @interpolate(flat) overlay_layer: u32,
+    // Face normal code (packed2 bits 16..19) for the fragment-side cel rim.
+    @location(9) @interpolate(flat) ncode: u32,
+    // Day-invariant light LEVEL (max(sky, block) at noon scale + white sky, no
+    // AO): drives the fragment-side cel banding so the bands stay put while the
+    // sim's day/night scale, the tint, and the smooth AO ride on `light`
+    // untouched.
+    @location(10) cel_drive: f32,
 };
+
+// Cel-banded fragment light (cel.wgsl): quantize the interpolated light by the
+// banded/raw ratio of the day-invariant drive (hue, night dimming, and AO
+// survive), faded to identity in the dark and applied at partial strength so
+// cave gradients stay gradual; then add the view-angle rim on faces that carry
+// a normal.
+fn cel_shaded_light(in: VsOut) -> vec3<f32> {
+    let banded = cel_band(CEL_LIGHT, in.cel_drive);
+    let f = smoothstep(CEL_LIGHT_FADE_LO, CEL_LIGHT_FADE_HI, in.cel_drive)
+        * CEL_LIGHT_STRENGTH;
+    let cel = mix(1.0, banded / max(in.cel_drive, 1e-4), f);
+    var light = max(vec3<f32>(FINAL_MIN), in.light * cel);
+    if (CEL_RIM_ENABLED && in.ncode != 0u) {
+        light += cel_rim(face_normal(in.ncode), normalize(in.view), light);
+    }
+    return light;
+}
 
 // Per-corner UV in unit-tile space [0,1]^2. Corner order matches the mesher:
 // 0->(0,1) 1->(1,1) 2->(1,0) 3->(0,0). This IS the tile-local sample coord now that
@@ -187,9 +216,14 @@ fn vs_main(in: VsIn) -> VsOut {
     out.overlay = (in.packed >> 20u) & 0x1u;
     out.overlay_layer = overlay_tile;
 
-    // Final vertex light = directional face shade (mirror of mesh::SHADES — keep
-    // byte-identical) * per-vertex AO * max(sky term, block term), all smoothly
-    // interpolated so shadows and the light-level gradient are soft.
+    // Final vertex light = directional face shade * per-vertex AO *
+    // max(sky term, block term), all smoothly interpolated so shadows and the
+    // light-level gradient are soft.
+    //   - Face shade: SUN-DIRECTIONAL for terrain faces carrying a normal code
+    //     (packed2 bits 16..19): N·L against the moving sun, warm on lit faces,
+    //     cool in shadow — the flat storybook look (WIKI/visual-style.md). Code
+    //     0 (cross plants, torches, dynamic props) keeps the classic SHADES
+    //     table (mirror of mesh::SHADES — keep byte-identical).
     //   - AO_LUT: contact-shadow dip in lit areas.
     //   - each 6-bit channel: 0..63 -> 0..1; a gamma curve keeps near-full light
     //     bright while mid/low levels fall off, mixed up from SKY_MIN so a fully
@@ -208,14 +242,32 @@ fn vs_main(in: VsIn) -> VsOut {
     let block6 = in.packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
     let blk = f32(block6) / 63.0;
-    let sky_term = mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
+    let sky_curve = pow(sky, SKY_GAMMA);
+    let sky_term = mix(SKY_MIN, 1.0, sky_curve * u.fog_color.w) * u.sky_color.rgb;
     let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
+    let ncode = (in.packed2 >> 16u) & 0x7u;
+    var face_shade = vec3<f32>(shades[shade_idx]);
+    if (ncode != 0u) {
+        // Sun colours only where the sky actually reaches. The warm-lit /
+        // cool-shadow split is daylight bathing the face; underground it has no
+        // light source, and it read as yellow cave ceilings next to gray cave
+        // walls. Fade the sun ramp out with the vertex's sky light and rest on
+        // the neutral shade table in the dark.
+        let sun_shade = sun_face_shade(face_normal(ncode), u.sun_dir.xyz, u.sun_dir.w);
+        face_shade = mix(face_shade, sun_shade, sky);
+    }
     out.light = max(
         vec3<f32>(FINAL_MIN),
-        shades[shade_idx] * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
+        face_shade * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
     );
+    // Noon-equivalent light level (scale 1.0, white sky, no AO) for the cel
+    // bands: the banding pattern must not slide around as the sim dims the sky
+    // term, and AO stays a smooth multiplier so corners keep contact shadow.
+    let sky_noon = mix(SKY_MIN, 1.0, sky_curve);
+    out.cel_drive = max(sky_noon, block_term);
+    out.ncode = ncode;
 
-    out.dist = length(u.cam_pos.xyz - local_pos);
+    out.view = local_pos - u.cam_pos.xyz;
     out.tint = in.tint;
     out.world_pos = in.pos;
     return out;
@@ -234,13 +286,24 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         if (base.a < 0.5) { discard; } // leaf/cutout
         rgb = base.rgb * in.tint;
     }
-    var color = rgb * in.light;
-    // Underwater: blue darkening multiply.
+    var color = rgb * cel_shaded_light(in);
+    // Underwater: blue darkening multiply + the tight linear murk fog.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    let out = mix(color, u.fog_color.rgb, f);
+    let out = atmosphere_apply(
+        color,
+        in.view,
+        in.world_pos.y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(out, 1.0);
 }
 
@@ -250,15 +313,26 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     // Only water uses this alpha-blended pass; water tiles are full-alpha so the
     // discard is a no-op for them.
     if (tex.a < 0.5) { discard; }
-    var color = tex.rgb * in.tint * in.light;
+    var color = tex.rgb * in.tint * cel_shaded_light(in);
+    // Water blue tint + slight transparency.
+    let alpha = 0.78;
     // Tint the water volume itself when submerged so the surface seen from below
     // blends into the murk rather than glowing.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), alpha);
     }
-    // Water blue tint + slight transparency.
-    let alpha = 0.78;
-    let f = clamp((in.dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-    let out = mix(color, u.fog_color.rgb, f);
+    let out = atmosphere_apply(
+        color,
+        in.view,
+        in.world_pos.y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
     return vec4<f32>(out, alpha);
 }
