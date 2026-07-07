@@ -221,6 +221,22 @@ impl App {
         }
     }
 
+    /// Flip the open World Settings world's "Optimize explored terrain" flag
+    /// and write `settings.json` immediately (like the mod toggles). Takes
+    /// effect the next time the world is OPENED — never live.
+    pub(super) fn toggle_optimize_explored_terrain(&mut self) {
+        let Some(session) = self.world_settings.as_mut() else {
+            return;
+        };
+        session.settings.optimize_explored_terrain = !session.settings.optimize_explored_terrain;
+        if let Err(e) = crate::save::write_world_settings(&session.dir_name, &session.settings) {
+            log::warn!(
+                "could not write settings.json for world '{}': {e}",
+                session.world_name
+            );
+        }
+    }
+
     pub(super) fn delete_selected_world(&mut self) {
         let Some(world) = self
             .selected_world

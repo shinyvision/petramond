@@ -161,6 +161,44 @@ impl ColumnGen {
         }
     }
 
+    /// This column's resident data as a column-gen cache record ("Optimize
+    /// explored terrain"). The record IS the slimmed column: a load through
+    /// [`from_cache_record`](Self::from_cache_record) reproduces exactly what
+    /// [`slimmed`](Self::slimmed) retains.
+    pub fn cache_record(&self, seed: u32) -> crate::save::colgen::ColumnGenRecord {
+        crate::save::colgen::ColumnGenRecord {
+            pos: crate::chunk::ChunkPos::new(self.cx, self.cz),
+            seed,
+            biome: self.biome.clone(),
+            surf: self.surf.clone(),
+            top_surf: self.top_surf.clone(),
+            surf_min: self.surf_min,
+            surf_max: self.surf_max,
+            cand_surf_min: self.cand_surf_min,
+            cand_surf_max: self.cand_surf_max,
+            content_top: self.content_top,
+        }
+    }
+
+    /// Rebuild a (slim) column from its cache record — no feature windows; a
+    /// rare late tree-band section job rebuilds them locally, exactly like a
+    /// column slimmed after its gen burst.
+    pub fn from_cache_record(rec: crate::save::colgen::ColumnGenRecord) -> ColumnGen {
+        ColumnGen {
+            cx: rec.pos.cx,
+            cz: rec.pos.cz,
+            biome: rec.biome,
+            surf: rec.surf,
+            top_surf: rec.top_surf,
+            surf_min: rec.surf_min,
+            surf_max: rec.surf_max,
+            cand_surf_min: rec.cand_surf_min,
+            cand_surf_max: rec.cand_surf_max,
+            content_top: rec.content_top,
+            feature_windows: None,
+        }
+    }
+
     /// Conservative occupancy summary for a generated section that may not be
     /// materialized yet. This is cheap enough for streaming/meshing decisions and avoids
     /// generating deep stone just to learn that it is fully solid.
@@ -658,6 +696,43 @@ mod tests {
                     "slimmed rebuild diverged at cy {cy} of column ({cx},{cz})"
                 );
             }
+        }
+    }
+
+    /// A column restored from its encoded cache record ("Optimize explored
+    /// terrain") must be indistinguishable from a slimmed live column: same
+    /// resident data, byte-identical section regeneration.
+    #[test]
+    fn cache_record_roundtrip_matches_the_live_column() {
+        let seed = 0xDEAD_BEEF;
+        let generator = ChunkGenerator::new(seed);
+        let full = generator.generate_column_gen(2, -5);
+        let blob = crate::save::colgen::encode_record(&full.cache_record(seed));
+        let rec =
+            crate::save::colgen::decode_record(crate::chunk::ChunkPos::new(2, -5), seed, &blob)
+                .expect("cache record decodes");
+        let cached = ColumnGen::from_cache_record(rec);
+
+        for x in 0..SECTION_SIZE {
+            for z in 0..SECTION_SIZE {
+                assert_eq!(cached.biome_at(x, z), full.biome_at(x, z));
+                assert_eq!(cached.surface_y(x, z), full.surface_y(x, z));
+                assert_eq!(
+                    cached.heightmap_surface_y(x, z),
+                    full.heightmap_surface_y(x, z)
+                );
+            }
+        }
+        assert_eq!(cached.surf_range(), full.surf_range());
+        assert_eq!(cached.content_top(), full.content_top());
+        let (lo, hi) = full.surf_range();
+        for cy in [lo.div_euclid(16), hi.div_euclid(16) + 1] {
+            let sp = SectionPos::new(2, cy, -5);
+            assert_eq!(
+                generator.generate_section(sp, &full).blocks_slice(),
+                generator.generate_section(sp, &cached).blocks_slice(),
+                "cached column diverged at cy {cy}"
+            );
         }
     }
 }

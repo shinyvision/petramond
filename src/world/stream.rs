@@ -251,13 +251,28 @@ impl World {
         }
         missing.sort_by_key(|(priority, _)| *priority);
         for (priority, pos) in missing.into_iter().take(submit_limit) {
-            self.worker.submit(
-                priority,
-                GenJob::Column {
-                    pos,
-                    seed: self.seed,
-                },
-            );
+            // "Optimize explored terrain": an explored column's 2D gen data
+            // loads from the column-gen cache instead of running the heavy
+            // noise job; a decode miss falls back to the worker (poll's cache
+            // drain resubmits). Both answers resolve the same `pending` entry.
+            let cached = self.optimize_explored_terrain
+                && self
+                    .save
+                    .as_ref()
+                    .is_some_and(|s| s.colgen_manifest_contains(pos));
+            if cached {
+                if let Some(save) = self.save.as_ref() {
+                    save.request_column_gen(pos, self.seed);
+                }
+            } else {
+                self.worker.submit(
+                    priority,
+                    GenJob::Column {
+                        pos,
+                        seed: self.seed,
+                    },
+                );
+            }
             self.pending.insert(pos, ());
         }
     }
@@ -402,7 +417,27 @@ impl World {
     /// Queue one section's gen job and, paired with it, ask the save thread for that
     /// section's saved (player-modified) record if one exists — so the disk overlay
     /// lands after the generated base and wins (`apply_pending_overlays`).
+    ///
+    /// With "Optimize explored terrain" on, a section that exists on disk skips the
+    /// gen job entirely: its record is a full section that would have replaced the
+    /// generated base anyway, so it installs as the PRIMARY content when the save
+    /// thread answers (`poll`), and generation runs only as the corrupt-record
+    /// fallback.
     fn submit_section_job(&mut self, key: i64, sp: SectionPos, col: Arc<ColumnGen>) {
+        let disk_primary = self.optimize_explored_terrain
+            && self.save.as_ref().is_some_and(|s| s.manifest_contains(sp));
+        if disk_primary {
+            self.pending_sections.insert(sp);
+            self.disk_primary_sections.insert(sp);
+            // The section's true content is in flight until the save thread
+            // answers: the sim guard blocks mutation and the harvest skips
+            // persisting it meanwhile (same contract as the overlay path).
+            self.awaited_overlays.insert(sp);
+            if let Some(save) = self.save.as_ref() {
+                save.request_load(sp);
+            }
+            return;
+        }
         self.worker.submit(
             key,
             GenJob::Section {
@@ -496,6 +531,7 @@ impl World {
             if let Some(save) = self.save.as_mut() {
                 save.save_sections(snaps);
             }
+            self.flush_pending_colgen_records();
         }
 
         for pos in drop_columns {
@@ -519,6 +555,10 @@ impl World {
     /// no in-flight section gen. In-flight jobs keep their full `Arc`; premature
     /// slimming is safe (a later tree-band job rebuilds the windows), so this is a
     /// memory policy, not a correctness gate.
+    ///
+    /// This is also the write-once capture point for the column-gen cache
+    /// ("Optimize explored terrain"): the burst just finished, the data is hot,
+    /// and a cache-loaded column never re-captures (it arrives already slim).
     fn slim_settled_column_gen(&mut self, pos: ChunkPos) {
         let Some(col) = self.column_gen.get(&pos) else {
             return;
@@ -528,6 +568,15 @@ impl World {
         }
         if self.pending_sections.iter().any(|sp| sp.chunk_pos() == pos) {
             return;
+        }
+        if self.optimize_explored_terrain
+            && self
+                .save
+                .as_ref()
+                .is_some_and(|s| !s.colgen_manifest_contains(pos))
+        {
+            self.pending_colgen_records
+                .push(col.cache_record(self.seed));
         }
         let slim = std::sync::Arc::new(col.slimmed());
         self.column_gen.insert(pos, slim);
@@ -623,35 +672,101 @@ impl World {
             }
         }
 
+        // 1b. Column-gen cache answers ("Optimize explored terrain"): a hit
+        //     installs exactly like a generated column; a miss (corrupt record,
+        //     seed/version drift) hands the column to the worker — `pending`
+        //     stays set so the existing `GenOutput::Column` arm resolves it.
+        while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded_column_gen()) {
+            let pos = loaded.pos;
+            if !self.pending.contains_key(&pos) {
+                continue;
+            }
+            match loaded.record {
+                Some(rec) => {
+                    self.pending.remove(&pos);
+                    if !self.within_current_keep_radius(pos) {
+                        continue;
+                    }
+                    let col = Arc::new(ColumnGen::from_cache_record(rec));
+                    self.install_column_gen(pos, col);
+                    new_columns += 1;
+                    new_column_positions.push(pos);
+                }
+                None => {
+                    self.worker.submit(
+                        target.column_priority_key(pos),
+                        GenJob::Column {
+                            pos,
+                            seed: self.seed,
+                        },
+                    );
+                }
+            }
+        }
+
         // 2. Newly-installed columns: submit their vertical window's section jobs now.
         for pos in new_column_positions {
             self.request_sections_for_column(pos, target);
         }
 
-        // Columns whose gen burst just finished (a section landed and nothing is
-        // pending for the column any more) retain only the slimmed ColumnGen: the
-        // ~15 KB tree windows are dead weight post-gen, and a rare late tree-band
-        // job rebuilds them locally (see worldgen::driver::FeatureWindows).
-        for &sp in &ingested {
-            self.slim_settled_column_gen(sp.chunk_pos());
-        }
-
-        // 3. Saved sections read back from disk. Buffer them until their generated section
-        //    has landed (disk usually beats noise-gen), then overlay below so the saved
+        // 3. Saved sections read back from disk. Disk-primary records ("Optimize
+        //    explored terrain" — no gen job was submitted) install immediately;
+        //    overlay records buffer until their generated section has landed
+        //    (disk usually beats noise-gen), then apply below so the saved
         //    blocks win over the generated base.
         while let Some(loaded) = self.save.as_ref().and_then(|s| s.poll_loaded()) {
             let sp = loaded.pos;
             // The save thread answered: the record is no longer in flight (whatever
             // the answer), so the sim guard must not keep the section blocked.
             self.awaited_overlays.remove(&sp);
+            let disk_primary = self.disk_primary_sections.remove(&sp);
+            if disk_primary {
+                self.pending_sections.remove(&sp);
+            }
             if !self.within_current_keep_radius(sp.chunk_pos()) {
                 continue;
             }
             let Some(section) = loaded.section else {
-                continue; // missing/corrupt record: generation stands for this section.
+                // Missing/corrupt record. Overlay path: generation stands.
+                // Disk-primary path: no base exists — generate it after all.
+                if disk_primary {
+                    if let Some(col) = self.column_gen.get(&sp.chunk_pos()).cloned() {
+                        self.worker.submit(
+                            target.section_priority_key(sp),
+                            GenJob::Section {
+                                sp,
+                                col,
+                                seed: self.seed,
+                            },
+                        );
+                        self.pending_sections.insert(sp);
+                    }
+                }
+                continue;
             };
-            self.pending_overlays
-                .insert(sp, (section, loaded.entities, loaded.mobs));
+            if disk_primary {
+                if !self.column_gen.contains_key(&sp.chunk_pos()) {
+                    continue; // column evicted while the read was in flight
+                }
+                if !loaded.entities.is_empty() || !loaded.mobs.is_empty() {
+                    if let Some(save) = self.save.as_mut() {
+                        save.note_record_holds_entities(sp);
+                    }
+                }
+                self.sections.insert(sp, Arc::new(section));
+                self.refresh_block_entity_index(sp);
+                self.refresh_particle_emitter_index(sp);
+                self.classify_deep_on_install(sp);
+                self.dropped_items.extend(loaded.entities);
+                self.restore_mobs(loaded.mobs);
+                if self.stream_events_enabled {
+                    self.stream_events.push(StreamEvent::Loaded(sp));
+                }
+                ingested.push(sp);
+            } else {
+                self.pending_overlays
+                    .insert(sp, (section, loaded.entities, loaded.mobs));
+            }
         }
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
@@ -665,6 +780,21 @@ impl World {
             if !ingested.contains(sp) {
                 ingested.push(*sp);
             }
+        }
+
+        // Columns whose burst just finished (a section landed — generated,
+        // disk-primary, or overlaid — and nothing is pending for the column any
+        // more) retain only the slimmed ColumnGen: the ~15 KB tree windows are
+        // dead weight post-gen, and a rare late tree-band job rebuilds them
+        // locally (see worldgen::driver::FeatureWindows). This is also the
+        // column-gen cache capture point.
+        for i in 0..ingested.len() {
+            self.slim_settled_column_gen(ingested[i].chunk_pos());
+        }
+        // Bound the column-cache buffer during long exploration flights between
+        // autosaves/unloads (each flush is one batched region write).
+        if self.pending_colgen_records.len() >= 128 {
+            self.flush_pending_colgen_records();
         }
 
         if ingested.is_empty() {
@@ -1463,6 +1593,107 @@ mod tests {
             Block::Stone.id(),
             "the saved edit overlaid back on after reload"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// "Optimize explored terrain" end to end: a first visit persists every
+    /// explored section AND the column-gen cache on flush; a reload of the same
+    /// area installs everything from disk — every stream event is `Loaded`,
+    /// none `Generated` — with content identical to the first visit.
+    #[cfg(feature = "worldgen-tests")]
+    #[test]
+    fn optimize_explored_terrain_reloads_from_disk_without_generating() {
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-optimize-terrain-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let stream_settled = |world: &mut World| {
+            world.update_load(0, 8, 0);
+            let mut settled = 0;
+            let mut last = 0usize;
+            for _ in 0..5000 {
+                world.poll();
+                let now = world.loaded_section_count();
+                if now == last && now > 0 {
+                    settled += 1;
+                    if settled >= 100 {
+                        break;
+                    }
+                } else {
+                    settled = 0;
+                    last = now;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+
+        // First visit: generate, then flush (autosave path) — the flag persists
+        // every explored section and the column-gen cache.
+        let opened = crate::save::open_at(dir.clone()).expect("open save");
+        let mut world = World::new(0x51EED, 2);
+        world.attach_save(opened.save);
+        world.set_optimize_explored_terrain(true);
+        stream_settled(&mut world);
+        let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
+        assert!(!first_sections.is_empty());
+        let first_blocks: std::collections::HashMap<SectionPos, Vec<u8>> = first_sections
+            .iter()
+            .map(|sp| (*sp, world.sections[sp].blocks_slice().to_vec()))
+            .collect();
+        world.flush_modified_chunks();
+        {
+            let save = world.save().expect("save attached");
+            for sp in &first_sections {
+                assert!(
+                    save.manifest_contains(*sp),
+                    "explored section {sp:?} must persist with the flag on"
+                );
+            }
+            assert!(
+                save.colgen_manifest_contains(ChunkPos::new(0, 0)),
+                "explored columns must enter the column-gen cache"
+            );
+        }
+        drop(world); // joins the save thread: everything is on disk.
+
+        // Reload: same area must come back entirely from disk.
+        let opened = crate::save::open_at(dir.clone()).expect("reopen save");
+        let mut world = World::new(0x51EED, 2);
+        world.attach_save(opened.save);
+        world.set_optimize_explored_terrain(true);
+        world.set_stream_event_capture(true);
+        stream_settled(&mut world);
+
+        let events = world.take_stream_events();
+        let generated = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Generated(_)))
+            .count();
+        let loaded = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Loaded(_)))
+            .count();
+        assert_eq!(
+            generated, 0,
+            "explored terrain must not regenerate on reload ({loaded} loaded)"
+        );
+        assert!(loaded > 0, "sections came back from disk");
+        for (sp, blocks) in &first_blocks {
+            let section = world
+                .sections
+                .get(sp)
+                .unwrap_or_else(|| panic!("section {sp:?} reloaded"));
+            assert_eq!(
+                section.blocks_slice(),
+                &blocks[..],
+                "reloaded content diverged at {sp:?}"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

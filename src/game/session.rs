@@ -20,6 +20,9 @@ struct OpenedSession {
     level: Option<LevelData>,
     /// Per-world disabled mod ids (`settings.json`; empty without a save).
     disabled_mods: BTreeSet<String>,
+    /// The world's "Optimize explored terrain" setting (false without a save —
+    /// there is nowhere to persist to).
+    optimize_explored_terrain: bool,
 }
 
 impl Game {
@@ -40,6 +43,7 @@ impl Game {
         // Editing settings for a world that is NOT open only takes effect on
         // the next open — nothing re-reads settings.json mid-session.
         world.set_disabled_mods(disabled_mods.clone());
+        world.set_optimize_explored_terrain(opened.optimize_explored_terrain);
         // The mod world KV rides level.dat: restore it before core systems and
         // mod init below, so core day/night and init-time HostCalls see it.
         if let Some(level) = &opened.level {
@@ -159,6 +163,7 @@ fn open_session(world_name: &str) -> OpenedSession {
             save: None,
             level: None,
             disabled_mods: BTreeSet::new(),
+            optimize_explored_terrain: false,
         };
     }
 
@@ -167,6 +172,7 @@ fn open_session(world_name: &str) -> OpenedSession {
             save: Some(opened.save),
             level: opened.level,
             disabled_mods: opened.disabled_mods,
+            optimize_explored_terrain: opened.optimize_explored_terrain,
         },
         Err(e) => {
             log::warn!("save disabled: could not open world '{world_name}': {e}");
@@ -174,6 +180,7 @@ fn open_session(world_name: &str) -> OpenedSession {
                 save: None,
                 level: None,
                 disabled_mods: BTreeSet::new(),
+                optimize_explored_terrain: false,
             }
         }
     }

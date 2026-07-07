@@ -35,6 +35,10 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("world_name", UiValue::Str(session.world_name.clone()));
     state.set("renaming", UiValue::Bool(session.renaming));
     state.set("not_renaming", UiValue::Bool(!session.renaming));
+    state.set(
+        "optimize_terrain",
+        UiValue::Bool(session.settings.optimize_explored_terrain),
+    );
     let rows: Vec<UiMap> = session
         .rows
         .iter()
@@ -78,6 +82,9 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             item: Some(row),
             ..
         } if id == "mod_on" => app.toggle_world_settings_row(row as usize),
+        UiEvent::Toggle { id, .. } if id == "optimize_terrain" => {
+            app.toggle_optimize_explored_terrain();
+        }
         UiEvent::ListSelect { id, index } if id == "mods" => {
             if let Some(session) = app.world_settings.as_mut() {
                 session.selected = index as usize;

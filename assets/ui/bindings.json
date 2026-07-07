@@ -1,214 +1,219 @@
 {
-    "format": 1,
-    "_doc": "The data contract between the game and each GUI document kind: which UiState keys the game populates every frame (bindable via a node's `bind`), what fields each list item map carries, and which widget ids / events the screen's controller reacts to. The gui-builder reads this to offer binding pickers and to seed preview sample data. Source of truth for behavior is the controller in src/app/shell_docs/ (or drive_doc_menu for menus); keep this file in sync when a controller's populate/handle changes.",
-    "kinds": {
-        "llama:title": {
-            "state": {},
-            "handles": {
-                "start": "click: open world select",
-                "quit": "click: quit the game"
-            }
-        },
-        "llama:world_select": {
-            "state": {
-                "worlds": {
-                    "type": "list",
-                    "item": {
-                        "name": "str"
-                    },
-                    "doc": "one row per saved world"
-                },
-                "world_sel": {
-                    "type": "i32",
-                    "doc": "selected row index, -1 = none"
-                },
-                "has_selection": {
-                    "type": "bool",
-                    "doc": "a world is selected (enables Play / World Settings)"
-                },
-                "no_worlds": {
-                    "type": "bool",
-                    "doc": "true when the save list is empty"
-                }
-            },
-            "handles": {
-                "worlds": "list select = choose world; activate (double-click/Enter) = play",
-                "play": "click: play the selected world",
-                "create": "click: open create-world",
-                "settings": "click: open world settings",
-                "back": "click: back to title",
-                "keys": "Up/Down move selection, Enter plays, Delete opens settings"
-            }
-        },
-        "llama:world_settings": {
-            "state": {
-                "world_name": {
-                    "type": "str",
-                    "doc": "the open world's name"
-                },
-                "mod_rows": {
-                    "type": "list",
-                    "item": {
-                        "name": "str",
-                        "desc": "str",
-                        "enabled": "bool",
-                        "toggleable": "bool",
-                        "content_only": "bool",
-                        "icon": "str",
-                        "has_icon": "bool",
-                        "version": "str",
-                        "has_version": "bool"
-                    },
-                    "doc": "one row per installed mod pack"
-                },
-                "mod_sel": {
-                    "type": "i32",
-                    "doc": "keyboard-selected row"
-                },
-                "no_mods": {
-                    "type": "bool",
-                    "doc": "true when no packs are installed"
-                },
-                "renaming": {
-                    "type": "bool",
-                    "doc": "the inline rename editor is open"
-                },
-                "not_renaming": {
-                    "type": "bool",
-                    "doc": "inverse of renaming (label/pencil visibility)"
-                },
-                "rename_text": {
-                    "type": "str",
-                    "doc": "live rename input text (mirrored from the editor)"
-                }
-            },
-            "handles": {
-                "mods": "list select = keyboard selection",
-                "mod_on": "toggle (per row): enable/disable that pack for this world",
-                "back": "click: back to world select",
-                "delete_world": "click: open the delete confirmation",
-                "keys": "Up/Down move, Enter toggles selected, Delete opens delete confirmation",
-                "rename": "click: open the inline rename editor (pencil)",
-                "rename_input": "text_input: new world name; Enter applies",
-                "rename_confirm": "click: apply the rename"
-            }
-        },
-        "llama:create_world": {
-            "state": {
-                "create_name": {
-                    "type": "str",
-                    "doc": "live name input text (mirrored from the text_input)"
-                },
-                "create_seed": {
-                    "type": "str",
-                    "doc": "live seed input text"
-                },
-                "can_create": {
-                    "type": "bool",
-                    "doc": "name is non-empty and unused (enables Create)"
-                },
-                "name_exists": {
-                    "type": "bool",
-                    "doc": "a world with this name already exists"
-                }
-            },
-            "handles": {
-                "create_name": "text_input: world name; Enter submits",
-                "create_seed": "text_input: seed (blank = random)",
-                "create": "click: create + enter the world",
-                "cancel": "click: back to world select"
-            }
-        },
-        "llama:delete_world": {
-            "state": {
-                "world_name": {
-                    "type": "str",
-                    "doc": "the world being deleted"
-                }
-            },
-            "handles": {
-                "confirm": "click: delete the world",
-                "cancel": "click: back to world select",
-                "keys": "Enter confirms"
-            }
-        },
-        "llama:pause": {
-            "state": {},
-            "handles": {
-                "resume": "click: back to the game",
-                "save_quit": "click: save and return to title",
-                "keys": "Enter resumes (ESC also resumes, via the global close control)"
-            }
-        },
-        "llama:hotbar": {
-            "state": {
-                "active_slot": {
-                    "type": "i32",
-                    "doc": "the selected hotbar slot (bind on the slot_grid's `selected`)"
-                }
-            },
-            "handles": {},
-            "notes": "HUD only: presentation-driven, receives no input. Hearts are drawn by the game beside the document."
-        },
-        "llama:inventory": {
-            "state": {},
-            "handles": {},
-            "notes": "container: slots route to the game automatically by role; no custom keys"
-        },
-        "llama:crafting_table": {
-            "state": {},
-            "handles": {},
-            "notes": "container: slots route by role"
-        },
-        "llama:chest": {
-            "state": {},
-            "handles": {},
-            "notes": "container: slots route by role"
-        },
-        "llama:furnace": {
-            "state": {
-                "cook01": {
-                    "type": "f32",
-                    "doc": "smelt progress 0..1 (bind a grow_lr gauge)"
-                },
-                "burn01": {
-                    "type": "f32",
-                    "doc": "remaining fuel 0..1 (bind a deplete_td gauge)"
-                }
-            },
-            "handles": {},
-            "notes": "container: slots route by role"
-        },
-        "llama:furniture_workbench": {
-            "state": {},
-            "handles": {},
-            "notes": "container: slots route by role; result icons grey out automatically when not craftable"
-        },
-        "mod kinds (modid:name)": {
-            "state": {
-                "<any key a mod sets via GuiStateSet>": {
-                    "type": "f32|i32|str",
-                    "doc": "the mod's tick-owned GUI state map is mirrored into UiState every frame"
-                }
-            },
-            "handles": {
-                "<button id>": "click: dispatched to the owning mod as gui_click (primary clicks only)"
-            }
-        },
-        "llama:sleep": {
-            "state": {},
-            "handles": {
-                "leave_bed": "click: cancel the sleep and wake beside the bed",
-                "keys": "ESC cancels the sleep (global close control)"
-            }
-        },
-        "llama:death": {
-            "state": {},
-            "handles": {
-                "respawn": "click: respawn at the bed spawn (or a fresh surface spot) on the tick",
-                "save_quit": "click: save and return to title",
-                "keys": "ESC is swallowed; only the buttons leave the death screen"
-            }
-        }
+ "format": 1,
+ "_doc": "The data contract between the game and each GUI document kind: which UiState keys the game populates every frame (bindable via a node's `bind`), what fields each list item map carries, and which widget ids / events the screen's controller reacts to. The gui-builder reads this to offer binding pickers and to seed preview sample data. Source of truth for behavior is the controller in src/app/shell_docs/ (or drive_doc_menu for menus); keep this file in sync when a controller's populate/handle changes.",
+ "kinds": {
+  "llama:title": {
+   "state": {},
+   "handles": {
+    "start": "click: open world select",
+    "quit": "click: quit the game"
+   }
+  },
+  "llama:world_select": {
+   "state": {
+    "worlds": {
+     "type": "list",
+     "item": {
+      "name": "str"
+     },
+     "doc": "one row per saved world"
+    },
+    "world_sel": {
+     "type": "i32",
+     "doc": "selected row index, -1 = none"
+    },
+    "has_selection": {
+     "type": "bool",
+     "doc": "a world is selected (enables Play / World Settings)"
+    },
+    "no_worlds": {
+     "type": "bool",
+     "doc": "true when the save list is empty"
     }
+   },
+   "handles": {
+    "worlds": "list select = choose world; activate (double-click/Enter) = play",
+    "play": "click: play the selected world",
+    "create": "click: open create-world",
+    "settings": "click: open world settings",
+    "back": "click: back to title",
+    "keys": "Up/Down move selection, Enter plays, Delete opens settings"
+   }
+  },
+  "llama:world_settings": {
+   "state": {
+    "world_name": {
+     "type": "str",
+     "doc": "the open world's name"
+    },
+    "mod_rows": {
+     "type": "list",
+     "item": {
+      "name": "str",
+      "desc": "str",
+      "enabled": "bool",
+      "toggleable": "bool",
+      "content_only": "bool",
+      "icon": "str",
+      "has_icon": "bool",
+      "version": "str",
+      "has_version": "bool"
+     },
+     "doc": "one row per installed mod pack"
+    },
+    "mod_sel": {
+     "type": "i32",
+     "doc": "keyboard-selected row"
+    },
+    "no_mods": {
+     "type": "bool",
+     "doc": "true when no packs are installed"
+    },
+    "renaming": {
+     "type": "bool",
+     "doc": "the inline rename editor is open"
+    },
+    "not_renaming": {
+     "type": "bool",
+     "doc": "inverse of renaming (label/pencil visibility)"
+    },
+    "rename_text": {
+     "type": "str",
+     "doc": "live rename input text (mirrored from the editor)"
+    },
+    "optimize_terrain": {
+     "type": "bool",
+     "doc": "the world's \"Optimize explored terrain\" setting (persist explored terrain for faster loads)"
+    }
+   },
+   "handles": {
+    "mods": "list select = keyboard selection",
+    "mod_on": "toggle (per row): enable/disable that pack for this world",
+    "back": "click: back to world select",
+    "delete_world": "click: open the delete confirmation",
+    "keys": "Up/Down move, Enter toggles selected, Delete opens delete confirmation",
+    "rename": "click: open the inline rename editor (pencil)",
+    "rename_input": "text_input: new world name; Enter applies",
+    "rename_confirm": "click: apply the rename",
+    "optimize_terrain": "toggle: flip Optimize explored terrain for this world (writes settings.json; applies next open)"
+   }
+  },
+  "llama:create_world": {
+   "state": {
+    "create_name": {
+     "type": "str",
+     "doc": "live name input text (mirrored from the text_input)"
+    },
+    "create_seed": {
+     "type": "str",
+     "doc": "live seed input text"
+    },
+    "can_create": {
+     "type": "bool",
+     "doc": "name is non-empty and unused (enables Create)"
+    },
+    "name_exists": {
+     "type": "bool",
+     "doc": "a world with this name already exists"
+    }
+   },
+   "handles": {
+    "create_name": "text_input: world name; Enter submits",
+    "create_seed": "text_input: seed (blank = random)",
+    "create": "click: create + enter the world",
+    "cancel": "click: back to world select"
+   }
+  },
+  "llama:delete_world": {
+   "state": {
+    "world_name": {
+     "type": "str",
+     "doc": "the world being deleted"
+    }
+   },
+   "handles": {
+    "confirm": "click: delete the world",
+    "cancel": "click: back to world select",
+    "keys": "Enter confirms"
+   }
+  },
+  "llama:pause": {
+   "state": {},
+   "handles": {
+    "resume": "click: back to the game",
+    "save_quit": "click: save and return to title",
+    "keys": "Enter resumes (ESC also resumes, via the global close control)"
+   }
+  },
+  "llama:hotbar": {
+   "state": {
+    "active_slot": {
+     "type": "i32",
+     "doc": "the selected hotbar slot (bind on the slot_grid's `selected`)"
+    }
+   },
+   "handles": {},
+   "notes": "HUD only: presentation-driven, receives no input. Hearts are drawn by the game beside the document."
+  },
+  "llama:inventory": {
+   "state": {},
+   "handles": {},
+   "notes": "container: slots route to the game automatically by role; no custom keys"
+  },
+  "llama:crafting_table": {
+   "state": {},
+   "handles": {},
+   "notes": "container: slots route by role"
+  },
+  "llama:chest": {
+   "state": {},
+   "handles": {},
+   "notes": "container: slots route by role"
+  },
+  "llama:furnace": {
+   "state": {
+    "cook01": {
+     "type": "f32",
+     "doc": "smelt progress 0..1 (bind a grow_lr gauge)"
+    },
+    "burn01": {
+     "type": "f32",
+     "doc": "remaining fuel 0..1 (bind a deplete_td gauge)"
+    }
+   },
+   "handles": {},
+   "notes": "container: slots route by role"
+  },
+  "llama:furniture_workbench": {
+   "state": {},
+   "handles": {},
+   "notes": "container: slots route by role; result icons grey out automatically when not craftable"
+  },
+  "mod kinds (modid:name)": {
+   "state": {
+    "<any key a mod sets via GuiStateSet>": {
+     "type": "f32|i32|str",
+     "doc": "the mod's tick-owned GUI state map is mirrored into UiState every frame"
+    }
+   },
+   "handles": {
+    "<button id>": "click: dispatched to the owning mod as gui_click (primary clicks only)"
+   }
+  },
+  "llama:sleep": {
+   "state": {},
+   "handles": {
+    "leave_bed": "click: cancel the sleep and wake beside the bed",
+    "keys": "ESC cancels the sleep (global close control)"
+   }
+  },
+  "llama:death": {
+   "state": {},
+   "handles": {
+    "respawn": "click: respawn at the bed spawn (or a fresh surface spot) on the tick",
+    "save_quit": "click: save and return to title",
+    "keys": "ESC is swallowed; only the buttons leave the death screen"
+   }
+  }
+ }
 }

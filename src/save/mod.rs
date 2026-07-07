@@ -10,6 +10,7 @@
 
 pub mod client;
 mod codec;
+pub mod colgen;
 mod container;
 pub mod entities;
 mod furnace;
@@ -36,9 +37,11 @@ use crate::section::Section;
 /// Messages from the game thread to the I/O thread.
 enum IoMsg {
     SaveSections(Vec<SectionSnapshot>),
+    SaveColumnGens(Vec<colgen::ColumnGenRecord>),
     SaveLevel(Vec<u8>),
     SaveModsJson(Vec<u8>),
     Load(SectionPos),
+    LoadColumnGen(ChunkPos, u32),
     Shutdown,
 }
 
@@ -52,10 +55,18 @@ pub struct LoadedSection {
     pub mobs: Vec<SavedMob>,
 }
 
+/// A column-gen cache record read back from disk (`record` is `None` when the
+/// cache misses — absent, corrupt, or seed/version drift: regenerate instead).
+pub struct LoadedColumnGen {
+    pub pos: ChunkPos,
+    pub record: Option<colgen::ColumnGenRecord>,
+}
+
 /// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
     tx: Sender<IoMsg>,
     load_rx: Receiver<LoadedSection>,
+    colgen_rx: Receiver<LoadedColumnGen>,
     handle: Option<JoinHandle<()>>,
     /// Section coords present on disk: seeded at open from region headers, grown
     /// as we save. The load path consults it to choose overlay-from-disk vs
@@ -65,6 +76,10 @@ pub struct WorldSave {
     /// scans don't walk the whole manifest for every column (that made vertical
     /// crossings O(columns × manifest) on a lived-in save).
     manifest_columns: HashMap<ChunkPos, Vec<i32>>,
+    /// Columns with a column-gen cache record on disk ("Optimize explored
+    /// terrain"): seeded at open from `colgen/` headers, grown as we save.
+    /// Presence only — a hit still validates seed/version at decode.
+    colgen_manifest: HashSet<ChunkPos>,
     /// Section coords whose written record currently carries live entities — dropped
     /// items OR mobs. A section leaves the set when re-saved with neither. The persist
     /// decision consults it so a section whose drops were picked up / despawned (or whose
@@ -84,6 +99,9 @@ pub struct OpenedWorld {
     /// enabled). Already applied to the palette here; the session applies it
     /// to the mod host / recipes / spawner.
     pub disabled_mods: std::collections::BTreeSet<String>,
+    /// The world's "Optimize explored terrain" setting (`settings.json`):
+    /// persist all explored terrain + the column-gen cache for faster loads.
+    pub optimize_explored_terrain: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +190,36 @@ impl WorldSave {
 
     pub fn poll_loaded(&self) -> Option<LoadedSection> {
         self.load_rx.try_recv().ok()
+    }
+
+    /// `true` if `pos` has a column-gen cache record on disk (or saved this
+    /// session). A hit still validates seed/version at decode.
+    pub fn colgen_manifest_contains(&self, pos: ChunkPos) -> bool {
+        self.colgen_manifest.contains(&pos)
+    }
+
+    /// Queue explored columns' 2D gen data for the column-gen cache
+    /// (non-blocking; "Optimize explored terrain").
+    pub fn save_column_gens(&mut self, recs: Vec<colgen::ColumnGenRecord>) {
+        if recs.is_empty() {
+            return;
+        }
+        for rec in &recs {
+            self.colgen_manifest.insert(rec.pos);
+        }
+        let _ = self.tx.send(IoMsg::SaveColumnGens(recs));
+    }
+
+    /// Ask the I/O thread to read `pos`'s column-gen cache record (validated
+    /// against `seed`); the result arrives via [`poll_loaded_column_gen`].
+    ///
+    /// [`poll_loaded_column_gen`]: Self::poll_loaded_column_gen
+    pub fn request_column_gen(&self, pos: ChunkPos, seed: u32) {
+        let _ = self.tx.send(IoMsg::LoadColumnGen(pos, seed));
+    }
+
+    pub fn poll_loaded_column_gen(&self) -> Option<LoadedColumnGen> {
+        self.colgen_rx.try_recv().ok()
     }
 
     /// Flush everything still queued and join the I/O thread. Call on quit after
@@ -401,9 +449,11 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let region_dir = dir.join("region");
     std::fs::create_dir_all(&region_dir)?;
 
-    // Per-world mod enablement (`settings.json`; absent = all enabled). Read
-    // BEFORE the palette so disabled-mod content decodes as unknown.
-    let disabled_mods = settings::load(&dir).disabled_mods;
+    // Per-world settings (`settings.json`; absent = defaults). Mod enablement
+    // is read BEFORE the palette so disabled-mod content decodes as unknown.
+    let world_settings = settings::load(&dir);
+    let disabled_mods = world_settings.disabled_mods;
+    let optimize_explored_terrain = world_settings.optimize_explored_terrain;
 
     // Pin (or load) the save's block/item name palette BEFORE any record is
     // read or written: the codec maps every id through it (see `palette`).
@@ -433,13 +483,29 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         }
     }
 
+    // The column-gen cache manifest ("Optimize explored terrain"), same shape.
+    let mut colgen_manifest = HashSet::new();
+    if let Ok(rd) = std::fs::read_dir(dir.join("colgen")) {
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if let Some((rx, rz)) = colgen::parse_cache_name(&path) {
+                if let Ok(indices) = colgen::read_cache_indices(&path) {
+                    for lidx in indices {
+                        colgen_manifest.insert(colgen::column_pos(rx, rz, lidx));
+                    }
+                }
+            }
+        }
+    }
+
     let (tx, rx) = std::sync::mpsc::channel::<IoMsg>();
     let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
+    let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
     let handle = std::thread::Builder::new()
         .name("llamacraft-save".to_string())
         .spawn(move || {
             crate::worker::lower_current_thread_priority();
-            io_thread(dir, rx, load_tx)
+            io_thread(dir, rx, load_tx, colgen_tx)
         })
         .expect("spawn save thread");
 
@@ -455,23 +521,73 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         save: WorldSave {
             tx,
             load_rx,
+            colgen_rx,
             handle: Some(handle),
             manifest,
             manifest_columns,
+            colgen_manifest,
             entities_on_disk: HashSet::new(),
         },
         level,
         disabled_mods,
+        optimize_explored_terrain,
     })
 }
 
 /// The I/O thread loop: process requests in order, doing compression + file I/O
 /// off the game loop. Returns (and so the join completes) on `Shutdown`.
-fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedSection>) {
+/// One parsed region-container file, cached on the I/O thread. Load requests
+/// are spatially clustered (a streaming burst reads hundreds of records from
+/// the same file), so without this every per-section load re-read and re-parsed
+/// the whole region — O(file) work per record. One slot per file kind
+/// (region / colgen) is enough; writes refresh the slot through the same path.
+#[derive(Default)]
+struct RegionFileCache {
+    path: Option<PathBuf>,
+    records: std::collections::HashMap<u16, Vec<u8>>,
+}
+
+impl RegionFileCache {
+    /// The parsed records of `path`, re-reading only when the slot holds a
+    /// different file. `refresh` forces the re-read (after a write).
+    fn read(&mut self, path: &Path, refresh: bool) -> &std::collections::HashMap<u16, Vec<u8>> {
+        if refresh || self.path.as_deref() != Some(path) {
+            self.records = region::read_region(path).unwrap_or_default();
+            self.path = Some(path.to_path_buf());
+        }
+        &self.records
+    }
+}
+
+fn io_thread(
+    dir: PathBuf,
+    rx: Receiver<IoMsg>,
+    load_tx: Sender<LoadedSection>,
+    colgen_tx: Sender<LoadedColumnGen>,
+) {
     let region_dir = dir.join("region");
+    let colgen_dir = dir.join("colgen");
+    let mut region_cache = RegionFileCache::default();
+    let mut colgen_cache = RegionFileCache::default();
     while let Ok(msg) = rx.recv() {
         match msg {
-            IoMsg::SaveSections(snaps) => write_sections(&region_dir, snaps),
+            IoMsg::SaveSections(snaps) => {
+                let touched = write_sections(&region_dir, snaps);
+                if let Some(path) = region_cache.path.clone() {
+                    if touched.contains(&path) {
+                        region_cache.read(&path, true);
+                    }
+                }
+            }
+            IoMsg::SaveColumnGens(recs) => {
+                let _ = std::fs::create_dir_all(&colgen_dir);
+                let touched = colgen::write_records(&colgen_dir, recs);
+                if let Some(path) = colgen_cache.path.clone() {
+                    if touched.contains(&path) {
+                        colgen_cache.read(&path, true);
+                    }
+                }
+            }
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
             }
@@ -479,7 +595,16 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedSection>) 
                 let _ = write_atomic(&dir.join("mods.json"), &bytes);
             }
             IoMsg::Load(pos) => {
-                let (section, entities, mobs) = load_section(&region_dir, pos);
+                let (rx_, rz_) = region::region_of(pos);
+                let path = region::region_path(&region_dir, rx_, rz_);
+                let records = region_cache.read(&path, false);
+                let decoded = records
+                    .get(&region::local_index(pos))
+                    .and_then(|blob| codec::decode_section(pos, blob));
+                let (section, entities, mobs) = match decoded {
+                    Some((section, entities, mobs)) => (Some(section), entities, mobs),
+                    None => (None, Vec::new(), Vec::new()),
+                };
                 let _ = load_tx.send(LoadedSection {
                     pos,
                     section,
@@ -487,13 +612,23 @@ fn io_thread(dir: PathBuf, rx: Receiver<IoMsg>, load_tx: Sender<LoadedSection>) 
                     mobs,
                 });
             }
+            IoMsg::LoadColumnGen(pos, seed) => {
+                let (rx_, rz_) = colgen::region_of(pos);
+                let path = colgen::cache_path(&colgen_dir, rx_, rz_);
+                let record = colgen_cache
+                    .read(&path, false)
+                    .get(&colgen::local_index(pos))
+                    .and_then(|blob| colgen::decode_record(pos, seed, blob));
+                let _ = colgen_tx.send(LoadedColumnGen { pos, record });
+            }
             IoMsg::Shutdown => break,
         }
     }
 }
 
 /// Merge snapshots into their region files (read-modify-write per region).
-fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) {
+/// Returns the paths written, so the I/O thread's read cache can refresh.
+fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) -> Vec<PathBuf> {
     use std::collections::HashMap;
     let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
     for s in snaps {
@@ -502,6 +637,7 @@ fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) {
             .or_default()
             .push(s);
     }
+    let mut touched = Vec::with_capacity(by_region.len());
     for ((rx, rz), group) in by_region {
         let path = region::region_path(region_dir, rx, rz);
         // On a corrupt region we start fresh rather than refuse to save; the new
@@ -511,24 +647,9 @@ fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) {
             records.insert(region::local_index(s.pos), codec::encode_snapshot(s));
         }
         let _ = region::write_region(&path, &records);
+        touched.push(path);
     }
-}
-
-fn load_section(
-    region_dir: &Path,
-    pos: SectionPos,
-) -> (Option<Section>, Vec<DroppedItem>, Vec<SavedMob>) {
-    let decoded = (|| {
-        let (rx, rz) = region::region_of(pos);
-        let path = region::region_path(region_dir, rx, rz);
-        let records = region::read_region(&path).ok()?;
-        let blob = records.get(&region::local_index(pos))?;
-        codec::decode_section(pos, blob)
-    })();
-    match decoded {
-        Some((section, entities, mobs)) => (Some(section), entities, mobs),
-        None => (None, Vec::new(), Vec::new()),
-    }
+    touched
 }
 
 /// Atomic file write: tmp + rename, so a crash mid-write can't truncate the live file.

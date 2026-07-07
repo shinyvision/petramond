@@ -190,6 +190,10 @@ pub struct World {
     /// true content is in flight: the sim guard blocks mutation and the harvest skips
     /// persisting it (see `world::sim_guard`).
     pub(super) awaited_overlays: FxHashSet<SectionPos>,
+    /// Requested disk records that install as the section's PRIMARY content — no
+    /// gen job was submitted for them ("Optimize explored terrain"). A corrupt
+    /// answer falls back to generation; see `world::stream::submit_section_job`.
+    pub(super) disk_primary_sections: FxHashSet<SectionPos>,
     pub render_dist: i32,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
@@ -236,6 +240,16 @@ pub struct World {
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
     pub(super) save: Option<WorldSave>,
+    /// The world's "Optimize explored terrain" setting: persist EVERY explored
+    /// section (not just modified ones) plus the per-column gen cache, so
+    /// revisited terrain loads from disk instead of regenerating. Set once at
+    /// session open from `settings.json`; meaningless without a save.
+    pub(super) optimize_explored_terrain: bool,
+    /// Column-gen cache records awaiting a batched write ("Optimize explored
+    /// terrain"): buffered so the save thread merges many columns per region
+    /// file rewrite instead of read-modify-writing per column. Records are
+    /// pure gen data — a crash losing the buffer only costs a future regen.
+    pub(super) pending_colgen_records: Vec<crate::save::colgen::ColumnGenRecord>,
     /// Active dropped item entities resting in currently-loaded sections.
     pub(super) dropped_items: DroppedItems,
     /// Active mobs in currently-loaded sections.
@@ -295,6 +309,7 @@ impl World {
             pending_sections: FxHashSet::default(),
             pending_overlays: FxHashMap::default(),
             awaited_overlays: FxHashSet::default(),
+            disk_primary_sections: FxHashSet::default(),
             render_dist,
             lighting_revision: 0,
             light_bakes: LightBakeQueue::new(jobs.clone()),
@@ -312,6 +327,8 @@ impl World {
             last_load_target: None,
             sim: TickState::new(seed),
             save: None,
+            optimize_explored_terrain: false,
+            pending_colgen_records: Vec::new(),
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
             mod_block_hooks: Vec::new(),
@@ -328,6 +345,12 @@ impl World {
     #[inline]
     pub fn disabled_mods(&self) -> &std::collections::BTreeSet<String> {
         &self.disabled_mods
+    }
+
+    /// Install the world's "Optimize explored terrain" setting — once, at
+    /// session open (like [`set_disabled_mods`](Self::set_disabled_mods)).
+    pub fn set_optimize_explored_terrain(&mut self, on: bool) {
+        self.optimize_explored_terrain = on;
     }
 
     /// Install the world's disabled-mod set — once, at session open.
@@ -383,7 +406,21 @@ impl World {
         record_holds_entities: bool,
     ) -> Option<SectionSnapshot> {
         let section = self.sections.get(&pos)?;
-        if section.modified || !entities.is_empty() || !mobs.is_empty() || record_holds_entities {
+        // "Optimize explored terrain": every explored section persists ONCE.
+        // Unmodified generated content is deterministic, so a section already
+        // on disk never needs a rewrite (the manifest check keeps steady-state
+        // flushes cheap); modified/entity records rewrite as always.
+        let explored_first_persist = self.optimize_explored_terrain
+            && self
+                .save
+                .as_ref()
+                .is_some_and(|s| !s.manifest_contains(pos));
+        if section.modified
+            || !entities.is_empty()
+            || !mobs.is_empty()
+            || record_holds_entities
+            || explored_first_persist
+        {
             let mut snap = SectionSnapshot::from_section(section);
             snap.entities = entities;
             snap.mobs = mobs;
@@ -430,6 +467,20 @@ impl World {
         }
         if let Some(save) = self.save.as_mut() {
             save.save_sections(snaps);
+        }
+        self.flush_pending_colgen_records();
+    }
+
+    /// Send the buffered column-gen cache records to the save thread. Batched
+    /// (autosave / unload / a size trigger in `poll`) so one region-file
+    /// rewrite absorbs many columns.
+    pub(super) fn flush_pending_colgen_records(&mut self) {
+        if self.pending_colgen_records.is_empty() {
+            return;
+        }
+        let recs = std::mem::take(&mut self.pending_colgen_records);
+        if let Some(save) = self.save.as_mut() {
+            save.save_column_gens(recs);
         }
     }
 
@@ -946,6 +997,7 @@ impl World {
         self.block_entity_sections.remove(&pos);
         self.particle_emitter_sections.remove(&pos);
         self.awaited_overlays.remove(&pos);
+        self.disk_primary_sections.remove(&pos);
         if self.remove_mesh(pos) {
             self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
         }
@@ -986,6 +1038,8 @@ impl World {
         self.pending.remove(&pos);
         self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
         self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
+        self.disk_primary_sections
+            .retain(|sp| sp.chunk_pos() != pos);
     }
 
     /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
@@ -1010,6 +1064,7 @@ impl World {
         self.pending_sections.clear();
         self.pending_overlays.clear();
         self.awaited_overlays.clear();
+        self.disk_primary_sections.clear();
     }
 
     /// All section coordinates of column `(cx,cz)` in the world vertical range.
