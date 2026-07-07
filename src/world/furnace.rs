@@ -10,7 +10,8 @@
 use crate::chunk::{SectionPos, SECTION_SIZE};
 use crate::container::Container;
 use crate::crafting::Recipes;
-use crate::furnace::{Facing, Furnace, FURNACE_SLOTS};
+use crate::facing::Facing;
+use crate::furnace::{Furnace, FURNACE_SLOTS};
 use crate::mathh::IVec3;
 
 use super::store::World;
@@ -27,8 +28,11 @@ impl World {
     pub(super) fn tick_furnaces(&mut self, recipes: &Recipes) {
         let mut relit = Vec::new();
         // Only indexed sections can hold a furnace; skip the Arc::make_mut
-        // (a potential copy-on-write clone) for chest/door-only ones.
-        let candidates: Vec<_> = self.block_entity_sections.iter().copied().collect();
+        // (a potential copy-on-write clone) for chest/door-only ones. Sorted:
+        // set order reflects streaming history, and the relit block updates
+        // must fire in a deterministic order (the multiplayer tick contract).
+        let mut candidates: Vec<_> = self.block_entity_sections.iter().copied().collect();
+        candidates.sort_unstable_by_key(|p| (p.cx, p.cy, p.cz));
         for cpos in candidates {
             let Some(section) = self.sections.get_mut(&cpos) else {
                 continue;
@@ -77,16 +81,6 @@ impl World {
         }
     }
 
-    /// Remove the furnace at a world position (block break): its machine state
-    /// and facing. The block's container (the slots) is scattered by the
-    /// generic break path, not here.
-    pub fn take_furnace(&mut self, pos: IVec3) -> Option<Furnace> {
-        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
-        let furnace = c.take_furnace(lx, ly, lz);
-        c.take_entity_facing(lx, ly, lz);
-        self.note_block_entity_change(pos);
-        furnace
-    }
 }
 
 #[inline]

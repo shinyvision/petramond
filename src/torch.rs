@@ -59,7 +59,7 @@ pub fn warm_amount(sky01: f32, block01: f32) -> f32 {
 /// and leans away from that wall. The four wall variants name the horizontal
 /// direction the torch LEANS toward — equal to the face normal of the block it was
 /// placed against (pointing away from the wall) — matching the cardinal convention
-/// the furnace [`Facing`](crate::furnace::Facing) uses. Stored per-cell in the
+/// [`Facing`](crate::facing::Facing) uses. Stored per-cell in the
 /// owning chunk's torch map.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

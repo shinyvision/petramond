@@ -399,12 +399,7 @@ mod tests {
     fn bare_hand_builds_solid_cuboid() {
         let view = HeldItemView {
             item: None,
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -426,12 +421,7 @@ mod tests {
     fn held_block_builds_textured_cube() {
         let view = HeldItemView {
             item: Some(ItemType::OakLog),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -447,12 +437,7 @@ mod tests {
     fn lit_hand_packs_sampled_skylight() {
         let view = HeldItemView {
             item: Some(ItemType::Stone),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
 
@@ -478,12 +463,7 @@ mod tests {
         // pipeline, NOT the model3d hand pass, so build_hand emits nothing.
         let view = HeldItemView {
             item: Some(ItemType::Poppy),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -609,12 +589,7 @@ mod tests {
         for (row, (label, item)) in items.iter().enumerate() {
             let view = HeldItemView {
                 item: Some(*item),
-                block_state: Default::default(),
-                swing: 0.0,
-                swing_scale: 1.0,
-                eat: 0.0,
-                eat_bob: 0.0,
-                eat_near: 0.0,
+                ..Default::default()
             };
             let (kind, mvp) = held_model(&view, aspect).expect("model item");
             raster_held_cell(kind, mvp, (w, h), row, &mut color);
@@ -637,12 +612,7 @@ mod tests {
         // tile (and a finite MVP) for a sprite item and None otherwise.
         let poppy = HeldItemView {
             item: Some(ItemType::Poppy),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
         assert_eq!(tile, crate::atlas::Tile::named("poppy"));
@@ -667,21 +637,11 @@ mod tests {
         // The hand buffers are cleared + refilled each call, never reallocated.
         let block = HeldItemView {
             item: Some(ItemType::Stone),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let bare = HeldItemView {
             item: None,
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         build_hand(&block, 1.5, &mut v, &mut i);
@@ -745,12 +705,7 @@ mod tests {
         let screens: [(u32, u32); 4] = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
         let view = HeldItemView {
             item: None,
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         for screen in screens {
@@ -788,12 +743,7 @@ mod tests {
     fn bare_hand_rest_does_not_show_large_fist_cap() {
         let view = HeldItemView {
             item: None,
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let (mut v, mut i) = (Vec::new(), Vec::new());
         let mvp = build_hand(&view, 16.0 / 9.0, &mut v, &mut i);
@@ -853,12 +803,7 @@ mod tests {
         let aspect = 16.0 / 9.0;
         let rest_view = HeldItemView {
             item: None,
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let early_view = HeldItemView {
             swing: 0.25,
@@ -925,9 +870,7 @@ mod tests {
             block_state: Default::default(),
             swing,
             swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let fist = |swing| bare_arm_placement(&view(swing), aspect).transform_point3(fist_local);
         let shoulder =
@@ -963,12 +906,7 @@ mod tests {
     fn swing_and_place_change_the_mvp() {
         let rest = HeldItemView {
             item: Some(ItemType::Stone),
-            block_state: Default::default(),
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
+            ..Default::default()
         };
         let mid_punch = HeldItemView { swing: 0.5, ..rest };
         // A reduced amplitude (< 1.0) stands in for the softer place jab so the

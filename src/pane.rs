@@ -209,7 +209,7 @@ pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTI
 mod tests {
     use super::*;
     use crate::block_state::{StairHalf, StairState};
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     fn mask_with(neighbours: impl Fn(IVec3) -> Block) -> u8 {
         resolved_mask(

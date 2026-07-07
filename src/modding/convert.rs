@@ -11,7 +11,7 @@ use crate::events::{
     self, BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobHurtPre, PlayerDamagePre,
     PostEvent, PostEventKind,
 };
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
 use mod_api as api;
 

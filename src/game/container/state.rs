@@ -58,7 +58,7 @@ impl ContainerMenu {
     /// (placement always inserts one, so this is belt-and-braces).
     pub(in crate::game) fn open_furnace_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.furnace_at(pos).is_none() {
-            world.insert_furnace(pos, crate::furnace::Facing::default());
+            world.insert_furnace(pos, crate::facing::Facing::default());
         }
         self.target = ContainerTarget::Furnace(pos);
     }
@@ -76,7 +76,7 @@ impl ContainerMenu {
     /// always inserts one, so this is belt-and-braces).
     pub(in crate::game) fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.container_at(pos).is_none() {
-            world.insert_chest(pos, crate::furnace::Facing::default());
+            world.insert_chest(pos, crate::facing::Facing::default());
         }
         self.target = ContainerTarget::Chest(pos);
     }

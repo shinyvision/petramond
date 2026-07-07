@@ -443,8 +443,9 @@ fn kitchen_reuse_inner() {
     game.look = None;
 
     // Cook completes with the menu CLOSED; the coal then burns dry and the
-    // oven swaps back to its unlit row (coal 4800 ticks; generous margin).
-    for _ in 0..5000 {
+    // oven swaps back to its unlit row. The margin derives from the fuel
+    // row's burn time (freely editable — never pin it here).
+    for _ in 0..ItemType::Coal.fuel_burn_ticks() as u32 + 200 {
         game.game_tick_step(&mut ev);
     }
     let slots = game

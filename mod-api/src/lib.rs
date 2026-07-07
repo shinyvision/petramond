@@ -629,11 +629,16 @@ pub enum HostCall {
     /// per the message-level ABI rule. Creates/grows the container as needed
     /// (never shrinks; slot indices past the engine cap are rejected). The
     /// block at `pos` must be registered to THIS mod's namespace — a mod owns
-    /// only its own blocks' containers (reads may cross namespaces). Unknown
-    /// item keys reject the call. → [`HostRet::Bool`] (`false` = unloaded).
+    /// only its own blocks' containers, ANY of them, decorative or not (reads
+    /// may cross namespaces). Multi-cell model blocks canonicalize to the
+    /// group anchor, so writing through any footprint cell edits the one
+    /// container the GUI shows. Counts past the item's stack cap are CLAMPED
+    /// to it — size against `ItemInfo.max_stack` if the overflow matters. →
+    /// [`HostRet::Bool`] (`false` = unloaded, or an unknown item key — the
+    /// batch is not applied).
     ContainerSet {
         pos: [i32; 3],
-        slots: Vec<(u32, Option<ItemSlotData>)>,
+        slots: Vec<(u32, Option<ItemStackData>)>,
     },
     /// Read one item's registry data: stack cap, fuel burn ticks, and tag
     /// names — the same rows engine mechanics read, so mod logic (a fuel-fired
@@ -644,7 +649,7 @@ pub enum HostCall {
     /// recipe `class` (`"llama:smelting"` = the furnace's table; a mod machine
     /// names its own, e.g. `"kitchen:cooking"`), from the same layered
     /// `recipes.json` catalog engine machines cook from — any pack's rows for
-    /// that class included. `None` = no recipe. → [`HostRet::ItemSlot`].
+    /// that class included. `None` = no recipe. → [`HostRet::ItemStack`].
     RecipeResult { class: String, key: String },
 
     // --- Player status effects (landed 2026-07-07) --------------------------
@@ -672,11 +677,18 @@ pub enum HostCall {
     /// namespace. → [`HostRet::Bool`] (`false` = not a model group there,
     /// footprint mismatch, or unloaded).
     SwapModelBlock { pos: [i32; 3], block: BlockId },
+
+    /// Batched [`ContainerGet`](Self::ContainerGet): every listed position's
+    /// container slots in ONE crossing. A machine mod's tick loop MUST read
+    /// its placed machines through this (like `GetBlocks`), never loop
+    /// `ContainerGet` per machine — the per-block-per-tick hot-loop rule. →
+    /// [`HostRet::Containers`], parallel to the positions.
+    ContainerGetMany { positions: Vec<[i32; 3]> },
 }
 
 /// One item stack crossing the ABI: the item's stable registry key + count.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ItemSlotData {
+pub struct ItemStackData {
     pub key: String,
     pub count: u8,
 }
@@ -733,13 +745,16 @@ pub enum HostRet {
     GuiValue(Option<GuiValue>),
     /// [`HostCall::ContainerGet`]: every slot in index order; `None` = no
     /// container / unloaded.
-    ContainerSlots(Option<Vec<Option<ItemSlotData>>>),
+    ContainerSlots(Option<Vec<Option<ItemStackData>>>),
     /// [`HostCall::ItemInfo`]: `None` = unknown item key.
     ItemInfo(Option<ItemInfoData>),
     /// [`HostCall::RecipeResult`]: `None` = no recipe for that input.
-    ItemSlot(Option<ItemSlotData>),
+    ItemStack(Option<ItemStackData>),
     /// [`HostCall::EffectsActive`]: the player's active status effects.
     Effects(Vec<EffectStateData>),
+    /// [`HostCall::ContainerGetMany`], parallel to the request positions
+    /// (each entry as [`HostRet::ContainerSlots`]'s payload).
+    Containers(Vec<Option<Vec<Option<ItemStackData>>>>),
 }
 
 /// One active status effect crossing the ABI (see [`HostCall::EffectsActive`]).

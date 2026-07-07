@@ -15,7 +15,8 @@ use crate::block::{Block, BlockTag};
 use crate::block_state::{BlockStates, LogAxis, SlabState, StairHalf, StairState};
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::door::DoorState;
-use crate::furnace::{Facing, Furnace};
+use crate::facing::Facing;
+use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 use crate::container::Container;
 use crate::torch::TorchPlacement;
@@ -854,7 +855,13 @@ impl Section {
         }
         let mut changed = false;
         let mut relit = Vec::new();
-        for (&key, f) in self.furnaces.iter_mut() {
+        // Key order, not map order: `relit` feeds block-update scheduling, and
+        // deterministic ticks (the multiplayer contract) forbid HashMap
+        // iteration order leaking into it.
+        let mut keys: Vec<u16> = self.furnaces.keys().copied().collect();
+        keys.sort_unstable();
+        for key in keys {
+            let f = self.furnaces.get_mut(&key).expect("key just listed");
             // The furnace's slots live in the shared container map under the
             // same key (sibling field — disjoint borrow).
             let Some(container) = self.containers.get_mut(&key) else {

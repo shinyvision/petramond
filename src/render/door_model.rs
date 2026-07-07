@@ -18,7 +18,7 @@ use glam::Vec3;
 use super::item_cube::push_box_faces_lit_mirrored;
 use super::DoorInstance;
 use crate::door::{self, THICKNESS};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mesh::{Vertex, UV_MODE_THIN_U, UV_MODE_THIN_V};
 
 /// Canonical closed-door slab extent on the thin (Z) axis: flush with the `+Z` face.

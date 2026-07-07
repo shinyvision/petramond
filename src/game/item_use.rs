@@ -13,11 +13,14 @@ use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
 use crate::player::Player;
 
-/// The in-progress eat: which food item is being eaten and for how many ticks
-/// the button has been held on it. Tick-owned on [`Game`]; aborted the moment
-/// the button lifts or the hotbar selection changes.
+/// The in-progress eat: which hotbar slot and food item are being eaten and
+/// for how many ticks the button has been held on it. Tick-owned on [`Game`];
+/// aborted the moment the button lifts or the hotbar selection changes — the
+/// SLOT is tracked so switching to a different slot holding the same food
+/// still aborts (per WIKI/status-effects.md, switching slots aborts).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct EatingState {
+    pub slot: u8,
     pub item: ItemType,
     pub progress: u32,
 }
@@ -35,7 +38,8 @@ impl Game {
         if item.food().is_none() || self.player.is_spectator() {
             return false;
         }
-        if self.eating.is_some_and(|e| e.item == item) {
+        let slot = self.player.inventory.active_slot();
+        if self.eating.is_some_and(|e| e.slot == slot && e.item == item) {
             return true; // re-click mid-eat: consumed, nothing restarts
         }
         let mut pre = ItemUsePre {
@@ -50,19 +54,27 @@ impl Game {
             self.bus.emit(PostEvent::ItemUsed { item });
             return true;
         }
-        self.eating = Some(EatingState { item, progress: 0 });
+        self.eating = Some(EatingState {
+            slot,
+            item,
+            progress: 0,
+        });
         true
     }
 
     /// Advance the in-progress eat one tick (runs every tick, click or not):
-    /// abort when the button lifted or the selection changed; consume the item
-    /// and grant its effects when the hold reaches the row's `eat_ticks`.
-    pub(super) fn advance_eating(&mut self, _events: &mut TickEvents) {
+    /// abort when the button lifted, the selection moved to ANY other slot,
+    /// or the slot's item changed under the eat; consume the item and grant
+    /// its effects when the hold reaches the row's `eat_ticks`.
+    pub(super) fn advance_eating(&mut self) {
         let Some(eat) = self.eating else {
             return;
         };
         let held = self.player.inventory.selected().map(|s| s.item);
-        if !self.intent_use_held || held != Some(eat.item) {
+        if !self.intent_use_held
+            || self.player.inventory.active_slot() != eat.slot
+            || held != Some(eat.item)
+        {
             self.eating = None;
             return;
         }
@@ -72,10 +84,7 @@ impl Game {
         };
         let progress = eat.progress + 1;
         if progress < food.eat_ticks {
-            self.eating = Some(EatingState {
-                item: eat.item,
-                progress,
-            });
+            self.eating = Some(EatingState { progress, ..eat });
             return;
         }
         // Done: the food leaves the hotbar and its effects land, atomically on

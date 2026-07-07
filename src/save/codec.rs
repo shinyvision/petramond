@@ -14,7 +14,8 @@ use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::door::DoorState;
 use crate::entity::DroppedItem;
-use crate::furnace::{Facing, Furnace};
+use crate::facing::Facing;
+use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 use crate::mob::SavedMob;
 use crate::container::Container;
@@ -502,7 +503,7 @@ pub fn decode_section(
         HashMap::new()
     };
     let mobs = if flags & FLAG_HAS_MOBS != 0 {
-        super::mobs::get_mobs(&mut r, version)?
+        super::mobs::get_mobs(&mut r)?
     } else {
         Vec::new()
     };
@@ -684,7 +685,7 @@ mod tests {
         container.slots[SLOT_INPUT] = Some(ItemStack::new(ItemType::RawCopper, 12));
         container.slots[SLOT_FUEL] = Some(ItemStack::new(ItemType::Coal, 1));
         s.insert_container(2, 1, 3, container);
-        s.insert_entity_facing(2, 1, 3, crate::furnace::Facing::West);
+        s.insert_entity_facing(2, 1, 3, crate::facing::Facing::West);
 
         let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, _entities, _mobs) =
@@ -700,7 +701,7 @@ mod tests {
         assert_eq!(c.slots[SLOT_FUEL], Some(ItemStack::new(ItemType::Coal, 1)));
         assert_eq!(
             back.entity_facing(2, 1, 3),
-            crate::furnace::Facing::West,
+            crate::facing::Facing::West,
             "facing persists"
         );
     }
@@ -714,7 +715,7 @@ mod tests {
         chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
         chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
         s.insert_container(9, 2, 1, chest);
-        s.insert_entity_facing(9, 2, 1, crate::furnace::Facing::South);
+        s.insert_entity_facing(9, 2, 1, crate::facing::Facing::South);
 
         let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, _entities, _mobs) =
@@ -727,7 +728,7 @@ mod tests {
         assert_eq!(got.slots[5], None);
         assert_eq!(
             back.entity_facing(9, 2, 1),
-            crate::furnace::Facing::South,
+            crate::facing::Facing::South,
             "facing persists"
         );
     }
@@ -818,7 +819,7 @@ mod tests {
         // A placed door's facing + open + which-half state must reload exactly. State is
         // set AFTER the block.
         use crate::door::DoorState;
-        use crate::furnace::Facing;
+        use crate::facing::Facing;
         let mut s = sec(3, 4, 7);
         s.set_block(4, 0, 5, Block::OakDoor);
         s.set_door_state(

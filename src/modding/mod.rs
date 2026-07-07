@@ -26,7 +26,7 @@ pub(crate) mod manifest;
 pub(crate) mod modset;
 mod scope;
 
-/// The session's loaded recipe catalog, shared with the host so `SmeltResult`
+/// The session's loaded recipe catalog, shared with the host so `RecipeResult`
 /// answers from the exact table the engine cooks from (same process-wide
 /// install pattern as [`gen`]; replaced by each `Game::new`).
 static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<crate::crafting::Recipes>>> =

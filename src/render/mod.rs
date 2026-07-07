@@ -202,7 +202,7 @@ struct ChestInstance {
     /// World position of the block's min corner (block coords as f32).
     pos: Vec3,
     /// Placement orientation (which way the front + latch face).
-    facing: crate::furnace::Facing,
+    facing: crate::facing::Facing,
     /// Lid open fraction: `0.0` closed, `1.0` fully open.
     lid01: f32,
     /// 6-bit skylight sampled from the world at the chest's cell.
@@ -222,7 +222,7 @@ struct DoorInstance {
     /// World position of the lower cell's min corner (block coords as f32).
     pos: Vec3,
     /// The edge the CLOSED door rests on (its outward normal); see [`crate::door`].
-    facing: crate::furnace::Facing,
+    facing: crate::facing::Facing,
     /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
     open01: f32,
     /// Atlas tile for the lower half's front/back (door art).

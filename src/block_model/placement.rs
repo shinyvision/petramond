@@ -5,7 +5,7 @@
 use glam::{Mat4, Vec3};
 
 use crate::block::Aabb;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::IVec3;
 
 use super::{box_corners, footprint, instance, BlockModelKind, CellInstance, OrientedCellInstance};

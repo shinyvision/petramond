@@ -36,6 +36,42 @@ pub(crate) fn insert_into_slots(
 
     Some(stack)
 }
+
+/// Move `stack` onto the cursor if it fits: an empty cursor takes it whole; a
+/// matching cursor stack absorbs it when there is room. `false` = untouched
+/// (a full or mismatched cursor) — take-only output clicks gate on this.
+pub(crate) fn stack_onto_cursor(cursor: &mut Option<ItemStack>, stack: ItemStack) -> bool {
+    match cursor {
+        None => {
+            *cursor = Some(stack);
+            true
+        }
+        Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
+            cur.count += stack.count;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Merge `src` into `dst`: fill an empty `dst`, top up a matching stack to
+/// its cap (leaving the remainder in `src`), and leave both untouched on a
+/// mismatch — the unit move behind every shift-route into container slots.
+pub(crate) fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
+    let Some(mut incoming) = src.take() else {
+        return;
+    };
+    match dst {
+        None => *dst = Some(incoming),
+        Some(existing) if existing.can_stack_with(&incoming) => {
+            let moved = existing.space_left().min(incoming.count);
+            existing.count += moved;
+            incoming.count -= moved;
+            *src = (incoming.count > 0).then_some(incoming);
+        }
+        Some(_) => *src = Some(incoming),
+    }
+}
 pub const HOTBAR_LEN: usize = 9;
 pub const MAIN_LEN: usize = 27;
 pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN; // 36

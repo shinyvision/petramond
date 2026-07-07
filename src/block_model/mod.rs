@@ -41,7 +41,7 @@ use serde_json::Value;
 use crate::asset_cache::CompiledAsset;
 use crate::bbmodel::{euler_quat, face_corners, Model};
 use crate::block::Aabb;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::IVec3;
 use crate::mesh::face::Face;
 use crate::mesh::SHADES;

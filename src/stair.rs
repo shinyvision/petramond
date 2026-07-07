@@ -2,7 +2,7 @@
 
 use crate::block::{Aabb, Block, RenderShape};
 use crate::block_state::{StairHalf, StairState};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
 
 pub const MAX_BOXES: usize = 3;

@@ -166,7 +166,11 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
 /// role slots.
 pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
-        GuiKind::Chest => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
+        GuiKind::Chest => SlotContract::new(&[
+            ("storage", crate::world::chest::CHEST_SLOTS),
+            ("player_inv", 27),
+            ("hotbar", 9),
+        ]),
         GuiKind::Inventory => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),

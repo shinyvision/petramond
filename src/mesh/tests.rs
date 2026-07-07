@@ -827,7 +827,7 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     let pos = crate::chunk::SectionPos::new(0, 0, 0);
     let mut section = crate::section::Section::new(0, 0, 0);
     section.set_block(8, 8, 8, Block::OakStairs);
-    section.set_stair_facing(8, 8, 8, crate::furnace::Facing::East);
+    section.set_stair_facing(8, 8, 8, crate::facing::Facing::East);
 
     let mesh = super::build_section_mesh(
         &section,
@@ -1109,7 +1109,7 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
 /// uniform full skylight, so tests can probe stair-only geometry.
 fn mesh_stair_fixture(
     blocks: &[((i32, i32, i32), Block)],
-    facings: &[((i32, i32, i32), crate::furnace::Facing)],
+    facings: &[((i32, i32, i32), crate::facing::Facing)],
 ) -> ChunkMesh {
     let pos = crate::chunk::SectionPos::new(0, 0, 0);
     let mut section = crate::section::Section::new(0, 0, 0);
@@ -1153,7 +1153,7 @@ fn mesh_stair_fixture(
 #[test]
 fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
     use super::vertex::UV_MODE_CELL_LOCAL;
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     let mesh = mesh_stair_fixture(
         &[((8, 8, 8), Block::RedwoodStairs)],
@@ -1195,7 +1195,7 @@ fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
 /// planes must darken toward the wall (the AO gradient survives, continuously).
 #[test]
 fn stair_plane_lighting_is_continuous_beside_a_wall() {
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     let mesh = mesh_stair_fixture(
         &[
@@ -1266,7 +1266,7 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
 /// full cube in an identical neighbourhood.
 #[test]
 fn stair_underside_shades_like_a_full_block_bottom() {
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     let mesh = mesh_stair_fixture(
         &[
@@ -1309,7 +1309,7 @@ fn stair_underside_shades_like_a_full_block_bottom() {
 
 #[test]
 fn stair_mesh_uses_resolved_outside_corner_shape() {
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     let pos = crate::chunk::SectionPos::new(0, 0, 0);
     let mut section = crate::section::Section::new(0, 0, 0);
@@ -1483,7 +1483,8 @@ mod parallel_parity_tests {
 #[test]
 fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     use crate::atlas::Tile;
-    use crate::furnace::{Facing, Furnace};
+    use crate::facing::Facing;
+use crate::furnace::Furnace;
     let air = |_: i32, _: i32, _: i32| 0u8;
     let biome0 = |_: i32, _: i32| 0u8;
     let light = |_: i32, _: i32, _: i32| SKY_FULL;
@@ -1618,7 +1619,8 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
 #[test]
 fn pad_local_section_mesher_matches_closure_mesher() {
     use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
-    use crate::furnace::{Facing, Furnace};
+    use crate::facing::Facing;
+use crate::furnace::Furnace;
     use crate::section::Section;
 
     const PAD: usize = SECTION_SIZE + 2;

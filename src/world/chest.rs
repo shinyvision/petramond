@@ -4,11 +4,12 @@
 //! plain slots) plus an entity facing for the lidded dynamic render — it has
 //! no machine state and doesn't tick. These wrappers own only that pairing:
 //! placement installs both, breaking's generic container scatter empties the
-//! slots while [`take_chest_facing`](super::store::World) forgets the facing,
-//! and the render collection walks the facings of chest cells.
+//! slots (the facing falls to the generic
+//! [`forget_block_entity_records`](super::store::World) sweep), and the
+//! render collection walks the facings of chest cells.
 
 use crate::container::Container;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::IVec3;
 
 use super::store::World;
@@ -23,15 +24,6 @@ impl World {
         if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_container(lx, ly, lz, Container::with_len(CHEST_SLOTS));
             c.insert_entity_facing(lx, ly, lz, facing);
-            self.note_block_entity_change(pos);
-        }
-    }
-
-    /// Forget a broken chest's facing (its container is scattered by the
-    /// generic break path, not here).
-    pub fn take_chest_facing(&mut self, pos: IVec3) {
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-            c.take_entity_facing(lx, ly, lz);
             self.note_block_entity_change(pos);
         }
     }

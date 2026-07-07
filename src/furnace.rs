@@ -4,7 +4,7 @@
 //! storage chests and mod containers use — the furnace only owns what makes
 //! it a furnace: burn/cook counters and the rule for advancing them.
 
-use crate::item::{ItemStack, ItemTag, ItemType};
+use crate::item::{ItemStack, ItemType};
 
 pub const COOK_TICKS: u16 = 600;
 const COOK_REGRESS: u16 = 2;
@@ -14,49 +14,6 @@ pub const SLOT_INPUT: usize = 0;
 pub const SLOT_FUEL: usize = 1;
 pub const SLOT_OUTPUT: usize = 2;
 pub const FURNACE_SLOTS: usize = 3;
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Facing {
-    #[default]
-    North = 0, // front faces -Z
-    South = 1, // +Z
-    West = 2,  // -X
-    East = 3,  // +X
-}
-
-impl Facing {
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        self as u8
-    }
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Facing::South,
-            2 => Facing::West,
-            3 => Facing::East,
-            _ => Facing::North,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FillSlot {
-    Input,
-    Fuel,
-}
-
-impl FillSlot {
-    /// The container slot this role fills.
-    #[inline]
-    pub fn index(self) -> usize {
-        match self {
-            FillSlot::Input => SLOT_INPUT,
-            FillSlot::Fuel => SLOT_FUEL,
-        }
-    }
-}
 
 /// One furnace's burn/cook state. `Copy`; slots live in the block's container.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -70,18 +27,6 @@ impl Furnace {
     #[inline]
     pub fn is_lit(&self) -> bool {
         self.burn_remaining > 0
-    }
-
-    /// Which slot a shift-clicked `item` fills, by its tags (fuel beats
-    /// smeltable for the rare item that is both).
-    pub fn fill_slot_for(item: ItemType) -> Option<FillSlot> {
-        if item.has_tag(ItemTag::FUEL) {
-            Some(FillSlot::Fuel)
-        } else if item.has_tag(ItemTag::SMELTABLE) {
-            Some(FillSlot::Input)
-        } else {
-            None
-        }
     }
 
     /// Advance one game tick over the furnace's container `slots`
@@ -173,36 +118,6 @@ fn consume_one(slots: &mut [Option<ItemStack>], i: usize) {
     }
 }
 
-pub(crate) fn stack_onto_cursor(cursor: &mut Option<ItemStack>, stack: ItemStack) -> bool {
-    match cursor {
-        None => {
-            *cursor = Some(stack);
-            true
-        }
-        Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
-            cur.count += stack.count;
-            true
-        }
-        _ => false,
-    }
-}
-
-pub(crate) fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
-    let Some(mut incoming) = src.take() else {
-        return;
-    };
-    match dst {
-        None => *dst = Some(incoming),
-        Some(existing) if existing.can_stack_with(&incoming) => {
-            let moved = existing.space_left().min(incoming.count);
-            existing.count += moved;
-            incoming.count -= moved;
-            *src = (incoming.count > 0).then_some(incoming);
-        }
-        Some(_) => *src = Some(incoming),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,28 +150,31 @@ mod tests {
     }
 
     #[test]
-    fn smelts_one_item_in_600_ticks() {
+    fn smelts_one_item_in_cook_ticks() {
         let mut f = Furnace::default();
         let mut slots = [stack(ItemType::RawIron, 1), stack(ItemType::Coal, 1), None];
-        // Lights on the first tick and begins cooking.
+        // Lights on the first tick and begins cooking; burn_max mirrors the
+        // fuel's row (derived, not pinned — the row is freely editable).
         assert!(f.tick(&mut slots, smelt));
         assert!(f.is_lit(), "furnace lights from the coal");
-        assert_eq!(f.burn_max, 4800);
-        // 599 more ticks complete the first (and only) smelt at tick 600.
-        run(&mut f, &mut slots, 599);
+        assert_eq!(f.burn_max, ItemType::Coal.fuel_burn_ticks());
+        // The remaining ticks complete the first (and only) smelt.
+        run(&mut f, &mut slots, COOK_TICKS as u32 - 1);
         assert_eq!(slots[SLOT_OUTPUT], stack(ItemType::IronIngot, 1));
         assert!(slots[SLOT_INPUT].is_none(), "the single raw iron is consumed");
         assert_eq!(f.cook_progress, 0);
     }
 
     #[test]
-    fn one_coal_smelts_eight_items() {
+    fn one_coal_smelts_its_burn_worth_of_items() {
+        let burn = ItemType::Coal.fuel_burn_ticks() as u32;
+        let smelts = burn / COOK_TICKS as u32;
         let mut f = Furnace::default();
         let mut slots = [stack(ItemType::RawIron, 64), stack(ItemType::Coal, 1), None];
-        // One coal burns 4800 ticks = eight 600-tick smelts.
-        run(&mut f, &mut slots, 4800);
-        assert_eq!(slots[SLOT_OUTPUT].unwrap().count, 8, "4800 / 600 = 8 ingots");
-        assert_eq!(slots[SLOT_INPUT].unwrap().count, 56, "64 - 8 consumed");
+        // One coal burns `burn` ticks = `burn / COOK_TICKS` whole smelts.
+        run(&mut f, &mut slots, burn);
+        assert_eq!(slots[SLOT_OUTPUT].unwrap().count as u32, smelts);
+        assert_eq!(slots[SLOT_INPUT].unwrap().count as u32, 64 - smelts);
         // Fuel is spent; one more tick puts the flame out.
         f.tick(&mut slots, smelt);
         assert!(!f.is_lit(), "the flame goes out once the coal is spent");
@@ -265,10 +183,11 @@ mod tests {
 
     #[test]
     fn flame_relights_from_a_second_coal() {
+        let burn = ItemType::Coal.fuel_burn_ticks() as u32;
         let mut f = Furnace::default();
         let mut slots = [stack(ItemType::RawIron, 64), stack(ItemType::Coal, 2), None];
         // Past the first coal's burn: it relights from the second, staying lit.
-        run(&mut f, &mut slots, 4810);
+        run(&mut f, &mut slots, burn + 10);
         assert!(f.is_lit(), "second coal keeps it burning");
         assert_eq!(slots[SLOT_FUEL], None, "both coal eventually consumed");
     }

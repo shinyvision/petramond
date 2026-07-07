@@ -5,8 +5,9 @@
 //! only the cooking logic. The engine owns the oven's three `container` slots
 //! (declared by the GUI document: 0 = food input, 1 = fuel, 2 = take-only
 //! output), stores them per placed oven at the model group's base cell, and
-//! routes clicks/shift-clicks; this mod steps burn/cook state each tick and
-//! swaps the slots through `container_get`/`container_set`.
+//! routes clicks/shift-clicks; this mod steps burn/cook state each tick,
+//! reading every oven's slots in one batched `container_get_many` and writing
+//! back changed slots through `container_set`.
 //!
 //! State model, all deterministic and save-safe:
 //! - The oven POSITION LIST lives in world KV `kitchen:ovens` (12 B LE per
@@ -109,7 +110,7 @@ struct Kitchen {
     open_session: Option<[i32; 3]>,
     /// Session caches for registry data (stable per session).
     fuel_ticks: HashMap<String, u32>,
-    cook: HashMap<String, Option<ItemSlotData>>,
+    cook: HashMap<String, Option<ItemStackData>>,
     max_stack: HashMap<String, u8>,
 }
 
@@ -152,7 +153,7 @@ impl Kitchen {
         m
     }
 
-    fn cook_result_for(&mut self, key: &str) -> Option<ItemSlotData> {
+    fn cook_result_for(&mut self, key: &str) -> Option<ItemStackData> {
         if let Some(cached) = self.cook.get(key) {
             return cached.clone();
         }
@@ -161,13 +162,10 @@ impl Kitchen {
         result
     }
 
-    /// One oven's game tick: the engine furnace algorithm over the container
-    /// slots. Returns nothing; writes back only what changed.
-    fn step_oven(&mut self, pos: [i32; 3]) {
-        let Some(mut slots) = container_get(pos) else {
-            // Never opened and never written: an empty oven has nothing to do.
-            return;
-        };
+    /// One oven's game tick: the engine furnace algorithm over its container
+    /// slots (batch-fetched by the caller — one crossing for every oven, per
+    /// the ABI hot-loop rule). Writes back only what changed.
+    fn step_oven(&mut self, pos: [i32; 3], mut slots: Vec<Option<ItemStackData>>) {
         slots.resize(3, None);
         let mut state = OvenState::decode(&section_kv_get(pos, STATE_KEY).unwrap_or_default());
         let before_state = state;
@@ -198,7 +196,7 @@ impl Kitchen {
                 if burn > 0 {
                     state.burn_remaining = burn;
                     state.burn_max = burn;
-                    slots[SLOT_FUEL] = (fuel.count > 1).then(|| ItemSlotData {
+                    slots[SLOT_FUEL] = (fuel.count > 1).then(|| ItemStackData {
                         key: fuel.key,
                         count: fuel.count - 1,
                     });
@@ -213,13 +211,13 @@ impl Kitchen {
                 let result = result.expect("can_cook implies a result");
                 slots[SLOT_OUTPUT] = Some(match slots[SLOT_OUTPUT].take() {
                     None => result.clone(),
-                    Some(o) => ItemSlotData {
+                    Some(o) => ItemStackData {
                         key: o.key,
                         count: o.count + result.count,
                     },
                 });
                 let input = slots[SLOT_INPUT].take().expect("can_cook implies input");
-                slots[SLOT_INPUT] = (input.count > 1).then(|| ItemSlotData {
+                slots[SLOT_INPUT] = (input.count > 1).then(|| ItemStackData {
                     key: input.key,
                     count: input.count - 1,
                 });
@@ -318,18 +316,19 @@ impl Mod for Kitchen {
         let Some(oven_block) = self.oven_block else {
             return;
         };
-        // One batched read prunes stale anchors (broken ovens — reported from
-        // ANY footprint cell — decode to a different block at the anchor) and
-        // gates on loaded sections in one crossing.
+        // One batched block read prunes stale anchors (broken ovens —
+        // reported from ANY footprint cell — decode to a different block at
+        // the anchor) and gates on loaded sections in one crossing.
         let positions: Vec<[i32; 3]> = self.ovens.clone();
         let blocks = get_blocks(positions.clone());
+        let mut live: Vec<[i32; 3]> = Vec::new();
         let mut pruned = false;
         for (pos, block) in positions.into_iter().zip(blocks) {
             match block {
                 // Unloaded: state is frozen on disk, exactly like a furnace.
                 None => continue,
                 // A listed anchor is ours in EITHER visual state.
-                Some(b) if b == oven_block || Some(b) == self.lit_block => self.step_oven(pos),
+                Some(b) if b == oven_block || Some(b) == self.lit_block => live.push(pos),
                 Some(_) => {
                     self.ovens.retain(|p| *p != pos);
                     pruned = true;
@@ -338,6 +337,18 @@ impl Mod for Kitchen {
         }
         if pruned {
             self.store_oven_list();
+        }
+        if live.is_empty() {
+            return;
+        }
+        // One batched container read for every live oven (never container_get
+        // in a loop). A `None` container = never opened, never written: an
+        // empty oven has nothing to do.
+        let containers = container_get_many(live.clone());
+        for (pos, slots) in live.into_iter().zip(containers) {
+            if let Some(slots) = slots {
+                self.step_oven(pos, slots);
+            }
         }
     }
 }

@@ -2,7 +2,7 @@ use super::{tick::TickEvents, Game};
 use crate::block::{Block, BlockInteraction, RenderShape};
 use crate::block_state::StairState;
 use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
 use crate::torch::TorchPlacement;
 
@@ -16,7 +16,7 @@ impl Game {
         if std::mem::take(&mut self.pending_place) {
             self.place_click(events);
         }
-        self.advance_eating(events);
+        self.advance_eating();
     }
 
     /// Resolve one consumed secondary-button press.

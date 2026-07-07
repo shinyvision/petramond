@@ -1,12 +1,12 @@
-//! (De)serialization for mod container block-entities stored inside a chunk's
-//! save record.
+//! (De)serialization for the generic containers (chest, furnace, and mod
+//! block slot storage alike) stored inside a chunk's save record.
 //!
-//! Rides the section record behind `FLAG2_HAS_CONTAINERS` exactly like
-//! `save::chest` rides `FLAG_HAS_CHESTS`, except the slot list is
-//! variable-length (each container is sized by its owning GUI document): the
-//! body is a `u8` slot count followed by that many palette-mapped item slots.
-//! Items from an absent/disabled mod decode to empty via the palette's
-//! unknown-name rule, like every other persisted stack.
+//! Rides the section record behind `FLAG2_HAS_CONTAINERS`. The slot list is
+//! variable-length (a chest is 27, a furnace 3, a mod container sized by its
+//! owning GUI document): the body is a `u8` slot count followed by that many
+//! palette-mapped item slots. Items from an absent/disabled mod decode to
+//! empty via the palette's unknown-name rule, like every other persisted
+//! stack.
 
 use std::collections::HashMap;
 

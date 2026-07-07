@@ -1,16 +1,16 @@
-//! Generic item-slot storage for MOD container blocks.
+//! THE generic item-slot storage: one section-owned `Container` per block
+//! position backs chests, furnaces, and mod container blocks alike — there
+//! are NO parallel slot stores (see WIKI/containers.md).
 //!
-//! A mod GUI document (kind `mod_id:name`) may declare `container` role slots;
-//! the engine backs them with one `Container` per opening block position —
-//! section-owned like [`crate::chest::Chest`]/[`crate::furnace::Furnace`], but
-//! with no engine behavior at all: the engine stores, renders, click-routes,
-//! persists, and scatters the slots; what the contents MEAN (cooking, burning,
-//! filtering machines…) is the owning mod's tick logic, reached through the
-//! `ContainerGet`/`ContainerSet` host calls.
+//! The engine stores, renders, click-routes, persists, and scatters the
+//! slots; what the contents MEAN is the container's owner — engine machine
+//! state ([`crate::furnace::Furnace`]) or the owning mod's tick logic,
+//! reached through the `ContainerGet`/`ContainerSet` host calls.
 //!
 //! Slot SEMANTICS (which item groups shift-clicks route into a slot, which
-//! slots are take-only outputs) are declared on the document's slot nodes and
-//! resolved at document load — see `gui::documents` and [`SlotSpec`].
+//! slots are take-only outputs) are [`SlotSpec`]s: engine-owned sets for the
+//! chest/furnace (`game::container::generic`), document slot nodes resolved
+//! at load for mod GUIs (`gui::documents`).
 
 use crate::item::{ItemStack, ItemTag};
 

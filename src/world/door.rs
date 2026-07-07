@@ -12,7 +12,7 @@
 use crate::atlas::Tile;
 use crate::block::{Block, BlockBehavior, RenderShape};
 use crate::door::DoorState;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::IVec3;
 
 use super::store::World;

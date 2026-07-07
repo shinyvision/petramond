@@ -440,7 +440,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
     if block.render_shape() == crate::block::RenderShape::Stair {
         let stair = match state {
             HeldBlockState::Stair(state) => state,
-            _ => StairState::new(crate::furnace::Facing::South, Default::default()),
+            _ => StairState::new(crate::facing::Facing::South, Default::default()),
         };
         push_stair_item_lit(verts, indices, faces, stair, origin, size, light);
     } else if block.render_shape() == crate::block::RenderShape::Slab {

@@ -14,17 +14,13 @@
 //! name this build doesn't know is SKIPPED with a warning — there is no "air mob"
 //! to degrade to, and respawning a wrong species would corrupt the world.
 
-use std::collections::BTreeMap;
-
 use crate::mathh::Vec3;
 use crate::mob::{Mob, SavedMob};
 use crate::save::codec::{get_kv_map, put_f32, put_kv_map, put_u16, put_u32, put_u8, Reader};
 
 /// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4) + shear_regrow(4);
-/// a section-record-v3 mob appends its variable-length mod KV map after them
-/// (a v3 mob with no KV is these bytes + the map's 2-byte zero count). A v1
-/// section record predates the shear-regrow field and stores 17-byte mobs; v2
-/// predates the KV map (see [`get_mobs`]).
+/// the variable-length mod KV map follows (a mob with no KV appends only the
+/// map's 2-byte zero count).
 const MOB_FIXED_BYTES: usize = 21;
 
 /// Append a `u16`-length-prefixed list of saved mobs to `buf`. The count is capped at
@@ -65,10 +61,7 @@ pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
 /// Read a list of saved mobs written by [`put_mobs`]; `None` on truncated input. A
 /// disk species the palette (or registry) doesn't know is skipped with a warning —
 /// its record bytes are still consumed, so the rest of the list stays intact.
-/// The per-mob layout is versioned by the enclosing section record:
-/// `record_version` `1` mobs have no shear-regrow field (they reload fully coated),
-/// `2` no mod KV map (they reload with none), `3+` both.
-pub fn get_mobs(r: &mut Reader, record_version: u8) -> Option<Vec<SavedMob>> {
+pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
     let pal = super::palette::active();
     let registered = crate::mob::defs().len();
     let n = r.u16()? as usize;
@@ -77,12 +70,8 @@ pub fn get_mobs(r: &mut Reader, record_version: u8) -> Option<Vec<SavedMob>> {
         let disk = r.u8()?;
         let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let yaw = r.f32()?;
-        let shear_regrow = if record_version >= 2 { r.u32()? } else { 0 };
-        let kv = if record_version >= 3 {
-            get_kv_map(r)?
-        } else {
-            BTreeMap::new()
-        };
+        let shear_regrow = r.u32()?;
+        let kv = get_kv_map(r)?;
         // Resolve the species AFTER consuming the record bytes, so a skip can't
         // desync the reader.
         let kind = pal
@@ -110,6 +99,7 @@ pub fn get_mobs(r: &mut Reader, record_version: u8) -> Option<Vec<SavedMob>> {
 mod tests {
     use super::*;
     use crate::mob::Mob;
+    use std::collections::BTreeMap;
 
     #[test]
     fn mobs_roundtrip_through_a_buffer() {
@@ -134,50 +124,13 @@ mod tests {
         put_mobs(&mut buf, &[a.clone(), b.clone()]);
 
         let mut r = Reader::new(&buf);
-        let got = get_mobs(&mut r, 3).expect("decodes");
+        let got = get_mobs(&mut r).expect("decodes");
         assert_eq!(got.len(), 2);
         assert_eq!(
             got[0], a,
             "species, position and facing survive the round-trip"
         );
         assert_eq!(got[1], b, "the shear-regrow counter and mod KV survive too");
-    }
-
-    #[test]
-    fn v1_records_decode_without_a_shear_field() {
-        // A v1 section record stored 17-byte mobs (no shear-regrow). Hand-write that
-        // old layout and decode it as record version 1: the mob reloads fully coated.
-        let mut buf = Vec::new();
-        put_u16(&mut buf, 1);
-        put_u8(&mut buf, Mob::Sheep.id());
-        for v in [1.0f32, 64.0, 2.0, 0.5] {
-            crate::save::codec::put_f32(&mut buf, v);
-        }
-        let mut r = Reader::new(&buf);
-        let got = get_mobs(&mut r, 1).expect("v1 layout decodes");
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].kind, Mob::Sheep);
-        assert_eq!(got[0].shear_regrow, 0, "an old record reloads coated");
-        assert!(got[0].kv.is_empty(), "an old record reloads with no mod KV");
-    }
-
-    #[test]
-    fn v2_records_decode_without_a_kv_map() {
-        // A v2 section record stored 21-byte mobs (shear-regrow, no mod KV).
-        // Hand-write that layout and decode it as record version 2: the mob
-        // reloads with the field defaulted empty.
-        let mut buf = Vec::new();
-        put_u16(&mut buf, 1);
-        put_u8(&mut buf, Mob::Sheep.id());
-        for v in [1.0f32, 64.0, 2.0, 0.5] {
-            put_f32(&mut buf, v);
-        }
-        put_u32(&mut buf, 77);
-        let mut r = Reader::new(&buf);
-        let got = get_mobs(&mut r, 2).expect("v2 layout decodes");
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].shear_regrow, 77, "v2 fields still decode");
-        assert!(got[0].kv.is_empty(), "a v2 record reloads with no mod KV");
     }
 
     #[test]
@@ -202,7 +155,7 @@ mod tests {
             );
         }
         let mut r = Reader::new(&buf);
-        let got = get_mobs(&mut r, 3).expect("decodes despite the stranger");
+        let got = get_mobs(&mut r).expect("decodes despite the stranger");
         assert_eq!(got.len(), 2, "only the unknown mob is dropped");
         assert_eq!(got[0].kind, Mob::Owl);
         assert_eq!(got[0].pos.x, 1.0);
@@ -218,7 +171,7 @@ mod tests {
         let mut buf = Vec::new();
         put_mobs(&mut buf, &[]);
         let mut r = Reader::new(&buf);
-        assert!(get_mobs(&mut r, 3).expect("decodes").is_empty());
+        assert!(get_mobs(&mut r).expect("decodes").is_empty());
     }
 
     #[test]
@@ -227,6 +180,6 @@ mod tests {
         let mut buf = Vec::new();
         put_u16(&mut buf, 1);
         let mut r = Reader::new(&buf);
-        assert!(get_mobs(&mut r, 3).is_none());
+        assert!(get_mobs(&mut r).is_none());
     }
 }

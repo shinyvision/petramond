@@ -88,7 +88,7 @@ mod tests {
         assert!(world.place_stair(
             p,
             Block::OakStairs,
-            StairState::new(crate::furnace::Facing::East, StairHalf::Bottom)
+            StairState::new(crate::facing::Facing::East, StairHalf::Bottom)
         ));
 
         let column = world.columns.get(&ChunkPos::new(0, 0)).unwrap();

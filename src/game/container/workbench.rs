@@ -38,7 +38,7 @@ impl ContainerMenu {
         }
         // `self.workbench_input` and the inventory slot are disjoint borrows.
         if let Some(src) = inv.slot_mut(i) {
-            crate::furnace::merge_stack(src, &mut self.workbench_input);
+            crate::inventory::merge_stack(src, &mut self.workbench_input);
         }
     }
     pub(super) fn workbench_shift_input(&mut self, inv: &mut Inventory) {

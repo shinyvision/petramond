@@ -31,6 +31,7 @@ mod door;
 mod effect;
 mod entity;
 mod events;
+mod facing;
 mod furnace;
 mod game;
 mod gui;

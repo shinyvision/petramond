@@ -20,7 +20,9 @@ use std::collections::HashMap;
 
 use crate::block::Block;
 #[cfg(test)]
-use crate::furnace::{Facing, Furnace};
+use crate::facing::Facing;
+#[cfg(test)]
+use crate::furnace::Furnace;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;

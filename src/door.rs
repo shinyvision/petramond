@@ -20,7 +20,7 @@
 //! collision slab (the door stays within its own cell, not 3px into the neighbour).
 
 use crate::block::Aabb;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 
 /// Slab thickness as a fraction of a cell — 3/16, like a Minecraft door.
 pub const THICKNESS: f32 = 3.0 / 16.0;

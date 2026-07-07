@@ -167,25 +167,29 @@ impl Player {
         self.effects.clear();
     }
 
-    /// Step every active effect one game tick: count down, apply interval
-    /// behaviors on their boundaries, drop expired entries. Only `Game`'s tick
-    /// should call this.
-    pub(crate) fn tick_effects(&mut self) {
-        let mut heal_total = 0;
+    /// Step every active effect one game tick: count down, drop expired
+    /// entries, and return each behavior whose interval boundary fired this
+    /// tick (boundaries land every `interval` ticks counted back from expiry,
+    /// including one AT expiry). The player owns WHEN a behavior fires — a
+    /// duration concern — but never WHAT it does: consequences are applied by
+    /// `Game::tick_effects`, because damaging behaviors must route through
+    /// the `Game::damage_player` funnel this type cannot reach.
+    pub(crate) fn tick_effects(&mut self) -> Vec<crate::effect::EffectBehavior> {
+        let mut fired = Vec::new();
         for e in &mut self.effects {
             e.remaining -= 1;
-            if let crate::effect::EffectBehavior::Regen { interval, amount } =
-                e.effect.def().behavior
-            {
-                // Boundaries land every `interval` ticks after application,
-                // including one at expiry (remaining == 0).
-                if e.remaining % interval == 0 {
-                    heal_total += amount;
+            let behavior = e.effect.def().behavior;
+            match behavior {
+                crate::effect::EffectBehavior::None => {}
+                crate::effect::EffectBehavior::Regen { interval, .. } => {
+                    if e.remaining % interval == 0 {
+                        fired.push(behavior);
+                    }
                 }
             }
         }
         self.effects.retain(|e| e.remaining > 0);
-        self.heal(heal_total);
+        fired
     }
 
     /// Add a knockback impulse to the velocity — a mob strike's shove (and, later,

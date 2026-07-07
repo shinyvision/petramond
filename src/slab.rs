@@ -3,7 +3,7 @@
 
 use crate::block::{Aabb, Block};
 use crate::block_state::{SlabSplit, SlabState};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
 

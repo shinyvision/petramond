@@ -364,10 +364,6 @@ pub struct Renderer {
     /// Texture+sampler bind layout used by every UI texture (doc-UI images,
     /// the heart atlas).
     ui_texture_bgl: wgpu::BindGroupLayout,
-    /// The HUD heart atlas (one texture, cells empty | half | full) as its own
-    /// bind group, or `None` when the PNG is missing. HUD chrome drawn over
-    /// the hotbar, independent of any document.
-    hearts_bind: Option<wgpu::BindGroup>,
     /// GUI-document draw path (llama-ui DrawList upload + batches): every
     /// screen's chrome. See `doc_ui`.
     doc_ui: doc_ui::DocUi,
@@ -377,21 +373,11 @@ pub struct Renderer {
     ui_solid_vbuf: wgpu::Buffer,
     ui_count_vertex_count: u32,
     ui_drag_count_vertex_count: u32,
-    /// HUD heart quads (bottom-left health bar) + their vertex count. Sampled from the
-    /// heart atlas; empty for a spectator or behind an open menu.
-    ui_hearts_vbuf: wgpu::Buffer,
-    ui_hearts_vertex_count: u32,
-    /// The status-effect icon strip (one framed cell per REGISTERED effect,
-    /// composed at construction — see `render::effect_icons`) as its own bind
-    /// group, or `None` when the frame art is missing.
-    effects_bind: Option<wgpu::BindGroup>,
-    /// HUD status-effect icon quads (the row above the hearts) + vertex count.
-    ui_effects_vbuf: wgpu::Buffer,
-    ui_effects_vertex_count: u32,
-    /// Hurt-flash red edge vignette (solid gradient quads) + vertex count.
-    /// Drawn first in the UI pass; zero on a calm frame.
-    ui_vignette_vbuf: wgpu::Buffer,
-    ui_vignette_vertex_count: u32,
+    /// The HUD chrome layers (hurt vignette, hearts, status effects, …), each
+    /// a `UiBuild` vec + texture + vbuf drawn in list order by the UI pass.
+    /// A NEW HUD element is one `UiBuild` vec + one [`HudLayer`] entry in
+    /// `construct` — not a field trio, upload block, and pass branch each.
+    hud_layers: Vec<HudLayer>,
     /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
     /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
@@ -410,6 +396,30 @@ pub struct Renderer {
     /// Reusable CPU staging for the per-frame UI geometry (all quad buffers +
     /// overlay spans + icon-quad list), cleared + refilled each frame.
     ui_build: UiBuild,
+}
+
+/// What a [`HudLayer`] samples.
+enum HudLayerTexture {
+    /// Solid-color quads: the solid sentinel skips the sampler, so the layer
+    /// draws with the icon-atlas bind (any layout-compatible bind works).
+    Solid,
+    /// The layer's own texture bind, or `None` when its art failed to load —
+    /// the layer then draws nothing.
+    Texture(Option<wgpu::BindGroup>),
+}
+
+/// One HUD chrome layer of the UI pass: a `UiBuild` vertex list uploaded to
+/// its own buffer and drawn with its own texture. Layers draw in list order;
+/// `under_chrome` ones go beneath the GUI-document draw list (the hurt
+/// vignette), the rest above it (hearts, status effects).
+struct HudLayer {
+    /// Which `UiBuild` vec fills this layer each frame.
+    source: fn(&UiBuild) -> &[UiVertex],
+    texture: HudLayerTexture,
+    /// Draw beneath the GUI-document chrome instead of over it.
+    under_chrome: bool,
+    vbuf: wgpu::Buffer,
+    vertex_count: u32,
 }
 
 impl Renderer {

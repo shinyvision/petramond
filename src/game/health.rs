@@ -135,13 +135,26 @@ impl Game {
         }
     }
 
-    /// Step the player's active status effects one game tick (durations count
-    /// down; interval behaviors such as regeneration apply on their
-    /// boundaries). Spectators keep ticking their durations too — an effect is
-    /// wall-clock-like state, not a survival consequence — but healing a full
-    /// or dead player is already a no-op inside [`crate::player::Player`].
+    /// Step the player's active status effects one game tick and apply the
+    /// consequences of every interval boundary that fired. The split matters:
+    /// [`crate::player::Player::tick_effects`] owns the durations and reports
+    /// the boundaries; the consequences are applied HERE so a damaging
+    /// behavior (poison) can route through the [`damage_player`] funnel —
+    /// never through `Player::apply_damage` directly. Spectators keep ticking
+    /// their durations too — an effect is wall-clock-like state, not a
+    /// survival consequence — but healing a full or dead player is already a
+    /// no-op inside [`crate::player::Player::heal`].
+    ///
+    /// [`damage_player`]: Game::damage_player
     pub(super) fn tick_effects(&mut self) {
-        self.player.tick_effects();
+        for behavior in self.player.tick_effects() {
+            match behavior {
+                crate::effect::EffectBehavior::None => {}
+                crate::effect::EffectBehavior::Regen { amount, .. } => {
+                    self.player.heal(amount);
+                }
+            }
+        }
     }
 
     /// The player's active status effects for the HUD icon row, in application

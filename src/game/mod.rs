@@ -326,7 +326,7 @@ impl Game {
             let slot = crate::slab::slot_for_rotation(
                 self.held_slab_rotation(),
                 IVec3::ZERO,
-                crate::furnace::Facing::South,
+                crate::facing::Facing::South,
             );
             return HeldBlockState::Slab(SlabState::single(slot.split, slot.index, block));
         }
@@ -359,13 +359,13 @@ impl Game {
     }
 
     #[inline]
-    pub(crate) fn held_log_axis_for_facing(&self, facing: crate::furnace::Facing) -> LogAxis {
+    pub(crate) fn held_log_axis_for_facing(&self, facing: crate::facing::Facing) -> LogAxis {
         if !self.held_rotation_active() {
             return LogAxis::Y;
         }
         match facing {
-            crate::furnace::Facing::East | crate::furnace::Facing::West => LogAxis::X,
-            crate::furnace::Facing::North | crate::furnace::Facing::South => LogAxis::Z,
+            crate::facing::Facing::East | crate::facing::Facing::West => LogAxis::X,
+            crate::facing::Facing::North | crate::facing::Facing::South => LogAxis::Z,
         }
     }
 }

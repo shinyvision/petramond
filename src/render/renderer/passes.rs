@@ -617,15 +617,14 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
             pass.draw(0..self.crosshair_vertex_count, 0..1);
         }
-        // UI PASS: the GUI-document draw list (all screen chrome, including its
-        // own dim backdrop) → HUD hearts → per-slot item icons, all via
-        // `ui_pipe` (own alpha blend, NO depth). Each group binds its own
-        // texture; solid quads bind the icon atlas (the solid sentinel skips
-        // the sampler, so any layout-compatible texture works).
-        if self.ui_hearts_vertex_count > 0
-            || self.ui_effects_vertex_count > 0
+        // UI PASS: under-chrome HUD layers (hurt vignette) → the GUI-document
+        // draw list (all screen chrome, including its own dim backdrop) → the
+        // over-chrome HUD layers (hearts, status effects, …) → per-slot item
+        // icons, all via `ui_pipe` (own alpha blend, NO depth). Each layer
+        // binds its own texture; solid quads bind the icon atlas (the solid
+        // sentinel skips the sampler, so any layout-compatible texture works).
+        if self.hud_layers.iter().any(|l| l.vertex_count > 0)
             || self.icon_quad_vertex_count > 0
-            || self.ui_vignette_vertex_count > 0
             || !self.doc_ui.batches.is_empty()
         {
             let mut pass = color_depth_pass(
@@ -637,34 +636,29 @@ impl Renderer {
                 None,
             );
             pass.set_pipeline(&self.ui_pipe);
-            // 0) Hurt-flash edge vignette, under all chrome (solid gradient
-            //    quads; the solid sentinel skips the sampler, any bind works).
-            if self.ui_vignette_vertex_count > 0 {
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.ui_vignette_vbuf.slice(..));
-                pass.draw(0..self.ui_vignette_vertex_count, 0..1);
-            }
-            // 1) GUI-document draw list: every panel, slot face, hover, gauge,
-            //    text and dim quad of the frame's screen.
+            let draw_layers = |pass: &mut wgpu::RenderPass<'_>, under: bool| {
+                for layer in self.hud_layers.iter().filter(|l| l.under_chrome == under) {
+                    if layer.vertex_count == 0 {
+                        continue;
+                    }
+                    let bind = match &layer.texture {
+                        super::HudLayerTexture::Solid => Some(&self.icon_atlas.bind),
+                        super::HudLayerTexture::Texture(b) => b.as_ref(),
+                    };
+                    let Some(bind) = bind else {
+                        continue; // the layer's art is missing — draw nothing
+                    };
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, layer.vbuf.slice(..));
+                    pass.draw(0..layer.vertex_count, 0..1);
+                }
+            };
+            draw_layers(&mut pass, true);
+            // The GUI-document draw list: every panel, slot face, hover,
+            // gauge, text and dim quad of the frame's screen.
             self.draw_doc_ui(&mut pass);
-            // 2) HUD hearts (bottom-left health bar), one draw from the heart atlas.
-            if self.ui_hearts_vertex_count > 0 {
-                if let Some(bind) = self.hearts_bind.as_ref() {
-                    pass.set_bind_group(0, bind, &[]);
-                    pass.set_vertex_buffer(0, self.ui_hearts_vbuf.slice(..));
-                    pass.draw(0..self.ui_hearts_vertex_count, 0..1);
-                }
-            }
-            // 2b) Status-effect icons (framed row above the hearts), one draw
-            //     from the composed effect strip.
-            if self.ui_effects_vertex_count > 0 {
-                if let Some(bind) = self.effects_bind.as_ref() {
-                    pass.set_bind_group(0, bind, &[]);
-                    pass.set_vertex_buffer(0, self.ui_effects_vbuf.slice(..));
-                    pass.draw(0..self.ui_effects_vertex_count, 0..1);
-                }
-            }
-            // 3) Per-slot item icons (icon atlas), one bind + one draw.
+            draw_layers(&mut pass, false);
+            // Per-slot item icons (icon atlas), one bind + one draw.
             if self.icon_quad_vertex_count > 0 {
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
                 pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));

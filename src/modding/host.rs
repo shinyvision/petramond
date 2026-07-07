@@ -354,6 +354,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::GuiOpen { .. }
         | HostCall::GuiClose => handle_gui_call(&data.mod_id, call),
         HostCall::ContainerGet { .. }
+        | HostCall::ContainerGetMany { .. }
         | HostCall::ContainerSet { .. }
         | HostCall::ItemInfo { .. }
         | HostCall::RecipeResult { .. } => handle_container_call(&data.mod_id, call),
@@ -365,13 +366,32 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
 fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::ContainerGet { pos } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            // Multi-cell blocks keep ONE container at the group anchor;
+            // canonicalize so any footprint cell reads the same slots the GUI
+            // and break-scatter use.
+            let p = ctx.world.container_anchor(to_ivec(pos));
             HostRet::ContainerSlots(ctx.world.container_at(p).map(|c| {
                 c.slots
                     .iter()
-                    .map(|slot| slot.map(item_slot_data))
+                    .map(|slot| slot.map(item_stack_data))
                     .collect()
             }))
+        }),
+        HostCall::ContainerGetMany { positions } => sim_query(|ctx| {
+            HostRet::Containers(
+                positions
+                    .iter()
+                    .map(|&pos| {
+                        let p = ctx.world.container_anchor(to_ivec(pos));
+                        ctx.world.container_at(p).map(|c| {
+                            c.slots
+                                .iter()
+                                .map(|slot| slot.map(item_stack_data))
+                                .collect()
+                        })
+                    })
+                    .collect(),
+            )
         }),
         HostCall::ContainerSet { pos, slots } => {
             // Resolve+validate every entry BEFORE any write, so a bad entry
@@ -388,11 +408,16 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 let stack = match slot {
                     None => None,
                     Some(data) => {
+                        // A typo'd registry key is not a protocol break: warn
+                        // and refuse the batch (the GiveItem/EffectApply
+                        // policy), don't trap the whole mod.
                         let Some(item) = item_by_key(&data.key) else {
-                            return HostRet::Error(format!(
-                                "ContainerSet: unknown item '{}'",
+                            log::warn!(
+                                "[mod {mod_id}] ContainerSet: unknown item '{}' — \
+                                 batch not applied",
                                 data.key
-                            ));
+                            );
+                            return HostRet::Bool(false);
                         };
                         (data.count > 0)
                             .then(|| crate::item::ItemStack::new(item, data.count))
@@ -402,7 +427,10 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             }
             let mod_id = mod_id.to_owned();
             sim_query(move |ctx| {
-                let p = to_ivec(pos);
+                // Same anchor rule as ContainerGet: writing through a
+                // non-anchor footprint cell must not mint a second container
+                // the GUI and break-scatter would never see.
+                let p = ctx.world.container_anchor(to_ivec(pos));
                 // A mod owns only its own blocks' containers: the block at
                 // `pos` must be registered to the caller's namespace.
                 let Some(block) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
@@ -438,20 +466,22 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::RecipeResult { class, key } => {
             let Some(recipes) = crate::modding::active_recipes() else {
                 log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
-                return HostRet::ItemSlot(None);
+                return HostRet::ItemStack(None);
             };
             let Some(item) = item_by_key(&key) else {
-                return HostRet::ItemSlot(None);
+                return HostRet::ItemStack(None);
             };
-            HostRet::ItemSlot(recipes.process(&class, item).map(item_slot_data))
+            HostRet::ItemStack(recipes.process(&class, item).map(item_stack_data))
         }
-        other => unreachable!("non-container call {other:?} routed to handle_container_call"),
+        other => HostRet::Error(format!(
+            "non-container call {other:?} mis-routed to handle_container_call (host bug)"
+        )),
     }
 }
 
 /// An engine stack as its ABI crossing (registry key + count).
-fn item_slot_data(stack: crate::item::ItemStack) -> mod_api::ItemSlotData {
-    mod_api::ItemSlotData {
+fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemStackData {
+    mod_api::ItemStackData {
         key: stack.item.key().to_owned(),
         count: stack.count,
     }
@@ -522,7 +552,9 @@ fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
         },
-        other => unreachable!("non-core call {other:?} routed to handle_core_call"),
+        other => HostRet::Error(format!(
+            "non-core call {other:?} mis-routed to handle_core_call (host bug)"
+        )),
     }
 }
 
@@ -618,7 +650,9 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             let p = to_ivec(pos);
             HostRet::Bool(ctx.world.block_is_full_spawn_support(p.x, p.y, p.z))
         }),
-        other => unreachable!("non-block call {other:?} routed to handle_block_call"),
+        other => HostRet::Error(format!(
+            "non-block call {other:?} mis-routed to handle_block_call (host bug)"
+        )),
     }
 }
 
@@ -704,7 +738,9 @@ fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             }),
         },
-        other => unreachable!("non-entity call {other:?} routed to handle_entity_call"),
+        other => HostRet::Error(format!(
+            "non-entity call {other:?} mis-routed to handle_entity_call (host bug)"
+        )),
     }
 }
 
@@ -783,7 +819,9 @@ fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     .collect(),
             )
         }),
-        other => unreachable!("non-player call {other:?} routed to handle_player_call"),
+        other => HostRet::Error(format!(
+            "non-player call {other:?} mis-routed to handle_player_call (host bug)"
+        )),
     }
 }
 
@@ -877,7 +915,9 @@ fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                     .push(crate::game::ModSpatialSoundCommand::Stop { handle });
             }
         }),
-        other => unreachable!("non-sound call {other:?} routed to handle_sound_call"),
+        other => HostRet::Error(format!(
+            "non-sound call {other:?} mis-routed to handle_sound_call (host bug)"
+        )),
     }
 }
 
@@ -948,7 +988,9 @@ fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(mob_index as usize, &key))
             }),
         },
-        other => unreachable!("non-KV call {other:?} routed to handle_kv_call"),
+        other => HostRet::Error(format!(
+            "non-KV call {other:?} mis-routed to handle_kv_call (host bug)"
+        )),
     }
 }
 
@@ -980,7 +1022,9 @@ fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         HostCall::RegisterGenerator { callback_id } => {
             data.register(Registration::Generator { callback_id })
         }
-        other => unreachable!("non-worldgen call {other:?} routed to handle_worldgen_call"),
+        other => HostRet::Error(format!(
+            "non-worldgen call {other:?} mis-routed to handle_worldgen_call (host bug)"
+        )),
     }
 }
 
@@ -1013,7 +1057,9 @@ fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
             })
         }
         HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(ModAction::CloseGui)),
-        other => unreachable!("non-GUI call {other:?} routed to handle_gui_call"),
+        other => HostRet::Error(format!(
+            "non-GUI call {other:?} mis-routed to handle_gui_call (host bug)"
+        )),
     }
 }
 
@@ -1187,6 +1233,65 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, f);
+    }
+
+    /// Container host calls canonicalize any footprint cell of a multi-cell
+    /// model block to the group ANCHOR: a write through a non-anchor cell
+    /// must land in the one anchored container (the same slots the GUI and
+    /// break-scatter use), never mint a second store at that cell.
+    #[test]
+    fn container_calls_canonicalize_to_the_group_anchor() {
+        let mut world = World::new(1, 4);
+        world.clear_world();
+        world.insert_chunk_for_test(ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+        let origin = crate::mathh::IVec3::new(5, 64, 5);
+        assert!(world.place_model_block(origin, crate::block::Block::FurnitureWorkbench));
+        let (_, anchor, cells) = world.model_group(origin).expect("a placed model group");
+        let far = *cells.iter().find(|c| **c != anchor).expect("a non-anchor cell");
+
+        // The workbench is engine-owned and ContainerSet is guarded to the
+        // caller's own namespace, so the test store impersonates the engine
+        // namespace — this keeps the test off the heavy WASM fixture.
+        let mut store = ModStoreData::new(crate::registry::ENGINE_NAMESPACE, 1);
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            let set = handle_host_call(
+                &mut store,
+                HostCall::ContainerSet {
+                    pos: [far.x, far.y, far.z],
+                    slots: vec![(
+                        0,
+                        Some(mod_api::ItemStackData {
+                            key: "llama:coal".into(),
+                            count: 3,
+                        }),
+                    )],
+                },
+            );
+            assert_eq!(set, HostRet::Bool(true));
+            // Reading through a different cell (the anchor) sees the write.
+            let got = handle_host_call(
+                &mut store,
+                HostCall::ContainerGet {
+                    pos: [anchor.x, anchor.y, anchor.z],
+                },
+            );
+            let HostRet::ContainerSlots(Some(slots)) = got else {
+                panic!("expected slots from the anchor, got {got:?}");
+            };
+            assert_eq!(slots[0].as_ref().map(|s| s.count), Some(3));
+        });
+        // One container, keyed at the anchor — nothing stranded at the cell.
+        assert!(world.container_at(anchor).is_some());
+        assert!(world.container_at(far).is_none());
     }
 
     /// The KV namespace contract: writes must carry the CALLER's own

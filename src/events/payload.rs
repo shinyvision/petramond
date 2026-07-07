@@ -12,7 +12,7 @@
 
 use crate::block::Block;
 use crate::chunk::SectionPos;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mathh::{IVec3, Vec3};
 use crate::mob::Mob;

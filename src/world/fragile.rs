@@ -82,7 +82,7 @@ mod tests {
     use crate::block_state::{StairHalf, StairState};
     use crate::chunk::{Chunk, ChunkPos};
     use crate::crafting::Recipes;
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
     use crate::torch::TorchPlacement;
 
     /// A world with one empty loaded chunk at the origin.

@@ -1,4 +1,3 @@
-mod chest;
 mod crafting;
 mod dispatch;
 mod furnace;
@@ -16,7 +15,7 @@ mod tests {
     use crate::block::Block;
     use crate::controls::PointerButton;
     use crate::crafting::Recipes;
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
     use crate::gui::{MenuSlot, WorkbenchHit};
     use crate::inventory::Inventory;
     use crate::item::{ItemStack, ItemType};
@@ -137,7 +136,7 @@ mod tests {
         inv.add(ItemStack::new(ItemType::OakPlanks, 4));
 
         // Coal -> fuel slot.
-        menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
+        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
         assert!(inv.slot(0).is_none(), "coal left the inventory");
         assert_eq!(
             world.container_at(pos).unwrap().slots[crate::furnace::SLOT_FUEL],
@@ -146,7 +145,7 @@ mod tests {
         );
 
         // Raw iron -> input slot.
-        menu.furnace_shift_from_inventory(&mut world, &mut inv, 1);
+        menu.container_shift_from_inventory(&mut world, &mut inv, 1);
         assert!(inv.slot(1).is_none(), "raw iron left the inventory");
         assert_eq!(
             world.container_at(pos).unwrap().slots[crate::furnace::SLOT_INPUT],
@@ -156,7 +155,7 @@ mod tests {
 
         // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
         // back to the ordinary hotbar->main-grid shuffle.
-        menu.furnace_shift_from_inventory(&mut world, &mut inv, 2);
+        menu.container_shift_from_inventory(&mut world, &mut inv, 2);
         assert!(inv.slot(2).is_none(), "plank moved out of the hotbar slot");
         let c = world.container_at(pos).unwrap();
         for slot in &c.slots {
@@ -183,7 +182,7 @@ mod tests {
 
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(ItemType::Coal, 10));
-        menu.furnace_shift_from_inventory(&mut world, &mut inv, 0);
+        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
 
         // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
         assert_eq!(
@@ -193,6 +192,29 @@ mod tests {
             64
         );
         assert_eq!(inv.slot(0).map(|s| s.count), Some(6));
+    }
+
+    #[test]
+    fn container_shift_merges_before_opening_an_empty_slot() {
+        // Regression: the routed shift-in must top up a matching stack even
+        // when an EARLIER slot is empty — index-order routing used to drop
+        // the stack into the empty slot 0 and fragment the pile.
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let pos = IVec3::new(4, 64, 4);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Chest);
+        world.insert_chest(pos, Facing::North);
+        world.container_at_mut(pos).unwrap().slots[1] = Some(ItemStack::new(ItemType::Coal, 30));
+        menu.open_chest_screen(&mut world, pos);
+
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Coal, 10));
+        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
+
+        let c = world.container_at(pos).unwrap();
+        assert_eq!(c.slots[0], None, "no new stack opened while one can merge");
+        assert_eq!(c.slots[1], Some(ItemStack::new(ItemType::Coal, 40)));
+        assert!(inv.slot(0).is_none(), "the whole shifted stack moved");
     }
     fn place_in_workbench_input(
         menu: &mut ContainerMenu,

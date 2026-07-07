@@ -125,7 +125,7 @@ mod tests {
     use crate::block::Block;
     use crate::block_state::{SlabSplit, StairHalf, StairState};
     use crate::chunk::{Chunk, ChunkPos};
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);

@@ -8,7 +8,7 @@
 use crate::block::{Block, BlockParticleEmitter, ParticleEmitterAnchor, RenderShape};
 use crate::block_model::{self, BlockModelKind};
 use crate::chunk::{section_local, SectionPos};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::torch::POLE_HEIGHT;
 

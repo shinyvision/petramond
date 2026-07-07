@@ -223,52 +223,45 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
 }
 
 #[test]
-fn status_effects_heal_on_interval_boundaries_and_expire() {
+fn status_effects_fire_on_interval_boundaries_and_expire() {
     use crate::effect::{Effect, EffectBehavior};
     // Derive the cadence from the loaded row — the contract under test is the
     // boundary/expiry behavior, never the freely-editable interval/amount.
-    let EffectBehavior::Regen { interval, amount } = Effect::Regeneration.def().behavior else {
+    let EffectBehavior::Regen { interval, .. } = Effect::Regeneration.def().behavior else {
         panic!("regeneration is an interval-heal behavior");
     };
 
+    // The player owns WHEN a behavior fires (Game applies the consequences,
+    // so damage can route through its funnel): boundaries land every
+    // `interval` ticks, including one at expiry.
     let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
-    pl.set_health(2);
     pl.apply_effect(Effect::Regeneration, interval * 2);
+    let mut fired = 0;
     for _ in 0..interval {
-        pl.tick_effects();
+        fired += pl.tick_effects().len();
     }
-    assert_eq!(pl.health(), 2 + amount, "the first boundary heals exactly once");
+    assert_eq!(fired, 1, "the first boundary fires exactly once");
     for _ in 0..interval {
-        pl.tick_effects();
+        fired += pl.tick_effects().len();
     }
-    assert_eq!(
-        pl.health(),
-        2 + amount * 2,
-        "the expiry tick is itself a boundary heal"
-    );
+    assert_eq!(fired, 2, "the expiry tick is itself a boundary");
     assert!(pl.effects().is_empty(), "the effect expired");
 
-    // Re-applying overwrites the duration (in place); zero removes; heal caps.
+    // Re-applying overwrites the duration (in place); zero removes.
     pl.apply_effect(Effect::Regeneration, 10);
     pl.apply_effect(Effect::Regeneration, interval * 5);
     assert_eq!(pl.effects()[0].remaining, interval * 5);
     pl.apply_effect(Effect::Regeneration, 0);
     assert!(pl.effects().is_empty(), "zero ticks removes the effect");
-    pl.set_health(MAX_HEALTH);
-    pl.apply_effect(Effect::Regeneration, interval);
-    for _ in 0..interval {
-        pl.tick_effects();
-    }
-    assert_eq!(pl.health(), MAX_HEALTH, "healing clamps at full");
 
-    // A dead player never regenerates back to life — respawn owns that.
-    let mut dead = p(Vec3::new(0.0, 64.0, 0.0));
-    dead.set_health(0);
-    dead.apply_effect(Effect::Regeneration, interval);
-    for _ in 0..interval {
-        dead.tick_effects();
-    }
-    assert_eq!(dead.health(), 0, "healing never resurrects");
+    // The heal primitive the regen consequence lands through clamps at full
+    // and never resurrects — respawn owns that transition.
+    pl.set_health(MAX_HEALTH);
+    pl.heal(5);
+    assert_eq!(pl.health(), MAX_HEALTH, "healing clamps at full");
+    pl.set_health(0);
+    pl.heal(5);
+    assert_eq!(pl.health(), 0, "healing never resurrects");
 }
 
 #[test]

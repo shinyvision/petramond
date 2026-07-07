@@ -4,7 +4,7 @@ use super::super::Game;
 use super::common::{filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
 use crate::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3};

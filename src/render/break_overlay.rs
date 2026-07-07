@@ -250,7 +250,7 @@ mod tests {
 
         let block = IVec3::new(2, 60, 5);
         let shape = crate::stair::shape(crate::block_state::StairState::new(
-            crate::furnace::Facing::South,
+            crate::facing::Facing::South,
             Default::default(),
         ));
         let view = BreakOverlayView {

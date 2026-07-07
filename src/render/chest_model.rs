@@ -20,7 +20,7 @@ use glam::Vec3;
 use super::item_cube::push_box_faces_lit;
 use super::ChestInstance;
 use crate::atlas::Tile;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mesh::Vertex;
 
 /// Inset (m) of the body/lid from the block edges — the chest is 14/16 wide & deep.

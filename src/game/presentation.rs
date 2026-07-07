@@ -12,7 +12,7 @@ use crate::atlas::Tile;
 use crate::block::{Block, BlockParticleEmitter, RenderShape};
 use crate::block_model::BlockModelKind;
 use crate::door::DoorState;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mob::Mob;
 use crate::stair::StairShape;

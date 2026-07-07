@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::block::Block;
 use crate::chunk::SECTION_VOLUME;
 use crate::door::DoorState;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::torch::TorchPlacement;
 
 #[repr(u8)]

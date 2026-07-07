@@ -1083,7 +1083,7 @@ mod tests {
             0,
             crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS),
         );
-        saved.insert_entity_facing(0, 0, 0, crate::furnace::Facing::default());
+        saved.insert_entity_facing(0, 0, 0, crate::facing::Facing::default());
         world
             .pending_overlays
             .insert(sp, (saved, Vec::new(), Vec::new()));

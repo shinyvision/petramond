@@ -376,7 +376,7 @@ fn push_line(out: &mut OutlineVertices, a: [f32; 3], b: [f32; 3]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     #[test]
     fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {

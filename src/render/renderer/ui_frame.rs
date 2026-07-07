@@ -13,15 +13,13 @@ impl Renderer {
     /// - `ui_solid_vbuf`: stack counts `[0, counts)`, then drag counts — all
     ///   solid-color, drawn with the icon-atlas bind (the solid sentinel skips
     ///   the sampler).
-    /// - `ui_hearts_vbuf`: the HUD heart bar quads (heart atlas).
+    /// - each `hud_layers` entry (vignette, hearts, effects, …): its `UiBuild`
+    ///   vec to its own buffer.
     /// - `icon_quad_vbuf`: one textured quad per filled slot sampling the item's
     ///   pre-baked icon-atlas cell — normal icons then cursor-held icons.
     pub(super) fn build_ui_frame(&mut self) {
         self.ui_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
-        self.ui_hearts_vertex_count = 0;
-        self.ui_effects_vertex_count = 0;
-        self.ui_vignette_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
@@ -52,27 +50,15 @@ impl Renderer {
             self.ui_drag_count_vertex_count = drag_counts.len() as u32;
         }
 
-        let hearts = &self.ui_build.hearts;
-        if !hearts.is_empty() && hearts.len() <= cap {
-            self.queue
-                .write_buffer(&self.ui_hearts_vbuf, 0, bytemuck::cast_slice(hearts));
-            self.ui_hearts_vertex_count = hearts.len() as u32;
-        }
-
-        let effects = &self.ui_build.effects;
-        if !effects.is_empty() && effects.len() <= cap {
-            self.queue
-                .write_buffer(&self.ui_effects_vbuf, 0, bytemuck::cast_slice(effects));
-            self.ui_effects_vertex_count = effects.len() as u32;
-        }
-
-        // Hurt vignette (fixed 24-vertex frame; the buffer is sized for it).
-        let vignette = &self.ui_build.vignette;
-        let vignette_cap = (self.ui_vignette_vbuf.size() / vsize as u64) as usize;
-        if !vignette.is_empty() && vignette.len() <= vignette_cap {
-            self.queue
-                .write_buffer(&self.ui_vignette_vbuf, 0, bytemuck::cast_slice(vignette));
-            self.ui_vignette_vertex_count = vignette.len() as u32;
+        // HUD chrome layers: each layer's UiBuild vec to its own buffer.
+        for layer in &mut self.hud_layers {
+            layer.vertex_count = 0;
+            let verts = (layer.source)(&self.ui_build);
+            if !verts.is_empty() && verts.len() <= cap {
+                self.queue
+                    .write_buffer(&layer.vbuf, 0, bytemuck::cast_slice(verts));
+                layer.vertex_count = verts.len() as u32;
+            }
         }
 
         // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's

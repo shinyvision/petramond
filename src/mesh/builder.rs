@@ -9,7 +9,7 @@ use crate::chunk::{
 };
 #[cfg(test)]
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::section::Section;
 use crate::torch::warm_tint;
 

@@ -10,7 +10,7 @@
 
 use crate::block::{Aabb, Block, RenderShape};
 use crate::block_model::{self, BlockModelKind};
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mathh::{IVec3, Mat4, Vec3};
 
 use super::store::World;
@@ -253,7 +253,7 @@ impl World {
     /// when `pos` is not a model-group cell, `new_block` is not a model block,
     /// or the footprints differ (nothing is written).
     pub fn swap_model_block(&mut self, pos: IVec3, new_block: Block) -> bool {
-        let Some((kind, base, cells)) = self.model_group(pos) else {
+        let Some((_, base, cells)) = self.model_group(pos) else {
             return false;
         };
         let RenderShape::Model(new_kind) = new_block.render_shape() else {
@@ -269,11 +269,19 @@ impl World {
         if new_cells.len() != cells.len() || new_cells.iter().any(|(c, _)| !cells.contains(c)) {
             return false;
         }
-        let _ = kind;
+        // All-or-nothing: a group may straddle sections, so verify every cell
+        // resolves BEFORE the first write — bailing mid-loop would leave a
+        // half-swapped group with a stale mesh.
+        if new_cells
+            .iter()
+            .any(|&(c, _)| self.chunk_at_world(c.x, c.y, c.z).is_none())
+        {
+            return false;
+        }
         for &(c, off) in &new_cells {
-            let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
-                return false;
-            };
+            let (chunk, lx, ly, lz) = self
+                .chunk_at_world_mut(c.x, c.y, c.z)
+                .expect("cell resolution verified above");
             // `set_block` clears the cell's model state AND its mod cell KV
             // (per-cell state dies with the block) — a swap is the same placed
             // machine changing costume, so both are carried across explicitly.

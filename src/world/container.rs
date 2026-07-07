@@ -53,6 +53,22 @@ impl World {
         container
     }
 
+    /// Forget every sibling block-entity record at a broken block's cell —
+    /// machine state (furnace), entity facing (chest/furnace front), torch
+    /// orientation — in one unconditional sweep. The maps share the same cell
+    /// key and clearing an absent record is free, so the break path needs no
+    /// per-block ladder (and the next facing-bearing block can't be
+    /// forgotten). The container itself is NOT taken here: breaking scatters
+    /// it via [`take_container`](Self::take_container) at the anchor.
+    pub fn forget_block_entity_records(&mut self, pos: IVec3) {
+        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+            c.take_furnace(lx, ly, lz);
+            c.take_entity_facing(lx, ly, lz);
+            c.take_torch(lx, ly, lz);
+            self.note_block_entity_change(pos);
+        }
+    }
+
     /// The canonical container position for the block at `pos`: multi-cell
     /// model blocks share ONE container keyed at the model group's base cell,
     /// so opening the same placed object from any of its cells edits the same

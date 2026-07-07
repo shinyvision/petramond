@@ -111,15 +111,10 @@ impl Game {
             self.world
                 .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
         }
-        // Forget the broken block's entity records: the furnace's machine
-        // state + facing, a chest's facing, a torch's orientation.
-        if event.block == Block::Furnace {
-            self.world.take_furnace(event.pos);
-        } else if event.block == Block::Chest {
-            self.world.take_chest_facing(event.pos);
-        } else if event.block == Block::Torch {
-            self.world.take_torch(event.pos);
-        }
+        // Forget the broken block's other entity records (machine state,
+        // facing, torch orientation) in one generic sweep — no per-block
+        // ladder to extend for the next facing-bearing block.
+        self.world.forget_block_entity_records(event.pos);
         // ANY broken container block — chest, furnace, or a mod's — scatters
         // its whole contents, regardless of tool (the block ITEM's own drop
         // still gates on harvest via spawn_drops below).

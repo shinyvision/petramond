@@ -10,7 +10,7 @@
 //! system can query through the `EffectsActive` host call). The ACTIVE state —
 //! which effects the player currently has and for how many more ticks — lives
 //! on [`crate::player::Player`] and is stepped once per game tick by
-//! `Game::tick_effects` (`src/game/effects.rs`), never in per-frame code.
+//! `Game::tick_effects` (`src/game/health.rs`), never in per-frame code.
 //! Persistence is by registry NAME in `level.dat` (ids are session-scoped).
 
 use std::sync::LazyLock;
@@ -61,8 +61,11 @@ impl Effect {
 pub enum EffectBehavior {
     /// A pure marker: the engine only counts the duration down.
     None,
-    /// Heal `amount` half-hearts every `interval` ticks while active (the first
-    /// heal lands `interval` ticks after application).
+    /// Heal `amount` half-hearts every `interval` ticks while active.
+    /// Boundaries are anchored at EXPIRY (a heal fires whenever `remaining %
+    /// interval == 0`, including the expiry tick itself), so the first heal
+    /// lands `interval` ticks after application exactly when the granted
+    /// duration is a multiple of `interval` — grant such durations.
     Regen { interval: u32, amount: i32 },
 }
 
@@ -72,7 +75,8 @@ pub struct EffectDef {
     /// The row's registry name (`"llama:regeneration"`, `"mod_id:haste"`) — the
     /// key host calls and `level.dat` persistence resolve through [`by_name`].
     pub name: &'static str,
-    /// Human-readable display name.
+    /// Human-readable display name — authored row data reserved for a future
+    /// HUD tooltip; nothing reads it yet (the icon row is icons-only).
     #[allow(dead_code)]
     pub display: &'static str,
     /// HUD icon, as an asset-relative PNG path resolved through
@@ -96,11 +100,35 @@ struct RawEffectDef {
     effect: String,
     display: String,
     icon: String,
-    behavior: String,
-    /// `regen` only: ticks between heals.
-    interval: Option<u32>,
-    /// `regen` only: half-hearts per heal.
-    amount: Option<i32>,
+    behavior: RawBehavior,
+}
+
+/// A row's `behavior` as written: `"none"`, or `{"regen": {"interval": ..,
+/// "amount": ..}}`. The enum shape gives every behavior its own required
+/// params (a missing or misspelled one is a serde error) — adding a behavior
+/// is one variant here + one arm in [`RawBehavior::resolve`].
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RawBehavior {
+    None,
+    Regen { interval: u32, amount: i32 },
+}
+
+impl RawBehavior {
+    /// Range-check and convert to the runtime enum.
+    fn resolve(&self, effect: &str) -> Result<EffectBehavior, String> {
+        match *self {
+            RawBehavior::None => Ok(EffectBehavior::None),
+            RawBehavior::Regen { interval, amount } => {
+                if interval == 0 || amount <= 0 {
+                    return Err(format!(
+                        "effect '{effect}': regen interval and amount must be positive"
+                    ));
+                }
+                Ok(EffectBehavior::Regen { interval, amount })
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -155,7 +183,7 @@ fn parse_layers(texts: &[&str]) -> Result<Vec<EffectDef>, String> {
     let names = crate::registry::NameTable::build(ENGINE_EFFECT_NAMES, &layer_keys, "effect")?;
     let mut rows: Vec<Option<EffectDef>> = (0..names.len()).map(|_| None).collect();
     for r in merged {
-        let behavior = resolve_behavior(&r)?;
+        let behavior = r.behavior.resolve(&r.effect)?;
         if r.icon.is_empty() {
             return Err(format!("effect '{}': icon path is empty", r.effect));
         }
@@ -183,36 +211,6 @@ fn parse_layers(texts: &[&str]) -> Result<Vec<EffectDef>, String> {
         .collect()
 }
 
-fn resolve_behavior(r: &RawEffectDef) -> Result<EffectBehavior, String> {
-    match r.behavior.as_str() {
-        "none" => {
-            if r.interval.is_some() || r.amount.is_some() {
-                return Err(format!(
-                    "effect '{}': behavior 'none' takes no interval/amount",
-                    r.effect
-                ));
-            }
-            Ok(EffectBehavior::None)
-        }
-        "regen" => {
-            let interval = r
-                .interval
-                .ok_or_else(|| format!("effect '{}': regen needs an interval", r.effect))?;
-            let amount = r
-                .amount
-                .ok_or_else(|| format!("effect '{}': regen needs an amount", r.effect))?;
-            if interval == 0 || amount <= 0 {
-                return Err(format!(
-                    "effect '{}': regen interval and amount must be positive",
-                    r.effect
-                ));
-            }
-            Ok(EffectBehavior::Regen { interval, amount })
-        }
-        other => Err(format!("effect '{}': unknown behavior '{other}'", r.effect)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,8 +222,8 @@ mod tests {
     #[test]
     fn engine_row_holds_its_frozen_id_and_pack_rows_register_after() {
         let base = r#"{"effects": [{"effect": "llama:regeneration", "display": "Regeneration",
-            "icon": "textures/gui/effects/regeneration.png", "behavior": "regen",
-            "interval": 100, "amount": 1}]}"#;
+            "icon": "textures/gui/effects/regeneration.png",
+            "behavior": {"regen": {"interval": 100, "amount": 1}}}]}"#;
         let pack = r#"{"effects": [{"effect": "mymod:haste", "display": "Haste",
             "icon": "textures/haste.png", "behavior": "none"}]}"#;
         let defs = parse_layers(&[base, pack]).expect("loads");
@@ -244,21 +242,23 @@ mod tests {
 
     #[test]
     fn behavior_params_are_validated() {
-        // A marker effect must not carry regen params.
+        // Behavior params ride the behavior object — a stray row-level param
+        // is an unknown field, rejected loudly.
         assert!(table(
             r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
                 "icon": "i.png", "behavior": "none", "interval": 5}]}"#
         )
         .is_err());
-        // Regen must carry both params, positive.
+        // Regen must carry both params (the enum shape requires them)...
         assert!(table(
             r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
-                "icon": "i.png", "behavior": "regen"}]}"#
+                "icon": "i.png", "behavior": {"regen": {"interval": 100}}}]}"#
         )
         .is_err());
+        // ...and they must be positive.
         assert!(table(
             r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
-                "icon": "i.png", "behavior": "regen", "interval": 0, "amount": 1}]}"#
+                "icon": "i.png", "behavior": {"regen": {"interval": 0, "amount": 1}}}]}"#
         )
         .is_err());
         // Unknown behavior names are load errors, not silent markers.

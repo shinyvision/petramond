@@ -6,7 +6,7 @@ use glam::{Mat4, Vec3};
 
 use crate::bbmodel::{euler_quat, face_corners};
 use crate::block::Aabb;
-use crate::furnace::Facing;
+use crate::facing::Facing;
 use crate::mesh::face::Face;
 
 use super::atlas::{atlas, ModelAtlas};

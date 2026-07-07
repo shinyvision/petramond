@@ -203,7 +203,7 @@ mod tests {
 
     use crate::block::Block;
     use crate::block_state::{StairHalf, StairState};
-    use crate::furnace::Facing;
+    use crate::facing::Facing;
 
     use super::super::shape::{ShapeStateSnapshot, SparseCellState};
     use super::super::NBHD_AREA;

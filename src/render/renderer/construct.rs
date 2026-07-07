@@ -389,13 +389,26 @@ async fn new_renderer_inner(
             ],
         }))
     };
-    let hearts_bind = load_gui_bind("textures/gui/hearts.png");
-    let ui_hearts_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui hearts vbuf"),
-        size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    // The HUD chrome layers, in draw order. Adding a HUD element = one
+    // `UiBuild` vec + one entry here (see `HudLayer`).
+    let hud_layer = |label: &'static str,
+                     source: fn(&crate::render::ui::UiBuild) -> &[UiVertex],
+                     texture: super::HudLayerTexture,
+                     under_chrome: bool| {
+        super::HudLayer {
+            source,
+            texture,
+            under_chrome,
+            vbuf: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: crate::render::pipeline::MAX_UI_VERTICES
+                    * std::mem::size_of::<UiVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            vertex_count: 0,
+        }
+    };
     // Status-effect icon strip: composed on the CPU from the shared frame +
     // each registered effect's icon (engine and pack rows alike), uploaded
     // once — the HUD indexes cells by effect id like hearts index their atlas.
@@ -417,19 +430,29 @@ async fn new_renderer_inner(
             ],
         })
     });
-    let ui_effects_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui effects vbuf"),
-        size: crate::render::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // Hurt vignette: four gradient bands = 24 vertices; a small fixed buffer.
-    let ui_vignette_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui vignette vbuf"),
-        size: 24 * std::mem::size_of::<UiVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let hud_layers = vec![
+        // Hurt-flash red edge vignette, under all chrome (solid gradient quads).
+        hud_layer(
+            "hud vignette",
+            |b| &b.vignette,
+            super::HudLayerTexture::Solid,
+            true,
+        ),
+        // HUD hearts (bottom-left health bar), from the heart atlas.
+        hud_layer(
+            "hud hearts",
+            |b| &b.hearts,
+            super::HudLayerTexture::Texture(load_gui_bind("textures/gui/hearts.png")),
+            false,
+        ),
+        // Status-effect icons (framed row above the hearts), from the strip.
+        hud_layer(
+            "hud effects",
+            |b| &b.effects,
+            super::HudLayerTexture::Texture(effects_bind),
+            false,
+        ),
+    ];
 
     Renderer {
         surface,
@@ -586,18 +609,11 @@ async fn new_renderer_inner(
         emitter_particle_scratch: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
         ui_texture_bgl: pipelines.atlas_bgl.clone(),
-        hearts_bind,
         doc_ui: super::doc_ui::DocUi::default(),
         ui_solid_vbuf: pipelines.ui_vbuf,
         ui_count_vertex_count: 0,
         ui_drag_count_vertex_count: 0,
-        ui_hearts_vbuf,
-        ui_hearts_vertex_count: 0,
-        effects_bind,
-        ui_effects_vbuf,
-        ui_effects_vertex_count: 0,
-        ui_vignette_vbuf,
-        ui_vignette_vertex_count: 0,
+        hud_layers,
         icon_atlas,
         icon_quad_vbuf,
         icon_quad_verts: Vec::new(),
