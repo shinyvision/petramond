@@ -144,7 +144,10 @@ mod tests {
     fn empty_furnace_does_nothing() {
         let mut f = Furnace::default();
         let mut slots = [None; FURNACE_SLOTS];
-        assert!(!f.tick(&mut slots, smelt), "an idle furnace reports no change");
+        assert!(
+            !f.tick(&mut slots, smelt),
+            "an idle furnace reports no change"
+        );
         assert!(!f.is_lit());
         assert_eq!(f, Furnace::default());
     }
@@ -161,7 +164,10 @@ mod tests {
         // The remaining ticks complete the first (and only) smelt.
         run(&mut f, &mut slots, COOK_TICKS as u32 - 1);
         assert_eq!(slots[SLOT_OUTPUT], stack(ItemType::IronIngot, 1));
-        assert!(slots[SLOT_INPUT].is_none(), "the single raw iron is consumed");
+        assert!(
+            slots[SLOT_INPUT].is_none(),
+            "the single raw iron is consumed"
+        );
         assert_eq!(f.cook_progress, 0);
     }
 
@@ -238,7 +244,10 @@ mod tests {
         ];
         run(&mut f, &mut slots, 600);
         assert!(!f.is_lit());
-        assert!(slots[SLOT_OUTPUT].is_none(), "nothing smelts without real fuel");
+        assert!(
+            slots[SLOT_OUTPUT].is_none(),
+            "nothing smelts without real fuel"
+        );
         assert_eq!(
             slots[SLOT_FUEL],
             stack(ItemType::Dirt, 1),

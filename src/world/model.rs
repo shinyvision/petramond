@@ -456,10 +456,17 @@ mod tests {
         w.set_block_world(pos.x, pos.y, pos.z, Block::Stone);
         w.set_block_world(neighbour.x, neighbour.y, neighbour.z, Block::Stone);
         assert!(w.cell_kv_set(pos.x, pos.y, pos.z, "farm:moisture".into(), vec![9]));
-        assert!(w.cell_kv_set(neighbour.x, neighbour.y, neighbour.z, "farm:moisture".into(), vec![1]));
+        assert!(w.cell_kv_set(
+            neighbour.x,
+            neighbour.y,
+            neighbour.z,
+            "farm:moisture".into(),
+            vec![1]
+        ));
         w.set_block_world(pos.x, pos.y, pos.z, Block::Air);
         assert!(
-            w.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture").is_none(),
+            w.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture")
+                .is_none(),
             "a replaced block takes its cell KV with it"
         );
         assert_eq!(
@@ -472,10 +479,17 @@ mod tests {
         // machine's burn state must not haunt the next one placed there).
         let origin = IVec3::new(9, 64, 5);
         assert!(w.place_model_block(origin, WB));
-        assert!(w.cell_kv_set(origin.x, origin.y, origin.z, "kitchen:state".into(), vec![1, 2, 3]));
+        assert!(w.cell_kv_set(
+            origin.x,
+            origin.y,
+            origin.z,
+            "kitchen:state".into(),
+            vec![1, 2, 3]
+        ));
         w.remove_model_block(origin).expect("removes the group");
         assert!(
-            w.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state").is_none(),
+            w.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
+                .is_none(),
             "breaking a model block clears its anchor's cell KV"
         );
     }

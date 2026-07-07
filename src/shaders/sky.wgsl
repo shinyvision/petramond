@@ -33,7 +33,9 @@ fn vs_sky(@builtin(vertex_index) vertex_index: u32) -> VsOut {
     let p = positions[vertex_index];
 
     var out: VsOut;
-    out.clip = vec4<f32>(p, 0.0, 1.0);
+    // Exactly the far plane: the sky pass draws AFTER opaque terrain with a
+    // LessEqual depth test, so only pixels no terrain covered get shaded.
+    out.clip = vec4<f32>(p, 1.0, 1.0);
     out.ndc = p;
     return out;
 }

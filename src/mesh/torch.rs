@@ -14,7 +14,7 @@ use crate::mathh::Vec3;
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
 use super::face::Face;
-use super::vertex::{pack_vertex, pack_vertex2, Vertex};
+use super::vertex::{pack_tint, pack_vertex, pack_vertex2, Vertex};
 
 /// Append the torch pole at the cell whose world origin is `(bx, by, bz)`, oriented
 /// by `placement`, textured with `side_tile` (body) + `top_tile` (flame), tinted by
@@ -57,7 +57,7 @@ pub(super) fn emit_torch(
             let wp = origin + xform.transform_point3(Vec3::new(lp[0], lp[1], lp[2]));
             opaque.push(Vertex {
                 pos: [wp.x, wp.y, wp.z],
-                tint,
+                tint: pack_tint(tint),
                 // Flat-lit (shade index 0, AO 3) like a cross-plant: no overlay.
                 packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
                 packed2: pack_vertex2(block6),

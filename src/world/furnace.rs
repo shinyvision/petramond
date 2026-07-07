@@ -80,7 +80,6 @@ impl World {
             self.note_block_entity_change(pos);
         }
     }
-
 }
 
 #[inline]

@@ -13,8 +13,8 @@ use super::builder::cube_face_lighting;
 use super::builder::{mesh_pad_idx, SectionMeshPad};
 use super::face::{should_flip, vertex_ao, Face};
 use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
-    UV_MODE_SHIFT,
+    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
+    UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
 };
 
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into TWO packed
@@ -308,11 +308,11 @@ pub(super) fn push_cube_face_with_cell_uvs(
             // Warm the face tint per corner by however much torch light reaches it,
             // so the glow fades smoothly across the surface (0 warm = unchanged, so
             // skip the multiply entirely — the torch-free common case).
-            tint: if warm[corner] == 0.0 {
+            tint: pack_tint(if warm[corner] == 0.0 {
                 tint
             } else {
                 warm_tint(tint, warm[corner])
-            },
+            }),
             packed: pack_vertex(
                 base_tile.index() as u32,
                 corner as u32,

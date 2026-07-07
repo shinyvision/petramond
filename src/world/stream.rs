@@ -515,6 +515,24 @@ impl World {
         self.pending_overlays.retain(|sp, _| sp.chunk_pos() != pos);
     }
 
+    /// Swap `pos`'s retained `ColumnGen` for its slimmed clone once the column has
+    /// no in-flight section gen. In-flight jobs keep their full `Arc`; premature
+    /// slimming is safe (a later tree-band job rebuilds the windows), so this is a
+    /// memory policy, not a correctness gate.
+    fn slim_settled_column_gen(&mut self, pos: ChunkPos) {
+        let Some(col) = self.column_gen.get(&pos) else {
+            return;
+        };
+        if !col.has_feature_windows() {
+            return;
+        }
+        if self.pending_sections.iter().any(|sp| sp.chunk_pos() == pos) {
+            return;
+        }
+        let slim = std::sync::Arc::new(col.slimmed());
+        self.column_gen.insert(pos, slim);
+    }
+
     fn within_current_keep_radius(&self, pos: ChunkPos) -> bool {
         let Some(target) = self.last_load_target else {
             return true;
@@ -608,6 +626,14 @@ impl World {
         // 2. Newly-installed columns: submit their vertical window's section jobs now.
         for pos in new_column_positions {
             self.request_sections_for_column(pos, target);
+        }
+
+        // Columns whose gen burst just finished (a section landed and nothing is
+        // pending for the column any more) retain only the slimmed ColumnGen: the
+        // ~15 KB tree windows are dead weight post-gen, and a rare late tree-band
+        // job rebuilds them locally (see worldgen::driver::FeatureWindows).
+        for &sp in &ingested {
+            self.slim_settled_column_gen(sp.chunk_pos());
         }
 
         // 3. Saved sections read back from disk. Buffer them until their generated section

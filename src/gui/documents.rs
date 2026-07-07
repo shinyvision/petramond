@@ -87,9 +87,7 @@ pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
 /// A mod document's `container` role slot semantics, in-role index order.
 /// Empty for engine kinds, widgets-only mod GUIs, and unknown kinds.
 pub(crate) fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
-    doc_for(kind)
-        .map(|d| d.container_slots)
-        .unwrap_or_default()
+    doc_for(kind).map(|d| d.container_slots).unwrap_or_default()
 }
 
 /// The slot contract a MOD document earns from its own declarations: mod

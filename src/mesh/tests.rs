@@ -1484,7 +1484,7 @@ mod parallel_parity_tests {
 fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     use crate::atlas::Tile;
     use crate::facing::Facing;
-use crate::furnace::Furnace;
+    use crate::furnace::Furnace;
     let air = |_: i32, _: i32, _: i32| 0u8;
     let biome0 = |_: i32, _: i32| 0u8;
     let light = |_: i32, _: i32, _: i32| SKY_FULL;
@@ -1620,7 +1620,7 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
 fn pad_local_section_mesher_matches_closure_mesher() {
     use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
     use crate::facing::Facing;
-use crate::furnace::Furnace;
+    use crate::furnace::Furnace;
     use crate::section::Section;
 
     const PAD: usize = SECTION_SIZE + 2;

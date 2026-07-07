@@ -87,8 +87,7 @@ impl HeldItemAnimator {
             let target = progress.clamp(0.0, 1.0);
             // Never retreat: the food only ever approaches (a new eat starts
             // from 0 anyway, via the reset below).
-            let eased =
-                self.eat_near + (target - self.eat_near) * (dt / EAT_NEAR_EASE_S).min(1.0);
+            let eased = self.eat_near + (target - self.eat_near) * (dt / EAT_NEAR_EASE_S).min(1.0);
             self.eat_near = eased.max(self.eat_near).min(1.0);
         } else {
             self.eat_blend = (self.eat_blend - dt / EAT_BLEND_OUT_S).max(0.0);

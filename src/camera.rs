@@ -10,11 +10,11 @@ use crate::world::RENDER_DIST;
 /// long sightline (e.g. across an unfogged gap). We size it off the real cause —
 /// the loaded-world extent — rather than a bare magic number.
 ///
-/// `render::uniforms::FOG_END` (currently 256 blocks) is where visibility ends;
-/// this far plane is two orders of magnitude past it, so the fog end is never the
-/// limiting factor. (Kept out of a direct `FOG_END` reference to avoid pointing
-/// the low-level camera at the high-level render layer — the invariant to hold is
-/// simply `CAMERA_FAR >= FOG_END`.)
+/// `render::uniforms::fog_range` (end = render distance in blocks) is where
+/// visibility ends; this far plane is two orders of magnitude past it, so the fog
+/// end is never the limiting factor. (Kept out of a direct reference to avoid
+/// pointing the low-level camera at the high-level render layer — the invariant
+/// to hold is simply `CAMERA_FAR >= fog end` at the maximum render distance.)
 ///
 /// Diameter, in blocks, of the chunks loaded around the camera
 /// (`2 * RENDER_DIST` chunks across, `CHUNK_SX` blocks each).

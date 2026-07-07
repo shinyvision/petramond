@@ -160,6 +160,17 @@ pub struct World {
     /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
     /// Kept explicitly so the renderer does not scan every section mesh each frame.
     pub(super) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
+    /// Uploaded columns scheduled to release their CPU mesh buffers once they have
+    /// been upload-quiet long enough (value = earliest release frame). The retained
+    /// CPU copy exists only so a column repack can re-pack sibling sections; a
+    /// settled column frees it and repacks force a remesh instead (`repack_forced`).
+    pub(super) mesh_release_after: FxHashMap<ChunkPos, u64>,
+    /// Released sections whose column needs a GPU repack: their remesh must not be
+    /// skipped by deep-visibility parking — the packed column buffer cannot be
+    /// rebuilt without their geometry.
+    pub(super) repack_forced: FxHashSet<SectionPos>,
+    /// Monotonic mesh-pump frame counter (drives `mesh_release_after`).
+    pub(super) mesh_pump_frame: u64,
     pub worker: WorkerPool,
     /// Columns whose shared 2D gen data (`ColumnGen`) has landed: the source for
     /// submitting per-section jobs and sizing each column's vertical load window.
@@ -275,6 +286,9 @@ impl World {
             meshes: FxHashMap::default(),
             mesh_columns: FxHashSet::default(),
             mesh_upload_dirty_columns: FxHashSet::default(),
+            mesh_release_after: FxHashMap::default(),
+            repack_forced: FxHashSet::default(),
+            mesh_pump_frame: 0,
             worker: WorkerPool::new(jobs.clone()),
             column_gen: FxHashMap::default(),
             pending: FxHashMap::default(),
@@ -803,12 +817,14 @@ impl World {
 
     pub(super) fn install_mesh(&mut self, pos: SectionPos, mesh: ChunkMesh) {
         self.meshes.insert(pos, mesh);
+        self.repack_forced.remove(&pos);
         self.mesh_columns.insert(pos.chunk_pos());
         self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
     }
 
     pub(super) fn remove_mesh(&mut self, pos: SectionPos) -> bool {
         let removed = self.meshes.remove(&pos).is_some();
+        self.repack_forced.remove(&pos);
         if removed {
             self.refresh_mesh_column_presence(pos.chunk_pos());
         }
@@ -953,6 +969,7 @@ impl World {
             self.block_entity_sections.remove(&sp);
             self.particle_emitter_sections.remove(&sp);
             self.meshes.remove(&sp);
+            self.repack_forced.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
             self.light_deferred.remove(&sp);
@@ -963,6 +980,7 @@ impl World {
         }
         self.mesh_columns.remove(&pos);
         self.mesh_upload_dirty_columns.remove(&pos);
+        self.mesh_release_after.remove(&pos);
         self.columns.remove(&pos);
         self.column_gen.remove(&pos);
         self.pending.remove(&pos);
@@ -984,6 +1002,8 @@ impl World {
         self.meshes.clear();
         self.mesh_columns.clear();
         self.mesh_upload_dirty_columns.clear();
+        self.mesh_release_after.clear();
+        self.repack_forced.clear();
         self.light_blocked_meshes.clear();
         self.light_deferred.clear();
         self.pending.clear();

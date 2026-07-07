@@ -475,12 +475,16 @@ impl Renderer {
         let particles = &self.particles;
         let model_particles = &self.model_particles;
         let mut block_v = 0u32;
-        self.particle_draw
-            .bake(&self.queue, &mut self.particle_verts, |verts| {
+        self.particle_draw.bake(
+            &self.device,
+            &self.queue,
+            &mut self.particle_verts,
+            |verts| {
                 let (total, nb) = build_particles_split(particles, model_particles, env, verts);
                 block_v = nb;
                 total
-            });
+            },
+        );
         self.particle_block_vertex_count = if self.particle_draw.vertex_count == 0 {
             0
         } else {
@@ -490,7 +494,7 @@ impl Renderer {
         // Block-row particle emitters (torch flames and mod-content emitters): cull the
         // emitter envelope first, then synthesize alpha-blended cubes sorted far-to-near.
         self.particle_emitter_visible.clear();
-        let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
+        let fog = self.terrain_cull_dist();
         let fog_sq = fog * fog;
         for inst in &self.particle_emitters {
             let (min, max) = emitter_world_bounds(inst);
@@ -510,8 +514,11 @@ impl Renderer {
         let emitters = &self.particle_emitter_visible;
         let time = self.visual_time;
         let cam_pos = self.cam_pos;
-        self.emitter_particle_draw
-            .bake(&self.queue, &mut self.emitter_particle_verts, |verts| {
+        self.emitter_particle_draw.bake(
+            &self.device,
+            &self.queue,
+            &mut self.emitter_particle_verts,
+            |verts| {
                 build_transparent_emitter_particles(
                     emitters,
                     time,
@@ -520,7 +527,8 @@ impl Renderer {
                     verts,
                     &mut self.emitter_particle_scratch,
                 )
-            });
+            },
+        );
     }
 }
 

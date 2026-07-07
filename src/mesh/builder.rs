@@ -15,7 +15,9 @@ use crate::torch::warm_tint;
 
 use super::face::{cactus_quad, cross_quads, quad_for, vertex_ao, Face, FACES};
 use super::tint;
-use super::vertex::{pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE};
+use super::vertex::{
+    pack_tint, pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE,
+};
 use super::water::{self, SideVsWater, WaterSurface};
 
 #[cfg(test)]
@@ -971,7 +973,7 @@ fn section_geometry(
                                     ao: ao[0],
                                     light6: light6[0],
                                     block6: block6[0],
-                                    tint: final_tint,
+                                    tint: pack_tint(final_tint),
                                 };
                                 let s = [lx, ly, lz][face_axes(face).0];
                                 greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
@@ -1132,7 +1134,7 @@ fn section_geometry(
                             ao: ao[0],
                             light6: light6[0],
                             block6: block6[0],
-                            tint: final_tint,
+                            tint: pack_tint(final_tint),
                         };
                         // Slice index = the cell's coord along this face's normal axis.
                         let s = [lx, ly, lz][face_axes(face).0];
@@ -1178,11 +1180,10 @@ fn section_geometry(
         opaque_idx,
         transparent,
         transparent_idx,
-        far_opaque: vec![],
-        far_opaque_idx: vec![],
         model,
         model_idx,
         mesh_dirty: true,
+        ..ChunkMesh::empty()
     }
 }
 
@@ -1730,11 +1731,10 @@ fn chunk_geometry(
         opaque_idx,
         transparent,
         transparent_idx,
-        far_opaque: vec![],
-        far_opaque_idx: vec![],
         model,
         model_idx,
         mesh_dirty: true,
+        ..ChunkMesh::empty()
     }
 }
 
@@ -1942,7 +1942,7 @@ fn emit_cross(
         for (corner, p) in plane.into_iter().enumerate() {
             opaque.push(Vertex {
                 pos: p,
-                tint,
+                tint: pack_tint(tint),
                 packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
                 packed2: pack_vertex2(block6),
             });

@@ -105,7 +105,9 @@ fn kitchen_oven_inner() {
     // Two coal: the relight consumes one the same tick the fuel routes in
     // (Menu stage click, then the mod's WorldScheduled cook step).
     game.player.inventory.add(ItemStack::new(ItemType::Coal, 2));
-    game.player.inventory.add(ItemStack::new(ItemType::Stone, 7));
+    game.player
+        .inventory
+        .add(ItemStack::new(ItemType::Stone, 7));
 
     // Place through the REAL placement path (multi-cell footprint, facing,
     // `block_placed` anchor announcement — the cell the mod records).
@@ -152,7 +154,12 @@ fn kitchen_oven_inner() {
     // is not a furnace; it falls back to the ordinary inventory shuffle).
     let inv_slot_of = |game: &Game, item: ItemType| -> usize {
         (0..crate::inventory::TOTAL_SLOTS)
-            .find(|&i| game.player.inventory.slot(i).is_some_and(|s| s.item == item))
+            .find(|&i| {
+                game.player
+                    .inventory
+                    .slot(i)
+                    .is_some_and(|s| s.item == item)
+            })
             .expect("item somewhere in the inventory")
     };
     for item in [raw_chop, ItemType::Coal, raw_iron] {
@@ -413,7 +420,12 @@ fn kitchen_reuse_inner() {
     game.open_mod_gui_screen(kind, Some(clicked));
     let inv_slot_of = |game: &Game, item: ItemType| -> usize {
         (0..crate::inventory::TOTAL_SLOTS)
-            .find(|&i| game.player.inventory.slot(i).is_some_and(|s| s.item == item))
+            .find(|&i| {
+                game.player
+                    .inventory
+                    .slot(i)
+                    .is_some_and(|s| s.item == item)
+            })
             .expect("item somewhere in the inventory")
     };
     for item in [raw_mutton, ItemType::Coal] {
@@ -492,7 +504,12 @@ fn kitchen_reuse_inner() {
     for _ in 0..620 {
         game.game_tick_step(&mut ev);
     }
-    let slots = game.world.container_at(anchor).expect("container").slots.clone();
+    let slots = game
+        .world
+        .container_at(anchor)
+        .expect("container")
+        .slots
+        .clone();
     assert_eq!(
         slots[2],
         Some(ItemStack::new(cooked_mutton, 2)),
@@ -534,7 +551,10 @@ fn kitchen_reuse_inner() {
     game.look = Some(super::common::hit(floor, IVec3::Y));
     game.pending_place = true;
     game.game_tick_step(&mut ev);
-    let (_, anchor2, _) = game.world.model_group(clicked).expect("replaced oven group");
+    let (_, anchor2, _) = game
+        .world
+        .model_group(clicked)
+        .expect("replaced oven group");
     game.open_mod_gui_screen(kind, Some(clicked));
     let i = inv_slot_of(&game, raw_mutton);
     game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
@@ -552,7 +572,10 @@ fn kitchen_reuse_inner() {
         Some(ItemStack::new(raw_mutton, 1)),
         "the food sits uncooked in the cold replacement oven"
     );
-    assert_eq!(slots[2], None, "no phantom-fuel cook in the replacement oven");
+    assert_eq!(
+        slots[2], None,
+        "no phantom-fuel cook in the replacement oven"
+    );
     assert_eq!(
         Block::from_id(game.world.chunk_block(anchor2.x, anchor2.y, anchor2.z)),
         oven_block,
@@ -560,7 +583,10 @@ fn kitchen_reuse_inner() {
     );
 
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "the kitchen mod stayed healthy through the reuse cycle");
+    assert!(
+        !disabled,
+        "the kitchen mod stayed healthy through the reuse cycle"
+    );
 }
 
 #[test]

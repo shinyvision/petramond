@@ -408,6 +408,16 @@ pub(super) fn create_depth(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Textu
     tex.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// Allocation size for a layer holding `len` bytes: 25% headroom rounded up to
+/// 1 KiB. The headroom absorbs remesh-to-remesh size jitter (so consecutive
+/// uploads reuse the allocation) with bounded slack — the previous
+/// `next_power_of_two()` rounding averaged ~40% wasted VRAM (up to 2×) across
+/// every loaded column's up-to-8 buffers.
+fn layer_capacity(len: usize) -> u64 {
+    let with_headroom = (len + len / 4) as u64;
+    ((with_headroom + 1023) & !1023).max(1024)
+}
+
 /// Upload `data` into `prev`, REUSING its GPU allocation when it is large enough
 /// (`queue.write_buffer`), otherwise (re)allocating a rounded-up buffer. Empty data drops
 /// `prev` (frees it) and returns `None`.
@@ -416,7 +426,9 @@ pub(super) fn create_depth(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Textu
 /// section re-lights its neighbours, each of which remeshes), and allocating fresh GPU
 /// buffers for every one of those re-uploads — then freeing the old ones — churns the
 /// driver allocator on the render thread and stalls the frame. `write_buffer` into an
-/// existing, big-enough buffer avoids the allocation entirely; buffers only ever grow.
+/// existing, big-enough buffer avoids the allocation entirely. Buffers grow with bounded
+/// headroom and shrink only past a 4× hysteresis, so a dug-out column returns its VRAM
+/// but size jitter never churns reallocations.
 fn upload_layer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -428,17 +440,18 @@ fn upload_layer(
         return None;
     }
     if let Some(buf) = prev {
-        if buf.size() as usize >= data.len() {
+        let size = buf.size() as usize;
+        // Keep buffers that fit, unless they are now wildly oversized (player
+        // mined out most of the column / far LOD replaced dense foliage).
+        let oversized = size > 16 * 1024 && size / 4 > data.len();
+        if size >= data.len() && !oversized {
             queue.write_buffer(&buf, 0, data);
             return Some(buf);
         }
     }
-    // Round the capacity up so the next slightly-larger remesh reuses this allocation
-    // rather than churning a new one. `COPY_DST` lets later frames `write_buffer` into it.
-    let cap = (data.len() as u64).next_power_of_two().max(1024);
     let buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: cap,
+        size: layer_capacity(data.len()),
         usage: usage | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

@@ -90,12 +90,15 @@ async fn new_renderer_inner(
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let (_atlas_array_texture, atlas_array_view, atlas_array_sampler) =
         create_atlas_array(&device, &queue);
+    // Overridden by `set_render_distance` at host wiring; the default keeps the
+    // icon-atlas bake (which reads this buffer) fog-free at any distance.
+    let default_fog = crate::render::uniforms::fog_range(crate::world::RENDER_DIST);
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniforms"),
         contents: bytemuck::cast_slice(&[Uniforms {
             view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             cam_pos: [0.0; 4],
-            fog: [FOG_START, FOG_END, 0.0, 0.0],
+            fog: [default_fog.0, default_fog.1, 0.0, 0.0],
             fog_color: [0.60, 0.82, 1.00, 1.0],
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_origin: [0.0; 4],
@@ -465,6 +468,10 @@ async fn new_renderer_inner(
         sky_shader_param_keys: pipelines.sky_shader_param_keys,
         sky_light_param_key: pipelines.sky_light_param_key,
         underwater: false,
+        fog_start: default_fog.0,
+        fog_end: default_fog.1,
+        render_scale: 1.0,
+        grade_enabled: true,
         sky_scale: 1.0,
         sky_color: [1.0, 1.0, 1.0],
         opaque_pipe: pipelines.opaque_pipe,
@@ -639,13 +646,20 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        self.depth = create_depth(&self.device, width, height);
-        self.scene_color = create_scene_color(&self.device, width, height, self.config.format);
+        self.recreate_scene_targets();
+        self.crosshair_drawn_size = (0, 0);
+    }
+
+    /// (Re)build the world-pass targets at the current `render_scale` (and the
+    /// grade bind that reads them). Called on resize and scale changes.
+    pub(super) fn recreate_scene_targets(&mut self) {
+        let (w, h) = self.scene_dims();
+        self.depth = create_depth(&self.device, w, h);
+        self.scene_color = create_scene_color(&self.device, w, h, self.config.format);
         self.grade_bind = super::super::pipeline::create_grade_bind(
             &self.device,
             &self.grade_bgl,
             &self.scene_color,
         );
-        self.crosshair_drawn_size = (0, 0);
     }
 }

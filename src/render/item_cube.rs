@@ -42,7 +42,7 @@ use crate::atlas::Tile;
 use crate::block::Block;
 use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairState};
 use crate::mesh::face::Face;
-use crate::mesh::{pack_cell_uv, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
+use crate::mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
 use glam::Vec3;
 
@@ -96,7 +96,7 @@ fn push_quad(
     for (corner, pos) in corners.into_iter().enumerate() {
         verts.push(Vertex {
             pos,
-            tint,
+            tint: pack_tint(tint),
             packed: base_bits | ((corner as u32) << 8),
             packed2,
         });
@@ -138,7 +138,7 @@ fn push_quad_cell_uvs(
         let (u, v) = cell_uvs[corner];
         verts.push(Vertex {
             pos,
-            tint,
+            tint: pack_tint(tint),
             packed: base_bits | ((corner as u32) << 8),
             packed2: packed2 | pack_cell_uv(u, v),
         });
@@ -359,7 +359,7 @@ fn push_quad_uflip(
     for (i, pos) in corners.into_iter().enumerate() {
         verts.push(Vertex {
             pos,
-            tint,
+            tint: pack_tint(tint),
             packed: base_bits | (MIRROR[i] << 8),
             packed2,
         });
@@ -551,7 +551,7 @@ pub(super) fn push_cell_local_face(
         let [u, v] = crate::mesh::plane::cell_uv(face, local[corner]);
         verts.push(Vertex {
             pos,
-            tint: mat.tint,
+            tint: pack_tint(mat.tint),
             packed: bits | ((corner as u32) << 8),
             packed2: word2 | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
         });
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(i.len(), 36);
         for vert in &v {
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, SOLID_COLOR_FLAG);
-            assert_eq!(vert.tint, tint);
+            assert_eq!(vert.tint, pack_tint(tint));
             assert_eq!((vert.packed >> 23) & 0x3F, 63);
         }
     }
@@ -917,7 +917,7 @@ mod tests {
             (top.packed & 0xFF) as u8,
             Tile::named("grass_top").index() as u8
         );
-        assert_eq!(top.tint, grass);
+        assert_eq!(top.tint, pack_tint(grass));
         assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
 
         // Side faces (PosX 0, NegX 1, PosZ 4, NegZ 5): dirt base + tinted
@@ -940,13 +940,13 @@ mod tests {
                 Tile::named("grass_side_overlay").index() as u8,
                 "side overlay tile = grass-side overlay"
             );
-            assert_eq!(s.tint, grass, "side overlay tinted green");
+            assert_eq!(s.tint, pack_tint(grass), "side overlay tinted green");
         }
 
         // Bottom face (NegY = index 3): plain dirt, untinted, no overlay.
         let bot = &v[3 * 4];
         assert_eq!((bot.packed & 0xFF) as u8, Tile::named("dirt").index() as u8);
-        assert_eq!(bot.tint, foliage_tint::NO_TINT);
+        assert_eq!(bot.tint, pack_tint(foliage_tint::NO_TINT));
         assert_eq!(bot.packed & SOLID_COLOR_FLAG, 0);
     }
 
@@ -959,7 +959,7 @@ mod tests {
                 (vert.packed & 0xFF) as u8,
                 Tile::named("oak_leaves").index() as u8
             );
-            assert_eq!(vert.tint, foliage);
+            assert_eq!(vert.tint, pack_tint(foliage));
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");
         }
     }
@@ -970,7 +970,7 @@ mod tests {
         for vert in &v {
             assert_eq!(
                 vert.tint,
-                foliage_tint::NO_TINT,
+                pack_tint(foliage_tint::NO_TINT),
                 "flowers are not biome-tinted"
             );
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
@@ -982,7 +982,11 @@ mod tests {
         let (v, _) = billboard_quad(Tile::named("fern"), Vec3::ZERO, 1.0);
         let grass = foliage_tint::default_grass_color();
         for vert in &v {
-            assert_eq!(vert.tint, grass, "ferns tint with the grass colour");
+            assert_eq!(
+                vert.tint,
+                pack_tint(grass),
+                "ferns tint with the grass colour"
+            );
         }
     }
 }

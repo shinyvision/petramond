@@ -104,7 +104,7 @@ impl Renderer {
         let (fog_start, fog_end) = if underwater {
             (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
         } else {
-            (FOG_START, FOG_END)
+            (self.fog_start, self.fog_end)
         };
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -302,6 +302,7 @@ impl Renderer {
         let cam = self.cam_pos;
         let frustum = self.frustum;
         let render_origin = self.render_origin;
+        let fog = self.terrain_cull_dist();
         let mut dirty_columns = std::mem::take(&mut self.terrain_upload_order);
         dirty_columns.clear();
         terrain.for_dirty_columns(&mut |column| {
@@ -315,7 +316,6 @@ impl Renderer {
                 crate::chunk::WORLD_MAX_Y as f32,
                 (column.cz * 16 + 16) as f32,
             );
-            let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
             let visible_soon = frustum.aabb_visible(min - render_origin, max - render_origin)
                 && aabb_distance_sq(cam, min, max) <= fog * fog;
             let center = glam::Vec3::new(
@@ -336,6 +336,11 @@ impl Renderer {
         for &(_, _, column) in &dirty_columns {
             if uploaded_columns >= MESH_COLUMN_UPLOADS_PER_FRAME {
                 break;
+            }
+            // Released CPU meshes: the repack must wait for their forced remesh.
+            // The column stays upload-dirty and its current GPU buffers keep drawing.
+            if terrain.needs_repack_remeshes(column) {
+                continue;
             }
             let uploaded = {
                 let meshes = terrain.column_meshes(column);

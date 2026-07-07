@@ -29,6 +29,13 @@ const MAX_MESH_JOBS_IN_FLIGHT: usize = 32;
 /// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
 /// always allowed; after that, the pump yields to rendering once it burns this much CPU.
 const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_000);
+/// Mesh-pump frames a column must stay upload-quiet before its CPU mesh buffers are
+/// released (~10 s at 60 fps). Releasing too early amplifies streaming work: any
+/// repack of the column then has to remesh the released sections first.
+pub(super) const MESH_RELEASE_DELAY_FRAMES: u64 = 600;
+/// How often the release sweep scans `mesh_release_after` (it iterates the whole map,
+/// so keep it off the every-frame path).
+const MESH_RELEASE_SWEEP_INTERVAL: u64 = 64;
 
 /// Set of sections awaiting a remesh. With `World`'s section map private, every
 /// path that dirties a section pushes here and `remove_section` pulls it back out —
@@ -49,6 +56,10 @@ impl DirtyMeshQueue {
 
     pub fn remove(&mut self, pos: SectionPos) {
         self.pending.remove(&pos);
+    }
+
+    pub fn contains(&self, pos: SectionPos) -> bool {
+        self.pending.contains(&pos)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -94,8 +105,10 @@ impl World {
     /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
+        self.mesh_pump_frame += 1;
         self.drain_finished_light_bakes();
         self.drain_finished_meshes();
+        self.release_settled_column_meshes();
         if max_per_frame == 0 {
             return;
         }
@@ -124,7 +137,10 @@ impl World {
             // Hidden deep section: nothing can see it — park it out of the hot
             // queue (its light parks with it, since light is mesh-demanded). The
             // visibility refresh re-queues it the moment a sightline can reach it.
-            if self.section_hidden(pos) {
+            // Repack-forced sections are exempt: their (released) geometry is still
+            // part of the packed column buffer, so the repack needs a fresh mesh
+            // even if nothing can currently see the section.
+            if self.section_hidden(pos) && !self.repack_forced.contains(&pos) {
                 self.hidden_parked.insert(pos);
                 continue;
             }
@@ -163,6 +179,50 @@ impl World {
                         self.dirty_meshes.push(rest);
                     }
                     break;
+                }
+            }
+        }
+    }
+
+    /// Release the CPU mesh buffers of columns that have been upload-quiet for
+    /// [`MESH_RELEASE_DELAY_FRAMES`] (stamped by `mark_column_uploaded`). The CPU
+    /// copy only exists so a column repack can re-pack sibling sections; once a
+    /// column settles, the copy is dead weight (~30–60 KB per meshed section) and
+    /// a later repack forces a remesh of the released sections instead
+    /// (`repack_forced`). Releasing never touches the GPU buffers, so a wrong
+    /// "settled" verdict costs remesh work, never visible terrain.
+    fn release_settled_column_meshes(&mut self) {
+        if self.mesh_pump_frame % MESH_RELEASE_SWEEP_INTERVAL != 0
+            || self.mesh_release_after.is_empty()
+        {
+            return;
+        }
+        let frame = self.mesh_pump_frame;
+        let ripe: Vec<ChunkPos> = self
+            .mesh_release_after
+            .iter()
+            .filter(|&(_, &after)| frame >= after)
+            .map(|(&pos, _)| pos)
+            .collect();
+        for pos in ripe {
+            self.mesh_release_after.remove(&pos);
+            // Still has upload or remesh work pending: skip. The eventual upload
+            // re-stamps the column via `mark_column_uploaded`.
+            if self.mesh_upload_dirty_columns.contains(&pos) {
+                continue;
+            }
+            let busy = Self::column_section_range().any(|cy| {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                self.dirty_meshes.contains(sp) || self.light_blocked_meshes.contains(&sp)
+            });
+            if busy {
+                continue;
+            }
+            for cy in Self::column_section_range() {
+                if let Some(mesh) = self.meshes.get_mut(&SectionPos::new(pos.cx, cy, pos.cz)) {
+                    if !mesh.mesh_dirty && !mesh.is_released() {
+                        mesh.release_cpu_buffers();
+                    }
                 }
             }
         }
@@ -597,7 +657,10 @@ mod tests {
             (0, 0, 1),
             (0, 0, -1),
         ] {
-            insert_solid_section(&mut world, SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz));
+            insert_solid_section(
+                &mut world,
+                SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz),
+            );
         }
         assert!(
             !world.section_produces_no_mesh(center),

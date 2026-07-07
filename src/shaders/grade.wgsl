@@ -1,9 +1,12 @@
 // grade: full-screen colour grade over the finished world image.
 //
 // The world (sky → terrain → entities → hand) renders into an offscreen scene
-// texture; this pass reads it back 1:1 (textureLoad — no sampler, no filtering)
-// and writes the graded result to the swapchain. Screen chrome (crosshair, UI)
-// draws AFTER the grade so interface colours stay exact.
+// texture; this pass samples it (bilinear) and writes the graded result to the
+// swapchain. Screen chrome (crosshair, UI) draws AFTER the grade so interface
+// colours stay exact. Sampling — not textureLoad — because the scene texture
+// may be SMALLER than the swapchain (the render_scale client setting): the
+// grade pass doubles as the upscale. At scale 1.0 every sample lands exactly
+// on a texel centre, identical to a load.
 //
 // The grade shapes the vibrant storybook tonal range (WIKI/visual-style.md):
 //  - a gentle S-curve for soft contrast without crushing the flat colour fields,
@@ -17,6 +20,7 @@
 //    floor converged caves and night below ~0.03 linear to one flat gray.
 
 @group(0) @binding(0) var scene: texture_2d<f32>;
+@group(0) @binding(1) var scene_samp: sampler;
 
 // Rec.709 luma weights.
 const GRADE_LUMA_W: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -37,6 +41,7 @@ const GRADE_LIFT: f32 = 0.0;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
 };
 
 @vertex
@@ -47,13 +52,15 @@ fn vs_grade(@builtin(vertex_index) vertex_index: u32) -> VsOut {
         vec2<f32>(-1.0,  1.0),
     );
     var out: VsOut;
-    out.clip = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    let p = positions[vertex_index];
+    out.clip = vec4<f32>(p, 0.0, 1.0);
+    out.uv = vec2<f32>(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
     return out;
 }
 
 @fragment
 fn fs_grade(in: VsOut) -> @location(0) vec4<f32> {
-    let src = textureLoad(scene, vec2<i32>(in.clip.xy), 0).rgb;
+    let src = textureSample(scene, scene_samp, in.uv).rgb;
     // Soft S-curve: smoothstep of the clamped colour, blended lightly over the
     // original so contrast firms up without banding or crushed shadows.
     let cl = clamp(src, vec3<f32>(0.0), vec3<f32>(1.0));

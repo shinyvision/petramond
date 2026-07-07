@@ -8,10 +8,11 @@
 //! drains loaded sections via [`WorldSave::poll_loaded`], mirroring the section-gen
 //! worker pool.
 
+pub mod client;
 mod codec;
+mod container;
 pub mod entities;
 mod furnace;
-mod container;
 pub mod level;
 pub mod mobs;
 pub(crate) mod palette;
@@ -531,7 +532,7 @@ fn load_section(
 }
 
 /// Atomic file write: tmp + rename, so a crash mid-write can't truncate the live file.
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)

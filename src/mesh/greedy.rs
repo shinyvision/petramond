@@ -33,7 +33,7 @@ pub(super) struct FlatFace {
     /// Second light channel (block light) — merges require BOTH channels equal, so
     /// a merged quad's `packed2` word is exact for every cell it replaces.
     pub(super) block6: u32,
-    pub(super) tint: [f32; 3],
+    pub(super) tint: u32,
 }
 
 const FLAT_ABSENT: FlatFace = FlatFace {
@@ -42,7 +42,7 @@ const FLAT_ABSENT: FlatFace = FlatFace {
     ao: 0,
     light6: 0,
     block6: 0,
-    tint: [0.0; 3],
+    tint: 0,
 };
 
 /// Reused per-thread greedy-merge scratch: a `FlatFace` per (face direction 0..6, cell), a

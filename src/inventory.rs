@@ -995,5 +995,4 @@ mod tests {
         // An empty stack fits nothing.
         assert_eq!(inv.fits_count(item(ItemType::Dirt, 0)), 0);
     }
-
 }

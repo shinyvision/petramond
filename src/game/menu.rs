@@ -7,7 +7,7 @@
 use crate::controls::PointerButton;
 use crate::crafting::CraftGrid;
 use crate::events::{ContainerKind, PostEvent, SimCtx};
-use crate::gui::{ChestView, FurnaceView, GuiStateMap, MenuSlot, ContainerView, WorkbenchView};
+use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot, WorkbenchView};
 use crate::inventory::Inventory;
 use crate::mathh::IVec3;
 

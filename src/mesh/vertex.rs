@@ -1,18 +1,27 @@
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
 pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 
-/// GPU vertex: 32 bytes. `pos` and `tint` stay full `f32` (pos keeps the water
-/// surface Y baked on the CPU; tint must not be quantized -- the sRGB OETF would
-/// shift output levels). `packed` folds the uv tile + corner + shade index + AO
+/// GPU vertex: 24 bytes. `pos` stays full `f32` (it keeps the water surface Y
+/// baked on the CPU, and dynamic bakes — item entities, chests, doors — write
+/// absolute world positions). `tint` is LINEAR RGB packed unorm8 ([`pack_tint`];
+/// the GPU reads it as `Unorm8x4` — linear values in a linear-interpreted
+/// format, so no sRGB OETF level shift; 1/255 steps on a multiplier that feeds
+/// an 8-bit output). `packed` folds the uv tile + corner + shade index + AO
 /// level into one word; the vertex shader reconstructs uv (by SELECTING from a
 /// CPU-uploaded `tile_uv()` table -- never recomputing) and light (from the
 /// `SHADES` literal times an AO lookup). The uv/shade decode is bit-identical to
 /// the old inline values; `light` additionally folds in the per-vertex AO term.
+///
+/// Remaining pack lever, NOT done: quantizing `pos` to section-local fixed
+/// point would reach ~16 bytes, but needs a per-column origin fed to the packed
+/// column draws (instance-step buffer or per-draw uniform) AND a split format
+/// for the dynamic bakes that share this layout with absolute positions.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub pos: [f32; 3],
-    pub tint: [f32; 3],
+    /// Linear RGB tint in unorm8 lanes (byte 3 unused, kept 0xFF); see [`pack_tint`].
+    pub tint: u32,
     /// Folded tile + corner + shade + overlay + AO + SKY light. [`pack_vertex`] is
     /// the sole owner of this bit layout (see its doc); the vertex shader decodes
     /// it (selecting uv from the CPU-uploaded `tile_uv()` table — never recomputing
@@ -21,6 +30,27 @@ pub struct Vertex {
     /// Second packed word: block light plus the optional cell-local UV. See
     /// [`pack_vertex2`] and [`pack_cell_uv`], the owners of its bit layout.
     pub packed2: u32,
+}
+
+/// Pack a linear RGB tint (each channel `0..=1` — warm/biome tints never exceed
+/// 1) into the `Vertex::tint` unorm8 word, little-endian `r | g<<8 | b<<16`,
+/// matching `VertexFormat::Unorm8x4`'s lane order. The SINGLE owner of the tint
+/// encoding; the alpha lane is unused and fixed at 255.
+#[inline]
+pub(crate) fn pack_tint(rgb: [f32; 3]) -> u32 {
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    q(rgb[0]) | (q(rgb[1]) << 8) | (q(rgb[2]) << 16) | 0xFF00_0000
+}
+
+/// Inverse of [`pack_tint`] for the rare CPU path that post-processes an
+/// already-built vertex (held-item warm tinting).
+#[inline]
+pub(crate) fn unpack_tint(tint: u32) -> [f32; 3] {
+    [
+        (tint & 0xFF) as f32 / 255.0,
+        ((tint >> 8) & 0xFF) as f32 / 255.0,
+        ((tint >> 16) & 0xFF) as f32 / 255.0,
+    ]
 }
 
 /// Fold one vertex's attributes into the packed `u32` word — the SINGLE owner of
@@ -142,6 +172,19 @@ pub struct ChunkMesh {
     /// True until GPU upload has happened. Set by `build_mesh`, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
+    /// True once the CPU vertex/index buffers were released after a settled GPU
+    /// upload (the geometry then lives only in the packed column buffer). A column
+    /// repack cannot read a released mesh; it must force a remesh first.
+    pub(in crate::mesh) released: bool,
+    /// `is_empty()` captured at release time, so emptiness queries stay truthful
+    /// after the buffers are gone.
+    pub(in crate::mesh) released_empty: bool,
+}
+
+impl Default for ChunkMesh {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
 impl ChunkMesh {
@@ -156,12 +199,37 @@ impl ChunkMesh {
             model: vec![],
             model_idx: vec![],
             mesh_dirty: false,
+            released: false,
+            released_empty: false,
         }
     }
 
     pub fn is_empty(&self) -> bool {
+        if self.released {
+            return self.released_empty;
+        }
         // A chunk holding ONLY a bbmodel block (empty packed buffers) is NOT empty —
         // its geometry lives in the model stream, which must still upload + draw.
         self.opaque_idx.is_empty() && self.transparent_idx.is_empty() && self.model_idx.is_empty()
+    }
+
+    pub fn is_released(&self) -> bool {
+        self.released
+    }
+
+    /// Free the CPU-side geometry of an uploaded mesh. `Vec::new()` (not `clear`)
+    /// so the heap allocations are returned, not kept as capacity.
+    pub fn release_cpu_buffers(&mut self) {
+        debug_assert!(!self.mesh_dirty, "releasing a mesh that was never uploaded");
+        self.released_empty = self.is_empty();
+        self.released = true;
+        self.opaque = Vec::new();
+        self.opaque_idx = Vec::new();
+        self.transparent = Vec::new();
+        self.transparent_idx = Vec::new();
+        self.far_opaque = Vec::new();
+        self.far_opaque_idx = Vec::new();
+        self.model = Vec::new();
+        self.model_idx = Vec::new();
     }
 }

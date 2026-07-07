@@ -19,7 +19,8 @@ use crate::torch::warm_tint;
 use super::face::Face;
 use super::plane::cell_uv;
 use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
+    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
+    UV_MODE_CELL_LOCAL,
 };
 use super::UV_MODE_SHIFT;
 
@@ -200,7 +201,7 @@ fn push_face(
         }
         vbuf.push(Vertex {
             pos,
-            tint,
+            tint: pack_tint(tint),
             // Flat AO (3 = unoccluded) with the face's directional shade: thin
             // glass reads best evenly lit, but still distinguishes its sides.
             packed: pack_vertex(

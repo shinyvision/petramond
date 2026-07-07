@@ -181,7 +181,9 @@ fn disabled_namespace_in<'a>(
             ingredient,
             result,
             ..
-        } => hit(class).or_else(|| hit(ingredient)).or_else(|| hit(result)),
+        } => hit(class)
+            .or_else(|| hit(ingredient))
+            .or_else(|| hit(result)),
         RawRecipe::Furniture { input, result, .. } => hit(input).or_else(|| hit(result)),
     }
 }
@@ -365,7 +367,10 @@ mod tests {
             recipes.process("llama:smelting", ItemType::RawIron),
             Some(ItemStack::new(ItemType::IronIngot, 1))
         );
-        assert_eq!(recipes.smelt(ItemType::RawIron).unwrap().item, ItemType::IronIngot);
+        assert_eq!(
+            recipes.smelt(ItemType::RawIron).unwrap().item,
+            ItemType::IronIngot
+        );
         assert_eq!(
             recipes.process("kitchen:cooking", ItemType::RawIron),
             Some(ItemStack::new(ItemType::Coal, 1))

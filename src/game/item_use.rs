@@ -39,7 +39,10 @@ impl Game {
             return false;
         }
         let slot = self.player.inventory.active_slot();
-        if self.eating.is_some_and(|e| e.slot == slot && e.item == item) {
+        if self
+            .eating
+            .is_some_and(|e| e.slot == slot && e.item == item)
+        {
             return true; // re-click mid-eat: consumed, nothing restarts
         }
         let mut pre = ItemUsePre {

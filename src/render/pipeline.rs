@@ -380,9 +380,10 @@ pub(super) fn create_pipeline_resources(
         array_sampler,
     );
 
-    // 32-byte packed vertex: pos (f32x3) + tint (f32x3) + packed (u32) + packed2 (u32).
-    // Pipelines whose shaders ignore `packed2` (break overlay) share the layout; an
-    // attribute the shader doesn't consume is valid.
+    // 24-byte packed vertex: pos (f32x3) + tint (unorm8x4, linear RGB) +
+    // packed (u32) + packed2 (u32). Pipelines whose shaders ignore `packed2`
+    // (break overlay) share the layout; an attribute the shader doesn't consume
+    // is valid.
     let vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -390,18 +391,18 @@ pub(super) fn create_pipeline_resources(
             shader_location: 0,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
+            format: wgpu::VertexFormat::Unorm8x4,
             offset: 12,
             shader_location: 1,
         },
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Uint32,
-            offset: 24,
+            offset: 16,
             shader_location: 2,
         },
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Uint32,
-            offset: 28,
+            offset: 20,
             shader_location: 3,
         },
     ];
@@ -960,7 +961,10 @@ fn create_sky_pipeline(
             &[],
             &sky_targets,
             wgpu::PrimitiveState::default(),
-            None,
+            // The sky draws AFTER opaque terrain at exactly the far plane
+            // (vs_sky emits z = 1.0), so LessEqual shades only the pixels no
+            // terrain covered — the expensive sky fs skips the overdrawn ~80–90%.
+            Some(DepthPreset::ReadLessEqual),
             sample_count,
         )
     };
@@ -1018,16 +1022,26 @@ fn create_grade_pipeline(
     });
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("grade bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    // Filterable: the grade pass bilinearly upscales when the
+                    // scene renders below swapchain resolution (render_scale).
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("grade layout"),
@@ -1072,13 +1086,27 @@ pub(super) fn create_grade_bind(
     bgl: &wgpu::BindGroupLayout,
     scene_view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("grade sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("grade bind"),
         layout: bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(scene_view),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(scene_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
     })
 }
 
@@ -1830,17 +1858,18 @@ fn create_particle_pipeline(
         Some(DepthPreset::ReadLess),
         sample_count,
     );
+    // Deliberately tiny: DynamicVertexDraw::bake grows the buffer on demand up
+    // to MAX_PARTICLE_VERTICES (the two worst-case buffers were ~8 MB of VRAM,
+    // parked mostly empty).
     let particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("particle vbuf"),
-        size: (super::particles::MAX_PARTICLE_VERTICES
-            * std::mem::size_of::<super::particles::ParticleVertex>()) as u64,
+        size: 4096,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let emitter_particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("emitter particle vbuf"),
-        size: (super::particles::MAX_PARTICLE_VERTICES
-            * std::mem::size_of::<super::particles::ParticleVertex>()) as u64,
+        size: 4096,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -2144,9 +2173,9 @@ mod gpu_validation {
         // Confirm the assumption baked into the packing: tile ids fit in 8 bits
         // (also enforced by the atlas loader at composition time).
         assert!(Tile::count() <= 256);
-        // Stride sanity: the compressed block vertex is exactly 32 bytes
-        // (two packed u32 words since the sky/block light-channel split).
-        assert_eq!(std::mem::size_of::<Vertex>(), 32);
+        // Stride sanity: the compressed block vertex is exactly 24 bytes
+        // (unorm8 tint + two packed u32 words).
+        assert_eq!(std::mem::size_of::<Vertex>(), 24);
         // item3d vertex stride must match its declared attribute layout
         // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24 = 36 bytes).
         assert_eq!(

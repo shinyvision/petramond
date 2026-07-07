@@ -5,6 +5,7 @@
 //! API stable while the implementation is split by responsibility.
 
 pub(crate) mod chest;
+mod container;
 pub(crate) mod door;
 mod edit;
 mod entities;
@@ -15,7 +16,6 @@ mod kv;
 mod light;
 mod mesh_pool;
 mod mesh_queue;
-mod container;
 mod model;
 mod pane;
 mod particle_emitters;

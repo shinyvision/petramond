@@ -137,7 +137,10 @@ pub(super) fn build_hand_lit(
     if warm > 0 {
         let w = warm as f32 / 255.0;
         for v in verts.iter_mut() {
-            v.tint = crate::torch::warm_tint(v.tint, w);
+            v.tint = crate::mesh::pack_tint(crate::torch::warm_tint(
+                crate::mesh::unpack_tint(v.tint),
+                w,
+            ));
         }
     }
 
@@ -348,8 +351,8 @@ fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
         // wiggles there, `eat_near` slides the whole mouth point ALONG THE
         // VIEW RAY toward the camera (uniform scale of the view-space point =
         // screen position stays put, the food just looms closer bite by bite).
-        let mouth = Vec3::new(rest.x * 0.16, rest.y * 0.34, rest.z * 0.74)
-            * (1.0 - 0.28 * view.eat_near);
+        let mouth =
+            Vec3::new(rest.x * 0.16, rest.y * 0.34, rest.z * 0.74) * (1.0 - 0.28 * view.eat_near);
         let carry = mouth - rest;
         pos += carry * e;
         // Each bite nudges the item a touch further into the mouth (positive
@@ -413,7 +416,7 @@ mod tests {
                 vert.packed & super::super::SOLID_COLOR_FLAG,
                 super::super::SOLID_COLOR_FLAG
             );
-            assert_eq!(vert.tint, SKIN);
+            assert_eq!(vert.tint, crate::mesh::pack_tint(SKIN));
         }
     }
 

@@ -231,7 +231,6 @@ impl App {
         }
         renderer.render();
     }
-
 }
 
 /// Frame-side heart-wiggle bookkeeping: ANY change in the HUD health — a

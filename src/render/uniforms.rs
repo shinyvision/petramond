@@ -1,9 +1,15 @@
 /// Terminal fog band: the smoothstep ramp of `atmosphere.wgsl`'s terminal term.
 /// The band starts earlier than the old linear fog so terrain dissolves into the
-/// haze gradually; FOG_END is a hard contract — the atmosphere reaches exactly
-/// 1.0 there, and terrain visibility is fog-distance culled against it.
-pub const FOG_START: f32 = 12.0 * 32.0;
-pub const FOG_END: f32 = 16.0 * 32.0;
+/// haze gradually; the returned end is a hard contract — the atmosphere reaches
+/// exactly 1.0 there, and terrain visibility is fog-distance culled against it.
+///
+/// Derived from the streaming radius so the fog fade always terminates exactly at
+/// the loaded-world edge: a lower render distance pulls the fog in with it instead
+/// of ending terrain before the fade.
+pub fn fog_range(render_dist_chunks: i32) -> (f32, f32) {
+    let end = (render_dist_chunks.max(1) * crate::chunk::SECTION_SIZE as i32) as f32;
+    (end * 0.75, end)
+}
 
 /// Underwater fog band (blocks): pulled in tight so submerged visibility is short
 /// and distant terrain dissolves into the murky water colour.

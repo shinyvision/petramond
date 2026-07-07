@@ -117,8 +117,15 @@ impl DynamicVertexDraw {
     /// Bake one frame's vertex stream. Clears the count, runs `build` to fill the
     /// supplied scratch (returns the vertex count emitted), and uploads + records
     /// it only if it both produced geometry and fits the cap.
+    ///
+    /// The vertex buffer GROWS on demand (25% headroom, 4 KiB granularity,
+    /// bounded by `vbuf_cap` vertices) instead of preallocating the worst case:
+    /// the particle caps are ~4 MB of VRAM each, while a quiet scene holds a few
+    /// hundred flecks. A shrunken buffer never reallocates downward — particle
+    /// load is bursty and the cap bounds the waste.
     pub(super) fn bake<V: bytemuck::Pod>(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         verts: &mut Vec<V>,
         build: impl FnOnce(&mut Vec<V>) -> u32,
@@ -126,6 +133,17 @@ impl DynamicVertexDraw {
         self.vertex_count = 0;
         let count = build(verts);
         if count > 0 && verts.len() <= self.vbuf_cap {
+            let needed = std::mem::size_of_val(verts.as_slice()) as u64;
+            if self.vbuf.size() < needed {
+                let max = (self.vbuf_cap * std::mem::size_of::<V>()) as u64;
+                let cap = ((needed + needed / 4 + 4095) & !4095).min(max);
+                self.vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("dynamic vertex draw vbuf"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
             queue.write_buffer(&self.vbuf, 0, bytemuck::cast_slice(verts));
             self.vertex_count = count;
         }

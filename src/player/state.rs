@@ -151,9 +151,10 @@ impl Player {
         }
         match self.effects.iter_mut().find(|e| e.effect == effect) {
             Some(e) => e.remaining = ticks,
-            None => self
-                .effects
-                .push(crate::effect::ActiveEffect { effect, remaining: ticks }),
+            None => self.effects.push(crate::effect::ActiveEffect {
+                effect,
+                remaining: ticks,
+            }),
         }
     }
 

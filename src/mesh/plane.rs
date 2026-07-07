@@ -8,7 +8,8 @@ use crate::torch::warm_tint;
 
 use super::face::{should_flip, Face};
 use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_CELL_LOCAL,
+    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
+    UV_MODE_CELL_LOCAL,
 };
 use super::UV_MODE_SHIFT;
 
@@ -85,11 +86,11 @@ pub(super) fn push_plane_quad(
         quad_ao[corner] = ao;
         vbuf.push(Vertex {
             pos,
-            tint: if warm == 0.0 {
+            tint: pack_tint(if warm == 0.0 {
                 tint
             } else {
                 warm_tint(tint, warm)
-            },
+            }),
             packed: pack_vertex(
                 tile.index() as u32,
                 corner as u32,

@@ -14,11 +14,11 @@ use std::sync::Arc;
 use crate::block::{Block, BlockTag};
 use crate::block_state::{BlockStates, LogAxis, SlabState, StairHalf, StairState};
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
+use crate::container::Container;
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
-use crate::container::Container;
 use crate::torch::TorchPlacement;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,18 +59,10 @@ pub struct Section {
     pub cz: i32,
     blocks: Arc<[u8]>,
     states: BlockStates,
-    /// Furnace machine state (burn/cook counters), keyed by section-local
-    /// block index (`section_idx`, max 4095 — fits `u16`). A furnace's SLOTS
-    /// live in [`containers`](Self::containers) under the same key. Empty for
-    /// the common section.
-    furnaces: HashMap<u16, Furnace>,
-    /// Generic item-slot containers — chests, furnaces, and mod container
-    /// blocks all store their stacks here, keyed like
-    /// [`furnaces`](Self::furnaces). Empty for the common section.
-    containers: HashMap<u16, Container>,
-    /// Which way a facing block-entity (chest, furnace) points, keyed like
-    /// [`furnaces`](Self::furnaces).
-    entity_facings: HashMap<u16, Facing>,
+    /// Block-entity state, allocated on first insert — `None` for the common
+    /// generated section (together with `BlockStates`' boxed sparse maps this
+    /// keeps `size_of::<Section>()` small across thousands of loaded sections).
+    entities: Option<Box<BlockEntities>>,
     pub dirty: bool,
     /// Set true by runtime edits, never by generation, so only player-touched
     /// sections are written to disk.
@@ -120,17 +112,58 @@ pub struct Section {
     particle_emitter_count: u32,
 }
 
+/// A section's block-entity maps, keyed by section-local block index
+/// (`section_idx`, max 4095 — fits `u16`).
+#[derive(Clone, Default)]
+struct BlockEntities {
+    /// Furnace machine state (burn/cook counters). A furnace's SLOTS live in
+    /// [`containers`](Self::containers) under the same key.
+    furnaces: HashMap<u16, Furnace>,
+    /// Generic item-slot containers — chests, furnaces, and mod container
+    /// blocks all store their stacks here.
+    containers: HashMap<u16, Container>,
+    /// Which way a facing block-entity (chest, furnace) points.
+    entity_facings: HashMap<u16, Facing>,
+}
+
+impl BlockEntities {
+    fn is_empty(&self) -> bool {
+        self.furnaces.is_empty() && self.containers.is_empty() && self.entity_facings.is_empty()
+    }
+}
+
+/// Process-wide shared 16³ cubes filled with one byte value. Uniform sections
+/// (all-air sky band, all-stone deep, all-water ocean) and uniform light cubes
+/// (open sky, pitch dark) point at these instead of owning a 4 KiB buffer each;
+/// the cache entry keeps the refcount ≥ 2, so the first heterogeneous write
+/// un-shares through the existing `Arc::make_mut` copy-on-write path.
+fn uniform_cube(value: u8) -> Arc<[u8]> {
+    static CACHE: [std::sync::OnceLock<Arc<[u8]>>; 256] =
+        [const { std::sync::OnceLock::new() }; 256];
+    CACHE[value as usize]
+        .get_or_init(|| vec![value; SECTION_VOLUME].into())
+        .clone()
+}
+
+/// Collapse `cube` onto the shared per-value buffer when all its cells are equal.
+fn compact_uniform_cube(cube: Arc<[u8]>) -> Arc<[u8]> {
+    let first = cube[0];
+    if cube.iter().all(|&v| v == first) {
+        uniform_cube(first)
+    } else {
+        cube
+    }
+}
+
 impl Section {
     pub fn new(cx: i32, cy: i32, cz: i32) -> Self {
         Self {
             cx,
             cy,
             cz,
-            blocks: vec![0u8; SECTION_VOLUME].into(),
+            blocks: uniform_cube(0),
             states: BlockStates::new(),
-            furnaces: HashMap::new(),
-            containers: HashMap::new(),
-            entity_facings: HashMap::new(),
+            entities: None,
             dirty: true,
             modified: false,
             skylight: None,
@@ -265,8 +298,11 @@ impl Section {
     }
 
     /// Install a freshly computed skylight cube and clear the dirty flag.
+    /// Uniform cubes (fully open sky above the surface, fully dark deep
+    /// underground — most lit sections) collapse onto the shared per-value
+    /// buffer instead of retaining the bake's 4 KiB allocation.
     pub fn set_skylight(&mut self, cube: Arc<[u8]>) {
-        self.skylight = Some(cube);
+        self.skylight = Some(compact_uniform_cube(cube));
         self.light_dirty = false;
     }
 
@@ -279,9 +315,15 @@ impl Section {
         }
     }
 
-    /// Install a freshly computed block-light cube.
+    /// Install a freshly computed block-light cube. All-zero (no emitter in
+    /// range — the overwhelmingly common bake) stores as `None`, which reads
+    /// identically; other uniform cubes share the per-value buffer.
     pub fn set_blocklight(&mut self, cube: Arc<[u8]>) {
-        self.blocklight = Some(cube);
+        if cube.iter().all(|&v| v == 0) {
+            self.blocklight = None;
+        } else {
+            self.blocklight = Some(compact_uniform_cube(cube));
+        }
     }
 
     pub fn mark_light_dirty(&mut self) {
@@ -413,6 +455,7 @@ impl Section {
         self.water_count = water;
         self.biome_tint_count = biome_tint;
         self.particle_emitter_count = particle_emitters;
+        self.compact_uniform_blocks();
 
         let mut planes = [0u16; 6];
         let hi = SECTION_SIZE - 1;
@@ -430,6 +473,27 @@ impl Section {
             }
         }
         self.plane_opaque = planes;
+    }
+
+    /// Swap the block buffer for the shared per-id uniform cube when every cell
+    /// holds the same id (all-air, all-stone, all-water — the bulk of loaded
+    /// sections). Runs from `recompute_opaque_count`, so every bulk-load path
+    /// compacts automatically. Counter fast paths gate the byte scan to sections
+    /// that can actually be uniform.
+    fn compact_uniform_blocks(&mut self) {
+        let uniform_id = if self.non_air_count == 0 {
+            Some(0u8)
+        } else if self.opaque_count as usize == SECTION_VOLUME
+            || self.water_count as usize == SECTION_VOLUME
+        {
+            let first = self.blocks[0];
+            self.blocks.iter().all(|&b| b == first).then_some(first)
+        } else {
+            None
+        };
+        if let Some(id) = uniform_id {
+            self.blocks = uniform_cube(id);
+        }
     }
 
     /// Whether every cell is opaque (fully solid). Such a section, when its six
@@ -684,12 +748,23 @@ impl Section {
 
     /// Detach one cell's whole mod-KV map — the state-preserving half of a
     /// model-block swap (see `World::swap_model_block`).
-    pub fn cell_kv_take(&mut self, x: usize, y: usize, z: usize) -> Option<BTreeMap<String, Vec<u8>>> {
+    pub fn cell_kv_take(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+    ) -> Option<BTreeMap<String, Vec<u8>>> {
         self.states.cell_kv_take(x, y, z)
     }
 
     /// Re-attach a map detached by [`cell_kv_take`](Self::cell_kv_take).
-    pub fn cell_kv_restore(&mut self, x: usize, y: usize, z: usize, map: BTreeMap<String, Vec<u8>>) {
+    pub fn cell_kv_restore(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+        map: BTreeMap<String, Vec<u8>>,
+    ) {
         self.states.cell_kv_restore(x, y, z, map);
     }
 
@@ -712,23 +787,36 @@ impl Section {
     }
 
     #[inline]
+    fn entities_mut(&mut self) -> &mut BlockEntities {
+        self.entities.get_or_insert_default()
+    }
+
+    #[inline]
     pub fn furnace_at(&self, x: usize, y: usize, z: usize) -> Option<&Furnace> {
-        self.furnaces.get(&Self::block_entity_key(x, y, z))
+        self.entities
+            .as_deref()
+            .and_then(|e| e.furnaces.get(&Self::block_entity_key(x, y, z)))
     }
 
     #[inline]
     pub fn furnace_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Furnace> {
-        self.furnaces.get_mut(&Self::block_entity_key(x, y, z))
+        self.entities
+            .as_deref_mut()
+            .and_then(|e| e.furnaces.get_mut(&Self::block_entity_key(x, y, z)))
     }
 
     pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace) {
-        self.furnaces
+        self.entities_mut()
+            .furnaces
             .insert(Self::block_entity_key(x, y, z), furnace);
         self.modified = true;
     }
 
     pub fn take_furnace(&mut self, x: usize, y: usize, z: usize) -> Option<Furnace> {
-        let removed = self.furnaces.remove(&Self::block_entity_key(x, y, z));
+        let removed = self
+            .entities
+            .as_deref_mut()
+            .and_then(|e| e.furnaces.remove(&Self::block_entity_key(x, y, z)));
         if removed.is_some() {
             self.modified = true;
         }
@@ -744,8 +832,9 @@ impl Section {
         z: usize,
     ) -> Option<(&mut Furnace, &mut Container)> {
         let key = Self::block_entity_key(x, y, z);
-        let furnace = self.furnaces.get_mut(&key)?;
-        let container = self.containers.get_mut(&key)?;
+        let e = self.entities.as_deref_mut()?;
+        let furnace = e.furnaces.get_mut(&key)?;
+        let container = e.containers.get_mut(&key)?;
         Some((furnace, container))
     }
 
@@ -756,28 +845,33 @@ impl Section {
 
     #[inline]
     pub fn furnaces(&self) -> &HashMap<u16, Furnace> {
-        &self.furnaces
+        match &self.entities {
+            Some(e) => &e.furnaces,
+            None => crate::block_state::empty_map!(Furnace),
+        }
     }
 
     /// Which way the facing block-entity (chest, furnace) at a cell points.
     #[inline]
     pub fn entity_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.entity_facings
+        self.entity_facings()
             .get(&Self::block_entity_key(x, y, z))
             .copied()
             .unwrap_or_default()
     }
 
     pub fn insert_entity_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.entity_facings
+        self.entities_mut()
+            .entity_facings
             .insert(Self::block_entity_key(x, y, z), facing);
         self.modified = true;
     }
 
     pub fn take_entity_facing(&mut self, x: usize, y: usize, z: usize) {
         if self
-            .entity_facings
-            .remove(&Self::block_entity_key(x, y, z))
+            .entities
+            .as_deref_mut()
+            .and_then(|e| e.entity_facings.remove(&Self::block_entity_key(x, y, z)))
             .is_some()
         {
             self.modified = true;
@@ -786,31 +880,38 @@ impl Section {
 
     #[inline]
     pub fn entity_facings(&self) -> &HashMap<u16, Facing> {
-        &self.entity_facings
+        match &self.entities {
+            Some(e) => &e.entity_facings,
+            None => crate::block_state::empty_map!(Facing),
+        }
     }
 
     #[inline]
     pub fn container_at(&self, x: usize, y: usize, z: usize) -> Option<&Container> {
-        self.containers.get(&Self::block_entity_key(x, y, z))
+        self.entities
+            .as_deref()
+            .and_then(|e| e.containers.get(&Self::block_entity_key(x, y, z)))
     }
 
     #[inline]
-    pub fn container_at_mut(
-        &mut self,
-        x: usize,
-        y: usize,
-        z: usize,
-    ) -> Option<&mut Container> {
-        self.containers.get_mut(&Self::block_entity_key(x, y, z))
+    pub fn container_at_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut Container> {
+        self.entities
+            .as_deref_mut()
+            .and_then(|e| e.containers.get_mut(&Self::block_entity_key(x, y, z)))
     }
 
     pub fn insert_container(&mut self, x: usize, y: usize, z: usize, c: Container) {
-        self.containers.insert(Self::block_entity_key(x, y, z), c);
+        self.entities_mut()
+            .containers
+            .insert(Self::block_entity_key(x, y, z), c);
         self.modified = true;
     }
 
     pub fn take_container(&mut self, x: usize, y: usize, z: usize) -> Option<Container> {
-        let removed = self.containers.remove(&Self::block_entity_key(x, y, z));
+        let removed = self
+            .entities
+            .as_deref_mut()
+            .and_then(|e| e.containers.remove(&Self::block_entity_key(x, y, z)));
         if removed.is_some() {
             self.modified = true;
         }
@@ -819,7 +920,10 @@ impl Section {
 
     #[inline]
     pub fn containers(&self) -> &HashMap<u16, Container> {
-        &self.containers
+        match &self.entities {
+            Some(e) => &e.containers,
+            None => crate::block_state::empty_map!(Container),
+        }
     }
 
     #[inline]
@@ -850,7 +954,10 @@ impl Section {
         &mut self,
         smelt: impl Fn(ItemType) -> Option<ItemStack>,
     ) -> Vec<(usize, usize, usize)> {
-        if self.furnaces.is_empty() {
+        let Some(entities) = self.entities.as_deref_mut() else {
+            return Vec::new();
+        };
+        if entities.furnaces.is_empty() {
             return Vec::new();
         }
         let mut changed = false;
@@ -858,13 +965,13 @@ impl Section {
         // Key order, not map order: `relit` feeds block-update scheduling, and
         // deterministic ticks (the multiplayer contract) forbid HashMap
         // iteration order leaking into it.
-        let mut keys: Vec<u16> = self.furnaces.keys().copied().collect();
+        let mut keys: Vec<u16> = entities.furnaces.keys().copied().collect();
         keys.sort_unstable();
         for key in keys {
-            let f = self.furnaces.get_mut(&key).expect("key just listed");
+            let f = entities.furnaces.get_mut(&key).expect("key just listed");
             // The furnace's slots live in the shared container map under the
             // same key (sibling field — disjoint borrow).
-            let Some(container) = self.containers.get_mut(&key) else {
+            let Some(container) = entities.containers.get_mut(&key) else {
                 continue;
             };
             let was_lit = f.is_lit();
@@ -906,6 +1013,11 @@ impl Section {
         log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
+        let entities = BlockEntities {
+            furnaces,
+            containers,
+            entity_facings,
+        };
         let mut s = Self {
             cx,
             cy,
@@ -923,9 +1035,7 @@ impl Section {
                 log_axes,
                 cell_kv,
             ),
-            furnaces,
-            containers,
-            entity_facings,
+            entities: (!entities.is_empty()).then(|| Box::new(entities)),
             dirty: true,
             modified: false,
             skylight: None,

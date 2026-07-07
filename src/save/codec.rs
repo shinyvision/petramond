@@ -12,13 +12,13 @@ use std::io::{Read, Write};
 
 use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{SectionPos, SECTION_VOLUME};
+use crate::container::Container;
 use crate::door::DoorState;
 use crate::entity::DroppedItem;
 use crate::facing::Facing;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 use crate::mob::SavedMob;
-use crate::container::Container;
 use crate::section::Section;
 use crate::torch::TorchPlacement;
 
@@ -697,7 +697,10 @@ mod tests {
         assert_eq!(f.burn_remaining, 1000);
         assert!(f.is_lit(), "a saved burning furnace reloads lit");
         let c = back.container_at(2, 1, 3).expect("slots restored");
-        assert_eq!(c.slots[SLOT_INPUT], Some(ItemStack::new(ItemType::RawCopper, 12)));
+        assert_eq!(
+            c.slots[SLOT_INPUT],
+            Some(ItemStack::new(ItemType::RawCopper, 12))
+        );
         assert_eq!(c.slots[SLOT_FUEL], Some(ItemStack::new(ItemType::Coal, 1)));
         assert_eq!(
             back.entity_facing(2, 1, 3),
@@ -710,8 +713,7 @@ mod tests {
     fn section_record_roundtrips_chests() {
         let mut s = sec(4, 4, -2);
         s.set_block(9, 2, 1, Block::Chest);
-        let mut chest =
-            crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
+        let mut chest = crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
         chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
         chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
         s.insert_container(9, 2, 1, chest);

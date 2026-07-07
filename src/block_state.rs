@@ -198,9 +198,22 @@ pub(crate) enum HeldBlockState {
     Log(LogAxis),
 }
 
+/// A lazily-shared empty map, so absent sparse state can hand out `&HashMap`
+/// without allocating. Each expansion site owns one static empty map.
+macro_rules! empty_map {
+    ($V:ty) => {{
+        static EMPTY: std::sync::LazyLock<HashMap<u16, $V>> =
+            std::sync::LazyLock::new(HashMap::new);
+        &*EMPTY
+    }};
+}
+pub(crate) use empty_map;
+
+/// The nine sparse per-cell maps, boxed behind `Option` in [`BlockStates`]: the
+/// common generated section carries none of these, and their inline map headers
+/// (~430 bytes each section) dominated `size_of::<Section>()`.
 #[derive(Clone, Default)]
-pub(crate) struct BlockStates {
-    water: Option<Arc<[u8]>>,
+struct SparseStates {
     torches: HashMap<u16, TorchPlacement>,
     model_cells: HashMap<u16, [u8; 3]>,
     model_facings: HashMap<u16, Facing>,
@@ -212,9 +225,35 @@ pub(crate) struct BlockStates {
     cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
 }
 
+impl SparseStates {
+    fn is_empty(&self) -> bool {
+        self.torches.is_empty()
+            && self.model_cells.is_empty()
+            && self.model_facings.is_empty()
+            && self.sapling_stages.is_empty()
+            && self.doors.is_empty()
+            && self.stairs.is_empty()
+            && self.slabs.is_empty()
+            && self.log_axes.is_empty()
+            && self.cell_kv.is_empty()
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct BlockStates {
+    water: Option<Arc<[u8]>>,
+    /// Allocated on the first sparse-state insert; `None` for the common section.
+    sparse: Option<Box<SparseStates>>,
+}
+
 impl BlockStates {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    #[inline]
+    fn sparse_mut(&mut self) -> &mut SparseStates {
+        self.sparse.get_or_insert_default()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -230,8 +269,7 @@ impl BlockStates {
         log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
-        Self {
-            water: water.map(Arc::from),
+        let sparse = SparseStates {
             torches,
             model_cells,
             model_facings,
@@ -241,6 +279,10 @@ impl BlockStates {
             slabs,
             log_axes,
             cell_kv,
+        };
+        Self {
+            water: water.map(Arc::from),
+            sparse: (!sparse.is_empty()).then(|| Box::new(sparse)),
         }
     }
 
@@ -283,20 +325,25 @@ impl BlockStates {
     #[inline]
     pub(crate) fn clear_on_block_change(&mut self, idx: usize) {
         self.clear_water_meta(idx);
-        self.clear_model_cell(idx);
-        self.clear_sapling_stage(idx);
-        self.clear_door(idx);
-        self.clear_stair(idx);
-        self.clear_slab(idx);
-        self.clear_log_axis(idx);
-        self.clear_torch(idx);
+        let Some(s) = self.sparse.as_deref_mut() else {
+            return;
+        };
+        let key = idx as u16;
+        s.model_cells.remove(&key);
+        s.model_facings.remove(&key);
+        s.sapling_stages.remove(&key);
+        s.doors.remove(&key);
+        s.stairs.remove(&key);
+        s.slabs.remove(&key);
+        s.log_axes.remove(&key);
+        s.torches.remove(&key);
         // Mod cell KV is per-BLOCK state like everything above: a broken
         // machine's burn state must die with the block — air holds no data.
         // (A same-footprint model swap that must KEEP the state carries it
         // across explicitly — see `World::swap_model_block`. A disabled mod's
         // KV is untouched by this: its sections load their KV wholesale, not
         // through per-cell block writes.)
-        self.cell_kv.remove(&(idx as u16));
+        s.cell_kv.remove(&key);
     }
 
     #[inline]
@@ -305,20 +352,15 @@ impl BlockStates {
     }
 
     #[inline]
-    fn clear_model_cell(&mut self, idx: usize) {
-        let key = idx as u16;
-        self.model_cells.remove(&key);
-        self.model_facings.remove(&key);
-    }
-
-    #[inline]
     pub(crate) fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
-        self.model_cells.insert(Self::key(x, y, z), offset);
+        self.sparse_mut()
+            .model_cells
+            .insert(Self::key(x, y, z), offset);
     }
 
     #[inline]
     pub(crate) fn model_offset(&self, x: usize, y: usize, z: usize) -> [u8; 3] {
-        self.model_cells
+        self.model_cells()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or([0, 0, 0])
@@ -326,12 +368,14 @@ impl BlockStates {
 
     #[inline]
     pub(crate) fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.model_facings.insert(Self::key(x, y, z), facing);
+        self.sparse_mut()
+            .model_facings
+            .insert(Self::key(x, y, z), facing);
     }
 
     #[inline]
     pub(crate) fn model_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.model_facings
+        self.model_facings()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or(crate::block_model::DEFAULT_MODEL_FACING)
@@ -339,17 +383,23 @@ impl BlockStates {
 
     #[inline]
     pub(crate) fn model_cells(&self) -> &HashMap<u16, [u8; 3]> {
-        &self.model_cells
+        match &self.sparse {
+            Some(s) => &s.model_cells,
+            None => empty_map!([u8; 3]),
+        }
     }
 
     #[inline]
     pub(crate) fn model_facings(&self) -> &HashMap<u16, Facing> {
-        &self.model_facings
+        match &self.sparse {
+            Some(s) => &s.model_facings,
+            None => empty_map!(Facing),
+        }
     }
 
     #[inline]
     pub(crate) fn sapling_stage(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.sapling_stages
+        self.sapling_stages()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or(0)
@@ -358,45 +408,43 @@ impl BlockStates {
     pub(crate) fn set_sapling_stage(&mut self, x: usize, y: usize, z: usize, stage: u8) {
         let key = Self::key(x, y, z);
         if stage == 0 {
-            self.sapling_stages.remove(&key);
+            if let Some(s) = self.sparse.as_deref_mut() {
+                s.sapling_stages.remove(&key);
+            }
         } else {
-            self.sapling_stages.insert(key, stage);
+            self.sparse_mut().sapling_stages.insert(key, stage);
         }
     }
 
     #[inline]
-    fn clear_sapling_stage(&mut self, idx: usize) {
-        self.sapling_stages.remove(&(idx as u16));
-    }
-
-    #[inline]
     pub(crate) fn sapling_stages(&self) -> &HashMap<u16, u8> {
-        &self.sapling_stages
+        match &self.sparse {
+            Some(s) => &s.sapling_stages,
+            None => empty_map!(u8),
+        }
     }
 
     #[inline]
     pub(crate) fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
-        self.doors.get(&Self::key(x, y, z)).copied()
+        self.doors().get(&Self::key(x, y, z)).copied()
     }
 
     #[inline]
     pub(crate) fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
-        self.doors.insert(Self::key(x, y, z), state);
-    }
-
-    #[inline]
-    fn clear_door(&mut self, idx: usize) {
-        self.doors.remove(&(idx as u16));
+        self.sparse_mut().doors.insert(Self::key(x, y, z), state);
     }
 
     #[inline]
     pub(crate) fn doors(&self) -> &HashMap<u16, DoorState> {
-        &self.doors
+        match &self.sparse {
+            Some(s) => &s.doors,
+            None => empty_map!(DoorState),
+        }
     }
 
     #[inline]
     pub(crate) fn stair_state(&self, x: usize, y: usize, z: usize) -> StairState {
-        self.stairs
+        self.stair_states()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or_default()
@@ -404,22 +452,20 @@ impl BlockStates {
 
     #[inline]
     pub(crate) fn set_stair_state(&mut self, x: usize, y: usize, z: usize, state: StairState) {
-        self.stairs.insert(Self::key(x, y, z), state);
-    }
-
-    #[inline]
-    fn clear_stair(&mut self, idx: usize) {
-        self.stairs.remove(&(idx as u16));
+        self.sparse_mut().stairs.insert(Self::key(x, y, z), state);
     }
 
     #[inline]
     pub(crate) fn stair_states(&self) -> &HashMap<u16, StairState> {
-        &self.stairs
+        match &self.sparse {
+            Some(s) => &s.stairs,
+            None => empty_map!(StairState),
+        }
     }
 
     #[inline]
     pub(crate) fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
-        self.slabs
+        self.slab_states()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or_default()
@@ -429,25 +475,25 @@ impl BlockStates {
     pub(crate) fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
         let key = Self::key(x, y, z);
         if state.is_empty() {
-            self.slabs.remove(&key);
+            if let Some(s) = self.sparse.as_deref_mut() {
+                s.slabs.remove(&key);
+            }
         } else {
-            self.slabs.insert(key, state);
+            self.sparse_mut().slabs.insert(key, state);
         }
     }
 
     #[inline]
-    fn clear_slab(&mut self, idx: usize) {
-        self.slabs.remove(&(idx as u16));
-    }
-
-    #[inline]
     pub(crate) fn slab_states(&self) -> &HashMap<u16, SlabState> {
-        &self.slabs
+        match &self.sparse {
+            Some(s) => &s.slabs,
+            None => empty_map!(SlabState),
+        }
     }
 
     #[inline]
     pub(crate) fn log_axis(&self, x: usize, y: usize, z: usize) -> LogAxis {
-        self.log_axes
+        self.log_axes()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or_default()
@@ -457,25 +503,25 @@ impl BlockStates {
     pub(crate) fn set_log_axis(&mut self, x: usize, y: usize, z: usize, axis: LogAxis) {
         let key = Self::key(x, y, z);
         if axis == LogAxis::Y {
-            self.log_axes.remove(&key);
+            if let Some(s) = self.sparse.as_deref_mut() {
+                s.log_axes.remove(&key);
+            }
         } else {
-            self.log_axes.insert(key, axis);
+            self.sparse_mut().log_axes.insert(key, axis);
         }
     }
 
     #[inline]
-    fn clear_log_axis(&mut self, idx: usize) {
-        self.log_axes.remove(&(idx as u16));
-    }
-
-    #[inline]
     pub(crate) fn log_axes(&self) -> &HashMap<u16, LogAxis> {
-        &self.log_axes
+        match &self.sparse {
+            Some(s) => &s.log_axes,
+            None => empty_map!(LogAxis),
+        }
     }
 
     #[inline]
     pub(crate) fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
-        self.torches
+        self.torches()
             .get(&Self::key(x, y, z))
             .copied()
             .unwrap_or_default()
@@ -483,26 +529,28 @@ impl BlockStates {
 
     #[inline]
     pub(crate) fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
-        self.torches.insert(Self::key(x, y, z), placement);
+        self.sparse_mut()
+            .torches
+            .insert(Self::key(x, y, z), placement);
     }
 
     #[inline]
     pub(crate) fn take_torch(&mut self, x: usize, y: usize, z: usize) -> bool {
-        self.torches.remove(&Self::key(x, y, z)).is_some()
-    }
-
-    #[inline]
-    fn clear_torch(&mut self, idx: usize) {
-        self.torches.remove(&(idx as u16));
+        self.sparse
+            .as_deref_mut()
+            .is_some_and(|s| s.torches.remove(&Self::key(x, y, z)).is_some())
     }
 
     #[inline]
     pub(crate) fn torches(&self) -> &HashMap<u16, TorchPlacement> {
-        &self.torches
+        match &self.sparse {
+            Some(s) => &s.torches,
+            None => empty_map!(TorchPlacement),
+        }
     }
 
     pub(crate) fn cell_kv_get(&self, x: usize, y: usize, z: usize, key: &str) -> Option<&[u8]> {
-        self.cell_kv
+        self.cell_kv()
             .get(&Self::key(x, y, z))?
             .get(key)
             .map(Vec::as_slice)
@@ -516,7 +564,8 @@ impl BlockStates {
         key: String,
         value: Vec<u8>,
     ) {
-        self.cell_kv
+        self.sparse_mut()
+            .cell_kv
             .entry(Self::key(x, y, z))
             .or_default()
             .insert(key, value);
@@ -524,19 +573,25 @@ impl BlockStates {
 
     pub(crate) fn cell_kv_remove(&mut self, x: usize, y: usize, z: usize, key: &str) -> bool {
         let idx = Self::key(x, y, z);
-        let Some(map) = self.cell_kv.get_mut(&idx) else {
+        let Some(s) = self.sparse.as_deref_mut() else {
+            return false;
+        };
+        let Some(map) = s.cell_kv.get_mut(&idx) else {
             return false;
         };
         let removed = map.remove(key).is_some();
         if map.is_empty() {
-            self.cell_kv.remove(&idx);
+            s.cell_kv.remove(&idx);
         }
         removed
     }
 
     #[inline]
     pub(crate) fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
-        &self.cell_kv
+        match &self.sparse {
+            Some(s) => &s.cell_kv,
+            None => empty_map!(BTreeMap<String, Vec<u8>>),
+        }
     }
 
     /// Detach one cell's whole mod-KV map, for a state-PRESERVING block swap
@@ -548,7 +603,10 @@ impl BlockStates {
         y: usize,
         z: usize,
     ) -> Option<BTreeMap<String, Vec<u8>>> {
-        self.cell_kv.remove(&Self::key(x, y, z))
+        self.sparse
+            .as_deref_mut()?
+            .cell_kv
+            .remove(&Self::key(x, y, z))
     }
 
     /// Re-attach a map detached by [`cell_kv_take`](Self::cell_kv_take).
@@ -560,7 +618,7 @@ impl BlockStates {
         map: BTreeMap<String, Vec<u8>>,
     ) {
         if !map.is_empty() {
-            self.cell_kv.insert(Self::key(x, y, z), map);
+            self.sparse_mut().cell_kv.insert(Self::key(x, y, z), map);
         }
     }
 }

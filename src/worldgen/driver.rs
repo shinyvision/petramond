@@ -71,6 +71,19 @@ pub struct ColumnGen {
     /// window's tallest surface plus the maximum tree reach. Sections whose floor is
     /// above this are provably all-air sky, so the streamer skips generating them.
     content_top: i32,
+    /// Tree-placement windows (candidate region + redwood-support halo), consumed
+    /// ONLY by tree-band section jobs. `None` once the streamer swaps in a
+    /// [`slimmed`](Self::slimmed) clone after the column's gen burst — they are
+    /// ~15 KB per column, dead weight while resident. A rare late tree-band job
+    /// (vertical window re-entering the surface band) rebuilds them locally via
+    /// [`ChunkGenerator::build_feature_windows`].
+    feature_windows: Option<FeatureWindows>,
+}
+
+/// The tree stage's lattice windows: the feature candidate region (chunk +
+/// spacing margin, cave-adjusted) and the redwood-support surface halo. A pure
+/// function of `(seed, cx, cz)` — droppable and rebuildable at will.
+pub struct FeatureWindows {
     /// Feature candidate window (chunk + spacing margin): surfaces + biomes for the
     /// tree density/spacing rolls.
     candidates: RegionCells,
@@ -121,6 +134,31 @@ impl ColumnGen {
     #[inline]
     pub fn content_top(&self) -> i32 {
         self.content_top
+    }
+
+    /// Whether the tree-placement windows are still resident (see `feature_windows`).
+    #[inline]
+    pub fn has_feature_windows(&self) -> bool {
+        self.feature_windows.is_some()
+    }
+
+    /// A copy of this column's resident data WITHOUT the tree-placement windows —
+    /// what the world retains once the column's gen burst is done. ~2 KB of 16×16
+    /// arrays instead of ~17 KB.
+    pub fn slimmed(&self) -> ColumnGen {
+        ColumnGen {
+            cx: self.cx,
+            cz: self.cz,
+            biome: self.biome.clone(),
+            surf: self.surf.clone(),
+            top_surf: self.top_surf.clone(),
+            surf_min: self.surf_min,
+            surf_max: self.surf_max,
+            cand_surf_min: self.cand_surf_min,
+            cand_surf_max: self.cand_surf_max,
+            content_top: self.content_top,
+            feature_windows: None,
+        }
     }
 
     /// Conservative occupancy summary for a generated section that may not be
@@ -245,7 +283,7 @@ impl ChunkGenerator {
         // Candidate window (chunk + spacing margin): full biome + surface. The chunk's
         // own 16×16 biome/surface is the centre of this region, so no separate query.
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let mut candidates = self.surface_density.region(cx0, cz0, cw, ch);
+        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
 
         let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let mut surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
@@ -262,24 +300,12 @@ impl ChunkGenerator {
             }
         }
 
-        let mut needs_support = false;
-        for (i, s) in candidates.surf.iter_mut().enumerate() {
-            let wx = candidates.x0 + (i % candidates.w) as i32;
-            let wz = candidates.z0 + (i / candidates.w) as i32;
-            *s = self.caves.feature_surface_after_caves(wx, wz, *s);
-            if matches!(
-                super::biome::spec(candidates.biomes[i]).trees.support,
-                super::biome::TreeSupport::RedwoodBase
-            ) {
-                needs_support = true;
-            }
-        }
+        let windows = self.finish_feature_windows(ox, oz, candidates);
 
-        // Candidate-window surface range + whether any cell wants a redwood support
-        // check. Feature surfaces are cave-aware, so tree gating does not root on
-        // cave-mouth columns.
+        // Candidate-window surface range. Feature surfaces are cave-aware, so tree
+        // gating does not root on cave-mouth columns.
         let (mut cand_surf_min, mut cand_surf_max) = (i32::MAX, i32::MIN);
-        for &s in &candidates.surf {
+        for &s in &windows.candidates.surf {
             cand_surf_min = cand_surf_min.min(s);
             cand_surf_max = cand_surf_max.max(s);
         }
@@ -312,6 +338,52 @@ impl ChunkGenerator {
             }
         }
 
+        ColumnGen {
+            cx,
+            cz,
+            biome,
+            surf,
+            top_surf,
+            surf_min,
+            surf_max,
+            cand_surf_min,
+            cand_surf_max,
+            content_top: cand_surf_max + MAX_TREE_REACH_ABOVE,
+            feature_windows: Some(windows),
+        }
+    }
+
+    /// Rebuild a column's tree-placement windows from scratch — for a section job
+    /// that received a [`ColumnGen::slimmed`] column. Byte-identical to the windows
+    /// the original column build produced (pure function of `(seed, cx, cz)`).
+    fn build_feature_windows(&self, cx: i32, cz: i32) -> FeatureWindows {
+        let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
+        let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
+        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
+        self.finish_feature_windows(ox, oz, candidates)
+    }
+
+    /// Cave-adjust the raw candidate region and build the redwood-support halo:
+    /// the shared tail of [`generate_column_gen`] and [`build_feature_windows`].
+    fn finish_feature_windows(
+        &self,
+        ox: i32,
+        oz: i32,
+        mut candidates: RegionCells,
+    ) -> FeatureWindows {
+        let mut needs_support = false;
+        for (i, s) in candidates.surf.iter_mut().enumerate() {
+            let wx = candidates.x0 + (i % candidates.w) as i32;
+            let wz = candidates.z0 + (i / candidates.w) as i32;
+            *s = self.caves.feature_surface_after_caves(wx, wz, *s);
+            if matches!(
+                super::biome::spec(candidates.biomes[i]).trees.support,
+                super::biome::TreeSupport::RedwoodBase
+            ) {
+                needs_support = true;
+            }
+        }
+
         // Support window (the larger redwood-support halo): surfaces only, and ONLY when
         // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
         // is its sole reader, so the common (redwood-free) column skips this big window.
@@ -327,17 +399,7 @@ impl ChunkGenerator {
             SurfaceHeights::new(sx0, sz0, sw, support_surf)
         });
 
-        ColumnGen {
-            cx,
-            cz,
-            biome,
-            surf,
-            top_surf,
-            surf_min,
-            surf_max,
-            cand_surf_min,
-            cand_surf_max,
-            content_top: cand_surf_max + MAX_TREE_REACH_ABOVE,
+        FeatureWindows {
             candidates,
             support,
         }
@@ -414,7 +476,18 @@ impl ChunkGenerator {
             if anchor_lo <= anchor_hi
                 && ranges_overlap(sec_lo, sec_hi, anchor_lo, anchor_hi + MAX_TREE_REACH_ABOVE)
             {
-                let mut field = ColumnFeatureField::new(&col.candidates, col.support.as_ref());
+                // A slimmed column (gen burst long done) rebuilds its windows
+                // locally — rare, and byte-identical by construction.
+                let rebuilt;
+                let windows = match &col.feature_windows {
+                    Some(w) => w,
+                    None => {
+                        rebuilt = self.build_feature_windows(col.cx, col.cz);
+                        &rebuilt
+                    }
+                };
+                let mut field =
+                    ColumnFeatureField::new(&windows.candidates, windows.support.as_ref());
                 place_features_section(&mut section, &mut field, self.seed);
             }
         }
@@ -552,5 +625,39 @@ impl FeatureField for CaveAdjustedFeatureField<'_> {
     fn surf_at(&mut self, wx: i32, wz: i32) -> i32 {
         let surf = self.inner.surf_at(wx, wz);
         self.caves.feature_surface_after_caves(wx, wz, surf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A slimmed column must regenerate any section byte-identically: the tree
+    /// windows it drops are a pure function of `(seed, cx, cz)`, and the rebuild
+    /// path in `generate_section` must reproduce them exactly.
+    #[test]
+    fn slimmed_column_regenerates_sections_byte_identically() {
+        let generator = ChunkGenerator::new(0xDEAD_BEEF);
+        for (cx, cz) in [(0, 0), (3, -2)] {
+            let full = generator.generate_column_gen(cx, cz);
+            let slim = full.slimmed();
+            assert!(full.has_feature_windows() && !slim.has_feature_windows());
+            // Cover the surface/tree band and a deep section.
+            let (lo, hi) = full.surf_range();
+            for cy in [
+                lo.div_euclid(16) - 1,
+                hi.div_euclid(16),
+                hi.div_euclid(16) + 1,
+            ] {
+                let sp = SectionPos::new(cx, cy, cz);
+                let a = generator.generate_section(sp, &full);
+                let b = generator.generate_section(sp, &slim);
+                assert_eq!(
+                    a.blocks_slice(),
+                    b.blocks_slice(),
+                    "slimmed rebuild diverged at cy {cy} of column ({cx},{cz})"
+                );
+            }
+        }
     }
 }

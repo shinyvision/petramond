@@ -374,7 +374,14 @@ impl Chunk {
 
     /// Install a furnace fixture (state + facing) at a local voxel.
     #[cfg(test)]
-    pub fn insert_furnace(&mut self, x: usize, y: usize, z: usize, furnace: Furnace, facing: Facing) {
+    pub fn insert_furnace(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+        furnace: Furnace,
+        facing: Facing,
+    ) {
         self.furnaces
             .insert(Self::block_entity_key(x, y, z), (furnace, facing));
     }

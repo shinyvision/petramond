@@ -58,6 +58,7 @@ impl Renderer {
         frustum: Frustum,
         render_origin: glam::Vec3,
         cam_pos: glam::Vec3,
+        fog: f32,
     ) -> bool {
         let (ox, oy, oz) = section.origin;
         let min = glam::Vec3::new(ox as f32, oy as f32, oz as f32);
@@ -65,7 +66,6 @@ impl Renderer {
         if !frustum.aabb_visible(min - render_origin, max - render_origin) {
             return false;
         }
-        let fog = FOG_END + TERRAIN_FOG_CULL_PAD;
         aabb_distance_sq(cam_pos, min, max) <= fog * fog
     }
 
@@ -83,6 +83,7 @@ impl Renderer {
         let cam = self.cam_pos;
         let frustum = self.frustum;
         let render_origin = self.render_origin;
+        let fog = self.terrain_cull_dist();
         let terrain_columns = &self.terrain_columns;
         let far_leaf_lod_state = &mut self.far_leaf_lod_state;
         order.clear();
@@ -97,7 +98,7 @@ impl Renderer {
             let mut column_has_model = false;
             let mut any_far_lod_active = false;
             for &(sp, ref section) in &column.sections {
-                if !Self::section_visible(section, frustum, render_origin, cam) {
+                if !Self::section_visible(section, frustum, render_origin, cam, fog) {
                     continue;
                 }
                 let (ox, oy, oz) = section.origin;
@@ -174,43 +175,28 @@ impl Renderer {
         any_model_visible: bool,
         any_transparent_visible: bool,
     ) {
-        // The world (sky → … → hand) renders into the offscreen scene target;
-        // the grade pass then reads it and writes the swapchain, and screen
-        // chrome (crosshair, UI) draws over the graded image so its colours
-        // stay exact.
-        let view = &self.scene_color;
+        // The world (opaque → sky → … → hand) renders into the offscreen scene
+        // target; the grade pass then reads it and writes the swapchain, and
+        // screen chrome (crosshair, UI) draws over the graded image so its
+        // colours stay exact. With grade off at native scale the world skips
+        // the round-trip and renders straight into the swapchain.
+        let direct = self.direct_to_swapchain();
+        let view = if direct { swapchain } else { &self.scene_color };
         let cc = self.clear_color;
-        // SKY PASS: full-screen background triangle. The sky shader owns
-        // celestials and any day/night colour. The ONLY pass that CLEARS color
-        // (to the fog colour).
-        {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.depth,
-                "sky pass",
-                wgpu::LoadOp::Clear(wgpu::Color {
-                    r: cc[0] as f64,
-                    g: cc[1] as f64,
-                    b: cc[2] as f64,
-                    a: 1.0,
-                }),
-                None,
-            );
-            pass.set_pipeline(&self.sky_pipe);
-            pass.set_bind_group(0, &self.sky_bind, &[]);
-            pass.set_bind_group(1, &self.sky_texture_bind, &[]);
-            pass.draw(0..3, 0..1);
-        }
-        // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. CLEARS the
-        // depth buffer (the first depth user this frame); loads color over the sky.
+        // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. The first
+        // pass of the frame: CLEARS color (to the fog colour) and depth.
         {
             let mut pass = color_depth_pass(
                 enc,
                 view,
                 &self.depth,
                 "opaque pass",
-                wgpu::LoadOp::Load,
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: cc[0] as f64,
+                    g: cc[1] as f64,
+                    b: cc[2] as f64,
+                    a: 1.0,
+                }),
                 Some(wgpu::LoadOp::Clear(1.0)),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
@@ -265,6 +251,24 @@ impl Renderer {
                     pass.draw_indexed(index_start..index_start + idx_count, 0, 0..1);
                 }
             }
+        }
+        // SKY PASS: full-screen background triangle at exactly the far plane,
+        // AFTER opaque so its LessEqual depth test shades only the pixels no
+        // terrain covered (the sky fs is the priciest full-screen shader). The
+        // sky shader owns celestials and any day/night colour.
+        {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.depth,
+                "sky pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_pipeline(&self.sky_pipe);
+            pass.set_bind_group(0, &self.sky_bind, &[]);
+            pass.set_bind_group(1, &self.sky_texture_bind, &[]);
+            pass.draw(0..3, 0..1);
         }
         // MODEL PASS: bbmodel-block geometry (explicit-UV, sampling the model atlas),
         // drawn per visible chunk with the mob pipeline (own texture + the same
@@ -587,10 +591,11 @@ impl Renderer {
                 pass.draw(0..self.item3d_vertex_count, 0..1);
             }
         }
-        // GRADE PASS: full-screen colour grade of the finished world image,
-        // scene texture → swapchain (see grade.wgsl). Everything after this
-        // draws ungraded over the graded world.
-        {
+        // GRADE PASS: full-screen colour grade (+ upscale when render_scale < 1)
+        // of the finished world image, scene texture → swapchain (see
+        // grade.wgsl). Everything after this draws ungraded over the graded
+        // world. Skipped entirely when the world already rendered direct.
+        if !direct {
             let mut pass = color_depth_pass(
                 enc,
                 swapchain,

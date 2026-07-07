@@ -134,7 +134,13 @@ impl ContainerMenu {
         }
     }
 
-    fn container_click_slot(&self, world: &mut World, inv: &mut Inventory, i: usize, secondary: bool) {
+    fn container_click_slot(
+        &self,
+        world: &mut World,
+        inv: &mut Inventory,
+        i: usize,
+        secondary: bool,
+    ) {
         let specs = self.slot_specs();
         self.edit_open_container(world, inv, |inv, c| {
             let Some(slot) = c.slots.get_mut(i) else {

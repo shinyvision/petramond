@@ -419,8 +419,7 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                             );
                             return HostRet::Bool(false);
                         };
-                        (data.count > 0)
-                            .then(|| crate::item::ItemStack::new(item, data.count))
+                        (data.count > 0).then(|| crate::item::ItemStack::new(item, data.count))
                     }
                 };
                 writes.push((i, stack));
@@ -436,7 +435,10 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 let Some(block) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
                     return HostRet::Bool(false);
                 };
-                let block_name = crate::registry::names().blocks.name(block.id()).unwrap_or("?");
+                let block_name = crate::registry::names()
+                    .blocks
+                    .name(block.id())
+                    .unwrap_or("?");
                 if !key_owned_by_namespace(&mod_id, block_name) {
                     return HostRet::Error(format!(
                         "ContainerSet: block '{block_name}' at {pos:?} is not owned by mod \
@@ -456,13 +458,13 @@ fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::ItemInfo { key } => HostRet::ItemInfo(item_by_key(&key).map(|item| {
-            mod_api::ItemInfoData {
+        HostCall::ItemInfo { key } => {
+            HostRet::ItemInfo(item_by_key(&key).map(|item| mod_api::ItemInfoData {
                 max_stack: item.max_stack_size(),
                 fuel_burn_ticks: item.fuel_burn_ticks() as u32,
                 tags: item.tags().iter().map(|t| t.name().to_owned()).collect(),
-            }
-        })),
+            }))
+        }
         HostCall::RecipeResult { class, key } => {
             let Some(recipes) = crate::modding::active_recipes() else {
                 log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
@@ -579,7 +581,10 @@ fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     let Some(old) = ctx.world.block_if_loaded(p.x, p.y, p.z) else {
                         return HostRet::Bool(false);
                     };
-                    let old_name = crate::registry::names().blocks.name(old.id()).unwrap_or("?");
+                    let old_name = crate::registry::names()
+                        .blocks
+                        .name(old.id())
+                        .unwrap_or("?");
                     if !key_owned_by_namespace(&mod_id, old_name) {
                         return HostRet::Error(format!(
                             "SwapModelBlock: block '{old_name}' at {pos:?} is not owned by mod \
@@ -1247,7 +1252,10 @@ mod tests {
         let origin = crate::mathh::IVec3::new(5, 64, 5);
         assert!(world.place_model_block(origin, crate::block::Block::FurnitureWorkbench));
         let (_, anchor, cells) = world.model_group(origin).expect("a placed model group");
-        let far = *cells.iter().find(|c| **c != anchor).expect("a non-anchor cell");
+        let far = *cells
+            .iter()
+            .find(|c| **c != anchor)
+            .expect("a non-anchor cell");
 
         // The workbench is engine-owned and ContainerSet is guarded to the
         // caller's own namespace, so the test store impersonates the engine

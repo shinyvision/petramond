@@ -41,7 +41,7 @@ use super::resources::{
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
-use super::uniforms::{Uniforms, FOG_END, FOG_START, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
+use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
@@ -141,6 +141,12 @@ pub struct Renderer {
     sky_shader_param_keys: Vec<String>,
     sky_light_param_key: Option<String>,
     underwater: bool,
+    /// Above-water fog band, derived from the streaming render distance
+    /// (`uniforms::fog_range`) via [`Renderer::set_render_distance`] so the fade
+    /// always terminates at the loaded-world edge. The end (plus
+    /// `TERRAIN_FOG_CULL_PAD`) is also the terrain draw-cull distance.
+    fog_start: f32,
+    fog_end: f32,
     /// Sim-owned skylight scale (1.0 = identity), mirrored to the CPU lighting
     /// path (`render::lighting::light_rgb`) for mobs/items/particles.
     sky_scale: f32,
@@ -152,6 +158,13 @@ pub struct Renderer {
     /// Offscreen scene-colour target the world passes render into; the grade
     /// pass reads it and writes the swapchain. Recreated with `depth` on resize.
     scene_color: wgpu::TextureView,
+    /// Internal resolution scale for the world passes (`0.5..=1.0`): scene_color
+    /// and depth are created at `swapchain × scale` and the grade pass upscales.
+    /// Fill-rate knob for weak GPUs; chrome (UI/crosshair) stays native-res.
+    render_scale: f32,
+    /// When false (and `render_scale == 1.0`), the world renders straight into
+    /// the swapchain and the grade pass + offscreen round-trip are skipped.
+    grade_enabled: bool,
     grade_pipe: wgpu::RenderPipeline,
     grade_bgl: wgpu::BindGroupLayout,
     grade_bind: wgpu::BindGroup,
@@ -423,6 +436,51 @@ struct HudLayer {
 }
 
 impl Renderer {
+    /// Couple the fog band (and with it the terrain draw-cull distance) to the
+    /// streaming render distance, so the fade always ends at the loaded edge.
+    pub fn set_render_distance(&mut self, chunks: i32) {
+        let (start, end) = super::uniforms::fog_range(chunks);
+        self.fog_start = start;
+        self.fog_end = end;
+    }
+
+    /// Terrain draw-cull distance: nothing beyond this is fully un-fogged.
+    pub(in crate::render) fn terrain_cull_dist(&self) -> f32 {
+        self.fog_end + TERRAIN_FOG_CULL_PAD
+    }
+
+    /// Set the internal world-resolution scale (clamped `0.5..=1.0`) and rebuild
+    /// the offscreen targets. The grade pass upscales to the swapchain.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        let scale = scale.clamp(0.5, 1.0);
+        if (scale - self.render_scale).abs() < f32::EPSILON {
+            return;
+        }
+        self.render_scale = scale;
+        self.recreate_scene_targets();
+    }
+
+    /// Toggle the colour-grade pass. Off (at native scale) skips the offscreen
+    /// scene round-trip entirely — the world renders straight to the swapchain.
+    pub fn set_grade_enabled(&mut self, on: bool) {
+        self.grade_enabled = on;
+    }
+
+    /// World passes bypass the offscreen target only when nothing needs it:
+    /// grade off AND native scale (upscaling needs the small target + grade).
+    pub(in crate::render) fn direct_to_swapchain(&self) -> bool {
+        !self.grade_enabled && self.render_scale >= 1.0
+    }
+
+    /// The offscreen scene/depth dimensions under `render_scale`.
+    pub(in crate::render) fn scene_dims(&self) -> (u32, u32) {
+        let scale = self.render_scale;
+        (
+            ((self.config.width as f32 * scale).round() as u32).max(1),
+            ((self.config.height as f32 * scale).round() as u32).max(1),
+        )
+    }
+
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(t) => t,

@@ -10,7 +10,6 @@ use crate::controls::{
 };
 use crate::mathh::Vec3;
 use crate::render::{new_renderer_from_target, Renderer};
-use crate::world::RENDER_DIST;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -21,8 +20,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, CursorIcon as WinitCursorIcon, Window, WindowId};
 
-const TARGET_FPS: u64 = 60;
-const FRAME: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
+fn frame_period(fps: u32) -> Duration {
+    Duration::from_nanos(1_000_000_000 / fps.clamp(10, 240) as u64)
+}
 
 pub fn run() {
     env_logger::init();
@@ -30,11 +30,27 @@ pub fn run() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0x1234_5678);
+    // Env var > client.json > built-in default, so one-off runs can override
+    // the persistent setting.
+    crate::save::client::ensure_file();
+    let client = crate::save::client::load();
     let rd: i32 = std::env::var("LLAMACRAFT_RD")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(RENDER_DIST);
-    let mut host = NativeHost::new(seed, rd);
+        .unwrap_or(client.render_dist)
+        .clamp(4, 64);
+    let fps: u32 = std::env::var("LLAMACRAFT_FPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(client.fps_cap);
+    let mut host = NativeHost::new(
+        seed,
+        rd,
+        fps,
+        client.menu_fps_cap.min(fps),
+        client.render_scale,
+        client.grade,
+    );
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
@@ -52,7 +68,16 @@ struct NativeHost {
     app: Option<App>,
     seed: u32,
     render_dist: i32,
-    /// When the next frame (`App::update` + redraw) is due — the 60 FPS frame cap.
+    /// Internal world-resolution scale + grade toggle (client settings), applied
+    /// to the renderer at creation.
+    render_scale: f32,
+    grade: bool,
+    /// Gameplay frame period (from the `fps_cap` client setting / `LLAMACRAFT_FPS`).
+    frame: Duration,
+    /// Frame period while a modal screen is up (cursor released): near-static
+    /// screens don't need the full gameplay rate. Still renders every frame.
+    menu_frame: Duration,
+    /// When the next frame (`App::update` + redraw) is due — the frame cap.
     next_update: Instant,
     /// Per-second update/render counters logged to stderr when `LLAMACRAFT_PERF` is set.
     perf_log: bool,
@@ -71,13 +96,24 @@ struct NativeHost {
 }
 
 impl NativeHost {
-    fn new(seed: u32, render_dist: i32) -> Self {
+    fn new(
+        seed: u32,
+        render_dist: i32,
+        fps_cap: u32,
+        menu_fps_cap: u32,
+        render_scale: f32,
+        grade: bool,
+    ) -> Self {
         Self {
             window: None,
             renderer: None,
             app: None,
             seed,
             render_dist,
+            render_scale,
+            grade,
+            frame: frame_period(fps_cap),
+            menu_frame: frame_period(menu_fps_cap),
             next_update: Instant::now(),
             perf_log: std::env::var_os("LLAMACRAFT_PERF").is_some(),
             perf_since: Instant::now(),
@@ -139,9 +175,12 @@ impl ApplicationHandler for NativeHost {
             .with_inner_size(PhysicalSize::new(1280, 720));
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let size = window.inner_size();
-        let renderer = pollster::block_on(async {
+        let mut renderer = pollster::block_on(async {
             new_renderer_from_target(window.clone(), size.width, size.height).await
         });
+        renderer.set_render_distance(self.render_dist);
+        renderer.set_render_scale(self.render_scale);
+        renderer.set_grade_enabled(self.grade);
         let cam = Camera::new(
             Vec3::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
@@ -318,6 +357,8 @@ impl ApplicationHandler for NativeHost {
         let now = Instant::now();
         // Fixed frame-capped loop: every wake runs one `App::update` and draws it.
         // `Game::tick`'s fixed-step accumulator holds the sim at 20 TPS regardless.
+        // A released cursor means a modal screen (title/pause/inventory) is up, so
+        // the cheaper menu cap applies — still rendering every frame.
         if now >= self.next_update {
             let update_start = Instant::now();
             app.update(renderer);
@@ -334,7 +375,12 @@ impl ApplicationHandler for NativeHost {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            self.next_update = now + FRAME;
+            let frame = if app.cursor_policy().grabbed {
+                self.frame
+            } else {
+                self.menu_frame
+            };
+            self.next_update = now + frame;
         }
         if self.perf_log && now.saturating_duration_since(self.perf_since).as_secs() >= 1 {
             let avg_update = avg_ms(self.perf_update_total, self.perf_updates);
