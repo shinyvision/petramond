@@ -495,13 +495,76 @@ fn a_mob_pushes_the_player_per_frame() {
     }]);
     let x0 = game.player.pos.x;
     for _ in 0..30 {
-        game.apply_mob_push(1.0 / 60.0);
+        game.apply_entity_push(1.0 / 60.0);
     }
     assert!(
         game.player.pos.x < x0 - 0.05,
         "the owl pushed the player -X, away from it: {x0} -> {}",
         game.player.pos.x
     );
+}
+
+#[test]
+fn a_remote_player_pushes_the_local_player_per_frame() {
+    // Remote players jostle like mobs: an overlapping remote body shoves the
+    // LOCAL predicted player out, per frame, through the same separation rule.
+    // The remote's own half runs on its own client — each client only ever
+    // shoves itself. Hidden bodies (spectators/the dead) and sleepers don't
+    // push: nothing should nudge the player off a bedside vigil, and nothing
+    // is there to touch when the body isn't rendered.
+    use crate::net::protocol::PlayerStateRow;
+    use crate::server::player::PlayerId;
+    use std::collections::HashMap;
+
+    fn remote_row(pos: Vec3, visible: bool, sleeping: bool) -> PlayerStateRow {
+        PlayerStateRow {
+            id: PlayerId(1),
+            pos,
+            vel: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+            sneaking: false,
+            sleeping,
+            sleep_yaw: None,
+            alive: visible,
+            visible,
+            held_item: None,
+            mining: None,
+            eating: false,
+            hurt_recent: false,
+            snap: false,
+        }
+    }
+
+    let mut game = game();
+    let own_id = game.game.self_id;
+    let roster = HashMap::new();
+    let start = Vec3::new(8.0, 64.0, 8.0);
+    let overlap = Vec3::new(8.2, 64.0, 8.0); // just east, footprints overlapping
+
+    let run = |game: &mut common::TestGame, row: PlayerStateRow| {
+        game.player.pos = start;
+        game.game
+            .remote_players
+            .apply(&[row], &[], own_id, &roster);
+        for _ in 0..30 {
+            game.apply_entity_push(1.0 / 60.0);
+        }
+        game.player.pos.x - start.x
+    };
+
+    let moved = run(&mut game, remote_row(overlap, true, false));
+    assert!(
+        moved < -0.05,
+        "the remote body pushed the player -X, away from it: {moved}"
+    );
+
+    let hidden = run(&mut game, remote_row(overlap, false, false));
+    assert_eq!(hidden, 0.0, "a hidden (spectator/dead) remote doesn't push");
+
+    let asleep = run(&mut game, remote_row(overlap, true, true));
+    assert_eq!(asleep, 0.0, "a sleeping remote doesn't push");
 }
 
 #[test]

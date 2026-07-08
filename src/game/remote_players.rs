@@ -115,6 +115,22 @@ impl RemotePlayer {
     pub(crate) fn hurt_flash01(&self) -> f32 {
         (self.hurt_t / HURT_FLASH_SECS).clamp(0.0, 1.0)
     }
+
+    /// This remote's soft push body at its last-batch position, or `None` when
+    /// there is nothing to jostle: spectators and the dead ship
+    /// `visible = false`, and a sleeping body is tucked in a bed it must not
+    /// be shoved off. Consumed by the local player's per-frame entity push
+    /// (`Game::apply_entity_push`) through the same `mob::separation` rule
+    /// mobs use.
+    pub(crate) fn push_body(&self) -> Option<crate::mob::Body> {
+        (self.curr.visible && !self.curr.sleeping).then(|| {
+            crate::mob::Body::new(
+                self.curr.pos,
+                crate::player::HALF_W,
+                crate::player::HEIGHT,
+            )
+        })
+    }
 }
 
 /// The client's remote-player set. `BTreeMap` so presentation iterates in a

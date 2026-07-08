@@ -545,6 +545,10 @@ mod tests {
     #[test]
     fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
         let (mut server, _) = crate::game::session::build_session("", 3, 2);
+        // The local session's name resolves from the REAL environment
+        // (client.json / $USER); pin it so an ambient "Rachel"-ish name
+        // can't occupy a suffix the assertions below count on.
+        server.sessions[0].name = "Host".to_string();
         let (_, first) = server.admit_remote_player("Rachel");
         assert_eq!(first, "Rachel");
         let (_, second) = server.admit_remote_player("rachel");

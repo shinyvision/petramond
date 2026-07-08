@@ -229,6 +229,46 @@ fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     assert!(app.game.is_none());
 }
 
+/// Single-player pause freezes the client (no frames reach the sim), but a
+/// LAN host's pause menu must NOT: the server ignores `Pause` once opened
+/// (`lan_ever_opened`), so a frozen client would be an unpushable,
+/// undamageable statue in a world that keeps running. Behind the multiplayer
+/// pause menu the client keeps running full frames — observable as its
+/// per-frame `PlayerUpdate` still reaching the server channel — while
+/// gameplay input stays disabled and the menu stays up.
+#[test]
+fn multiplayer_pause_menu_does_not_freeze_the_client() {
+    use crate::net::protocol::ClientToServer;
+
+    let mut app = super::app();
+    app.handle_control(Control::CloseScreen, true); // ESC
+    assert_eq!(app.screen, AppScreen::Pause);
+    let drain = |app: &mut super::TestApp| {
+        let mut updates = 0;
+        while let Ok(msg) = app.pipe.inbox.try_recv() {
+            if matches!(msg, ClientToServer::PlayerUpdate(_)) {
+                updates += 1;
+            }
+        }
+        updates
+    };
+    drain(&mut app); // the ESC's Pause(true) and any pre-pause frames
+
+    // Single-player: the pause menu freezes the client — no frames run.
+    app.update_frame(SCREEN);
+    assert_eq!(drain(&mut app), 0, "SP pause: the client sends nothing");
+
+    // The same session once LAN is open (the flag the Open-to-LAN click
+    // sets): the pause menu no longer freezes anything.
+    app.lan_port = Some(7434);
+    app.update_frame(SCREEN);
+    assert!(
+        drain(&mut app) > 0,
+        "LAN-host pause: the client keeps simulating and reporting itself"
+    );
+    assert_eq!(app.screen, AppScreen::Pause, "the menu itself stays up");
+}
+
 /// The real thing over loopback TCP: a spawned host opened to LAN on an
 /// ephemeral port, the UI connect worker joining it, and the remote-session
 /// disconnect leaving cleanly.

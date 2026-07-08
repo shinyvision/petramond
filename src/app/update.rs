@@ -6,26 +6,36 @@ impl App {
     /// frame wake and then draws; [`Game::tick`](crate::game::Game::tick)'s fixed-step
     /// accumulator holds the world at 20 TPS regardless of frame rate.
     pub fn update(&mut self, renderer: &Renderer) {
+        self.update_frame(renderer.screen_size());
+    }
+
+    /// [`update`](Self::update) behind the renderer handoff — the whole frame
+    /// advance against a bare screen size, so tests can drive real frames
+    /// headlessly.
+    pub(crate) fn update_frame(&mut self, screen_size: (u32, u32)) {
         let now = now_seconds();
         let dt = (now - self.last) as f32;
         self.last = now;
 
-        let screen_size = renderer.screen_size();
         self.recenter_pointer_if_pending(screen_size);
 
         // Document-backed SHELL screens run their whole UI frame here (input
         // → events → controller) and skip the simulation entirely; render
         // only hands the built draw list over. The legacy click routers must
         // not also fire on their invisible layouts.
+        let pause_runs_sim = self.multiplayer_pause_runs_sim();
         if let Some(kind) = self.doc_shell_kind() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();
             self.drive_doc_ui(kind, screen_size, now);
-            // Shell screens (pause menu) skip Game::tick, but the server
-            // thread keeps streaming: keep consuming its output so nothing
-            // backs up and resume is instant (multiplayer Phase D).
-            self.pump_network_and_watch();
-            return;
+            if !pause_runs_sim {
+                // Shell screens (pause menu) skip Game::tick, but the server
+                // thread keeps streaming: keep consuming its output so nothing
+                // backs up and resume is instant (multiplayer Phase D).
+                self.pump_network_and_watch();
+                return;
+            }
+            // Multiplayer pause menu: fall through to the simulation below.
         }
 
         // Gameplay OVERLAYS (sleep fade, death screen) drive the document like
@@ -46,7 +56,7 @@ impl App {
             self.pointer.clear_edges();
         }
 
-        if self.screen.shell_open() || self.game.is_none() {
+        if (self.screen.shell_open() && !pause_runs_sim) || self.game.is_none() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();
             // Same as the doc-shell path above: keep draining the server.
@@ -74,6 +84,23 @@ impl App {
         self.play_game_event_sounds(&events, mining_block, now);
         self.pointer.clear_edges();
         self.latch_game_event_hand_triggers(&events);
+    }
+
+    /// The pause menu is up but pausing is INEFFECTIVE, so the client must
+    /// keep simulating behind it: the server permanently ignores `Pause` once
+    /// it has been opened to LAN (`lan_ever_opened` — mirrored here by
+    /// `lan_port`, which lives exactly as long as the session), and a remote
+    /// client never pauses the shared server at all. Freezing only this
+    /// client would stop its `PlayerUpdate`s and per-frame systems (entity
+    /// push, interpolation) while the world runs on — a statue that can't be
+    /// jostled. Gameplay INPUT stays disabled on the Pause screen regardless
+    /// (`take_game_input`).
+    fn multiplayer_pause_runs_sim(&self) -> bool {
+        self.screen == super::AppScreen::Pause
+            && self
+                .game
+                .as_ref()
+                .is_some_and(|g| g.is_remote() || self.lan_port.is_some())
     }
 
     /// Drain the server while `Game::tick` is suppressed (shell screens over

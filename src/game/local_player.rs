@@ -100,15 +100,18 @@ impl Game {
         self.sync_camera_to_player_eye(dt);
     }
 
-    /// Push the player out of any mob it overlaps, per frame. The mobs sit at their
-    /// last-batch positions (fixed between ticks), so as the player moves each frame the
-    /// overlap - and the push - track the player smoothly; applied as a small
-    /// collision-resolved displacement (the push *velocity* over this frame's `dt`), it
-    /// never accumulates or fights the movement controller. A noclip spectator has no body
-    /// to jostle. The mobs' own half of the push runs on the tick (`game_tick_step`).
-    /// Client movement physics against the REPLICATED mob rows (pos + species
-    /// size); the shove reaches the server in the next `PlayerUpdate`.
-    pub(super) fn apply_mob_push(&mut self, dt: f32) {
+    /// Push the player out of any soft entity body it overlaps — mobs and remote
+    /// players — per frame. The bodies sit at their last-batch positions (fixed between
+    /// ticks), so as the player moves each frame the overlap - and the push - track the
+    /// player smoothly; applied as a small collision-resolved displacement (the push
+    /// *velocity* over this frame's `dt`), it never accumulates or fights the movement
+    /// controller. A noclip spectator has no body to jostle. The mobs' own half of the
+    /// push runs on the tick (`game_tick_step`); a remote PLAYER's half runs on that
+    /// player's own client through this same rule against ITS replicated rows — each
+    /// client only ever shoves itself, and the shove reaches the server in the next
+    /// `PlayerUpdate`, so player↔player separation is symmetric without any server-side
+    /// push step.
+    pub(super) fn apply_entity_push(&mut self, dt: f32) {
         if self.player.is_spectator() {
             return;
         }
@@ -121,6 +124,14 @@ impl Game {
             let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
             let mob = crate::mob::Body::new(entry.curr.pos, size.half_width, size.height);
             if let Some(p) = crate::mob::separation(body, mob) {
+                push += p;
+            }
+        }
+        for remote in self.remote_players.iter() {
+            let Some(other) = remote.push_body() else {
+                continue; // hidden (spectator/dead) or asleep in a bed
+            };
+            if let Some(p) = crate::mob::separation(body, other) {
                 push += p;
             }
         }

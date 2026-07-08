@@ -387,11 +387,11 @@ impl Game {
     /// service the pipe synchronously between the halves (production runs
     /// them back-to-back; the thread answers asynchronously).
     pub(crate) fn tick_send(&mut self, dt: f32, input: &GameInput) {
-        // Per-frame exceptions kept for local feel: look, hotbar, local player, mob push.
+        // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
         self.apply_hotbar_input(input);
         self.tick_player(dt, input);
-        self.apply_mob_push(dt);
+        self.apply_entity_push(dt);
         self.tick_replica_view();
         self.refresh_target();
         self.update_third_person(dt);
