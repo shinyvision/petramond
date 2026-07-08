@@ -52,6 +52,7 @@ impl App {
             self.spatial_sound_commands.clear();
             self.spatial_mob_positions.clear();
             self.mob_sound_events.clear();
+            self.world_sound_cues.clear();
             self.mob_sound_state.clear();
             renderer.set_crosshair_visible(false);
             renderer.set_hand_visible(false);
@@ -130,7 +131,7 @@ impl App {
         {
             let current_tick = game.current_tick();
             let presentation = self.presentation.snapshot(game);
-            renderer.set_break_overlay(presentation.break_overlay);
+            renderer.set_break_overlays(presentation.break_overlays);
             self.spatial_mob_positions.clear();
             self.spatial_mob_positions.extend(
                 presentation
@@ -191,6 +192,18 @@ impl App {
                 listener,
                 &self.spatial_mob_positions,
             );
+            // Positional world-event one-shots (place/break/door/chest/foreign
+            // pickup): fire-and-forget spatial plays off the same client-local
+            // wrapping handle pool the mob sounds use.
+            for (sound, pos) in self.world_sound_cues.drain(..) {
+                self.audio.play_spatial_randomized(
+                    alloc_mob_sound_handle(&mut self.next_mob_sound_handle),
+                    sound,
+                    SpatialSoundSource::Fixed(pos),
+                    listener,
+                    pos,
+                );
+            }
             if self.screen.gameplay_enabled() {
                 tick_idle_mob_sounds(
                     &mut self.audio,

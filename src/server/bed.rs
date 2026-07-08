@@ -4,8 +4,12 @@
 //! sets the spawn point in one go; the sleep timer then runs [`SLEEP_TICKS`]
 //! fixed ticks and either completes (time skips to next morning) or is
 //! cancelled by an app-side wake request (ESC / the "Leave bed" button). The
-//! presentation side only draws the dark overlay from [`Game::sleep_progress01`]
+//! presentation side only draws the dark overlay from [`crate::game::Game::sleep_progress01`]
 //! and owns which screen is up; every mutation here happens on the game tick.
+//!
+//! With multiple players, the morning skip is a CROSS-player decision: it fires
+//! only when every alive, non-spectator player is asleep and the longest
+//! sleeper finished the timer — see [`ServerGame::resolve_sleep_completion`].
 //!
 //! Waking (and respawning at a bed) never drops the player inside a wall: the
 //! deterministic outward scan in [`find_wake_spot`] picks the closest cell
@@ -20,12 +24,12 @@ use crate::mathh::{IVec3, Vec3};
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
 
-use super::tick::TickEvents;
-use super::Game;
+use super::game::ServerGame;
+use crate::game::tick::TickEvents;
 
 /// Fixed ticks a full sleep takes — 3 seconds at 20 TPS, matching the overlay
 /// fade the presentation draws from the same progress.
-pub(super) const SLEEP_TICKS: u32 = 60;
+pub(crate) const SLEEP_TICKS: u32 = 60;
 
 /// Horizontal Chebyshev reach of the wake-spot scan around the bed cells. Past
 /// this the bed is walled in tightly enough that waking ON the bed reads better
@@ -38,99 +42,123 @@ const WAKE_SCAN_DY: [i32; 5] = [0, 1, -1, 2, -2];
 
 /// The in-flight sleep session: which bed (rotated-footprint base cell) and how
 /// many ticks have elapsed.
-pub(super) struct SleepState {
+pub(crate) struct SleepState {
     base: IVec3,
     progress: u32,
 }
 
-impl Game {
+impl ServerGame {
     /// Right-clicked a bed: set the spawn point beside it (first interaction is
     /// enough — completing the sleep is not required, and a daytime interaction
     /// still sets it) and, at night, start sleeping.
-    pub(super) fn start_sleep(&mut self, pos: IVec3) {
+    pub(super) fn start_sleep(&mut self, s: usize, pos: IVec3) {
         let Some((_, base, cells)) = self.world.model_group(pos) else {
             return;
         };
         let spot = find_wake_spot(&self.world, &cells).unwrap_or(bed_top_cell(base));
-        self.player.bed_spawn = Some(BedSpawn { bed: base, spot });
+        self.sessions[s].player.bed_spawn = Some(BedSpawn { bed: base, spot });
         // Sleeping is a night action: a daytime click only (re)sets the spawn.
         if !super::daynight::is_night(&self.world) {
             return;
         }
         // Tuck the player into the bed for the sleep; physics settles them onto
         // the mattress (movement input is off while the sleep screen is up).
-        self.player.teleport(group_centre(&cells));
-        self.player.vel = Vec3::ZERO;
-        self.player.pitch = PITCH_LIMIT;
-        self.cam.yaw = self.player.yaw;
-        self.cam.pitch = self.player.pitch;
-        self.sleep = Some(SleepState { base, progress: 0 });
-        self.sync_camera_to_player_eye(0.0);
-        self.request_open_sleep = true;
+        let sess = &mut self.sessions[s];
+        sess.player.teleport(group_centre(&cells));
+        sess.player.vel = Vec3::ZERO;
+        sess.player.pitch = PITCH_LIMIT;
+        sess.sleep = Some(SleepState { base, progress: 0 });
+        // The camera mirror that used to run here for the local player is
+        // presentation: the client applies it after the fixed ticks, keyed on
+        // this open request (`Game::tick`), before any presentation read.
+        sess.request_open_sleep = true;
     }
 
-    /// While sleeping, the engine yaw pointing from the bed's base (foot) cell
-    /// toward its pillow cell — the direction the lying third-person body's head
-    /// faces. `None` while awake or if the bed vanished mid-sleep.
-    pub(super) fn sleep_head_yaw(&self) -> Option<f32> {
-        let base = self.sleep.as_ref()?.base;
+    /// The bed base cell session `s` currently sleeps in (a session read — the
+    /// client derives the lying body's head yaw from it against the REPLICA's
+    /// model group; see `Game::sleep_head_yaw`). `None` while awake.
+    pub(crate) fn sleep_bed_base(&self, s: usize) -> Option<IVec3> {
+        Some(self.sessions[s].sleep.as_ref()?.base)
+    }
+
+    /// While session `s` sleeps, the engine yaw the lying body's head faces:
+    /// from the bed's base (foot) cell toward its pillow cell — the server
+    /// twin of `Game::sleep_head_yaw`, computed against the AUTHORITATIVE
+    /// model group and replicated in `PlayerStateRow::sleep_yaw` so observers
+    /// without the bed's section still pose the sleeper right.
+    pub(crate) fn sleep_head_yaw(&self, s: usize) -> Option<f32> {
+        let base = self.sleep_bed_base(s)?;
         let (_, _, cells) = self.world.model_group(base)?;
         let other = cells.iter().copied().find(|c| *c != base)?;
         let d = other - base;
         Some((d.x as f32).atan2(d.z as f32))
     }
 
-    /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
-    pub fn request_wake(&mut self) {
-        self.wake_requested = true;
-    }
-
-    /// App-side respawn request (the death screen's button), latched to the
-    /// next tick.
-    pub fn request_respawn(&mut self) {
-        self.respawn_requested = true;
-    }
-
-    /// Sleep fade progress in `[0, 1]` while a sleep is running — the read
-    /// model the presentation overlay darkens by. `None` while awake.
-    pub fn sleep_progress01(&self) -> Option<f32> {
-        self.sleep
+    /// Sleep fade progress in `[0, 1]` while session `s` sleeps (clamped — a
+    /// sleeper waiting on other players holds at full). `None` while awake.
+    /// Replicated per tick in the session's `SelfState`; the client overlay
+    /// reads its `SelfView` mirror.
+    pub(crate) fn sleep_progress01(&self, s: usize) -> Option<f32> {
+        self.sessions[s]
+            .sleep
             .as_ref()
-            .map(|s| s.progress as f32 / SLEEP_TICKS as f32)
+            .map(|st| (st.progress as f32 / SLEEP_TICKS as f32).clamp(0.0, 1.0))
     }
 
     /// Advance sleeping and consume any latched respawn request, on the tick.
-    pub(super) fn tick_bed_and_respawn(&mut self, events: &mut TickEvents) {
-        self.tick_respawn(events);
-        self.tick_sleep(events);
+    /// Sleep COMPLETION (the morning skip) is cross-player and resolves once
+    /// per tick in [`resolve_sleep_completion`](Self::resolve_sleep_completion).
+    pub(crate) fn tick_bed_and_respawn(&mut self, s: usize, events: &mut TickEvents) {
+        self.tick_respawn(s, events);
+        self.tick_sleep(s, events);
     }
 
-    fn tick_sleep(&mut self, events: &mut TickEvents) {
-        let Some(state) = self.sleep.as_mut() else {
-            self.wake_requested = false;
+    fn tick_sleep(&mut self, s: usize, events: &mut TickEvents) {
+        let sess = &mut self.sessions[s];
+        let Some(state) = sess.sleep.as_mut() else {
+            sess.wake_requested = false;
             return;
         };
         // Dying in bed ends the sleep without a wake teleport — the death
         // screen (and later the respawn) takes over from here.
-        if self.player.health() == 0 {
-            self.sleep = None;
-            events.sleep_ended = true;
+        if sess.player.health() == 0 {
+            sess.sleep = None;
+            events.player(s).sleep_ended = true;
             return;
         }
-        if std::mem::take(&mut self.wake_requested) {
+        if std::mem::take(&mut sess.wake_requested) {
             let base = state.base;
-            self.sleep = None;
-            self.wake_at_bed(base);
-            events.sleep_ended = true;
+            sess.sleep = None;
+            self.wake_at_bed(s, base);
+            events.player(s).sleep_ended = true;
             return;
         }
         state.progress += 1;
-        if state.progress >= SLEEP_TICKS {
-            let base = state.base;
-            self.sleep = None;
-            super::daynight::skip_to_morning(&mut self.world);
-            self.wake_at_bed(base);
-            events.sleep_ended = true;
+    }
+
+    /// The night skips to morning only when EVERY alive, non-spectator player
+    /// is asleep and the longest sleeper has slept the full [`SLEEP_TICKS`] —
+    /// then every sleeper wakes at their own bed. A single awake player blocks
+    /// the skip; sleepers just keep lying (ESC leaves the bed). With one player
+    /// this matches the old single-player behaviour tick-for-tick.
+    pub(crate) fn resolve_sleep_completion(&mut self, events: &mut TickEvents) {
+        let everyone_asleep = self.sessions.iter().all(|sess| {
+            sess.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
+        });
+        let any_done = self.sessions.iter().any(|sess| {
+            sess.sleep
+                .as_ref()
+                .is_some_and(|st| st.progress >= SLEEP_TICKS)
+        });
+        if !everyone_asleep || !any_done {
+            return;
+        }
+        super::daynight::skip_to_morning(&mut self.world);
+        for s in 0..self.sessions.len() {
+            if let Some(state) = self.sessions[s].sleep.take() {
+                self.wake_at_bed(s, state.base);
+                events.player(s).sleep_ended = true;
+            }
         }
     }
 
@@ -138,38 +166,39 @@ impl Game {
     /// the player wakes beside the bed to face whatever hit them. Called from
     /// the damage funnel; a lethal hit skips the wake teleport — the death
     /// screen takes over where they lay.
-    pub(super) fn interrupt_sleep(&mut self, events: &mut TickEvents) {
-        let Some(state) = self.sleep.take() else {
+    pub(super) fn interrupt_sleep(&mut self, s: usize, events: &mut TickEvents) {
+        let Some(state) = self.sessions[s].sleep.take() else {
             return;
         };
-        if self.player.health() > 0 {
-            self.wake_at_bed(state.base);
+        if self.sessions[s].player.health() > 0 {
+            self.wake_at_bed(s, state.base);
         }
-        events.sleep_ended = true;
+        events.player(s).sleep_ended = true;
     }
 
-    fn tick_respawn(&mut self, events: &mut TickEvents) {
-        if !std::mem::take(&mut self.respawn_requested) {
+    fn tick_respawn(&mut self, s: usize, events: &mut TickEvents) {
+        if !std::mem::take(&mut self.sessions[s].respawn_requested) {
             return;
         }
         // Respawn is only meaningful for a dead player; a stale request
         // (button mashed as the screen closed) must not teleport the living.
-        if self.player.health() > 0 {
+        if self.sessions[s].player.health() > 0 {
             return;
         }
-        let target = self.respawn_position();
-        self.player.teleport(target);
-        self.player.vel = Vec3::ZERO;
-        self.player.set_health(MAX_HEALTH);
+        let target = self.respawn_position(s);
+        let player = &mut self.sessions[s].player;
+        player.teleport(target);
+        player.vel = Vec3::ZERO;
+        player.set_health(MAX_HEALTH);
         // A fresh life starts clean: lingering status effects die with the body.
-        self.player.clear_effects();
-        events.respawned = true;
+        player.clear_effects();
+        events.player(s).respawned = true;
     }
 
     /// Where a respawn lands: beside the (still existing) spawn bed, or a
     /// random dry-land surface column near the origin — the fresh-spawn pick.
-    fn respawn_position(&mut self) -> Vec3 {
-        if let Some(bs) = self.player.bed_spawn {
+    fn respawn_position(&mut self, s: usize) -> Vec3 {
+        if let Some(bs) = self.sessions[s].player.bed_spawn {
             if !self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) {
                 // The bed's chunk isn't loaded, so it can't be verified (or
                 // rescanned) — trust the spot chosen when the spawn was set.
@@ -184,7 +213,7 @@ impl Game {
                 return cell_centre(bs.spot);
             }
             // The bed is gone — the spawn point disappears with it.
-            self.player.bed_spawn = None;
+            self.sessions[s].player.bed_spawn = None;
         }
         let surface = crate::worldgen::spawn::find_spawn(self.world.seed);
         Vec3::new(
@@ -196,36 +225,42 @@ impl Game {
 
     /// Wake beside `base`: the freshest safe spot, or on top of the bed when
     /// the scan finds nothing (the bed is walled in).
-    fn wake_at_bed(&mut self, base: IVec3) {
+    fn wake_at_bed(&mut self, s: usize, base: IVec3) {
         let cells = self
             .world
             .model_group(base)
-            .map(|(_, _, cells)| cells)
+            .map(|(_, _base, cells)| cells)
             .unwrap_or_else(|| vec![base]);
         let spot = find_wake_spot(&self.world, &cells).unwrap_or(bed_top_cell(base));
-        self.player.teleport(cell_centre(spot));
-        self.player.vel = Vec3::ZERO;
+        let player = &mut self.sessions[s].player;
+        player.teleport(cell_centre(spot));
+        player.vel = Vec3::ZERO;
     }
 
-    /// A bed cell at `pos` was broken (before the group is removed): if it is
-    /// the spawn bed, the spawn point disappears with it.
-    pub(super) fn clear_bed_spawn_at(&mut self, pos: IVec3) {
-        let Some(bs) = self.player.bed_spawn else {
+    /// A bed cell at `pos` was broken (before the group is removed): any
+    /// session whose spawn bed it was loses that spawn point.
+    pub(crate) fn clear_bed_spawn_at(&mut self, pos: IVec3) {
+        let Some(base) = self.world.model_group(pos).map(|(_, base, _)| base) else {
             return;
         };
-        if self.world.model_group(pos).map(|(_, base, _)| base) == Some(bs.bed) {
-            self.player.bed_spawn = None;
+        for sess in &mut self.sessions {
+            if sess.player.bed_spawn.is_some_and(|bs| bs.bed == base) {
+                sess.player.bed_spawn = None;
+            }
         }
     }
 
     /// A sleep block broke somewhere without a position-aware hook (a natural
-    /// break): re-check that the stored spawn bed still exists.
+    /// break): re-check that every stored spawn bed still exists.
     pub(super) fn validate_bed_spawn(&mut self) {
-        let Some(bs) = self.player.bed_spawn else {
-            return;
-        };
-        if self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) && !bed_at(&self.world, bs.bed) {
-            self.player.bed_spawn = None;
+        for s in 0..self.sessions.len() {
+            let Some(bs) = self.sessions[s].player.bed_spawn else {
+                continue;
+            };
+            if self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) && !bed_at(&self.world, bs.bed)
+            {
+                self.sessions[s].player.bed_spawn = None;
+            }
         }
     }
 }

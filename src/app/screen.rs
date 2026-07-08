@@ -7,6 +7,15 @@ pub(super) enum AppScreen {
     WorldSettings,
     CreateWorld,
     DeleteWorld,
+    /// The "Connect to Server" screen (address + player name; multiplayer
+    /// Phase E2). The connect worker runs while this screen is up.
+    ConnectServer,
+    /// The refused-join screen listing the server mods this client lacks;
+    /// Back returns to [`ConnectServer`](AppScreen::ConnectServer).
+    ModsMissing,
+    /// The "Disconnected" screen: the session was torn down after a
+    /// connection loss / server close; OK returns to the title.
+    ConnectionLost,
     Game,
     Pause,
     Inventory,
@@ -48,6 +57,9 @@ impl AppScreen {
                 | AppScreen::WorldSettings
                 | AppScreen::CreateWorld
                 | AppScreen::DeleteWorld
+                | AppScreen::ConnectServer
+                | AppScreen::ModsMissing
+                | AppScreen::ConnectionLost
                 | AppScreen::Pause
         )
     }
@@ -102,16 +114,13 @@ impl AppScreen {
             | AppScreen::WorldSettings
             | AppScreen::CreateWorld
             | AppScreen::DeleteWorld
+            | AppScreen::ConnectServer
+            | AppScreen::ModsMissing
+            | AppScreen::ConnectionLost
             | AppScreen::Pause => GuiKind::Other,
         }
     }
 
-    /// Whether the open menu is the chest screen — drives chest-specific click
-    /// routing and the chest panel + storage grid in place of the crafting grid.
-    #[inline]
-    pub(super) fn is_chest(self) -> bool {
-        matches!(self, AppScreen::Chest)
-    }
 }
 
 /// Known polish gap: document text inputs don't request a Text (I-beam)

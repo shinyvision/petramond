@@ -116,7 +116,10 @@ pub struct BehaviorOutput {
 }
 
 /// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
-pub trait AiBehavior {
+/// `Send` because mobs ride the `World`, which lives on the server thread
+/// (multiplayer Phase D) — behaviors are plain state machines; the scripted
+/// (WASM) node holds only its registry key.
+pub trait AiBehavior: Send {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput;
 }
 

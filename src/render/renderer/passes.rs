@@ -370,6 +370,7 @@ impl Renderer {
         if self.mob_gpu.iter().any(|g| g.draw.index_count > 0)
             || self.player_gpu.draw.index_count > 0
             || self.player_item_draw.index_count > 0
+            || self.player_model_item_draw.index_count > 0
             || self.player_block_item_draw.index_count > 0
         {
             let mut pass = color_depth_pass(
@@ -388,22 +389,24 @@ impl Renderer {
                 pass.set_bind_group(1, &g.bind, &[]);
                 g.draw.draw(&mut pass);
             }
-            // Third-person player body (its own skin texture, same mob pipeline)…
+            // Player bodies — the local third-person body and every remote
+            // player, one combined stream (shared skin texture, mob pipeline)…
             if self.player_gpu.draw.index_count > 0 {
                 pass.set_bind_group(1, &self.player_gpu.bind, &[]);
                 self.player_gpu.draw.draw(&mut pass);
             }
-            // …its extruded-sprite / bbmodel held item (2D atlas vs model atlas)…
+            // …their extruded-sprite held items (2D atlas)…
             if self.player_item_draw.index_count > 0 {
-                let atlas = if self.player_item_is_model {
-                    &self.model_atlas_bind
-                } else {
-                    &self.atlas_bind
-                };
-                pass.set_bind_group(1, atlas, &[]);
+                pass.set_bind_group(1, &self.atlas_bind, &[]);
                 self.player_item_draw.draw(&mut pass);
             }
-            // …or its held block mini-cube (opaque pipeline + terrain atlas array).
+            // …their bbmodel held items (model atlas)…
+            if self.player_model_item_draw.index_count > 0 {
+                pass.set_bind_group(1, &self.model_atlas_bind, &[]);
+                self.player_model_item_draw.draw(&mut pass);
+            }
+            // …and their held block mini-cubes (opaque pipeline + terrain
+            // atlas array).
             if self.player_block_item_draw.index_count > 0 {
                 pass.set_bind_group(1, &self.atlas_array_bind, &[]);
                 self.player_block_item_draw.draw(&mut pass);

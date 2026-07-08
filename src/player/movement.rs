@@ -62,7 +62,7 @@ const SWIM_VACCEL: f32 = 14.0;
 /// water reaches roughly thigh height the player switches to swim physics, so
 /// shallow wading still walks. Probing the body (not the eye) lets the head break
 /// the surface and gravity resume, so you bob at the waterline.
-pub(super) const WATER_PROBE_Y: f32 = 0.6;
+pub(crate) const WATER_PROBE_Y: f32 = 0.6;
 /// Probe just above the feet so shallow flowing sheets can nudge a walking
 /// player even when they are not deep enough to switch to swim physics.
 const WADING_CURRENT_PROBE_Y: f32 = 0.05;

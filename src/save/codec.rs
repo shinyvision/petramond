@@ -273,7 +273,7 @@ pub(crate) fn get_indexed<T>(
 /// so identical maps encode identically (the determinism the byte-exact
 /// preservation contract rests on). An entry with an oversized key (> u16 —
 /// the HostCall boundary caps keys far below this) is skipped defensively.
-/// Shared by the per-cell (section) and per-mob KV payloads.
+/// Shared by the per-cell (section), per-mob, and world (`level.dat`) KV payloads.
 pub(crate) fn put_kv_map(buf: &mut Vec<u8>, map: &BTreeMap<String, Vec<u8>>) {
     let entries: Vec<(&String, &Vec<u8>)> = map
         .iter()

@@ -37,6 +37,14 @@
             },
             {
                 "type": "button",
+                "id": "connect",
+                "text": "Connect to Server",
+                "layout": {
+                    "w": 130
+                }
+            },
+            {
+                "type": "button",
                 "id": "quit",
                 "text": "Quit",
                 "layout": {

@@ -26,6 +26,7 @@ mod ui_text;
 mod uniforms;
 
 pub use crate::game::presentation::BreakOverlayView;
+pub(crate) use hand_animator::HeldItemAnimator;
 pub(crate) use renderer::new_renderer_from_target;
 pub use renderer::Renderer;
 
@@ -190,6 +191,19 @@ pub struct PlayerRenderInstance {
     /// 6-bit two-channel light sampled at the player.
     pub skylight: u8,
     pub blocklight: u8,
+}
+
+/// One REMOTE player's body + held item to draw this frame, already
+/// interpolated/posed by the game's presentation layer: the same
+/// [`PlayerRenderInstance`] shape the local third-person body uses (so both
+/// bake through `build_player_body` identically), plus that remote's OWN
+/// [`HeldItemView`] animation channels — the local body instead reads the
+/// renderer's internal first-person held-item view, keeping its solo
+/// behavior bit-identical.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RemotePlayerRender {
+    pub body: PlayerRenderInstance,
+    pub held: HeldItemView,
 }
 
 /// A placed chest to draw in the world this frame: an inset body box plus a lid

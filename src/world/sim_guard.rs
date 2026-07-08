@@ -136,10 +136,7 @@ impl World {
         if self.pending.contains_key(&cp) {
             return StreamState::InFlight;
         }
-        if self
-            .last_load_target
-            .is_some_and(|t| Self::column_wanted(t, cp))
-        {
+        if self.column_wanted_by_any_target(cp) {
             return StreamState::InFlight; // column gen will be submitted shortly
         }
         StreamState::Unresolved

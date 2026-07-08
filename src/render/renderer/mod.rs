@@ -23,7 +23,7 @@ use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
 
-use super::break_overlay::build_break_overlay;
+use super::break_overlay::build_break_overlays;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
@@ -45,6 +45,7 @@ use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
+    RemotePlayerRender,
 };
 use crate::bbmodel::Model;
 use crate::gui::UiSnapshot;
@@ -119,9 +120,11 @@ struct MobGpu {
     indices: Vec<u32>,
 }
 
-/// GPU resources for the third-person player body: the precached player model,
-/// its skin texture bind, and a dynamic draw over the shared mob pipeline — a
-/// single-instance sibling of [`MobGpu`].
+/// GPU resources for player bodies — the local third-person body AND every
+/// remote player, all sharing the precached player model + skin texture bind
+/// (per-remote skins are out of scope). One dynamic draw over the shared mob
+/// pipeline; `verts`/`indices` are the COMBINED per-frame staging every
+/// visible body appends into.
 struct PlayerGpu {
     model: &'static Model,
     bind: wgpu::BindGroup,
@@ -241,22 +244,39 @@ pub struct Renderer {
     /// order). Built once from `mob::defs()`; each frame the visible mobs are
     /// grouped here by species, baked, and drawn in the mob pass.
     mob_gpu: Vec<MobGpu>,
-    /// Third-person player body resources (drawn in the mob pass when
-    /// `player_view` is set).
+    /// Player-body resources (local third-person + remote players, one
+    /// combined stream drawn in the mob pass).
     player_gpu: PlayerGpu,
-    /// The third-person player to draw this frame (`None` in first person).
+    /// The LOCAL third-person body to draw this frame (`None` in first
+    /// person). Its held item reads the renderer's own first-person
+    /// `held_item` view — unchanged solo behavior.
     player_view: Option<PlayerRenderInstance>,
-    /// The third-person held item's explicit-UV stream (extruded sprite OR baked
-    /// bbmodel — mutually exclusive), attached to the posed right hand. Rides the
-    /// mob-layout pipeline; the draw binds the 2D atlas or the model atlas per
-    /// `player_item_is_model`.
+    /// The remote players' bodies + held-item views for this frame.
+    remote_players: Vec<RemotePlayerRender>,
+    /// Frustum-visible bodies this frame (local first, then remotes), each
+    /// paired with the held-item view that animates its hand.
+    player_visible: Vec<(PlayerRenderInstance, HeldItemView)>,
+    /// Per-body staging for one `build_player_body` bake (the builder clears
+    /// its buffers), appended into `player_gpu`'s combined stream.
+    player_body_verts: Vec<super::item_model::ItemVertex>,
+    player_body_indices: Vec<u32>,
+    /// Held EXTRUDED-SPRITE items across all bodies (explicit-UV stream, 2D
+    /// atlas), attached to each posed right hand. Rides the mob-layout
+    /// pipeline.
     player_item_draw: DynamicDraw,
-    player_item_is_model: bool,
     player_item_verts: Vec<super::item_model::ItemVertex>,
     player_item_indices: Vec<u32>,
-    /// The third-person held BLOCK mini-cube (packed block vertices, opaque
-    /// pipeline + terrain atlas array), CPU-transformed to the hand like dropped
-    /// item cubes.
+    /// Per-item staging for one extruded-sprite build (the builder clears).
+    player_sprite_verts: Vec<super::item_model::ItemVertex>,
+    /// Held BBMODEL items across all bodies (explicit-UV stream, MODEL
+    /// atlas) — split from the sprite stream so mixed hands draw with the
+    /// right texture in one pass each.
+    player_model_item_draw: DynamicDraw,
+    player_model_item_verts: Vec<super::item_model::ItemVertex>,
+    player_model_item_indices: Vec<u32>,
+    /// Held BLOCK mini-cubes across all bodies (packed block vertices, opaque
+    /// pipeline + terrain atlas array), CPU-transformed to each hand like
+    /// dropped item cubes.
     player_block_item_draw: DynamicDraw,
     /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
     /// pass plus the combined model atlas bound at group(1). The geometry itself lives
@@ -316,8 +336,9 @@ pub struct Renderer {
     clear_color: [f32; 3],
     last_stats: RenderStats,
     // --- Per-frame view state set by the App via setters, drawn in `render`. ---
-    /// Block-break overlay to draw this frame, or `None`.
-    break_overlay: Option<BreakOverlayView>,
+    /// Block-break overlays to draw this frame (own + capped remotes; empty =
+    /// none).
+    break_overlays: Vec<BreakOverlayView>,
     /// First-person held item / hand state (defaults to the bare hand).
     held_item: HeldItemView,
     hand_visible: bool,

@@ -13,7 +13,8 @@ use crate::worker::{GenJob, GenOutput};
 use crate::worldgen::driver::ColumnGen;
 
 use super::store::{
-    LoadTarget, World, FORWARD_LOAD_DOT_MIN, OMNI_LOAD_RADIUS, VERTICAL_LOAD_RADIUS,
+    LoadAnchor, LoadTarget, World, WorldRole, FORWARD_LOAD_DOT_MIN, OMNI_LOAD_RADIUS,
+    VERTICAL_LOAD_RADIUS,
 };
 
 // Used only by the column-era test/fixture helper `split_generated_column`.
@@ -65,6 +66,10 @@ impl World {
     /// caves below y=0). Scans are gated to player-section / render-distance changes; call
     /// `poll` every frame to keep ingesting worker results.
     pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_y: i32, cam_chunk_z: i32) {
+        debug_assert!(
+            self.role != WorldRole::ClientReplica,
+            "a replica never generates: sections arrive from the connection"
+        );
         let target = LoadTarget::new(cam_chunk_x, cam_chunk_y, cam_chunk_z, self.render_dist);
         self.update_load_target(target);
     }
@@ -80,6 +85,10 @@ impl World {
         forward_x: f32,
         forward_z: f32,
     ) {
+        debug_assert!(
+            self.role != WorldRole::ClientReplica,
+            "a replica never generates: sections arrive from the connection"
+        );
         let target = LoadTarget::new_facing(
             cam_chunk_x,
             cam_chunk_y,
@@ -92,6 +101,8 @@ impl World {
     }
 
     fn update_load_target(&mut self, target: LoadTarget) {
+        // The single-anchor path: any multi-anchor residue is gone.
+        self.extra_load_targets.clear();
         if self.last_load_target == Some(target) {
             self.request_missing_columns(target);
             return;
@@ -130,6 +141,180 @@ impl World {
         if horizontal_keep_changed || vertical_moved {
             self.unload_far(target, vertical_moved);
         }
+    }
+
+    /// N-anchor streaming for the multi-player server: request everything any
+    /// anchor wants (submission priority = the MIN key over the anchors, so a
+    /// column between two players resolves for whichever is nearer) and keep
+    /// everything inside ANY anchor's keep shape. One anchor is exactly
+    /// [`update_load_facing`] — the existing single-anchor behaviour,
+    /// bit-for-bit, including its incremental rescan optimizations; the N ≥ 2
+    /// path trades those delta scans for a plain full scan on anchor-set
+    /// change (bounded by the anchors' discs, and it runs only on change).
+    pub fn update_load_multi(&mut self, anchors: &[LoadAnchor]) {
+        debug_assert!(
+            self.role != WorldRole::ClientReplica,
+            "a replica never generates: sections arrive from the connection"
+        );
+        match anchors {
+            [] => {}
+            [a] => self.update_load_facing(a.cx, a.cy, a.cz, a.fx, a.fz),
+            _ => {
+                let targets: Vec<LoadTarget> = anchors
+                    .iter()
+                    .map(|a| {
+                        LoadTarget::new_facing(a.cx, a.cy, a.cz, self.render_dist, a.fx, a.fz)
+                    })
+                    .collect();
+                self.update_load_multi_targets(targets);
+            }
+        }
+    }
+
+    fn update_load_multi_targets(&mut self, targets: Vec<LoadTarget>) {
+        let unchanged = self.last_load_target == Some(targets[0])
+            && self.extra_load_targets == targets[1..];
+        if unchanged {
+            self.request_missing_columns_multi(&targets);
+            return;
+        }
+        self.last_load_target = Some(targets[0]);
+        self.extra_load_targets = targets[1..].to_vec();
+        self.vis_dirty = true;
+        self.pending
+            .retain(|pos, _| targets.iter().any(|t| Self::column_wanted(*t, *pos)));
+        self.request_missing_columns_multi(&targets);
+        self.request_wanted_sections_multi(&targets);
+        self.unload_far_multi(&targets);
+    }
+
+    /// Whether `cp` is wanted under ANY current anchor. The multi-anchor form
+    /// of `last_load_target + column_wanted`, used wherever "is this column
+    /// coming?" must hold for every player (the sim guard's in-flight
+    /// classification, keep checks). Identical to the single check while
+    /// `extra_load_targets` is empty.
+    pub(super) fn column_wanted_by_any_target(&self, cp: ChunkPos) -> bool {
+        self.last_load_target
+            .is_some_and(|t| Self::column_wanted(t, cp))
+            || self
+                .extra_load_targets
+                .iter()
+                .any(|t| Self::column_wanted(*t, cp))
+    }
+
+    fn multi_column_key(targets: &[LoadTarget], pos: ChunkPos) -> i64 {
+        targets
+            .iter()
+            .map(|t| t.column_priority_key(pos))
+            .min()
+            .expect("at least one target")
+    }
+
+    fn multi_section_key(targets: &[LoadTarget], sp: SectionPos) -> i64 {
+        targets
+            .iter()
+            .map(|t| t.section_priority_key(sp))
+            .min()
+            .expect("at least one target")
+    }
+
+    /// [`request_missing_columns`] over the union of the anchors' discs.
+    fn request_missing_columns_multi(&mut self, targets: &[LoadTarget]) {
+        let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
+            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.pending.len()));
+        if submit_limit == 0 {
+            return;
+        }
+        let mut missing: Vec<(i64, ChunkPos)> = Vec::new();
+        let mut seen: FxHashSet<ChunkPos> = FxHashSet::default();
+        for scan in targets {
+            let r = scan.render_dist;
+            for dz in -r..=r {
+                for dx in -r..=r {
+                    let pos = ChunkPos::new(scan.center.cx + dx, scan.center.cz + dz);
+                    if !seen.insert(pos) {
+                        continue;
+                    }
+                    if !targets.iter().any(|t| Self::column_wanted(*t, pos)) {
+                        continue;
+                    }
+                    if self.column_gen.contains_key(&pos) || self.pending.contains_key(&pos) {
+                        continue;
+                    }
+                    missing.push((Self::multi_column_key(targets, pos), pos));
+                }
+            }
+        }
+        missing.sort_by_key(|(priority, _)| *priority);
+        for (priority, pos) in missing.into_iter().take(submit_limit) {
+            self.submit_column_job(priority, pos);
+        }
+    }
+
+    /// [`request_wanted_sections`] with each column's wanted window = the
+    /// union over the anchors that want it.
+    fn request_wanted_sections_multi(&mut self, targets: &[LoadTarget]) {
+        let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
+        let mut cys: Vec<i32> = Vec::new();
+        for (pos, col) in &self.column_gen {
+            cys.clear();
+            for t in targets {
+                if !Self::column_wanted(*t, *pos) {
+                    continue;
+                }
+                for cy in self.wanted_section_cys_for_column(*pos, col, t.center_cy, 0) {
+                    if !cys.contains(&cy) {
+                        cys.push(cy);
+                    }
+                }
+            }
+            let content_top = col.content_top();
+            for &cy in &cys {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                    continue;
+                }
+                if self.skip_empty_sky_section(sp, content_top) {
+                    continue;
+                }
+                wanted.push((Self::multi_section_key(targets, sp), sp, col.clone()));
+            }
+        }
+        wanted.sort_by_key(|(priority, _, _)| *priority);
+        for (priority, sp, col) in wanted {
+            self.submit_section_job(priority, sp, col);
+        }
+    }
+
+    /// [`unload_far`] keeping the UNION of the anchors' keep shapes: a column
+    /// (or kept column's section) survives if any anchor still wants it, with
+    /// the same hysteresis slack as the single-anchor path.
+    fn unload_far_multi(&mut self, targets: &[LoadTarget]) {
+        let drop_columns: Vec<ChunkPos> = self
+            .columns
+            .keys()
+            .filter(|p| !targets.iter().any(|t| Self::column_kept(*t, **p)))
+            .copied()
+            .collect();
+        let drop_sections: Vec<SectionPos> = self
+            .sections
+            .keys()
+            .filter(|sp| {
+                if targets
+                    .iter()
+                    .any(|t| Self::vertical_window(t.center_cy, 2).contains(&sp.cy))
+                {
+                    return false;
+                }
+                let cp = sp.chunk_pos();
+                targets.iter().any(|t| Self::column_kept(*t, cp))
+                    && !self.column_gen.get(&cp).is_some_and(|col| {
+                        Self::surface_window_for_column(col, 2).contains(&sp.cy)
+                    })
+            })
+            .copied()
+            .collect();
+        self.evict_columns_and_sections(drop_columns, drop_sections);
     }
 
     /// The vertical section-`cy` window around the player, clamped to the world range.
@@ -219,7 +404,9 @@ impl World {
         Self::column_in_shape(target, pos, 0, FORWARD_LOAD_DOT_MIN)
     }
 
-    fn column_kept(target: LoadTarget, pos: ChunkPos) -> bool {
+    /// `pub(super)` for the per-connection terrain sender: its client-side
+    /// unload mirrors the streamer's own keep hysteresis.
+    pub(super) fn column_kept(target: LoadTarget, pos: ChunkPos) -> bool {
         let (dx, dz, r) = Self::column_shape_key(target, pos);
         let keep = r + HORIZONTAL_KEEP_SLACK;
         dx * dx + dz * dz <= keep * keep
@@ -251,30 +438,36 @@ impl World {
         }
         missing.sort_by_key(|(priority, _)| *priority);
         for (priority, pos) in missing.into_iter().take(submit_limit) {
-            // "Optimize explored terrain": an explored column's 2D gen data
-            // loads from the column-gen cache instead of running the heavy
-            // noise job; a decode miss falls back to the worker (poll's cache
-            // drain resubmits). Both answers resolve the same `pending` entry.
-            let cached = self.optimize_explored_terrain
-                && self
-                    .save
-                    .as_ref()
-                    .is_some_and(|s| s.colgen_manifest_contains(pos));
-            if cached {
-                if let Some(save) = self.save.as_ref() {
-                    save.request_column_gen(pos, self.seed);
-                }
-            } else {
-                self.worker.submit(
-                    priority,
-                    GenJob::Column {
-                        pos,
-                        seed: self.seed,
-                    },
-                );
-            }
-            self.pending.insert(pos, ());
+            self.submit_column_job(priority, pos);
         }
+    }
+
+    /// Queue one column's gen job (or its column-gen cache read) and mark it
+    /// pending. Shared by the single- and multi-anchor request scans.
+    fn submit_column_job(&mut self, priority: i64, pos: ChunkPos) {
+        // "Optimize explored terrain": an explored column's 2D gen data
+        // loads from the column-gen cache instead of running the heavy
+        // noise job; a decode miss falls back to the worker (poll's cache
+        // drain resubmits). Both answers resolve the same `pending` entry.
+        let cached = self.optimize_explored_terrain
+            && self
+                .save
+                .as_ref()
+                .is_some_and(|s| s.colgen_manifest_contains(pos));
+        if cached {
+            if let Some(save) = self.save.as_ref() {
+                save.request_column_gen(pos, self.seed);
+            }
+        } else {
+            self.worker.submit(
+                priority,
+                GenJob::Column {
+                    pos,
+                    seed: self.seed,
+                },
+            );
+        }
+        self.pending.insert(pos, ());
     }
 
     fn prune_stale_column_requests(&mut self, target: LoadTarget) {
@@ -510,7 +703,17 @@ impl World {
         } else {
             Vec::new()
         };
+        self.evict_columns_and_sections(drop_columns, drop_sections);
+    }
 
+    /// The persist-then-drop tail of unloading: harvest entities + persist
+    /// modified sections (same gate as autosave), then evict. Shared by the
+    /// single- and multi-anchor unload selections.
+    fn evict_columns_and_sections(
+        &mut self,
+        drop_columns: Vec<ChunkPos>,
+        drop_sections: Vec<SectionPos>,
+    ) {
         // Persist (harvesting entities into the record) before anything leaves memory.
         if self.save.is_some() {
             let mut snaps = Vec::new();
@@ -534,6 +737,7 @@ impl World {
             self.flush_pending_colgen_records();
         }
 
+        let dropped_any = !drop_columns.is_empty() || !drop_sections.is_empty();
         for pos in drop_columns {
             self.remove_column(pos);
             self.drop_overlays_for_column(pos);
@@ -542,6 +746,9 @@ impl World {
             self.remove_section(sp);
             self.pending_overlays.remove(&sp);
             self.pending_sections.remove(&sp);
+        }
+        if dropped_any {
+            self.bump_terrain_revision();
         }
     }
 
@@ -587,6 +794,27 @@ impl World {
             return true;
         };
         Self::column_kept(target, pos)
+            || self
+                .extra_load_targets
+                .iter()
+                .any(|t| Self::column_kept(*t, pos))
+    }
+
+    /// The anchor that wants column `pos` most (min priority key) — the target
+    /// a landed column's section window should be built around, so a column
+    /// streamed for a far player fills near THAT player's `cy`. The primary
+    /// target while single-anchor.
+    fn best_target_for_column(&self, target: LoadTarget, pos: ChunkPos) -> LoadTarget {
+        let mut best = target;
+        let mut best_key = target.column_priority_key(pos);
+        for t in &self.extra_load_targets {
+            let key = t.column_priority_key(pos);
+            if key < best_key {
+                best = *t;
+                best_key = key;
+            }
+        }
+        best
     }
 
     /// Gate for buffering [`StreamEvent`]s in `poll`. Set each tick from event-bus
@@ -610,6 +838,33 @@ impl World {
     /// sections for heightmap refresh + light + mesh. Returns the number of columns whose
     /// shared data was installed this call.
     pub fn poll(&mut self) -> usize {
+        // Any change to what is loaded / stream-final re-keys the per-connection
+        // terrain senders (their wanted-vs-sent rescan gates on this).
+        let before = self.stream_finality_fingerprint();
+        let new_columns = self.poll_inner();
+        if self.stream_finality_fingerprint() != before {
+            self.bump_terrain_revision();
+        }
+        new_columns
+    }
+
+    /// The cheap "did loaded/in-flight content change?" probe `poll` brackets
+    /// itself with. Within one poll, installs only grow `sections` and every
+    /// finality transition shrinks an in-flight set, so length deltas suffice.
+    fn stream_finality_fingerprint(&self) -> (usize, usize, usize, usize) {
+        (
+            self.sections.len(),
+            self.pending_sections.len(),
+            self.awaited_overlays.len(),
+            self.pending_overlays.len(),
+        )
+    }
+
+    fn poll_inner(&mut self) -> usize {
+        debug_assert!(
+            self.role != WorldRole::ClientReplica,
+            "a replica has no gen/save workers to poll; installs come from the connection"
+        );
         let target = self
             .last_load_target
             .unwrap_or_else(|| LoadTarget::new(0, 0, 0, self.render_dist));
@@ -704,9 +959,11 @@ impl World {
             }
         }
 
-        // 2. Newly-installed columns: submit their vertical window's section jobs now.
+        // 2. Newly-installed columns: submit their vertical window's section jobs now,
+        //    around whichever anchor wants each column most.
         for pos in new_column_positions {
-            self.request_sections_for_column(pos, target);
+            let best = self.best_target_for_column(target, pos);
+            self.request_sections_for_column(pos, best);
         }
 
         // 3. Saved sections read back from disk. Disk-primary records ("Optimize
@@ -1356,6 +1613,83 @@ mod tests {
         assert!(
             cys.contains(&surface_cy),
             "high flight must retain/generate the visible surface band"
+        );
+    }
+
+    /// Two distant anchors: `update_load_multi` must request BOTH
+    /// neighbourhoods (nothing outside the union) and keep loaded content near
+    /// each anchor while evicting what no anchor wants.
+    #[test]
+    fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
+        let mut world = World::new(0, 4);
+        let a = LoadAnchor {
+            cx: 0,
+            cy: 4,
+            cz: 0,
+            fx: 1.0,
+            fz: 0.0,
+        };
+        let b = LoadAnchor {
+            cx: 40,
+            cy: 4,
+            cz: 0,
+            fx: 1.0,
+            fz: 0.0,
+        };
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        world.insert_empty_column_for_test(ChunkPos::new(40, 0));
+        world.insert_empty_column_for_test(ChunkPos::new(20, 0)); // far from both
+
+        world.update_load_multi(&[a, b]);
+
+        let near = |p: &ChunkPos, cx: i32| (p.cx - cx).abs() <= 4 && p.cz.abs() <= 4;
+        assert!(
+            world.pending.keys().any(|p| near(p, 0)),
+            "anchor A's columns are requested"
+        );
+        assert!(
+            world.pending.keys().any(|p| near(p, 40)),
+            "anchor B's columns are requested"
+        );
+        assert!(
+            world.pending.keys().all(|p| near(p, 0) || near(p, 40)),
+            "nothing outside the anchors' union is requested"
+        );
+
+        assert!(world.chunk_loaded(0, 0), "anchor A's column is kept");
+        assert!(world.chunk_loaded(40, 0), "anchor B's column is kept");
+        assert!(
+            !world.chunk_loaded(20, 0),
+            "a column no anchor keeps is evicted"
+        );
+    }
+
+    /// One anchor through `update_load_multi` IS `update_load_facing`: same
+    /// target, same requested set, no multi-anchor residue.
+    #[test]
+    fn single_anchor_multi_load_matches_update_load_facing() {
+        let mut facing = World::new(0x51EED, 3);
+        let mut multi = World::new(0x51EED, 3);
+        facing.update_load_facing(2, 5, -1, 0.6, -0.8);
+        multi.update_load_multi(&[LoadAnchor {
+            cx: 2,
+            cy: 5,
+            cz: -1,
+            fx: 0.6,
+            fz: -0.8,
+        }]);
+
+        assert_eq!(facing.last_load_target, multi.last_load_target);
+        assert!(multi.extra_load_targets.is_empty());
+        let sorted = |w: &World| {
+            let mut p: Vec<ChunkPos> = w.pending.keys().copied().collect();
+            p.sort_by_key(|c| (c.cx, c.cz));
+            p
+        };
+        assert_eq!(
+            sorted(&facing),
+            sorted(&multi),
+            "one anchor must request exactly the update_load_facing set"
         );
     }
 

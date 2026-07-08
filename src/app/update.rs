@@ -21,6 +21,10 @@ impl App {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();
             self.drive_doc_ui(kind, screen_size, now);
+            // Shell screens (pause menu) skip Game::tick, but the server
+            // thread keeps streaming: keep consuming its output so nothing
+            // backs up and resume is instant (multiplayer Phase D).
+            self.pump_network_and_watch();
             return;
         }
 
@@ -45,6 +49,8 @@ impl App {
         if self.screen.shell_open() || self.game.is_none() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();
+            // Same as the doc-shell path above: keep draining the server.
+            self.pump_network_and_watch();
             return;
         }
 
@@ -68,5 +74,18 @@ impl App {
         self.play_game_event_sounds(&events, mining_block, now);
         self.pointer.clear_edges();
         self.latch_game_event_hand_triggers(&events);
+    }
+
+    /// Drain the server while `Game::tick` is suppressed (shell screens over
+    /// a live game — the pause menu), and still notice a lost connection:
+    /// ticks surface it through `GameEvents`, but here nobody assembles them.
+    fn pump_network_and_watch(&mut self) {
+        let lost = self.game.as_mut().and_then(|game| {
+            game.pump_network();
+            game.take_connection_lost()
+        });
+        if let Some(reason) = lost {
+            self.enter_connection_lost(reason);
+        }
     }
 }

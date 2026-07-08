@@ -1,4 +1,6 @@
-//! Player health: fall damage on the tick, the damage funnel, and the HUD read model.
+//! Player health: fall damage on the tick and the damage funnel. (The HUD
+//! read model moved client-side: `Game::player_health` reads the replicated
+//! `SelfView`.)
 //!
 //! Physics only *measures* a fall (per-frame, for local feel — see
 //! [`crate::player::Player::track_fall`]); the health *mutation* happens here, on the
@@ -8,11 +10,9 @@
 //! `player_damaged` / `player_died` events fire consistently.
 
 use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
-use crate::gui::HealthView;
-use crate::player::MAX_HEALTH;
 
-use super::tick::TickEvents;
-use super::Game;
+use super::game::ServerGame;
+use crate::game::tick::TickEvents;
 
 /// Blocks you can fall with no damage. Beyond this, each further whole block costs one
 /// half-heart, so a 4-block fall (one past the safe 3) is the first to hurt — half a
@@ -28,19 +28,23 @@ const FALL_EPS: f32 = 1e-3;
 
 /// Half-hearts of fall damage for a landing that fell `distance` blocks: the whole
 /// blocks past the safe distance, never negative. `3 → 0`, `4 → 1`, `5 → 2`, ….
-pub(super) fn fall_damage_health(distance: f32) -> i32 {
+pub(crate) fn fall_damage_health(distance: f32) -> i32 {
     (distance - SAFE_FALL_BLOCKS + FALL_EPS).floor().max(0.0) as i32
 }
 
-impl Game {
-    /// Consume the landing the player's physics latched and apply its fall damage on
-    /// the tick. Spectators float, so their (absent) fall is drained without harm.
-    pub(super) fn tick_fall_damage(&mut self, events: &mut TickEvents) {
-        let distance = self.player.take_fall_distance();
-        if self.player.is_spectator() {
+impl ServerGame {
+    /// Consume the landing the SERVER-side fall tracker latched from the
+    /// session's reported transforms (`ConnectedPlayer::fall`, fed in
+    /// `apply_player_update`) and apply its fall damage on the tick. The client
+    /// physics still measures its own falls per frame, but nothing reads that
+    /// latch anymore — the server trusts only what it measured itself.
+    /// Spectators float, so their (absent) fall is drained without harm.
+    pub(crate) fn tick_fall_damage(&mut self, s: usize, events: &mut TickEvents) {
+        let distance = std::mem::replace(&mut self.sessions[s].pending_fall, 0.0);
+        if self.sessions[s].player.is_spectator() {
             return;
         }
-        self.damage_player(fall_damage_health(distance), DamageSource::Fall, events);
+        self.damage_player(s, fall_damage_health(distance), DamageSource::Fall, events);
     }
 
     /// The single player-damage funnel: dispatch `player_damage_pre` (mutable
@@ -51,8 +55,9 @@ impl Game {
     ///
     /// Returns whether damage was actually applied, so a caller can gate the
     /// side effects that must die with a cancelled hit (a mob strike's knockback).
-    pub(super) fn damage_player(
+    pub(crate) fn damage_player(
         &mut self,
+        s: usize,
         amount: i32,
         source: DamageSource,
         events: &mut TickEvents,
@@ -66,27 +71,34 @@ impl Game {
         // A dead player takes no further hits: without this, mobs pounding the
         // corpse behind the death screen would re-fire `player_damaged` (hurt
         // sound + shake) every strike and knock the body around.
-        if self.player.health() == 0 {
+        if self.sessions[s].player.health() == 0 {
             return false;
         }
         let mut pre = PlayerDamagePre { amount, source };
-        if self
-            .bus
-            .player_damage_pre(&mut self.world, &mut self.player, events, &mut pre)
-            == Outcome::Cancel
-        {
+        let cancelled = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            bus.player_damage_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
+                == Outcome::Cancel
+        };
+        if cancelled {
             return false;
         }
         if pre.amount <= 0 {
             return false;
         }
-        let was_alive = self.player.health() > 0;
-        self.player.apply_damage(pre.amount);
-        let new_health = self.player.health();
-        events.player_damaged = true;
+        let was_alive = self.sessions[s].player.health() > 0;
+        self.sessions[s].player.apply_damage(pre.amount);
+        let new_health = self.sessions[s].player.health();
+        events.player(s).player_damaged = true;
         // Being hurt in bed ends the sleep immediately — it never continues
         // through a fight (and a lethal hit hands straight over to death).
-        self.interrupt_sleep(events);
+        self.interrupt_sleep(s, events);
         self.bus.emit(PostEvent::PlayerDamaged {
             amount: pre.amount,
             new_health,
@@ -94,8 +106,8 @@ impl Game {
         // The transition check keeps this a one-shot: further damage at 0 health
         // (or the zero-damage fall drain) can never re-fire it.
         if was_alive && new_health == 0 {
-            events.player_died = true;
-            self.spill_inventory_on_death();
+            events.player(s).player_died = true;
+            self.spill_inventory_on_death(s, events);
             self.bus.emit(PostEvent::PlayerDied);
         }
         true
@@ -103,21 +115,21 @@ impl Game {
 
     /// Death spills everything the player carried as item entities at the
     /// body — the classic corpse pile, waiting where they died.
-    fn spill_inventory_on_death(&mut self) {
+    fn spill_inventory_on_death(&mut self, s: usize, events: &mut TickEvents) {
         // An open container session first returns its transient contents
         // (craft grid, cursor stack) to the inventory, so they spill too
         // instead of quietly surviving in a menu the app closes a frame later.
-        self.close_open_menu();
-        let centre = self.player.body_center();
+        self.close_open_menu_for(s, events);
+        let centre = self.sessions[s].player.body_center();
         let mut stacks: Vec<crate::item::ItemStack> = Vec::new();
         for i in 0..crate::inventory::TOTAL_SLOTS {
-            if let Some(slot) = self.player.inventory.slot_mut(i) {
+            if let Some(slot) = self.sessions[s].player.inventory.slot_mut(i) {
                 if let Some(stack) = slot.take() {
                     stacks.push(stack);
                 }
             }
         }
-        if let Some(stack) = self.player.inventory.take_cursor() {
+        if let Some(stack) = self.sessions[s].player.inventory.take_cursor() {
             stacks.push(stack);
         }
         let cell = (
@@ -145,38 +157,19 @@ impl Game {
     /// survival consequence — but healing a full or dead player is already a
     /// no-op inside [`crate::player::Player::heal`].
     ///
-    /// [`damage_player`]: Game::damage_player
-    pub(super) fn tick_effects(&mut self) {
-        for behavior in self.player.tick_effects() {
+    /// [`damage_player`]: ServerGame::damage_player
+    pub(crate) fn tick_effects(&mut self, s: usize) {
+        let player = &mut self.sessions[s].player;
+        for behavior in player.tick_effects() {
             match behavior {
                 crate::effect::EffectBehavior::None => {}
                 crate::effect::EffectBehavior::Regen { amount, .. } => {
-                    self.player.heal(amount);
+                    player.heal(amount);
                 }
             }
         }
     }
 
-    /// The player's active status effects for the HUD icon row, in application
-    /// order. Empty for a spectator — the row hides with the hearts.
-    pub fn player_effect_icons(&self) -> Vec<crate::effect::Effect> {
-        if self.player.is_spectator() {
-            return Vec::new();
-        }
-        self.player.effects().iter().map(|e| e.effect).collect()
-    }
-
-    /// The player's health for the HUD hearts, or `None` when there is no survival
-    /// bar to draw (a floating spectator). `(current, max)` in half-heart points.
-    pub fn player_health(&self) -> Option<HealthView> {
-        if self.player.is_spectator() {
-            return None;
-        }
-        Some(HealthView {
-            current: self.player.health(),
-            max: MAX_HEALTH,
-        })
-    }
 }
 
 #[cfg(test)]

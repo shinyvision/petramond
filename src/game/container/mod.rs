@@ -6,8 +6,8 @@ mod state;
 mod target;
 mod workbench;
 
-pub(super) use state::ContainerMenu;
-pub(super) use target::ContainerTarget;
+pub(crate) use state::ContainerMenu;
+pub(crate) use target::ContainerTarget;
 
 #[cfg(test)]
 mod tests {

@@ -851,7 +851,7 @@ fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             // The sim never touches audio: the sound rides the NON-lossy tick
             // queue on `TickEvents` and the app layer plays it next frame.
-            ctx.feed.sounds.push(crate::game::ModSound {
+            ctx.feed.world.sounds.push(crate::game::ModSound {
                 sound,
                 pos: pos.map(to_vec),
             });
@@ -873,6 +873,7 @@ fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             }
             let handle = ctx.feed.alloc_spatial_sound_handle();
             ctx.feed
+                .world
                 .spatial_sounds
                 .push(crate::game::ModSpatialSoundCommand::PlayAt {
                     handle,
@@ -912,6 +913,7 @@ fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             let handle = ctx.feed.alloc_spatial_sound_handle();
             ctx.feed
+                .world
                 .spatial_sounds
                 .push(crate::game::ModSpatialSoundCommand::PlayOnMob {
                     handle,
@@ -926,6 +928,7 @@ fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::SoundStop { handle } => sim_call(|ctx| {
             if handle != 0 {
                 ctx.feed
+                    .world
                     .spatial_sounds
                     .push(crate::game::ModSpatialSoundCommand::Stop { handle });
             }
@@ -1049,15 +1052,10 @@ fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
 fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::GuiStateSet { key, value } => sim_call(|ctx| {
-            ctx.world
-                .gui_state_set(key, super::convert::gui_value(value))
+            crate::gui::gui_state_set(ctx.gui_state, key, super::convert::gui_value(value))
         }),
         HostCall::GuiStateGet { key } => sim_query(|ctx| {
-            HostRet::GuiValue(
-                ctx.world
-                    .gui_state_get(&key)
-                    .map(super::convert::gui_value_out),
-            )
+            HostRet::GuiValue(ctx.gui_state.get(&key).map(super::convert::gui_value_out))
         }),
         HostCall::GuiOpen { kind_key } => {
             // Resolve WITHOUT registering: opening a kind nothing declared is
@@ -1241,9 +1239,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1274,9 +1274,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1444,9 +1446,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1597,9 +1601,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1625,8 +1631,8 @@ mod tests {
                 HostRet::Bool(false)
             );
         });
-        assert_eq!(feed.sounds.len(), 1, "one resolved sound queued");
-        assert_eq!(feed.sounds[0].pos, Some(Vec3::new(1.0, 64.0, 1.0)));
+        assert_eq!(feed.world.sounds.len(), 1, "one resolved sound queued");
+        assert_eq!(feed.world.sounds[0].pos, Some(Vec3::new(1.0, 64.0, 1.0)));
     }
 
     #[test]
@@ -1643,9 +1649,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1680,9 +1688,11 @@ mod tests {
             let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
             let mut feed = TickEvents::default();
             let mut queue = PostQueue::default();
+            let mut gui = crate::gui::empty_gui_state();
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut player,
+                gui_state: &mut gui,
                 feed: &mut feed,
                 queue: &mut queue,
             };
@@ -1730,7 +1740,7 @@ mod tests {
                     "unknown sounds do not allocate handles"
                 );
             });
-            (handles.0, handles.1, feed.spatial_sounds)
+            (handles.0, handles.1, feed.world.spatial_sounds)
         }
 
         let first = run_once();
@@ -1791,9 +1801,11 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };

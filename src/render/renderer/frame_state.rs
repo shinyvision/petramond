@@ -159,9 +159,12 @@ impl Renderer {
         self.selection = shape;
     }
 
-    /// Store the block-break overlay to draw this frame (or `None` to clear).
-    pub fn set_break_overlay(&mut self, v: Option<BreakOverlayView>) {
-        self.break_overlay = v;
+    /// Store the block-break overlays to draw this frame (empty clears). A
+    /// small bounded slice — the local miner's own crack plus the capped
+    /// nearest remotes; each bakes exactly like the single overlay always did.
+    pub fn set_break_overlays(&mut self, v: &[BreakOverlayView]) {
+        self.break_overlays.clear();
+        self.break_overlays.extend_from_slice(v);
     }
 
     /// Advance and store the first-person held-item / hand state for this frame.
@@ -220,10 +223,19 @@ impl Renderer {
         self.mobs.extend_from_slice(v);
     }
 
-    /// Store the third-person player body to draw this frame (`None` in first
-    /// person — the body, and its held item, then draw nothing).
+    /// Store the LOCAL third-person player body to draw this frame (`None` in
+    /// first person — the body, and its held item, then draw nothing). Its
+    /// held item animates from the renderer's own first-person `held_item`
+    /// view, exactly as before remote players existed.
     pub fn set_player(&mut self, v: Option<PlayerRenderInstance>) {
         self.player_view = v;
+    }
+
+    /// Store the REMOTE players' bodies + held-item views for this frame
+    /// (already interpolated/posed by the game). Reuses capacity.
+    pub fn set_remote_players(&mut self, v: &[super::RemotePlayerRender]) {
+        self.remote_players.clear();
+        self.remote_players.extend_from_slice(v);
     }
 
     /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
@@ -267,7 +279,7 @@ impl Renderer {
         self.hand_index_count = 0;
         self.hand_vertex_count = 0;
         self.item3d_vertex_count = 0;
-        self.break_overlay = None;
+        self.break_overlays.clear();
         self.break_draw.index_count = 0;
         self.item_entity_draw.index_count = 0;
         self.item_model_entity_draw.index_count = 0;
@@ -288,8 +300,11 @@ impl Renderer {
             mob.visible.clear();
         }
         self.player_view = None;
+        self.remote_players.clear();
+        self.player_visible.clear();
         self.player_gpu.draw.index_count = 0;
         self.player_item_draw.index_count = 0;
+        self.player_model_item_draw.index_count = 0;
         self.player_block_item_draw.index_count = 0;
     }
 

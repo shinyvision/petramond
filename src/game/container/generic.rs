@@ -47,7 +47,7 @@ impl ContainerMenu {
     /// The open mod GUI's container slots for the render view, or `None` when
     /// the session is not a mod GUI opened from a block with storage. (The
     /// chest and furnace draw through their own views.)
-    pub(in crate::game) fn open_container_view(&self, world: &World) -> Option<ContainerView> {
+    pub(crate) fn open_container_view(&self, world: &World) -> Option<ContainerView> {
         if !matches!(self.target, ContainerTarget::ModGui { .. }) {
             return None;
         }
@@ -59,7 +59,7 @@ impl ContainerMenu {
 
     /// The open chest's slots for the render view, or `None` when no chest is
     /// open.
-    pub(in crate::game) fn open_chest_view(&self, world: &World) -> Option<ChestView> {
+    pub(crate) fn open_chest_view(&self, world: &World) -> Option<ChestView> {
         let ContainerTarget::Chest(pos) = self.target else {
             return None;
         };

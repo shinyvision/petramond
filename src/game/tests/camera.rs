@@ -3,6 +3,7 @@ use crate::mathh::Vec3;
 
 #[test]
 fn camera_eases_grounded_step_up_to_the_player_eye() {
+    // The camera mirrors the CLIENT's predicted player.
     let mut game = game();
     game.player.pos = Vec3::new(0.0, 64.0, 0.0);
     game.player.vel = Vec3::ZERO;

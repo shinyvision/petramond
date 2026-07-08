@@ -111,35 +111,103 @@ impl App {
     }
 
     pub(super) fn open_pause(&mut self) {
-        if self.game.is_none() {
+        let Some(game) = self.game.as_mut() else {
             return;
-        }
+        };
+        // Pause is a protocol message since multiplayer Phase D: the server
+        // thread keeps streaming/autosaving but skips the fixed ticks. The
+        // screen switch below is what stops App::update calling Game::tick
+        // (it still pumps the network — see update.rs).
+        game.set_paused(true);
         self.screen = AppScreen::Pause;
         self.pointer.release_for_menu();
         self.audio.set_loop(None, now_seconds());
     }
 
     pub(super) fn resume_game(&mut self) {
-        if self.game.is_none() {
+        // Pause-close cleanup: a stale LAN error must not greet the next open.
+        self.lan_error = None;
+        let Some(game) = self.game.as_mut() else {
             self.screen = AppScreen::Title;
             self.pointer.release_for_menu();
             return;
-        }
+        };
+        game.set_paused(false);
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
     }
 
-    pub(super) fn save_and_quit_to_title(&mut self) {
-        if let Some(game) = self.game.as_mut() {
-            game.save_all();
+    /// The pause menu's Open to LAN: bind the default port into the running
+    /// HOST server. Success shows the port label; failure shows inline.
+    pub(super) fn open_lan(&mut self) {
+        let Some(game) = self.game.as_mut() else {
+            return;
+        };
+        let port = crate::net::DEFAULT_PORT;
+        match game.open_to_lan(port) {
+            Ok(bound) => {
+                self.lan_port = Some(bound);
+                self.lan_error = None;
+            }
+            Err(e) => self.lan_error = Some(format!("Couldn't open port {port}: {e}")),
         }
-        self.game = None;
+    }
+
+    pub(super) fn save_and_quit_to_title(&mut self) {
+        debug_assert!(
+            self.game.as_ref().map_or(true, |g| !g.is_remote()),
+            "save-and-quit is a HOST action; remote sessions disconnect"
+        );
+        if let Some(game) = self.game.take() {
+            // Joins the server thread; it saves everything before exiting.
+            game.shutdown();
+        }
         self.screen = AppScreen::Title;
+        self.teardown_game_scene();
+    }
+
+    /// Leave a REMOTE session (the pause menu's Disconnect): dropping the
+    /// handle's sender makes the connection writer flush a farewell
+    /// `Disconnect`; the server saves our player on its leave path. Nothing
+    /// to save locally.
+    pub(super) fn disconnect_to_title(&mut self) {
+        debug_assert!(
+            self.game.as_ref().is_some_and(|g| g.is_remote()),
+            "Disconnect is a remote-session action"
+        );
+        if let Some(game) = self.game.take() {
+            game.shutdown();
+        }
+        self.screen = AppScreen::Title;
+        self.teardown_game_scene();
+    }
+
+    /// The involuntary exit: the server became unreachable (host thread
+    /// crash, remote server close / connection loss). NO save — a crashed
+    /// host has no server thread left to ask, and a remote server saves
+    /// autonomously. Lands on the Disconnected screen with the reason.
+    pub(super) fn enter_connection_lost(&mut self, reason: String) {
+        if let Some(game) = self.game.take() {
+            // For a crashed host thread this is a no-op join; for a remote
+            // loss it drops the dead connection. Neither path saves.
+            game.shutdown();
+        }
+        self.disconnect_message = reason;
+        self.screen = AppScreen::ConnectionLost;
+        self.teardown_game_scene();
+    }
+
+    /// Shared post-session teardown (every quit/disconnect path): cursor,
+    /// audio, scene, hand state, LAN bookkeeping, world-list refresh. The
+    /// caller sets the target screen.
+    fn teardown_game_scene(&mut self) {
         self.pointer.release_for_menu();
         self.audio.set_loop(None, now_seconds());
         self.scene.clear();
         self.hand = HandTriggers::default();
         self.sleep_interact_hand_t = 0.0;
+        self.lan_port = None;
+        self.lan_error = None;
         self.renderer_world_clear_pending = true;
         self.refresh_worlds();
     }
@@ -264,17 +332,26 @@ impl App {
             Vec3::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
-        self.game = Some(crate::game::Game::new(
+        self.adopt_game(crate::game::Game::new(
             cam,
             world_dir_name,
             seed,
             self.render_dist,
         ));
+    }
+
+    /// Install a freshly-built game session and enter gameplay — the shared
+    /// tail of [`start_game`] (which builds the session, spawning the server
+    /// thread) and the test fixtures (which build a loopback-piped session).
+    pub(crate) fn adopt_game(&mut self, game: crate::game::Game) {
+        self.game = Some(game);
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();
         self.hand = HandTriggers::default();
         self.sleep_interact_hand_t = 0.0;
+        self.lan_port = None;
+        self.lan_error = None;
         self.renderer_world_clear_pending = false;
         // A world saved while dead (quit from the death screen, or a crash)
         // reopens ON the death screen — a 0-health player must never resume

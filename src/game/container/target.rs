@@ -4,7 +4,7 @@ use crate::mathh::IVec3;
 /// screen. The app's `AppScreen` decides which screen is up; this decides which
 /// block-entity (or the inventory-side craft grid) that screen reads and mutates.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::game) enum ContainerTarget {
+pub(crate) enum ContainerTarget {
     /// No container GUI is editing anything (gameplay, or a screen that owns no
     /// block-entity yet).
     #[default]
@@ -29,16 +29,4 @@ pub(in crate::game) enum ContainerTarget {
         kind: crate::gui::GuiKind,
         pos: Option<IVec3>,
     },
-}
-
-impl ContainerTarget {
-    /// The world position of the open chest, if a chest is the current target. The
-    /// lid animation on `Game` reads this to know which chest to ease open.
-    #[inline]
-    pub(in crate::game) fn open_chest(self) -> Option<IVec3> {
-        match self {
-            ContainerTarget::Chest(pos) => Some(pos),
-            _ => None,
-        }
-    }
 }

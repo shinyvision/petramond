@@ -1,11 +1,14 @@
-//! First-person held-item swing STATE MACHINE.
+//! Held-item swing STATE MACHINE.
 //!
 //! Advances the punch animation phase each frame, turning the sim's per-frame
 //! [`HeldItemFrame`] intent (mining / instant-break / place) into the flat
 //! [`HeldItemView`] that the stateless hand geometry builders in [`super::hand`]
 //! consume. This owns the timing — the looping mining sawtooth, the one-shot
 //! break/place jab, and the place jab's reduced [`HeldItemView::swing_scale`]
-//! amplitude — and nothing about geometry or pose.
+//! amplitude — and nothing about geometry or pose. The renderer owns one for
+//! the first-person hand / local third-person body; each REMOTE player owns
+//! one too (`game/remote_players.rs`), fed from replicated flags, so every
+//! view animates from the same triggers.
 
 use super::{HeldItemFrame, HeldItemView};
 
@@ -33,7 +36,7 @@ const EAT_BLEND_OUT_S: f32 = 0.10;
 const EAT_NEAR_EASE_S: f32 = 0.09;
 
 #[derive(Copy, Clone, Debug)]
-pub(super) struct HeldItemAnimator {
+pub(crate) struct HeldItemAnimator {
     swing_t: f32,
     swing_finishing: bool,
     /// Amplitude of the swing currently in flight (see [`HeldItemView::swing_scale`]).

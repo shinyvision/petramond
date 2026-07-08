@@ -19,7 +19,6 @@
 use crate::block::Block;
 use crate::item::Tool;
 use crate::mathh::IVec3;
-use crate::player::RaycastHit;
 use crate::world::World;
 
 /// Seconds of mining per unit of hardness, bare-handed. Anchors wood
@@ -61,7 +60,8 @@ impl MiningState {
 
     /// Advance mining by `dt`. Call every tick.
     ///
-    /// - `look`: the current block raycast hit, or `None` if nothing is targeted.
+    /// - `look`: the targeted cell of the current raycast, or `None` if nothing
+    ///   is targeted.
     /// - `mining_held`: left mouse button currently held down (not edge).
     /// - `inventory_open`: gates mining off entirely while the inventory is open.
     /// - `world`: looked up to resolve the targeted block.
@@ -74,7 +74,7 @@ impl MiningState {
     pub fn update(
         &mut self,
         dt: f32,
-        look: Option<&RaycastHit>,
+        look: Option<IVec3>,
         mining_held: bool,
         inventory_open: bool,
         world: &World,
@@ -91,22 +91,21 @@ impl MiningState {
     fn update_core(
         &mut self,
         dt: f32,
-        look: Option<&RaycastHit>,
+        look: Option<IVec3>,
         mining_held: bool,
         inventory_open: bool,
         tool: Option<Tool>,
         block_at: &impl Fn(IVec3) -> Block,
     ) -> Option<BreakEvent> {
         // Not mining, inventory open, or nothing targeted -> reset and bail.
-        let hit = match (mining_held, inventory_open, look) {
-            (true, false, Some(hit)) => hit,
+        let pos = match (mining_held, inventory_open, look) {
+            (true, false, Some(cell)) => cell,
             _ => {
                 self.reset();
                 return None;
             }
         };
 
-        let pos = hit.block;
         let block = block_at(pos);
 
         // Unbreakable cells (Air/Water/hardness < 0) are never mining targets.
@@ -158,7 +157,9 @@ impl MiningState {
     }
 
     /// True while a block is actively being mined (a target with accrued time).
-    /// Drives the hand punch animation.
+    /// The client-side hand/dust now key on the REPLICATED `overlay()` state
+    /// (multiplayer C2c-i), so this is a test-only readout of the raw latch.
+    #[cfg(test)]
     #[inline]
     pub fn is_mining(&self) -> bool {
         self.target.is_some() && self.elapsed > 0.0
@@ -169,13 +170,6 @@ impl MiningState {
     #[inline]
     pub fn target(&self) -> Option<IVec3> {
         self.target
-    }
-
-    /// The block being mined (cached at mining start), if any. Lets the tick resolve
-    /// the block's mining sound without re-reading the world mid-break.
-    #[inline]
-    pub fn block(&self) -> Option<Block> {
-        self.block
     }
 
     #[inline]
@@ -269,8 +263,7 @@ mod tests {
     use super::*;
     use crate::block::Block;
     use crate::item::ToolKind;
-    use crate::mathh::{IVec3, SelectionShape};
-    use crate::player::RaycastHit;
+    use crate::mathh::IVec3;
 
     /// A pickaxe of `tier` in hand.
     fn pick(tier: u8) -> Option<Tool> {
@@ -296,21 +289,16 @@ mod tests {
         })
     }
 
-    /// A raycast hit at `pos` with an upward face normal (enough for the
-    /// controller, which only reads `hit.block`).
-    fn hit_at(pos: IVec3) -> RaycastHit {
-        RaycastHit {
-            block: pos,
-            normal: IVec3::Y,
-            outline: SelectionShape::full_block(pos),
-        }
+    /// The targeted cell, as the controller consumes it.
+    fn hit_at(pos: IVec3) -> IVec3 {
+        pos
     }
 
     /// Drive `update_core` bare-handed with a constant single-block world.
     fn step(
         state: &mut MiningState,
         dt: f32,
-        look: Option<&RaycastHit>,
+        look: Option<IVec3>,
         held: bool,
         inv_open: bool,
         block: Block,
@@ -322,7 +310,7 @@ mod tests {
     fn step_with_tool(
         state: &mut MiningState,
         dt: f32,
-        look: Option<&RaycastHit>,
+        look: Option<IVec3>,
         held: bool,
         inv_open: bool,
         tool: Option<Tool>,
@@ -348,7 +336,7 @@ mod tests {
 
         // Well before 5.0 s (4.0 s) we are still mining with no break event.
         for _ in 0..40 {
-            assert!(step(&mut state, 0.1, Some(&hit), true, false, Block::OakLog).is_none());
+            assert!(step(&mut state, 0.1, Some(hit), true, false, Block::OakLog).is_none());
         }
         assert!(state.is_mining());
 
@@ -359,7 +347,7 @@ mod tests {
         let mut ev = None;
         for _ in 0..20 {
             elapsed += dt;
-            if let Some(e) = step(&mut state, dt, Some(&hit), true, false, Block::OakLog) {
+            if let Some(e) = step(&mut state, dt, Some(hit), true, false, Block::OakLog) {
                 ev = Some(e);
                 break;
             }
@@ -383,7 +371,7 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(0, 64, 0);
         let hit = hit_at(pos);
-        let ev = step(&mut state, 0.016, Some(&hit), true, false, Block::Poppy)
+        let ev = step(&mut state, 0.016, Some(hit), true, false, Block::Poppy)
             .expect("instant block breaks on the first qualifying frame");
         assert_eq!(ev.block, Block::Poppy);
         assert!(ev.harvested);
@@ -400,7 +388,7 @@ mod tests {
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
-            if let Some(e) = step(&mut state, dt, Some(&hit), true, false, Block::Stone) {
+            if let Some(e) = step(&mut state, dt, Some(hit), true, false, Block::Stone) {
                 ev = Some(e);
                 break;
             }
@@ -419,7 +407,7 @@ mod tests {
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
-            if let Some(e) = step(&mut state, dt, Some(&hit), true, false, Block::Dirt) {
+            if let Some(e) = step(&mut state, dt, Some(hit), true, false, Block::Dirt) {
                 ev = Some(e);
                 break;
             }
@@ -462,7 +450,7 @@ mod tests {
         let dt = 0.05;
         let mut t = 0.0;
         while t + dt < half {
-            step(&mut state, dt, Some(&hit), true, false, Block::Stone);
+            step(&mut state, dt, Some(hit), true, false, Block::Stone);
             t += dt;
         }
         let (otarget, stage) = state.overlay().expect("overlay while mining stone");
@@ -480,14 +468,14 @@ mod tests {
         let b = hit_at(IVec3::new(0, 0, 1));
 
         for _ in 0..10 {
-            step(&mut state, 0.1, Some(&a), true, false, Block::Stone);
+            step(&mut state, 0.1, Some(a), true, false, Block::Stone);
         }
         assert!(state.is_mining());
         let (_, before) = state.overlay().unwrap();
         assert!(before > 0);
 
         // Switching the target restarts the timer for this frame.
-        step(&mut state, 0.1, Some(&b), true, false, Block::Stone);
+        step(&mut state, 0.1, Some(b), true, false, Block::Stone);
         let (target, stage) = state.overlay().unwrap();
         assert_eq!(target, IVec3::new(0, 0, 1));
         assert_eq!(stage, 0, "target switch resets elapsed to one frame of dt");
@@ -498,12 +486,12 @@ mod tests {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(3, 3, 3));
         for _ in 0..10 {
-            step(&mut state, 0.1, Some(&hit), true, false, Block::Stone);
+            step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         assert!(state.is_mining());
 
         // Button up: progress clears.
-        assert!(step(&mut state, 0.1, Some(&hit), false, false, Block::Stone).is_none());
+        assert!(step(&mut state, 0.1, Some(hit), false, false, Block::Stone).is_none());
         assert!(!state.is_mining());
         assert_eq!(state.overlay(), None);
     }
@@ -513,11 +501,11 @@ mod tests {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(1, 1, 1));
         for _ in 0..5 {
-            step(&mut state, 0.1, Some(&hit), true, false, Block::Stone);
+            step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         assert!(state.is_mining());
         // Opening the inventory resets even with the button held.
-        assert!(step(&mut state, 0.1, Some(&hit), true, true, Block::Stone).is_none());
+        assert!(step(&mut state, 0.1, Some(hit), true, true, Block::Stone).is_none());
         assert!(!state.is_mining());
     }
 
@@ -526,7 +514,7 @@ mod tests {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(1, 1, 1));
         for _ in 0..5 {
-            step(&mut state, 0.1, Some(&hit), true, false, Block::Stone);
+            step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         assert!(state.is_mining());
         // Losing the raycast (look = None) clears progress.
@@ -539,7 +527,7 @@ mod tests {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(0, 0, 0));
         // Water has hardness < 0: never mined.
-        assert!(step(&mut state, 1.0, Some(&hit), true, false, Block::Water).is_none());
+        assert!(step(&mut state, 1.0, Some(hit), true, false, Block::Water).is_none());
         assert!(!state.is_mining());
         assert_eq!(state.target(), None);
     }
@@ -687,7 +675,7 @@ mod tests {
             let total = break_time(block, tool);
             for _ in 0..((total / dt) as usize + 2) {
                 if let Some(e) =
-                    step_with_tool(&mut state, dt, Some(&hit), true, false, tool, block)
+                    step_with_tool(&mut state, dt, Some(hit), true, false, tool, block)
                 {
                     return e;
                 }
@@ -715,7 +703,7 @@ mod tests {
         let hit = hit_at(IVec3::new(2, 2, 2));
         // Mine stone bare-handed for a while.
         for _ in 0..10 {
-            step(&mut state, 0.1, Some(&hit), true, false, Block::Stone);
+            step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         let (_, before) = state.overlay().unwrap();
         assert!(before > 0);
@@ -723,7 +711,7 @@ mod tests {
         step_with_tool(
             &mut state,
             0.1,
-            Some(&hit),
+            Some(hit),
             true,
             false,
             pick(1),

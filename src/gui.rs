@@ -43,6 +43,22 @@ pub(crate) fn empty_gui_state() -> Arc<GuiStateMap> {
     EMPTY.get_or_init(|| Arc::new(GuiStateMap::new())).clone()
 }
 
+/// Write a session state key (tick-side; copy-on-write against any
+/// outstanding snapshot — at most one clone per snapshot taken). The map lives
+/// per player session (`ConnectedPlayer::gui_state`).
+pub(crate) fn gui_state_set(map: &mut Arc<GuiStateMap>, key: String, value: GuiValue) {
+    Arc::make_mut(map).insert(key, value);
+}
+
+/// Reset a session state map for a fresh GUI session (the menu funnels call
+/// this on open AND close, so a session can never read a predecessor's
+/// values).
+pub(crate) fn gui_state_clear(map: &mut Arc<GuiStateMap>) {
+    if !map.is_empty() {
+        *map = empty_gui_state();
+    }
+}
+
 /// A hit-tested crafting slot: an input cell index (`0..cols*cols`, row-major) or
 /// the single output result slot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -321,5 +337,43 @@ impl Default for UiSnapshot {
             hurt_flash: 0.0,
             heart_wiggle: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+
+    /// The GUI state session contract (per player session since C2c-iii):
+    /// set/get round-trips, clear resets to the shared empty map, and a held
+    /// snapshot is a refcount bump that tick-side writes never mutate in place
+    /// (copy-on-write) — which is also what makes the menu-sync `Arc`
+    /// identity change detection sound.
+    #[test]
+    fn gui_state_set_get_clear_and_snapshot_cow() {
+        let mut map = empty_gui_state();
+        assert!(map.get("wheel:angle").is_none());
+
+        gui_state_set(&mut map, "wheel:angle".into(), GuiValue::F32(1.5));
+        assert_eq!(map.get("wheel:angle"), Some(&GuiValue::F32(1.5)));
+
+        // A held snapshot keeps its values across later writes, and the write
+        // lands on a FRESH allocation (identity change = "changed" on the wire).
+        let snap = map.clone();
+        gui_state_set(&mut map, "wheel:angle".into(), GuiValue::F32(2.0));
+        gui_state_set(&mut map, "wheel:result".into(), GuiValue::Str("stick".into()));
+        assert_eq!(snap.get("wheel:angle"), Some(&GuiValue::F32(1.5)));
+        assert_eq!(snap.get("wheel:result"), None);
+        assert_eq!(map.get("wheel:angle"), Some(&GuiValue::F32(2.0)));
+        assert!(!Arc::ptr_eq(&snap, &map), "a write under a snapshot re-allocates");
+
+        // Unchanged between snapshots = the same allocation (no per-frame copy).
+        let a = map.clone();
+        let b = map.clone();
+        assert!(Arc::ptr_eq(&a, &b));
+
+        gui_state_clear(&mut map);
+        assert!(map.get("wheel:angle").is_none());
+        assert!(map.get("wheel:result").is_none());
     }
 }

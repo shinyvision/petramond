@@ -31,10 +31,10 @@ mod ragdoll;
 mod spawn;
 
 pub use brain::Brain;
-pub use instance::Instance;
+pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
-pub use manager::{DeathDrop, MobAttack, Mobs, ShearDrop};
-pub use push::Body;
+pub use manager::{DeathDrop, MobAttack, Mobs, PlayerAnchor, ShearDrop};
+pub use push::{separation, Body};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_cap_full,
     HOSTILE_SPAWN_ATTEMPTS,
@@ -259,6 +259,25 @@ pub enum MobSoundCategory {
     Hurt,
     /// The killing hit landed on the mob.
     Death,
+}
+
+impl MobSoundCategory {
+    /// Wire discriminant (net protocol `WorldEventMsg::MobSound`).
+    pub(crate) fn to_u8(self) -> u8 {
+        match self {
+            Self::Idle => 0,
+            Self::Hurt => 1,
+            Self::Death => 2,
+        }
+    }
+
+    pub(crate) fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Hurt,
+            2 => Self::Death,
+            _ => Self::Idle,
+        }
+    }
 }
 
 /// One species sound hook. Idle sounds carry a client-side tick cadence; hurt

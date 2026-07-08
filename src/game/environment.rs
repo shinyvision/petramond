@@ -32,8 +32,8 @@ impl Game {
         // Fog/underwater follow the RENDERED camera: a third-person boom dipping
         // into water must show underwater fog even while the player's eye is dry.
         let eye = self.render_camera().pos;
-        let underwater = camera_eye_underwater(&self.world, eye);
-        let env = self.world.environment();
+        let underwater = camera_eye_underwater(&self.replica, eye);
+        let env = self.replica.environment();
 
         let fog = if underwater {
             UNDERWATER_FOG_COLOR
@@ -51,7 +51,7 @@ impl Game {
 
     fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
         blended_fog_color(x, z, |wx, wz| {
-            if let Some(id) = self.world.column_biome(wx, wz) {
+            if let Some(id) = self.replica.column_biome(wx, wz) {
                 return Biome::from_id(id);
             }
 
@@ -142,15 +142,17 @@ mod tests {
 
     fn install_empty_chunk(game: &mut Game) {
         let pos = ChunkPos::new(0, 0);
-        game.world.clear_world();
+        // The environment reads the REPLICA (what the camera sees), so the
+        // fixture water lands there.
+        game.replica.clear_world();
         // A full empty column (every section present) so a water write at any Y lands in
         // a loaded section — an empty `Chunk` would split to no surface sections.
-        game.world.insert_empty_column_for_test(pos);
+        game.replica.insert_empty_column_for_test(pos);
     }
 
     fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
         let section = game
-            .world
+            .replica
             .section_at_world_mut_for_test(pos.x, pos.y, pos.z)
             .expect("test section must be installed");
         section.set_water(

@@ -53,6 +53,11 @@ const THROW_UP: f32 = 1.5;
 /// A free-floating stack of items in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DroppedItem {
+    /// Stable session identity for replication (the item-entity analogue of
+    /// `mob::Instance::id`). Assigned by `world::entities::DroppedItems` when
+    /// the drop enters the active set (spawn, reload, or pickup split);
+    /// constructors leave it 0. Never persisted — a reload assigns fresh ids.
+    pub id: u64,
     /// World-space centre of the item cube.
     pub pos: Vec3,
     pub vel: Vec3,
@@ -68,10 +73,12 @@ pub struct DroppedItem {
     /// delay and drives the despawn timer; persisted with the owning chunk so the
     /// remaining lifetime survives an unload/reload. NOT touched by physics.
     pub ticks_lived: u32,
-    /// Transient reservation from the pickup planner. Requested drops are the only
-    /// ones that the magnet may pull toward the player; save/load deliberately
-    /// reconstructs this as `false` so reservations are recomputed from inventory.
-    pub pickup_requested: bool,
+    /// Transient reservation from the pickup planner: the PLAYER this drop is
+    /// reserved for (at most one at a time — first come per tick, in session
+    /// order). Only a requested drop may magnet, and it flies toward ITS
+    /// requester; save/load deliberately reconstructs this as `None` so
+    /// reservations are recomputed from inventory.
+    pub pickup_requested: Option<crate::server::player::PlayerId>,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
     /// Previous-tick `pos`/`spin`, snapshotted at the top of each physics tick so the
@@ -98,13 +105,14 @@ impl DroppedItem {
         // Stagger the starting spin so a pile of drops isn't phase-locked.
         let spin = hash_signed(s ^ 0x3C3C) * std::f32::consts::PI;
         DroppedItem {
+            id: 0,
             pos,
             vel,
             stack,
             skylight: 63,
             blocklight: 0,
             ticks_lived: 0,
-            pickup_requested: false,
+            pickup_requested: None,
             spin,
             prev_pos: pos,
             prev_spin: spin,
@@ -125,28 +133,29 @@ impl DroppedItem {
             d.z * THROW_SPEED,
         );
         DroppedItem {
+            id: 0,
             pos,
             vel,
             stack,
             skylight: 63,
             blocklight: 0,
             ticks_lived: 0,
-            pickup_requested: false,
+            pickup_requested: None,
             spin: 0.0,
             prev_pos: pos,
             prev_spin: 0.0,
         }
     }
 
-    /// Mark this drop as reserved for player pickup. The world pickup planner owns
-    /// when this flag is set; physics only consumes the decision.
-    pub fn request_pickup(&mut self) {
-        self.pickup_requested = true;
+    /// Reserve this drop for player `by`'s pickup. The world pickup planner
+    /// owns when this is set; physics only consumes the decision.
+    pub fn request_pickup(&mut self, by: crate::server::player::PlayerId) {
+        self.pickup_requested = Some(by);
     }
 
     /// Release this drop from the pickup magnet.
     pub fn clear_pickup_request(&mut self) {
-        self.pickup_requested = false;
+        self.pickup_requested = None;
     }
 
     /// Advance physics by `dt`: gravity, axis-resolved block collision, and spin.

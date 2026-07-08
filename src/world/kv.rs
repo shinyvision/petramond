@@ -1,16 +1,13 @@
 //! Persistent mod data on the world (WIKI/modding.md Phase 3b): the world KV
 //! map (rides `level.dat`, restored at session open) and the per-cell section
-//! KV accessors (each cell's entries ride its section's save record) — plus
-//! the transient Phase 5 GUI-session state map.
+//! KV accessors (each cell's entries ride its section's save record).
 //!
 //! Namespacing (`mod_id:key`, own-prefix writes) is enforced at the HostCall
 //! boundary (`modding::host`), not here — engine/test code may use any key.
-//! GUI state keys are mod-local by design (the map belongs to one session).
+//! The GUI-session state map moved to the player session in multiplayer
+//! C2c-iii (`ConnectedPlayer::gui_state` + the `crate::gui` state helpers).
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-
-use crate::gui::{GuiStateMap, GuiValue};
 
 use super::store::World;
 
@@ -82,66 +79,5 @@ impl World {
 
     fn cell_kv_writable(&self, wx: i32, wy: i32, wz: i32) -> bool {
         crate::chunk::SectionPos::from_world(wx, wy, wz).is_some_and(|sp| self.stream_writable(sp))
-    }
-
-    // ---- Phase 5: the open mod GUI session's state map ----------------------
-
-    #[inline]
-    pub fn gui_state_get(&self, key: &str) -> Option<&GuiValue> {
-        self.gui_state.get(key)
-    }
-
-    /// Write a session state key (tick-side; copy-on-write against any
-    /// outstanding frame snapshot — at most one clone per snapshot taken).
-    pub fn gui_state_set(&mut self, key: String, value: GuiValue) {
-        Arc::make_mut(&mut self.gui_state).insert(key, value);
-    }
-
-    /// Reset the map for a fresh GUI session (called by the menu funnel on
-    /// open AND close, so a session can never read a predecessor's values).
-    pub fn gui_state_clear(&mut self) {
-        if !self.gui_state.is_empty() {
-            self.gui_state = crate::gui::empty_gui_state();
-        }
-    }
-
-    /// A shared read snapshot for the frame (a refcount bump; never a copy).
-    #[inline]
-    pub fn gui_state_snapshot(&self) -> Arc<GuiStateMap> {
-        self.gui_state.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The GUI state session contract: set/get round-trips, clear resets to
-    /// the shared empty map, and the frame snapshot is a refcount bump that
-    /// tick-side writes never mutate in place (copy-on-write).
-    #[test]
-    fn gui_state_set_get_clear_and_snapshot_cow() {
-        let mut w = World::new(1, 1);
-        assert!(w.gui_state_get("wheel:angle").is_none());
-
-        w.gui_state_set("wheel:angle".into(), GuiValue::F32(1.5));
-        assert_eq!(w.gui_state_get("wheel:angle"), Some(&GuiValue::F32(1.5)));
-
-        // A held frame snapshot keeps its values across later writes.
-        let snap = w.gui_state_snapshot();
-        w.gui_state_set("wheel:angle".into(), GuiValue::F32(2.0));
-        w.gui_state_set("wheel:result".into(), GuiValue::Str("stick".into()));
-        assert_eq!(snap.get("wheel:angle"), Some(&GuiValue::F32(1.5)));
-        assert_eq!(snap.get("wheel:result"), None);
-        assert_eq!(w.gui_state_get("wheel:angle"), Some(&GuiValue::F32(2.0)));
-
-        // Unchanged between snapshots = the same allocation (no per-frame copy).
-        let a = w.gui_state_snapshot();
-        let b = w.gui_state_snapshot();
-        assert!(Arc::ptr_eq(&a, &b));
-
-        w.gui_state_clear();
-        assert!(w.gui_state_get("wheel:angle").is_none());
-        assert!(w.gui_state_get("wheel:result").is_none());
     }
 }

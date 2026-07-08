@@ -106,7 +106,7 @@ impl World {
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
         self.mesh_pump_frame += 1;
-        self.drain_finished_light_bakes();
+        self.pump_light_bakes();
         self.drain_finished_meshes();
         self.release_settled_column_meshes();
         if max_per_frame == 0 {
@@ -387,7 +387,34 @@ impl World {
         })
     }
 
-    fn drain_finished_light_bakes(&mut self) {
+    /// Drain and apply finished light bakes — the light half of the pump,
+    /// public so a headless server loop can keep light current with no mesh
+    /// machinery attached. `tick_mesh_budget` calls this internally, so the
+    /// combined/client worlds behave exactly as before.
+    ///
+    /// On a `ServerHeadless` world this is ALSO where rebakes are REQUESTED:
+    /// edits mark light dirty into `headless_relight` (`mark_light_dirty_pos`)
+    /// because the mesh pump that normally demands rebakes
+    /// (`request_light_dependencies`) never runs headless. First-time bakes
+    /// still come from the streamer's `flush_settled_deferred`.
+    pub fn pump_light_bakes(&mut self) {
+        if !self.headless_relight.is_empty() {
+            debug_assert_eq!(self.role, crate::world::store::WorldRole::ServerHeadless);
+            let target = self.last_load_target;
+            for pos in std::mem::take(&mut self.headless_relight) {
+                let bakeable = self
+                    .sections
+                    .get(&pos)
+                    .is_some_and(|s| s.light_dirty && !s.all_opaque());
+                // Deferred first-timers bake once their gen neighbourhood
+                // settles (streamer-owned) — requesting here would double-bake.
+                if bakeable && !self.light_deferred.contains(&pos) {
+                    let key = target.map_or(0, |t| t.section_priority_key(pos));
+                    self.light_bakes
+                        .request(key, pos, &self.sections, &self.columns);
+                }
+            }
+        }
         let start = std::time::Instant::now();
         let mut drained = 0usize;
         while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
@@ -411,7 +438,10 @@ impl World {
                 s.mesh_revision = s.mesh_revision.wrapping_add(1);
             }
             self.bump_lighting_revision();
-            self.dirty_meshes.push(res.pos);
+            // Headless: no meshes to relight (see `queue_dirty_mesh`).
+            if self.role != crate::world::store::WorldRole::ServerHeadless {
+                self.dirty_meshes.push(res.pos);
+            }
         }
         self.flush_light_blocked_meshes();
     }

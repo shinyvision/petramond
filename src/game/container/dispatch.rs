@@ -18,7 +18,7 @@ impl ContainerMenu {
     /// through ONE generic path driven by the target's `SlotSpec`s — the furnace's
     /// role hits just map to their conventional indices first. Only the transient
     /// stations (craft grid, workbench) keep dedicated handling.
-    pub(in crate::game) fn click(
+    pub(crate) fn click(
         &mut self,
         world: &mut World,
         inv: &mut Inventory,

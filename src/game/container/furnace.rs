@@ -9,7 +9,7 @@ use crate::gui::FurnaceView;
 use crate::world::World;
 
 impl ContainerMenu {
-    pub(in crate::game) fn open_furnace_view(&self, world: &World) -> Option<FurnaceView> {
+    pub(crate) fn open_furnace_view(&self, world: &World) -> Option<FurnaceView> {
         let ContainerTarget::Furnace(pos) = self.target else {
             return None;
         };

@@ -11,7 +11,8 @@
 //! which effects the player currently has and for how many more ticks — lives
 //! on [`crate::player::Player`] and is stepped once per game tick by
 //! `Game::tick_effects` (`src/game/health.rs`), never in per-frame code.
-//! Persistence is by registry NAME in `level.dat` (ids are session-scoped).
+//! Persistence is by registry NAME in `players/<name>.dat` (ids are
+//! session-scoped).
 
 use std::sync::LazyLock;
 

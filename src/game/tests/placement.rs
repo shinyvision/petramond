@@ -1,6 +1,4 @@
-use super::super::placement::facing_from_forward;
 use super::super::tick::TickEvents;
-use super::super::Game;
 use super::common::{filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
 use crate::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
@@ -8,14 +6,19 @@ use crate::facing::Facing;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3};
+use crate::server::placement::facing_from_forward;
 
 #[test]
 fn place_with_empty_hand_does_nothing() {
     let mut game = game();
     // The starting inventory is already empty.
-    assert!(game.player.inventory.selected().is_none());
-    game.look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
-    assert!(!game.try_place_for_test());
+    assert!(game.server.sessions[0]
+        .player
+        .inventory
+        .selected()
+        .is_none());
+    game.server.sessions[0].look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
+    assert!(!game.server.try_place_for_test());
 }
 
 #[test]
@@ -36,33 +39,52 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
         let mut game = game();
         install_empty_chunk(&mut game);
         let pos = IVec3::new(4, 64, 4);
-        game.world.set_block_world(pos.x, pos.y, pos.z, block);
-        game.look = Some(hit(pos, IVec3::Y));
-        game.pending_place = true;
+        game.server
+            .world
+            .set_block_world(pos.x, pos.y, pos.z, block);
+        game.server.sessions[0].look = Some(hit(pos, IVec3::Y));
+        game.server.sessions[0].pending_place = true;
 
         let mut events = TickEvents::default();
-        game.tick_place(&mut events);
+        game.server.tick_place(0, &mut events);
 
         assert!(
-            events.placed_block.is_none(),
+            events.player_at(0).placed_block.is_none(),
             "{block:?} should interact, not place"
         );
         // Every consumed interaction reports through the generic flag, so the
         // interact hand jab is the default for ALL interactables — a new
         // interaction kind must not need remembering in the presentation.
-        assert!(events.interacted, "{block:?} should report interacted");
+        assert!(
+            events.player_at(0).interacted,
+            "{block:?} should report interacted"
+        );
         match expected {
             ExpectedOpen::CraftingTable => {
-                assert!(game.request_open_table, "{block:?} should open crafting");
+                assert!(
+                    game.server.sessions[0].request_open_table,
+                    "{block:?} should open crafting"
+                );
             }
             ExpectedOpen::Furnace => {
-                assert_eq!(game.request_open_furnace, Some(pos), "{block:?}");
+                assert_eq!(
+                    game.server.sessions[0].request_open_furnace,
+                    Some(pos),
+                    "{block:?}"
+                );
             }
             ExpectedOpen::Chest => {
-                assert_eq!(game.request_open_chest, Some(pos), "{block:?}");
+                assert_eq!(
+                    game.server.sessions[0].request_open_chest,
+                    Some(pos),
+                    "{block:?}"
+                );
             }
             ExpectedOpen::FurnitureWorkbench => {
-                assert_eq!(game.request_open_workbench, Some(pos), "{block:?}");
+                assert!(
+                    game.server.sessions[0].request_open_workbench,
+                    "{block:?}"
+                );
             }
         }
     }
@@ -74,36 +96,46 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
     install_empty_chunk(&mut game);
     let floor = IVec3::new(5, 63, 5);
     let lower = floor + IVec3::Y;
-    game.world
+    game.server
+        .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    assert!(game.world.place_door(lower, Block::OakDoor, Facing::South));
+    assert!(game
+        .server
+        .world
+        .place_door(lower, Block::OakDoor, Facing::South));
     assert!(
         !game
+            .server
             .world
             .door_state_at(lower.x, lower.y, lower.z)
             .unwrap()
             .open
     );
 
-    game.look = Some(hit(lower, IVec3::Y));
-    game.pending_place = true;
+    game.server.sessions[0].look = Some(hit(lower, IVec3::Y));
+    game.server.sessions[0].pending_place = true;
     let mut events = TickEvents::default();
-    game.tick_place(&mut events);
+    game.server.tick_place(0, &mut events);
 
-    assert!(events.placed_block.is_none(), "door click should not place");
     assert!(
-        game.toggled_door.is_some(),
-        "door click should report a toggle event"
+        events.player_at(0).placed_block.is_none(),
+        "door click should not place"
     );
     assert!(
-        game.world
+        events.player_at(0).toggled_door.is_some(),
+        "door click should report a toggle event to the toggler"
+    );
+    assert!(
+        game.server
+            .world
             .door_state_at(lower.x, lower.y, lower.z)
             .unwrap()
             .open
     );
     let upper = lower + IVec3::Y;
     assert!(
-        game.world
+        game.server
+            .world
             .door_state_at(upper.x, upper.y, upper.z)
             .unwrap()
             .open
@@ -113,10 +145,10 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
 #[test]
 fn place_into_loaded_air_decrements_selected() {
     let mut game = game();
-    game.player.inventory = filled_inventory();
+    game.server.sessions[0].player.inventory = filled_inventory();
     // Player at the surface (section cy 4 ≈ y64): the vertical window streams the surface
     // band, and the y=200 placement below is into open air via materialize-on-write.
-    game.world.update_load(0, 4, 0);
+    game.server.world.update_load(0, 4, 0);
     // Real async generation runs on the shared worldgen pool; under a saturated pool
     // (the full `worldgen-tests` suite on a many-core box) this chunk's job can queue
     // for a while, so wait on a generous wall-clock deadline rather than a fixed poll
@@ -124,8 +156,8 @@ fn place_into_loaded_air_decrements_selected() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut loaded = false;
     while std::time::Instant::now() < deadline {
-        game.world.poll();
-        if game.world.chunk_loaded(0, 0) {
+        game.server.world.poll();
+        if game.server.world.chunk_loaded(0, 0) {
             loaded = true;
             break;
         }
@@ -134,17 +166,38 @@ fn place_into_loaded_air_decrements_selected() {
     assert!(loaded, "chunk (0,0) failed to load within 30s");
 
     let p = IVec3::new(0, 200, 0);
-    assert!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)).is_replaceable());
-    game.player.inventory.set_active(0);
-    let item = game.player.inventory.selected().unwrap().item;
+    assert!(Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z)).is_replaceable());
+    game.server.sessions[0].player.inventory.set_active(0);
+    let item = game.server.sessions[0]
+        .player
+        .inventory
+        .selected()
+        .unwrap()
+        .item;
     let block = item.as_block().unwrap();
-    let before = game.player.inventory.selected().unwrap().count;
+    let before = game.server.sessions[0]
+        .player
+        .inventory
+        .selected()
+        .unwrap()
+        .count;
 
-    game.look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y));
-    assert!(game.try_place_for_test());
+    game.server.sessions[0].look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y));
+    assert!(game.server.try_place_for_test());
 
-    assert_eq!(Block::from_id(game.world.chunk_block(p.x, p.y, p.z)), block);
-    assert_eq!(game.player.inventory.selected().unwrap().count, before - 1);
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z)),
+        block
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .count,
+        before - 1
+    );
 }
 
 #[test]
@@ -154,33 +207,45 @@ fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
     // top of it.
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.inventory = filled_inventory(); // a stack of Dirt
-    game.player.inventory.set_active(0);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
+    game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
 
     let g = IVec3::new(8, 100, 8);
-    game.world.set_block_world(g.x, g.y, g.z, Block::ShortGrass);
-    let before = game.player.inventory.selected().unwrap().count;
+    game.server
+        .world
+        .set_block_world(g.x, g.y, g.z, Block::ShortGrass);
+    let before = game.server.sessions[0]
+        .player
+        .inventory
+        .selected()
+        .unwrap()
+        .count;
 
     // Look straight at the grass and place into it.
-    game.look = Some(hit(g, IVec3::Y));
+    game.server.sessions[0].look = Some(hit(g, IVec3::Y));
     assert!(
-        game.try_place_for_test(),
+        game.server.try_place_for_test(),
         "placing into replaceable grass succeeds"
     );
 
     assert_eq!(
-        Block::from_id(game.world.chunk_block(g.x, g.y, g.z)),
+        Block::from_id(game.server.world.chunk_block(g.x, g.y, g.z)),
         Block::Dirt,
         "the block replaced the grass in its own cell, not the cell above"
     );
     assert_eq!(
-        game.player.inventory.selected().unwrap().count,
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .count,
         before - 1,
         "one block was consumed"
     );
     assert!(
-        game.world.item_entities().is_empty(),
+        game.server.world.item_entities().is_empty(),
         "the overwritten grass dropped nothing"
     );
 }
@@ -190,17 +255,17 @@ fn rooted_plants_place_only_on_their_required_ground() {
     // The data-driven substrate gate: a flower roots in soil (grass/dirt), a cactus
     // in sand (sand/red sand). Building onto the wrong ground is a no-op; the right
     // ground accepts it. Each case uses its own column so they don't interfere.
-    fn place_on(game: &mut Game, ground: Block, item: ItemType, col: i32) -> bool {
+    fn place_on(game: &mut super::common::TestGame, ground: Block, item: ItemType, col: i32) -> bool {
         let g = IVec3::new(col, 100, col);
-        game.world.set_block_world(g.x, g.y, g.z, ground);
+        game.server.world.set_block_world(g.x, g.y, g.z, ground);
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(item, 1));
-        game.player.inventory = inv;
-        game.player.inventory.set_active(0);
-        game.look = Some(hit(g, IVec3::Y)); // build on TOP of the ground block
-        let placed = game.try_place_for_test();
+        game.server.sessions[0].player.inventory = inv;
+        game.server.sessions[0].player.inventory.set_active(0);
+        game.server.sessions[0].look = Some(hit(g, IVec3::Y)); // build on TOP of the ground block
+        let placed = game.server.try_place_for_test();
         // The return must agree with whether the block actually landed above.
-        let above = Block::from_id(game.world.chunk_block(g.x, g.y + 1, g.z));
+        let above = Block::from_id(game.server.world.chunk_block(g.x, g.y + 1, g.z));
         assert_eq!(
             placed,
             above == item.as_block().unwrap(),
@@ -211,7 +276,7 @@ fn rooted_plants_place_only_on_their_required_ground() {
 
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
 
     // A flower (Dandelion) roots in soil only.
     assert!(
@@ -272,19 +337,19 @@ fn rooted_plants_place_only_on_their_required_ground() {
 fn rotating_held_stair_places_top_half() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::OakStairs, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
     game.toggle_held_block_rotation();
 
     let p = IVec3::new(4, 64, 4);
-    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test());
+    game.server.sessions[0].look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test());
 
     assert_eq!(
-        game.world.stair_state_at(p.x, p.y, p.z),
+        game.server.world.stair_state_at(p.x, p.y, p.z),
         StairState::new(Facing::North, StairHalf::Top)
     );
 }
@@ -293,35 +358,35 @@ fn rotating_held_stair_places_top_half() {
 fn slabs_stack_horizontally_with_mixed_materials() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::DirtSlab, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test(), "first slab places");
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test(), "first slab places");
     assert_eq!(
-        game.world.slab_state_at(p.x, p.y, p.z),
+        game.server.world.slab_state_at(p.x, p.y, p.z),
         SlabState::single(SlabSplit::Y, 0, Block::DirtSlab)
     );
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::CobblestoneSlab, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(p, IVec3::Y));
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(p, IVec3::Y));
     assert!(
-        game.try_place_for_test(),
+        game.server.try_place_for_test(),
         "second slab stacks in the hit cell"
     );
 
-    let state = game.world.slab_state_at(p.x, p.y, p.z);
+    let state = game.server.world.slab_state_at(p.x, p.y, p.z);
     assert_eq!(state.split, SlabSplit::Y);
     assert_eq!(state.layers, [Block::DirtSlab, Block::CobblestoneSlab]);
     assert_eq!(
-        game.world.slab_drop_stacks_at(p),
+        game.server.world.slab_drop_stacks_at(p),
         vec![
             ItemStack::new(ItemType::DirtSlab, 1),
             ItemStack::new(ItemType::CobblestoneSlab, 1),
@@ -334,37 +399,38 @@ fn slabs_stack_horizontally_with_mixed_materials() {
 fn slabs_stack_vertically_with_mixed_materials() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let support = IVec3::new(3, 64, 4);
     let p = support + IVec3::X;
-    game.world
+    game.server
+        .world
         .set_block_world(support.x, support.y, support.z, Block::Stone);
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::StoneSlab, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
     game.toggle_held_block_rotation();
     game.toggle_held_block_rotation();
-    game.look = Some(hit(support, IVec3::X));
+    game.server.sessions[0].look = Some(hit(support, IVec3::X));
     assert!(
-        game.try_place_for_test(),
+        game.server.try_place_for_test(),
         "vertical slab places against support"
     );
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::DirtSlab, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
     game.toggle_held_block_rotation();
     game.toggle_held_block_rotation();
-    game.look = Some(hit(p, IVec3::X));
+    game.server.sessions[0].look = Some(hit(p, IVec3::X));
     assert!(
-        game.try_place_for_test(),
+        game.server.try_place_for_test(),
         "second vertical slab stacks in the open half"
     );
 
-    let state = game.world.slab_state_at(p.x, p.y, p.z);
+    let state = game.server.world.slab_state_at(p.x, p.y, p.z);
     assert_eq!(state.split, SlabSplit::X);
     assert_eq!(state.layers, [Block::StoneSlab, Block::DirtSlab]);
 }
@@ -373,9 +439,9 @@ fn slabs_stack_vertically_with_mixed_materials() {
 fn torch_places_on_the_flat_side_of_a_stair() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let stair = IVec3::new(4, 64, 4);
-    assert!(game.world.place_stair(
+    assert!(game.server.world.place_stair(
         stair,
         Block::OakStairs,
         StairState::new(Facing::East, StairHalf::Bottom)
@@ -383,18 +449,21 @@ fn torch_places_on_the_flat_side_of_a_stair() {
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Torch, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(stair, -IVec3::X));
-    assert!(game.try_place_for_test(), "torch places on stair back");
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(stair, -IVec3::X));
+    assert!(
+        game.server.try_place_for_test(),
+        "torch places on stair back"
+    );
 
     let torch = stair - IVec3::X;
     assert_eq!(
-        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
         Block::Torch
     );
     assert_eq!(
-        game.world.torch_placement(torch),
+        game.server.world.torch_placement(torch),
         crate::torch::TorchPlacement::West
     );
 }
@@ -403,9 +472,9 @@ fn torch_places_on_the_flat_side_of_a_stair() {
 fn torch_does_not_place_on_the_open_side_of_a_stair() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let stair = IVec3::new(4, 64, 4);
-    assert!(game.world.place_stair(
+    assert!(game.server.world.place_stair(
         stair,
         Block::OakStairs,
         StairState::new(Facing::East, StairHalf::Bottom)
@@ -413,17 +482,17 @@ fn torch_does_not_place_on_the_open_side_of_a_stair() {
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Torch, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(stair, IVec3::X));
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(stair, IVec3::X));
     assert!(
-        !game.try_place_for_test(),
+        !game.server.try_place_for_test(),
         "stair open side is not a full torch support face"
     );
 
     let torch = stair + IVec3::X;
     assert_eq!(
-        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
         Block::Air
     );
 }
@@ -432,9 +501,9 @@ fn torch_does_not_place_on_the_open_side_of_a_stair() {
 fn torch_does_not_place_on_the_side_of_a_single_slab() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let slab = IVec3::new(4, 64, 4);
-    assert!(game.world.place_slab_layer(
+    assert!(game.server.world.place_slab_layer(
         slab,
         Block::DirtSlab,
         crate::slab::SlabSlot {
@@ -445,17 +514,17 @@ fn torch_does_not_place_on_the_side_of_a_single_slab() {
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Torch, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(slab, IVec3::X));
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(slab, IVec3::X));
     assert!(
-        !game.try_place_for_test(),
+        !game.server.try_place_for_test(),
         "single slab side is not a full torch support face"
     );
 
     let torch = slab + IVec3::X;
     assert_eq!(
-        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
         Block::Air
     );
 }
@@ -464,10 +533,10 @@ fn torch_does_not_place_on_the_side_of_a_single_slab() {
 fn torch_places_on_the_side_of_a_full_slab_stack() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let slab = IVec3::new(4, 64, 4);
     for (block, index) in [(Block::DirtSlab, 0), (Block::CobblestoneSlab, 1)] {
-        assert!(game.world.place_slab_layer(
+        assert!(game.server.world.place_slab_layer(
             slab,
             block,
             crate::slab::SlabSlot {
@@ -479,17 +548,17 @@ fn torch_places_on_the_side_of_a_full_slab_stack() {
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Torch, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(slab, IVec3::X));
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(slab, IVec3::X));
     assert!(
-        game.try_place_for_test(),
+        game.server.try_place_for_test(),
         "full slab stack supports wall torch"
     );
 
     let torch = slab + IVec3::X;
     assert_eq!(
-        Block::from_id(game.world.chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
         Block::Torch
     );
 }
@@ -498,29 +567,29 @@ fn torch_places_on_the_side_of_a_full_slab_stack() {
 fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::DirtSlab, 2));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test(), "bottom slab places");
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test(), "bottom slab places");
 
     // Hold TOP rotation and click the bottom slab's SIDE face: the hit cell's
     // empty top half must not swallow the click — only a face looking along
     // the split axis stacks. The top slab builds in the adjacent cell.
     game.toggle_held_block_rotation();
-    game.look = Some(hit(p, IVec3::X));
-    assert!(game.try_place_for_test(), "side click places");
+    game.server.sessions[0].look = Some(hit(p, IVec3::X));
+    assert!(game.server.try_place_for_test(), "side click places");
     assert_eq!(
-        game.world.slab_state_at(p.x, p.y, p.z),
+        game.server.world.slab_state_at(p.x, p.y, p.z),
         SlabState::single(SlabSplit::Y, 0, Block::DirtSlab),
         "the hit cell keeps its lone bottom layer"
     );
     assert_eq!(
-        game.world.slab_state_at(p.x + 1, p.y, p.z),
+        game.server.world.slab_state_at(p.x + 1, p.y, p.z),
         SlabState::single(SlabSplit::Y, 1, Block::DirtSlab),
         "the top slab lands in the adjacent cell"
     );
@@ -530,7 +599,7 @@ fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
 fn held_rotation_does_not_leak_across_item_swaps() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     // Rotate a held stair, then swap the ACTIVE SLOT's content to a slab (an
@@ -538,18 +607,18 @@ fn held_rotation_does_not_leak_across_item_swaps() {
     // latched rotation). The stale stair rotation must not orient the slab.
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::DirtStairs, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
     game.toggle_held_block_rotation();
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::DirtSlab, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
-    game.look = Some(hit(p - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test(), "slab places");
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions[0].look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test(), "slab places");
     assert_eq!(
-        game.world.slab_state_at(p.x, p.y, p.z),
+        game.server.world.slab_state_at(p.x, p.y, p.z),
         SlabState::single(SlabSplit::Y, 0, Block::DirtSlab),
         "an un-rotated slab places as a bottom slab"
     );
@@ -559,31 +628,34 @@ fn held_rotation_does_not_leak_across_item_swaps() {
 fn rotating_held_log_places_horizontal_axis() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::OakLog, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
 
     let vertical = IVec3::new(4, 64, 4);
-    game.look = Some(hit(vertical - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test());
+    game.server.sessions[0].look = Some(hit(vertical - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test());
     assert_eq!(
-        game.world.log_axis_at(vertical.x, vertical.y, vertical.z),
+        game.server
+            .world
+            .log_axis_at(vertical.x, vertical.y, vertical.z),
         LogAxis::Y
     );
 
     inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::OakLog, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
     game.toggle_held_block_rotation();
 
     let horizontal = IVec3::new(6, 64, 4);
-    game.look = Some(hit(horizontal - IVec3::Y, IVec3::Y));
-    assert!(game.try_place_for_test());
+    game.server.sessions[0].look = Some(hit(horizontal - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test());
     assert_eq!(
-        game.world
+        game.server
+            .world
             .log_axis_at(horizontal.x, horizontal.y, horizontal.z),
         LogAxis::Z
     );
@@ -594,8 +666,9 @@ fn held_rotation_state_toggles_only_for_rotatable_blocks() {
     let mut game = game();
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::OakLog, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.sync_self_view_for_test(); // held_block_state reads the replicated view
 
     assert_eq!(game.held_block_state(), HeldBlockState::Log(LogAxis::Y));
     game.toggle_held_block_rotation();
@@ -605,8 +678,9 @@ fn held_rotation_state_toggles_only_for_rotatable_blocks() {
 
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::StonePickaxe, 1));
-    game.player.inventory = inv;
-    game.player.inventory.set_active(0);
+    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions[0].player.inventory.set_active(0);
+    game.sync_self_view_for_test();
     game.toggle_held_block_rotation();
     assert_eq!(game.held_block_state(), HeldBlockState::None);
 }
@@ -617,19 +691,19 @@ fn held_rotation_state_toggles_only_for_rotatable_blocks() {
 #[test]
 fn model_placement_orientation_spans_across_or_away() {
     // The default camera (yaw 0) looks south (+Z).
-    let place = |item: ItemType, target: IVec3| -> Game {
+    let place = |item: ItemType, target: IVec3| -> super::common::TestGame {
         let mut game = game();
         install_empty_chunk(&mut game);
-        game.player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+        game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(item, 1));
-        game.player.inventory = inv;
-        game.player.inventory.set_active(0);
-        game.look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
-        assert!(game.try_place_for_test(), "{item:?} should place");
+        game.server.sessions[0].player.inventory = inv;
+        game.server.sessions[0].player.inventory.set_active(0);
+        game.server.sessions[0].look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
+        assert!(game.server.try_place_for_test(), "{item:?} should place");
         game
     };
-    let at = |game: &Game, p: IVec3| Block::from_id(game.world.chunk_block(p.x, p.y, p.z));
+    let at = |game: &super::common::TestGame, p: IVec3| Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z));
 
     // FrontToBack: the bed occupies the clicked cell and the cell BEYOND it (south,
     // away from the player) — never the cells beside it.

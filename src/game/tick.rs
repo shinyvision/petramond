@@ -1,18 +1,20 @@
+//! The frame→tick boundary types shared by the client and the server sim
+//! ([`GameInput`], [`GameEvents`], [`TickEvents`]/[`WorldEvents`]) plus the
+//! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
+//! itself lives on [`crate::server::game::ServerGame`].
+
 use super::Game;
 use crate::block::Block;
-use crate::events::{Attach, PostEvent, PostEventKind, SimCtx, Stage};
-use crate::mathh::IVec3;
-use crate::player;
-use crate::world::StreamEvent;
+use crate::mathh::{IVec3, Vec3};
+use crate::net::protocol::{
+    ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
+};
+use crate::server::player::PlayerId;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
 /// rate. World simulation (block updates, scheduled ticks, water flow) advances
 /// in whole steps of this size.
-pub(super) const TICK_DT: f32 = 0.05;
-
-/// Most fixed ticks run in a single frame before the leftover is dropped. Caps
-/// catch-up after a stall so the sim never spirals trying to replay lost time.
-const MAX_TICKS_PER_FRAME: u32 = 4;
+pub(crate) const TICK_DT: f32 = 0.05;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MovementInput {
@@ -92,6 +94,40 @@ pub enum ModSpatialSoundCommand {
     },
 }
 
+/// One world-anchored event this frame's tick batch carried, in local types —
+/// the client-side twin of [`crate::net::protocol::WorldEventMsg`]. Every
+/// observer presents these (break bursts, door swings, POSITIONAL sounds);
+/// the app maps each to its sound at the event's position.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum WorldEvent {
+    BlockBroken {
+        pos: IVec3,
+        block: Block,
+        normal: Option<IVec3>,
+    },
+    BlockPlaced {
+        pos: IVec3,
+        block: Block,
+    },
+    /// A door toggled: the LOWER cell + its NEW open state.
+    DoorToggled {
+        lower: IVec3,
+        open: bool,
+    },
+    ChestOpened {
+        pos: IVec3,
+    },
+    ChestClosed {
+        pos: IVec3,
+    },
+    /// A player collected a drop at `pos`. `by_self` = the LOCAL player did
+    /// (the app keeps its non-positional self pickup sound for that).
+    ItemPickedUp {
+        pos: Vec3,
+        by_self: bool,
+    },
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GameEvents {
     /// The block placed this frame, if any.
@@ -119,8 +155,10 @@ pub struct GameEvents {
     /// honours it only while a mod GUI screen is actually up.
     pub close_mod_gui: bool,
     /// The player right-clicked a door this frame. Carries the door's NEW open
-    /// state (after the toggle applied), so the presentation picks the open vs
-    /// close sound. `None` = no door toggle this frame.
+    /// state (after the toggle applied). The open/close SOUND is event-driven
+    /// since C2c-iii (the positional [`WorldEvent::DoorToggled`] every
+    /// observer receives); this one-shot remains for the toggler's own
+    /// presentation. `None` = no door toggle this frame.
     pub toggled_door: Option<bool>,
     /// The player right-clicked a bed this frame. This fires even in daytime,
     /// when the click sets the spawn point but does not start sleep.
@@ -157,31 +195,103 @@ pub struct GameEvents {
     /// Semantic mob sound events emitted by gameplay across this frame's fixed
     /// ticks. NON-lossy; the app resolves species data and plays them.
     pub mob_sounds: Vec<MobSoundEvent>,
+    /// World-anchored events every observer presents (positional sounds,
+    /// break bursts, door swings), in emission order. NON-lossy.
+    pub world_events: Vec<WorldEvent>,
+    /// The server became unreachable (thread crashed / channel closed) —
+    /// reported EXACTLY ONCE, on the frame the loss is detected. The app
+    /// grows a proper "world stopped" screen for it in Phase E; until then it
+    /// is logged and the (frozen) world keeps rendering.
+    pub connection_lost: Option<String>,
 }
 
-/// What the world-mutating actions did across the fixed tick(s) that ran this frame.
-/// The tick→presentation channel: the event bus feeds it (via `SimCtx::feed`),
-/// never the other way around. Crate-visible so event handlers can write it.
-/// The latched fields are lossy by design; `sounds` is the non-lossy per-tick
-/// queue alongside them (every mod `EmitSound` plays exactly once).
-#[derive(Clone, Debug)]
-pub(crate) struct TickEvents {
+/// The per-PLAYER slice of what the tick did: the lossy latched one-shots that
+/// feed that player's [`GameEvents`] (hand jabs, hurt shake, screen requests).
+/// One per session per tick; the acting session's slice is written by the
+/// per-player stages.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) struct PlayerTickEvents {
     pub(crate) broke_block: Option<Block>,
     pub(crate) placed_block: Option<Block>,
     pub(crate) swung_hand: bool,
     pub(crate) picked_up_item: bool,
     pub(crate) threw_item: bool,
     pub(crate) used_item: bool,
+    /// An eat COMPLETED this tick (the food was consumed) — as opposed to the
+    /// level `eating` state ending in an abort. Feeds the remote-player
+    /// `AteFinished` action; the local client's presentation reads the eat
+    /// progress instead.
+    pub(crate) ate_finished: bool,
     pub(crate) bed_interacted: bool,
     pub(crate) interacted: bool,
     pub(crate) player_damaged: bool,
     pub(crate) player_died: bool,
     pub(crate) sleep_ended: bool,
     pub(crate) respawned: bool,
+    /// The door toggle's NEW open state, latched for the TOGGLER only.
+    pub(crate) toggled_door: Option<bool>,
+}
+
+/// A block the sim destroyed this tick (player-mined or natural), with
+/// everything a CLIENT needs to present it: break-burst particles at `pos`,
+/// sampled against the post-tick world. Position-carrying and broadcastable —
+/// the wire replicates these to every client in range (multiplayer Phase C).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct BlockBrokenEvent {
+    pub(crate) pos: IVec3,
+    pub(crate) block: Block,
+    /// The mined face (for directional burst spread), when known.
+    pub(crate) normal: Option<IVec3>,
+}
+
+/// The WORLD-anchored slice of what the tick did: non-lossy queues every
+/// observer cares about, independent of which player acted. `sounds`/
+/// `spatial_sounds`/`mob_sounds` are the existing presentation feeds;
+/// `block_broken`/`door_changed` are consumed client-side
+/// after the tick (particles, swing/lid animation seeds) and become broadcast
+/// messages when the wire exists.
+#[derive(Clone, Debug)]
+pub(crate) struct WorldEvents {
     pub(crate) sounds: Vec<ModSound>,
     pub(crate) spatial_sounds: Vec<ModSpatialSoundCommand>,
     pub(crate) mob_sounds: Vec<MobSoundEvent>,
+    pub(crate) block_broken: Vec<BlockBrokenEvent>,
+    /// A block placed by a player: (anchor cell, block).
+    pub(crate) block_placed: Vec<(IVec3, Block)>,
+    /// A door toggled: (lower cell, new open state).
+    pub(crate) door_changed: Vec<(IVec3, bool)>,
+    /// A chest's viewer count crossed 0↔1: (chest cell, now open).
+    pub(crate) chest_changed: Vec<(IVec3, bool)>,
+    /// A player collected at least one drop: (their body centre, player id).
+    pub(crate) item_picked_up: Vec<(Vec3, PlayerId)>,
     next_spatial_sound_handle: u64,
+}
+
+impl WorldEvents {
+    fn with_next_spatial_sound_handle(next_spatial_sound_handle: u64) -> Self {
+        Self {
+            sounds: Vec::new(),
+            spatial_sounds: Vec::new(),
+            mob_sounds: Vec::new(),
+            block_broken: Vec::new(),
+            block_placed: Vec::new(),
+            door_changed: Vec::new(),
+            chest_changed: Vec::new(),
+            item_picked_up: Vec::new(),
+            next_spatial_sound_handle: next_spatial_sound_handle.max(1),
+        }
+    }
+}
+
+/// What the world-mutating actions did across the fixed tick(s) that ran this frame.
+/// The tick→presentation channel: the event bus feeds it (via `SimCtx::feed`),
+/// never the other way around. Crate-visible so event handlers can write it.
+/// Split per audience: `players[s]` is player `s`'s lossy one-shot slice,
+/// `world` the shared non-lossy queues.
+#[derive(Clone, Debug)]
+pub(crate) struct TickEvents {
+    players: Vec<PlayerTickEvents>,
+    pub(crate) world: WorldEvents,
 }
 
 impl Default for TickEvents {
@@ -193,332 +303,316 @@ impl Default for TickEvents {
 impl TickEvents {
     pub(crate) fn with_next_spatial_sound_handle(next_spatial_sound_handle: u64) -> Self {
         Self {
-            broke_block: None,
-            placed_block: None,
-            swung_hand: false,
-            picked_up_item: false,
-            threw_item: false,
-            used_item: false,
-            bed_interacted: false,
-            interacted: false,
-            player_damaged: false,
-            player_died: false,
-            sleep_ended: false,
-            respawned: false,
-            sounds: Vec::new(),
-            spatial_sounds: Vec::new(),
-            mob_sounds: Vec::new(),
-            next_spatial_sound_handle: next_spatial_sound_handle.max(1),
+            players: Vec::new(),
+            world: WorldEvents::with_next_spatial_sound_handle(next_spatial_sound_handle),
         }
     }
 
+    /// Player `s`'s event slice, grown on demand so tests (and late joins mid-
+    /// frame) never index out of bounds.
+    pub(crate) fn player(&mut self, s: usize) -> &mut PlayerTickEvents {
+        if self.players.len() <= s {
+            self.players.resize_with(s + 1, Default::default);
+        }
+        &mut self.players[s]
+    }
+
+    /// Read-only copy of player `s`'s slice (default if nothing was written).
+    pub(crate) fn player_at(&self, s: usize) -> PlayerTickEvents {
+        self.players.get(s).copied().unwrap_or_default()
+    }
+
     pub(crate) fn next_spatial_sound_handle(&self) -> u64 {
-        self.next_spatial_sound_handle
+        self.world.next_spatial_sound_handle
     }
 
     pub(crate) fn alloc_spatial_sound_handle(&mut self) -> u64 {
-        let handle = self.next_spatial_sound_handle.max(1);
-        self.next_spatial_sound_handle = handle.wrapping_add(1).max(1);
+        let handle = self.world.next_spatial_sound_handle.max(1);
+        self.world.next_spatial_sound_handle = handle.wrapping_add(1).max(1);
         handle
     }
 }
 
+/// Client-side tick clock: `tick_alpha` used to read the server accumulator,
+/// which now lives on the server thread. Instead, note the arrival `Instant`
+/// of each applied `TickUpdate` and measure into the current tick from there.
+/// Simple and monotonic per interval; thread-scheduling jitter shows up as
+/// small alpha noise — smoothing (e.g. an EMA over update spacing) can layer
+/// on later if interpolation visibly judders.
+#[derive(Default)]
+pub(crate) struct ReplicaClock {
+    last_update: Option<std::time::Instant>,
+}
+
+impl ReplicaClock {
+    /// Note that a `TickUpdate` was just applied.
+    pub(crate) fn note_update(&mut self) {
+        self.last_update = Some(std::time::Instant::now());
+    }
+
+    /// Fraction (0..1) into the current fixed tick since the last update.
+    /// `1.0` before the first update (render current state, no interpolation)
+    /// and while updates stall (pause, hitches) — poses hold rather than snap.
+    pub(crate) fn alpha(&self) -> f32 {
+        match self.last_update {
+            Some(at) => (at.elapsed().as_secs_f32() / TICK_DT).clamp(0.0, 1.0),
+            None => 1.0,
+        }
+    }
+}
+
+/// The client-side accumulation of one frame's `TickUpdate` event payloads,
+/// already translated to LOCAL types (ids remapped at the transport for a
+/// remote client; identity in-process). Filled by `apply_tick_update`, drained
+/// once per frame by [`Game::tick`] into `GameEvents`.
+#[derive(Default)]
+pub(crate) struct ClientEvents {
+    pub(crate) world: Vec<WorldEvent>,
+    pub(crate) self_events: SelfEvents,
+    pub(crate) mod_sounds: Vec<ModSound>,
+    pub(crate) mod_spatial_sounds: Vec<ModSpatialSoundCommand>,
+    pub(crate) mob_sounds: Vec<MobSoundEvent>,
+}
+
 impl Game {
     pub fn tick(&mut self, dt: f32, input: &GameInput) -> GameEvents {
+        self.tick_send(dt, input);
+        self.tick_receive(dt)
+    }
+
+    /// The frame's INPUT half: per-frame client systems, then this frame's
+    /// protocol messages onto the server channel — the ONLY road input takes
+    /// into the sim (the server thread latches them before its next ticks).
+    /// Split from [`tick_receive`](Self::tick_receive) so the test harness can
+    /// service the pipe synchronously between the halves (production runs
+    /// them back-to-back; the thread answers asynchronously).
+    pub(crate) fn tick_send(&mut self, dt: f32, input: &GameInput) {
         // Per-frame exceptions kept for local feel: look, hotbar, local player, mob push.
         self.apply_camera_input(input);
         self.apply_hotbar_input(input);
         self.tick_player(dt, input);
         self.apply_mob_push(dt);
-        self.tick_world();
+        self.tick_replica_view();
         self.refresh_target();
         self.update_third_person(dt);
 
-        self.capture_intent(input);
-        let mut events = self.run_fixed_ticks(dt);
+        let update = self.build_player_update(input);
+        self.build_outgoing_messages(input, update);
+        // What we are claiming this frame — the reference a later
+        // `SelfState::transform` correction diffs against (fields the server
+        // merely echoes back must not stomp newer local values).
+        self.last_sent_transform = Some(crate::net::protocol::SelfTransform {
+            pos: update.pos,
+            vel: update.vel,
+            yaw: update.yaw,
+            pitch: update.pitch,
+            on_ground: update.on_ground,
+        });
+        let mut lost = false;
+        for msg in self.frame_messages.drain(..) {
+            if lost {
+                continue; // drain the rest; the server is gone
+            }
+            lost = self.handle.send(msg).is_err();
+        }
+        if lost {
+            self.note_connection_lost();
+        }
+    }
+
+    /// The frame's OUTPUT half: drain + apply the server's messages, then the
+    /// per-frame presentation systems, and assemble the app-facing events.
+    pub(crate) fn tick_receive(&mut self, dt: f32) -> GameEvents {
+        // Apply the drained messages (terrain installs, then tick batches)
+        // BEFORE any presentation/HUD read — the same messages a remote
+        // client applies off the wire. Everything below consumes ONLY what
+        // those messages carried (`ClientEvents`), never sim state. More than
+        // one `TickUpdate` may have landed since last frame; `ClientEvents`
+        // accumulates them (one-shots OR, queues append, latest state wins).
+        self.pump_network();
 
         // Presentation/infra after fixed simulation; no gameplay mutation here.
+        // Remote players' per-frame animation state (shared body pose,
+        // held-item animator, hurt/eat ramps) advances right after the batches
+        // applied, so this frame's latched one-shots jab this frame.
+        let alpha = self.replica_clock.alpha();
+        self.remote_players.advance(dt, alpha);
+        let events = std::mem::take(&mut self.pending_events);
+        self.sync_sleep_camera_on_open(&events.self_events);
+        // World-anchored effects the tick batch carried (break bursts, door
+        // swings) spawn from the replicated events — the identical path a
+        // remote client drives them from off the wire.
+        self.apply_world_effects(&events.world);
+        self.tick_mining_dust(dt);
         self.tick_entities(dt);
         self.advance_chest_lids(dt);
         self.advance_door_swings(dt);
         self.tick_mesh_budget();
-        self.refresh_dropped_item_lights_after_world_light_update();
 
-        self.maybe_autosave(dt);
-
-        GameEvents {
-            placed_block: events.placed_block,
-            broke_block: events.broke_block,
-            swung_hand: events.swung_hand,
-            picked_up_item: events.picked_up_item,
-            threw_item: events.threw_item,
-            open_crafting_table: std::mem::take(&mut self.request_open_table),
-            open_furnace: std::mem::take(&mut self.request_open_furnace),
-            open_chest: std::mem::take(&mut self.request_open_chest),
-            open_furniture_workbench: std::mem::take(&mut self.request_open_workbench),
-            open_mod_gui: std::mem::take(&mut self.request_open_mod_gui),
-            close_mod_gui: std::mem::take(&mut self.request_close_mod_gui),
-            toggled_door: self.toggled_door.take(),
-            bed_interacted: events.bed_interacted,
-            interacted: events.interacted,
-            used_item: events.used_item,
-            player_damaged: events.player_damaged,
-            player_died: events.player_died,
-            open_sleep: std::mem::take(&mut self.request_open_sleep),
-            sleep_ended: events.sleep_ended,
-            respawned: events.respawned,
-            mod_sounds: std::mem::take(&mut events.sounds),
-            mod_spatial_sounds: std::mem::take(&mut events.spatial_sounds),
-            mob_sounds: std::mem::take(&mut events.mob_sounds),
-        }
+        self.assemble_game_events(events)
     }
 
-    /// Latch this frame's input into the action-intent fields the fixed tick consumes.
-    pub(super) fn capture_intent(&mut self, input: &GameInput) {
-        self.intent_gameplay = input.gameplay_enabled;
-        self.intent_sneak = input.movement.sneak;
-        if !input.gameplay_enabled {
-            // Menu focus drops queued action edges so clicks cannot fire behind screens.
-            self.intent_break_held = false;
-            self.intent_use_held = false;
-            self.pending_attack = false;
-            self.pending_place = false;
-            return;
+    /// Drain and apply every pending server→client message. `Game::tick` runs
+    /// it every frame; the App ALSO calls it while a shell screen (pause menu)
+    /// suppresses `Game::tick`, so the client keeps consuming server output —
+    /// streaming installs land, the channel never backs up, and resume is
+    /// instant. Also where a dead server (crash / closed channel) is detected.
+    pub fn pump_network(&mut self) {
+        if self.handle.is_crashed() {
+            self.note_connection_lost();
         }
-        self.intent_break_held = input.break_held;
-        self.intent_use_held = input.use_held;
-        if input.attack_clicked {
-            self.pending_attack = true;
-        }
-        if input.place_clicked {
-            self.pending_place = true;
-        }
+        let mut msgs = std::mem::take(&mut self.incoming);
+        self.handle.drain(&mut msgs);
+        self.apply_server_messages(&mut msgs);
+        self.incoming = msgs; // drained; capacity reused
     }
 
-    fn run_fixed_ticks(&mut self, dt: f32) -> TickEvents {
-        // Clamp long stalls and cap catch-up so fixed ticks never spiral.
-        self.tick_accumulator += dt.clamp(0.0, 1.0);
-        let mut ran = 0;
-        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
-        while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
-            self.game_tick_step(&mut events);
-            self.tick_accumulator -= TICK_DT;
-            ran += 1;
-        }
-        if self.tick_accumulator > TICK_DT {
-            self.tick_accumulator = TICK_DT;
-        }
-        self.next_mod_sound_handle = events.next_spatial_sound_handle();
-        events
-    }
-
-    /// One fixed game tick: world and entity mutation only. The hardwired engine
-    /// steps run in [`Stage`] order; between them the scheduler runs attached
-    /// systems and the post-event queue drains (see [`end_stage`](Self::end_stage)).
-    /// `pub(super)` so tests can drive exactly one tick.
-    pub(super) fn game_tick_step(&mut self, events: &mut TickEvents) {
-        // Post events queued from per-frame code since the last tick (section
-        // stream installs, container screens) dispatch first, before any stage:
-        // per-frame code only ever queues; handlers run on the tick. Mod
-        // actions still queued from the previous tick's final drain (or from
-        // mod_init) apply here first.
-        self.pump_stream_events();
-        self.apply_mod_actions(events);
-        self.drain_post_events(events);
-
-        // Keep action intent before world/entity simulation so inputs resolve on the tick.
-        self.begin_stage(Stage::Mining, events);
-        self.tick_mining(events);
-        self.end_stage(Stage::Mining, events);
-
-        self.begin_stage(Stage::Placement, events);
-        self.tick_place(events);
-        self.end_stage(Stage::Placement, events);
-
-        self.begin_stage(Stage::Attack, events);
-        self.tick_attack(events);
-        self.end_stage(Stage::Attack, events);
-
-        self.begin_stage(Stage::Drops, events);
-        self.tick_drops(events);
-        self.end_stage(Stage::Drops, events);
-
-        self.begin_stage(Stage::Menu, events);
-        self.tick_menu(events);
-        self.end_stage(Stage::Menu, events);
-
-        self.begin_stage(Stage::PlayerDamage, events);
-        self.tick_fall_damage(events);
-        // Status effects ride the same stage: they are pure player-state
-        // steps (regen heals, durations count down) on the tick, after damage
-        // so a same-tick hit lands before the heal.
-        self.tick_effects();
-        // Sleeping and respawn ride the same stage: both are pure player-state
-        // transitions (teleport, health restore, time skip) on the tick.
-        self.tick_bed_and_respawn(events);
-        self.end_stage(Stage::PlayerDamage, events);
-
-        // World::game_tick's internal order (scheduled → block updates → furnaces
-        // → random ticks) is its own sealed contract; the stage wraps it whole.
-        self.begin_stage(Stage::WorldScheduled, events);
-        self.world.game_tick(&self.recipes);
-        self.dispatch_mod_block_hooks(events);
-        self.end_stage(Stage::WorldScheduled, events);
-
-        self.begin_stage(Stage::NaturalBreaks, events);
-        self.process_natural_breaks();
-        self.end_stage(Stage::NaturalBreaks, events);
-
-        self.begin_stage(Stage::Pickup, events);
-        if self.item_pickup_tick() {
-            events.picked_up_item = true;
-        }
-        self.end_stage(Stage::Pickup, events);
-
-        let player_pos = self.player.body_center();
-        let player_body = (!self.player.is_spectator())
-            .then(|| crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT));
-
-        self.begin_stage(Stage::Mobs, events);
-        let attacks = self.world.tick_mobs(TICK_DT, player_pos, player_body);
-        // Mob→player combat resolves right after the mobs moved: each strike runs
-        // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
-        // an applied strike knocks the player back.
-        self.apply_mob_attacks(attacks, events);
-        self.end_stage(Stage::Mobs, events);
-
-        self.begin_stage(Stage::ItemPhysics, events);
-        self.world.tick_item_physics(TICK_DT, player_pos);
-        self.end_stage(Stage::ItemPhysics, events);
-
-        self.begin_stage(Stage::Spawning, events);
-        for (kind, pos) in self.world.spawn_mobs_tick(player_pos) {
-            self.bus.emit(PostEvent::MobSpawned { kind, pos });
-        }
-        self.tick_mod_hostile_mob_spawns(events);
-        self.end_stage(Stage::Spawning, events);
-    }
-
-    /// Forward the behavior hooks the world tick queued on mod-behavior blocks
-    /// (see `block::behavior::wasm`) to their owning mods, inside the same
-    /// stage window as the world tick that fired them. The queue is drained
-    /// unconditionally so it never carries over between ticks.
-    fn dispatch_mod_block_hooks(&mut self, events: &mut TickEvents) {
-        let hooks = self.world.take_mod_block_hooks();
-        if hooks.is_empty() || !self.mods.has_block_behaviors() {
-            return;
-        }
-        let Self {
-            world,
-            player,
-            mods,
-            bus,
-            ..
-        } = self;
-        let mut ctx = SimCtx {
-            world,
-            player,
-            feed: events,
-            queue: bus.queue_mut(),
+    /// Map this frame's replicated event payloads onto the app-facing
+    /// `GameEvents` shape (the app's consumption is unchanged: the one-shots
+    /// and `open_*` fields read exactly as they did pre-wire).
+    fn assemble_game_events(&mut self, events: ClientEvents) -> GameEvents {
+        let se = events.self_events;
+        let mut out = GameEvents {
+            placed_block: se.placed_block.map(Block::from_id),
+            broke_block: se.broke_block.map(Block::from_id),
+            swung_hand: se.swung_hand,
+            picked_up_item: se.picked_up_item,
+            threw_item: se.threw_item,
+            close_mod_gui: se.close_mod_gui,
+            toggled_door: se.toggled_door,
+            bed_interacted: se.bed_interacted,
+            interacted: se.interacted,
+            used_item: se.used_item,
+            player_damaged: se.player_damaged,
+            player_died: se.player_died,
+            sleep_ended: se.sleep_ended,
+            respawned: se.respawned,
+            mod_sounds: events.mod_sounds,
+            mod_spatial_sounds: events.mod_spatial_sounds,
+            mob_sounds: events.mob_sounds,
+            world_events: events.world,
+            ..Default::default()
         };
-        mods.dispatch_block_hooks(&mut ctx, &hooks);
-    }
-
-    fn tick_mod_hostile_mob_spawns(&mut self, events: &mut TickEvents) {
-        if !self.mods.has_hostile_spawners() || crate::mob::hostile_cap_full(&self.world) {
-            return;
-        }
-
-        let player_pos = self.player.pos;
-        'attempts: for attempt in 0..crate::mob::HOSTILE_SPAWN_ATTEMPTS {
-            let sites = crate::mob::hostile_attempt_sites(&self.world, player_pos, attempt);
-            for site in sites {
-                let kind = {
-                    let Self {
-                        world,
-                        player,
-                        mods,
-                        bus,
-                        ..
-                    } = self;
-                    let mut ctx = SimCtx {
-                        world,
-                        player,
-                        feed: events,
-                        queue: bus.queue_mut(),
-                    };
-                    mods.hostile_spawn_kind(&mut ctx, &site.candidate)
-                };
-                let Some(kind) = kind else {
-                    continue;
-                };
-                if self.world.spawn_mob(kind, site.pos, site.yaw) {
-                    self.bus.emit(PostEvent::MobSpawned {
-                        kind,
-                        pos: site.pos,
-                    });
-                }
-                break 'attempts;
+        if !self.connection_lost_reported {
+            if let Some(reason) = &self.connection_lost {
+                log::error!("{reason}; nothing further will be saved");
+                out.connection_lost = Some(reason.clone());
+                self.connection_lost_reported = true;
             }
         }
-    }
-
-    /// Run the systems attached at `at` — the mod seam. Nothing is attached in
-    /// Phase 1, so this is a bounds-checked array read per stage edge.
-    fn run_systems(&mut self, at: Attach, events: &mut TickEvents) {
-        if self.systems.is_empty_at(at) {
-            return;
+        match se.open_screen {
+            // The client itself requested the inventory (the E key already
+            // opened its screen); the event is the server's ack.
+            Some(OpenScreen::Inventory) | None => {}
+            Some(OpenScreen::CraftingTable) => out.open_crafting_table = true,
+            Some(OpenScreen::Furnace(pos)) => out.open_furnace = Some(pos),
+            Some(OpenScreen::Chest(pos)) => out.open_chest = Some(pos),
+            // Only presence is meaningful — the workbench session carries no
+            // position (the field keeps its historical Option<IVec3> shape).
+            Some(OpenScreen::Workbench) => out.open_furniture_workbench = Some(IVec3::ZERO),
+            Some(OpenScreen::ModGui { kind_key, pos }) => {
+                // Unknown kind = a mod the client lacks; the handshake makes
+                // this unreachable in practice — skip rather than panic.
+                if let Some(kind) = crate::gui::resolve_kind(&kind_key) {
+                    out.open_mod_gui = Some((kind, pos));
+                }
+            }
+            Some(OpenScreen::Sleep) => out.open_sleep = true,
         }
-        self.systems.run(
-            at,
-            &mut self.world,
-            &mut self.player,
-            events,
-            self.bus.queue_mut(),
-        );
+        out
     }
 
-    /// Open a stage: run its `Before` systems, then apply any mod actions they
-    /// queued (`DamagePlayer`/`HurtMob`/... — see `apply_mod_actions`) BEFORE
-    /// the engine step runs, so mob indices captured by those systems cannot be
-    /// shifted by the step in between.
-    fn begin_stage(&mut self, stage: Stage, events: &mut TickEvents) {
-        self.run_systems(Attach::Before(stage), events);
-        self.apply_mod_actions(events);
-    }
-
-    /// Close a stage: run its `After` systems, apply the mod actions they (or
-    /// the stage's inline pre-event handlers) queued, then drain the post
-    /// queue — so post events emitted by those actions (`player_damaged`,
-    /// `mob_died`) dispatch within the same tick, at the earliest defined
-    /// point. Actions queued by post handlers during the drain roll to the
-    /// next action point (next stage or next tick's start) — no recursion.
-    fn end_stage(&mut self, stage: Stage, events: &mut TickEvents) {
-        self.run_systems(Attach::After(stage), events);
-        self.apply_mod_actions(events);
-        self.drain_post_events(events);
-    }
-
-    fn drain_post_events(&mut self, events: &mut TickEvents) {
-        self.bus
-            .drain_post(&mut self.world, &mut self.player, events);
-    }
-
-    /// Hand the section stream events buffered by the per-frame `World::poll` to
-    /// the bus. The capture gate mirrors listener presence so an idle bus costs
-    /// the streamer nothing.
-    fn pump_stream_events(&mut self) {
-        let wants = self.bus.wants(PostEventKind::SectionGenerated)
-            || self.bus.wants(PostEventKind::SectionLoaded);
-        self.world.set_stream_event_capture(wants);
-        if !wants {
-            return;
+    /// This frame's transform + held-intent message, built from the predicted
+    /// player and the per-frame targeting. Held intents ride raw — the server
+    /// forces them off while `gameplay` is false (the old `capture_intent`
+    /// rule); the held-rotation counter rides raw and the session re-derives
+    /// the armed item (see `HeldRotation::apply_wire`).
+    fn build_player_update(&self, input: &GameInput) -> PlayerUpdate {
+        PlayerUpdate {
+            pos: self.player.pos,
+            vel: self.player.vel,
+            yaw: self.player.yaw,
+            pitch: self.player.pitch,
+            on_ground: self.player.on_ground,
+            sneak: input.movement.sneak,
+            gameplay: input.gameplay_enabled,
+            break_held: input.break_held,
+            use_held: input.use_held,
+            target: self.look.map(|h| TargetRef {
+                block: h.block,
+                normal: h.normal,
+            }),
+            hotbar_slot: self.player.inventory.active_slot(),
+            held_rotation: self.held_rotation.rotation,
         }
-        for ev in self.world.take_stream_events() {
-            self.bus.emit(match ev {
-                StreamEvent::Generated(pos) => PostEvent::SectionGenerated { pos },
-                StreamEvent::Loaded(pos) => PostEvent::SectionLoaded { pos },
-            });
+    }
+
+    /// Assemble this frame's message batch into `frame_messages`, in
+    /// consumption order: the `PlayerUpdate` first (so the edge-drop rule and
+    /// slot-dependent actions see this frame's state), then this frame's click
+    /// edges (mob targets resolved to STABLE ids now, at click time), then
+    /// everything the app-facing methods queued since the last frame.
+    fn build_outgoing_messages(&mut self, input: &GameInput, update: PlayerUpdate) {
+        debug_assert!(self.frame_messages.is_empty(), "pump drains every frame");
+        let use_mob = input.place_clicked.then(|| self.targeted_mob_id()).flatten();
+        let attack_mob = input
+            .attack_clicked
+            .then(|| self.targeted_mob_id())
+            .flatten();
+        // At most one of mob/player is targeted per frame (refresh_target's
+        // nearest-wins pick), so the click carries at most one.
+        let attack_player = input
+            .attack_clicked
+            .then_some(self.targeted_player)
+            .flatten();
+        self.frame_messages
+            .push(ClientToServer::PlayerUpdate(update));
+        if input.gameplay_enabled {
+            if input.place_clicked {
+                self.frame_messages
+                    .push(ClientToServer::Action(PlayerAction::UseClick {
+                        mob: use_mob,
+                    }));
+            }
+            if input.attack_clicked {
+                self.frame_messages
+                    .push(ClientToServer::Action(PlayerAction::AttackClick {
+                        mob: attack_mob,
+                        player: attack_player,
+                    }));
+            }
+        }
+        self.frame_messages.append(&mut self.outbox);
+    }
+
+    /// Adopt a `SelfState::transform` correction: the server's ticks moved
+    /// this player (bed tuck, wake/respawn teleports, mod `Teleport`,
+    /// mob-strike knockback). Per-field against the transform we last SENT:
+    /// a field still equal to our last claim is the server echoing us — the
+    /// local value (possibly a frame newer: look, movement) wins; a differing
+    /// field is a genuine server-side mutation. A position change adopts via
+    /// `Player::teleport` so the client's own fall bookkeeping re-anchors too.
+    /// Without a `last_sent_transform` (before the first frame) everything
+    /// adopts — the values are the shared restore, so it is a no-op.
+    pub(crate) fn adopt_authoritative_transform(
+        &mut self,
+        t: &crate::net::protocol::SelfTransform,
+    ) {
+        let sent = self.last_sent_transform;
+        if sent.is_none_or(|s| s.pos != t.pos) {
+            self.player.teleport(t.pos);
+        }
+        if sent.is_none_or(|s| s.vel != t.vel) {
+            self.player.vel = t.vel;
+        }
+        if sent.is_none_or(|s| s.yaw != t.yaw) {
+            self.player.yaw = t.yaw;
+        }
+        if sent.is_none_or(|s| s.pitch != t.pitch) {
+            self.player.pitch = t.pitch;
+        }
+        if sent.is_none_or(|s| s.on_ground != t.on_ground) {
+            self.player.on_ground = t.on_ground;
         }
     }
 }

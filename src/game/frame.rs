@@ -32,9 +32,17 @@ pub(crate) struct ClientHeldItem {
 }
 
 impl Game {
-    /// Coherent neutral app-facing state for update/render after the game tick.
+    /// Coherent neutral app-facing state for update/render after the game
+    /// tick. Held-item/mining/eating state reads the REPLICATED self view,
+    /// never the server session.
     pub(crate) fn client_frame(&self, now: f64) -> ClientFrame<'_> {
-        let mining = self.mining.is_mining();
+        let view = &self.self_view;
+        let mining = view.mining.is_some();
+        // The mined block is re-read from the REPLICA at the replicated
+        // target cell — it feeds the dig-sound pick.
+        let mining_block = view
+            .mining
+            .map(|(p, _)| Block::from_id(self.replica.chunk_block(p.x, p.y, p.z)));
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -42,10 +50,10 @@ impl Game {
             environment: self.environment(now),
             selection: self.look.map(|h| h.outline),
             held_item: ClientHeldItem {
-                item: self.player.inventory.selected().map(|s| s.item),
+                item: view.inventory.selected().map(|s| s.item),
                 block_state: self.held_block_state(),
                 mining,
-                mining_block: mining.then(|| self.mining.block()).flatten(),
+                mining_block,
                 eating: self.eating_progress(),
             },
         }

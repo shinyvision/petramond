@@ -66,6 +66,20 @@ impl CraftGrid {
         self.cells = [None; MAX_CELLS];
         self.result = None;
     }
+    /// Rebuild from a replicated menu-sync view: `cells` (its length is the
+    /// capacity, `cols²`) plus the server-computed `result` — no recipe
+    /// recompute (the CLIENT renders; the server owns the crafting rules).
+    pub(crate) fn set_view(&mut self, cells: &[Option<ItemStack>], result: Option<ItemStack>) {
+        self.cols = match cells.len() {
+            0..=4 => 2,
+            _ => MAX_GRID,
+        };
+        self.cells = [None; MAX_CELLS];
+        for (dst, src) in self.cells.iter_mut().zip(cells) {
+            *dst = *src;
+        }
+        self.result = result;
+    }
     pub fn recompute(&mut self, recipes: &Recipes) {
         self.result = recipes.find(self.cells(), self.cols);
     }

@@ -334,140 +334,181 @@ impl Renderer {
                 });
         }
 
-        // Third-person player body + its held item. The body poses walk + head-look
-        // + the right-arm swing (the same HeldItemView swing state the first-person
-        // hand plays) and returns the posed right-hand transform; the held item is
-        // baked attached to it, per render kind: a block mini-cube rides the packed
-        // opaque stream (CPU-transformed like dropped cubes), an extruded sprite or
-        // a bbmodel item rides the explicit-UV stream with the matching atlas.
-        self.player_gpu.draw.index_count = 0;
-        self.player_item_draw.index_count = 0;
-        self.player_block_item_draw.index_count = 0;
-        let player_visible = self.player_view.filter(|p| {
+        // Player bodies + their held items: the LOCAL third-person body (when
+        // the view is up, animated by the renderer's own first-person
+        // HeldItemView — unchanged solo behavior) plus EVERY remote player
+        // (each carrying its own replicated HeldItemView), frustum-culled like
+        // mobs and ALL appended into the one player_gpu vertex/index stream
+        // (every body shares the player model + skin bind). Held items
+        // accumulate per render kind into three combined streams — block
+        // mini-cubes on the packed opaque stream, extruded sprites and bbmodel
+        // items on explicit-UV streams split by atlas — each uploaded and
+        // drawn once regardless of player count.
+        self.player_visible.clear();
+        {
             let pad = glam::Vec3::new(1.0, 2.2, 1.0);
-            visible_world_aabb(p.pos - pad, p.pos + pad)
-        });
-        if let Some(inst) = player_visible {
-            let held = self.held_item;
+            if let Some(p) = self.player_view {
+                if visible_world_aabb(p.pos - pad, p.pos + pad) {
+                    self.player_visible.push((p, self.held_item));
+                }
+            }
+            for r in &self.remote_players {
+                if visible_world_aabb(r.body.pos - pad, r.body.pos + pad) {
+                    self.player_visible.push((r.body, r.held));
+                }
+            }
+        }
+        // Combined streams + per-body scratch taken out so the loop below can
+        // borrow them alongside `self` reads (restored after the uploads).
+        let mut body_verts = std::mem::take(&mut self.player_gpu.verts);
+        let mut body_indices = std::mem::take(&mut self.player_gpu.indices);
+        let mut sprite_verts = std::mem::take(&mut self.player_item_verts);
+        let mut sprite_indices = std::mem::take(&mut self.player_item_indices);
+        let mut model_verts = std::mem::take(&mut self.player_model_item_verts);
+        let mut model_indices = std::mem::take(&mut self.player_model_item_indices);
+        let mut block_verts = std::mem::take(&mut self.item_entity_verts);
+        let mut block_indices = std::mem::take(&mut self.item_entity_indices);
+        let mut scratch_verts = std::mem::take(&mut self.player_body_verts);
+        let mut scratch_indices = std::mem::take(&mut self.player_body_indices);
+        let mut sprite_scratch = std::mem::take(&mut self.player_sprite_verts);
+        body_verts.clear();
+        body_indices.clear();
+        sprite_verts.clear();
+        sprite_indices.clear();
+        model_verts.clear();
+        model_indices.clear();
+        block_verts.clear();
+        block_indices.clear();
+        let model = self.player_gpu.model;
+        for (inst, held) in &self.player_visible {
+            // The builder clears its buffers, so each body bakes into the
+            // scratch and appends with a base-vertex offset.
+            let (_, hand) = crate::render::player_model::build_player_body(
+                model,
+                env,
+                inst,
+                held.swing,
+                held.swing_scale,
+                held.eat,
+                held.eat_bob,
+                &mut scratch_verts,
+                &mut scratch_indices,
+            );
+            let base = body_verts.len() as u32;
+            body_verts.extend_from_slice(&scratch_verts);
+            body_indices.extend(scratch_indices.iter().map(|&i| i + base));
+
             let light = crate::render::lighting::DynLight {
                 sky: inst.skylight,
                 block: inst.blocklight,
             };
-            let model = self.player_gpu.model;
-            let mut hand = glam::Mat4::IDENTITY;
-            {
-                let queue = &self.queue;
-                let g = &mut self.player_gpu;
-                g.draw
-                    .bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
-                        let (count, h) = crate::render::player_model::build_player_body(
-                            model,
-                            env,
-                            &inst,
-                            held.swing,
-                            held.swing_scale,
-                            held.eat,
-                            held.eat_bob,
-                            verts,
-                            indices,
-                        );
-                        hand = h;
-                        count
-                    });
-            }
             // A sleeper's hands are empty — the held item would poke through the bed.
             let held_item = (!inst.sleeping).then_some(held.item).flatten();
             match held_item.map(|it| it.render_kind()) {
                 Some(crate::item::ItemRenderKind::BlockCube(block)) => {
                     let m = crate::render::player_model::held_block_transform(hand);
-                    let state = held.block_state;
-                    self.player_block_item_draw.bake(
-                        &self.queue,
-                        &mut self.item_entity_verts,
-                        &mut self.item_entity_indices,
-                        |verts, indices| {
-                            verts.clear();
-                            indices.clear();
-                            if block == crate::block::Block::Chest {
-                                crate::render::chest_model::push_chest_item(
-                                    verts,
-                                    indices,
-                                    glam::Vec3::splat(-0.5),
-                                    1.0,
-                                    light,
-                                );
-                            } else {
-                                crate::render::item_cube::push_block_item_cube_lit_with_state(
-                                    verts,
-                                    indices,
-                                    block,
-                                    state,
-                                    glam::Vec3::splat(-0.5),
-                                    1.0,
-                                    light,
-                                );
-                            }
-                            crate::render::player_model::transform_positions(verts, 0, m);
-                            indices.len() as u32
-                        },
-                    );
+                    let start = block_verts.len();
+                    if block == crate::block::Block::Chest {
+                        crate::render::chest_model::push_chest_item(
+                            &mut block_verts,
+                            &mut block_indices,
+                            glam::Vec3::splat(-0.5),
+                            1.0,
+                            light,
+                        );
+                    } else {
+                        crate::render::item_cube::push_block_item_cube_lit_with_state(
+                            &mut block_verts,
+                            &mut block_indices,
+                            block,
+                            held.block_state,
+                            glam::Vec3::splat(-0.5),
+                            1.0,
+                            light,
+                        );
+                    }
+                    crate::render::player_model::transform_positions(&mut block_verts, start, m);
                 }
                 Some(crate::item::ItemRenderKind::Sprite(tile)) => {
+                    // The extrusion clears its buffer and emits a non-indexed
+                    // triangle list; transform in place, then append with
+                    // sequential offset indices to ride the indexed draw.
                     let m = crate::render::player_model::held_sprite_transform(hand);
-                    self.player_item_is_model = false;
-                    self.player_item_draw.bake(
-                        &self.queue,
-                        &mut self.player_item_verts,
-                        &mut self.player_item_indices,
-                        |verts, indices| {
-                            // The extrusion is a non-indexed triangle list; give it
-                            // sequential indices to ride the indexed draw.
-                            let count = crate::render::item_model::build_extruded_item_lit(
-                                tile, light, env, verts,
-                            );
-                            crate::render::player_model::transform_item_positions(verts, 0, m);
-                            indices.clear();
-                            indices.extend(0..count);
-                            count
-                        },
+                    let count = crate::render::item_model::build_extruded_item_lit(
+                        tile,
+                        light,
+                        env,
+                        &mut sprite_scratch,
                     );
+                    crate::render::player_model::transform_item_positions(
+                        &mut sprite_scratch,
+                        0,
+                        m,
+                    );
+                    let base = sprite_verts.len() as u32;
+                    sprite_verts.extend_from_slice(&sprite_scratch);
+                    sprite_indices.extend((0..count).map(|i| i + base));
                 }
                 Some(crate::item::ItemRenderKind::Model(kind)) => {
+                    // Appends with absolute indices into the shared buffer.
                     let m = crate::render::player_model::held_model_transform(hand, kind);
-                    self.player_item_is_model = true;
-                    self.player_item_draw.bake(
-                        &self.queue,
-                        &mut self.player_item_verts,
-                        &mut self.player_item_indices,
-                        |verts, indices| {
-                            verts.clear();
-                            indices.clear();
-                            crate::render::item_model::build_block_model_item(
-                                kind, m, light, env, 0, None, verts, indices,
-                            );
-                            indices.len() as u32
-                        },
+                    crate::render::item_model::build_block_model_item(
+                        kind,
+                        m,
+                        light,
+                        env,
+                        0,
+                        None,
+                        &mut model_verts,
+                        &mut model_indices,
                     );
                 }
                 None => {}
             }
         }
+        // Upload the four combined streams (a stream that stayed empty draws
+        // nothing; over-cap frames drop that stream, per DynamicDraw).
+        let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;
+        self.player_gpu
+            .draw
+            .bake(&self.queue, &mut body_verts, &mut body_indices, prebuilt);
+        self.player_item_draw.bake(
+            &self.queue,
+            &mut sprite_verts,
+            &mut sprite_indices,
+            prebuilt,
+        );
+        self.player_model_item_draw
+            .bake(&self.queue, &mut model_verts, &mut model_indices, prebuilt);
+        self.player_block_item_draw.bake(
+            &self.queue,
+            &mut block_verts,
+            &mut block_indices,
+            |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32,
+        );
+        self.player_gpu.verts = body_verts;
+        self.player_gpu.indices = body_indices;
+        self.player_item_verts = sprite_verts;
+        self.player_item_indices = sprite_indices;
+        self.player_model_item_verts = model_verts;
+        self.player_model_item_indices = model_indices;
+        self.item_entity_verts = block_verts;
+        self.item_entity_indices = block_indices;
+        self.player_body_verts = scratch_verts;
+        self.player_body_indices = scratch_indices;
+        self.player_sprite_verts = sprite_scratch;
 
-        // Break-overlay (destroy crack) cube, when a block is targeted.
-        let break_overlay = self.break_overlay;
+        // Break-overlay (destroy crack) geometry: ONE combined stream over
+        // every active overlay (the local miner's own + the capped remotes),
+        // each baked exactly like the single overlay always was.
+        let break_overlays = std::mem::take(&mut self.break_overlays);
         self.break_draw.bake(
             &self.queue,
             &mut self.item_entity_verts,
             &mut self.item_entity_indices,
-            |verts, indices| match break_overlay {
-                Some(view) => build_break_overlay(&view, verts, indices),
-                None => {
-                    verts.clear();
-                    indices.clear();
-                    0
-                }
-            },
+            |verts, indices| build_break_overlays(&break_overlays, verts, indices),
         );
+        self.break_overlays = break_overlays;
 
         // Tiny 3D particle cubes into the reusable vbuf (static cube ibuf): block-atlas
         // flecks first, then bbmodel-block (model-atlas) flecks, so the draw splits at one

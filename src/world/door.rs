@@ -239,6 +239,12 @@ impl World {
                 state.open = !state.open;
                 self.set_door_state_world(c, state);
             }
+            // A toggle flips the door map with NO block-id write, so it never
+            // passes the announce choke point — log its delta explicitly
+            // (`state: Some(Door(..))` carries the new open bit to replicas).
+            if self.replication_capture {
+                self.record_block_delta(c.x, c.y, c.z);
+            }
         }
         Some(lower)
     }

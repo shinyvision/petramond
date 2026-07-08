@@ -12,7 +12,7 @@ use crate::world::World;
 /// them, so they stay on `Game` and are borrowed into the craft methods per call.
 /// That keeps the smelt tick free of a self-referential borrow.
 #[derive(Default)]
-pub(in crate::game) struct ContainerMenu {
+pub(crate) struct ContainerMenu {
     /// What the open GUI is currently editing (a block-entity or the craft grid).
     pub(super) target: ContainerTarget,
     /// The active crafting grid + its cached result. Empty whenever no crafting
@@ -25,25 +25,25 @@ pub(in crate::game) struct ContainerMenu {
 }
 
 impl ContainerMenu {
-    pub(in crate::game) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// What the open GUI is editing (read by the lid animation + render views).
     #[inline]
-    pub(in crate::game) fn target(&self) -> ContainerTarget {
+    pub(crate) fn target(&self) -> ContainerTarget {
         self.target
     }
 
     /// The active crafting grid (for the UI to read cells + result preview).
     #[inline]
-    pub(in crate::game) fn craft_grid(&self) -> &CraftGrid {
+    pub(crate) fn craft_grid(&self) -> &CraftGrid {
         &self.craft
     }
 
     /// Configure the crafting grid for a screen of `cols×cols` (2 = inventory,
     /// 3 = table) and clear it. Called when a crafting screen opens.
-    pub(in crate::game) fn open_crafting(&mut self, cols: usize, recipes: &Recipes) {
+    pub(crate) fn open_crafting(&mut self, cols: usize, recipes: &Recipes) {
         self.target = if cols >= 3 {
             ContainerTarget::Table
         } else {
@@ -56,7 +56,7 @@ impl ContainerMenu {
     /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
     /// reads and edits. Defensively creates an empty entity if the block lacks one
     /// (placement always inserts one, so this is belt-and-braces).
-    pub(in crate::game) fn open_furnace_screen(&mut self, world: &mut World, pos: IVec3) {
+    pub(crate) fn open_furnace_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.furnace_at(pos).is_none() {
             world.insert_furnace(pos, crate::facing::Facing::default());
         }
@@ -65,7 +65,7 @@ impl ContainerMenu {
 
     /// End the furnace-screen session. The furnace keeps its contents (unlike the
     /// crafting grid, which empties back into the inventory on close).
-    pub(in crate::game) fn close_furnace(&mut self) {
+    pub(crate) fn close_furnace(&mut self) {
         if matches!(self.target, ContainerTarget::Furnace(_)) {
             self.target = ContainerTarget::None;
         }
@@ -74,7 +74,7 @@ impl ContainerMenu {
     /// Begin a chest-screen session at `pos`: remember which chest the GUI reads and
     /// edits. Defensively creates an empty chest if the block lacks one (placement
     /// always inserts one, so this is belt-and-braces).
-    pub(in crate::game) fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
+    pub(crate) fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.container_at(pos).is_none() {
             world.insert_chest(pos, crate::facing::Facing::default());
         }
@@ -83,14 +83,14 @@ impl ContainerMenu {
 
     /// End the chest-screen session. The chest keeps its contents (like the furnace,
     /// unlike the crafting grid which empties back into the inventory on close).
-    pub(in crate::game) fn close_chest(&mut self) {
+    pub(crate) fn close_chest(&mut self) {
         if matches!(self.target, ContainerTarget::Chest(_)) {
             self.target = ContainerTarget::None;
         }
     }
 
     /// Begin a furniture-workbench session: the input slot starts empty.
-    pub(in crate::game) fn open_workbench(&mut self) {
+    pub(crate) fn open_workbench(&mut self) {
         self.target = ContainerTarget::FurnitureWorkbench;
         self.workbench_input = None;
     }
@@ -104,7 +104,7 @@ impl ContainerMenu {
     /// anchor (multi-cell model blocks share ONE container at the group base,
     /// whichever cell was clicked) and a container sized to the document is
     /// created — or grown, never shrunk — at it.
-    pub(in crate::game) fn open_mod_gui(
+    pub(crate) fn open_mod_gui(
         &mut self,
         world: &mut World,
         kind: crate::gui::GuiKind,
@@ -120,7 +120,7 @@ impl ContainerMenu {
 
     /// End the mod GUI session (the state map is cleared by `Game`'s close
     /// funnel, which knows the world).
-    pub(in crate::game) fn close_mod_gui(&mut self) {
+    pub(crate) fn close_mod_gui(&mut self) {
         if matches!(self.target, ContainerTarget::ModGui { .. }) {
             self.target = ContainerTarget::None;
         }
@@ -129,7 +129,7 @@ impl ContainerMenu {
     /// End the workbench session: return the input block to the inventory (overflow
     /// thrown into the world via `overflow`), then drop the target — like the crafting
     /// grid, the workbench is a station that holds nothing once closed.
-    pub(in crate::game) fn close_workbench(
+    pub(crate) fn close_workbench(
         &mut self,
         inv: &mut Inventory,
         mut overflow: impl FnMut(ItemStack),
@@ -147,7 +147,7 @@ impl ContainerMenu {
     /// Close the crafting grid: return every input item to the inventory (any
     /// overflow is thrown into the world via `overflow`), then clear the result and
     /// drop the craft target.
-    pub(in crate::game) fn close_crafting(
+    pub(crate) fn close_crafting(
         &mut self,
         inv: &mut Inventory,
         recipes: &Recipes,

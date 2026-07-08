@@ -25,6 +25,37 @@ use super::tick::TickState;
 
 pub const RENDER_DIST: i32 = 32;
 
+/// Which half of the client/server split this `World` instance plays
+/// (WIKI/multiplayer.md). Until Phase C flips the split on, the one live world
+/// is [`Combined`](WorldRole::Combined): it runs the sim AND meshes for the
+/// renderer, exactly as before.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorldRole {
+    /// Today's single world: gen + sim + light + mesh.
+    #[default]
+    Combined,
+    /// The internal server's sim world: gen + light + sim, NO meshing — every
+    /// mesh-queueing entry point is a no-op so the dirty-mesh queue cannot
+    /// grow with nobody pumping it.
+    ServerHeadless,
+    /// A client's replica: no gen, no sim ticks. Sections are installed from
+    /// the connection (`world::remote`); it computes its own light, meshes,
+    /// and serves collision/raycast/placement queries.
+    ClientReplica,
+}
+
+/// One streaming anchor for [`World::update_load_multi`]: a player's section
+/// coords plus horizontal view direction (the `update_load_facing` argument
+/// tuple, one per connected player).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LoadAnchor {
+    pub cx: i32,
+    pub cy: i32,
+    pub cz: i32,
+    pub fx: f32,
+    pub fz: f32,
+}
+
 /// Vertical load radius (in 16³ sections) around the player's section: the world
 /// streams a flattened cylinder — a Euclidean horizontal disc of columns × this many
 /// sections above and below the player. Sized so the visible surface band is fully
@@ -138,6 +169,8 @@ impl LoadTarget {
 /// whenever any of its sections is loaded (see [`ensure_column`](World::ensure_column)).
 pub struct World {
     pub seed: u32,
+    /// Client/server role (see [`WorldRole`]); fixed at construction.
+    pub(super) role: WorldRole,
     /// Loaded section voxel data. Private to the `world` module: every external
     /// mutation routes through an accessor (`set_block_world`, the dirty-mesh queue)
     /// so the queue stays the single source of truth for what needs remeshing.
@@ -236,6 +269,37 @@ pub struct World {
     /// ingest dirtied its whole 3×3×3).
     pub(super) light_deferred: FxHashSet<SectionPos>,
     pub(super) last_load_target: Option<LoadTarget>,
+    /// Anchors beyond the first under multi-anchor streaming
+    /// ([`World::update_load_multi`]); empty in single-anchor mode, so every
+    /// single-anchor path is byte-identical to before. `last_load_target`
+    /// stays the PRIMARY anchor (the priority/fallback target).
+    pub(super) extra_load_targets: Vec<LoadTarget>,
+    /// Replica-only: each installed column's per-cy `SectionSummary`s from the
+    /// server's `ColumnPayload`, indexed `cy - SECTION_MIN_CY`. Consulted by
+    /// [`section_summary`](Self::section_summary) for ABSENT sections — the
+    /// replica's stand-in for `column_gen`, so physics/placement answer
+    /// truthfully without running worldgen. Empty on Combined/server worlds.
+    pub(super) column_summaries: FxHashMap<ChunkPos, Box<[SectionSummary]>>,
+    /// Server-side replication log gate; ~zero cost while off (one branch at
+    /// the block-change choke point). See [`set_replication_capture`].
+    ///
+    /// [`set_replication_capture`]: Self::set_replication_capture
+    pub(super) replication_capture: bool,
+    /// This tick's coalesced block/water changes, latest state per cell —
+    /// drained by [`take_block_deltas`](Self::take_block_deltas).
+    pub(super) block_delta_log: FxHashMap<crate::mathh::IVec3, crate::net::protocol::BlockDelta>,
+    /// Monotonic revision of "which sections exist / are stream-final": bumped
+    /// on ingest, eviction, materialization, and in-flight-set changes. The
+    /// per-connection terrain sender keys its wanted-vs-sent rescan on this
+    /// (plus the anchor's quantized target), so a steady frame does no scan.
+    pub(super) terrain_revision: u64,
+    /// ServerHeadless only: sections whose light went dirty since the last
+    /// [`pump_light_bakes`](Self::pump_light_bakes) drain. On the combined and
+    /// replica worlds, light rebakes are demanded by the MESH pump
+    /// (`request_light_dependencies`); headless has no mesh pump, so the mark
+    /// choke point feeds this set and the light pump requests from it —
+    /// keeping the QUEUEING off the mesh path. Bounded by edits per tick.
+    pub(super) headless_relight: FxHashSet<SectionPos>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
@@ -279,22 +343,32 @@ pub struct World {
     /// and the mod-set record consult it. The palette/mod-host gates take it
     /// separately at session construction.
     pub(super) disabled_mods: std::collections::BTreeSet<String>,
-    /// The open mod GUI session's state map (WIKI/modding.md Phase 5). Lives
-    /// on the world so `GuiStateSet/Get` HostCalls reach it through `SimCtx`;
-    /// the SESSION lifecycle (cleared on open/close) is driven by the game's
-    /// menu funnel. Behind `Arc` so the per-frame UI snapshot is a refcount
-    /// bump; tick-side writes are copy-on-write ([`std::sync::Arc::make_mut`]
-    /// clones at most once per outstanding snapshot). NOT persisted.
-    pub(super) gui_state: std::sync::Arc<crate::gui::GuiStateMap>,
 }
 
 impl World {
     pub fn new(seed: u32, render_dist: i32) -> Self {
+        Self::new_with_role(seed, render_dist, WorldRole::Combined)
+    }
+
+    pub fn new_with_role(seed: u32, render_dist: i32, role: WorldRole) -> Self {
         // ONE background pool shared by every streaming stage; the per-stage adapters
         // below each hold a handle and compete purely on distance priority.
         let jobs = std::sync::Arc::new(JobPool::new(JobPool::default_threads()));
+        Self::new_with_pool(seed, render_dist, role, jobs)
+    }
+
+    /// Construct over a caller-owned job pool, so the server world and the
+    /// local client's replica can share one pool instead of each spawning a
+    /// machine-sized thread set (Phase C runs both in one process).
+    pub fn new_with_pool(
+        seed: u32,
+        render_dist: i32,
+        role: WorldRole,
+        jobs: std::sync::Arc<JobPool>,
+    ) -> Self {
         Self {
             seed,
+            role,
             sections: FxHashMap::default(),
             columns: FxHashMap::default(),
             meshes: FxHashMap::default(),
@@ -325,6 +399,12 @@ impl World {
             light_blocked_meshes: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
             last_load_target: None,
+            extra_load_targets: Vec::new(),
+            column_summaries: FxHashMap::default(),
+            replication_capture: false,
+            block_delta_log: FxHashMap::default(),
+            terrain_revision: 0,
+            headless_relight: FxHashSet::default(),
             sim: TickState::new(seed),
             save: None,
             optimize_explored_terrain: false,
@@ -337,7 +417,6 @@ impl World {
             environment: WorldEnvironment::default(),
             mod_kv: BTreeMap::new(),
             disabled_mods: std::collections::BTreeSet::new(),
-            gui_state: crate::gui::empty_gui_state(),
         }
     }
 
@@ -369,10 +448,131 @@ impl World {
         self.environment.set_shader_param(key, value);
     }
 
+    /// Client/server role, fixed at construction.
+    #[inline]
+    pub fn role(&self) -> WorldRole {
+        self.role
+    }
+
     /// Attach an on-disk save: enables section persistence (load-from-disk in the
     /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
+    /// Never on a replica — the server owns persistence; a replica persisting its
+    /// installed copies would shadow the authoritative world.
     pub fn attach_save(&mut self, save: WorldSave) {
+        debug_assert!(
+            self.role != WorldRole::ClientReplica,
+            "a replica must not persist replicated sections"
+        );
         self.save = Some(save);
+    }
+
+    /// Turn the server-side replication log on/off (Phase C flips it on per
+    /// tick while clients are connected). Turning capture off drops anything
+    /// already logged, mirroring [`set_stream_event_capture`].
+    ///
+    /// [`set_stream_event_capture`]: Self::set_stream_event_capture
+    #[allow(dead_code)] // consumed by the internal server loop (Phase C)
+    pub(crate) fn set_replication_capture(&mut self, on: bool) {
+        if !on {
+            self.block_delta_log.clear();
+        }
+        self.replication_capture = on;
+    }
+
+    /// Drain this tick's coalesced block/water deltas (latest state per cell),
+    /// sorted by cell so the wire batch is deterministic. Each delta's
+    /// per-cell STATE is re-read here, at the drain: several placement funnels
+    /// write their state maps AFTER the block write that announced the change
+    /// (chest/furnace/torch insert their facing after `set_block_world`), so
+    /// only the drain sees the whole tick's final state for the cell.
+    pub(crate) fn take_block_deltas(&mut self) -> Vec<crate::net::protocol::BlockDelta> {
+        let mut out: Vec<_> = self.block_delta_log.drain().map(|(_, d)| d).collect();
+        out.sort_unstable_by_key(|d| (d.pos.x, d.pos.y, d.pos.z));
+        for d in &mut out {
+            // A section evicted since the write keeps the recorded state; the
+            // recipient unloads it anyway.
+            if self.section_loaded_at(d.pos.x, d.pos.y, d.pos.z) {
+                d.state = self.cell_state_at(d.pos.x, d.pos.y, d.pos.z);
+            }
+        }
+        out
+    }
+
+    /// Log the CURRENT content of one just-changed cell (called from the
+    /// block-change announce choke point, after the write landed). `block_id`
+    /// is the raw session id; `water` carries the meta byte iff the cell holds
+    /// water. Latest write per cell per tick wins by construction; the sparse
+    /// per-cell state is re-read once more at the drain (`take_block_deltas`).
+    pub(super) fn record_block_delta(&mut self, wx: i32, wy: i32, wz: i32) {
+        let block_id = self.chunk_block(wx, wy, wz);
+        let water =
+            (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
+        let pos = crate::mathh::IVec3::new(wx, wy, wz);
+        let state = self.cell_state_at(wx, wy, wz);
+        self.block_delta_log.insert(
+            pos,
+            crate::net::protocol::BlockDelta {
+                pos,
+                block_id,
+                water,
+                state,
+            },
+        );
+    }
+
+    /// The cell's sparse per-cell block state as its wire [`CellState`], using
+    /// the save codec's per-entry encodings — the delta-sized twin of the maps
+    /// `Section::to_payload` ships whole. A cell carries at most one of these
+    /// (`clear_on_block_change` wipes them all on any block write); a model
+    /// cell folds its placed facing in.
+    ///
+    /// [`CellState`]: crate::net::protocol::CellState
+    pub(super) fn cell_state_at(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> Option<crate::net::protocol::CellState> {
+        use crate::net::protocol::CellState;
+        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+            return None;
+        };
+        let s = self.sections.get(&pos)?;
+        let cell = section_idx(lx, ly, lz) as u16;
+        // A model cell may carry offset, facing, or both (the BASE cell of an
+        // oriented multi-block records only its facing — offset [0,0,0] is
+        // implicit); either one makes it a ModelCell on the wire.
+        let model_off = s.model_cells().get(&cell).copied();
+        let model_facing = s.model_facings().get(&cell).copied();
+        if model_off.is_some() || model_facing.is_some() {
+            return Some(CellState::ModelCell {
+                off: model_off.unwrap_or([0, 0, 0]),
+                facing: model_facing.unwrap_or_default().to_u8(),
+            });
+        }
+        if let Some(d) = s.doors().get(&cell) {
+            return Some(CellState::Door(d.encode()));
+        }
+        if let Some(st) = s.stair_states().get(&cell) {
+            return Some(CellState::Stair(st.encode()));
+        }
+        if let Some(sl) = s.slab_states().get(&cell) {
+            return Some(CellState::Slab([
+                sl.encode_meta(),
+                sl.layers[0].0,
+                sl.layers[1].0,
+            ]));
+        }
+        if let Some(a) = s.log_axes().get(&cell) {
+            return Some(CellState::LogAxis(a.to_u8()));
+        }
+        if let Some(t) = s.torches().get(&cell) {
+            return Some(CellState::Torch(t.to_u8()));
+        }
+        if let Some(f) = s.entity_facings().get(&cell) {
+            return Some(CellState::Facing(f.to_u8()));
+        }
+        None
     }
 
     pub fn save(&self) -> Option<&WorldSave> {
@@ -624,15 +824,14 @@ impl World {
     pub fn tick_mobs(
         &mut self,
         dt: f32,
-        player_pos: Vec3,
-        player_body: Option<crate::mob::Body>,
+        anchors: &[crate::mob::PlayerAnchor],
     ) -> Vec<crate::mob::MobAttack> {
         if self.mobs.is_empty() {
             return Vec::new();
         }
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);
-        let attacks = mobs.tick(dt, self, player_pos, player_body, freeze_unloaded);
+        let attacks = mobs.tick(dt, self, anchors, freeze_unloaded);
         self.mobs = mobs;
         attacks
     }
@@ -658,10 +857,20 @@ impl World {
     pub(super) fn mark_light_dirty_pos(&mut self, pos: SectionPos) {
         if let Some(s) = self.section_mut(pos) {
             s.mark_light_dirty();
+            // Headless rebakes are demanded from the mark itself (no mesh pump
+            // to demand them): pump_light_bakes drains this set.
+            if self.role == WorldRole::ServerHeadless {
+                self.headless_relight.insert(pos);
+            }
         }
     }
 
     pub(super) fn queue_dirty_mesh(&mut self, pos: SectionPos) {
+        // A headless server never meshes: with nobody pumping `tick_mesh_budget`,
+        // anything queued here would only accumulate.
+        if self.role == WorldRole::ServerHeadless {
+            return;
+        }
         if let Some(s) = self.section_mut(pos) {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
@@ -726,8 +935,17 @@ impl World {
             self.sections.insert(pos, Arc::new(section));
             self.refresh_block_entity_index(pos);
             self.refresh_particle_emitter_index(pos);
+            // A synchronously-born section must enter connected clients' sent
+            // shapes promptly, or its deltas are filtered until an anchor move.
+            self.bump_terrain_revision();
         }
         true
+    }
+
+    /// See [`terrain_revision`](Self::terrain_revision) (field docs).
+    #[inline]
+    pub(super) fn bump_terrain_revision(&mut self) {
+        self.terrain_revision = self.terrain_revision.wrapping_add(1);
     }
 
     /// [`materialize_section`](Self::materialize_section) for the section owning world
@@ -832,9 +1050,16 @@ impl World {
         if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
             return SectionSummary::Unknown;
         }
-        self.column_gen
-            .get(&pos.chunk_pos())
-            .map_or(SectionSummary::Unknown, |col| col.section_summary(pos.cy))
+        if let Some(col) = self.column_gen.get(&pos.chunk_pos()) {
+            return col.section_summary(pos.cy);
+        }
+        // Replica: an absent section answers from the server's ColumnPayload
+        // summaries — the wire stand-in for generated column facts.
+        if let Some(sums) = self.column_summaries.get(&pos.chunk_pos()) {
+            let idx = (pos.cy - SECTION_MIN_CY) as usize;
+            return sums.get(idx).copied().unwrap_or(SectionSummary::Unknown);
+        }
+        SectionSummary::Unknown
     }
 
     /// Exact block when loaded, otherwise a conservative generated-summary placeholder
@@ -1035,6 +1260,7 @@ impl World {
         self.mesh_release_after.remove(&pos);
         self.columns.remove(&pos);
         self.column_gen.remove(&pos);
+        self.column_summaries.remove(&pos);
         self.pending.remove(&pos);
         self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
         self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
@@ -1053,6 +1279,7 @@ impl World {
         self.particle_emitter_sections.clear();
         self.columns.clear();
         self.column_gen.clear();
+        self.column_summaries.clear();
         self.meshes.clear();
         self.mesh_columns.clear();
         self.mesh_upload_dirty_columns.clear();
@@ -1065,6 +1292,7 @@ impl World {
         self.pending_overlays.clear();
         self.awaited_overlays.clear();
         self.disk_primary_sections.clear();
+        self.bump_terrain_revision();
     }
 
     /// All section coordinates of column `(cx,cz)` in the world vertical range.
@@ -1081,6 +1309,7 @@ impl World {
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.queue_dirty_mesh(pos);
+        self.bump_terrain_revision();
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
@@ -1103,6 +1332,7 @@ impl World {
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
         }
+        self.bump_terrain_revision();
     }
 
     /// Install an entire column of empty (all-air) sections for a test, so
@@ -1120,6 +1350,7 @@ impl World {
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
         }
+        self.bump_terrain_revision();
     }
 
     /// The loaded section owning world voxel `(wx,wy,wz)`, for a test that inspects

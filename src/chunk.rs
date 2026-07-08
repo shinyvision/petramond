@@ -410,7 +410,7 @@ impl Chunk {
 /// 2D column coordinate `(cx, cz)` — the key for per-column [`crate::column::Column`]
 /// data (biome, heightmap) and region-file / entity grouping. One column is a
 /// vertical stack of [`SectionPos`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ChunkPos {
     pub cx: i32,
     pub cz: i32,
@@ -425,7 +425,7 @@ impl ChunkPos {
 /// 3D section coordinate `(cx, cy, cz)` — the canonical key of the cubic world.
 /// `cy` may be negative (`cy = wy.div_euclid(16)`), spanning
 /// [`SECTION_MIN_CY`]..=[`SECTION_MAX_CY`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SectionPos {
     pub cx: i32,
     pub cy: i32,

@@ -1,134 +1,189 @@
-//! Voxel game simulation and scene state.
+//! Voxel game CLIENT session and scene state.
 //!
-//! `Game` owns the world, player, entities, mining, and camera. It does not own
-//! platform input, app screens, or hand animation; those belong to the app shell
-//! and render presentation layer.
+//! `Game` is the client half of the split (multiplayer Phase C2a/C2b): the
+//! camera, the locally-predicted player ([`Game::player`] — movement physics
+//! and the camera source), per-frame targeting ([`Game::look`]/
+//! [`Game::targeted_mob`]), particles, transient animation state, and the
+//! app-facing API. The SIMULATION — world, player sessions, entities, the
+//! fixed-tick stage ladder — lives in [`crate::server::game::ServerGame`].
+//!
+//! Since Phase C2b input reaches the sim ONLY as [`crate::net::protocol`]
+//! messages: every frame the client translates its input + targeting into a
+//! `PlayerUpdate` (+ one-shot `Action`s/`MenuClick`s queued in
+//! [`Game::outbox`]) and sends them to the server. Since Phase D the server
+//! (`ServerGame`) runs on its OWN self-clocked thread behind a
+//! [`ServerHandle`] — the handoff is std::sync::mpsc channels of message
+//! VALUES (Arc payloads are refcount bumps); Phase E swaps TCP under the
+//! identical messages.
+//!
+//! The server replies with ordered server→client MESSAGES (terrain payloads +
+//! `TickUpdate`s): the client installs terrain into its own REPLICA world
+//! ([`Game::replica`] — rendering, collision, raycast, particles, door/chest
+//! presentation all read it), entity/self state into the REPLICATED stores
+//! ([`Game::self_view`], `replicated.rs`). The client consumes ONLY those
+//! messages: the tick's events (world-anchored + self one-shots) and the
+//! menu-session view ride the `TickUpdate` (`ClientEvents`/
+//! [`Game::menu_view`]); menus open server-side on the tick; tick-side
+//! transform mutations come back as `SelfState::transform` corrections;
+//! `tick_alpha` is a client-side clock over received updates
+//! ([`tick::ReplicaClock`]). MOVEMENT-derived presentation (camera eye,
+//! third-person pose) reads `self.player`. The LOCAL player is always
+//! session 0 server-side.
 
-mod bed;
-mod breaking;
+pub(crate) mod body_pose;
 mod client_presentation;
-mod container;
-mod daynight;
-mod drops;
-mod entities;
+pub(crate) mod container;
 mod environment;
 mod frame;
-mod health;
-mod item_use;
 mod local_player;
-mod menu;
-mod mod_actions;
-mod placement;
 pub(crate) mod presentation;
-mod session;
+pub(crate) mod remote_players;
+pub(crate) mod replicated;
+pub(crate) mod session;
 mod terrain_render;
 mod third_person;
-mod tick;
+pub(crate) mod tick;
 
 use std::collections::HashMap;
 
-use crate::block::RenderShape;
-use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
+use crate::block_state::HeldBlockState;
 use crate::camera::Camera;
-use crate::crafting::Recipes;
 use crate::entity::ParticleSystem;
-#[cfg(test)]
-use crate::inventory::Inventory;
-#[cfg(test)]
-use crate::item::ItemStack;
-use crate::item::ItemType;
 use crate::mathh::IVec3;
-use crate::mining::MiningState;
-use crate::mob::LootTables;
+use crate::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, SelfTransform};
+use crate::player::{Player, RaycastHit};
 #[cfg(test)]
 use crate::player::PlayerMode;
-use crate::player::{Player, RaycastHit};
+use crate::server::handle::ServerHandle;
+use crate::server::player::HeldRotation;
 use crate::world::World;
 use crate::worldgen::density::surface::SurfaceDensitySystem;
 
-pub use crate::gui::MenuSlot;
-use container::ContainerMenu;
-use drops::DropQueue;
+pub(crate) use container::ContainerMenu;
 pub(crate) use environment::GameEnvironment;
 pub(crate) use tick::TickEvents;
 pub use tick::{
     GameEvents, GameInput, MobSoundEvent, ModSound, ModSpatialSoundCommand, MovementInput,
+    WorldEvent,
 };
 
 /// Mining-dust emission interval, seconds.
 const MINING_DUST_INTERVAL: f32 = 0.1;
 
-/// Minimum number of game ticks between two attack swings, so a player mashing the
-/// attack button can't land hits every tick (which would, e.g., instakill an owl).
-/// Counted in ticks now that attacks resolve on the fixed tick — 6 ticks ≈ 0.3 s.
-const ATTACK_COOLDOWN_TICKS: u32 = 6;
-
 pub struct Game {
     cam: Camera,
+    /// The client's LOCALLY-SIMULATED player: movement physics runs on this
+    /// copy every frame and the camera mirrors its eye. Its transform is sent
+    /// to the server in each frame's `PlayerUpdate` (trusted verbatim for the
+    /// local session); server-side transform mutations (teleports, knockback)
+    /// are adopted back after the fixed ticks. Its INVENTORY CONTENTS are a
+    /// stale clone — only the active-slot index is meaningful client-side; the
+    /// authoritative inventory lives on the session.
+    player: Player,
+    /// The client's per-frame raycast target: presentation (selection outline,
+    /// mining dust) + the `PlayerUpdate.target` message source. `None` when a
+    /// mob is the closer target.
+    look: Option<RaycastHit>,
+    /// The mob under the crosshair this frame (STABLE replicated id), nearer
+    /// than any block. Refreshed per frame from the replicated rows; the click
+    /// actions carry it on the wire.
+    targeted_mob: Option<u64>,
+    /// The remote PLAYER under the crosshair this frame (`PlayerId` byte),
+    /// nearer than any block or mob — the PvP attack target. At most one of
+    /// `targeted_mob`/`targeted_player` is set; `AttackClick` carries it.
+    targeted_player: Option<u8>,
+    /// The client-owned R-key placement-rotation cycle; its raw counter rides
+    /// `PlayerUpdate.held_rotation` (the session keeps its own latched copy).
+    held_rotation: HeldRotation,
+    /// One-shot client→server messages queued by the app-facing methods since
+    /// the last frame, handed to `ServerGame::pump` (after this frame's
+    /// `PlayerUpdate` + click edges) in `Game::tick`.
+    outbox: Vec<ClientToServer>,
+    /// Per-frame scratch for the assembled message batch (capacity reused;
+    /// `pump` drains it every frame).
+    frame_messages: Vec<ClientToServer>,
     /// Visual-only vertical lag after grounded auto-step movement. The player
     /// feet and collision state update immediately; only the camera eases upward.
     camera_step_y_offset: f32,
     last_player_eye_y: f32,
     /// Third-person view state (boom camera + body pose). `cam` above stays the
-    /// authoritative first-person eye for every sim consumer; see `third_person.rs`.
+    /// authoritative first-person eye for every presentation consumer; see
+    /// `third_person.rs`.
     third_person: third_person::ThirdPerson,
-    world: World,
+    /// The handle to the SIMULATION — `ServerGame` on its own self-clocked
+    /// thread (multiplayer Phase D). Input reaches it only as messages
+    /// ([`ServerHandle::send`]); state comes back only as drained
+    /// server→client messages. The client holds NO direct sim state.
+    handle: ServerHandle,
+    /// Whether this session is a REMOTE client (built by
+    /// [`Game::new_remote`] over a TCP connection). Gates host-only actions:
+    /// pause, open-to-LAN, save-and-quit.
+    remote: bool,
+    /// `Some(reason)` once the server is unreachable (thread crashed, or a
+    /// send/drain hit a closed channel). Latched once, surfaced through
+    /// `GameEvents::connection_lost` on the frame it is detected; the app
+    /// keeps running the (frozen) world until it consumes the event with a
+    /// proper screen in Phase E.
+    connection_lost: Option<String>,
+    /// Whether `connection_lost` was already surfaced (log + event) — the
+    /// error is reported exactly once.
+    connection_lost_reported: bool,
+    /// The transform of the last `PlayerUpdate` this client SENT. A
+    /// `SelfState::transform` correction adopts only the fields that differ
+    /// from it: fields equal to what we last claimed are just the server
+    /// echoing us, and the local (possibly newer) value wins.
+    last_sent_transform: Option<SelfTransform>,
+    /// Client-side tick clock over RECEIVED `TickUpdate`s — the `tick_alpha`
+    /// source now that the server accumulator lives on another thread.
+    replica_clock: tick::ReplicaClock,
+    /// Per-frame scratch for drained server messages (capacity reused).
+    incoming: Vec<crate::net::protocol::ServerToClient>,
+    /// The client's REPLICA world (role `ClientReplica`): installed from the
+    /// server's terrain payloads + deltas, it owns light + meshes for the
+    /// renderer and answers every client-side world read — collision, raycast,
+    /// particles, door/chest presentation, environment sampling.
+    replica: World,
+    /// REPLICATED mob store: presentation reads these, fed by the per-tick
+    /// `TickUpdate` batches — never `server.world.mobs()` (see
+    /// `game/replicated.rs`).
+    replicated_mobs: replicated::ReplicatedMobs,
+    /// REPLICATED dropped-item store (same contract as `replicated_mobs`).
+    replicated_items: replicated::ReplicatedItems,
+    /// The client-side mirror of the local player's replicated `SelfState`:
+    /// the HUD/hand/overlay read model (health, effects, inventory, mining,
+    /// eating, sleeping).
+    self_view: replicated::SelfView,
+    /// The client's replicated MENU-session view (`MenuSyncMsg`, on-change):
+    /// the EXCLUSIVE source `menu_read_model` renders container screens from.
+    menu_view: replicated::MenuView,
+    /// This frame's replicated tick events (world-anchored + self one-shots +
+    /// sound queues), buffered by `apply_tick_update` and drained once per
+    /// `Game::tick` into `GameEvents`.
+    pending_events: tick::ClientEvents,
+    /// The LOCAL player's server-assigned id (`JoinData::player_id`;
+    /// in-process always session 0's) — distinguishes own vs foreign
+    /// `ItemPickedUp` events.
+    self_id: crate::server::player::PlayerId,
+    /// The OTHER connected players (id → name): seeded from
+    /// `JoinData::players` on a remote join, then maintained by
+    /// `PlayerJoined`/`PlayerLeft` broadcasts on every connection kind.
+    player_roster: HashMap<crate::server::player::PlayerId, String>,
+    /// REPLICATED remote-player store (Phase F): every OTHER session's
+    /// prev/curr row pair plus its body-pose / held-item animation state —
+    /// what `collect_remote_players` renders bodies from. The local player
+    /// is never in it.
+    remote_players: remote_players::RemotePlayers,
+    /// The latest replicated tick number (`TickUpdate::tick`) — the client's
+    /// notion of game time for presentation scheduling.
+    replicated_tick: u64,
+    /// Chests with at least one open screen anywhere (replicated per batch —
+    /// the server's `chest_viewers` key set). Drives the lid animation.
+    open_chests: rustc_hash::FxHashSet<IVec3>,
     fallback_world: SurfaceDensitySystem,
-    player: Player,
-    /// Block currently under the crosshair, refreshed each tick. Set to `None` when a
-    /// mob is the closer target (so looking at a mob interrupts block selection/mining).
-    look: Option<RaycastHit>,
-    /// The mob under the crosshair (index into the world's live mob set) this frame,
-    /// nearer than any block, if any. Recomputed every frame — never stored across a
-    /// mob tick, so despawn-driven index shifts can't make it stale.
-    targeted_mob: Option<usize>,
-    mining: MiningState,
-    /// Tracks the world's lighting revision so item-entity skylight is only
-    /// recomputed when a world light bake actually changed. The drops themselves
-    /// live in `World` (with their chunks); this is just the change detector.
-    dropped_light_revision: u64,
     particles: ParticleSystem,
-    spawn_counter: u32,
-    /// Next deterministic session handle for mod-owned spatial sounds. The app
-    /// owns playback; this counter only gives mods stable identities for stop calls.
-    next_mod_sound_handle: u64,
+    /// Wall-clock seconds banked toward the next mining-dust fleck while the
+    /// local player is actively mining (client presentation pacing).
     mining_dust_t: f32,
-    /// Game ticks remaining before the player may attack again — the
-    /// [`ATTACK_COOLDOWN_TICKS`] gate, decremented once per tick. An attack is refused
-    /// while it is positive, so mashing the button can't land hits faster than this.
-    attack_cooldown: u32,
-    /// --- Per-frame input intent, sampled in [`tick`](Self::tick) and consumed by the
-    /// fixed-tick loop, so every world/entity mutation happens on the game tick while
-    /// input is still read per-frame. ---
-    /// Primary button held this frame (mine the looked-at block); re-sampled each frame.
-    intent_break_held: bool,
-    /// Secondary button held this frame (sustains an in-progress eat); re-sampled.
-    intent_use_held: bool,
-    /// Sneaking this frame (gates right-click interact vs. place); re-sampled each frame.
-    intent_sneak: bool,
-    /// Gameplay input is live this frame (false while a screen owns focus); re-sampled.
-    intent_gameplay: bool,
-    /// A primary-button *press* is waiting to be resolved as an attack on the next tick
-    /// (edge-latched; the tick consumes it). The visual swing is emitted when it resolves.
-    pending_attack: bool,
-    /// A secondary-button *press* is waiting to be resolved as a place/interact on the
-    /// next tick (edge-latched; the tick consumes it).
-    pending_place: bool,
-    held_rotation_item: Option<ItemType>,
-    held_block_rotation: u8,
-    /// The in-progress eat (held secondary button on a food item), or `None`.
-    /// Tick-owned: started/advanced/aborted in `tick_place`; the presentation
-    /// reads its progress for the chew animation.
-    eating: Option<item_use::EatingState>,
-    /// Item-drop intents latched by input/menu cleanup and applied on the next fixed
-    /// tick. Gameplay-visible inventory/cursor mutation and entity spawning happen
-    /// together in [`tick_drops`](Self::tick_drops).
-    drop_queue: DropQueue,
-    /// Container-menu clicks (slot, button, shift, the App's double-click `gather`
-    /// verdict) latched this frame, applied in order on the next tick so chest / furnace /
-    /// inventory edits mutate state on the tick. Real clicks are >1 tick apart, so each is
-    /// applied before the next is decided. Drained each tick.
-    pending_menu_clicks: Vec<(MenuSlot, crate::controls::PointerButton, bool, bool)>,
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
     /// for the rest; client-side animation only, never persisted. The render-side
@@ -142,105 +197,16 @@ pub struct Game {
     /// straight from the door state). Client-side animation only, never persisted — the
     /// authoritative open/closed bit lives in the chunk door map. See [`crate::door`].
     door_swings: HashMap<IVec3, f32>,
-    /// Wall-clock seconds banked toward the next fixed simulation tick.
-    tick_accumulator: f32,
-    /// Wall-clock seconds since the last background autosave.
-    autosave_t: f32,
-    /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
-    /// [`ContainerMenu`]'s craft preview (borrowed in per call) and by the furnace
-    /// *smelting* tick (`World::game_tick`), which is why they live here on `Game`
-    /// rather than on the menu — the menu would otherwise need a self-referential
-    /// borrow during the tick.
-    recipes: Recipes,
-    /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
-    /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
-    loot: LootTables,
-    /// The open container GUI's persistent *edit target*: the block-entity (or the
-    /// inventory-side craft grid) the screen currently mutates, plus its slot
-    /// behaviour. NOT the screen authority — `App::AppScreen` decides which screen
-    /// is open; this only tracks what that screen is acting on.
-    menu: ContainerMenu,
-    /// Set when the player right-clicks a placed crafting table, so the next
-    /// [`tick`](Self::tick) asks the app shell to open the 3×3 screen. One-shot
-    /// open *request* (consumed via [`GameEvents`]), distinct from the menu's
-    /// persistent edit target.
-    request_open_table: bool,
-    /// Set to a furnace's position when right-clicked, so the next
-    /// [`tick`](Self::tick) asks the app shell to open the furnace screen. One-shot
-    /// open request (consumed via [`GameEvents`]).
-    request_open_furnace: Option<IVec3>,
-    /// Set to a chest's position when right-clicked, so the next [`tick`](Self::tick)
-    /// asks the app shell to open the chest screen. One-shot open request (consumed
-    /// via [`GameEvents`]).
-    request_open_chest: Option<IVec3>,
-    /// Set to a furniture workbench's position when right-clicked, so the next
-    /// [`tick`](Self::tick) asks the app shell to open the workbench screen. One-shot
-    /// open request (consumed via [`GameEvents`]).
-    request_open_workbench: Option<IVec3>,
-    /// Set when a block's `open_gui` interaction (pos `Some`) or a mod's
-    /// `GuiOpen` HostCall (pos `None`) asks for a mod GUI screen. One-shot
-    /// open request (consumed via [`GameEvents`]).
-    request_open_mod_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
-    /// Set by a mod's `GuiClose` HostCall; the app closes the mod GUI screen
-    /// if one is up. One-shot (consumed via [`GameEvents`]).
-    request_close_mod_gui: bool,
-    /// Set when the player right-clicks a bed, so the next [`tick`](Self::tick)
-    /// asks the app shell to open the sleep overlay. One-shot open request
-    /// (consumed via [`GameEvents`]).
-    request_open_sleep: bool,
-    /// The in-flight sleep session (`None` = awake). Tick-owned; the overlay
-    /// fade reads it through [`sleep_progress01`](Self::sleep_progress01).
-    sleep: Option<bed::SleepState>,
-    /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
-    wake_requested: bool,
-    /// App-side respawn request (the death screen), latched to the next tick.
-    respawn_requested: bool,
-    /// Set when a door was toggled on a tick, so the per-frame [`GameEvents`] can
-    /// flick the hand (the toggle itself already applied) and play the open/close
-    /// sound. Carries the door's NEW open state. One-shot (consumed via `GameEvents`).
-    toggled_door: Option<bool>,
-    /// The modding event bus (Phase 1): pre events dispatch at their decision sites,
-    /// post events queue and drain at tick-stage boundaries. The engine registers no
-    /// handlers yet — the seams exist for mods. See WIKI/modding.md.
-    bus: crate::events::EventBus,
-    /// Systems attached between the fixed-tick stages (Phase 1 seam).
-    systems: crate::events::TickSystems,
-    /// The WASM mod instances (Phase 2b). Their registered closures (held by
-    /// `bus`/`systems`) share ownership; the host keeps the canonical handles
-    /// for GUI click dispatch (Phase 5) and diagnostics.
-    mods: crate::modding::ModHost,
 }
 
 impl Game {
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn inventory(&self) -> &Inventory {
-        &self.player.inventory
-    }
-
-    #[cfg(test)]
-    pub(crate) fn add_to_inventory(&mut self, stack: ItemStack) -> Option<ItemStack> {
-        self.player.inventory.add(stack)
-    }
-
-    /// Test injection: replace the mod host (e.g. with a WAT guest) so the GUI
-    /// click dispatch plumbing can be driven without compiled mods.
-    #[cfg(test)]
-    pub(crate) fn set_mods_for_test(&mut self, mods: crate::modding::ModHost) {
-        self.mods = mods;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn mods_for_test(&self) -> &crate::modding::ModHost {
-        &self.mods
-    }
-
     pub fn set_aspect(&mut self, aspect: f32) {
         self.cam.aspect = aspect;
     }
 
     /// The player's ear (eye) position, for the app layer's distance
-    /// attenuation of positional mod sounds.
+    /// attenuation of positional mod sounds. Movement-derived → the client's
+    /// predicted player.
     #[inline]
     pub fn listener_position(&self) -> crate::mathh::Vec3 {
         self.player.eye()
@@ -248,13 +214,29 @@ impl Game {
 
     /// Current fixed-tick number, exposed for client-side presentation systems
     /// that schedule effects against game tick time without mutating the sim.
+    /// The REPLICATED tick (latest `TickUpdate`), not a server-world read.
     #[inline]
     pub fn current_tick(&self) -> u64 {
-        self.world.current_tick()
+        self.replicated_tick
     }
 
+    /// The OTHER connected players (id → name). Empty in singleplayer.
+    #[allow(dead_code)] // first consumers: Phase E2 (player list) / Phase F (rendering)
+    pub(crate) fn player_roster(&self) -> &HashMap<crate::server::player::PlayerId, String> {
+        &self.player_roster
+    }
+
+    /// Toggle spectator mode. The LOCAL prediction flips immediately
+    /// (movement feel — the very next physics frame must float or fall); the
+    /// server applies `PlayerAction::ToggleMode` at message time and confirms
+    /// through `SelfState::mode`, which `SelfView` mirrors.
     pub fn toggle_player_mode(&mut self) {
         self.player.toggle_mode();
+        // Mirror into the replicated view immediately so the HUD (hearts
+        // hide/show) follows the prediction; the next batch carries the same.
+        self.self_view.mode = self.player.mode();
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::ToggleMode));
     }
 
     #[cfg(test)]
@@ -263,123 +245,330 @@ impl Game {
         self.player.mode()
     }
 
+    /// The CLIENT-owned active hotbar slot (what the number keys set and the
+    /// next `PlayerUpdate` carries).
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn active_hotbar(&self) -> u8 {
+        self.player.inventory.active_slot()
+    }
+
+    /// Take the queued one-shot messages, for a test harness that services
+    /// the server end synchronously (`Game::tick` sends them in play).
+    #[cfg(test)]
+    pub(crate) fn take_outbox_for_test(&mut self) -> Vec<ClientToServer> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// Apply replicated view refreshes a test harness built server-side,
+    /// standing in for the next batch (`SelfState` + optional menu sync).
+    #[cfg(test)]
+    pub(crate) fn apply_views_for_test(
+        &mut self,
+        state: &crate::net::protocol::SelfState,
+        sync: Option<crate::net::protocol::MenuSyncMsg>,
+    ) {
+        self.self_view.apply(state);
+        if let Some(sync) = sync {
+            self.menu_view.apply(sync);
+        }
+    }
+
+    /// Select hotbar `slot` (number key). Client-owned: the index rides the
+    /// next `PlayerUpdate.hotbar_slot`; any hotbar change resets the R-key
+    /// rotation cycle (clear-on-select).
     pub fn set_active_hotbar(&mut self, slot: u8) {
         self.player.inventory.set_active(slot);
-        self.clear_held_block_rotation();
+        self.held_rotation.clear();
     }
 
-    #[inline]
-    fn selected_item(&self) -> Option<ItemType> {
-        self.player.inventory.selected().map(|s| s.item)
-    }
-
+    /// Cycle the held block's placement rotation (the R key). Client-owned:
+    /// the armed-item check reads the REPLICATED inventory's selection; the
+    /// raw counter rides the next `PlayerUpdate.held_rotation` and the
+    /// session re-derives the armed item (see `HeldRotation::apply_wire`).
     pub fn toggle_held_block_rotation(&mut self) {
-        let Some(item) = self.selected_item() else {
-            self.clear_held_block_rotation();
-            return;
-        };
-        if !item.as_block().is_some_and(rotatable_block) {
-            self.clear_held_block_rotation();
-            return;
-        }
-        if self.held_rotation_item == Some(item) {
-            let count = item.as_block().map_or(1, rotation_count).max(1);
-            self.held_block_rotation = (self.held_block_rotation + 1) % count;
-        } else {
-            self.held_rotation_item = Some(item);
-            self.held_block_rotation = 1 % item.as_block().map_or(1, rotation_count).max(1);
-        }
+        let selected = self.self_view.inventory.selected().map(|s| s.item);
+        self.held_rotation.toggle(selected);
     }
 
-    #[inline]
-    fn clear_held_block_rotation(&mut self) {
-        self.held_rotation_item = None;
-        self.held_block_rotation = 0;
+    /// The in-progress eat progress for the LOCAL player (chew animation),
+    /// read from the replicated self view.
+    pub fn eating_progress(&self) -> Option<f32> {
+        self.self_view.eating
     }
 
-    #[inline]
-    fn held_rotation_active(&self) -> bool {
-        let Some(item) = self.selected_item() else {
-            return false;
-        };
-        self.held_rotation_item == Some(item)
-            && self.held_block_rotation != 0
-            && item.as_block().is_some_and(rotatable_block)
-    }
-
+    /// The held block's previewed placement state — the CLIENT's rotation
+    /// cycle over the REPLICATED inventory's selected item (the render-path
+    /// preview; the session keeps its own latched copy for the actual
+    /// placement tick).
     #[inline]
     pub(crate) fn held_block_state(&self) -> HeldBlockState {
-        let Some(block) = self.selected_item().and_then(ItemType::as_block) else {
-            return HeldBlockState::None;
-        };
-        if block.render_shape() == RenderShape::Stair {
-            return HeldBlockState::Stair(StairState::new(
-                crate::block_model::DEFAULT_MODEL_FACING,
-                if self.held_rotation_active() {
-                    StairHalf::Top
-                } else {
-                    StairHalf::Bottom
-                },
-            ));
-        }
-        if block.render_shape() == RenderShape::Slab {
-            let slot = crate::slab::slot_for_rotation(
-                self.held_slab_rotation(),
-                IVec3::ZERO,
-                crate::facing::Facing::South,
-            );
-            return HeldBlockState::Slab(SlabState::single(slot.split, slot.index, block));
-        }
-        if block.is_log() {
-            return HeldBlockState::Log(if self.held_rotation_active() {
-                LogAxis::X
-            } else {
-                LogAxis::Y
-            });
-        }
-        HeldBlockState::None
+        self.held_rotation
+            .held_block_state(self.self_view.inventory.selected().map(|s| s.item))
     }
 
+    // --- App-facing action methods. The pub surface `Game` exposed before the
+    // client/server split stays intact, but since Phase C2b these PUSH
+    // MESSAGES into `outbox` (consumed by `ServerGame::pump` inside
+    // `Game::tick`) instead of touching server state. Since C2c-iii the menu
+    // read model renders from the REPLICATED `MenuView` and the screen-open
+    // calls are requests/acks (menus open server-side on the tick).
+
+    /// Ask the server to persist everything (world chunks, level.dat,
+    /// per-player files, mod set) — a control message; the save happens on the
+    /// server thread. For the QUIT path use [`Game::shutdown`], which also
+    /// joins the thread.
+    pub fn save_all(&mut self) {
+        self.handle.save_all();
+    }
+
+    /// Quit this session: the server thread saves everything (what `save_all`
+    /// did) and exits; returns once it is joined.
+    pub fn shutdown(mut self) {
+        self.handle.shutdown_and_join();
+    }
+
+    /// Singleplayer pause (the pause menu): the server keeps draining
+    /// messages, streaming, and autosaving, but skips the fixed ticks and
+    /// banks no tick debt. Honored server-side only while it has never been
+    /// open to LAN (the sole connection is this local one); once opened, the
+    /// server ignores Pause. While paused the app must keep calling
+    /// [`Game::pump_network`] so server output is still consumed.
+    pub fn set_paused(&mut self, paused: bool) {
+        // A remote client never pauses the shared server (which also gates:
+        // once opened to LAN, Pause is ignored) — belt and braces.
+        if self.remote {
+            return;
+        }
+        if self.handle.send(ClientToServer::Pause(paused)).is_err() {
+            self.note_connection_lost();
+        }
+    }
+
+    /// Whether this session fronts a REMOTE server (joined over TCP) rather
+    /// than the in-process host thread.
     #[inline]
-    pub(crate) fn held_stair_half(&self) -> StairHalf {
-        if self.held_rotation_active() {
-            StairHalf::Top
-        } else {
-            StairHalf::Bottom
+    pub fn is_remote(&self) -> bool {
+        self.remote
+    }
+
+    /// Open the running HOST server to LAN on `port`; `Ok` carries the
+    /// actual bound port. Host only — the pause menu hides the button for
+    /// remote sessions (and a remote handle has no control channel to ask).
+    pub fn open_to_lan(&mut self, port: u16) -> std::io::Result<u16> {
+        debug_assert!(!self.remote, "open_to_lan is a host action");
+        self.handle.open_to_lan(port)
+    }
+
+    /// One-shot: the latched connection-loss reason if it has not yet been
+    /// surfaced. `Game::tick` reports through `GameEvents::connection_lost`;
+    /// the app polls THIS on frames that skip the tick (shell screens over a
+    /// live game — the pause menu) so a loss detected by
+    /// [`Game::pump_network`] still reaches the Disconnected screen.
+    pub fn take_connection_lost(&mut self) -> Option<String> {
+        if self.connection_lost_reported {
+            return None;
+        }
+        let reason = self.connection_lost.clone()?;
+        self.connection_lost_reported = true;
+        log::error!("{reason}; nothing further will be saved");
+        Some(reason)
+    }
+
+    /// Latch the server as unreachable (crashed thread / closed channel /
+    /// lost TCP connection); reported exactly once through
+    /// `GameEvents::connection_lost`.
+    fn note_connection_lost(&mut self) {
+        self.note_connection_lost_because("world stopped: the server is gone");
+    }
+
+    /// [`note_connection_lost`](Self::note_connection_lost) with an explicit
+    /// reason (`ServerClosing` / a server `Disconnect`); the first reason
+    /// latched wins.
+    fn note_connection_lost_because(&mut self, reason: &str) {
+        if self.connection_lost.is_none() {
+            self.connection_lost = Some(reason.to_string());
         }
     }
 
-    #[inline]
-    pub(crate) fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
-        if self.held_rotation_active() {
-            crate::slab::SlabRotation::from_index(self.held_block_rotation)
-        } else {
-            crate::slab::SlabRotation::Bottom
+    /// Drop the player's held (active hotbar) item into the world via the in-game
+    /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
+    /// single item (Q). No-op with an empty hand.
+    pub fn drop_selected_item(&mut self, all: bool) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::Drop { all }));
+    }
+
+    /// Throw the whole cursor-held stack out into the world (inventory drag-out
+    /// then click outside the panel). No-op when the cursor is empty.
+    pub fn throw_cursor_stack(&mut self) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::ThrowCursorStack));
+    }
+
+    /// Throw a single item off the cursor-held stack (right-click outside the
+    /// panel while dragging). No-op when the cursor is empty.
+    pub fn throw_cursor_one(&mut self) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::ThrowCursorOne));
+    }
+
+    /// Whether the LOCAL cursor currently holds a stack, from the REPLICATED
+    /// inventory (cursor rides `SelfState`). Gates the double-click gather,
+    /// which only fires while a stack is being dragged; the gather verdict
+    /// ships in the `MenuClick` message.
+    pub fn cursor_has_stack(&self) -> bool {
+        self.self_view.inventory.cursor().is_some()
+    }
+
+    /// Read-only state needed to build the UI snapshot for the LOCAL player's
+    /// current menu — assembled ENTIRELY from the replicated stores: the
+    /// inventory from `SelfView`, the menu-session views (craft grid, furnace,
+    /// chest, workbench, mod GUI slots + state map) from the `MenuView` the
+    /// per-tick `MenuSyncMsg`s feed. No server-session reads.
+    pub fn menu_read_model(&self) -> crate::server::menu::MenuReadModel<'_> {
+        let view = &self.menu_view;
+        crate::server::menu::MenuReadModel {
+            inventory: &self.self_view.inventory,
+            craft: &view.craft,
+            furnace: view.furnace,
+            chest: view.chest,
+            workbench: view.workbench.clone(),
+            gui_state: view.gui_state.clone(),
+            container: view.container.clone(),
         }
     }
 
-    #[inline]
-    pub(crate) fn held_log_axis_for_facing(&self, facing: crate::facing::Facing) -> LogAxis {
-        if !self.held_rotation_active() {
-            return LogAxis::Y;
-        }
-        match facing {
-            crate::facing::Facing::East | crate::facing::Facing::West => LogAxis::X,
-            crate::facing::Facing::North | crate::facing::Facing::South => LogAxis::Z,
+    /// Latch a hit-tested container click for the next game tick: resolved by
+    /// the App to a [`MenuSlot`](crate::gui::MenuSlot), a button, Shift, and
+    /// its double-click `gather` verdict, shipped as a `MenuClick` message and
+    /// applied in arrival order by the tick's menu stage.
+    pub fn menu_click(
+        &mut self,
+        slot: crate::gui::MenuSlot,
+        button: crate::controls::PointerButton,
+        shift: bool,
+        gather: bool,
+    ) {
+        self.outbox.push(ClientToServer::MenuClick {
+            slot: MenuSlotWire::from_menu_slot(&slot),
+            button: crate::net::protocol::button_to_wire(button),
+            shift,
+            gather,
+        });
+    }
+
+    // Menu sessions open SERVER-SIDE on the tick (at the interaction / mod
+    // action / OpenInventory request sites) since C2c-iii. The App's open_*
+    // calls below keep their historical signatures: `open_crafting(2)` (the E
+    // key) is the one genuine REQUEST — it sends `PlayerAction::OpenInventory`
+    // — while the rest are client-side ACKNOWLEDGMENTS the App makes when it
+    // receives the matching `GameEvents.open_*` one-shot (by which point the
+    // server session is already open). Since Phase D the client holds no
+    // session state to assert against, so the acks are plain no-ops.
+
+    /// The E-key inventory screen (`cols == 2`): REQUEST the server open the
+    /// 2×2 crafting session on the next tick. `cols == 3` is the App's ack of
+    /// a server-opened crafting-table session (no-op; see above).
+    pub fn open_crafting(&mut self, cols: usize) {
+        if cols <= 2 {
+            self.outbox
+                .push(ClientToServer::Action(PlayerAction::OpenInventory));
         }
     }
-}
 
-fn rotatable_block(block: crate::block::Block) -> bool {
-    matches!(block.render_shape(), RenderShape::Stair | RenderShape::Slab) || block.is_log()
-}
-
-fn rotation_count(block: crate::block::Block) -> u8 {
-    if block.render_shape() == RenderShape::Slab {
-        3
-    } else {
-        2
+    /// Ack of a server-opened furnace session at `pos` (no-op; see above).
+    pub fn open_furnace_screen(&mut self, pos: IVec3) {
+        let _ = pos;
     }
+
+    /// Ack of a server-opened chest session at `pos` (no-op; see above).
+    pub fn open_chest_screen(&mut self, pos: IVec3) {
+        let _ = pos;
+    }
+
+    /// Ack of a server-opened furniture-workbench session (no-op; see above).
+    pub fn open_workbench_screen(&mut self) {}
+
+    /// Ack of a server-opened mod GUI session (no-op; see above).
+    pub fn open_mod_gui_screen(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
+        let _ = (kind, pos);
+    }
+
+    /// Close the LOCAL player's open menu session. The server-side close
+    /// (cursor stash, craft-grid return, viewer release) runs ON THE TICK the
+    /// message lands on; there is no client-side menu state to clear — the App
+    /// owns which screen is up.
+    pub fn close_open_menu(&mut self) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::CloseMenu));
+    }
+
+    /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
+    pub fn request_wake(&mut self) {
+        self.outbox.push(ClientToServer::Action(PlayerAction::Wake));
+    }
+
+    /// App-side respawn request (the death screen's button), latched to the
+    /// next tick.
+    pub fn request_respawn(&mut self) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::Respawn));
+    }
+
+    /// Sleep fade progress in `[0, 1]` while the LOCAL player sleeps — the read
+    /// model the presentation overlay darkens by, from the replicated self
+    /// view. `None` while awake.
+    pub fn sleep_progress01(&self) -> Option<f32> {
+        self.self_view.sleeping
+    }
+
+    /// `(sleeping, total)` across every connected player — the replicated
+    /// remote rows plus the local self view. The sleep overlay shows
+    /// "x/y players sleeping" from this when `total > 1`.
+    pub fn sleeping_player_counts(&self) -> (usize, usize) {
+        let self_sleeping = usize::from(self.self_view.sleeping.is_some());
+        (
+            self.remote_players.sleeping_count() + self_sleeping,
+            self.remote_players.len() + 1,
+        )
+    }
+
+    /// While sleeping, the engine yaw the lying third-person body's head faces:
+    /// from the bed's base (foot) cell toward its pillow cell. `None` while
+    /// awake or if the bed vanished mid-sleep. The bed cell is REPLICATED
+    /// (`SelfState::sleep_bed`); the bed's model group is read from the
+    /// REPLICA (model cells replicate via payload states + deltas).
+    pub(super) fn sleep_head_yaw(&self) -> Option<f32> {
+        let base = self.self_view.sleep_bed?;
+        let (_, _, cells) = self.replica.model_group(base)?;
+        let other = cells.iter().copied().find(|c| *c != base)?;
+        let d = other - base;
+        Some((d.x as f32).atan2(d.z as f32))
+    }
+
+    /// The LOCAL player's health for the HUD hearts (replicated self view), or
+    /// `None` when there is no survival bar to draw (a floating spectator).
+    pub fn player_health(&self) -> Option<crate::gui::HealthView> {
+        if self.self_view.mode == crate::player::PlayerMode::Spectator {
+            return None;
+        }
+        Some(crate::gui::HealthView {
+            current: self.self_view.health,
+            max: crate::player::MAX_HEALTH,
+        })
+    }
+
+    /// The LOCAL player's active status effects for the HUD icon row, in
+    /// application order (replicated self view). Empty for a spectator — the
+    /// row hides with the hearts.
+    pub fn player_effect_icons(&self) -> Vec<crate::effect::Effect> {
+        if self.self_view.mode == crate::player::PlayerMode::Spectator {
+            return Vec::new();
+        }
+        self.self_view.effects.iter().map(|&(e, _)| e).collect()
+    }
+
 }
 
 #[cfg(test)]

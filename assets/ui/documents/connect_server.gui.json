@@ -1,0 +1,130 @@
+{
+    "format": 1,
+    "kind": "llama:connect_server",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "w": 240,
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6,
+            "align": "stretch"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Connect to Server",
+                "scale": 2
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "label",
+                "text": "Server Address",
+                "style": "label.muted"
+            },
+            {
+                "type": "text_input",
+                "id": "server_addr",
+                "placeholder": "host or host:port",
+                "max_chars": 64,
+                "bind": {
+                    "text": "server_addr"
+                }
+            },
+            {
+                "type": "label",
+                "text": "Player Name",
+                "style": "label.muted"
+            },
+            {
+                "type": "text_input",
+                "id": "player_name",
+                "placeholder": "Player",
+                "max_chars": 32,
+                "bind": {
+                    "text": "player_name"
+                }
+            },
+            {
+                "type": "label",
+                "wrap": true,
+                "style": "label.danger",
+                "bind": {
+                    "text": "status_text",
+                    "visible": "has_status"
+                }
+            },
+            {
+                "type": "label",
+                "style": "label.muted",
+                "bind": {
+                    "text": "connect_phase",
+                    "visible": "connecting"
+                }
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 4
+                }
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 5,
+                    "align": "stretch"
+                },
+                "children": [
+                    {
+                        "type": "button",
+                        "id": "connect",
+                        "text": "Connect",
+                        "style": "button.success",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        },
+                        "bind": {
+                            "enabled": "can_connect"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "cancel",
+                        "text": "Cancel",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        },
+                        "bind": {
+                            "visible": "connecting"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "back",
+                        "text": "Back",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

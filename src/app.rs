@@ -5,6 +5,7 @@
 //! `game`, and first-person hand animation lives in the renderer presentation
 //! layer.
 
+mod connect;
 mod gui_router;
 mod input;
 mod menu_lifecycle;
@@ -58,6 +59,9 @@ pub struct App {
     /// Gameplay-originated mob sound events waiting for the next presentation
     /// snapshot, where they can be pinned to interpolated mob positions.
     mob_sound_events: Vec<crate::game::MobSoundEvent>,
+    /// Positional world-event one-shots (block place/break, doors, chest
+    /// lids, foreign pickups) waiting for the next render's spatial listener.
+    world_sound_cues: Vec<(crate::audio::Sound, crate::mathh::Vec3)>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,
     next_mob_sound_handle: u64,
@@ -101,6 +105,17 @@ pub struct App {
     /// The World Settings session for the selected world (`None` unless the
     /// screen is open): installed pack rows + the world's disabled set.
     world_settings: Option<shell::WorldSettingsSession>,
+    /// The Connect to Server session: entry fields, the off-thread connect
+    /// worker's channel, and the mods a refused join reported missing.
+    connect: connect::ConnectSession,
+    /// The port the running HOST session is open to LAN on (`None` = not
+    /// open). Drives the pause menu's Open to LAN button/label.
+    lan_port: Option<u16>,
+    /// The last Open to LAN failure, shown inline on the pause menu; cleared
+    /// when the pause screen closes.
+    lan_error: Option<String>,
+    /// Why the last session ended, shown by the Disconnected screen.
+    disconnect_message: String,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
 }
@@ -145,6 +160,7 @@ impl App {
             spatial_sound_commands: Vec::new(),
             spatial_mob_positions: Vec::new(),
             mob_sound_events: Vec::new(),
+            world_sound_cues: Vec::new(),
             mob_sound_state: HashMap::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio: Audio::new(),
@@ -164,6 +180,10 @@ impl App {
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,
+            connect: connect::ConnectSession::default(),
+            lan_port: None,
+            lan_error: None,
+            disconnect_message: String::new(),
             quit_requested: false,
             renderer_world_clear_pending: true,
         };
@@ -172,15 +192,10 @@ impl App {
         app
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_in_game(cam: Camera, world_name: &str, seed: u32, render_dist: i32) -> Self {
-        let mut app = Self::new(cam, render_dist);
-        app.start_game(world_name, seed);
-        app
-    }
-
-    /// Flush the world to disk on quit. The `WorldSave` I/O thread is joined when
-    /// the `App` (and the `World` it owns) drops, after this queues the writes.
+    /// Flush the world to disk on quit: a save request to the server thread.
+    /// Dropping the `App` (→ `Game` → `ServerHandle`) then shuts the server
+    /// down, which saves again and joins — the request here just bounds the
+    /// window if teardown is interrupted.
     pub fn save_on_exit(&mut self) {
         if let Some(game) = self.game.as_mut() {
             game.save_all();
@@ -284,6 +299,9 @@ impl App {
             AppScreen::WorldSettings => GuiKind::WorldSettings,
             AppScreen::CreateWorld => GuiKind::CreateWorld,
             AppScreen::DeleteWorld => GuiKind::DeleteWorld,
+            AppScreen::ConnectServer => GuiKind::ConnectServer,
+            AppScreen::ModsMissing => GuiKind::ModsMissing,
+            AppScreen::ConnectionLost => GuiKind::ConnectionLost,
             AppScreen::Pause => GuiKind::Pause,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,

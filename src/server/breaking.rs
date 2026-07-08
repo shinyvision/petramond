@@ -6,54 +6,35 @@ use crate::mathh::{IVec3, Vec3};
 use crate::mining::BreakEvent;
 use crate::world::World;
 
-use super::{
-    tick::{TickEvents, TICK_DT},
-    Game, MINING_DUST_INTERVAL,
-};
+use super::game::ServerGame;
+use crate::game::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
-impl Game {
+impl ServerGame {
     /// Mining, on the tick: advance the break timer against the block under the crosshair
     /// (sampled per frame into `look`) by [`TICK_DT`], and when a block finishes breaking,
     /// clear it, scatter any block-entity contents + harvested drops, and spawn the break
     /// burst. Frame-rate independent. Gated off (progress reset) while a screen owns input
     /// (`intent_gameplay` false) — that's `inventory_open` to the mining controller.
-    pub(super) fn tick_mining(&mut self, events: &mut TickEvents) {
+    /// The mining-dust flecks are presentation, emitted CLIENT-side per frame from
+    /// this session's live mining state (`Game::tick_mining_dust`).
+    pub(crate) fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
+        let sess = &mut self.sessions[s];
         // The held tool (None = bare hand) gates mining speed + whether drops fall.
-        let tool = self.player.inventory.selected().and_then(|s| s.item.tool());
-        if let Some(event) = self.mining.update(
+        let tool = sess
+            .player
+            .inventory
+            .selected()
+            .and_then(|st| st.item.tool());
+        let look = sess.look;
+        if let Some(event) = sess.mining.update(
             TICK_DT,
-            self.look.as_ref(),
-            self.intent_break_held,
-            !self.intent_gameplay,
+            look.map(|t| t.block),
+            sess.intent_break_held,
+            !sess.intent_gameplay,
             &self.world,
             tool,
         ) {
-            self.finish_player_break(event, events);
-        }
-
-        // A small dust fleck every MINING_DUST_INTERVAL while actively breaking.
-        if self.mining.is_mining() {
-            if let Some(h) = self.look {
-                self.mining_dust_t += TICK_DT;
-                if self.mining_dust_t >= MINING_DUST_INTERVAL {
-                    self.mining_dust_t = 0.0;
-                    let block =
-                        Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-                    let cell = h.block + h.normal;
-                    let (sky, blk, warm) =
-                        self.world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-                    match block.render_shape() {
-                        RenderShape::Model(kind) => self
-                            .particles
-                            .spawn_mining_model(h.block, h.normal, kind, sky, blk, warm),
-                        _ => self
-                            .particles
-                            .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm),
-                    }
-                }
-            }
-        } else {
-            self.mining_dust_t = 0.0;
+            self.finish_player_break(s, event, events);
         }
     }
 
@@ -61,32 +42,48 @@ impl Game {
     /// unbreakable — the block stays; the spent mining progress is the cost), then
     /// clear the block, scatter block-entity contents + harvested drops, spawn the
     /// burst, and queue `block_broken`.
-    pub(super) fn finish_player_break(&mut self, event: BreakEvent, events: &mut TickEvents) {
+    pub(crate) fn finish_player_break(
+        &mut self,
+        s: usize,
+        event: BreakEvent,
+        events: &mut TickEvents,
+    ) {
         {
             let mut pre = BlockBreakPre {
                 pos: event.pos,
                 block: event.block,
                 harvested: event.harvested,
             };
-            if self
-                .bus
-                .block_break_pre(&mut self.world, &mut self.player, events, &mut pre)
-                == Outcome::Cancel
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            if bus.block_break_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
             {
                 return;
             }
         }
-        events.broke_block = Some(event.block);
+        events.player(s).broke_block = Some(event.block);
         // Breaking a bed takes its spawn point with it — resolved BEFORE the
         // removal below clears the footprint metadata the group lookup needs.
+        // Checked for EVERY session: any player can break another's spawn bed.
         if event.block.interaction() == crate::block::BlockInteraction::Sleep {
             self.clear_bed_spawn_at(event.pos);
         }
-        let hit_normal = self
+        let hit_normal = self.sessions[s]
             .look
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
-        let (sky, blk, warm) = break_light(&self.world, event.pos, hit_normal);
+        let (sky, blk, _warm) = break_light(&self.world, event.pos, hit_normal);
         let slab_drops = (event.block.render_shape() == RenderShape::Slab)
             .then(|| self.world.slab_drop_stacks_at(event.pos));
         // A mod container is keyed at the block's container anchor — resolved
@@ -99,13 +96,9 @@ impl Game {
             self.world.remove_model_block(event.pos);
         } else if event.block.render_shape() == RenderShape::Door {
             // A door breaks as a whole: removing either cell clears both halves and
-            // drops one door item (the `spawn_drops` below). Forget any swing too.
-            if let Some(lower) = self
-                .world
-                .door_lower_cell(event.pos.x, event.pos.y, event.pos.z)
-            {
-                self.door_swings.remove(&lower);
-            }
+            // drops one door item (the `spawn_drops` below). The client-side swing
+            // animation entry dies with it, dropped from the `block_broken` event
+            // in `Game::apply_world_effects` (client-owned state).
             self.world.remove_door(event.pos);
         } else {
             self.world
@@ -123,16 +116,13 @@ impl Game {
                 self.spawn_item_stack(event.pos, stack, (sky, blk));
             }
         }
-        // A bbmodel block has no block-atlas tile, so its burst samples its own
-        // texture (the model atlas); every other block uses its face tiles.
-        match event.block.render_shape() {
-            RenderShape::Model(kind) => self
-                .particles
-                .spawn_break_burst_model(event.pos, kind, sky, blk, warm),
-            _ => self
-                .particles
-                .spawn_break_burst_lit(event.pos, event.block, sky, blk, warm),
-        }
+        // The break burst is presentation: queued as a world event and spawned
+        // client-side after the tick (any observing client can do the same).
+        events.world.block_broken.push(BlockBrokenEvent {
+            pos: event.pos,
+            block: event.block,
+            normal: hit_normal,
+        });
         if event.harvested {
             if let Some(stacks) = slab_drops {
                 for stack in stacks {
@@ -157,22 +147,19 @@ impl Game {
     /// drops materialise on this tick like every other entity. The block is already gone
     /// (the world cleared the cell), so light is sampled from the now-empty cell — which is
     /// what the burst should glow with.
-    pub(super) fn process_natural_breaks(&mut self) {
+    pub(crate) fn process_natural_breaks(&mut self, events: &mut TickEvents) {
         for (pos, block) in self.world.take_natural_breaks() {
             // The cell is already cleared, so the group base can't be derived;
             // re-checking the stored spawn bed still exists covers it.
             if block.interaction() == crate::block::BlockInteraction::Sleep {
                 self.validate_bed_spawn();
             }
-            let (sky, blk, warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
-            match block.render_shape() {
-                RenderShape::Model(kind) => self
-                    .particles
-                    .spawn_break_burst_model(pos, kind, sky, blk, warm),
-                _ => self
-                    .particles
-                    .spawn_break_burst_lit(pos, block, sky, blk, warm),
-            }
+            events.world.block_broken.push(BlockBrokenEvent {
+                pos,
+                block,
+                normal: None,
+            });
+            let (sky, blk, _warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
             // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
             // hand-break would (short grass yields nothing, a flower/torch yields itself).
             self.spawn_drops(pos, block, (sky, blk));
@@ -187,7 +174,7 @@ impl Game {
         }
     }
 
-    pub(super) fn spawn_drops(&mut self, pos: IVec3, block: Block, (sky, blk): (u8, u8)) {
+    pub(crate) fn spawn_drops(&mut self, pos: IVec3, block: Block, (sky, blk): (u8, u8)) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
@@ -237,7 +224,7 @@ impl Game {
 /// particles: the mined face's `(sky6, block6, warm)`, or the brightest neighbour
 /// (by combined `max(sky, block)`, matching the old single-channel pick) when the
 /// face is unknown.
-fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8, u8) {
+pub(crate) fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8, u8) {
     let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
         return at(pos + n);

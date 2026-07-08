@@ -1,13 +1,14 @@
 //! Client (per-machine) settings: `client.json` in the base data dir.
 //!
-//! Graphics/host knobs that belong to the machine running the game, not to a
-//! world: render distance, frame caps, render scale. Distinct from the
-//! per-world `settings.json` (`save::settings`), which holds world state like
-//! disabled mods. An absent file means defaults; unknown fields are ignored so
-//! hand-edited files survive version drift. `LLAMACRAFT_*` env vars override
-//! the file for one-off runs (see `platform::native`).
+//! Graphics/host knobs and the player identity that belong to the machine
+//! running the game, not to a world: render distance, frame caps, render
+//! scale, player name. Distinct from the per-world `settings.json`
+//! (`save::settings`), which holds world state like disabled mods. An absent
+//! file means defaults; unknown fields are ignored so hand-edited files
+//! survive version drift. `LLAMACRAFT_*` env vars override the file for
+//! one-off runs (see `platform::native` and [`resolve_player_name`]).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,13 @@ pub struct ClientSettings {
     /// The colour-grade post pass. Off (at scale 1.0) also skips the offscreen
     /// scene round-trip; changes the game's look — a power knob of last resort.
     pub grade: bool,
+    /// The local player's name: multiplayer identity and the per-world save
+    /// key (`players/<name>.dat`). `None` = unset; [`resolve_player_name`]
+    /// falls back to the OS username.
+    pub player_name: Option<String>,
+    /// The address last joined via "Connect to server", as a convenience
+    /// prefill for the connect screen. `None` until a first join.
+    pub last_server: Option<String>,
 }
 
 impl Default for ClientSettings {
@@ -44,8 +52,32 @@ impl Default for ClientSettings {
             menu_fps_cap: 30,
             render_scale: 1.0,
             grade: true,
+            player_name: None,
+            last_server: None,
         }
     }
+}
+
+/// The local player's effective name: `LLAMACRAFT_PLAYER_NAME` env >
+/// client.json `player_name` > OS `$USER`/`$USERNAME` > `"Player"`.
+/// Candidates are trimmed; blank ones fall through to the next.
+pub fn resolve_player_name(s: &ClientSettings) -> String {
+    first_nonempty([
+        std::env::var("LLAMACRAFT_PLAYER_NAME").ok(),
+        s.player_name.clone(),
+        std::env::var("USER").ok(),
+        std::env::var("USERNAME").ok(),
+    ])
+}
+
+/// The first candidate that trims non-empty, else `"Player"`.
+fn first_nonempty(candidates: impl IntoIterator<Item = Option<String>>) -> String {
+    candidates
+        .into_iter()
+        .flatten()
+        .map(|c| c.trim().to_string())
+        .find(|c| !c.is_empty())
+        .unwrap_or_else(|| "Player".to_string())
 }
 
 fn path() -> PathBuf {
@@ -55,8 +87,11 @@ fn path() -> PathBuf {
 /// Read the client settings. Absent file = defaults; an unreadable file warns
 /// and falls back — settings must never block launching the game.
 pub fn load() -> ClientSettings {
-    let path = path();
-    let Ok(bytes) = std::fs::read(&path) else {
+    load_from(&path())
+}
+
+fn load_from(path: &Path) -> ClientSettings {
+    let Ok(bytes) = std::fs::read(path) else {
         return ClientSettings::default();
     };
     match serde_json::from_slice(&bytes) {
@@ -82,10 +117,59 @@ pub fn ensure_file() {
 
 /// Write the client settings (atomic tmp+rename, like every data-dir file).
 pub fn store(settings: &ClientSettings) -> std::io::Result<()> {
-    let path = path();
+    store_to(&path(), settings)
+}
+
+fn store_to(path: &Path, settings: &ClientSettings) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let bytes = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
-    super::write_atomic(&path, &bytes)
+    super::write_atomic(path, &bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_fields_roundtrip_and_default_to_none() {
+        let dir = std::env::temp_dir().join(format!(
+            "llamacraft-clienttest-{}-identity",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("client.json");
+
+        // New fields survive a store/load round-trip.
+        let settings = ClientSettings {
+            player_name: Some("Rachel".to_string()),
+            last_server: Some("host:7434".to_string()),
+            ..ClientSettings::default()
+        };
+        store_to(&file, &settings).expect("store");
+        assert_eq!(load_from(&file), settings);
+
+        // A file from before the fields existed (no such keys) loads as None
+        // and keeps its other values.
+        std::fs::write(&file, br#"{ "fps_cap": 90 }"#).expect("write old-style file");
+        let old = load_from(&file);
+        assert_eq!(old.player_name, None);
+        assert_eq!(old.last_server, None);
+        assert_eq!(old.fps_cap, 90);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn player_name_resolution_trims_and_falls_through_blanks() {
+        // Pure precedence check (the env layers feed the same chain — see
+        // `resolve_player_name`): blank/whitespace candidates fall through,
+        // the first real one wins trimmed, and nothing left means "Player".
+        assert_eq!(
+            first_nonempty([None, Some("  ".into()), Some(" Rachel ".into())]),
+            "Rachel"
+        );
+        assert_eq!(first_nonempty([None, Some(String::new())]), "Player");
+    }
 }

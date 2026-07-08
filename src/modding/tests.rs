@@ -20,6 +20,7 @@ use super::ModHost;
 struct Sim {
     world: World,
     player: Player,
+    gui_state: std::sync::Arc<crate::gui::GuiStateMap>,
     feed: TickEvents,
     bus: EventBus,
     systems: TickSystems,
@@ -30,6 +31,7 @@ impl Sim {
         Self {
             world: World::new(1, 1),
             player: Player::new(Vec3::new(0.0, 80.0, 0.0)),
+            gui_state: crate::gui::empty_gui_state(),
             feed: TickEvents::default(),
             bus: EventBus::default(),
             systems: TickSystems::default(),
@@ -41,6 +43,7 @@ impl Sim {
         host.initialize(
             &mut self.world,
             &mut self.player,
+            &mut self.gui_state,
             &mut self.bus,
             &mut self.systems,
             &mut next_spatial_sound_handle,
@@ -52,6 +55,7 @@ impl Sim {
             at,
             &mut self.world,
             &mut self.player,
+            &mut self.gui_state,
             &mut self.feed,
             self.bus.queue_mut(),
         );
@@ -205,11 +209,12 @@ fn smoke_mod_round_trip_via_wasm_host() {
     let Sim {
         world,
         player,
+        gui_state,
         feed,
         bus,
         ..
     } = &mut sim;
-    bus.drain_post(world, player, feed);
+    bus.drain_post(world, player, gui_state, feed);
     let (disabled, after_event_dispatches, _) = host.probe(0);
     assert!(!disabled, "the whole round trip leaves the mod healthy");
     assert!(
@@ -268,6 +273,7 @@ fn smoke_mod_gui_click_updates_gui_state_via_wasm() {
         let Sim {
             world,
             player,
+            gui_state,
             feed,
             bus,
             ..
@@ -275,6 +281,7 @@ fn smoke_mod_gui_click_updates_gui_state_via_wasm() {
         let mut ctx = crate::events::SimCtx {
             world,
             player,
+            gui_state,
             feed,
             queue: bus.queue_mut(),
         };
@@ -294,12 +301,12 @@ fn smoke_mod_gui_click_updates_gui_state_via_wasm() {
     );
 
     assert_eq!(
-        sim.world.gui_state_get("smoke:count"),
+        sim.gui_state.get("smoke:count"),
         Some(&crate::gui::GuiValue::I32(2)),
         "each click incremented the session counter via GuiStateGet/Set"
     );
     assert_eq!(
-        sim.world.gui_state_get("smoke:count_text"),
+        sim.gui_state.get("smoke:count_text"),
         Some(&crate::gui::GuiValue::Str("clicks: 2".into())),
         "the label's bound key follows the counter"
     );
@@ -413,12 +420,12 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
 
     // An engine system registered AFTER the mod in the same slot must still
     // run when the mod traps ahead of it.
-    let ran_after = std::rc::Rc::new(std::cell::Cell::new(false));
+    let ran_after = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let ran_after = ran_after.clone();
         sim.systems
             .attach(Attach::Before(Stage::Mining), 0, move |_| {
-                ran_after.set(true)
+                ran_after.store(true, std::sync::atomic::Ordering::Relaxed)
             });
     }
 
@@ -429,25 +436,26 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
         dispatches, dispatches_after_init,
         "the dispatch never completed"
     );
-    assert!(ran_after.get(), "the tick continued past the trapping mod");
+    assert!(ran_after.load(std::sync::atomic::Ordering::Relaxed), "the tick continued past the trapping mod");
 
     // Still ticking, and the disabled mod is not dispatched again.
-    ran_after.set(false);
+    ran_after.store(false, std::sync::atomic::Ordering::Relaxed);
     sim.run_slot(Attach::Before(Stage::Mining));
     let (_, dispatches_again, _) = host.probe(0);
     assert_eq!(dispatches_again, dispatches);
-    assert!(ran_after.get());
+    assert!(ran_after.load(std::sync::atomic::Ordering::Relaxed));
 
     // The bus keeps draining post events normally with a disabled mod around.
     sim.bus.emit(PostEvent::PlayerDied);
     let Sim {
         world,
         player,
+        gui_state,
         feed,
         bus,
         ..
     } = &mut sim;
-    bus.drain_post(world, player, feed);
+    bus.drain_post(world, player, gui_state, feed);
 }
 
 /// Contract: the registration window is `mod_init` only — a registration

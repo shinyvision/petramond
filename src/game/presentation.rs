@@ -15,8 +15,10 @@ use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mob::Mob;
+use crate::render::{PlayerRenderInstance, RemotePlayerRender};
 use crate::stair::StairShape;
 
+use super::remote_players;
 use super::Game;
 
 /// The block-break overlay to draw this frame: a cracked-texture overlay over
@@ -159,10 +161,22 @@ pub(crate) struct GamePresentation<'a> {
     pub(crate) chests: &'a [ChestPresentation],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
+    /// Every OTHER connected player's body + held item for this frame,
+    /// already interpolated and posed — the render input rows themselves
+    /// (`build_player_body` consumes `PlayerRenderInstance` directly, so no
+    /// second translation buys anything).
+    pub(crate) remote_players: &'a [RemotePlayerRender],
     pub(crate) player: Option<PlayerPresentation>,
     pub(crate) held_item_light: (u8, u8, u8),
-    pub(crate) break_overlay: Option<BreakOverlayView>,
+    /// Every break (crack) overlay to draw this frame: the LOCAL player's own
+    /// mining target plus each visible remote's replicated one, capped at the
+    /// [`MAX_BREAK_OVERLAYS`] nearest to the camera.
+    pub(crate) break_overlays: &'a [BreakOverlayView],
 }
+
+/// Break overlays drawn per frame (own + remotes), nearest-to-camera first
+/// under contention — a bound so a crowd of miners can't grow the bake.
+const MAX_BREAK_OVERLAYS: usize = 8;
 
 #[derive(Default)]
 pub(crate) struct GamePresentationScratch {
@@ -175,6 +189,8 @@ pub(crate) struct GamePresentationScratch {
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
+    remote_players: Vec<RemotePlayerRender>,
+    break_overlays: Vec<BreakOverlayView>,
 }
 
 impl GamePresentationScratch {
@@ -190,6 +206,8 @@ impl GamePresentationScratch {
         self.collect_chests(game);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
+        self.collect_remote_players(game, tick_alpha);
+        self.collect_break_overlays(game);
 
         GamePresentation {
             tick_alpha,
@@ -199,30 +217,32 @@ impl GamePresentationScratch {
             chests: &self.chests,
             doors: &self.doors,
             mobs: &self.mobs,
+            remote_players: &self.remote_players,
             player: collect_player(game),
             held_item_light: game.held_item_light(),
-            break_overlay: mining_break_overlay(game),
+            break_overlays: &self.break_overlays,
         }
     }
 
     fn collect_item_entities(&mut self, game: &Game) {
         self.item_entities.clear();
+        // REPLICATED store: prev/curr batch rows are the interpolation pair.
+        // Light is client-sampled at the item's cell, from the REPLICA world.
+        let world = &game.replica;
         self.item_entities
-            .extend(
-                game.world
-                    .item_entities()
-                    .iter()
-                    .map(|item| DroppedItemPresentation {
-                        prev_pos: item.prev_pos,
-                        pos: item.pos,
-                        item: item.stack.item,
-                        count: item.stack.count,
-                        prev_spin: item.prev_spin,
-                        spin: item.spin,
-                        skylight: item.skylight,
-                        blocklight: item.blocklight,
-                    }),
-            );
+            .extend(game.replicated_items.iter().map(|entry| {
+                let c = crate::mathh::voxel_at(entry.curr.pos);
+                DroppedItemPresentation {
+                    prev_pos: entry.prev.pos,
+                    pos: entry.curr.pos,
+                    item: crate::item::ItemType(entry.curr.item_id),
+                    count: entry.curr.count,
+                    prev_spin: entry.prev.spin,
+                    spin: entry.curr.spin,
+                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                }
+            }));
     }
 
     fn collect_particles(&mut self, game: &Game) {
@@ -250,7 +270,7 @@ impl GamePresentationScratch {
     }
 
     fn collect_particle_emitters(&mut self, game: &Game) {
-        game.world
+        game.replica
             .collect_particle_emitters(&mut self.particle_emitter_rows);
         self.particle_emitters.clear();
         self.particle_emitters
@@ -266,7 +286,7 @@ impl GamePresentationScratch {
     }
 
     fn collect_chests(&mut self, game: &Game) {
-        game.world.collect_chests(&mut self.chest_rows);
+        game.replica.collect_chests(&mut self.chest_rows);
         self.chests.clear();
         self.chests.extend(
             self.chest_rows
@@ -282,7 +302,7 @@ impl GamePresentationScratch {
     }
 
     fn collect_doors(&mut self, game: &Game) {
-        game.world.collect_doors(&mut self.door_rows);
+        game.replica.collect_doors(&mut self.door_rows);
         self.doors.clear();
         self.doors.extend(self.door_rows.iter().map(
             |&(pos, state, tiles, skylight, blocklight)| DoorPresentation {
@@ -298,34 +318,120 @@ impl GamePresentationScratch {
 
     fn collect_mobs(&mut self, game: &Game, tick_alpha: f32) {
         self.mobs.clear();
-        self.mobs.extend(
-            game.world
-                .mobs()
-                .instances()
-                .iter()
-                .map(|mob| MobPresentation {
-                    id: mob.id(),
-                    kind: mob.kind,
-                    prev_pos: mob.prev_pos,
-                    pos: mob.pos,
-                    prev_yaw: mob.prev_yaw,
-                    yaw: mob.yaw,
-                    prev_anim_time: mob.prev_anim_time,
-                    anim_time: mob.anim_time,
-                    moving: mob.moving,
-                    idle_anim: mob.idle_anim,
-                    prev_head_yaw: mob.prev_head_yaw,
-                    head_yaw: mob.head_yaw,
-                    prev_head_pitch: mob.prev_head_pitch,
-                    head_pitch: mob.head_pitch,
-                    skylight: mob.skylight,
-                    blocklight: mob.blocklight,
-                    hurt_flash: mob.hurt_flash(tick_alpha),
-                    dead: mob.is_dead(),
-                    shorn: mob.is_shorn(),
-                    ragdoll_pose: mob.ragdoll_pose(tick_alpha).map(Into::into),
+        // REPLICATED store: prev/curr batch rows are the interpolation pair
+        // (the same blend the renderer used to run over `Instance::prev_*`).
+        // Light is client-sampled at the mob's body cell (the sim's sampling
+        // point), from the REPLICA world.
+        let world = &game.replica;
+        self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
+            let (prev, curr) = (&entry.prev, &entry.curr);
+            let c = crate::mathh::voxel_at(curr.pos + Vec3::new(0.0, 0.3, 0.0));
+            MobPresentation {
+                id: curr.id,
+                kind: Mob(curr.kind_id),
+                prev_pos: prev.pos,
+                pos: curr.pos,
+                prev_yaw: prev.yaw,
+                yaw: curr.yaw,
+                prev_anim_time: prev.anim_time,
+                anim_time: curr.anim_time,
+                moving: curr.moving,
+                idle_anim: curr.idle_anim,
+                prev_head_yaw: prev.head_yaw,
+                head_yaw: curr.head_yaw,
+                prev_head_pitch: prev.head_pitch,
+                head_pitch: curr.head_pitch,
+                skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                hurt_flash: crate::mob::hurt_flash01(prev.hurt_timer, curr.hurt_timer, tick_alpha),
+                dead: curr.dead,
+                shorn: curr.shorn,
+                ragdoll_pose: curr.ragdoll.as_ref().map(|pose| {
+                    crate::game::replicated::lerp_ragdoll(prev.ragdoll.as_ref(), pose, tick_alpha)
+                        .into()
                 }),
-        );
+            }
+        }));
+    }
+
+    /// One render row per VISIBLE remote player, mirroring `collect_mobs`:
+    /// transform interpolated between the prev/curr batch rows at
+    /// `tick_alpha`, the shared body pose + per-remote held-item view read
+    /// from the store (advanced once per frame in `Game::tick_receive`),
+    /// light client-sampled from the replica at the interpolated body.
+    fn collect_remote_players(&mut self, game: &Game, tick_alpha: f32) {
+        self.remote_players.clear();
+        let world = &game.replica;
+        for p in game.remote_players.iter() {
+            // Spectators and the dead ship rows (flags/actions keep flowing)
+            // but draw no body.
+            if !p.curr.visible {
+                continue;
+            }
+            let (mut pos, yaw, pitch) = remote_players::interpolate(&p.prev, &p.curr, tick_alpha);
+            let sleeping = p.curr.sleeping;
+            let body_yaw = p.pose.body_yaw;
+            if sleeping {
+                // Mirror of `collect_player`'s sleeping branch: the sleeper
+                // stands at the bed-group centre; the lying model's feet
+                // anchor shifts back so the head lands on the pillow.
+                pos.x -= body_yaw.sin() * 0.925;
+                pos.z -= body_yaw.cos() * 0.925;
+            }
+            // Sample light at the body's torso cell (~mid-height).
+            let c = crate::mathh::voxel_at(pos + Vec3::new(0.0, 0.9, 0.0));
+            self.remote_players.push(RemotePlayerRender {
+                body: PlayerRenderInstance {
+                    pos,
+                    body_yaw,
+                    // The follow rule keeps `yaw - body_yaw` within the head
+                    // limit, so the relative head yaw needs no re-wrapping
+                    // (same contract as the local body).
+                    head_yaw: yaw - body_yaw,
+                    head_pitch: pitch,
+                    anim_time: p.pose.anim_time,
+                    walk_weight: p.pose.walk_weight,
+                    sleeping,
+                    hurt: p.hurt_flash01(),
+                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                },
+                held: p.view,
+            });
+        }
+    }
+
+    /// One break (crack) overlay per active miner this frame: the local
+    /// player's own target (from the replicated self view) plus every VISIBLE
+    /// remote row's replicated target + stage, each shaped against the replica
+    /// exactly like the own overlay always was. Capped at the
+    /// [`MAX_BREAK_OVERLAYS`] nearest to the camera.
+    fn collect_break_overlays(&mut self, game: &Game) {
+        self.break_overlays.clear();
+        if let Some((block, stage)) = game.self_view.mining {
+            self.break_overlays.push(break_overlay_at(game, block, stage));
+        }
+        for p in game.remote_players.iter() {
+            if !p.curr.visible {
+                continue;
+            }
+            if let Some((block, stage)) = p.curr.mining {
+                self.break_overlays.push(break_overlay_at(game, block, stage));
+            }
+        }
+        if self.break_overlays.len() > MAX_BREAK_OVERLAYS {
+            let cam = game.render_camera().pos;
+            let dist = |v: &BreakOverlayView| {
+                (Vec3::new(
+                    v.block.x as f32 + 0.5,
+                    v.block.y as f32 + 0.5,
+                    v.block.z as f32 + 0.5,
+                ) - cam)
+                    .length_squared()
+            };
+            self.break_overlays.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+            self.break_overlays.truncate(MAX_BREAK_OVERLAYS);
+        }
     }
 }
 
@@ -343,62 +449,65 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     // negative, settling lag) so stepping up a ledge glides instead of popping.
     let mut pos = game.player.pos;
     pos.y += game.camera_step_y_offset;
-    let sleeping = game.sleep.is_some();
+    // Sleep state reads the replicated self view (the sim's SleepState stays
+    // server-side).
+    let sleeping = game.self_view.sleeping.is_some();
     if sleeping {
         // The sleeper stands at the bed-group CENTRE; the lying model's feet
         // anchor shifts back toward the foot end so the head lands on the pillow
         // (bed length 2, model ~1.85 → feet ~0.925 behind centre).
-        let head_yaw = game.third_person.body_yaw;
+        let head_yaw = game.third_person.pose.body_yaw;
         pos.x -= head_yaw.sin() * 0.925;
         pos.z -= head_yaw.cos() * 0.925;
     }
     Some(PlayerPresentation {
         pos,
-        body_yaw: game.third_person.body_yaw,
-        head_yaw: game.player.yaw - game.third_person.body_yaw,
+        body_yaw: game.third_person.pose.body_yaw,
+        head_yaw: game.player.yaw - game.third_person.pose.body_yaw,
         head_pitch: game.player.pitch,
-        anim_time: game.third_person.anim_time,
-        walk_weight: game.third_person.walk_weight,
+        anim_time: game.third_person.pose.anim_time,
+        walk_weight: game.third_person.pose.walk_weight,
         sleeping,
         skylight,
         blocklight,
     })
 }
 
-fn mining_break_overlay(game: &Game) -> Option<BreakOverlayView> {
-    game.mining.overlay().map(|(block, stage)| {
-        let model = match Block::from_id(game.world.chunk_block(block.x, block.y, block.z))
-            .render_shape()
+/// The crack overlay for a miner's `(block, stage)` — the target + stage come
+/// from replicated state (the own `SelfState::mining` or a remote row's); the
+/// shape details are derived from the REPLICA world at that cell.
+fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
+    let model = match Block::from_id(game.replica.chunk_block(block.x, block.y, block.z))
+        .render_shape()
+    {
+        RenderShape::Model(kind) => Some((
+            kind,
+            game.replica.model_offset_at(block.x, block.y, block.z),
+            game.replica.model_facing_at(block.x, block.y, block.z),
+        )),
+        _ => None,
+    };
+    let block_type = Block::from_id(game.replica.chunk_block(block.x, block.y, block.z));
+    let stair_shape = (block_type.render_shape() == RenderShape::Stair)
+        .then(|| game.replica.stair_shape_at(block.x, block.y, block.z));
+    let slab_state = game.replica.slab_state_if_slab(block);
+    let pane_mask = (block_type.render_shape() == RenderShape::Pane)
+        .then(|| game.replica.pane_mask_at(block));
+    BreakOverlayView {
+        block,
+        visual_box: if model.is_some()
+            || stair_shape.is_some()
+            || slab_state.is_some()
+            || pane_mask.is_some()
         {
-            RenderShape::Model(kind) => Some((
-                kind,
-                game.world.model_offset_at(block.x, block.y, block.z),
-                game.world.model_facing_at(block.x, block.y, block.z),
-            )),
-            _ => None,
-        };
-        let block_type = Block::from_id(game.world.chunk_block(block.x, block.y, block.z));
-        let stair_shape = (block_type.render_shape() == RenderShape::Stair)
-            .then(|| game.world.stair_shape_at(block.x, block.y, block.z));
-        let slab_state = game.world.slab_state_if_slab(block);
-        let pane_mask = (block_type.render_shape() == RenderShape::Pane)
-            .then(|| game.world.pane_mask_at(block));
-        BreakOverlayView {
-            block,
-            visual_box: if model.is_some()
-                || stair_shape.is_some()
-                || slab_state.is_some()
-                || pane_mask.is_some()
-            {
-                None
-            } else {
-                game.world.selection_box_at(block.x, block.y, block.z)
-            },
-            stair_shape,
-            slab_state,
-            pane_mask,
-            model,
-            stage,
-        }
-    })
+            None
+        } else {
+            game.replica.selection_box_at(block.x, block.y, block.z)
+        },
+        stair_shape,
+        slab_state,
+        pane_mask,
+        model,
+        stage,
+    }
 }

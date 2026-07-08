@@ -208,13 +208,16 @@ async fn new_renderer_inner(
         })
         .collect();
 
-    // Third-person player body: the precached player model gets the same shape of
-    // resources as one mob species (own skin texture bind + dynamic draw over the
-    // shared mob pipeline), plus two small held-item draws attached to its hand:
-    // an explicit-UV stream (extruded sprite / bbmodel item) and a packed
-    // block-vertex stream (held block mini-cube on the opaque pipeline).
-    const PLAYER_ITEM_VERTICES: u64 = 8192;
-    const PLAYER_ITEM_INDICES: u64 = 12288;
+    // Player bodies: the precached player model gets the same shape of
+    // resources as one mob species (own skin texture bind + dynamic draw over
+    // the shared mob pipeline), plus three held-item draws attached to the
+    // posed hands: an extruded-sprite stream (2D atlas), a bbmodel-item stream
+    // (model atlas), and a packed block-vertex stream (held mini-cube on the
+    // opaque pipeline). Since Phase F EVERY connected player's body appends
+    // into the one stream, so the caps cover a full LAN party of bodies
+    // (~300 verts each), not just the local one.
+    const PLAYER_ITEM_VERTICES: u64 = 16384;
+    const PLAYER_ITEM_INDICES: u64 = 24576;
     let player_gpu = {
         let model = crate::player::model::player_model();
         let (_texture, view, sampler) = create_model_texture(
@@ -281,6 +284,8 @@ async fn new_renderer_inner(
     };
     let (player_item_vbuf, player_item_ibuf) =
         player_dyn_buffers("player item", std::mem::size_of::<ItemVertex>() as u64);
+    let (player_model_item_vbuf, player_model_item_ibuf) =
+        player_dyn_buffers("player model item", std::mem::size_of::<ItemVertex>() as u64);
     let (player_block_item_vbuf, player_block_item_ibuf) = player_dyn_buffers(
         "player block item",
         std::mem::size_of::<crate::mesh::Vertex>() as u64,
@@ -289,6 +294,13 @@ async fn new_renderer_inner(
         pipelines.mob_pipe.clone(),
         player_item_vbuf,
         player_item_ibuf,
+        PLAYER_ITEM_VERTICES,
+        PLAYER_ITEM_INDICES,
+    );
+    let player_model_item_draw = DynamicDraw::new(
+        pipelines.mob_pipe.clone(),
+        player_model_item_vbuf,
+        player_model_item_ibuf,
         PLAYER_ITEM_VERTICES,
         PLAYER_ITEM_INDICES,
     );
@@ -541,10 +553,17 @@ async fn new_renderer_inner(
         mob_gpu,
         player_gpu,
         player_view: None,
+        remote_players: Vec::new(),
+        player_visible: Vec::new(),
+        player_body_verts: Vec::new(),
+        player_body_indices: Vec::new(),
         player_item_draw,
-        player_item_is_model: false,
         player_item_verts: Vec::new(),
         player_item_indices: Vec::new(),
+        player_sprite_verts: Vec::new(),
+        player_model_item_draw,
+        player_model_item_verts: Vec::new(),
+        player_model_item_indices: Vec::new(),
         player_block_item_draw,
         model_pipe: model_pipe.clone(),
         world_model_pipe,
@@ -584,7 +603,7 @@ async fn new_renderer_inner(
         far_leaf_lod_state: HashMap::new(),
         clear_color: [0.60, 0.82, 1.00],
         last_stats: RenderStats::default(),
-        break_overlay: None,
+        break_overlays: Vec::new(),
         held_item: HeldItemView::default(),
         hand_visible: false,
         hand_shake: [0.0, 0.0],

@@ -74,9 +74,11 @@ mod tests {
         let mut queue = PostQueue::default();
 
         assert!(with_active(|_| ()).is_none(), "no scope outside enter");
+        let mut gui = crate::gui::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
+            gui_state: &mut gui,
             feed: &mut feed,
             queue: &mut queue,
         };

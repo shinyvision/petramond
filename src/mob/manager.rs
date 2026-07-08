@@ -42,7 +42,20 @@ pub struct ShearDrop {
     pub blocklight: u8,
 }
 
-/// A melee strike a mob landed on the player this tick. Drained from
+/// One player's presence as the mob simulation sees it: an AI/despawn anchor
+/// plus (for non-spectators) a pushable body. The mobs target whichever anchor
+/// is NEAREST per mob, so N players share one world of mobs.
+#[derive(Copy, Clone, Debug)]
+pub struct PlayerAnchor {
+    pub id: crate::server::player::PlayerId,
+    /// Body centre — the AI's target/despawn anchor (matches the old single
+    /// `player_pos` argument).
+    pub pos: Vec3,
+    /// The pushable body; `None` for a spectator (nothing to jostle or strike).
+    pub body: Option<push::Body>,
+}
+
+/// A melee strike a mob landed on a player this tick. Drained from
 /// [`Mobs::tick`] by `Game`, which applies the damage through the
 /// `player_damage_pre` pipeline — a cancelled strike drops its knockback too.
 #[derive(Copy, Clone, Debug)]
@@ -51,6 +64,8 @@ pub struct MobAttack {
     /// `MobHurtPre::mob`).
     pub mob_index: usize,
     pub mob: Mob,
+    /// The player the strike targets — the anchor nearest the mob at strike time.
+    pub target: crate::server::player::PlayerId,
     /// Damage in half-heart points (rounded when applied to the player).
     pub damage: f32,
     /// Horizontal unit direction the player is knocked toward (away from the mob;
@@ -58,6 +73,22 @@ pub struct MobAttack {
     pub knockback_dir: Vec3,
     /// Horizontal knockback speed (m/s) added to the player's velocity.
     pub knockback: f32,
+}
+
+/// The anchor nearest `pos`. Anchors are never empty: the local session always
+/// exists.
+fn nearest_anchor<'a>(anchors: &'a [PlayerAnchor], pos: Vec3) -> &'a PlayerAnchor {
+    debug_assert!(!anchors.is_empty(), "at least the local session anchors");
+    let mut best = &anchors[0];
+    let mut best_d = (best.pos - pos).length_squared();
+    for a in &anchors[1..] {
+        let d = (a.pos - pos).length_squared();
+        if d < best_d {
+            best = a;
+            best_d = d;
+        }
+    }
+    best
 }
 
 /// Hard cap on simultaneous mobs, so a spawn loop / debug key can't run the world
@@ -188,8 +219,7 @@ impl Mobs {
         &mut self,
         dt: f32,
         world: &World,
-        player_pos: Vec3,
-        player_body: Option<push::Body>,
+        anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
     ) -> Vec<MobAttack> {
         let mut ai_mobs = std::mem::take(&mut self.ai_scratch);
@@ -205,10 +235,13 @@ impl Mobs {
                 continue;
             }
             let meta = &MOB_META[mob.kind.0 as usize];
+            // Every player-facing decision (chase target, head look, despawn
+            // distance, strike geometry) anchors on the NEAREST player.
+            let anchor = *nearest_anchor(anchors, mob.pos);
             mob.tick(
                 dt,
                 world,
-                player_pos,
+                anchor.pos,
                 i,
                 &ai_mobs,
                 def(mob.kind).despawn_radius,
@@ -218,11 +251,12 @@ impl Mobs {
             if let Some(intent) = mob.take_attack() {
                 // The knockback direction is derived here, from the live mob→player
                 // geometry at strike time — horizontal, away from the attacker.
-                let mut away = player_pos - mob.pos;
+                let mut away = anchor.pos - mob.pos;
                 away.y = 0.0;
                 attacks.push(MobAttack {
                     mob_index: i,
                     mob: mob.kind,
+                    target: anchor.id,
                     damage: intent.damage,
                     knockback_dir: away.normalize_or_zero(),
                     knockback: intent.knockback,
@@ -233,7 +267,7 @@ impl Mobs {
             mob.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
         }
         self.ai_scratch = ai_mobs;
-        self.resolve_pushes(world, player_body, freeze_unloaded);
+        self.resolve_pushes(world, anchors, freeze_unloaded);
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
         attacks
@@ -250,7 +284,7 @@ impl Mobs {
     /// speed on its own pass (see [`push::separation`]) regardless of list order. A mob
     /// that isn't pushable this tick (dead, or frozen over an unloaded chunk) neither
     /// pushes nor is pushed.
-    fn resolve_pushes(&mut self, world: &World, player: Option<push::Body>, freeze_unloaded: bool) {
+    fn resolve_pushes(&mut self, world: &World, anchors: &[PlayerAnchor], freeze_unloaded: bool) {
         // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
         let mut bodies = std::mem::take(&mut self.push_scratch);
         bodies.clear();
@@ -275,11 +309,13 @@ impl Mobs {
                     }
                 }
             }
-            // Off the player (player→mob). The mob's reaction on the player is applied
-            // per-frame elsewhere, so nothing is accumulated for the player here.
-            if let Some(player) = player {
-                if let Some(p) = push::separation(bi, player) {
-                    push_vel += p;
+            // Off every player (player→mob). The mob's reaction on the player is
+            // applied per-frame elsewhere, so nothing is accumulated for players here.
+            for anchor in anchors {
+                if let Some(player) = anchor.body {
+                    if let Some(p) = push::separation(bi, player) {
+                        push_vel += p;
+                    }
                 }
             }
             self.list[i].set_push(push_vel);
@@ -471,6 +507,13 @@ impl Mobs {
         &self.list
     }
 
+    /// Resolve a STABLE mob id to its current list index, or `None` when the
+    /// mob is gone. Actions arriving over the wire carry ids (indices shift
+    /// under despawns between the click and the consuming tick).
+    pub fn index_of_id(&self, id: u64) -> Option<usize> {
+        self.list.iter().position(|m| m.id() == id)
+    }
+
     /// Whether placing `block` at cell `p` would clip into any live mob — its collision
     /// box(es) at `p` overlapping a mob's body. A no-collision block (a torch, grass, a
     /// fern, …) has no boxes, so this is always `false` and it may be placed freely even
@@ -526,6 +569,26 @@ fn is_pushable(mob: &Instance, world: &World, freeze_unloaded: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mobs_anchor_on_the_nearest_player() {
+        use super::PlayerAnchor;
+        let a = PlayerAnchor {
+            id: crate::server::player::PlayerId(0),
+            pos: Vec3::new(0.0, 64.0, 0.0),
+            body: None,
+        };
+        let b = PlayerAnchor {
+            id: crate::server::player::PlayerId(1),
+            pos: Vec3::new(10.0, 64.0, 0.0),
+            body: None,
+        };
+        let near_b = Vec3::new(8.0, 64.0, 0.0);
+        assert_eq!(super::nearest_anchor(&[a, b], near_b).id.0, 1);
+        assert_eq!(super::nearest_anchor(&[b, a], near_b).id.0, 1, "order-independent");
+        let near_a = Vec3::new(1.0, 64.0, 0.0);
+        assert_eq!(super::nearest_anchor(&[a, b], near_a).id.0, 0);
+    }
     use super::*;
 
     #[test]
@@ -642,7 +705,12 @@ mod tests {
         // The coat regrows on the tick, within the spec's rolled range.
         let mut ticks: u32 = 0;
         while mobs.instances()[0].is_shorn() {
-            mobs.tick(0.05, &world, far(), None, false);
+            mobs.tick(
+                0.05,
+                &world,
+                &[crate::mob::PlayerAnchor { id: Default::default(), pos: far(), body: None }],
+                false,
+            );
             ticks += 1;
             assert!(
                 ticks <= spec.regrow_max,
@@ -708,7 +776,12 @@ mod tests {
         let mut gap = gap0;
         let mut last_step = f32::INFINITY;
         for _ in 0..40 {
-            mobs.tick(0.05, &world, far(), None, false);
+            mobs.tick(
+                0.05,
+                &world,
+                &[crate::mob::PlayerAnchor { id: Default::default(), pos: far(), body: None }],
+                false,
+            );
             let next = horizontal_gap(&mobs);
             // No snap-back: the gap only ever grows — the jitter we were getting was the
             // gap oscillating as positions were snapped each tick.
@@ -779,7 +852,12 @@ mod tests {
         let spot = Vec3::new(8.0, 64.0, 8.0);
         assert!(mobs.spawn(Mob::Owl, spot, 0.0));
         let before = mobs.instances()[0].pos;
-        mobs.tick(0.05, &world, spot, None, false);
+        mobs.tick(
+            0.05,
+            &world,
+            &[crate::mob::PlayerAnchor { id: Default::default(), pos: spot, body: None }],
+            false,
+        );
         let after = mobs.instances()[0].pos;
         assert_eq!(
             (before.x, before.z),

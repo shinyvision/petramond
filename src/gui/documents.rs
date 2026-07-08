@@ -392,6 +392,9 @@ mod tests {
             "llama:death",
             "llama:hotbar",
             "llama:furnace",
+            "llama:connect_server",
+            "llama:mods_missing",
+            "llama:connection_lost",
         ] {
             assert!(
                 kinds.contains_key(key),

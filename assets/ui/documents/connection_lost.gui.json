@@ -1,0 +1,52 @@
+{
+    "format": 1,
+    "kind": "llama:connection_lost",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "w": 220,
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 7,
+            "align": "center"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Disconnected",
+                "scale": 2
+            },
+            {
+                "type": "label",
+                "wrap": true,
+                "style": "label.muted",
+                "layout": {
+                    "w": 200
+                },
+                "bind": {
+                    "text": "disconnect_message"
+                }
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "button",
+                "id": "ok",
+                "text": "OK",
+                "layout": {
+                    "w": 130
+                }
+            }
+        ]
+    }
+}

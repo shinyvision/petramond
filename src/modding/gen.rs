@@ -661,9 +661,11 @@ mod tests {
         let mut systems = TickSystems::default();
         let mut host = super::super::ModHost::load(seed, &Default::default());
         let mut next_spatial_sound_handle = 1;
+        let mut gui = crate::gui::empty_gui_state();
         host.initialize(
             &mut world,
             &mut player,
+            &mut gui,
             &mut bus,
             &mut systems,
             &mut next_spatial_sound_handle,

@@ -6,11 +6,10 @@
 //! `LLAMACRAFT_MODS` re-spawn pattern, staged by `modding::tests`).
 
 use super::super::tick::TickEvents;
-use super::super::Game;
 use crate::camera::Camera;
 use crate::mathh::Vec3;
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[test]
 fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
@@ -36,40 +35,43 @@ fn zombie_combat_inner() {
         .map(|i| crate::mob::Mob(i as u8))
         .expect("zombies:zombie registered from the fixture pack");
 
-    let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
     // The mod spawner needs loaded dark cells in the 32-128 ring; this tiny
     // fixture has neither, so this test owns its zombies. Flat floor, player
     // standing on it.
-    game.world.clear_world();
+    game.server.world.clear_world();
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Grass);
         }
     }
-    game.world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
-    game.player.pos = Vec3::new(8.0, 64.0, 8.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server
+        .world
+        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
     // TWO zombies in reach, facing the player: their independent 20-tick
     // melee cooldowns would land two hits inside one window — only the mod's
     // i-frames keep the applications 20+ ticks apart.
     for dx in [1.1f32, -1.1] {
         let pos = Vec3::new(8.0 + dx, 64.0, 8.0);
-        let to_player = game.player.body_center() - pos;
+        let to_player = game.server.sessions[0].player.body_center() - pos;
         let yaw = (-to_player.x).atan2(-to_player.z);
-        assert!(game.world.mobs_mut().spawn(zombie, pos, yaw));
+        assert!(game.server.world.mobs_mut().spawn(zombie, pos, yaw));
     }
 
     let mut ev = TickEvents::default();
-    let h0 = game.player.health();
+    let h0 = game.server.sessions[0].player.health();
     let mut health = h0;
     let mut hits: Vec<(i64, i32)> = Vec::new(); // (tick index, health drop)
     for tick in 0..50i64 {
-        game.game_tick_step(&mut ev);
-        let h = game.player.health();
+        game.server.game_tick_step(&mut ev);
+        let h = game.server.sessions[0].player.health();
         if h < health {
             hits.push((tick, health - h));
         }
@@ -96,12 +98,13 @@ fn zombie_combat_inner() {
     // An applied (non-cancelled) strike knocks the player back; the player
     // integrates per frame, so on pure ticks the impulse shows in velocity.
     assert!(
-        game.player.vel.length() > 1.0,
+        game.server.sessions[0].player.vel.length() > 1.0,
         "knockback reached the player's velocity: {:?}",
-        game.player.vel
+        game.server.sessions[0].player.vel
     );
     // The documented inspection mirror: 8-byte LE u64 end-of-window tick.
     let bytes = game
+        .server
         .world
         .mod_kv_get("zombies:invuln_until")
         .expect("zombies:invuln_until mirrored to world KV");
@@ -138,29 +141,26 @@ fn zombie_sunburn_inner() {
         .map(|i| crate::mob::Mob(i as u8))
         .expect("zombies:zombie registered from the fixture pack");
 
-    let mut game = Game::new(
-        Camera::new(Vec3::new(80.0, 66.0, 8.0), 16.0 / 9.0),
-        "",
-        7,
-        1,
-    );
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(80.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
-    game.world.clear_world();
-    game.player.pos = Vec3::new(80.0, 64.0, 8.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server.world.clear_world();
+    game.server.sessions[0].player.pos = Vec3::new(80.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
-    fn install_chunk(game: &mut Game, cx: i32, cz: i32, sky_x2: u8, block_x2: u8) {
+    fn install_chunk(game: &mut super::common::TestGame, cx: i32, cz: i32, sky_x2: u8, block_x2: u8) {
         let pos = ChunkPos::new(cx, cz);
-        game.world.insert_empty_column_for_test(pos);
+        game.server.world.insert_empty_column_for_test(pos);
         let mut chunk = Chunk::new(cx, cz);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 chunk.set_block(x, 63, z, Block::Grass);
             }
         }
-        game.world.insert_chunk_for_test(pos, chunk);
+        game.server.world.insert_chunk_for_test(pos, chunk);
         let section = game
+            .server
             .world
             .section_at_world_mut_for_test(cx * 16, 64, cz * 16)
             .expect("feet section is loaded");
@@ -175,10 +175,11 @@ fn zombie_sunburn_inner() {
     for x in [2.5, 5.5, 8.5, 11.5] {
         for z in [2.5, 5.5, 8.5, 11.5] {
             assert!(game
+                .server
                 .world
                 .mobs_mut()
                 .spawn(zombie, Vec3::new(x, 64.0, z), 0.0));
-            sun_ids.push(game.world.mobs().instances().last().unwrap().id());
+            sun_ids.push(game.server.world.mobs().instances().last().unwrap().id());
         }
     }
     // The dark controls must survive the whole loop: keep them outside the
@@ -187,41 +188,45 @@ fn zombie_sunburn_inner() {
     let mut dark_ids = Vec::new();
     for z in [4.5, 7.5, 10.5, 13.5] {
         assert!(game
+            .server
             .world
             .mobs_mut()
             .spawn(zombie, Vec3::new(52.5, 64.0, z), 0.0));
-        dark_ids.push(game.world.mobs().instances().last().unwrap().id());
+        dark_ids.push(game.server.world.mobs().instances().last().unwrap().id());
     }
 
-    let deaths = Rc::new(Cell::new(0usize));
+    let deaths = Arc::new(AtomicUsize::new(0));
     {
         let deaths = deaths.clone();
-        game.bus.on_post(PostEventKind::MobDied, 0, move |_, ev| {
-            if matches!(ev, PostEvent::MobDied { kind, .. } if *kind == zombie) {
-                deaths.set(deaths.get() + 1);
-            }
-        });
+        game.server
+            .bus
+            .on_post(PostEventKind::MobDied, 0, move |_, ev| {
+                if matches!(ev, PostEvent::MobDied { kind, .. } if *kind == zombie) {
+                    deaths.fetch_add(1, Ordering::Relaxed);
+                }
+            });
     }
 
     let mut ev = TickEvents::default();
     for _ in 0..1_200 {
-        game.game_tick_step(&mut ev);
-        if deaths.get() > 0 {
+        game.server.game_tick_step(&mut ev);
+        if deaths.load(Ordering::Relaxed) > 0 {
             break;
         }
     }
 
     assert!(
-        deaths.get() > 0,
+        deaths.load(Ordering::Relaxed) > 0,
         "sunlit zombies eventually burn through the mob death path"
     );
     assert!(
-        ev.mob_sounds
+        ev.world
+            .mob_sounds
             .iter()
             .any(|s| s.kind == zombie && s.category == MobSoundCategory::Death),
         "the same death path queued the zombie's data-driven death sound"
     );
-    let mobs = game.world.mobs().instances();
+    let mobs = game.server.world.mobs().instances();
     assert!(
         sun_ids
             .iter()

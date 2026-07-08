@@ -1,3 +1,8 @@
+//! The client's locally-simulated player: per-frame look/movement physics on
+//! `Game::player`, the camera mirror, and the per-frame target refresh
+//! (`Game::look`/`Game::targeted_mob`). None of this touches the sessions —
+//! the results reach the sim as the next `PlayerUpdate` message.
+
 use crate::mathh::Vec3;
 use crate::player::{self, Input, Player};
 
@@ -28,7 +33,15 @@ impl Game {
 
     pub(super) fn apply_hotbar_input(&mut self, input: &GameInput) {
         if input.gameplay_enabled && input.hotbar_scroll != 0 {
+            // Client-owned selection (only the INDEX matters — contents are
+            // session-owned); the slot rides `PlayerUpdate.hotbar_slot`. Any
+            // hotbar change resets the R-key rotation cycle so the raw wire
+            // counter unambiguously means "R pressed on the current selection".
+            let before = self.player.inventory.active_slot();
             self.player.inventory.scroll_active(input.hotbar_scroll);
+            if self.player.inventory.active_slot() != before {
+                self.held_rotation.clear();
+            }
         }
     }
 
@@ -72,11 +85,14 @@ impl Game {
             sprint: input.gameplay_enabled && input.movement.sprint,
         };
 
-        if spectator || self.player.columns_loaded(&self.world) {
+        // Physics gates on the REPLICA's loaded columns: until the spawn area's
+        // payloads land, the player holds still (exactly the fresh-world
+        // stream-in wait; absent-Mixed sections would read as air and lie).
+        if spectator || self.player.columns_loaded(&self.replica) {
             let mut remaining = dt.min(0.25);
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
-                self.player.update(step, &self.world, player_input);
+                self.player.update(step, &self.replica, player_input);
                 remaining -= step;
             }
         }
@@ -85,19 +101,31 @@ impl Game {
     }
 
     /// Push the player out of any mob it overlaps, per frame. The mobs sit at their
-    /// last-tick positions (fixed between ticks), so as the player moves each frame the
+    /// last-batch positions (fixed between ticks), so as the player moves each frame the
     /// overlap - and the push - track the player smoothly; applied as a small
     /// collision-resolved displacement (the push *velocity* over this frame's `dt`), it
     /// never accumulates or fights the movement controller. A noclip spectator has no body
     /// to jostle. The mobs' own half of the push runs on the tick (`game_tick_step`).
+    /// Client movement physics against the REPLICATED mob rows (pos + species
+    /// size); the shove reaches the server in the next `PlayerUpdate`.
     pub(super) fn apply_mob_push(&mut self, dt: f32) {
         if self.player.is_spectator() {
             return;
         }
         let body = crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT);
-        let push = self.world.mobs().push_on_player(body);
+        let mut push = Vec3::ZERO;
+        for entry in self.replicated_mobs.iter() {
+            if entry.curr.dead {
+                continue; // a ragdolling corpse doesn't push
+            }
+            let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
+            let mob = crate::mob::Body::new(entry.curr.pos, size.half_width, size.height);
+            if let Some(p) = crate::mob::separation(body, mob) {
+                push += p;
+            }
+        }
         if push != Vec3::ZERO {
-            self.player.shove(push * dt, &self.world);
+            self.player.shove(push * dt, &self.replica);
             self.sync_camera_to_player_eye(dt);
         }
     }
@@ -125,7 +153,8 @@ impl Game {
         // Lying in bed: the body stays a standing collision box on the
         // mattress (physics unchanged), but the camera drops to pillow height
         // so the player visibly lies down rather than standing on the bed.
-        let eye_y = if self.sleep.is_some() {
+        // Sleep state reads the replicated self view.
+        let eye_y = if self.self_view.sleeping.is_some() {
             self.player.pos.y + SLEEP_EYE_HEIGHT
         } else {
             target.y + self.camera_step_y_offset
@@ -134,43 +163,121 @@ impl Game {
         self.last_player_eye_y = target.y;
     }
 
-    pub(super) fn tick_world(&mut self) {
-        let cam_cx = (self.cam.pos.x as i32) >> 4;
+    /// Keep the REPLICA's view centre (mesh/light priority ordering + the
+    /// always-mesh near ring) on the camera, where the streaming target used
+    /// to live. Streaming itself is server-side since C2c-ii
+    /// (`ServerGame::pump_streaming`); the replica never generates.
+    pub(super) fn tick_replica_view(&mut self) {
+        let cam_cx = (self.cam.pos.x.floor() as i32).div_euclid(16);
         let cam_cy = (self.cam.pos.y.floor() as i32).div_euclid(16);
-        let cam_cz = (self.cam.pos.z as i32) >> 4;
+        let cam_cz = (self.cam.pos.z.floor() as i32).div_euclid(16);
         let forward = self.cam.forward();
-        self.world
-            .update_load_facing(cam_cx, cam_cy, cam_cz, forward.x, forward.z);
-        let _ = self.world.poll();
+        self.replica
+            .set_replica_view_center(cam_cx, cam_cy, cam_cz, forward.x, forward.z);
     }
 
+    /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation
+    /// + `PlayerUpdate.target` source) against the REPLICA world, the mob
+    /// under the crosshair from the REPLICATED rows, and the remote PLAYER
+    /// under the crosshair from the remote-player rows (PvP). All three
+    /// compete by distance — the nearest wins; a closer block occludes both
+    /// entity kinds. At most one of `targeted_mob`/`targeted_player` is set
+    /// (the click actions carry them on the wire).
     pub(super) fn refresh_target(&mut self) {
-        let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.world);
+        let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.replica);
         self.look = block_hit.map(|(h, _)| h);
         let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
-        self.targeted_mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
-        if self.targeted_mob.is_some() {
+        let mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
+        let remote = self.closest_remote_player(self.cam.pos, self.cam.forward(), block_dist);
+        self.targeted_mob = None;
+        self.targeted_player = None;
+        match (mob, remote) {
+            (Some((_, mt)), Some((pid, pt))) if pt < mt => self.targeted_player = Some(pid),
+            (Some((id, _)), _) => self.targeted_mob = Some(id),
+            (None, Some((pid, _))) => self.targeted_player = Some(pid),
+            (None, None) => {}
+        }
+        if self.targeted_mob.is_some() || self.targeted_player.is_some() {
             self.look = None;
         }
     }
 
-    /// The closest mob in front of the eye whose AABB the ray enters within `max_dist`
-    /// (and within reach), skipping dead corpses. `max_dist` is the block hit distance,
-    /// so a mob *behind* the block isn't targeted (the block occludes it).
-    pub(super) fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<usize> {
+    /// The stable id of the mob currently under the crosshair — what a click
+    /// action carries on the wire.
+    pub(super) fn targeted_mob_id(&self) -> Option<u64> {
+        self.targeted_mob
+    }
+
+    /// The closest replicated mob in front of the eye whose AABB (row position
+    /// + species size) the ray enters within `max_dist` (and within reach),
+    /// with its ray distance; skips dead corpses. `max_dist` is the block hit
+    /// distance, so a mob *behind* the block isn't targeted (the block
+    /// occludes it).
+    pub(super) fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
-        let mut best: Option<(usize, f32)> = None;
-        for (i, m) in self.world.mobs().instances().iter().enumerate() {
-            if m.is_dead() {
+        let mut best: Option<(u64, f32)> = None;
+        for entry in self.replicated_mobs.iter() {
+            let row = &entry.curr;
+            if row.dead {
                 continue; // a corpse can't be targeted
             }
-            let (min, max) = m.aabb();
+            let size = crate::mob::def(crate::mob::Mob(row.kind_id)).size;
+            let min = Vec3::new(
+                row.pos.x - size.half_width,
+                row.pos.y,
+                row.pos.z - size.half_width,
+            );
+            let max = Vec3::new(
+                row.pos.x + size.half_width,
+                row.pos.y + size.height,
+                row.pos.z + size.half_width,
+            );
             if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
                 if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
-                    best = Some((i, t));
+                    best = Some((row.id, t));
                 }
             }
         }
-        best.map(|(i, _)| i)
+        best
+    }
+
+    /// The closest VISIBLE, alive remote player whose body AABB (row feet
+    /// position + the player half-extents) the ray enters within `max_dist`
+    /// (and within reach), with its ray distance — [`closest_mob`] over the
+    /// remote-player rows. The store never holds the own id, so self-targeting
+    /// is impossible; spectators and the dead ship `visible: false`/`alive:
+    /// false` rows and are skipped.
+    ///
+    /// [`closest_mob`]: Self::closest_mob
+    pub(super) fn closest_remote_player(
+        &self,
+        eye: Vec3,
+        dir: Vec3,
+        max_dist: f32,
+    ) -> Option<(u8, f32)> {
+        let limit = max_dist.min(player::REACH);
+        let mut best: Option<(u8, f32)> = None;
+        for p in self.remote_players.iter() {
+            let row = &p.curr;
+            if !row.visible || !row.alive {
+                continue;
+            }
+            let min = Vec3::new(
+                row.pos.x - player::HALF_W,
+                row.pos.y,
+                row.pos.z - player::HALF_W,
+            );
+            let max = Vec3::new(
+                row.pos.x + player::HALF_W,
+                row.pos.y + player::HEIGHT,
+                row.pos.z + player::HALF_W,
+            );
+            if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
+                if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
+                    best = Some((row.id.0, t));
+                }
+            }
+        }
+        best
     }
 }

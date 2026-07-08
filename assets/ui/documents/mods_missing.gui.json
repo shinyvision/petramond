@@ -1,0 +1,122 @@
+{
+    "format": 1,
+    "kind": "llama:mods_missing",
+    "class": "screen",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "w": 280,
+            "h": 200,
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6,
+            "align": "stretch"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Missing Mods",
+                "scale": 2
+            },
+            {
+                "type": "label",
+                "text": "This server requires mods you don't have installed:",
+                "wrap": true
+            },
+            {
+                "id": "missing_scroll",
+                "type": "scroll",
+                "axis": "vertical",
+                "style": "panel.inset",
+                "layout": {
+                    "h": {
+                        "grow": 1
+                    },
+                    "pad": [
+                        1,
+                        1,
+                        1,
+                        1
+                    ],
+                    "min_h": 36
+                },
+                "children": [
+                    {
+                        "id": "missing",
+                        "type": "list",
+                        "layout": {
+                            "gap": 2,
+                            "align": "stretch"
+                        },
+                        "bind": {
+                            "items": "missing_rows"
+                        },
+                        "children": [
+                            {
+                                "type": "row",
+                                "style": "list.row",
+                                "layout": {
+                                    "pad": [
+                                        3,
+                                        1,
+                                        3,
+                                        1
+                                    ],
+                                    "gap": 5,
+                                    "align": "center"
+                                },
+                                "children": [
+                                    {
+                                        "type": "label",
+                                        "bind": {
+                                            "text": "id"
+                                        }
+                                    },
+                                    {
+                                        "type": "badge",
+                                        "bind": {
+                                            "text": "version",
+                                            "visible": "has_version"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "label",
+                "text": "Install them, then try again.",
+                "style": "label.muted"
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 5
+                },
+                "children": [
+                    {
+                        "type": "button",
+                        "id": "back",
+                        "text": "Back",
+                        "layout": {
+                            "w": 110
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

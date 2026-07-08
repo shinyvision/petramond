@@ -1,8 +1,8 @@
 use super::App;
 use crate::audio::Sound;
 use crate::block::{Block, BlockSoundAction};
-use crate::game::GameEvents;
-use crate::mathh::Vec3;
+use crate::game::{GameEvents, WorldEvent};
+use crate::mathh::{IVec3, Vec3};
 
 impl App {
     pub(super) fn play_game_event_sounds(
@@ -29,15 +29,34 @@ impl App {
         self.mob_sound_events
             .extend(events.mob_sounds.iter().copied());
 
-        if let Some(b) = events.placed_block {
-            if let Some(s) = b.sound(BlockSoundAction::Place) {
-                self.audio.play(s);
-            }
-        }
-
-        if let Some(b) = events.broke_block {
-            if let Some(s) = b.sound(BlockSoundAction::Break) {
-                self.audio.play(s);
+        // World-anchored one-shots play POSITIONALLY, from the replicated
+        // events (every observer hears them at the event's place — including
+        // the local player's own actions; their old non-positional plays off
+        // the `GameEvents` one-shots are gone). Buffered like the mob sounds
+        // and started next render, where the spatial listener exists.
+        for ev in &events.world_events {
+            let cue = match *ev {
+                WorldEvent::BlockPlaced { pos, block } => block
+                    .sound(BlockSoundAction::Place)
+                    .map(|s| (s, cell_centre(pos))),
+                WorldEvent::BlockBroken { pos, block, .. } => block
+                    .sound(BlockSoundAction::Break)
+                    .map(|s| (s, cell_centre(pos))),
+                WorldEvent::DoorToggled { lower, open } => Some((
+                    if open { Sound::DoorOpen } else { Sound::DoorClose },
+                    cell_centre(lower),
+                )),
+                WorldEvent::ChestOpened { pos } => Some((Sound::ChestOpen, cell_centre(pos))),
+                WorldEvent::ChestClosed { pos } => Some((Sound::ChestClose, cell_centre(pos))),
+                // The local player's own pickup keeps its non-positional
+                // sound (`events.picked_up_item` below); other players'
+                // pickups are heard at their body.
+                WorldEvent::ItemPickedUp { pos, by_self } => {
+                    (!by_self).then_some((Sound::ItemPickup, pos))
+                }
+            };
+            if let Some(cue) = cue {
+                self.world_sound_cues.push(cue);
             }
         }
 
@@ -50,18 +69,6 @@ impl App {
         if events.player_damaged {
             self.audio.play(Sound::PlayerHurt);
             self.hurt_shake_t = super::HURT_SHAKE_SECS;
-        }
-
-        if let Some(now_open) = events.toggled_door {
-            self.audio.play(if now_open {
-                Sound::DoorOpen
-            } else {
-                Sound::DoorClose
-            });
-        }
-
-        if events.open_chest.is_some() {
-            self.audio.play(Sound::ChestOpen);
         }
     }
 
@@ -85,4 +92,13 @@ impl App {
 fn mod_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
     let dist = (pos - ear).length();
     sound.distance_gain(dist)
+}
+
+/// A cell's audible centre.
+fn cell_centre(pos: IVec3) -> Vec3 {
+    Vec3::new(
+        pos.x as f32 + 0.5,
+        pos.y as f32 + 0.5,
+        pos.z as f32 + 0.5,
+    )
 }

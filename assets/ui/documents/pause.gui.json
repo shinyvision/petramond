@@ -37,10 +37,55 @@
             },
             {
                 "type": "button",
+                "id": "open_lan",
+                "text": "OPEN TO LAN",
+                "layout": {
+                    "w": 110
+                },
+                "bind": {
+                    "visible": "lan_closed"
+                }
+            },
+            {
+                "type": "label",
+                "style": "label.muted",
+                "bind": {
+                    "text": "lan_status",
+                    "visible": "lan_open"
+                }
+            },
+            {
+                "type": "label",
+                "style": "label.danger",
+                "wrap": true,
+                "layout": {
+                    "w": 140
+                },
+                "bind": {
+                    "text": "lan_error",
+                    "visible": "has_lan_error"
+                }
+            },
+            {
+                "type": "button",
+                "id": "disconnect",
+                "text": "DISCONNECT",
+                "layout": {
+                    "w": 110
+                },
+                "bind": {
+                    "visible": "is_remote"
+                }
+            },
+            {
+                "type": "button",
                 "id": "save_quit",
                 "text": "SAVE AND QUIT",
                 "layout": {
                     "w": 110
+                },
+                "bind": {
+                    "visible": "is_host"
                 }
             }
         ]

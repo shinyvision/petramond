@@ -7,7 +7,6 @@
 //! `LLAMACRAFT_MODS` re-spawn pattern, staged by `modding::tests`).
 
 use super::super::tick::TickEvents;
-use super::super::Game;
 use crate::camera::Camera;
 use crate::mathh::Vec3;
 
@@ -41,43 +40,45 @@ fn wheel_spin_inner() {
         .as_block()
         .expect("the wheel item links to its block");
 
-    let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "the wheel wasm loaded");
     // A STONE platform: no mob species natural-spawns on stone, so a sheep
     // party is countable. Empty columns first (the fixture gotcha: the air
     // above the floor must read as loaded for the mod's ground scans).
-    game.world.clear_world();
+    game.server.world.clear_world();
     let pos = ChunkPos::new(0, 0);
-    game.world.insert_empty_column_for_test(pos);
+    game.server.world.insert_empty_column_for_test(pos);
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Stone);
         }
     }
-    game.world.insert_chunk_for_test(pos, chunk);
-    game.player.pos = Vec3::new(8.0, 64.0, 8.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server.world.insert_chunk_for_test(pos, chunk);
+    game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
     // The mod block goes into the world through the engine edit API, then the
     // GUI session opens from it (the interaction row's own parse → GuiKind
     // registration is what `resolve_kind` finds here).
     let block_pos = IVec3::new(12, 64, 8);
-    assert!(game.world.set_block_world(12, 64, 8, wheel_block));
+    assert!(game.server.world.set_block_world(12, 64, 8, wheel_block));
     let kind = crate::gui::resolve_kind("wheel:wheel")
         .expect("the pack's open_gui interaction registered the kind");
-    game.open_mod_gui_screen(kind, Some(block_pos));
+    game.server.open_mod_gui_screen_for(0, kind, Some(block_pos));
 
-    let count = |game: &Game, item: ItemType| -> u32 {
+    let count = |game: &super::common::TestGame, item: ItemType| -> u32 {
         (0..crate::inventory::TOTAL_SLOTS)
-            .filter_map(|i| game.player.inventory.slot(i))
+            .filter_map(|i| game.server.sessions[0].player.inventory.slot(i))
             .filter(|s| s.item == item)
             .map(|s| s.count as u32)
             .sum()
     };
-    let sheep = |game: &Game| {
-        game.world
+    let sheep = |game: &super::common::TestGame| {
+        game.server
+            .world
             .mobs()
             .instances()
             .iter()
@@ -85,7 +86,7 @@ fn wheel_spin_inner() {
             .count()
     };
     assert_eq!(sheep(&game), 0, "no mobs before the spin");
-    let h0 = game.player.health();
+    let h0 = game.server.sessions[0].player.health();
 
     // Click spin; a second click mid-spin must be ignored (still exactly one
     // reward at the end).
@@ -95,15 +96,16 @@ fn wheel_spin_inner() {
         false,
         false,
     );
+    game.flush_outbox_for_test();
     let mut ev = TickEvents::default();
     for tick in 0..70 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
         if tick == 10 {
-            match game.world.gui_state_get("wheel:result") {
+            match game.server.sessions[0].gui_state.get("wheel:result") {
                 None | Some(GuiValue::Str(_)) => {} // empty or cleared mid-spin
                 other => panic!("unexpected mid-spin result value: {other:?}"),
             }
-            if let Some(GuiValue::Str(s)) = game.world.gui_state_get("wheel:result") {
+            if let Some(GuiValue::Str(s)) = game.server.sessions[0].gui_state.get("wheel:result") {
                 assert!(s.is_empty(), "no announcement before the wheel lands");
             }
             game.menu_click(
@@ -112,16 +114,17 @@ fn wheel_spin_inner() {
                 false,
                 false,
             );
+            game.flush_outbox_for_test();
         }
     }
 
     // The session stayed open: the announcement is visible and the wheel
     // rests EXACTLY on a segment centre (angle ≡ -k·72° mod 360°).
-    match game.world.gui_state_get("wheel:result") {
+    match game.server.sessions[0].gui_state.get("wheel:result") {
         Some(GuiValue::Str(s)) if !s.is_empty() => {}
         other => panic!("wheel:result should hold the announcement, got {other:?}"),
     }
-    match game.world.gui_state_get("wheel:angle") {
+    match game.server.sessions[0].gui_state.get("wheel:angle") {
         Some(GuiValue::F32(a)) => {
             let slots = a * 5.0 / core::f32::consts::TAU;
             assert!(
@@ -139,13 +142,13 @@ fn wheel_spin_inner() {
         count(&game, ItemType::Stick) == 1,
         count(&game, ItemType::Coal) == 1,
         sheep(&game) == 5,
-        game.player.health() == 0,
+        game.server.sessions[0].player.health() == 0,
     ];
     assert_eq!(
         outcomes.iter().filter(|&&o| o).count(),
         1,
         "exactly one reward materialized (h0 {h0}, health {}, outcomes {outcomes:?})",
-        game.player.health()
+        game.server.sessions[0].player.health()
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
     assert!(!disabled, "the wheel mod stayed healthy through the spin");

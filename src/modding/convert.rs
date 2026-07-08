@@ -143,6 +143,7 @@ fn damage_source(s: events::DamageSource) -> api::DamageSource {
         events::DamageSource::Mod(mod_id) => api::DamageSource::Mod {
             mod_id: mod_id.to_owned(),
         },
+        events::DamageSource::Player(id) => api::DamageSource::Player { id: id.0 },
     }
 }
 

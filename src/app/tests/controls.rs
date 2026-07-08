@@ -375,21 +375,21 @@ fn save_and_quit_returns_to_title_and_drops_game() {
 fn digit_controls_select_hotbar_slot() {
     let mut app = app();
     app.handle_control(Control::SelectHotbar(4), true);
-    assert_eq!(app.game().inventory().active_slot(), 4);
+    assert_eq!(app.game().active_hotbar(), 4);
     app.handle_control(Control::SelectHotbar(0), true);
-    assert_eq!(app.game().inventory().active_slot(), 0);
+    assert_eq!(app.game().active_hotbar(), 0);
     app.handle_control(Control::SelectHotbar(8), true);
-    assert_eq!(app.game().inventory().active_slot(), 8);
+    assert_eq!(app.game().active_hotbar(), 8);
 }
 
 #[test]
 fn digit_controls_ignored_while_inventory_open() {
     let mut app = app();
     app.handle_control(Control::SelectHotbar(2), true);
-    assert_eq!(app.game().inventory().active_slot(), 2);
+    assert_eq!(app.game().active_hotbar(), 2);
     app.handle_control(Control::ToggleInventory, true);
     app.handle_control(Control::SelectHotbar(6), true);
-    assert_eq!(app.game().inventory().active_slot(), 2);
+    assert_eq!(app.game().active_hotbar(), 2);
 }
 
 fn test_worlds(count: usize) -> Vec<WorldInfo> {
@@ -404,7 +404,7 @@ fn test_worlds(count: usize) -> Vec<WorldInfo> {
 
 /// Queue a primary click on the document instance `id`, using the last solved
 /// frame's rect. The next `drive_doc_ui` frame resolves it.
-fn click_doc_id(app: &mut App, id: &str) {
+pub(super) fn click_doc_id(app: &mut App, id: &str) {
     let r = app
         .ui
         .out()

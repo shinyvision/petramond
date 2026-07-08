@@ -39,6 +39,31 @@ impl SectionSummary {
             _ => Block::Air,
         }
     }
+
+    /// Stable byte for the wire (`ColumnPayload::summaries`).
+    #[inline]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            SectionSummary::Unknown => 0,
+            SectionSummary::Empty => 1,
+            SectionSummary::FullOpaque => 2,
+            SectionSummary::FullWater => 3,
+            SectionSummary::Mixed => 4,
+        }
+    }
+
+    /// Inverse of [`to_u8`](Self::to_u8); unknown bytes read as `Unknown`
+    /// (the conservative "reads lie" answer).
+    #[inline]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => SectionSummary::Empty,
+            2 => SectionSummary::FullOpaque,
+            3 => SectionSummary::FullWater,
+            4 => SectionSummary::Mixed,
+            _ => SectionSummary::Unknown,
+        }
+    }
 }
 
 /// One 16³ cube of voxels. Blocks stored as a flat `Arc<[u8; 4096]>` indexed by

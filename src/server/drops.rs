@@ -2,10 +2,12 @@ use crate::entity::DroppedItem;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 
-use super::{entities::light_at_pos, tick::TickEvents, Game};
+use super::entities::light_at_pos;
+use super::game::ServerGame;
+use crate::game::tick::TickEvents;
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct DropQueue {
+pub(crate) struct DropQueue {
     pending: Vec<PendingDropAction>,
 }
 
@@ -17,28 +19,28 @@ enum PendingDropAction {
 }
 
 impl DropQueue {
-    pub(super) fn queue_stack(&mut self, stack: ItemStack) {
+    pub(crate) fn queue_stack(&mut self, stack: ItemStack) {
         self.pending.push(PendingDropAction::Stack(stack));
     }
 
-    pub(super) fn queue_selected(&mut self, slot: u8, all: bool) {
+    pub(crate) fn queue_selected(&mut self, slot: u8, all: bool) {
         self.pending.push(PendingDropAction::Selected { slot, all });
     }
 
-    pub(super) fn queue_cursor_stack(&mut self, inventory: &Inventory) {
+    pub(crate) fn queue_cursor_stack(&mut self, inventory: &Inventory) {
         if let Some(stack) = self.available_cursor_throw_stack(inventory) {
             self.pending.push(PendingDropAction::Cursor(stack));
         }
     }
 
-    pub(super) fn queue_cursor_one(&mut self, inventory: &Inventory) {
+    pub(crate) fn queue_cursor_one(&mut self, inventory: &Inventory) {
         if let Some(stack) = self.available_cursor_throw_stack(inventory) {
             self.pending
                 .push(PendingDropAction::Cursor(ItemStack::new(stack.item, 1)));
         }
     }
 
-    pub(super) fn close_cursor_stack(&mut self, inventory: &mut Inventory) {
+    pub(crate) fn close_cursor_stack(&mut self, inventory: &mut Inventory) {
         let Some(cursor) = inventory.cursor().copied() else {
             return;
         };
@@ -77,61 +79,42 @@ impl DropQueue {
     }
 }
 
-impl Game {
+impl ServerGame {
     /// Close-time cleanup for a cursor-held GUI stack: merge it back into matching
     /// inventory stacks, then empty slots, and queue only any leftover to drop into
     /// the world on the next tick. Cursor throws already queued by an outside-panel
     /// click are reservations: closing the menu stashes only the unreserved remainder
     /// so the fixed tick can still apply the user's throw.
-    pub(crate) fn close_cursor_stack(&mut self) {
-        self.drop_queue
-            .close_cursor_stack(&mut self.player.inventory);
-    }
-
-    /// Throw the whole cursor-held stack out into the world (inventory drag-out
-    /// then click outside the panel). No-op when the cursor is empty.
-    pub fn throw_cursor_stack(&mut self) {
-        self.drop_queue.queue_cursor_stack(&self.player.inventory);
-    }
-
-    /// Throw a single item off the cursor-held stack (right-click outside the
-    /// panel while dragging). No-op when the cursor is empty.
-    pub fn throw_cursor_one(&mut self) {
-        self.drop_queue.queue_cursor_one(&self.player.inventory);
-    }
-
-    /// Drop the player's held (active hotbar) item into the world via the in-game
-    /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
-    /// single item (Q). No-op with an empty hand.
-    pub fn drop_selected_item(&mut self, all: bool) {
-        let slot = self.player.inventory.active_slot();
-        self.drop_queue.queue_selected(slot, all);
+    pub(crate) fn close_cursor_stack_for(&mut self, s: usize) {
+        let sess = &mut self.sessions[s];
+        sess.drop_queue
+            .close_cursor_stack(&mut sess.player.inventory);
     }
 
     /// Apply queued drop intents on the tick: remove the item from the inventory/cursor
     /// and spawn the matching dropped entity in the same fixed-tick phase, before item
     /// physics gives fresh drops their first step.
-    pub(super) fn tick_drops(&mut self, events: &mut TickEvents) {
-        for action in self.drop_queue.drain() {
+    pub(crate) fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
+        for action in self.sessions[s].drop_queue.drain() {
             let stack = match action {
                 PendingDropAction::Selected { slot, all } => {
-                    self.take_hotbar_slot_for_drop(slot, all)
+                    self.take_hotbar_slot_for_drop(s, slot, all)
                 }
                 PendingDropAction::Cursor(stack) => {
-                    self.consume_cursor_throw(stack);
+                    self.consume_cursor_throw(s, stack);
                     Some(stack)
                 }
                 PendingDropAction::Stack(stack) => Some(stack),
             };
             if let Some(stack) = stack {
-                self.spawn_thrown_item(stack);
-                events.threw_item = true;
+                self.spawn_thrown_item(s, stack);
+                events.player(s).threw_item = true;
             }
         }
     }
 
-    fn take_hotbar_slot_for_drop(&mut self, slot: u8, all: bool) -> Option<ItemStack> {
-        let cell = self.player.inventory.slot_mut(slot as usize)?;
+    fn take_hotbar_slot_for_drop(&mut self, s: usize, slot: u8, all: bool) -> Option<ItemStack> {
+        let cell = self.sessions[s].player.inventory.slot_mut(slot as usize)?;
         if all {
             return cell.take();
         }
@@ -144,8 +127,8 @@ impl Game {
         Some(ItemStack::new(item, 1))
     }
 
-    fn consume_cursor_throw(&mut self, stack: ItemStack) {
-        let cell = self.player.inventory.cursor_mut();
+    fn consume_cursor_throw(&mut self, s: usize, stack: ItemStack) {
+        let cell = self.sessions[s].player.inventory.cursor_mut();
         let Some(cursor) = cell.as_mut() else {
             return;
         };
@@ -158,10 +141,14 @@ impl Game {
         }
     }
 
-    /// Spawn `stack` as a thrown dropped item using the tick-time camera pose.
-    fn spawn_thrown_item(&mut self, stack: ItemStack) {
-        let dir = self.cam.forward();
-        let origin = self.cam.pos + dir * 0.3;
+    /// Spawn `stack` as a thrown dropped item from the throwing player's eye,
+    /// along their view direction.
+    fn spawn_thrown_item(&mut self, s: usize, stack: ItemStack) {
+        let (eye, dir) = {
+            let p = &self.sessions[s].player;
+            (p.eye(), p.forward())
+        };
+        let origin = eye + dir * 0.3;
         let mut drop = DroppedItem::thrown(origin, stack, dir);
         (drop.skylight, drop.blocklight) = light_at_pos(&self.world, origin);
         self.world.spawn_item(drop);

@@ -1,59 +1,66 @@
-use super::{tick::TickEvents, Game};
+use super::game::ServerGame;
 use crate::block::{Block, BlockInteraction, RenderShape};
 use crate::block_state::StairState;
 use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::facing::Facing;
+use crate::game::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
 use crate::torch::TorchPlacement;
 
-impl Game {
+impl ServerGame {
     /// Placement / interaction, on the tick: consume a buffered secondary-button press
     /// once. Right-clicking a placed interactable block uses its block-owned capability
     /// rather than placing into the cell — unless sneaking, which falls through so the
     /// player can still build against it. An in-progress EAT (held button on a food
     /// item) advances every tick, click or not.
-    pub(super) fn tick_place(&mut self, events: &mut TickEvents) {
-        if std::mem::take(&mut self.pending_place) {
-            self.place_click(events);
+    pub(crate) fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
+        // The mob under the crosshair at click time rides the click; consume
+        // it with the press so a stale target can't leak into a later click.
+        let use_mob = std::mem::take(&mut self.sessions[s].pending_use_mob);
+        if std::mem::take(&mut self.sessions[s].pending_place) {
+            self.place_click(s, use_mob, events);
         }
-        self.advance_eating();
+        self.advance_eating(s, events);
     }
 
     /// Resolve one consumed secondary-button press.
-    fn place_click(&mut self, events: &mut TickEvents) {
+    fn place_click(&mut self, s: usize, use_mob: Option<u64>, events: &mut TickEvents) {
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
-        // while a mob is targeted `self.look` is None, so the block paths below
+        // while a mob is targeted `look` is None, so the block paths below
         // would no-op anyway.
-        if self.try_shear_mob() {
-            events.used_item = true;
+        if self.try_shear_mob(s, use_mob) {
+            events.player(s).used_item = true;
             return;
         }
-        let interacted = !self.intent_sneak && self.try_open_interactable(events);
+        let interacted = !self.sessions[s].intent_sneak && self.try_open_interactable(s, events);
         // The one place every consumed interaction passes through: the interact
         // hand jab defaults ON for all of them (see `GameEvents::interacted`).
-        events.interacted |= interacted;
+        events.player(s).interacted |= interacted;
         if !interacted {
             // Food comes next: a click on a food item starts (or re-affirms) the
             // eat and never falls through to use/placement.
-            if self.try_start_eating(events) {
+            if self.try_start_eating(s, events) {
                 return;
             }
             // The held item's own use (a bucket) comes before block placement; an
             // item with a use has no block to place, so the two never compete.
-            if self.try_use_item(events) {
-                events.used_item = true;
+            if self.try_use_item(s, events) {
+                events.player(s).used_item = true;
                 return;
             }
             // Capture the held block before `try_place` consumes it: on success that is
             // exactly the block placed, which the client maps to a place sound.
-            let held = self
+            let held = self.sessions[s]
                 .player
                 .inventory
                 .selected()
-                .and_then(|s| s.item.as_block());
-            if let Some(pos) = self.try_place(events) {
-                events.placed_block = held;
+                .and_then(|st| st.item.as_block());
+            if let Some(pos) = self.try_place(s, events) {
+                events.player(s).placed_block = held;
                 if let Some(block) = held {
+                    // Every observer presents the placement (positional sound)
+                    // from the world-anchored event.
+                    events.world.block_placed.push((pos, block));
                     self.bus.emit(PostEvent::BlockPlaced { pos, block });
                 }
             }
@@ -62,8 +69,10 @@ impl Game {
 
     /// If the look target has a secondary-use capability, apply it and return
     /// `true` (consuming the right-click).
-    fn try_open_interactable(&mut self, events: &mut TickEvents) -> bool {
-        let Some(h) = self.look else { return false };
+    fn try_open_interactable(&mut self, s: usize, events: &mut TickEvents) -> bool {
+        let Some(h) = self.sessions[s].look else {
+            return false;
+        };
         let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
         // A handler cancelling `block_interact` consumed the click (this is how mod
         // blocks will open their own GUIs); the block's built-in capability is skipped.
@@ -71,34 +80,54 @@ impl Game {
             pos: h.block,
             block,
         };
-        if self
-            .bus
-            .block_interact(&mut self.world, &mut self.player, events, &mut pre)
-            == Outcome::Cancel
-        {
+        let cancelled = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            bus.block_interact(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
+        };
+        if cancelled {
             return true;
         }
+        // The screen-open arms BOTH open the menu session server-side on this
+        // tick AND queue the one-shot the client's `SelfEvents.open_screen`
+        // carries (so its screen opens off the batch).
         match block.interaction() {
             BlockInteraction::OpenCraftingTable => {
-                self.request_open_table = true;
+                self.open_crafting_for(s, 3);
+                self.sessions[s].request_open_table = true;
                 true
             }
             BlockInteraction::OpenFurnace => {
-                self.request_open_furnace = Some(h.block);
+                self.open_furnace_screen_for(s, h.block);
+                self.sessions[s].request_open_furnace = Some(h.block);
                 true
             }
             BlockInteraction::OpenChest => {
-                self.request_open_chest = Some(h.block);
+                self.open_chest_screen_for(s, h.block, events);
+                self.sessions[s].request_open_chest = Some(h.block);
                 true
             }
             BlockInteraction::OpenFurnitureWorkbench => {
-                self.request_open_workbench = Some(h.block);
+                self.open_workbench_screen_for(s);
+                self.sessions[s].request_open_workbench = true;
                 true
             }
             BlockInteraction::OpenModGui(kind) => {
                 // The clicked block's position rides the session so gui_click
                 // dispatches carry where the GUI was opened from.
-                self.request_open_mod_gui = Some((kind, Some(h.block)));
+                self.open_mod_gui_screen_for(s, kind, Some(h.block));
+                self.sessions[s].request_open_mod_gui = Some((kind, Some(h.block)));
                 true
             }
             // Right-clicking a door toggles it: the open/closed bit flips on this tick
@@ -107,18 +136,19 @@ impl Game {
             // BEFORE the toggle so it starts from the old pose, then eases to the new one.
             BlockInteraction::ToggleDoor => {
                 if let Some(lower) = self.world.door_lower_cell(h.block.x, h.block.y, h.block.z) {
-                    let start = self.door_swing_angle(lower);
-                    self.door_swings.entry(lower).or_insert(start);
                     self.world.toggle_door(h.block);
                     // The new open state after the toggle — drives open vs close sound.
                     let now_open = self
                         .world
                         .door_state_at(lower.x, lower.y, lower.z)
-                        .map(|s| s.open)
+                        .map(|st| st.open)
                         .unwrap_or(true);
-                    // Flick the hand for the interaction (same jab as opening a chest),
-                    // and surface the new state so the presentation picks the sound.
-                    self.toggled_door = Some(now_open);
+                    // The swing animation + positional sound come from this
+                    // event client-side (`apply_world_effects` / the app),
+                    // like any observer's will.
+                    events.world.door_changed.push((lower, now_open));
+                    // The TOGGLER's own one-shot (hand flick).
+                    events.player(s).toggled_door = Some(now_open);
                 }
                 true
             }
@@ -126,8 +156,8 @@ impl Game {
             // the sleep (see `game::bed`); the app opens the sleep overlay via
             // the open request this queues.
             BlockInteraction::Sleep => {
-                events.bed_interacted = true;
-                self.start_sleep(h.block);
+                events.player(s).bed_interacted = true;
+                self.start_sleep(s, h.block);
                 true
             }
             BlockInteraction::None => false,
@@ -137,13 +167,13 @@ impl Game {
     /// Attempt to place the held block; returns the anchor cell it landed in
     /// (the front-left-bottom cell for multi-cell models, the lower cell for
     /// doors), or `None` if nothing was placed.
-    pub(super) fn try_place(&mut self, events: &mut TickEvents) -> Option<IVec3> {
-        let h = self.look?;
+    pub(crate) fn try_place(&mut self, s: usize, events: &mut TickEvents) -> Option<IVec3> {
+        let h = self.sessions[s].look?;
         if h.normal == IVec3::ZERO {
             return None;
         }
 
-        let block = match self.player.inventory.selected() {
+        let block = match self.sessions[s].player.inventory.selected() {
             Some(stack) => match stack.item.as_block() {
                 Some(b) if b != Block::Air => b,
                 _ => return None,
@@ -164,10 +194,16 @@ impl Game {
         } else {
             h.block + h.normal
         };
-        let player_facing = facing_from_forward(self.cam.forward());
+        let player_facing = facing_from_forward(self.sessions[s].player.forward());
         let slab_stack_slot = (block.render_shape() == RenderShape::Slab
             && crate::slab::is_slab(looked_at))
-        .then(|| crate::slab::stack_slot(self.held_slab_rotation(), h.normal, player_facing))
+        .then(|| {
+            crate::slab::stack_slot(
+                self.sessions[s].held_slab_rotation(),
+                h.normal,
+                player_facing,
+            )
+        })
         .flatten();
         let slab_stacks_in_hit = slab_stack_slot.is_some_and(|slot| {
             crate::slab::can_add_layer(
@@ -187,10 +223,20 @@ impl Game {
                 block,
                 facing: player_facing,
             };
-            if self
-                .bus
-                .block_place_pre(&mut self.world, &mut self.player, events, &mut pre)
-                == Outcome::Cancel
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            if bus.block_place_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
             {
                 return None;
             }
@@ -222,7 +268,7 @@ impl Game {
                 _ => (
                     p,
                     crate::slab::slot_for_rotation(
-                        self.held_slab_rotation(),
+                        self.sessions[s].held_slab_rotation(),
                         h.normal,
                         player_facing,
                     ),
@@ -234,10 +280,12 @@ impl Game {
             }
             let next_state = self.world.slab_layer_target_state(target, block, slot)?;
             let boxes = crate::slab::boxes_for_state(next_state);
-            let blocked = self.player.intersects_block_boxes(target, boxes)
+            let blocked = self.sessions[s]
+                .player
+                .intersects_block_boxes(target, boxes)
                 || self.world.mobs().any_overlapping_boxes(target, boxes);
             if !blocked && self.world.place_slab_layer(target, block, slot) {
-                self.player.inventory.decrement_selected();
+                self.sessions[s].player.inventory.decrement_selected();
                 return Some(target);
             }
             return None;
@@ -270,14 +318,14 @@ impl Game {
             let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
                 .into_iter()
                 .any(|(c, off)| {
-                    self.player.intersects_block(c)
+                    self.sessions[s].player.intersects_block(c)
                         || self.world.mobs().any_overlapping_boxes(
                             c,
                             crate::block_model::collision_boxes_oriented(kind, off, facing),
                         )
                 });
             if !blocked && self.world.place_model_block_facing(base, block, facing) {
-                self.player.inventory.decrement_selected();
+                self.sessions[s].player.inventory.decrement_selected();
                 return Some(base);
             }
             return None;
@@ -302,11 +350,11 @@ impl Game {
                 })
             };
             let blocked = [(p, false), (upper, true)].into_iter().any(|(c, top)| {
-                self.player.intersects_block(c)
+                self.sessions[s].player.intersects_block(c)
                     || self.world.mobs().any_overlapping_boxes(c, closed(top))
             });
             if !blocked && self.world.place_door(p, block, facing) {
-                self.player.inventory.decrement_selected();
+                self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
             }
             return None;
@@ -314,15 +362,15 @@ impl Game {
 
         if block.render_shape() == RenderShape::Stair {
             let facing = player_facing;
-            let state = StairState::new(facing, self.held_stair_half());
+            let state = StairState::new(facing, self.sessions[s].held_stair_half());
             if !self.world.placement_cell_open(p) {
                 return None;
             }
             let boxes = self.world.resolved_stair_boxes(p, state);
-            let blocked = self.player.intersects_block_boxes(p, boxes)
+            let blocked = self.sessions[s].player.intersects_block_boxes(p, boxes)
                 || self.world.mobs().any_overlapping_boxes(p, boxes);
             if !blocked && self.world.place_stair(p, block, state) {
-                self.player.inventory.decrement_selected();
+                self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
             }
             return None;
@@ -337,10 +385,10 @@ impl Game {
                 return None;
             }
             let boxes = self.world.pane_boxes_at(p);
-            let blocked = self.player.intersects_block_boxes(p, boxes)
+            let blocked = self.sessions[s].player.intersects_block_boxes(p, boxes)
                 || self.world.mobs().any_overlapping_boxes(p, boxes);
             if !blocked && self.world.set_block_world(p.x, p.y, p.z, block) {
-                self.player.inventory.decrement_selected();
+                self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
             }
             return None;
@@ -362,13 +410,13 @@ impl Game {
         // it overlaps the player or a mob — the placement simply fails (the click does
         // nothing and the held item isn't consumed).
         let collides = block.blocks_movement();
-        let clear_of_player = !collides || !self.player.intersects_block(p);
+        let clear_of_player = !collides || !self.sessions[s].player.intersects_block(p);
         let clear_of_mobs = !collides || !self.world.mobs().any_overlapping_placement(p, block);
         if target.is_replaceable()
             && clear_of_player
             && clear_of_mobs
             && if block.is_log() {
-                let axis = self.held_log_axis_for_facing(player_facing);
+                let axis = self.sessions[s].held_log_axis_for_facing(player_facing);
                 self.world.place_log(p, block, axis)
             } else {
                 self.world.set_block_world(p.x, p.y, p.z, block)
@@ -390,7 +438,7 @@ impl Game {
             } else if let Some(tp) = torch_placement {
                 self.world.insert_torch(p, tp);
             }
-            self.player.inventory.decrement_selected();
+            self.sessions[s].player.inventory.decrement_selected();
             Some(p)
         } else {
             None
@@ -399,15 +447,15 @@ impl Game {
 
     /// Test-only wrapper keeping the old bool-shaped call for placement tests.
     #[cfg(test)]
-    pub(super) fn try_place_for_test(&mut self) -> bool {
-        self.try_place(&mut Default::default()).is_some()
+    pub(crate) fn try_place_for_test(&mut self) -> bool {
+        self.try_place(0, &mut Default::default()).is_some()
     }
 }
 
 /// The furnace facing for a block placed while looking along `forward`: the front
 /// (mouth) points back toward the player — opposite the camera's horizontal look
 /// direction — snapped to the nearest cardinal.
-pub(super) fn facing_from_forward(forward: Vec3) -> Facing {
+pub(crate) fn facing_from_forward(forward: Vec3) -> Facing {
     let (fx, fz) = (-forward.x, -forward.z);
     if fx.abs() >= fz.abs() {
         if fx >= 0.0 {

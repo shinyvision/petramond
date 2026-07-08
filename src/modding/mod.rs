@@ -42,9 +42,8 @@ pub(crate) fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes
     ACTIVE_RECIPES.read().unwrap().clone()
 }
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mod_api::{EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
 
@@ -58,7 +57,10 @@ use crate::world::World;
 use host::Registration;
 use instance::ModInstance;
 
-type SharedInstance = Rc<RefCell<ModInstance>>;
+// `Arc<Mutex<…>>` (not `Rc<RefCell<…>>`) because the whole `ServerGame` —
+// including every registration's shared instance handle — moves to the server
+// thread (multiplayer Phase D); the mutex is uncontended (one sim thread).
+type SharedInstance = Arc<Mutex<ModInstance>>;
 
 /// A loaded mod's identity + compiled module (kept for the worldgen hook
 /// config, whose per-thread instances re-instantiate from it).
@@ -90,6 +92,12 @@ pub(crate) struct ModHost {
     /// `blocks.json` `behavior` key (`mod_id:name`) → the owning mod's
     /// handler, for routing [`ModBlockHook`](crate::block::behavior::ModBlockHook)s.
     block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
+    /// The session's scripted AI-node registrations, retained so the server
+    /// thread can install them into ITS thread-local dispatch registry
+    /// ([`install_thread_ai_nodes`](Self::install_thread_ai_nodes)) — the
+    /// registry is per-thread (see `ai.rs`), and `initialize` runs on the
+    /// constructing thread.
+    ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration>,
 }
 
 impl ModHost {
@@ -122,7 +130,7 @@ impl ModHost {
             match ModInstance::from_module(id, &module, world_seed) {
                 Ok(inst) => {
                     log::info!("mod '{id}' loaded from {}", wasm.display());
-                    instances.push(Rc::new(RefCell::new(inst)));
+                    instances.push(Arc::new(Mutex::new(inst)));
                     metas.push(ModMeta {
                         id: id.clone(),
                         module: Some(module),
@@ -136,6 +144,7 @@ impl ModHost {
             metas,
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
+            ai_nodes: std::collections::HashMap::new(),
         }
     }
 
@@ -158,13 +167,14 @@ impl ModHost {
             wasmtime::Module::new(host::engine(), wat.as_bytes()).expect("assemble unit guest");
         let inst = ModInstance::from_module(mod_id, &module, 1).expect("instantiate unit guest");
         Self {
-            instances: vec![Rc::new(RefCell::new(inst))],
+            instances: vec![Arc::new(Mutex::new(inst))],
             metas: vec![ModMeta {
                 id: mod_id.to_owned(),
                 module: Some(module),
             }],
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
+            ai_nodes: std::collections::HashMap::new(),
         }
     }
 
@@ -181,11 +191,12 @@ impl ModHost {
         Self {
             instances: instances
                 .into_iter()
-                .map(|i| Rc::new(RefCell::new(i)))
+                .map(|i| Arc::new(Mutex::new(i)))
                 .collect(),
             metas,
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
+            ai_nodes: std::collections::HashMap::new(),
         }
     }
 
@@ -199,6 +210,7 @@ impl ModHost {
         &mut self,
         world: &mut World,
         player: &mut Player,
+        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
         bus: &mut EventBus,
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
@@ -212,10 +224,11 @@ impl ModHost {
             // anyway (CurrentTick is legal during init) via a scratch feed.
             let mut feed = TickEvents::with_next_spatial_sound_handle(*next_spatial_sound_handle);
             let registrations = {
-                let mut inst = shared.borrow_mut();
+                let mut inst = shared.lock().unwrap();
                 let mut ctx = SimCtx {
                     world: &mut *world,
                     player: &mut *player,
+                    gui_state: &mut *gui_state,
                     feed: &mut feed,
                     queue: bus.queue_mut(),
                 };
@@ -230,7 +243,7 @@ impl ModHost {
                         callback_id,
                     } => {
                         self.hostile_spawners.push(HostileSpawnerRegistration {
-                            instance: Rc::clone(shared),
+                            instance: Arc::clone(shared),
                             priority,
                             callback_id,
                             order: hostile_order,
@@ -245,7 +258,7 @@ impl ModHost {
                             .insert(
                                 key.clone(),
                                 BlockBehaviorRegistration {
-                                    instance: Rc::clone(shared),
+                                    instance: Arc::clone(shared),
                                     callback_id,
                                 },
                             )
@@ -263,7 +276,7 @@ impl ModHost {
                             .insert(
                                 key.clone(),
                                 ai::AiNodeRegistration {
-                                    instance: Rc::clone(shared),
+                                    instance: Arc::clone(shared),
                                     callback_id,
                                 },
                             )
@@ -292,7 +305,16 @@ impl ModHost {
         }
         self.hostile_spawners.sort_by_key(|r| (r.priority, r.order));
         gen::install(gen_hooks.build());
-        ai::install(ai_nodes);
+        ai::install(ai_nodes.clone());
+        self.ai_nodes = ai_nodes;
+    }
+
+    /// Install the session's scripted AI-node map into THIS thread's dispatch
+    /// registry. The server thread calls it once at startup (multiplayer
+    /// Phase D): `initialize` installed on the constructing thread, and the
+    /// registry is deliberately thread-local (test isolation — see `ai.rs`).
+    pub(crate) fn install_thread_ai_nodes(&self) {
+        ai::install(self.ai_nodes.clone());
     }
 
     /// Dispatch a GUI button click to the OWNING mod — the pack whose
@@ -318,7 +340,7 @@ impl ModHost {
             widget_id: widget_id.to_owned(),
             pos,
         };
-        self.instances[i].borrow_mut().call_guest(ctx, &call);
+        self.instances[i].lock().unwrap().call_guest(ctx, &call);
     }
 
     pub(crate) fn has_hostile_spawners(&self) -> bool {
@@ -348,12 +370,12 @@ impl ModHost {
                 kind: hook.kind,
                 pos: [hook.pos.x, hook.pos.y, hook.pos.z],
             };
-            let reply = reg.instance.borrow_mut().call_guest(ctx, &call);
+            let reply = reg.instance.lock().unwrap().call_guest(ctx, &call);
             match reply {
                 None | Some(GuestRet::Unit) => {}
                 Some(_) => reg
                     .instance
-                    .borrow_mut()
+                    .lock().unwrap()
                     .disable("returned a non-unit reply to a block behavior dispatch"),
             }
         }
@@ -370,7 +392,7 @@ impl ModHost {
                 candidate: candidate.clone(),
             };
             let reply = {
-                let mut inst = spawner.instance.borrow_mut();
+                let mut inst = spawner.instance.lock().unwrap();
                 inst.call_guest(ctx, &call)
             };
             let Some(reply) = reply else {
@@ -386,7 +408,7 @@ impl ModHost {
                 _ => {
                     spawner
                         .instance
-                        .borrow_mut()
+                        .lock().unwrap()
                         .disable("returned a non-hostile-spawn reply to a hostile spawn dispatch");
                 }
             }
@@ -403,7 +425,7 @@ impl ModHost {
     /// dispatches, host-call stats).
     #[cfg(test)]
     pub(crate) fn probe(&self, index: usize) -> (bool, u64, host::HostStats) {
-        let inst = self.instances[index].borrow();
+        let inst = self.instances[index].lock().unwrap();
         (inst.disabled(), inst.dispatches(), inst.stats())
     }
 }
@@ -467,10 +489,10 @@ fn apply_registration(
             priority,
             system_id,
         } => {
-            let inst = Rc::clone(shared);
+            let inst = Arc::clone(shared);
             systems.attach(convert::attach(stage, attach), priority, move |ctx| {
                 let call = GuestCall::TickSystem { id: system_id };
-                inst.borrow_mut().call_guest(ctx, &call);
+                inst.lock().unwrap().call_guest(ctx, &call);
             });
         }
         Registration::EventHandler {
@@ -506,10 +528,10 @@ fn call_event(
         kind: payload.kind(),
         payload,
     };
-    match inst.borrow_mut().call_guest(ctx, &call)? {
+    match inst.lock().unwrap().call_guest(ctx, &call)? {
         GuestRet::Event { outcome, payload } => Some((outcome, payload)),
         _ => {
-            inst.borrow_mut()
+            inst.lock().unwrap()
                 .disable("returned a non-event reply to an event dispatch");
             None
         }
@@ -525,7 +547,7 @@ fn wire_event_handler(
 ) {
     // Post kinds: observe-only, one generic wrapper.
     if let Some(kind) = convert::post_kind(event) {
-        let inst = Rc::clone(shared);
+        let inst = Arc::clone(shared);
         bus.on_post(kind, priority, move |ctx, ev| {
             call_event(&inst, ctx, handler_id, convert::post_event(ev));
         });
@@ -533,7 +555,7 @@ fn wire_event_handler(
     }
     // Pre kinds: each needs its typed bus slot, and only the fields the
     // taxonomy marks mutable are read back from the echoed payload.
-    let inst = Rc::clone(shared);
+    let inst = Arc::clone(shared);
     match event {
         EventKind::BlockPlacePre => {
             bus.on_block_place_pre(priority, move |ctx, ev| {

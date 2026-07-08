@@ -5,7 +5,7 @@ use crate::inventory::Inventory;
 use crate::item::ItemType;
 
 impl ContainerMenu {
-    pub(in crate::game) fn open_workbench_view(&self, recipes: &Recipes) -> Option<WorkbenchView> {
+    pub(crate) fn open_workbench_view(&self, recipes: &Recipes) -> Option<WorkbenchView> {
         if !matches!(self.target, ContainerTarget::FurnitureWorkbench) {
             return None;
         }

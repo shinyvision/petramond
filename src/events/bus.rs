@@ -34,12 +34,15 @@ pub(crate) enum Outcome {
 pub(crate) struct SimCtx<'a> {
     pub world: &'a mut World,
     pub player: &'a mut Player,
+    /// The ACTING session's mod-GUI state map (per-session since multiplayer
+    /// C2c-iii): `GuiStateSet/Get` HostCalls read/write it here.
+    pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,
 }
 
-type PreFn<E> = Box<dyn FnMut(&mut SimCtx, &mut E) -> Outcome>;
-type PostFn = Box<dyn FnMut(&mut SimCtx, &PostEvent)>;
+type PreFn<E> = Box<dyn FnMut(&mut SimCtx, &mut E) -> Outcome + Send>;
+type PostFn = Box<dyn FnMut(&mut SimCtx, &PostEvent) + Send>;
 
 struct PreHandler<E> {
     priority: i32,
@@ -123,7 +126,7 @@ macro_rules! pre_events {
                 pub(crate) fn $on(
                     &mut self,
                     priority: i32,
-                    f: impl FnMut(&mut SimCtx, &mut $ty) -> Outcome + 'static,
+                    f: impl FnMut(&mut SimCtx, &mut $ty) -> Outcome + Send + 'static,
                 ) {
                     let at = self.$field.partition_point(|h| h.priority <= priority);
                     self.$field.insert(at, PreHandler { priority, f: Box::new(f) });
@@ -131,11 +134,13 @@ macro_rules! pre_events {
 
                 /// Dispatch inline at the decision site. Every handler runs — a
                 /// cancelled event is still observed by later handlers — and the
-                /// first `Cancel` wins.
+                /// first `Cancel` wins. `player`/`gui_state` are the ACTING
+                /// session's.
                 pub(crate) fn $dispatch(
                     &mut self,
                     world: &mut World,
                     player: &mut Player,
+                    gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
                     feed: &mut TickEvents,
                     ev: &mut $ty,
                 ) -> Outcome {
@@ -148,6 +153,7 @@ macro_rules! pre_events {
                         let mut ctx = SimCtx {
                             world: &mut *world,
                             player: &mut *player,
+                            gui_state: &mut *gui_state,
                             feed: &mut *feed,
                             queue: &mut *queue,
                         };
@@ -200,7 +206,7 @@ impl EventBus {
         &mut self,
         kind: PostEventKind,
         priority: i32,
-        f: impl FnMut(&mut SimCtx, &PostEvent) + 'static,
+        f: impl FnMut(&mut SimCtx, &PostEvent) + Send + 'static,
     ) {
         let list = &mut self.post[kind as usize];
         let at = list.partition_point(|h| h.priority <= priority);
@@ -243,6 +249,7 @@ impl EventBus {
         &mut self,
         world: &mut World,
         player: &mut Player,
+        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
         feed: &mut TickEvents,
     ) {
         if self.queue.events.is_empty() {
@@ -265,6 +272,7 @@ impl EventBus {
                 let mut ctx = SimCtx {
                     world: &mut *world,
                     player: &mut *player,
+                    gui_state: &mut *gui_state,
                     feed: &mut *feed,
                     queue: &mut *queue,
                 };
@@ -276,8 +284,8 @@ impl EventBus {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::{Cell, RefCell};
-    use std::rc::Rc;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::super::payload::*;
     use super::*;
@@ -285,24 +293,25 @@ mod tests {
     use crate::item::ItemType;
     use crate::mathh::{IVec3, Vec3};
 
-    fn sim() -> (World, Player, TickEvents) {
+    fn sim() -> (World, Player, std::sync::Arc<crate::gui::GuiStateMap>, TickEvents) {
         (
             World::new(1, 1),
             Player::new(Vec3::new(0.0, 80.0, 0.0)),
+            crate::gui::empty_gui_state(),
             TickEvents::default(),
         )
     }
 
     #[test]
     fn pre_handlers_run_in_priority_then_registration_order() {
-        let (mut world, mut player, mut feed) = sim();
+        let (mut world, mut player, mut gui, mut feed) = sim();
         let mut bus = EventBus::default();
-        let order = Rc::new(RefCell::new(Vec::new()));
+        let order = Arc::new(Mutex::new(Vec::new()));
         // Two handlers share priority 10: they must keep registration order.
         for (label, priority) in [("a", 10), ("b", 0), ("c", 10), ("d", -5)] {
             let order = order.clone();
             bus.on_item_use_pre(priority, move |_, _| {
-                order.borrow_mut().push(label);
+                order.lock().unwrap().push(label);
                 Outcome::Continue
             });
         }
@@ -310,16 +319,16 @@ mod tests {
             item: ItemType::Dirt,
             target: None,
         };
-        let out = bus.item_use_pre(&mut world, &mut player, &mut feed, &mut ev);
+        let out = bus.item_use_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
         assert_eq!(out, Outcome::Continue);
-        assert_eq!(*order.borrow(), vec!["d", "b", "a", "c"]);
+        assert_eq!(*order.lock().unwrap(), vec!["d", "b", "a", "c"]);
     }
 
     #[test]
     fn first_cancel_wins_but_later_handlers_still_observe_the_payload() {
-        let (mut world, mut player, mut feed) = sim();
+        let (mut world, mut player, mut gui, mut feed) = sim();
         let mut bus = EventBus::default();
-        let seen_by_later = Rc::new(Cell::new(0));
+        let seen_by_later = Arc::new(AtomicI32::new(0));
         bus.on_player_damage_pre(0, |_, ev| {
             ev.amount = 3;
             Outcome::Cancel
@@ -327,7 +336,7 @@ mod tests {
         {
             let seen = seen_by_later.clone();
             bus.on_player_damage_pre(1, move |_, ev| {
-                seen.set(ev.amount);
+                seen.store(ev.amount, Ordering::Relaxed);
                 // A later verdict can't override the first Cancel.
                 Outcome::Continue
             });
@@ -336,10 +345,10 @@ mod tests {
             amount: 7,
             source: DamageSource::Fall,
         };
-        let out = bus.player_damage_pre(&mut world, &mut player, &mut feed, &mut ev);
+        let out = bus.player_damage_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
         assert_eq!(out, Outcome::Cancel);
         assert_eq!(
-            seen_by_later.get(),
+            seen_by_later.load(Ordering::Relaxed),
             3,
             "handlers after a cancel still run and see the mutated payload"
         );
@@ -347,16 +356,16 @@ mod tests {
 
     #[test]
     fn post_queue_drains_fifo_and_follow_ups_run_in_the_same_drain() {
-        let (mut world, mut player, mut feed) = sim();
+        let (mut world, mut player, mut gui, mut feed) = sim();
         let mut bus = EventBus::default();
-        let seen = Rc::new(RefCell::new(Vec::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
         {
             let seen = seen.clone();
             bus.on_post(PostEventKind::BlockPlaced, 0, move |ctx, ev| {
                 let PostEvent::BlockPlaced { pos, .. } = ev else {
                     unreachable!()
                 };
-                seen.borrow_mut().push(("placed", pos.x));
+                seen.lock().unwrap().push(("placed", pos.x));
                 if pos.x == 0 {
                     // Follow-ups queue behind everything already pending and
                     // still run within this drain (same tick).
@@ -367,7 +376,7 @@ mod tests {
         {
             let seen = seen.clone();
             bus.on_post(PostEventKind::PlayerDied, 0, move |_, _| {
-                seen.borrow_mut().push(("died", -1));
+                seen.lock().unwrap().push(("died", -1));
             });
         }
         bus.emit(PostEvent::BlockPlaced {
@@ -378,9 +387,9 @@ mod tests {
             pos: IVec3::new(1, 0, 0),
             block: Block::Stone,
         });
-        bus.drain_post(&mut world, &mut player, &mut feed);
+        bus.drain_post(&mut world, &mut player, &mut gui, &mut feed);
         assert_eq!(
-            *seen.borrow(),
+            *seen.lock().unwrap(),
             vec![("placed", 0), ("placed", 1), ("died", -1)]
         );
     }

@@ -44,6 +44,7 @@ pub struct BedSpawn {
     pub spot: IVec3,
 }
 
+#[derive(Clone)]
 pub struct Player {
     /// Feet centre (see module docs).
     pub pos: Vec3,
@@ -211,8 +212,12 @@ impl Player {
         }
     }
 
-    /// Take and clear the pending fall distance (blocks) latched by the last landing,
-    /// for the tick to convert into damage. Returns `0.0` when there was no landing.
+    /// Take and clear the pending fall distance (blocks) latched by the last landing.
+    /// Physics still measures falls per frame (for the `track_fall` tests), but since
+    /// multiplayer Phase C2b the server converts its own replicated-transform fall
+    /// tracking into damage instead (`ConnectedPlayer::fall`) — nothing consumes this
+    /// latch in the game anymore.
+    #[cfg(test)]
     pub(crate) fn take_fall_distance(&mut self) -> f32 {
         std::mem::replace(&mut self.fall_distance, 0.0)
     }
@@ -290,6 +295,17 @@ impl Player {
     #[inline]
     pub fn eye(&self) -> Vec3 {
         Vec3::new(self.pos.x, self.pos.y + EYE, self.pos.z)
+    }
+
+    /// View direction from yaw/pitch — the sim-side twin of
+    /// [`crate::camera::Camera::forward`]. Per-player actions (placement
+    /// facing, bucket rays, thrown drops) read THIS, not the camera: the
+    /// camera is presentation, exists only for the local player, and can lag
+    /// the eye during a step-up glide.
+    #[inline]
+    pub fn forward(&self) -> Vec3 {
+        let cp = self.pitch.cos();
+        Vec3::new(self.yaw.sin() * cp, self.pitch.sin(), self.yaw.cos() * cp).normalize()
     }
 
     /// Centre of the body AABB (feet + half height). Used as the pickup-radius

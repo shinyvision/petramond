@@ -11,16 +11,19 @@
 //! app-shell state, and presentation only hands the already-built draw list
 //! to the renderer.
 
+mod connect_server;
+mod connection_lost;
 mod create_world;
 mod death;
 mod delete_world;
+mod mods_missing;
 mod pause;
 mod sleep;
 mod title;
 mod world_select;
 mod world_settings;
 
-use super::App;
+use super::{App, AppScreen};
 use crate::audio::Sound;
 use crate::gui::GuiKind;
 use llama_ui::UiState;
@@ -56,6 +59,18 @@ impl App {
             }
             GuiKind::CreateWorld => with_state(self, create_world::populate),
             GuiKind::DeleteWorld => with_state(self, delete_world::populate),
+            GuiKind::ConnectServer => {
+                // Per-frame prep: consume the connect worker's outcomes BEFORE
+                // binding. A terminal outcome switches screens — skip the rest
+                // of this frame rather than draw the stale connect UI.
+                self.poll_connect_worker();
+                if !matches!(self.screen, AppScreen::ConnectServer) {
+                    return;
+                }
+                with_state(self, connect_server::populate);
+            }
+            GuiKind::ModsMissing => with_state(self, mods_missing::populate),
+            GuiKind::ConnectionLost => with_state(self, connection_lost::populate),
             GuiKind::Pause => with_state(self, pause::populate),
             GuiKind::Sleep => with_state(self, sleep::populate),
             GuiKind::Death => with_state(self, death::populate),
@@ -92,6 +107,9 @@ impl App {
                 GuiKind::WorldSettings => world_settings::handle(self, ev),
                 GuiKind::CreateWorld => create_world::handle(self, ev),
                 GuiKind::DeleteWorld => delete_world::handle(self, ev),
+                GuiKind::ConnectServer => connect_server::handle(self, ev),
+                GuiKind::ModsMissing => mods_missing::handle(self, ev),
+                GuiKind::ConnectionLost => connection_lost::handle(self, ev),
                 GuiKind::Pause => pause::handle(self, ev),
                 GuiKind::Sleep => sleep::handle(self, ev),
                 GuiKind::Death => death::handle(self, ev),

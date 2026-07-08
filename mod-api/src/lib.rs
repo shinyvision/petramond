@@ -136,6 +136,13 @@ pub enum DamageSource {
     Mod {
         mod_id: String,
     },
+    /// Another player's melee strike (PvP); `id` is the attacking session's
+    /// player id — session-scoped (ids recycle after a disconnect), so filter
+    /// per-hit, not across sessions. Appended for engine PvP; older mods'
+    /// exhaustive matches gain a no-op arm when they recompile.
+    Player {
+        id: u8,
+    },
 }
 
 /// Which container GUI opened/closed. APPEND-ONLY like every ABI enum.

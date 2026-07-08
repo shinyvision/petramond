@@ -15,7 +15,6 @@
 //! established `LLAMACRAFT_MODS` re-spawn pattern).
 
 use super::super::tick::TickEvents;
-use super::super::Game;
 use crate::camera::Camera;
 use crate::mathh::Vec3;
 
@@ -81,47 +80,62 @@ fn kitchen_oven_inner() {
     let cooked_chop = by_key("testfood:cooked_chop");
     let raw_iron = ItemType::RawIron;
 
-    let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "the kitchen wasm loaded");
-    game.world.clear_world();
+    game.server.world.clear_world();
     let cp = ChunkPos::new(0, 0);
-    game.world.insert_empty_column_for_test(cp);
+    game.server.world.insert_empty_column_for_test(cp);
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Stone);
         }
     }
-    game.world.insert_chunk_for_test(cp, chunk);
-    game.player.pos = Vec3::new(4.0, 64.0, 4.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server.world.insert_chunk_for_test(cp, chunk);
+    game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
     // Hotbar: the oven to place, food to cook, ore as the must-NOT-route (and
     // must-not-cook) control, coal to burn, stone for the cursor tests.
-    game.player.inventory.add(ItemStack::new(oven_item, 1));
-    game.player.inventory.add(ItemStack::new(raw_chop, 1));
-    game.player.inventory.add(ItemStack::new(raw_iron, 3));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(oven_item, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(raw_chop, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(raw_iron, 3));
     // Two coal: the relight consumes one the same tick the fuel routes in
     // (Menu stage click, then the mod's WorldScheduled cook step).
-    game.player.inventory.add(ItemStack::new(ItemType::Coal, 2));
-    game.player
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 2));
+    game.server.sessions[0]
+        .player
         .inventory
         .add(ItemStack::new(ItemType::Stone, 7));
 
     // Place through the REAL placement path (multi-cell footprint, facing,
     // `block_placed` anchor announcement — the cell the mod records).
     let floor = IVec3::new(10, 63, 8);
-    game.look = Some(super::common::hit(floor, IVec3::Y));
-    game.pending_place = true;
+    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.sessions[0].pending_place = true;
     let mut ev = TickEvents::default();
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert!(
-        ev.placed_block.is_some(),
+        ev.player_at(0).placed_block.is_some(),
         "the oven placed from the held item"
     );
     let clicked = floor + IVec3::Y;
     let (_, anchor, cells) = game
+        .server
         .world
         .model_group(clicked)
         .expect("the placed oven resolves as a model group from any cell");
@@ -139,9 +153,10 @@ fn kitchen_oven_inner() {
         .expect("a 12-cell footprint has non-anchor cells");
     let kind = crate::gui::resolve_kind("kitchen:oven")
         .expect("the pack's open_gui interaction registered the kind");
-    game.open_mod_gui_screen(kind, Some(far_cell));
-    let slots = |game: &Game| {
-        game.world
+    game.server.open_mod_gui_screen_for(0, kind, Some(far_cell));
+    let slots = |game: &super::common::TestGame| {
+        game.server
+            .world
             .container_at(anchor)
             .expect("the session created the container at the ANCHOR cell")
             .slots
@@ -152,10 +167,11 @@ fn kitchen_oven_inner() {
     // Shift-clicks route by the document's accepts filters: the cookable food
     // to the input, coal to the fuel slot — and raw IRON to NEITHER (the oven
     // is not a furnace; it falls back to the ordinary inventory shuffle).
-    let inv_slot_of = |game: &Game, item: ItemType| -> usize {
+    let inv_slot_of = |game: &super::common::TestGame, item: ItemType| -> usize {
         (0..crate::inventory::TOTAL_SLOTS)
             .find(|&i| {
-                game.player
+                game.server.sessions[0]
+                    .player
                     .inventory
                     .slot(i)
                     .is_some_and(|s| s.item == item)
@@ -165,7 +181,7 @@ fn kitchen_oven_inner() {
     for item in [raw_chop, ItemType::Coal, raw_iron] {
         let i = inv_slot_of(&game, item);
         game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let s = slots(&game);
     assert_eq!(s[0].map(|s| s.item), Some(raw_chop), "input got the food");
@@ -180,7 +196,8 @@ fn kitchen_oven_inner() {
         "raw iron routed NOWHERE into the oven (it is not cookable)"
     );
     assert_eq!(
-        game.player
+        game.server.sessions[0]
+            .player
             .inventory
             .slot(crate::inventory::HOTBAR_LEN)
             .map(|s| s.item),
@@ -197,19 +214,22 @@ fn kitchen_oven_inner() {
         .find(|b| crate::registry::names().blocks.name(b.id()) == Some("kitchen:oven_lit"))
         .expect("the lit oven row registered");
     assert_eq!(
-        Block::from_id(game.world.chunk_block(anchor.x, anchor.y, anchor.z)),
+        Block::from_id(game.server.world.chunk_block(anchor.x, anchor.y, anchor.z)),
         lit_block,
         "a burning oven swaps to its lit block row"
     );
     for &c in &cells {
         assert_eq!(
-            Block::from_id(game.world.chunk_block(c.x, c.y, c.z)),
+            Block::from_id(game.server.world.chunk_block(c.x, c.y, c.z)),
             lit_block,
             "every footprint cell swapped together: {c:?}"
         );
     }
     assert_eq!(
-        game.world.model_group(clicked).map(|(_, base, _)| base),
+        game.server
+            .world
+            .model_group(clicked)
+            .map(|(_, base, _)| base),
         Some(anchor),
         "the swapped group keeps its anchor"
     );
@@ -217,7 +237,7 @@ fn kitchen_oven_inner() {
     // The lit row's fire emitter reports ONCE per placed oven (from the
     // authored-origin cell), never once per footprint cell.
     let mut emitters = Vec::new();
-    game.world.collect_particle_emitters(&mut emitters);
+    game.server.world.collect_particle_emitters(&mut emitters);
     assert_eq!(
         emitters.len(),
         1,
@@ -228,7 +248,7 @@ fn kitchen_oven_inner() {
     // Cook: the wasm consumes the `kitchen:cooking` class (620 ticks covers
     // the 600-tick cook), publishing the gauges while the session is open.
     for _ in 0..620 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let s = slots(&game);
     assert_eq!(s[0], None, "the food was consumed");
@@ -237,12 +257,13 @@ fn kitchen_oven_inner() {
         Some(ItemStack::new(cooked_chop, 1)),
         "the output holds the cooked food"
     );
-    match game.world.gui_state_get("kitchen:burn01") {
+    match game.server.sessions[0].gui_state.get("kitchen:burn01") {
         Some(GuiValue::F32(v)) => assert!(*v > 0.0, "coal keeps burning mid-session, got {v}"),
         other => panic!("kitchen:burn01 should be live while open, got {other:?}"),
     }
     assert!(
-        game.world
+        game.server
+            .world
             .cell_kv_get(anchor.x, anchor.y, anchor.z, "kitchen:state")
             .is_some(),
         "burn/cook state persists in the anchor's section cell KV"
@@ -257,9 +278,9 @@ fn kitchen_oven_inner() {
         false,
         false,
     );
-    game.game_tick_step(&mut ev); // stone now on the cursor
+    game.server.game_tick_step(&mut ev); // stone now on the cursor
     game.menu_click(MenuSlot::Container(2), PointerButton::Primary, false, false);
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert_eq!(
         slots(&game)[2],
         Some(ItemStack::new(cooked_chop, 1)),
@@ -271,12 +292,12 @@ fn kitchen_oven_inner() {
         false,
         false,
     );
-    game.game_tick_step(&mut ev); // stone back in the inventory
+    game.server.game_tick_step(&mut ev); // stone back in the inventory
     game.menu_click(MenuSlot::Container(2), PointerButton::Primary, true, false);
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert!(
         (0..crate::inventory::TOTAL_SLOTS)
-            .filter_map(|i| game.player.inventory.slot(i))
+            .filter_map(|i| game.server.sessions[0].player.inventory.slot(i))
             .any(|s| s.item == cooked_chop),
         "the cooked food shift-clicked into the inventory"
     );
@@ -284,11 +305,11 @@ fn kitchen_oven_inner() {
     // THE BUG THIS TEST PINS: ore in the oven's input must never cook. The
     // burner is still lit (plenty of coal burn left), so a smelting-table
     // leak would produce an ingot within 600 ticks + margin.
-    if let Some(c) = game.world.container_at_mut(anchor) {
+    if let Some(c) = game.server.world.container_at_mut(anchor) {
         c.slots[0] = Some(ItemStack::new(raw_iron, 3));
     }
     for _ in 0..650 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let s = slots(&game);
     assert_eq!(
@@ -301,8 +322,9 @@ fn kitchen_oven_inner() {
 
     // Break from a NON-anchor cell: the whole footprint clears and the
     // container's remaining contents (the untouched ore) scatter.
-    let before = game.world.item_entities().len();
-    game.finish_player_break(
+    let before = game.server.world.item_entities().len();
+    game.server.finish_player_break(
+        0,
         crate::mining::BreakEvent {
             pos: far_cell,
             block: oven_block,
@@ -311,16 +333,16 @@ fn kitchen_oven_inner() {
         &mut ev,
     );
     assert!(
-        game.world.container_at(anchor).is_none(),
+        game.server.world.container_at(anchor).is_none(),
         "breaking any cell removes the anchored container"
     );
     assert!(
         cells
             .iter()
-            .all(|c| game.world.chunk_block(c.x, c.y, c.z) == Block::Air.id()),
+            .all(|c| game.server.world.chunk_block(c.x, c.y, c.z) == Block::Air.id()),
         "the whole footprint cleared"
     );
-    let scattered: Vec<ItemType> = game.world.item_entities()[before..]
+    let scattered: Vec<ItemType> = game.server.world.item_entities()[before..]
         .iter()
         .map(|e| e.stack.item)
         .collect();
@@ -334,9 +356,12 @@ fn kitchen_oven_inner() {
     );
 
     // The mod prunes the broken oven from its tracked list on the next tick.
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert_eq!(
-        game.world.mod_kv_get("kitchen:ovens").map(<[u8]>::len),
+        game.server
+            .world
+            .mod_kv_get("kitchen:ovens")
+            .map(<[u8]>::len),
         Some(0),
         "the wasm-side oven list pruned the broken anchor"
     );
@@ -389,39 +414,54 @@ fn kitchen_reuse_inner() {
     let oven_block = block_by_name("kitchen:oven");
     let lit_block = block_by_name("kitchen:oven_lit");
 
-    let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
-    game.world.clear_world();
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    game.server.world.clear_world();
     let cp = ChunkPos::new(0, 0);
-    game.world.insert_empty_column_for_test(cp);
+    game.server.world.insert_empty_column_for_test(cp);
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Stone);
         }
     }
-    game.world.insert_chunk_for_test(cp, chunk);
-    game.player.pos = Vec3::new(4.0, 64.0, 4.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server.world.insert_chunk_for_test(cp, chunk);
+    game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
-    game.player.inventory.add(ItemStack::new(oven_item, 1));
-    game.player.inventory.add(ItemStack::new(raw_mutton, 1));
-    game.player.inventory.add(ItemStack::new(ItemType::Coal, 2));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(oven_item, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(raw_mutton, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 2));
 
     // Place + first session, routing the food and fuel in.
     let floor = IVec3::new(10, 63, 8);
-    game.look = Some(super::common::hit(floor, IVec3::Y));
-    game.pending_place = true;
+    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.sessions[0].pending_place = true;
     let mut ev = TickEvents::default();
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     let clicked = floor + IVec3::Y;
-    let (_, anchor, cells) = game.world.model_group(clicked).expect("placed oven group");
+    let (_, anchor, cells) = game
+        .server
+        .world
+        .model_group(clicked)
+        .expect("placed oven group");
     let kind = crate::gui::resolve_kind("kitchen:oven").expect("registered kind");
-    game.open_mod_gui_screen(kind, Some(clicked));
-    let inv_slot_of = |game: &Game, item: ItemType| -> usize {
+    game.server.open_mod_gui_screen_for(0, kind, Some(clicked));
+    let inv_slot_of = |game: &super::common::TestGame, item: ItemType| -> usize {
         (0..crate::inventory::TOTAL_SLOTS)
             .find(|&i| {
-                game.player
+                game.server.sessions[0]
+                    .player
                     .inventory
                     .slot(i)
                     .is_some_and(|s| s.item == item)
@@ -431,10 +471,10 @@ fn kitchen_reuse_inner() {
     for item in [raw_mutton, ItemType::Coal] {
         let i = inv_slot_of(&game, item);
         game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     assert_eq!(
-        Block::from_id(game.world.chunk_block(anchor.x, anchor.y, anchor.z)),
+        Block::from_id(game.server.world.chunk_block(anchor.x, anchor.y, anchor.z)),
         lit_block,
         "the routing tick lit the oven"
     );
@@ -444,23 +484,24 @@ fn kitchen_reuse_inner() {
     // coal burns for minutes) must reopen the GUI: the lit row carries the
     // same open_gui interaction.
     let far_cell = *cells.iter().find(|c| **c != anchor).expect("non-anchor");
-    game.look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
-    game.pending_place = true;
-    game.tick_place(&mut ev);
+    game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
+    game.server.sessions[0].pending_place = true;
+    game.server.tick_place(0, &mut ev);
     assert_eq!(
-        game.request_open_mod_gui.take(),
+        game.server.sessions[0].request_open_mod_gui.take(),
         Some((kind, Some(far_cell))),
         "a lit oven still opens its GUI on interact"
     );
-    game.look = None;
+    game.server.sessions[0].look = None;
 
     // Cook completes with the menu CLOSED; the coal then burns dry and the
     // oven swaps back to its unlit row. The margin derives from the fuel
     // row's burn time (freely editable — never pin it here).
     for _ in 0..ItemType::Coal.fuel_burn_ticks() as u32 + 200 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let slots = game
+        .server
         .world
         .container_at(anchor)
         .expect("container survives")
@@ -473,7 +514,7 @@ fn kitchen_reuse_inner() {
     );
     for &c in &cells {
         assert_eq!(
-            Block::from_id(game.world.chunk_block(c.x, c.y, c.z)),
+            Block::from_id(game.server.world.chunk_block(c.x, c.y, c.z)),
             oven_block,
             "burnout swapped every cell back to the unlit row: {c:?}"
         );
@@ -481,30 +522,34 @@ fn kitchen_reuse_inner() {
 
     // REUSE, exactly as a player would: right-click a footprint cell again…
     let far_cell = *cells.iter().find(|c| **c != anchor).expect("non-anchor");
-    game.look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
-    game.pending_place = true;
-    game.tick_place(&mut ev);
+    game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
+    game.server.sessions[0].pending_place = true;
+    game.server.tick_place(0, &mut ev);
     assert_eq!(
-        game.request_open_mod_gui,
+        game.server.sessions[0].request_open_mod_gui,
         Some((kind, Some(far_cell))),
         "the used oven still opens its GUI on interact"
     );
 
     // …reopen the session, route a second helping, and cook again.
-    game.open_mod_gui_screen(kind, Some(far_cell));
-    game.player.inventory.add(ItemStack::new(raw_mutton, 1));
+    game.server.open_mod_gui_screen_for(0, kind, Some(far_cell));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(raw_mutton, 1));
     let i = inv_slot_of(&game, raw_mutton);
     game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert_eq!(
-        Block::from_id(game.world.chunk_block(anchor.x, anchor.y, anchor.z)),
+        Block::from_id(game.server.world.chunk_block(anchor.x, anchor.y, anchor.z)),
         lit_block,
         "the leftover coal relit the oven for the second cook"
     );
     for _ in 0..620 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let slots = game
+        .server
         .world
         .container_at(anchor)
         .expect("container")
@@ -522,12 +567,14 @@ fn kitchen_reuse_inner() {
     // inheriting the old burn time.
     game.close_open_menu();
     assert!(
-        game.world
+        game.server
+            .world
             .cell_kv_get(anchor.x, anchor.y, anchor.z, "kitchen:state")
             .is_some(),
         "the burning oven holds its state before the break"
     );
-    game.finish_player_break(
+    game.server.finish_player_break(
+        0,
         crate::mining::BreakEvent {
             pos: far_cell,
             block: lit_block,
@@ -536,32 +583,41 @@ fn kitchen_reuse_inner() {
         &mut ev,
     );
     assert!(
-        game.world
+        game.server
+            .world
             .cell_kv_get(anchor.x, anchor.y, anchor.z, "kitchen:state")
             .is_none(),
         "breaking the oven cleared its burn/cook state"
     );
-    game.game_tick_step(&mut ev); // the mod prunes the broken anchor
+    game.server.game_tick_step(&mut ev); // the mod prunes the broken anchor
 
     // Re-place at the same spot and load ONLY food — no fuel exists anywhere.
     // A fresh oven must sit cold; before the fix, thousands of stale burn
     // ticks cooked this mutton on phantom fuel.
-    game.player.inventory.add(ItemStack::new(oven_item, 1));
-    game.player.inventory.add(ItemStack::new(raw_mutton, 1));
-    game.look = Some(super::common::hit(floor, IVec3::Y));
-    game.pending_place = true;
-    game.game_tick_step(&mut ev);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(oven_item, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(raw_mutton, 1));
+    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.sessions[0].pending_place = true;
+    game.server.game_tick_step(&mut ev);
     let (_, anchor2, _) = game
+        .server
         .world
         .model_group(clicked)
         .expect("replaced oven group");
-    game.open_mod_gui_screen(kind, Some(clicked));
+    game.server.open_mod_gui_screen_for(0, kind, Some(clicked));
     let i = inv_slot_of(&game, raw_mutton);
     game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
     for _ in 0..700 {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     let slots = game
+        .server
         .world
         .container_at(anchor2)
         .expect("fresh container")
@@ -577,7 +633,11 @@ fn kitchen_reuse_inner() {
         "no phantom-fuel cook in the replacement oven"
     );
     assert_eq!(
-        Block::from_id(game.world.chunk_block(anchor2.x, anchor2.y, anchor2.z)),
+        Block::from_id(
+            game.server
+                .world
+                .chunk_block(anchor2.x, anchor2.y, anchor2.z)
+        ),
         oven_block,
         "the replacement oven stays unlit without fuel"
     );
@@ -619,37 +679,38 @@ fn kitchen_mutton_inner() {
     let raw_mutton = by_key("kitchen:raw_mutton");
     let cooked_mutton = by_key("kitchen:cooked_mutton");
 
-    let mut game = Game::new(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0), "", 1, 1);
-    game.world.clear_world();
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    game.server.world.clear_world();
     {
         use crate::block::Block;
         use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
         let cp = ChunkPos::new(0, 0);
-        game.world.insert_empty_column_for_test(cp);
+        game.server.world.insert_empty_column_for_test(cp);
         let mut chunk = Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 chunk.set_block(x, 63, z, Block::Stone);
             }
         }
-        game.world.insert_chunk_for_test(cp, chunk);
+        game.server.world.insert_chunk_for_test(cp, chunk);
     }
-    game.player.pos = Vec3::new(4.0, 64.0, 4.0);
-    game.player.vel = Vec3::ZERO;
-    game.player.on_ground = true;
+    game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
 
     // --- Sheep loot: the pack's loot_tables.json layer replaces the sheep
     // table with 1–2 raw mutton. Roll several deaths through the real loot
     // path (each advances the spawn counter, so counts vary).
     for _ in 0..8 {
-        let before = game.world.item_entities().len();
-        game.spawn_mob_loot(crate::mob::DeathDrop {
+        let before = game.server.world.item_entities().len();
+        game.server.spawn_mob_loot(crate::mob::DeathDrop {
             kind: crate::mob::Mob::Sheep,
             pos: V::new(6.0, 64.0, 6.0),
             skylight: 60,
             blocklight: 0,
         });
-        let dropped: Vec<ItemStack> = game.world.item_entities()[before..]
+        let dropped: Vec<ItemStack> = game.server.world.item_entities()[before..]
             .iter()
             .map(|e| e.stack)
             .collect();
@@ -681,34 +742,49 @@ fn kitchen_mutton_inner() {
         "llama:regeneration",
         "cooked mutton grants the engine regeneration effect"
     );
-    game.player.inventory.add(ItemStack::new(cooked_mutton, 1));
-    game.player.set_health(10);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(cooked_mutton, 1));
+    game.server.sessions[0].player.set_health(10);
 
     let mut ev = TickEvents::default();
-    game.look = None;
-    game.intent_use_held = true;
-    game.pending_place = true;
+    game.server.sessions[0].look = None;
+    game.server.sessions[0].intent_use_held = true;
+    game.server.sessions[0].pending_place = true;
     // One tick short of the eat duration: still chewing, nothing consumed.
     for _ in 0..(food.eat_ticks - 1) {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
+    // `eating_progress` reads the replicated self view; stage-driven tests
+    // sync it explicitly (the frame pump does this in play).
+    game.sync_self_view_for_test();
     assert!(
         game.eating_progress().is_some(),
         "the eat is in progress while the button stays held"
     );
     assert_eq!(
-        game.player.inventory.selected().map(|s| s.item),
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .map(|s| s.item),
         Some(cooked_mutton),
         "the food is not consumed early"
     );
-    game.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
     assert_eq!(
-        game.player.inventory.selected().map(|s| s.item),
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .map(|s| s.item),
         None,
         "the food left the hotbar when the eat completed"
     );
+    game.sync_self_view_for_test();
     assert!(game.eating_progress().is_none(), "the eat session ended");
-    let active = game.player.effects();
+    let active = game.server.sessions[0].player.effects();
     assert_eq!(active.len(), 1, "one effect granted");
     assert_eq!(active[0].effect, fx);
     assert!(
@@ -725,30 +801,38 @@ fn kitchen_mutton_inner() {
     else {
         panic!("regeneration is an interval-heal behavior");
     };
-    let start = game.player.health();
-    game.intent_use_held = false;
+    let start = game.server.sessions[0].player.health();
+    game.server.sessions[0].intent_use_held = false;
     for _ in 0..interval {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
     assert_eq!(
-        game.player.health(),
+        game.server.sessions[0].player.health(),
         start + amount,
         "one interval boundary healed exactly once"
     );
 
     // --- Releasing the button mid-eat aborts without consuming: eat a second
     // mutton halfway, let go, and nothing is lost.
-    game.player.inventory.add(ItemStack::new(cooked_mutton, 1));
-    game.intent_use_held = true;
-    game.pending_place = true;
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(cooked_mutton, 1));
+    game.server.sessions[0].intent_use_held = true;
+    game.server.sessions[0].pending_place = true;
     for _ in 0..(food.eat_ticks / 2) {
-        game.game_tick_step(&mut ev);
+        game.server.game_tick_step(&mut ev);
     }
-    game.intent_use_held = false;
-    game.game_tick_step(&mut ev);
+    game.server.sessions[0].intent_use_held = false;
+    game.server.game_tick_step(&mut ev);
+    game.sync_self_view_for_test();
     assert!(game.eating_progress().is_none(), "release aborts the eat");
     assert_eq!(
-        game.player.inventory.selected().map(|s| s.item),
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .map(|s| s.item),
         Some(cooked_mutton),
         "an aborted eat consumes nothing"
     );

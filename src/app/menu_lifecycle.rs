@@ -1,5 +1,4 @@
 use super::{App, AppScreen};
-use crate::audio::Sound;
 use crate::game::GameEvents;
 use crate::mathh::IVec3;
 
@@ -13,6 +12,14 @@ impl App {
     }
 
     pub(super) fn handle_open_screen_events(&mut self, events: &GameEvents) {
+        // The server became unreachable (host thread crash, remote server
+        // close / connection loss): tear the session down WITHOUT saving and
+        // land on the Disconnected screen. Nothing else this frame's events
+        // carry can matter — the world they refer to is gone.
+        if let Some(reason) = events.connection_lost.clone() {
+            self.enter_connection_lost(reason);
+            return;
+        }
         // Right-clicking a placed crafting table opens its 3x3 screen.
         if events.open_crafting_table && self.screen.gameplay_enabled() {
             self.open_crafting_table();
@@ -143,18 +150,16 @@ impl App {
     }
 
     /// Close any open menu: return crafting-grid items to the inventory, drop back
-    /// to gameplay, and re-grab the pointer. Plays the chest-close sound when the
-    /// open menu was a chest screen.
+    /// to gameplay, and re-grab the pointer. The chest-close SOUND is event-driven
+    /// now: the server's viewer release emits a positional `ChestClosed` world
+    /// event on the tick this close lands on (so every observer hears it, at
+    /// the chest).
     fn close_menu(&mut self) {
-        let was_chest = self.screen.is_chest();
         if let Some(game) = self.game.as_mut() {
             game.close_open_menu();
         }
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
-        if was_chest {
-            self.audio.play(Sound::ChestClose);
-        }
     }
 
     pub(super) fn close_screen(&mut self) -> bool {
@@ -180,6 +185,19 @@ impl App {
         } else if matches!(self.screen, AppScreen::WorldSettings) {
             self.world_settings = None;
             self.screen = AppScreen::WorldSelect;
+            self.pointer.release_for_menu();
+            true
+        } else if matches!(self.screen, AppScreen::ConnectServer) {
+            self.cancel_connect();
+            self.screen = AppScreen::Title;
+            self.pointer.release_for_menu();
+            true
+        } else if matches!(self.screen, AppScreen::ModsMissing) {
+            // Back to the connect screen, attempted address preserved.
+            self.reopen_connect_server();
+            true
+        } else if matches!(self.screen, AppScreen::ConnectionLost) {
+            self.screen = AppScreen::Title;
             self.pointer.release_for_menu();
             true
         } else if matches!(self.screen, AppScreen::WorldSelect) {

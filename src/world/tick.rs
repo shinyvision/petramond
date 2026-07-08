@@ -120,6 +120,15 @@ impl World {
         self.sim.tick
     }
 
+    /// Seed the tick counter from a save (`level.dat` v7), so scheduled ticks
+    /// and tick-anchored state (the `llama:clock` day cycle) continue across
+    /// sessions instead of restarting at 0. Call once at session open, BEFORE
+    /// mods initialize — init-time `CurrentTick` host calls must already see
+    /// the restored value.
+    pub fn restore_tick(&mut self, tick: u64) {
+        self.sim.tick = tick;
+    }
+
     /// Advance the world simulation by one fixed 50 ms step. Runs unconditionally
     /// (even with no pending work) so cadence is independent of activity. Owns the
     /// whole per-tick sequence so the order lives in one place.
@@ -138,6 +147,10 @@ impl World {
     /// lifetime/pickup per tick by `Game` (it needs the player inventory), so
     /// those stay in `Game`; everything the world owns alone sequences here.
     pub fn game_tick(&mut self, recipes: &Recipes) {
+        debug_assert!(
+            self.role != crate::world::store::WorldRole::ClientReplica,
+            "a replica never simulates: the server owns the tick"
+        );
         self.sim.tick = self.sim.tick.wrapping_add(1);
         let now = self.sim.tick;
 
@@ -213,6 +226,12 @@ impl World {
     /// change relights. The 3×3 covers the border flood: a cell's light can spill
     /// one chunk in every direction.
     pub(super) fn notify_block_and_neighbors(&mut self, wx: i32, wy: i32, wz: i32) {
+        // Replication rides the same choke point, for the same reason as the
+        // relight: every editor announces here, so no block/water change a
+        // client could see can miss the delta log (see `record_block_delta`).
+        if self.replication_capture {
+            self.record_block_delta(wx, wy, wz);
+        }
         if let Some(sp) = SectionPos::from_world(wx, wy, wz) {
             self.mark_light_dirty_neighborhood(sp, true);
         }

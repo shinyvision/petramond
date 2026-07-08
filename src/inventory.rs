@@ -80,6 +80,15 @@ pub struct Inventory {
     slots: [Option<ItemStack>; TOTAL_SLOTS],
     cursor: Option<ItemStack>,
     active: u8,
+    /// Mutation counter for replication: bumped by every mutating public
+    /// method (conservatively — a mutable borrow via [`slot_mut`]/
+    /// [`cursor_mut`] bumps at borrow time). The server includes the full
+    /// inventory in a `SelfState` only when this moved, so a spurious bump
+    /// costs one redundant send, never a stale client.
+    ///
+    /// [`slot_mut`]: Self::slot_mut
+    /// [`cursor_mut`]: Self::cursor_mut
+    revision: u64,
 }
 
 impl Default for Inventory {
@@ -88,6 +97,7 @@ impl Default for Inventory {
             slots: [None; TOTAL_SLOTS],
             cursor: None,
             active: 0,
+            revision: 0,
         }
     }
 }
@@ -96,12 +106,26 @@ impl Inventory {
     pub fn new() -> Self {
         Self::default()
     }
+    /// The mutation counter (see the field docs). Replication compares this
+    /// against the last value it shipped.
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    /// Mark the inventory changed. Public for callers that mutate through a
+    /// long-lived reference and can't rely on the borrow-time bump.
+    #[inline]
+    pub fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
     #[inline]
     pub fn slot(&self, i: usize) -> Option<&ItemStack> {
         self.slots.get(i).and_then(Option::as_ref)
     }
     #[inline]
     pub fn slot_mut(&mut self, i: usize) -> Option<&mut Option<ItemStack>> {
+        // Conservative: assume the borrower mutates.
+        self.bump_revision();
         self.slots.get_mut(i)
     }
     #[inline]
@@ -110,13 +134,20 @@ impl Inventory {
     }
     #[inline]
     pub fn set_active(&mut self, i: u8) {
-        self.active = i.min(HOTBAR_LEN as u8 - 1);
+        let next = i.min(HOTBAR_LEN as u8 - 1);
+        if next != self.active {
+            self.active = next;
+            self.bump_revision();
+        }
     }
     pub fn scroll_active(&mut self, delta: i32) {
         let len = HOTBAR_LEN as i32;
         // rem_euclid keeps the result in 0..len for any sign / magnitude.
-        let next = (self.active as i32 + delta).rem_euclid(len);
-        self.active = next as u8;
+        let next = (self.active as i32 + delta).rem_euclid(len) as u8;
+        if next != self.active {
+            self.active = next;
+            self.bump_revision();
+        }
     }
     #[inline]
     pub fn selected(&self) -> Option<&ItemStack> {
@@ -127,6 +158,9 @@ impl Inventory {
         self.add_to_range(stack, 0, TOTAL_SLOTS)
     }
     fn add_to_range(&mut self, stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
+        if !stack.is_empty() {
+            self.bump_revision();
+        }
         insert_into_slots(&mut self.slots[start..end], stack)
     }
     pub fn pull_from(&mut self, slot: &mut Option<ItemStack>) {
@@ -141,6 +175,7 @@ impl Inventory {
             if stack.count == 0 {
                 self.slots[i] = None;
             }
+            self.bump_revision();
         }
     }
     /// Swap ONE of the selected stack for `replacement` — a bucket filling or
@@ -151,9 +186,11 @@ impl Inventory {
     /// the world mutation it accompanies can be gated on it.
     pub fn replace_selected_one(&mut self, replacement: ItemStack) -> bool {
         let i = self.active as usize;
-        let Some(stack) = self.slots[i].as_mut() else {
+        if self.slots[i].is_none() {
             return false;
-        };
+        }
+        self.bump_revision();
+        let stack = self.slots[i].as_mut().expect("checked above");
         if stack.count <= 1 {
             self.slots[i] = Some(replacement);
             return true;
@@ -174,12 +211,21 @@ impl Inventory {
     }
     #[inline]
     pub fn cursor_mut(&mut self) -> &mut Option<ItemStack> {
+        // Conservative: assume the borrower mutates.
+        self.bump_revision();
         &mut self.cursor
     }
     pub fn take_cursor(&mut self) -> Option<ItemStack> {
+        if self.cursor.is_some() {
+            self.bump_revision();
+        }
         self.cursor.take()
     }
     pub fn stash_cursor_in_inventory(&mut self) -> Option<ItemStack> {
+        if self.cursor.is_none() {
+            return None;
+        }
+        self.bump_revision();
         let stack = self.cursor.take()?;
         if stack.is_empty() {
             return None;
@@ -190,9 +236,11 @@ impl Inventory {
         if i >= TOTAL_SLOTS {
             return;
         }
+        self.bump_revision();
         Self::apply_left_click(&mut self.cursor, &mut self.slots[i]);
     }
     pub fn click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
+        self.bump_revision();
         Self::apply_left_click(&mut self.cursor, slot);
     }
     fn apply_left_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
@@ -218,6 +266,7 @@ impl Inventory {
         let Some(mut cursor) = self.cursor.take() else {
             return;
         };
+        self.bump_revision();
         // Two passes so loose partials are merged before any full stack is split:
         // pass 1 skips full stacks, pass 2 (only reached if room remains) takes
         // from them too.
@@ -230,6 +279,7 @@ impl Inventory {
         let Some(mut cursor) = self.cursor.take() else {
             return;
         };
+        self.bump_revision();
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, extra, take_full);
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
@@ -263,9 +313,11 @@ impl Inventory {
         if i >= TOTAL_SLOTS {
             return;
         }
+        self.bump_revision();
         Self::apply_right_click(&mut self.cursor, &mut self.slots[i]);
     }
     pub fn right_click_external_slot(&mut self, slot: &mut Option<ItemStack>) {
+        self.bump_revision();
         Self::apply_right_click(&mut self.cursor, slot);
     }
     fn apply_right_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
@@ -339,6 +391,7 @@ impl Inventory {
         let Some(stack) = self.slots[i].take() else {
             return;
         };
+        self.bump_revision();
         // Hotbar `[0, 9)` ships to the main grid; the main grid ships to the hotbar.
         let (start, end) = if i < HOTBAR_LEN {
             (HOTBAR_LEN, TOTAL_SLOTS)
@@ -360,6 +413,7 @@ impl Inventory {
             slots,
             cursor,
             active: active.min(HOTBAR_LEN as u8 - 1),
+            revision: 0,
         }
     }
 }

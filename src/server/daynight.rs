@@ -22,7 +22,7 @@ pub(crate) const NIGHT_KEY: &str = "llama:is_night";
 pub(crate) const SKY_TIME_PARAM: &str = "llama:time";
 pub(crate) const SKY_LIGHT_PARAM: &str = "llama:light";
 
-pub(super) fn install_core(world: &mut World, systems: &mut TickSystems) {
+pub(crate) fn install_core(world: &mut World, systems: &mut TickSystems) {
     let mut cycle = DayNightCycle::from_world(world);
     cycle.publish(world);
 
@@ -105,6 +105,13 @@ impl DayNightCycle {
 /// not published yet.
 pub(super) fn is_night(world: &World) -> bool {
     world.mod_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
+}
+
+/// The published day clock (`llama:clock`), or 0 on a world whose cycle has
+/// not published yet — stamped on every `TickUpdate` so a client's sky follows
+/// the server's.
+pub(super) fn current_clock(world: &World) -> u64 {
+    read_clock(world).unwrap_or(0)
 }
 
 /// Skip the clock to early morning of the NEXT day (sleeping through the
@@ -223,12 +230,14 @@ mod tests {
 
         world.game_tick(&Recipes::default());
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut gui = crate::gui::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         systems.run(
             Attach::After(Stage::Spawning),
             &mut world,
             &mut player,
+            &mut gui,
             &mut feed,
             bus.queue_mut(),
         );
@@ -249,6 +258,7 @@ mod tests {
             Attach::After(Stage::Spawning),
             &mut world,
             &mut player,
+            &mut gui,
             &mut feed,
             bus.queue_mut(),
         );
@@ -263,6 +273,7 @@ mod tests {
             Attach::After(Stage::Spawning),
             &mut world,
             &mut player,
+            &mut gui,
             &mut feed,
             bus.queue_mut(),
         );

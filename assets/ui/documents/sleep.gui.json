@@ -14,9 +14,19 @@
                 0,
                 0,
                 28
-            ]
+            ],
+            "gap": 6,
+            "align": "center"
         },
         "children": [
+            {
+                "type": "label",
+                "style": "label.muted",
+                "bind": {
+                    "text": "sleep_count",
+                    "visible": "sleep_count_visible"
+                }
+            },
             {
                 "type": "button",
                 "id": "leave_bed",

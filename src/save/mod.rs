@@ -1,5 +1,6 @@
 //! Native world saving: a per-world directory under the OS data dir holding a
-//! `level.dat` (seed, player, inventory, tick) and `region/` files packing the
+//! `level.dat` (seed, world tick, mod world KV), per-player `players/<name>.dat`
+//! files (position, inventory, effects…), and `region/` files packing the
 //! 16³ sections the player has modified. Everything else regenerates from the
 //! seed, so a save stays small.
 //!
@@ -17,6 +18,7 @@ mod furnace;
 pub mod level;
 pub mod mobs;
 pub(crate) mod palette;
+pub mod player;
 mod region;
 pub mod settings;
 mod torch;
@@ -39,6 +41,7 @@ enum IoMsg {
     SaveSections(Vec<SectionSnapshot>),
     SaveColumnGens(Vec<colgen::ColumnGenRecord>),
     SaveLevel(Vec<u8>),
+    SavePlayer { name: String, bytes: Vec<u8> },
     SaveModsJson(Vec<u8>),
     Load(SectionPos),
     LoadColumnGen(ChunkPos, u32),
@@ -88,12 +91,17 @@ pub struct WorldSave {
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
     entities_on_disk: HashSet<SectionPos>,
+    /// `<world dir>/players/` — per-player `<sanitized name>.dat` files, read
+    /// synchronously at session open/join (one small file, like `level.dat`).
+    players_dir: PathBuf,
 }
 
 /// The result of opening (or creating) a world.
 pub struct OpenedWorld {
     pub save: WorldSave,
-    /// `Some` if a `level.dat` already existed (a returning world).
+    /// `Some` if a `level.dat` already existed (a returning world): seed, the
+    /// world tick, and the mod world KV. Per-player state is NOT here — the
+    /// session reads it per name via [`WorldSave::load_player`].
     pub level: Option<LevelData>,
     /// Mod pack ids disabled for THIS world (`settings.json`; empty = all
     /// enabled). Already applied to the palette here; the session applies it
@@ -173,6 +181,22 @@ impl WorldSave {
 
     pub fn save_level(&self, bytes: Vec<u8>) {
         let _ = self.tx.send(IoMsg::SaveLevel(bytes));
+    }
+
+    /// Queue a player-file write (`players/<sanitized name>.dat`, atomic like
+    /// `level.dat`). `bytes` come from [`player::encode`].
+    pub fn save_player(&self, name: &str, bytes: Vec<u8>) {
+        let _ = self.tx.send(IoMsg::SavePlayer {
+            name: name.to_string(),
+            bytes,
+        });
+    }
+
+    /// Blocking read of `players/<sanitized name>.dat` (`None` = no such
+    /// player yet, or unreadable). Called once per player at session open/join
+    /// time — one small file, synchronous like the `level.dat` read at open.
+    pub fn load_player(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(player_path(&self.players_dir, name)).ok()
     }
 
     /// Record the active mod set (`mods.json`) with the save — compared with a
@@ -284,6 +308,13 @@ fn sanitize(name: &str) -> String {
     } else {
         s
     }
+}
+
+/// The on-disk file for a player name: `players/<sanitized name>.dat`. Names
+/// sanitize through the same routine as world save directories, so any display
+/// name maps to a single safe path component.
+fn player_path(players_dir: &Path, name: &str) -> PathBuf {
+    players_dir.join(format!("{}.dat", sanitize(name)))
 }
 
 pub fn world_exists(name: &str) -> bool {
@@ -498,6 +529,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         }
     }
 
+    let players_dir = dir.join("players");
     let (tx, rx) = std::sync::mpsc::channel::<IoMsg>();
     let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
@@ -527,6 +559,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             manifest_columns,
             colgen_manifest,
             entities_on_disk: HashSet::new(),
+            players_dir,
         },
         level,
         disabled_mods,
@@ -567,6 +600,7 @@ fn io_thread(
 ) {
     let region_dir = dir.join("region");
     let colgen_dir = dir.join("colgen");
+    let players_dir = dir.join("players");
     let mut region_cache = RegionFileCache::default();
     let mut colgen_cache = RegionFileCache::default();
     while let Ok(msg) = rx.recv() {
@@ -590,6 +624,10 @@ fn io_thread(
             }
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
+            }
+            IoMsg::SavePlayer { name, bytes } => {
+                let _ = std::fs::create_dir_all(&players_dir);
+                let _ = write_atomic(&player_path(&players_dir, &name), &bytes);
             }
             IoMsg::SaveModsJson(bytes) => {
                 let _ = write_atomic(&dir.join("mods.json"), &bytes);
@@ -686,9 +724,9 @@ mod tests {
     }
 
     /// Full disk round-trip through the I/O thread: write a modified section (with a
-    /// resting item entity carrying a partly-elapsed lifetime) + level in one
-    /// session, reopen in another, and read it all back. Item entities ride in the
-    /// section record, so the drop returns when its section loads.
+    /// resting item entity carrying a partly-elapsed lifetime) + level + a player
+    /// file in one session, reopen in another, and read it all back. Item entities
+    /// ride in the section record, so the drop returns when its section loads.
     #[test]
     fn save_reopen_roundtrips_section_level_entities() {
         let dir = temp_world_dir("roundtrip");
@@ -697,6 +735,10 @@ mod tests {
         {
             let mut opened = open_at(dir.clone()).expect("open fresh");
             assert!(opened.level.is_none(), "fresh world has no level.dat");
+            assert!(
+                opened.save.load_player("Rachel S!").is_none(),
+                "fresh world has no player files"
+            );
             assert!(!opened.save.manifest_contains(pos));
 
             let mut section = Section::new(pos.cx, pos.cy, pos.cz);
@@ -712,11 +754,15 @@ mod tests {
             snap.entities.push(drop);
             opened.save.save_sections(vec![snap]);
 
-            let mut player = Player::new(Vec3::new(80.0, 70.0, -40.0));
-            player.inventory.set_active(4);
             opened
                 .save
-                .save_level(level::encode(0xABCD, &player, 0, &Default::default()));
+                .save_level(level::encode(0xABCD, 4242, &Default::default()));
+
+            // The player rides its own file, keyed by SANITIZED name — the
+            // display name may contain anything.
+            let mut plr = Player::new(Vec3::new(80.0, 70.0, -40.0));
+            plr.inventory.set_active(4);
+            opened.save.save_player("Rachel S!", player::encode(&plr));
 
             opened.save.shutdown(); // flush queued writes + join the I/O thread
         }
@@ -726,8 +772,15 @@ mod tests {
 
             let level = opened.level.expect("level.dat restored");
             assert_eq!(level.seed, 0xABCD);
-            assert_eq!(level.player_pos, Vec3::new(80.0, 70.0, -40.0));
-            assert_eq!(level.inventory.active_slot(), 4);
+            assert_eq!(level.tick, 4242, "the world tick persists across sessions");
+
+            let restored = opened
+                .save
+                .load_player("Rachel S!")
+                .and_then(|b| player::decode(&b))
+                .expect("player file restored under the same (sanitized) name");
+            assert_eq!(restored.pos, Vec3::new(80.0, 70.0, -40.0));
+            assert_eq!(restored.inventory.active_slot(), 4);
 
             assert!(
                 opened.save.manifest_contains(pos),

@@ -27,6 +27,15 @@ const GRAVITY: f32 = -22.0;
 /// During it the mob's locomotion is suppressed so the knockback reads, and the
 /// renderer tints it red.
 const HURT_FLASH_SECS: f32 = 0.3;
+
+/// Hurt-flash intensity in `[0, 1]` from a previous/current hurt-timer pair at
+/// `alpha` into the tick — the ONE derivation, shared by the live instance
+/// ([`Instance::hurt_flash`]) and the client's replicated-store presentation
+/// path (which interpolates consecutive replicated timers).
+pub fn hurt_flash01(prev: f32, curr: f32, alpha: f32) -> f32 {
+    let t = prev + (curr - prev) * alpha;
+    (t / HURT_FLASH_SECS).clamp(0.0, 1.0)
+}
 /// Horizontal speed (m/s) imparted away from the attacker on a non-lethal hit.
 const KNOCKBACK_SPEED: f32 = 6.5;
 /// One-shot upward pop (m/s) on a non-lethal hit — a small hop, like a soft jump.
@@ -357,8 +366,15 @@ impl Instance {
     /// red tint by this. Applies while dying too (the flash from the killing blow), so a
     /// kill reads like any other hit; it decays to 0 over the start of the ragdoll.
     pub fn hurt_flash(&self, alpha: f32) -> f32 {
-        let t = self.prev_hurt + (self.hurt_timer - self.prev_hurt) * alpha;
-        (t / HURT_FLASH_SECS).clamp(0.0, 1.0)
+        hurt_flash01(self.prev_hurt, self.hurt_timer, alpha)
+    }
+
+    /// The remaining hurt stagger/flash timer (seconds) — the SOURCE state the
+    /// flash derives from. Replicated per tick; the client derives the flash
+    /// from consecutive values via [`hurt_flash01`].
+    #[inline]
+    pub fn hurt_timer(&self) -> f32 {
+        self.hurt_timer
     }
 
     /// The interpolated per-bone ragdoll pose (pivot position + orientation) at `alpha`,

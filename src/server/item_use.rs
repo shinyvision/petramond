@@ -3,61 +3,68 @@
 //! using a clicked block's own capability. Runs on the fixed tick, dispatched from
 //! `tick_place` after block interaction and before placement.
 
+use super::game::ServerGame;
 use super::placement::facing_from_forward;
-use super::{tick::TickEvents, Game};
 use crate::block::Block;
 use crate::entity::DroppedItem;
 use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
+use crate::game::tick::TickEvents;
 use crate::item::{ItemStack, ItemType, ItemUse};
 use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
 use crate::player::Player;
 
 /// The in-progress eat: which hotbar slot and food item are being eaten and
-/// for how many ticks the button has been held on it. Tick-owned on [`Game`];
-/// aborted the moment the button lifts or the hotbar selection changes — the
-/// SLOT is tracked so switching to a different slot holding the same food
-/// still aborts (per WIKI/status-effects.md, switching slots aborts).
+/// for how many ticks the button has been held on it. Session-owned (one per
+/// player); aborted the moment the button lifts or the hotbar selection
+/// changes — the SLOT is tracked so switching to a different slot holding the
+/// same food still aborts (per WIKI/status-effects.md, switching slots aborts).
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(super) struct EatingState {
-    pub slot: u8,
-    pub item: ItemType,
-    pub progress: u32,
+pub(crate) struct EatingState {
+    pub(crate) slot: u8,
+    pub(crate) item: ItemType,
+    pub(crate) progress: u32,
 }
 
-impl Game {
+impl ServerGame {
     /// Start eating the held food item on a consumed secondary click. Returns
     /// `true` when the click belonged to food (whether the eat started, was
     /// cancelled by a mod, or was already running) so placement never fires
     /// from a food click. Fires `item_use_pre` at the START — a cancel eats
     /// the click, not the food.
-    pub(super) fn try_start_eating(&mut self, events: &mut TickEvents) -> bool {
-        let Some(item) = self.player.inventory.selected().map(|s| s.item) else {
+    pub(crate) fn try_start_eating(&mut self, s: usize, events: &mut TickEvents) -> bool {
+        let sess = &self.sessions[s];
+        let Some(item) = sess.player.inventory.selected().map(|st| st.item) else {
             return false;
         };
-        if item.food().is_none() || self.player.is_spectator() {
+        if item.food().is_none() || sess.player.is_spectator() {
             return false;
         }
-        let slot = self.player.inventory.active_slot();
-        if self
+        let slot = sess.player.inventory.active_slot();
+        if sess
             .eating
             .is_some_and(|e| e.slot == slot && e.item == item)
         {
             return true; // re-click mid-eat: consumed, nothing restarts
         }
-        let mut pre = ItemUsePre {
-            item,
-            target: self.look.map(|h| h.block),
+        let target = sess.look.map(|h| h.block);
+        let mut pre = ItemUsePre { item, target };
+        let cancelled = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            bus.item_use_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
+                == Outcome::Cancel
         };
-        if self
-            .bus
-            .item_use_pre(&mut self.world, &mut self.player, events, &mut pre)
-            == Outcome::Cancel
-        {
+        if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });
             return true;
         }
-        self.eating = Some(EatingState {
+        self.sessions[s].eating = Some(EatingState {
             slot,
             item,
             progress: 0,
@@ -69,62 +76,66 @@ impl Game {
     /// abort when the button lifted, the selection moved to ANY other slot,
     /// or the slot's item changed under the eat; consume the item and grant
     /// its effects when the hold reaches the row's `eat_ticks`.
-    pub(super) fn advance_eating(&mut self) {
-        let Some(eat) = self.eating else {
+    pub(crate) fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
+        let sess = &mut self.sessions[s];
+        let Some(eat) = sess.eating else {
             return;
         };
-        let held = self.player.inventory.selected().map(|s| s.item);
-        if !self.intent_use_held
-            || self.player.inventory.active_slot() != eat.slot
+        let held = sess.player.inventory.selected().map(|st| st.item);
+        if !sess.intent_use_held
+            || sess.player.inventory.active_slot() != eat.slot
             || held != Some(eat.item)
         {
-            self.eating = None;
+            sess.eating = None;
             return;
         }
         let Some(food) = eat.item.food() else {
-            self.eating = None;
+            sess.eating = None;
             return;
         };
         let progress = eat.progress + 1;
         if progress < food.eat_ticks {
-            self.eating = Some(EatingState { progress, ..eat });
+            sess.eating = Some(EatingState { progress, ..eat });
             return;
         }
         // Done: the food leaves the hotbar and its effects land, atomically on
         // this tick.
-        self.eating = None;
-        self.player.inventory.decrement_selected();
+        sess.eating = None;
+        sess.player.inventory.decrement_selected();
         for &(effect, ticks) in food.effects {
-            self.player.apply_effect(effect, ticks);
+            sess.player.apply_effect(effect, ticks);
         }
+        events.player(s).ate_finished = true;
         self.bus.emit(PostEvent::ItemUsed { item: eat.item });
-    }
-
-    /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`
-    /// when nothing is being eaten — the presentation's chew-animation driver.
-    pub fn eating_progress(&self) -> Option<f32> {
-        let eat = self.eating?;
-        let ticks = eat.item.food()?.eat_ticks.max(1);
-        Some(eat.progress as f32 / ticks as f32)
     }
 
     /// Apply the held item's own right-click use, if it has one. Returns `true`
     /// when the click was consumed: the world and the held item changed together.
-    pub(super) fn try_use_item(&mut self, events: &mut TickEvents) -> bool {
-        let Some(item) = self.player.inventory.selected().map(|s| s.item) else {
+    pub(crate) fn try_use_item(&mut self, s: usize, events: &mut TickEvents) -> bool {
+        let Some(item) = self.sessions[s]
+            .player
+            .inventory
+            .selected()
+            .map(|st| st.item)
+        else {
             return false;
         };
         // A handler cancelling `item_use_pre` consumed the click: the engine's own
         // use is skipped, but the item still reports as used (hand jab + post event).
-        let mut pre = ItemUsePre {
-            item,
-            target: self.look.map(|h| h.block),
+        let target = self.sessions[s].look.map(|h| h.block);
+        let mut pre = ItemUsePre { item, target };
+        let cancelled = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            bus.item_use_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
+                == Outcome::Cancel
         };
-        if self
-            .bus
-            .item_use_pre(&mut self.world, &mut self.player, events, &mut pre)
-            == Outcome::Cancel
-        {
+        if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });
             return true;
         }
@@ -132,8 +143,8 @@ impl Game {
         // `Shear` acts at the earlier shear stage of `tick_place`; mod items
         // react to use through the `item_use_pre` event handled above.
         let used = match item.item_use() {
-            Some(ItemUse::BucketFill) => self.try_fill_bucket(),
-            Some(ItemUse::BucketPour) => self.try_pour_bucket(events),
+            Some(ItemUse::BucketFill) => self.try_fill_bucket(s),
+            Some(ItemUse::BucketPour) => self.try_pour_bucket(s, events),
             _ => false,
         };
         if used {
@@ -144,13 +155,19 @@ impl Game {
 
     /// Shear the targeted mob with the held shears: the mob's coat comes off (and
     /// starts regrowing) and its rolled drop pops at its body, like death loot.
-    /// Returns `true` when the click was consumed. `targeted_mob` is already
-    /// reach-limited by the per-frame target refresh, exactly like an attack.
-    pub(super) fn try_shear_mob(&mut self) -> bool {
-        if self.selected_item().and_then(ItemType::item_use) != Some(ItemUse::Shear) {
+    /// Returns `true` when the click was consumed. `target` is the stable mob id
+    /// the `UseClick` carried (resolved client-side at click time, already
+    /// reach-limited by the client's target pick, exactly like an attack);
+    /// a mob vanished before this tick is a no-op.
+    pub(crate) fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
+        if self.sessions[s]
+            .selected_item()
+            .and_then(ItemType::item_use)
+            != Some(ItemUse::Shear)
+        {
             return false;
         }
-        let Some(idx) = self.targeted_mob else {
+        let Some(idx) = target.and_then(|id| self.world.mobs().index_of_id(id)) else {
             return false;
         };
         let Some(ShearDrop {
@@ -179,10 +196,12 @@ impl Game {
     /// it (like it is to normal selection), so a spread sheet or thin film,
     /// which can render exactly like still water, never shadows the source the
     /// player is actually aiming at, and aiming at pure flow does nothing.
-    fn try_fill_bucket(&mut self) -> bool {
-        let Some((h, _)) =
-            Player::raycast_water_sources(self.cam.pos, self.cam.forward(), &self.world)
-        else {
+    fn try_fill_bucket(&mut self, s: usize) -> bool {
+        let (eye, dir) = {
+            let p = &self.sessions[s].player;
+            (p.eye(), p.forward())
+        };
+        let Some((h, _)) = Player::raycast_water_sources(eye, dir, &self.world) else {
             return false;
         };
         if !self.world.is_water_source_world(h.block) {
@@ -191,7 +210,7 @@ impl Game {
         // The held-item swap must succeed BEFORE the world changes: with a full
         // inventory (nowhere for the filled bucket out of a stack) the scoop is
         // refused and the source stays.
-        if !self
+        if !self.sessions[s]
             .player
             .inventory
             .replace_selected_one(ItemStack::new(ItemType::WaterBucket, 1))
@@ -210,10 +229,12 @@ impl Game {
     /// on water the action is always predictable. On land it follows block
     /// placement: a replaceable target (grass, a fern) is filled in place,
     /// anything else pours against the clicked face.
-    fn try_pour_bucket(&mut self, events: &mut TickEvents) -> bool {
-        let Some((h, _)) =
-            Player::raycast_including_water(self.cam.pos, self.cam.forward(), &self.world)
-        else {
+    fn try_pour_bucket(&mut self, s: usize, events: &mut TickEvents) -> bool {
+        let (eye, dir) = {
+            let p = &self.sessions[s].player;
+            (p.eye(), p.forward())
+        };
+        let Some((h, _)) = Player::raycast_including_water(eye, dir, &self.world) else {
             return false;
         };
         // Water is itself replaceable, so a water hit pours in place.
@@ -232,12 +253,22 @@ impl Game {
             let mut pre = BlockPlacePre {
                 pos: p,
                 block: Block::Water,
-                facing: facing_from_forward(self.cam.forward()),
+                facing: facing_from_forward(dir),
             };
-            if self
-                .bus
-                .block_place_pre(&mut self.world, &mut self.player, events, &mut pre)
-                == Outcome::Cancel
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            if bus.block_place_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
             {
                 return false;
             }
@@ -255,7 +286,8 @@ impl Game {
         });
         // A water bucket never stacks, so the swap back to the empty bucket is
         // always an in-place slot swap and cannot fail.
-        self.player
+        self.sessions[s]
+            .player
             .inventory
             .replace_selected_one(ItemStack::new(ItemType::WoodenBucket, 1));
         true

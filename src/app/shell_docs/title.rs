@@ -1,4 +1,5 @@
-//! Title screen controller: Start Game → world select; Quit.
+//! Title screen controller: Start Game → world select; Connect to Server →
+//! the connect screen; Quit.
 
 use crate::app::{App, AppScreen};
 use llama_ui::{NavKey, UiEvent, UiState};
@@ -9,6 +10,7 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
     match ev {
         UiEvent::Click { id, .. } => match id.as_str() {
             "start" => start(app),
+            "connect" => app.open_connect_server(),
             "quit" => app.quit_requested = true,
             _ => {}
         },

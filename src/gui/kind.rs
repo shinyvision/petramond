@@ -43,6 +43,12 @@ impl GuiKind {
     pub const Sleep: GuiKind = GuiKind(13);
     /// The death screen ("You died": respawn / save-and-quit).
     pub const Death: GuiKind = GuiKind(14);
+    /// The "Connect to Server" screen (multiplayer Phase E2).
+    pub const ConnectServer: GuiKind = GuiKind(15);
+    /// The refused-join screen listing the server mods this client lacks.
+    pub const ModsMissing: GuiKind = GuiKind(16);
+    /// The "Disconnected" screen (connection lost / server closed).
+    pub const ConnectionLost: GuiKind = GuiKind(17);
     /// The not-a-container sentinel; compares equal to no registered kind.
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
@@ -56,7 +62,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 15] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 18] = [
     "llama:chest",
     "llama:inventory",
     "llama:crafting_table",
@@ -72,6 +78,9 @@ const ENGINE_GUI_KIND_NAMES: [&str; 15] = [
     "llama:demo",
     "llama:sleep",
     "llama:death",
+    "llama:connect_server",
+    "llama:mods_missing",
+    "llama:connection_lost",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

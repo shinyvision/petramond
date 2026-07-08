@@ -16,6 +16,7 @@ mod registry;
 pub use registry::{Sound, SoundCategory};
 
 pub(crate) use registry::by_name as sound_by_name;
+pub(crate) use registry::defs as sound_defs_for_net;
 
 use std::collections::HashMap;
 use std::io::Cursor;

@@ -1,8 +1,7 @@
 //! Game-level contracts of the Phase 1 event bus + tick-stage scheduler: the
 //! stage seam ordering, same-tick post drains, and the player-death one-shot.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use super::super::tick::TickEvents;
 use super::common::game;
@@ -13,28 +12,42 @@ use crate::mathh::Vec3;
 #[test]
 fn player_died_fires_exactly_once_on_the_zero_transition() {
     let mut game = game();
-    let deaths = Rc::new(RefCell::new(0));
+    let deaths = Arc::new(Mutex::new(0));
     {
         let deaths = deaths.clone();
-        game.bus.on_post(PostEventKind::PlayerDied, 0, move |_, _| {
-            *deaths.borrow_mut() += 1;
-        });
+        game.server
+            .bus
+            .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
+                *deaths.lock().unwrap() += 1;
+            });
     }
     let mut feed = TickEvents::default();
-    game.player.set_health(3);
-    game.damage_player(2, DamageSource::Fall, &mut feed); // 3 → 1: alive
-    game.damage_player(2, DamageSource::Fall, &mut feed); // 1 → 0: dies
-    game.damage_player(2, DamageSource::Fall, &mut feed); // already dead: no re-fire
-    game.damage_player(0, DamageSource::Fall, &mut feed); // the zero fall drain: non-event
-    game.bus
-        .drain_post(&mut game.world, &mut game.player, &mut feed);
-    assert_eq!(*deaths.borrow(), 1);
+    game.server.sessions[0].player.set_health(3);
+    game.server
+        .damage_player(0, 2, DamageSource::Fall, &mut feed); // 3 → 1: alive
+    game.server
+        .damage_player(0, 2, DamageSource::Fall, &mut feed); // 1 → 0: dies
+    game.server
+        .damage_player(0, 2, DamageSource::Fall, &mut feed); // already dead: no re-fire
+    game.server
+        .damage_player(0, 0, DamageSource::Fall, &mut feed); // the zero fall drain: non-event
+    {
+        let crate::server::game::ServerGame {
+            world,
+            sessions,
+            bus,
+            ..
+        } = &mut game.server;
+        let sess = &mut sessions[0];
+        bus.drain_post(world, &mut sess.player, &mut sess.gui_state, &mut feed);
+    }
+    assert_eq!(*deaths.lock().unwrap(), 1);
 }
 
 #[test]
 fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
     let mut game = game();
-    let log: Rc<RefCell<Vec<&str>>> = Rc::new(RefCell::new(Vec::new()));
+    let log: Arc<Mutex<Vec<&str>>> = Arc::new(Mutex::new(Vec::new()));
     for (label, at) in [
         ("after_spawning", Attach::After(Stage::Spawning)),
         ("before_mining", Attach::Before(Stage::Mining)),
@@ -42,29 +55,33 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
         ("before_mobs", Attach::Before(Stage::Mobs)),
     ] {
         let log = log.clone();
-        game.systems
-            .attach(at, 0, move |_| log.borrow_mut().push(label));
+        game.server
+            .systems
+            .attach(at, 0, move |_| log.lock().unwrap().push(label));
     }
     {
         // A system's post event must dispatch at the enclosing stage's boundary —
         // within the same tick — not linger to a later tick.
         let log = log.clone();
-        game.systems
+        game.server
+            .systems
             .attach(Attach::Before(Stage::Placement), 0, move |ctx| {
-                log.borrow_mut().push("emit");
+                log.lock().unwrap().push("emit");
                 ctx.queue.emit(PostEvent::PlayerDied);
             });
     }
     {
         let log = log.clone();
-        game.bus.on_post(PostEventKind::PlayerDied, 0, move |_, _| {
-            log.borrow_mut().push("post_handler");
-        });
+        game.server
+            .bus
+            .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
+                log.lock().unwrap().push("post_handler");
+            });
     }
     let mut feed = TickEvents::default();
-    game.game_tick_step(&mut feed);
+    game.server.game_tick_step(&mut feed);
     assert_eq!(
-        *log.borrow(),
+        *log.lock().unwrap(),
         vec![
             "before_mining",
             "after_mining",
@@ -80,9 +97,11 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
 fn spatial_sound_commands_reach_game_events_without_loss() {
     let mut game = game();
     let sound = crate::audio::sound_by_name("llama:item_pickup").expect("engine sound exists");
-    game.systems
+    game.server
+        .systems
         .attach(Attach::Before(Stage::Mining), 0, move |ctx| {
             ctx.feed
+                .world
                 .spatial_sounds
                 .push(ModSpatialSoundCommand::PlayAt {
                     handle: 7,

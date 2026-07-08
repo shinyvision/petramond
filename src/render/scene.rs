@@ -15,8 +15,9 @@ use glam::Vec3;
 
 use super::{
     ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance,
-    ParticleInstance, PlayerRenderInstance, Renderer,
+    ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
 };
+use crate::game::body_pose::lerp_angle;
 use crate::game::presentation::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
     MobPresentation, ParticleAtlas, ParticleEmitterPresentation, ParticlePresentation,
@@ -45,6 +46,9 @@ pub(crate) struct Scene {
     /// The third-person player body for this frame (`None` in first person).
     /// Player state is per-frame already, so it passes through uninterpolated.
     player: Option<PlayerRenderInstance>,
+    /// Every other connected player's body + held item (already interpolated
+    /// by the presentation layer — a pass-through here, like the local body).
+    remote_players: Vec<RemotePlayerRender>,
     /// Two-channel light + warm-tint amount for the first-person hand / held
     /// item, sampled at the camera each frame so it brightens AND warms near
     /// torches (and torch light keeps it lit at night).
@@ -67,6 +71,7 @@ impl Scene {
         self.doors.clear();
         self.mobs.clear();
         self.player = None;
+        self.remote_players.clear();
         self.held_item_skylight = 0;
         self.held_item_blocklight = 0;
         self.held_item_warm = 0;
@@ -103,6 +108,9 @@ impl Scene {
             skylight: p.skylight,
             blocklight: p.blocklight,
         });
+        self.remote_players.clear();
+        self.remote_players
+            .extend_from_slice(presentation.remote_players);
         (
             self.held_item_skylight,
             self.held_item_blocklight,
@@ -165,6 +173,7 @@ impl Scene {
         renderer.set_doors(&self.doors);
         renderer.set_mobs(&self.mobs);
         renderer.set_player(self.player);
+        renderer.set_remote_players(&self.remote_players);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
         renderer.set_particle_emitters(&self.particle_emitters);
@@ -192,18 +201,6 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         shorn: m.shorn,
         ragdoll: m.ragdoll_pose.clone(),
     }));
-}
-
-/// Interpolate from angle `a` to `b` along the shortest arc (radians).
-fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
-    use std::f32::consts::{PI, TAU};
-    let mut d = (b - a) % TAU;
-    if d > PI {
-        d -= TAU;
-    } else if d < -PI {
-        d += TAU;
-    }
-    a + d * t
 }
 
 /// Map each dropped-item row to one [`ItemEntityInstance`] (cleared + refilled,

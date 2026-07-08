@@ -3,23 +3,57 @@ use crate::camera::Camera;
 use crate::controls::PointerButton;
 use crate::game::Game;
 use crate::gui::MenuSlot;
+use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
+use crate::server::game::ServerGame;
+use crate::server::handle::LoopbackServer;
 
+mod connect;
 mod controls;
 mod drops;
 mod gui_routing;
 mod overlays;
+mod sounds;
 
 impl App {
     fn game(&self) -> &Game {
         self.game.as_ref().expect("test app has a loaded game")
     }
 
-    fn game_mut(&mut self) -> &mut Game {
-        self.game.as_mut().expect("test app has a loaded game")
+    /// Solve one input-free document frame for the open menu so its slot rects
+    /// are available on `self.ui.out()`.
+    fn solve_menu_frame_for_test(&mut self, screen: (u32, u32)) {
+        let kind = self.doc_ui_kind().expect("open menu is document-backed");
+        self.drive_doc_menu(kind, screen, 0.0);
     }
+}
 
+/// The app test fixture: a real [`App`] whose game session rides a LOOPBACK
+/// server pipe, with the `ServerGame` held here — the same shape as the game
+/// tests' `TestGame` (`src/game/tests/common.rs`), so app tests keep driving
+/// latched actions and asserting session state synchronously.
+struct TestApp {
+    app: App,
+    server: ServerGame,
+    #[allow(dead_code)]
+    pipe: LoopbackServer,
+}
+
+impl std::ops::Deref for TestApp {
+    type Target = App;
+    fn deref(&self) -> &App {
+        &self.app
+    }
+}
+
+impl std::ops::DerefMut for TestApp {
+    fn deref_mut(&mut self) -> &mut App {
+        &mut self.app
+    }
+}
+
+impl TestApp {
     /// Click the open document menu at the current cursor and then apply the
     /// latched container edit / drop, standing in for the game tick that
     /// resolves it in play. Returns whether a document menu consumed the click
@@ -33,41 +67,65 @@ impl App {
         self.press_screen_for_test(screen, now, PointerButton::Secondary)
     }
 
-    fn press_screen_for_test(
-        &mut self,
-        screen: (u32, u32),
-        now: f64,
-        button: PointerButton,
-    ) -> bool {
+    fn press_screen_for_test(&mut self, screen: (u32, u32), now: f64, button: PointerButton) -> bool {
         if !self.screen.ui_open() {
             return false;
         }
         let kind = self.doc_ui_kind().expect("open menu is document-backed");
-        self.set_pointer_button(button, true);
-        self.set_pointer_button(button, false);
-        self.drive_doc_menu(kind, screen, now);
-        self.game_mut().apply_latched_actions_for_test();
+        self.app.set_pointer_button(button, true);
+        self.app.set_pointer_button(button, false);
+        self.app.drive_doc_menu(kind, screen, now);
+        self.apply_latched_actions_for_test();
         true
     }
 
-    /// Solve one input-free document frame for the open menu so its slot rects
-    /// are available on `self.ui.out()`.
-    fn solve_menu_frame_for_test(&mut self, screen: (u32, u32)) {
-        let kind = self.doc_ui_kind().expect("open menu is document-backed");
-        self.drive_doc_menu(kind, screen, 0.0);
+    /// Flush the game's queued messages to the server, apply the latched
+    /// actions, and refresh the replicated read models — what the game tests'
+    /// harness does, reached through the App.
+    fn apply_latched_actions_for_test(&mut self) {
+        let game = self.app.game.as_mut().expect("test app has a loaded game");
+        for msg in game.take_outbox_for_test() {
+            self.server.apply_message(0, msg);
+        }
+        self.server.apply_latched_actions_for_test();
+        // Refresh the replicated self/menu views the way the next batch would.
+        self.server.sessions[0].last_sent_inventory_revision = None;
+        let state = self.server.build_self_state(0);
+        let sync = self.server.build_menu_sync(0);
+        game.apply_views_for_test(&state, sync);
+    }
+
+    /// The SESSION inventory — the authoritative one the sim mutates.
+    fn inventory(&self) -> &Inventory {
+        &self.server.sessions[0].player.inventory
+    }
+
+    fn add_to_inventory(&mut self, stack: ItemStack) {
+        self.server.sessions[0].player.inventory.add(stack);
     }
 }
 
-fn app() -> App {
-    App::new_in_game(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
+fn app() -> TestApp {
+    let (server, bootstrap) = crate::game::session::build_session("", 1, 1);
+    let (handle, pipe) = crate::server::handle::ServerHandle::loopback();
+    let game = Game::assemble(
+        Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+        handle,
+        bootstrap,
+    );
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    app.adopt_game(game);
+    TestApp { app, server, pipe }
 }
 
 /// An app whose player holds one full stack in hotbar slot 0 - the starting
 /// inventory is empty now, so inventory-interaction tests seed a stack first.
-fn app_with_grass() -> App {
+fn app_with_grass() -> TestApp {
     let mut app = app();
-    app.game_mut()
-        .add_to_inventory(ItemStack::new(ItemType::Grass, 64));
+    app.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Grass, 64));
     app
 }
 

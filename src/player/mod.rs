@@ -35,6 +35,9 @@ mod tests;
 
 pub(crate) use interaction::ray_vs_aabb;
 pub use interaction::{RaycastHit, REACH};
+/// The swim probe height above the feet — also what the server-side fall
+/// tracker samples to mirror `track_fall`'s water reset from reported positions.
+pub(crate) use movement::WATER_PROBE_Y;
 pub use state::{
     BedSpawn, Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,
 };

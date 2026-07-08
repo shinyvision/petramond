@@ -6,6 +6,7 @@
    "state": {},
    "handles": {
     "start": "click: open world select",
+    "connect": "click: open the connect-to-server screen",
     "quit": "click: quit the game"
    }
   },
@@ -138,10 +139,41 @@
    }
   },
   "llama:pause": {
-   "state": {},
+   "state": {
+    "is_host": {
+     "type": "bool",
+     "doc": "this session hosts the world (shows Save and Quit)"
+    },
+    "is_remote": {
+     "type": "bool",
+     "doc": "this session joined a remote server (shows Disconnect)"
+    },
+    "lan_open": {
+     "type": "bool",
+     "doc": "the host is open to LAN (shows the port label)"
+    },
+    "lan_closed": {
+     "type": "bool",
+     "doc": "host session not yet open to LAN (shows the Open to LAN button)"
+    },
+    "lan_status": {
+     "type": "str",
+     "doc": "\"Open on port N\" once LAN is open"
+    },
+    "lan_error": {
+     "type": "str",
+     "doc": "the last Open to LAN failure, inline"
+    },
+    "has_lan_error": {
+     "type": "bool",
+     "doc": "lan_error is non-empty"
+    }
+   },
    "handles": {
     "resume": "click: back to the game",
-    "save_quit": "click: save and return to title",
+    "open_lan": "click: open the running host to LAN on port 7434",
+    "disconnect": "click: leave the remote server and return to title",
+    "save_quit": "click: save and return to title (host only)",
     "keys": "Enter resumes (ESC also resumes, via the global close control)"
    }
   },
@@ -201,7 +233,10 @@
    }
   },
   "llama:sleep": {
-   "state": {},
+   "state": {
+    "sleep_count": "str: 'x/y players sleeping' from the replicated player rows + self",
+    "sleep_count_visible": "bool: true only with more than one connected player"
+   },
    "handles": {
     "leave_bed": "click: cancel the sleep and wake beside the bed",
     "keys": "ESC cancels the sleep (global close control)"
@@ -213,6 +248,72 @@
     "respawn": "click: respawn at the bed spawn (or a fresh surface spot) on the tick",
     "save_quit": "click: save and return to title",
     "keys": "ESC is swallowed; only the buttons leave the death screen"
+   }
+  },
+  "llama:connect_server": {
+   "state": {
+    "server_addr": {
+     "type": "str",
+     "doc": "live address input text (prefilled from client.json last_server; :port optional, default 7434)"
+    },
+    "player_name": {
+     "type": "str",
+     "doc": "live player-name input text (prefilled from the resolved player name)"
+    },
+    "status_text": {
+     "type": "str",
+     "doc": "the last attempt's failure message"
+    },
+    "has_status": {
+     "type": "bool",
+     "doc": "status_text is non-empty (shows the danger label)"
+    },
+    "connect_phase": {
+     "type": "str",
+     "doc": "worker progress: \"Connecting…\" then \"Joining world…\""
+    },
+    "connecting": {
+     "type": "bool",
+     "doc": "a connect attempt is running (shows the progress label + Cancel)"
+    },
+    "can_connect": {
+     "type": "bool",
+     "doc": "both fields non-empty and no attempt running (enables Connect)"
+    }
+   },
+   "handles": {
+    "server_addr": "text_input: server address; Enter connects",
+    "player_name": "text_input: player name; Enter connects",
+    "connect": "click: start the connect attempt",
+    "cancel": "click: abandon the running attempt (stays on this screen)",
+    "back": "click: cancel and return to title (ESC does the same)"
+   }
+  },
+  "llama:mods_missing": {
+   "state": {
+    "missing_rows": {
+     "type": "list",
+     "item": {
+      "id": "str",
+      "version": "str",
+      "has_version": "bool"
+     },
+     "doc": "one row per server mod this client lacks"
+    }
+   },
+   "handles": {
+    "back": "click: back to the connect screen, address preserved (Enter too)"
+   }
+  },
+  "llama:connection_lost": {
+   "state": {
+    "disconnect_message": {
+     "type": "str",
+     "doc": "why the session ended (server closed / connection lost / world stopped)"
+    }
+   },
+   "handles": {
+    "ok": "click: back to title (ESC/Enter too)"
    }
   }
  }

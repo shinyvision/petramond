@@ -36,24 +36,49 @@ fn destroy_tile(stage: u8) -> Tile {
     crate::atlas::engine().destroy_stages[stage.min(9) as usize]
 }
 
-/// Build the crack overlay geometry for `view` into `verts` / `indices` (cleared
-/// first, capacity reused). Returns the index count. All faces use the same
-/// destroy tile so the crack reads from every angle. A plain cube cracks over its
-/// six cell faces; a stair or slab over its meshed cell-local quads; a chest over
-/// its inset box; a bbmodel block over its structural model cubes.
+/// Build the crack overlay geometry for every view in `views` into `verts` /
+/// `indices` (cleared first, capacity reused) — ONE combined stream, since
+/// every overlay shares the break pipeline. Returns the index count. The
+/// slice is small and bounded (the local miner's own crack plus the capped
+/// nearest remotes); each entry bakes exactly as the single overlay always
+/// did, so the single-player path is geometry-identical.
+pub fn build_break_overlays(
+    views: &[BreakOverlayView],
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) -> u32 {
+    verts.clear();
+    indices.clear();
+    for view in views {
+        append_break_overlay(view, verts, indices);
+    }
+    indices.len() as u32
+}
+
+/// Build one crack overlay's geometry into `verts` / `indices` (cleared
+/// first). Returns the index count. See [`build_break_overlays`] for the
+/// multi-overlay frame path; this single-view form is the unit the tests pin.
+#[cfg(test)]
+pub fn build_break_overlay(
+    view: &BreakOverlayView,
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) -> u32 {
+    build_break_overlays(std::slice::from_ref(view), verts, indices)
+}
+
+/// Append the crack overlay geometry for `view` (indices are vert-relative, so
+/// composition is plain concatenation). All faces use the same destroy tile so
+/// the crack reads from every angle. A plain cube cracks over its six cell
+/// faces; a stair or slab over its meshed cell-local quads; a chest over its
+/// inset box; a bbmodel block over its structural model cubes.
 ///
 /// The cube spans the block's exact `[block, block + 1]` cell with no inflation,
 /// so each face lands on the same integer-coordinate plane the chunk mesh emitted
 /// for that block. The pipeline's depth `LessEqual` + a small polygon offset
 /// (`BREAK_DEPTH_BIAS`) put the crack on the surface without z-fighting (see the
 /// module docs for why the offset is needed).
-pub fn build_break_overlay(
-    view: &BreakOverlayView,
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-) -> u32 {
-    verts.clear();
-    indices.clear();
+fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
     let tile = destroy_tile(view.stage);
     let base = Vec3::new(
         view.block.x as f32,
@@ -169,7 +194,6 @@ pub fn build_break_overlay(
             None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
         }
     }
-    indices.len() as u32
 }
 
 fn transform_box(m: glam::Mat4, min: [f32; 3], max: [f32; 3]) -> (Vec3, Vec3) {

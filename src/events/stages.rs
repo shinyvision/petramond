@@ -52,7 +52,7 @@ impl Attach {
     }
 }
 
-type SystemFn = Box<dyn FnMut(&mut SimCtx)>;
+type SystemFn = Box<dyn FnMut(&mut SimCtx) + Send>;
 
 struct SystemEntry {
     priority: i32,
@@ -74,7 +74,7 @@ impl TickSystems {
         &mut self,
         at: Attach,
         priority: i32,
-        f: impl FnMut(&mut SimCtx) + 'static,
+        f: impl FnMut(&mut SimCtx) + Send + 'static,
     ) {
         let list = &mut self.slots[at.slot()];
         let i = list.partition_point(|s| s.priority <= priority);
@@ -93,12 +93,14 @@ impl TickSystems {
         self.slots[at.slot()].is_empty()
     }
 
-    /// Run the systems attached at `at`, in order.
+    /// Run the systems attached at `at`, in order. `player`/`gui_state` are
+    /// the HOST session's (the single-player-shaped mod ABI).
     pub(crate) fn run(
         &mut self,
         at: Attach,
         world: &mut World,
         player: &mut Player,
+        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
         feed: &mut TickEvents,
         queue: &mut PostQueue,
     ) {
@@ -106,6 +108,7 @@ impl TickSystems {
             let mut ctx = SimCtx {
                 world: &mut *world,
                 player: &mut *player,
+                gui_state: &mut *gui_state,
                 feed: &mut *feed,
                 queue: &mut *queue,
             };
@@ -116,8 +119,7 @@ impl TickSystems {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::mathh::Vec3;
@@ -125,12 +127,12 @@ mod tests {
     #[test]
     fn systems_in_one_slot_run_in_priority_then_registration_order() {
         let mut systems = TickSystems::default();
-        let order = Rc::new(RefCell::new(Vec::new()));
+        let order = Arc::new(Mutex::new(Vec::new()));
         // Two entries share priority 5: registration order must hold between them.
         for (label, priority) in [("a", 5), ("b", -1), ("c", 5), ("d", 0)] {
             let order = order.clone();
             systems.attach(Attach::Before(Stage::Mining), priority, move |_| {
-                order.borrow_mut().push(label);
+                order.lock().unwrap().push(label);
             });
         }
         assert!(!systems.is_empty_at(Attach::Before(Stage::Mining)));
@@ -138,15 +140,17 @@ mod tests {
 
         let mut world = World::new(1, 1);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut gui = crate::gui::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         systems.run(
             Attach::Before(Stage::Mining),
             &mut world,
             &mut player,
+            &mut gui,
             &mut feed,
             &mut queue,
         );
-        assert_eq!(*order.borrow(), vec!["b", "d", "a", "c"]);
+        assert_eq!(*order.lock().unwrap(), vec!["b", "d", "a", "c"]);
     }
 }

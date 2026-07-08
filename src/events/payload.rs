@@ -86,6 +86,9 @@ pub(crate) enum DamageSource {
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
     Mod(&'static str),
+    /// Another player's melee strike (PvP); carries the attacking session's
+    /// `PlayerId`.
+    Player(crate::server::player::PlayerId),
 }
 
 /// An engine action a mod HostCall queued from inside a guest dispatch, where
