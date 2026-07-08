@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "kind": "llama:world_settings",
+  "kind": "petramond:world_settings",
   "class": "screen",
   "root": {
     "type": "frame",

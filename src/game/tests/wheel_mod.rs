@@ -4,7 +4,7 @@
 //! (give_item / spawn_mob / kill_player). Which reward is seed-dependent and
 //! deliberately unpinned. Pack registration needs the fixture in the
 //! registry, so the assertions run in a child process (the established
-//! `LLAMACRAFT_MODS` re-spawn pattern, staged by `modding::tests`).
+//! `PETRAMOND_MODS` re-spawn pattern, staged by `modding::tests`).
 
 use super::super::tick::TickEvents;
 use crate::camera::Camera;
@@ -18,7 +18,7 @@ fn wheel_mod_spin_delivers_exactly_one_reward_via_wasm() {
     crate::modding::tests::run_child_test(&root, "game::tests::wheel_mod::wheel_spin_inner");
 }
 
-/// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
 /// pointing at the fixture pack before first registry touch). Production load
 /// path: `Game::new` → `ModHost::load`, clicks through the real menu funnel.
 #[test]

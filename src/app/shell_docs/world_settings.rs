@@ -3,7 +3,7 @@
 //! Delete World entry, and the header's inline world-rename editor.
 
 use crate::app::{App, AppScreen};
-use llama_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
+use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 use std::path::PathBuf;
 use std::sync::Arc;
 

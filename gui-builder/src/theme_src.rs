@@ -1,9 +1,9 @@
 //! Theme loading for the builder: the real game theme kit when it exists
-//! (`assets/ui/theme/theme.json` in the repo), otherwise llama-ui's
+//! (`assets/ui/theme/theme.json` in the repo), otherwise petramond-ui's
 //! placeholder — another agent authors the real kit in parallel, so the
 //! placeholder path must always work.
 
-use llama_ui::Theme;
+use petramond_ui::Theme;
 use std::path::PathBuf;
 use std::sync::Arc;
 

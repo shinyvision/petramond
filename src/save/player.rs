@@ -216,7 +216,7 @@ mod tests {
         );
         assert_eq!(
             got.effects,
-            vec![("llama:regeneration".to_owned(), 950)],
+            vec![("petramond:regeneration".to_owned(), 950)],
             "active effects survive the round-trip by name"
         );
         // Demo hotbar survives the round-trip.

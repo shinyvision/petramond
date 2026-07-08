@@ -1,4 +1,4 @@
-//! The llamacraft mod ABI: shared types crossing the engine↔WASM boundary.
+//! The petramond mod ABI: shared types crossing the engine↔WASM boundary.
 //!
 //! Both sides speak postcard-serialized enums over two raw entry points
 //! (`host_dispatch` on the host, `mod_dispatch` on the guest); everything in this
@@ -125,7 +125,7 @@ pub enum DamageSource {
         id: u8,
     },
     /// A mob's melee strike; `key` is the attacking species' key
-    /// (`"llama:owl"`, `"zombies:zombie"`).
+    /// (`"petramond:owl"`, `"zombies:zombie"`).
     MobAttack {
         key: String,
     },
@@ -339,7 +339,7 @@ pub enum GuiValue {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
     pub index: u32,
-    /// The species' key (`"llama:owl"`, `"zombies:zombie"`).
+    /// The species' key (`"petramond:owl"`, `"zombies:zombie"`).
     pub key: String,
     /// Feet position.
     pub pos: [f32; 3],
@@ -512,7 +512,7 @@ pub enum HostCall {
 
     // --- Phase 3b: persistent KV -------------------------------------------
     // Keys are namespaced. WRITES (set/delete) must use the calling mod's own
-    // prefix or an exposed engine `llama:*` key; READS may cross namespaces —
+    // prefix or an exposed engine `petramond:*` key; READS may cross namespaces —
     // that is the cross-mod interop surface (core day/night publishes, zombies
     // reads). Limits: key ≤ 256 bytes, value ≤ 64 KiB; violations return
     // `HostRet::Error`.
@@ -549,7 +549,7 @@ pub enum HostCall {
     MobKvDelete { mob_index: u32, key: String },
 
     // --- Phase 4: worldgen hooks ---------------------------------------------
-    /// Resolve a block registry key (`"llama:stone"`, `"smoke:smoke_block"`) to its
+    /// Resolve a block registry key (`"petramond:stone"`, `"kitchen:oven"`) to its
     /// session-scoped runtime id. Needs no simulation context — legal anywhere,
     /// including on worldgen instances. `None` = not registered (a typo'd or
     /// absent pack — degrade gracefully, don't panic). → [`HostRet::Block`].
@@ -639,7 +639,7 @@ pub enum HostCall {
 
     // --- Shader parameters ------------------------------------------------
     /// Set one named visual shader parameter (`vec4<f32>`). Mods may write
-    /// their own `mod_id:name` keys or exposed engine `llama:*` keys; active
+    /// their own `mod_id:name` keys or exposed engine `petramond:*` keys; active
     /// shader packs map keys onto fixed GPU slots. Not persisted: re-apply it
     /// from mod state on load.
     /// → [`HostRet::Unit`].
@@ -696,7 +696,7 @@ pub enum HostCall {
     /// `None` = unknown key. → [`HostRet::ItemInfo`].
     ItemInfo { key: String },
     /// The loaded machine-processing result for one input item key under a
-    /// recipe `class` (`"llama:smelting"` = the furnace's table; a mod machine
+    /// recipe `class` (`"petramond:smelting"` = the furnace's table; a mod machine
     /// names its own, e.g. `"kitchen:cooking"`), from the same layered
     /// `recipes.json` catalog engine machines cook from — any pack's rows for
     /// that class included. `None` = no recipe. → [`HostRet::ItemStack`].
@@ -704,7 +704,7 @@ pub enum HostCall {
 
     // --- Player status effects (landed 2026-07-07) --------------------------
     /// Grant the player the status effect registered under `key` (an
-    /// `effects.json` row — engine `llama:*` rows and every pack's rows alike)
+    /// `effects.json` row — engine `petramond:*` rows and every pack's rows alike)
     /// for `ticks` game ticks. An already-active effect is OVERWRITTEN with
     /// the new duration; `ticks == 0` removes it. Like `SetHealth` this is a
     /// state primitive: no events fire. → [`HostRet::Bool`] (`false` =
@@ -810,7 +810,7 @@ pub enum HostRet {
 /// One active status effect crossing the ABI (see [`HostCall::EffectsActive`]).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct EffectStateData {
-    /// The effect's registry key (`"llama:regeneration"`, `"mod_id:haste"`).
+    /// The effect's registry key (`"petramond:regeneration"`, `"mod_id:haste"`).
     pub key: String,
     /// Remaining game ticks.
     pub remaining: u32,
@@ -1082,7 +1082,7 @@ mod tests {
         });
         roundtrip(HostCall::DespawnMob { index: 7 });
         roundtrip(HostCall::SpawnItem {
-            item_key: "llama:stick".into(),
+            item_key: "petramond:stick".into(),
             count: 4,
             pos: [0.5, 64.0, 0.5],
         });
@@ -1092,7 +1092,7 @@ mod tests {
             impulse: [1.0, 3.0, -1.0],
         });
         roundtrip(HostCall::GiveItem {
-            item_key: "llama:diamond".into(),
+            item_key: "petramond:diamond".into(),
             count: 1,
         });
         roundtrip(HostCall::KillPlayer);
@@ -1105,14 +1105,14 @@ mod tests {
             pos: Some([0.0, 64.0, 0.0]),
         });
         roundtrip(HostCall::WorldKvGet {
-            key: "llama:time".into(),
+            key: "petramond:time".into(),
         });
         roundtrip(HostCall::WorldKvSet {
-            key: "llama:time".into(),
+            key: "petramond:time".into(),
             value: vec![1, 2, 3],
         });
         roundtrip(HostCall::WorldKvDelete {
-            key: "llama:time".into(),
+            key: "petramond:time".into(),
         });
         roundtrip(HostCall::SectionKvGet {
             pos: [4, -60, 4],
@@ -1141,7 +1141,7 @@ mod tests {
             key: "zombies:target".into(),
         });
         roundtrip(HostCall::ResolveBlock {
-            key: "smoke:smoke_block".into(),
+            key: "kitchen:oven".into(),
         });
         roundtrip(HostCall::RegisterWorldgenFeature {
             feature_id: 3,
@@ -1178,7 +1178,7 @@ mod tests {
         roundtrip(HostCall::SoundStop { handle: 99 });
         roundtrip(HostCall::BlockIsFullSpawnSupport { pos: [8, 63, 8] });
         roundtrip(HostCall::ShaderSetParam {
-            key: "llama:light".into(),
+            key: "petramond:light".into(),
             value: [0.75, 0.0, 0.0, 1.0],
         });
         roundtrip(HostCall::RegisterHostileSpawner {
@@ -1186,7 +1186,7 @@ mod tests {
             priority: -1,
         });
         roundtrip(HostRet::GuiValue(Some(GuiValue::Str(
-            "llama:diamond".into(),
+            "petramond:diamond".into(),
         ))));
         roundtrip(HostRet::GuiValue(Some(GuiValue::I32(-3))));
         roundtrip(HostRet::GuiValue(None));
@@ -1280,7 +1280,7 @@ mod tests {
         });
         roundtrip(HostRet::Mobs(vec![MobSnapshot {
             index: 0,
-            key: "llama:owl".into(),
+            key: "petramond:owl".into(),
             pos: [1.5, 64.0, -3.5],
             health: 4.0,
             id: 123,

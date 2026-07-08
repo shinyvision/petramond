@@ -427,11 +427,11 @@ impl BlockModelKind {
 /// Engine model keys in frozen id order — the completeness oracle
 /// `models.json` is validated against.
 const ENGINE_MODEL_KEYS: &[&str] = &[
-    "llama:furniture_workbench",
-    "llama:bucket",
-    "llama:water_bucket",
-    "llama:bed_frame",
-    "llama:bed",
+    "petramond:furniture_workbench",
+    "petramond:bucket",
+    "petramond:water_bucket",
+    "petramond:bed_frame",
+    "petramond:bed",
 ];
 
 impl std::fmt::Debug for BlockModelKind {
@@ -516,7 +516,7 @@ impl PlacementOrientation {
 /// and collision policy. The geometry/texture come from `model_file` (read through
 /// the asset roots, so a mod pack can override the art); this row carries only what
 /// the source can't express. Rows live in `models.json` (a layered catalog like
-/// `blocks.json`): known engine keys are `llama:*`, mod additions are
+/// `blocks.json`): known engine keys are `petramond:*`, mod additions are
 /// `mod_id:*`, and bare keys error.
 pub struct BlockModelDef {
     pub key: &'static str,

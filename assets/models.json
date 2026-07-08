@@ -1,7 +1,7 @@
 {
   "models": [
     {
-      "key": "llama:furniture_workbench",
+      "key": "petramond:furniture_workbench",
       "model_file": "models/blocks/furniture_workbench.bbmodel",
       "cells": [
         2,
@@ -11,7 +11,7 @@
       "orientation": "left_to_right"
     },
     {
-      "key": "llama:bucket",
+      "key": "petramond:bucket",
       "model_file": "models/items/bucket.bbmodel",
       "cells": [
         1,
@@ -21,7 +21,7 @@
       "orientation": "left_to_right"
     },
     {
-      "key": "llama:water_bucket",
+      "key": "petramond:water_bucket",
       "model_file": "models/items/water_bucket.bbmodel",
       "cells": [
         1,
@@ -31,7 +31,7 @@
       "orientation": "left_to_right"
     },
     {
-      "key": "llama:bed_frame",
+      "key": "petramond:bed_frame",
       "model_file": "models/blocks/bed_frame.bbmodel",
       "cells": [
         1,
@@ -41,7 +41,7 @@
       "orientation": "left_to_right"
     },
     {
-      "key": "llama:bed",
+      "key": "petramond:bed",
       "model_file": "models/blocks/bed.bbmodel",
       "cells": [
         1,

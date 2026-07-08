@@ -2,7 +2,7 @@
 //! drags, inspector drag-values) coalesce into one entry: the gesture pushes
 //! the pre-gesture snapshot once and further edits ride on it until release.
 
-use llama_ui::Document;
+use petramond_ui::Document;
 
 const DEPTH: usize = 256;
 
@@ -83,12 +83,12 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use llama_ui::{DocClass, Node, NodeKind, FORMAT_VERSION};
+    use petramond_ui::{DocClass, Node, NodeKind, FORMAT_VERSION};
 
     fn doc(label: &str) -> Document {
         Document {
             format: FORMAT_VERSION,
-            kind: "llama:test".into(),
+            kind: "petramond:test".into(),
             class: DocClass::Screen,
             root: Node::leaf(NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1 }),
         }

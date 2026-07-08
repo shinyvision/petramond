@@ -2,7 +2,7 @@
  "format": 1,
  "_doc": "The data contract between the game and each GUI document kind: which UiState keys the game populates every frame (bindable via a node's `bind`), what fields each list item map carries, and which widget ids / events the screen's controller reacts to. The gui-builder reads this to offer binding pickers and to seed preview sample data. Source of truth for behavior is the controller in src/app/shell_docs/ (or drive_doc_menu for menus); keep this file in sync when a controller's populate/handle changes.",
  "kinds": {
-  "llama:title": {
+  "petramond:title": {
    "state": {},
    "handles": {
     "start": "click: open world select",
@@ -10,7 +10,7 @@
     "quit": "click: quit the game"
    }
   },
-  "llama:world_select": {
+  "petramond:world_select": {
    "state": {
     "worlds": {
      "type": "list",
@@ -41,7 +41,7 @@
     "keys": "Up/Down move selection, Enter plays, Delete opens settings"
    }
   },
-  "llama:world_settings": {
+  "petramond:world_settings": {
    "state": {
     "world_name": {
      "type": "str",
@@ -99,7 +99,7 @@
     "optimize_terrain": "toggle: flip Optimize explored terrain for this world (writes settings.json; applies next open)"
    }
   },
-  "llama:create_world": {
+  "petramond:create_world": {
    "state": {
     "create_name": {
      "type": "str",
@@ -125,7 +125,7 @@
     "cancel": "click: back to world select"
    }
   },
-  "llama:delete_world": {
+  "petramond:delete_world": {
    "state": {
     "world_name": {
      "type": "str",
@@ -138,7 +138,7 @@
     "keys": "Enter confirms"
    }
   },
-  "llama:pause": {
+  "petramond:pause": {
    "state": {
     "is_host": {
      "type": "bool",
@@ -177,7 +177,7 @@
     "keys": "Enter resumes (ESC also resumes, via the global close control)"
    }
   },
-  "llama:hotbar": {
+  "petramond:hotbar": {
    "state": {
     "active_slot": {
      "type": "i32",
@@ -187,22 +187,22 @@
    "handles": {},
    "notes": "HUD only: presentation-driven, receives no input. Hearts are drawn by the game beside the document."
   },
-  "llama:inventory": {
+  "petramond:inventory": {
    "state": {},
    "handles": {},
    "notes": "container: slots route to the game automatically by role; no custom keys"
   },
-  "llama:crafting_table": {
+  "petramond:crafting_table": {
    "state": {},
    "handles": {},
    "notes": "container: slots route by role"
   },
-  "llama:chest": {
+  "petramond:chest": {
    "state": {},
    "handles": {},
    "notes": "container: slots route by role"
   },
-  "llama:furnace": {
+  "petramond:furnace": {
    "state": {
     "cook01": {
      "type": "f32",
@@ -216,7 +216,7 @@
    "handles": {},
    "notes": "container: slots route by role"
   },
-  "llama:furniture_workbench": {
+  "petramond:furniture_workbench": {
    "state": {},
    "handles": {},
    "notes": "container: slots route by role; result icons grey out automatically when not craftable"
@@ -232,7 +232,7 @@
     "<button id>": "click: dispatched to the owning mod as gui_click (primary clicks only)"
    }
   },
-  "llama:sleep": {
+  "petramond:sleep": {
    "state": {
     "sleep_count": "str: 'x/y players sleeping' from the replicated player rows + self",
     "sleep_count_visible": "bool: true only with more than one connected player"
@@ -242,7 +242,7 @@
     "keys": "ESC cancels the sleep (global close control)"
    }
   },
-  "llama:death": {
+  "petramond:death": {
    "state": {},
    "handles": {
     "respawn": "click: respawn at the bed spawn (or a fresh surface spot) on the tick",
@@ -250,7 +250,7 @@
     "keys": "ESC is swallowed; only the buttons leave the death screen"
    }
   },
-  "llama:connect_server": {
+  "petramond:connect_server": {
    "state": {
     "server_addr": {
      "type": "str",
@@ -289,7 +289,7 @@
     "back": "click: cancel and return to title (ESC does the same)"
    }
   },
-  "llama:mods_missing": {
+  "petramond:mods_missing": {
    "state": {
     "missing_rows": {
      "type": "list",
@@ -305,7 +305,7 @@
     "back": "click: back to the connect screen, address preserved (Enter too)"
    }
   },
-  "llama:connection_lost": {
+  "petramond:connection_lost": {
    "state": {
     "disconnect_message": {
      "type": "str",

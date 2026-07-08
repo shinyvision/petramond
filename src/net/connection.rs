@@ -124,7 +124,7 @@ impl TcpServerConn {
         let reader = stream.try_clone()?;
         let flag = Arc::clone(&dead);
         std::thread::Builder::new()
-            .name("llamacraft-conn-read".to_string())
+            .name("petramond-conn-read".to_string())
             .spawn(move || {
                 let mut r = BufReader::new(reader);
                 while let Ok(msg) = read_msg::<ClientToServer, _>(&mut r) {
@@ -139,7 +139,7 @@ impl TcpServerConn {
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&dead);
         std::thread::Builder::new()
-            .name("llamacraft-conn-write".to_string())
+            .name("petramond-conn-write".to_string())
             .spawn(move || {
                 let mut w = BufWriter::new(writer);
                 // Light crosses TCP too: the replica never bakes its own, so
@@ -226,7 +226,7 @@ impl TcpClientConn {
         let flag = Arc::clone(&lost);
         let map = Arc::clone(&remap);
         std::thread::Builder::new()
-            .name("llamacraft-conn-read".to_string())
+            .name("petramond-conn-read".to_string())
             .spawn(move || {
                 let mut r = BufReader::new(reader);
                 loop {
@@ -247,7 +247,7 @@ impl TcpClientConn {
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&lost);
         std::thread::Builder::new()
-            .name("llamacraft-conn-write".to_string())
+            .name("petramond-conn-write".to_string())
             .spawn(move || {
                 let mut w = BufWriter::new(writer);
                 // Farewell: whoever drops the last sender (a clean quit or a

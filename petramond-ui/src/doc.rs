@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// The document format version this crate reads and writes.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// One GUI document: its kind key (namespaced, e.g. `llama:furnace` or
+/// One GUI document: its kind key (namespaced, e.g. `petramond:furnace` or
 /// `somemod:wheel`), its class, and the node tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -631,7 +631,7 @@ mod tests {
     fn sample_doc() -> &'static str {
         r#"{
             "format": 1,
-            "kind": "llama:furnace",
+            "kind": "petramond:furnace",
             "class": "container",
             "root": {
                 "type": "frame", "style": "panel.large",
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn parses_and_round_trips() {
         let doc = Document::from_json(sample_doc()).unwrap();
-        assert_eq!(doc.kind, "llama:furnace");
+        assert_eq!(doc.kind, "petramond:furnace");
         assert_eq!(doc.class, DocClass::Container);
         let json = doc.to_json_pretty();
         let again = Document::from_json(&json).unwrap();
@@ -696,14 +696,14 @@ mod tests {
 
     #[test]
     fn wrong_format_version_is_rejected() {
-        let json = r#"{ "format": 99, "kind": "llama:x", "class": "screen",
+        let json = r#"{ "format": 99, "kind": "petramond:x", "class": "screen",
                         "root": { "type": "frame" } }"#;
         assert!(Document::from_json(json).is_err());
     }
 
     #[test]
     fn bad_size_word_is_rejected() {
-        let json = r#"{ "format": 1, "kind": "llama:x", "class": "screen",
+        let json = r#"{ "format": 1, "kind": "petramond:x", "class": "screen",
                         "root": { "type": "frame", "layout": { "w": "big" } } }"#;
         assert!(Document::from_json(json).is_err());
     }

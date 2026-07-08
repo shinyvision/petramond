@@ -3,73 +3,73 @@
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:oak_log"
+        "petramond:oak_log"
       ],
-      "result": "llama:oak_planks",
+      "result": "petramond:oak_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:spruce_log"
+        "petramond:spruce_log"
       ],
-      "result": "llama:spruce_planks",
+      "result": "petramond:spruce_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:birch_log"
+        "petramond:birch_log"
       ],
-      "result": "llama:birch_planks",
+      "result": "petramond:birch_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:jungle_log"
+        "petramond:jungle_log"
       ],
-      "result": "llama:jungle_planks",
+      "result": "petramond:jungle_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:acacia_log"
+        "petramond:acacia_log"
       ],
-      "result": "llama:acacia_planks",
+      "result": "petramond:acacia_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:dark_oak_log"
+        "petramond:dark_oak_log"
       ],
-      "result": "llama:dark_oak_planks",
+      "result": "petramond:dark_oak_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:cherry_log"
+        "petramond:cherry_log"
       ],
-      "result": "llama:cherry_planks",
+      "result": "petramond:cherry_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:mangrove_log"
+        "petramond:mangrove_log"
       ],
-      "result": "llama:mangrove_planks",
+      "result": "petramond:mangrove_planks",
       "count": 4
     },
     {
       "type": "shapeless",
       "ingredients": [
-        "llama:redwood_log"
+        "petramond:redwood_log"
       ],
-      "result": "llama:redwood_planks",
+      "result": "petramond:redwood_planks",
       "count": 4
     },
     {
@@ -79,9 +79,9 @@
         "#"
       ],
       "key": {
-        "#": "#llama:planks"
+        "#": "#petramond:planks"
       },
-      "result": "llama:stick",
+      "result": "petramond:stick",
       "count": 4
     },
     {
@@ -91,9 +91,9 @@
         "##"
       ],
       "key": {
-        "#": "#llama:planks"
+        "#": "#petramond:planks"
       },
-      "result": "llama:crafting_table",
+      "result": "petramond:crafting_table",
       "count": 1
     },
     {
@@ -103,10 +103,10 @@
         "LLL"
       ],
       "key": {
-        "T": "llama:crafting_table",
-        "L": "#llama:logs"
+        "T": "petramond:crafting_table",
+        "L": "#petramond:logs"
       },
-      "result": "llama:furniture_workbench",
+      "result": "petramond:furniture_workbench",
       "count": 1
     },
     {
@@ -117,9 +117,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:oak_planks"
+        "P": "petramond:oak_planks"
       },
-      "result": "llama:oak_stairs",
+      "result": "petramond:oak_stairs",
       "count": 6
     },
     {
@@ -130,9 +130,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:oak_planks"
+        "P": "petramond:oak_planks"
       },
-      "result": "llama:oak_stairs",
+      "result": "petramond:oak_stairs",
       "count": 6
     },
     {
@@ -143,9 +143,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:spruce_planks"
+        "P": "petramond:spruce_planks"
       },
-      "result": "llama:spruce_stairs",
+      "result": "petramond:spruce_stairs",
       "count": 6
     },
     {
@@ -156,9 +156,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:spruce_planks"
+        "P": "petramond:spruce_planks"
       },
-      "result": "llama:spruce_stairs",
+      "result": "petramond:spruce_stairs",
       "count": 6
     },
     {
@@ -169,9 +169,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:birch_planks"
+        "P": "petramond:birch_planks"
       },
-      "result": "llama:birch_stairs",
+      "result": "petramond:birch_stairs",
       "count": 6
     },
     {
@@ -182,9 +182,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:birch_planks"
+        "P": "petramond:birch_planks"
       },
-      "result": "llama:birch_stairs",
+      "result": "petramond:birch_stairs",
       "count": 6
     },
     {
@@ -195,9 +195,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:jungle_planks"
+        "P": "petramond:jungle_planks"
       },
-      "result": "llama:jungle_stairs",
+      "result": "petramond:jungle_stairs",
       "count": 6
     },
     {
@@ -208,9 +208,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:jungle_planks"
+        "P": "petramond:jungle_planks"
       },
-      "result": "llama:jungle_stairs",
+      "result": "petramond:jungle_stairs",
       "count": 6
     },
     {
@@ -221,9 +221,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:acacia_planks"
+        "P": "petramond:acacia_planks"
       },
-      "result": "llama:acacia_stairs",
+      "result": "petramond:acacia_stairs",
       "count": 6
     },
     {
@@ -234,9 +234,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:acacia_planks"
+        "P": "petramond:acacia_planks"
       },
-      "result": "llama:acacia_stairs",
+      "result": "petramond:acacia_stairs",
       "count": 6
     },
     {
@@ -247,9 +247,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:dark_oak_planks"
+        "P": "petramond:dark_oak_planks"
       },
-      "result": "llama:dark_oak_stairs",
+      "result": "petramond:dark_oak_stairs",
       "count": 6
     },
     {
@@ -260,9 +260,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:dark_oak_planks"
+        "P": "petramond:dark_oak_planks"
       },
-      "result": "llama:dark_oak_stairs",
+      "result": "petramond:dark_oak_stairs",
       "count": 6
     },
     {
@@ -273,9 +273,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:cherry_planks"
+        "P": "petramond:cherry_planks"
       },
-      "result": "llama:cherry_stairs",
+      "result": "petramond:cherry_stairs",
       "count": 6
     },
     {
@@ -286,9 +286,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:cherry_planks"
+        "P": "petramond:cherry_planks"
       },
-      "result": "llama:cherry_stairs",
+      "result": "petramond:cherry_stairs",
       "count": 6
     },
     {
@@ -299,9 +299,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:mangrove_planks"
+        "P": "petramond:mangrove_planks"
       },
-      "result": "llama:mangrove_stairs",
+      "result": "petramond:mangrove_stairs",
       "count": 6
     },
     {
@@ -312,9 +312,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:mangrove_planks"
+        "P": "petramond:mangrove_planks"
       },
-      "result": "llama:mangrove_stairs",
+      "result": "petramond:mangrove_stairs",
       "count": 6
     },
     {
@@ -325,9 +325,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:redwood_planks"
+        "P": "petramond:redwood_planks"
       },
-      "result": "llama:redwood_stairs",
+      "result": "petramond:redwood_stairs",
       "count": 6
     },
     {
@@ -338,9 +338,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:redwood_planks"
+        "P": "petramond:redwood_planks"
       },
-      "result": "llama:redwood_stairs",
+      "result": "petramond:redwood_stairs",
       "count": 6
     },
     {
@@ -351,9 +351,9 @@
         "CCC"
       ],
       "key": {
-        "C": "llama:cobblestone"
+        "C": "petramond:cobblestone"
       },
-      "result": "llama:cobblestone_stairs",
+      "result": "petramond:cobblestone_stairs",
       "count": 6
     },
     {
@@ -364,9 +364,9 @@
         "CCC"
       ],
       "key": {
-        "C": "llama:cobblestone"
+        "C": "petramond:cobblestone"
       },
-      "result": "llama:cobblestone_stairs",
+      "result": "petramond:cobblestone_stairs",
       "count": 6
     },
     {
@@ -377,9 +377,9 @@
         "SSS"
       ],
       "key": {
-        "S": "llama:stone"
+        "S": "petramond:stone"
       },
-      "result": "llama:stone_stairs",
+      "result": "petramond:stone_stairs",
       "count": 6
     },
     {
@@ -390,9 +390,9 @@
         "SSS"
       ],
       "key": {
-        "S": "llama:stone"
+        "S": "petramond:stone"
       },
-      "result": "llama:stone_stairs",
+      "result": "petramond:stone_stairs",
       "count": 6
     },
     {
@@ -403,9 +403,9 @@
         "DDD"
       ],
       "key": {
-        "D": "llama:dirt"
+        "D": "petramond:dirt"
       },
-      "result": "llama:dirt_stairs",
+      "result": "petramond:dirt_stairs",
       "count": 6
     },
     {
@@ -414,9 +414,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:oak_planks"
+        "P": "petramond:oak_planks"
       },
-      "result": "llama:oak_slab",
+      "result": "petramond:oak_slab",
       "count": 6
     },
     {
@@ -425,9 +425,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:spruce_planks"
+        "P": "petramond:spruce_planks"
       },
-      "result": "llama:spruce_slab",
+      "result": "petramond:spruce_slab",
       "count": 6
     },
     {
@@ -436,9 +436,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:birch_planks"
+        "P": "petramond:birch_planks"
       },
-      "result": "llama:birch_slab",
+      "result": "petramond:birch_slab",
       "count": 6
     },
     {
@@ -447,9 +447,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:jungle_planks"
+        "P": "petramond:jungle_planks"
       },
-      "result": "llama:jungle_slab",
+      "result": "petramond:jungle_slab",
       "count": 6
     },
     {
@@ -458,9 +458,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:acacia_planks"
+        "P": "petramond:acacia_planks"
       },
-      "result": "llama:acacia_slab",
+      "result": "petramond:acacia_slab",
       "count": 6
     },
     {
@@ -469,9 +469,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:dark_oak_planks"
+        "P": "petramond:dark_oak_planks"
       },
-      "result": "llama:dark_oak_slab",
+      "result": "petramond:dark_oak_slab",
       "count": 6
     },
     {
@@ -480,9 +480,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:cherry_planks"
+        "P": "petramond:cherry_planks"
       },
-      "result": "llama:cherry_slab",
+      "result": "petramond:cherry_slab",
       "count": 6
     },
     {
@@ -491,9 +491,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:mangrove_planks"
+        "P": "petramond:mangrove_planks"
       },
-      "result": "llama:mangrove_slab",
+      "result": "petramond:mangrove_slab",
       "count": 6
     },
     {
@@ -502,9 +502,9 @@
         "PPP"
       ],
       "key": {
-        "P": "llama:redwood_planks"
+        "P": "petramond:redwood_planks"
       },
-      "result": "llama:redwood_slab",
+      "result": "petramond:redwood_slab",
       "count": 6
     },
     {
@@ -513,9 +513,9 @@
         "CCC"
       ],
       "key": {
-        "C": "llama:cobblestone"
+        "C": "petramond:cobblestone"
       },
-      "result": "llama:cobblestone_slab",
+      "result": "petramond:cobblestone_slab",
       "count": 6
     },
     {
@@ -524,9 +524,9 @@
         "SSS"
       ],
       "key": {
-        "S": "llama:stone"
+        "S": "petramond:stone"
       },
-      "result": "llama:stone_slab",
+      "result": "petramond:stone_slab",
       "count": 6
     },
     {
@@ -535,9 +535,9 @@
         "DDD"
       ],
       "key": {
-        "D": "llama:dirt"
+        "D": "petramond:dirt"
       },
-      "result": "llama:dirt_slab",
+      "result": "petramond:dirt_slab",
       "count": 6
     },
     {
@@ -548,9 +548,9 @@
         "DDD"
       ],
       "key": {
-        "D": "llama:dirt"
+        "D": "petramond:dirt"
       },
-      "result": "llama:dirt_stairs",
+      "result": "petramond:dirt_stairs",
       "count": 6
     },
     {
@@ -561,10 +561,10 @@
         " S "
       ],
       "key": {
-        "P": "#llama:planks",
-        "S": "llama:stick"
+        "P": "#petramond:planks",
+        "S": "petramond:stick"
       },
-      "result": "llama:wooden_pickaxe",
+      "result": "petramond:wooden_pickaxe",
       "count": 1
     },
     {
@@ -575,10 +575,10 @@
         " S "
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "S": "llama:stick"
+        "C": "petramond:cobblestone",
+        "S": "petramond:stick"
       },
-      "result": "llama:stone_pickaxe",
+      "result": "petramond:stone_pickaxe",
       "count": 1
     },
     {
@@ -589,10 +589,10 @@
         " S "
       ],
       "key": {
-        "I": "llama:iron_ingot",
-        "S": "llama:stick"
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
       },
-      "result": "llama:iron_pickaxe",
+      "result": "petramond:iron_pickaxe",
       "count": 1
     },
     {
@@ -603,10 +603,10 @@
         " S "
       ],
       "key": {
-        "D": "llama:diamond",
-        "S": "llama:stick"
+        "D": "petramond:diamond",
+        "S": "petramond:stick"
       },
-      "result": "llama:diamond_pickaxe",
+      "result": "petramond:diamond_pickaxe",
       "count": 1
     },
     {
@@ -617,10 +617,10 @@
         "S"
       ],
       "key": {
-        "P": "#llama:planks",
-        "S": "llama:stick"
+        "P": "#petramond:planks",
+        "S": "petramond:stick"
       },
-      "result": "llama:wooden_shovel",
+      "result": "petramond:wooden_shovel",
       "count": 1
     },
     {
@@ -631,10 +631,10 @@
         "S"
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "S": "llama:stick"
+        "C": "petramond:cobblestone",
+        "S": "petramond:stick"
       },
-      "result": "llama:stone_shovel",
+      "result": "petramond:stone_shovel",
       "count": 1
     },
     {
@@ -645,10 +645,10 @@
         "S"
       ],
       "key": {
-        "I": "llama:iron_ingot",
-        "S": "llama:stick"
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
       },
-      "result": "llama:iron_shovel",
+      "result": "petramond:iron_shovel",
       "count": 1
     },
     {
@@ -659,10 +659,10 @@
         "S"
       ],
       "key": {
-        "D": "llama:diamond",
-        "S": "llama:stick"
+        "D": "petramond:diamond",
+        "S": "petramond:stick"
       },
-      "result": "llama:diamond_shovel",
+      "result": "petramond:diamond_shovel",
       "count": 1
     },
     {
@@ -673,10 +673,10 @@
         " S"
       ],
       "key": {
-        "P": "#llama:planks",
-        "S": "llama:stick"
+        "P": "#petramond:planks",
+        "S": "petramond:stick"
       },
-      "result": "llama:wooden_axe",
+      "result": "petramond:wooden_axe",
       "count": 1
     },
     {
@@ -687,10 +687,10 @@
         "S "
       ],
       "key": {
-        "P": "#llama:planks",
-        "S": "llama:stick"
+        "P": "#petramond:planks",
+        "S": "petramond:stick"
       },
-      "result": "llama:wooden_axe",
+      "result": "petramond:wooden_axe",
       "count": 1
     },
     {
@@ -701,10 +701,10 @@
         " S"
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "S": "llama:stick"
+        "C": "petramond:cobblestone",
+        "S": "petramond:stick"
       },
-      "result": "llama:stone_axe",
+      "result": "petramond:stone_axe",
       "count": 1
     },
     {
@@ -715,10 +715,10 @@
         "S "
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "S": "llama:stick"
+        "C": "petramond:cobblestone",
+        "S": "petramond:stick"
       },
-      "result": "llama:stone_axe",
+      "result": "petramond:stone_axe",
       "count": 1
     },
     {
@@ -729,10 +729,10 @@
         " S"
       ],
       "key": {
-        "I": "llama:iron_ingot",
-        "S": "llama:stick"
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
       },
-      "result": "llama:iron_axe",
+      "result": "petramond:iron_axe",
       "count": 1
     },
     {
@@ -743,10 +743,10 @@
         "S "
       ],
       "key": {
-        "I": "llama:iron_ingot",
-        "S": "llama:stick"
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
       },
-      "result": "llama:iron_axe",
+      "result": "petramond:iron_axe",
       "count": 1
     },
     {
@@ -757,10 +757,10 @@
         " S"
       ],
       "key": {
-        "D": "llama:diamond",
-        "S": "llama:stick"
+        "D": "petramond:diamond",
+        "S": "petramond:stick"
       },
-      "result": "llama:diamond_axe",
+      "result": "petramond:diamond_axe",
       "count": 1
     },
     {
@@ -771,10 +771,10 @@
         "S "
       ],
       "key": {
-        "D": "llama:diamond",
-        "S": "llama:stick"
+        "D": "petramond:diamond",
+        "S": "petramond:stick"
       },
-      "result": "llama:diamond_axe",
+      "result": "petramond:diamond_axe",
       "count": 1
     },
     {
@@ -784,9 +784,9 @@
         " I"
       ],
       "key": {
-        "I": "llama:iron_ingot"
+        "I": "petramond:iron_ingot"
       },
-      "result": "llama:shears",
+      "result": "petramond:shears",
       "count": 1
     },
     {
@@ -796,9 +796,9 @@
         "I "
       ],
       "key": {
-        "I": "llama:iron_ingot"
+        "I": "petramond:iron_ingot"
       },
-      "result": "llama:shears",
+      "result": "petramond:shears",
       "count": 1
     },
     {
@@ -809,10 +809,10 @@
         "CKC"
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "K": "llama:coal"
+        "C": "petramond:cobblestone",
+        "K": "petramond:coal"
       },
-      "result": "llama:furnace",
+      "result": "petramond:furnace",
       "count": 1
     },
     {
@@ -823,9 +823,9 @@
         "PPP"
       ],
       "key": {
-        "P": "#llama:planks"
+        "P": "#petramond:planks"
       },
-      "result": "llama:chest",
+      "result": "petramond:chest",
       "count": 1
     },
     {
@@ -835,10 +835,10 @@
         "S"
       ],
       "key": {
-        "C": "llama:coal",
-        "S": "llama:stick"
+        "C": "petramond:coal",
+        "S": "petramond:stick"
       },
-      "result": "llama:torch",
+      "result": "petramond:torch",
       "count": 4
     },
     {
@@ -848,9 +848,9 @@
         " P "
       ],
       "key": {
-        "P": "#llama:planks"
+        "P": "#petramond:planks"
       },
-      "result": "llama:wooden_bucket",
+      "result": "petramond:wooden_bucket",
       "count": 1
     },
     {
@@ -861,41 +861,41 @@
         "WWW"
       ],
       "key": {
-        "W": "llama:wool",
-        "B": "llama:bed_frame"
+        "W": "petramond:wool",
+        "B": "petramond:bed_frame"
       },
-      "result": "llama:bed",
+      "result": "petramond:bed",
       "count": 1
     },
     {
       "type": "processing",
-      "class": "llama:smelting",
-      "ingredient": "llama:raw_iron",
-      "result": "llama:iron_ingot"
+      "class": "petramond:smelting",
+      "ingredient": "petramond:raw_iron",
+      "result": "petramond:iron_ingot"
     },
     {
       "type": "processing",
-      "class": "llama:smelting",
-      "ingredient": "llama:raw_copper",
-      "result": "llama:copper_ingot"
+      "class": "petramond:smelting",
+      "ingredient": "petramond:raw_copper",
+      "result": "petramond:copper_ingot"
     },
     {
       "type": "processing",
-      "class": "llama:smelting",
-      "ingredient": "llama:raw_gold",
-      "result": "llama:gold_ingot"
+      "class": "petramond:smelting",
+      "ingredient": "petramond:raw_gold",
+      "result": "petramond:gold_ingot"
     },
     {
       "type": "processing",
-      "class": "llama:smelting",
-      "ingredient": "llama:cobblestone",
-      "result": "llama:stone"
+      "class": "petramond:smelting",
+      "ingredient": "petramond:cobblestone",
+      "result": "petramond:stone"
     },
     {
       "type": "processing",
-      "class": "llama:smelting",
-      "ingredient": "llama:sand",
-      "result": "llama:glass"
+      "class": "petramond:smelting",
+      "ingredient": "petramond:sand",
+      "result": "petramond:glass"
     },
     {
       "type": "shaped",
@@ -904,117 +904,117 @@
         "GGG"
       ],
       "key": {
-        "G": "llama:glass"
+        "G": "petramond:glass"
       },
-      "result": "llama:glass_pane",
+      "result": "petramond:glass_pane",
       "count": 16
     },
     {
       "type": "furniture",
-      "input": "llama:oak_planks",
-      "result": "llama:oak_door",
+      "input": "petramond:oak_planks",
+      "result": "petramond:oak_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:spruce_planks",
-      "result": "llama:spruce_door",
+      "input": "petramond:spruce_planks",
+      "result": "petramond:spruce_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:birch_planks",
-      "result": "llama:birch_door",
+      "input": "petramond:birch_planks",
+      "result": "petramond:birch_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:jungle_planks",
-      "result": "llama:jungle_door",
+      "input": "petramond:jungle_planks",
+      "result": "petramond:jungle_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:acacia_planks",
-      "result": "llama:acacia_door",
+      "input": "petramond:acacia_planks",
+      "result": "petramond:acacia_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:dark_oak_planks",
-      "result": "llama:dark_oak_door",
+      "input": "petramond:dark_oak_planks",
+      "result": "petramond:dark_oak_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:cherry_planks",
-      "result": "llama:cherry_door",
+      "input": "petramond:cherry_planks",
+      "result": "petramond:cherry_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:mangrove_planks",
-      "result": "llama:mangrove_door",
+      "input": "petramond:mangrove_planks",
+      "result": "petramond:mangrove_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:redwood_planks",
-      "result": "llama:redwood_door",
+      "input": "petramond:redwood_planks",
+      "result": "petramond:redwood_door",
       "cost": 1
     },
     {
       "type": "furniture",
-      "input": "llama:oak_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:oak_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:spruce_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:spruce_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:birch_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:birch_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:jungle_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:jungle_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:acacia_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:acacia_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:dark_oak_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:dark_oak_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:cherry_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:cherry_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:mangrove_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:mangrove_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     },
     {
       "type": "furniture",
-      "input": "llama:redwood_planks",
-      "result": "llama:bed_frame",
+      "input": "petramond:redwood_planks",
+      "result": "petramond:bed_frame",
       "cost": 5
     }
   ]

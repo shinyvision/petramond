@@ -308,10 +308,7 @@ impl ServerGame {
             ContainerTarget::Inventory => MenuTargetWire::Inventory,
             ContainerTarget::Table => MenuTargetWire::Table,
             ContainerTarget::Furnace(pos) => {
-                let v = sess
-                    .menu
-                    .open_furnace_view(&self.world)
-                    .unwrap_or_default();
+                let v = sess.menu.open_furnace_view(&self.world).unwrap_or_default();
                 MenuTargetWire::Furnace {
                     pos,
                     slots: [slot_wire(v.input), slot_wire(v.fuel), slot_wire(v.output)],

@@ -1876,7 +1876,7 @@ mod tests {
     fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         use std::time::Duration;
 
-        let dir = std::env::temp_dir().join(format!("llamacraft-cubic-e2e-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("petramond-cubic-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let opened = crate::save::open_at(dir.clone()).expect("open save");
         let mut world = World::new(0x51EED, 2);
@@ -1972,10 +1972,8 @@ mod tests {
     fn optimize_explored_terrain_reloads_from_disk_without_generating() {
         use std::time::Duration;
 
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-optimize-terrain-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("petramond-optimize-terrain-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let stream_settled = |world: &mut World| {

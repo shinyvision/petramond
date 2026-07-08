@@ -2,7 +2,7 @@
 //! the connect screen; Quit.
 
 use crate::app::{App, AppScreen};
-use llama_ui::{NavKey, UiEvent, UiState};
+use petramond_ui::{NavKey, UiEvent, UiState};
 
 pub(super) fn populate(_app: &App, _state: &mut UiState) {}
 

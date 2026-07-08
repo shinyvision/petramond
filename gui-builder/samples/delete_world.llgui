@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:delete_world",
+    "kind": "petramond:delete_world",
     "class": "screen",
     "root": {
       "type": "frame",

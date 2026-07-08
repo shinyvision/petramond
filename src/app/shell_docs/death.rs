@@ -3,7 +3,7 @@
 //! close this screen; death is only left through these buttons.
 
 use crate::app::App;
-use llama_ui::{UiEvent, UiState};
+use petramond_ui::{UiEvent, UiState};
 
 pub(super) fn populate(_app: &App, _state: &mut UiState) {}
 

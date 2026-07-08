@@ -6,7 +6,7 @@
 use crate::app::App;
 use crate::doc_edit::{self, NodePath};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use llama_ui::{Node, NodeKind};
+use petramond_ui::{Node, NodeKind};
 
 const ROW_H: f32 = 18.0;
 const INDENT: f32 = 14.0;

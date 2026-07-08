@@ -3,57 +3,57 @@
 //! accept at load time. Keep the two tables in sync by hand — the builder is
 //! deliberately outside the game workspace.
 
-use llama_ui::{DocClass, SlotContract};
+use petramond_ui::{DocClass, SlotContract};
 
 /// Every engine document kind the builder knows how to scaffold.
 pub const ENGINE_KINDS: &[&str] = &[
-    "llama:chest",
-    "llama:inventory",
-    "llama:crafting_table",
-    "llama:furnace",
-    "llama:hotbar",
-    "llama:furniture_workbench",
-    "llama:title",
-    "llama:world_select",
-    "llama:world_settings",
-    "llama:create_world",
-    "llama:delete_world",
-    "llama:pause",
-    "llama:demo",
+    "petramond:chest",
+    "petramond:inventory",
+    "petramond:crafting_table",
+    "petramond:furnace",
+    "petramond:hotbar",
+    "petramond:furniture_workbench",
+    "petramond:title",
+    "petramond:world_select",
+    "petramond:world_settings",
+    "petramond:create_world",
+    "petramond:delete_world",
+    "petramond:pause",
+    "petramond:demo",
 ];
 
 /// The engine's slot expectations for a document kind. Unknown (mod) kinds and
 /// shell screens carry no role slots.
 pub fn contract_for(kind: &str) -> SlotContract {
     match kind {
-        "llama:chest" => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
-        "llama:inventory" => SlotContract::new(&[
+        "petramond:chest" => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
+        "petramond:inventory" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
             ("craft_input", 4),
             ("craft_result", 1),
         ]),
-        "llama:crafting_table" => SlotContract::new(&[
+        "petramond:crafting_table" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
             ("craft_input", 9),
             ("craft_result", 1),
         ]),
-        "llama:furnace" => SlotContract::new(&[
+        "petramond:furnace" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
             ("furnace_input", 1),
             ("furnace_fuel", 1),
             ("furnace_output", 1),
         ]),
-        "llama:hotbar" => SlotContract::new(&[("hotbar", 9)]),
-        "llama:furniture_workbench" => SlotContract::new(&[
+        "petramond:hotbar" => SlotContract::new(&[("hotbar", 9)]),
+        "petramond:furniture_workbench" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
             ("workbench_input", 1),
             ("workbench_result", 21),
         ]),
-        "llama:demo" => SlotContract::new(&[("demo_slots", 9)]),
+        "petramond:demo" => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
     }
 }
@@ -62,12 +62,12 @@ pub fn contract_for(kind: &str) -> SlotContract {
 /// `Screen`; authors can change it).
 pub fn class_for(kind: &str) -> DocClass {
     match kind {
-        "llama:chest"
-        | "llama:inventory"
-        | "llama:crafting_table"
-        | "llama:furnace"
-        | "llama:furniture_workbench" => DocClass::Container,
-        "llama:hotbar" => DocClass::Hud,
+        "petramond:chest"
+        | "petramond:inventory"
+        | "petramond:crafting_table"
+        | "petramond:furnace"
+        | "petramond:furniture_workbench" => DocClass::Container,
+        "petramond:hotbar" => DocClass::Hud,
         _ => DocClass::Screen,
     }
 }
@@ -94,17 +94,17 @@ mod tests {
         // Hand-written expectation mirroring src/gui/documents.rs — if this
         // fails, the builder and the game disagree about what validates.
         let expect: &[(&str, &[(&str, usize)])] = &[
-            ("llama:chest", &[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
+            ("petramond:chest", &[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
             (
-                "llama:inventory",
+                "petramond:inventory",
                 &[("player_inv", 27), ("hotbar", 9), ("craft_input", 4), ("craft_result", 1)],
             ),
             (
-                "llama:crafting_table",
+                "petramond:crafting_table",
                 &[("player_inv", 27), ("hotbar", 9), ("craft_input", 9), ("craft_result", 1)],
             ),
             (
-                "llama:furnace",
+                "petramond:furnace",
                 &[
                     ("player_inv", 27),
                     ("hotbar", 9),
@@ -113,18 +113,18 @@ mod tests {
                     ("furnace_output", 1),
                 ],
             ),
-            ("llama:hotbar", &[("hotbar", 9)]),
+            ("petramond:hotbar", &[("hotbar", 9)]),
             (
-                "llama:furniture_workbench",
+                "petramond:furniture_workbench",
                 &[("player_inv", 27), ("hotbar", 9), ("workbench_input", 1), ("workbench_result", 21)],
             ),
-            ("llama:demo", &[("demo_slots", 9)]),
+            ("petramond:demo", &[("demo_slots", 9)]),
         ];
         for (kind, roles) in expect {
             assert_eq!(contract_for(kind), SlotContract::new(roles), "{kind}");
         }
         // Shell screens and mod kinds carry no slots.
-        for kind in ["llama:pause", "llama:title", "llama:world_select", "somemod:wheel"] {
+        for kind in ["petramond:pause", "petramond:title", "petramond:world_select", "somemod:wheel"] {
             assert!(contract_for(kind).roles.is_empty(), "{kind}");
         }
     }

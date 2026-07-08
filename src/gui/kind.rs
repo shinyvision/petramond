@@ -63,24 +63,24 @@ impl GuiKind {
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
 const ENGINE_GUI_KIND_NAMES: [&str; 18] = [
-    "llama:chest",
-    "llama:inventory",
-    "llama:crafting_table",
-    "llama:furnace",
-    "llama:hotbar",
-    "llama:furniture_workbench",
-    "llama:title",
-    "llama:world_select",
-    "llama:world_settings",
-    "llama:create_world",
-    "llama:delete_world",
-    "llama:pause",
-    "llama:demo",
-    "llama:sleep",
-    "llama:death",
-    "llama:connect_server",
-    "llama:mods_missing",
-    "llama:connection_lost",
+    "petramond:chest",
+    "petramond:inventory",
+    "petramond:crafting_table",
+    "petramond:furnace",
+    "petramond:hotbar",
+    "petramond:furniture_workbench",
+    "petramond:title",
+    "petramond:world_select",
+    "petramond:world_settings",
+    "petramond:create_world",
+    "petramond:delete_world",
+    "petramond:pause",
+    "petramond:demo",
+    "petramond:sleep",
+    "petramond:death",
+    "petramond:connect_server",
+    "petramond:mods_missing",
+    "petramond:connection_lost",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a
@@ -108,8 +108,8 @@ pub(crate) fn intern_str(s: &str) -> &'static str {
 }
 
 /// Resolve `key` to its kind, REGISTERING a namespaced key on first sight.
-/// Engine `llama:*` names map to their consts; a new bare name or unknown
-/// `llama:*` key is `None`.
+/// Engine `petramond:*` names map to their consts; a new bare name or unknown
+/// `petramond:*` key is `None`.
 pub(crate) fn intern_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
@@ -184,14 +184,14 @@ mod tests {
 
     #[test]
     fn engine_names_resolve_to_consts_and_mod_keys_intern_once() {
-        assert_eq!(intern_kind("llama:furnace"), Some(GuiKind::Furnace));
-        assert_eq!(resolve_kind("llama:hotbar"), Some(GuiKind::Hotbar));
+        assert_eq!(intern_kind("petramond:furnace"), Some(GuiKind::Furnace));
+        assert_eq!(resolve_kind("petramond:hotbar"), Some(GuiKind::Hotbar));
         assert!(!GuiKind::Furnace.is_mod());
         assert!(!GuiKind::Other.is_mod());
 
         // A new bare name is refused; a namespaced key registers exactly once.
         assert_eq!(intern_kind("wheel"), None);
-        assert_eq!(intern_kind("llama:wheel"), None);
+        assert_eq!(intern_kind("petramond:wheel"), None);
         let a = intern_kind("kindtest:wheel").expect("namespaced key registers");
         let b = intern_kind("kindtest:wheel").unwrap();
         assert_eq!(a, b, "re-interning returns the same id");

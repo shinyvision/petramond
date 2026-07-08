@@ -153,7 +153,7 @@ impl App {
         self.pointer.set_cursor_position(x, y);
         if self.doc_ui_kind().is_some() {
             self.ui
-                .push_input(llama_ui::InputEvent::PointerMove { x, y });
+                .push_input(petramond_ui::InputEvent::PointerMove { x, y });
         }
     }
 
@@ -162,18 +162,18 @@ impl App {
         if self.doc_ui_kind().is_some() {
             let (x, y) = self.pointer.cursor();
             let button = match button {
-                PointerButton::Primary => llama_ui::PointerButton::Primary,
-                PointerButton::Secondary => llama_ui::PointerButton::Secondary,
+                PointerButton::Primary => petramond_ui::PointerButton::Primary,
+                PointerButton::Secondary => petramond_ui::PointerButton::Secondary,
             };
             self.ui.push_input(if down {
-                llama_ui::InputEvent::PointerDown {
+                petramond_ui::InputEvent::PointerDown {
                     x,
                     y,
                     button,
                     shift: self.modifiers.shift,
                 }
             } else {
-                llama_ui::InputEvent::PointerUp { x, y, button }
+                petramond_ui::InputEvent::PointerUp { x, y, button }
             });
         }
     }
@@ -181,7 +181,7 @@ impl App {
     pub fn add_scroll_delta(&mut self, delta: f32) {
         if self.doc_ui_kind().is_some() {
             // One wheel notch scrolls ~20 logical px, natural direction.
-            self.ui.push_input(llama_ui::InputEvent::Scroll {
+            self.ui.push_input(petramond_ui::InputEvent::Scroll {
                 delta: (delta * 20.0) as i32,
             });
             return;

@@ -38,7 +38,7 @@ pub(crate) fn valid_mod_id(id: &str) -> bool {
 }
 
 /// The namespaced catalog keys `keys` that `pack_id` may NOT introduce: every
-/// `ns:name` key must carry the pack's own id as `ns`. The reserved `llama:*`
+/// `ns:name` key must carry the pack's own id as `ns`. The reserved `petramond:*`
 /// namespace belongs to base engine content, not packs. A pack without an id
 /// may introduce no namespaced keys at all.
 pub(crate) fn foreign_namespaced_keys(pack_id: Option<&str>, keys: &[String]) -> Vec<String> {
@@ -314,28 +314,28 @@ mod tests {
     #[test]
     fn foreign_namespace_keys_flag_violations() {
         let keys = vec![
-            "stone".to_owned(),       // bare non-registry string: ignored here
-            "smoke:lamp".to_owned(),  // own namespace
-            "other:thing".to_owned(), // someone else's
-            "llama:stone".to_owned(), // reserved engine namespace
+            "stone".to_owned(),           // bare non-registry string: ignored here
+            "lights:lamp".to_owned(),     // own namespace
+            "other:thing".to_owned(),     // someone else's
+            "petramond:stone".to_owned(), // reserved engine namespace
         ];
         assert_eq!(
-            foreign_namespaced_keys(Some("smoke"), &keys),
-            vec!["other:thing".to_owned(), "llama:stone".to_owned()]
+            foreign_namespaced_keys(Some("lights"), &keys),
+            vec!["other:thing".to_owned(), "petramond:stone".to_owned()]
         );
         // Without an id, ANY namespaced key is a violation.
         assert_eq!(
             foreign_namespaced_keys(None, &keys),
             vec![
-                "smoke:lamp".to_owned(),
+                "lights:lamp".to_owned(),
                 "other:thing".to_owned(),
-                "llama:stone".to_owned()
+                "petramond:stone".to_owned()
             ]
         );
-        assert!(foreign_namespaced_keys(Some("smoke"), &["stone".to_owned()]).is_empty());
+        assert!(foreign_namespaced_keys(Some("lights"), &["stone".to_owned()]).is_empty());
 
         assert!(valid_mod_id("day_night2"));
-        for bad in ["", "Day", "day-night", "day night", "dæy", "llama"] {
+        for bad in ["", "Day", "day-night", "day night", "dæy", "petramond"] {
             assert!(!valid_mod_id(bad), "{bad}");
         }
     }

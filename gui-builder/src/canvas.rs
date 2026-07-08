@@ -1,4 +1,4 @@
-//! The preview canvas: the real llama-ui frame rasterized by the software
+//! The preview canvas: the real petramond-ui frame rasterized by the software
 //! renderer (pixel-exactly what the game shows), with editor chrome overlaid
 //! as egui shapes — selection outline + resize handles, hover outline, pixel
 //! grid, role badges, drag-to-move/resize/reorder.
@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::doc_edit::{self, NodePath};
 use crate::preview::{self, RectEntry};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
-use llama_ui::{Dir, InstKey, PreviewState, RectI, Size};
+use petramond_ui::{Dir, InstKey, PreviewState, RectI, Size};
 
 const SEL: Color32 = Color32::from_rgb(90, 170, 255);
 const HOVER: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 90);
@@ -208,7 +208,7 @@ fn interact(
                     let path2 = path.clone();
                     app.gesture_mutate(move |doc| {
                         if let Some(n) = doc_edit::node_at_mut(&mut doc.root, &path2) {
-                            n.layout.abs = Some(llama_ui::AbsPos { x: want.0, y: want.1 });
+                            n.layout.abs = Some(petramond_ui::AbsPos { x: want.0, y: want.1 });
                         }
                     });
                 }

@@ -106,7 +106,7 @@ async fn new_renderer_inner(
             // White sky colour at init = identity; the icon-atlas bake reads
             // this buffer, so baked UI icons stay untinted.
             sky_color: [1.0, 1.0, 1.0, 0.0],
-            // Late-morning sun at full daylight until the sim writes llama:time.
+            // Late-morning sun at full daylight until the sim writes petramond:time.
             sun_dir: super::frame_state::sun_uniform(None),
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,

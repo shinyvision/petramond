@@ -3,7 +3,7 @@
 //! Data-driven content (block/item defs, recipes, loot tables, textures,
 //! models) lives under `assets/`; this module finds that directory wherever
 //! the game runs from, so every loader resolves files the same way. Base
-//! candidate roots, in priority order: the `LLAMACRAFT_ASSETS` env override,
+//! candidate roots, in priority order: the `PETRAMOND_ASSETS` env override,
 //! `assets/` under the working directory (the dev tree), then `assets/` (or
 //! the bare file) alongside the executable (a shipped install).
 //!
@@ -13,10 +13,10 @@
 //! manifest. Roots, in priority order (first root providing a pack directory
 //! NAME wins for that pack):
 //!
-//! 1. the `LLAMACRAFT_MODS` env override — REPLACES every other root
+//! 1. the `PETRAMOND_MODS` env override — REPLACES every other root
 //!    (tests / explicit launches mean exactly that mod set),
 //! 2. `mods/` under the working directory (the dev tree),
-//! 3. `<OS data dir>/llamacraft/mods` (e.g. `~/.local/share/llamacraft/mods`)
+//! 3. `<OS data dir>/petramond/mods` (e.g. `~/.local/share/petramond/mods`)
 //!    — where players install packs without touching the install,
 //! 4. `mods/` alongside the executable (packs shipped with the game).
 //!
@@ -35,7 +35,7 @@
 //! ```
 //!
 //! Only `name` is required. `id` is the pack's stable snake_case namespace
-//! (except reserved `llama`, which belongs to the engine) — required as soon as
+//! (except reserved `petramond`, which belongs to the engine) — required as soon as
 //! the pack ships `wasm` or introduces namespaced (`id:name`) catalog keys, and
 //! every namespaced key the pack states must carry ITS OWN id as the prefix (a
 //! violation disables the whole pack with a logged error — packs never load
@@ -72,7 +72,7 @@ use std::sync::LazyLock;
 /// Base asset directories (no packs), in priority order (first wins).
 fn base_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Ok(dir) = std::env::var("LLAMACRAFT_ASSETS") {
+    if let Ok(dir) = std::env::var("PETRAMOND_ASSETS") {
         roots.push(PathBuf::from(dir));
     }
     roots.push(PathBuf::from("assets"));
@@ -114,12 +114,12 @@ pub fn packs() -> &'static [Pack] {
 
 /// `mods/` directories searched for packs, in priority order (see the module
 /// docs): dev tree, then the user's OS data dir, then alongside the
-/// executable. Unlike the additive base roots, the `LLAMACRAFT_MODS` override
+/// executable. Unlike the additive base roots, the `PETRAMOND_MODS` override
 /// REPLACES the default roots: pointing the game (or a test child process) at
 /// a mods dir must mean exactly that mod set, not "that plus whatever the
 /// working directory carries".
 fn mod_roots() -> Vec<PathBuf> {
-    if let Ok(dir) = std::env::var("LLAMACRAFT_MODS") {
+    if let Ok(dir) = std::env::var("PETRAMOND_MODS") {
         return vec![PathBuf::from(dir)];
     }
     let mut roots = vec![PathBuf::from("mods")];

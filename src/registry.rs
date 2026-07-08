@@ -3,7 +3,7 @@
 //! Blocks and items are opaque `u8` ids behind newtypes (`Block(u8)`,
 //! `ItemType(u8)`). Engine content owns the low ids in a compiled, frozen
 //! order (worldgen parity and existing saves depend on those ids never
-//! moving); engine content is named under the reserved `llama:*` namespace.
+//! moving); engine content is named under the reserved `petramond:*` namespace.
 //! Mod packs ADD content by introducing rows with their own NAMESPACED keys
 //! (`mod_id:name`) in the existing layered catalogs (`blocks.json`,
 //! `items.json`), which register fresh ids after the engine range in pack
@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 /// Reserved namespace for engine-owned public keys.
-pub(crate) const ENGINE_NAMESPACE: &str = "llama";
+pub(crate) const ENGINE_NAMESPACE: &str = "petramond";
 
 /// An id-ordered list of registered names: the compiled engine names first
 /// (index == frozen engine id), then pack-registered namespaced names in load
@@ -52,8 +52,8 @@ impl NameTable {
 
     /// Build a table from the compiled engine names plus every layer's row
     /// keys in order. A key that is an engine name (or an already-registered
-    /// dynamic name) is an override — no new id. A non-`llama` NAMESPACED key
-    /// (`mod_id:name`) registers the next id. Bare keys and unknown `llama:*`
+    /// dynamic name) is an override — no new id. A non-`petramond` NAMESPACED key
+    /// (`mod_id:name`) registers the next id. Bare keys and unknown `petramond:*`
     /// keys are errors.
     pub fn build(
         engine: &[&'static str],
@@ -69,7 +69,7 @@ impl NameTable {
                 if !is_namespaced(key) {
                     return Err(format!(
                         "unknown {what} '{key}': registry keys must be namespaced; use a known \
-                         engine key like 'llama:name' or a mod-owned 'mod_id:name' key"
+                         engine key like 'petramond:name' or a mod-owned 'mod_id:name' key"
                     ));
                 }
                 if namespace(key) == Some(ENGINE_NAMESPACE) {
@@ -99,7 +99,7 @@ pub(crate) fn is_namespaced(key: &str) -> bool {
 }
 
 /// The namespace of `key` (`"wheel:wheel" → Some("wheel")`,
-/// `"llama:stone" → Some("llama")`), or `None` for bare and degenerate forms.
+/// `"petramond:stone" → Some("petramond")`), or `None` for bare and degenerate forms.
 /// The per-world mod enablement gates (palette / recipes / natural spawner)
 /// key off this.
 pub(crate) fn namespace(key: &str) -> Option<&str> {
@@ -110,7 +110,7 @@ pub(crate) fn namespace(key: &str) -> Option<&str> {
 }
 
 /// Extensible tag vocabulary: compiled engine tags own the low ids (bare
-/// snake_case names, also reachable as `llama:<name>`); packs add NAMESPACED
+/// snake_case names, also reachable as `petramond:<name>`); packs add NAMESPACED
 /// tags (`mod_id:name`), interned on first sight during load — a tag is
 /// *defined by being listed* (on a data row or in a recipe), it has no
 /// standalone declaration. Ids are process-local and never persisted, so
@@ -131,10 +131,10 @@ impl TagTable {
 
     /// Resolve a tag name from data: a bare name must be an engine tag (typo
     /// guard — a misspelled engine tag must not silently become a new tag);
-    /// `llama:<engine>` resolves to the same id; a namespaced `mod_id:name`
+    /// `petramond:<engine>` resolves to the same id; a namespaced `mod_id:name`
     /// interns on first sight.
     pub(crate) fn resolve(&self, name: &str) -> Result<u8, String> {
-        let bare = name.strip_prefix("llama:").unwrap_or(name);
+        let bare = name.strip_prefix("petramond:").unwrap_or(name);
         if let Some(i) = self.engine.iter().position(|n| *n == bare) {
             return Ok(i as u8);
         }
@@ -243,7 +243,7 @@ mod tests {
         let t = TagTable::new(&["fuel", "planks"]);
         assert_eq!(t.resolve("fuel"), Ok(0));
         assert_eq!(
-            t.resolve("llama:planks"),
+            t.resolve("petramond:planks"),
             Ok(1),
             "an engine tag resolves under its namespaced recipe form too"
         );
@@ -258,16 +258,20 @@ mod tests {
 
     #[test]
     fn namespaced_keys_register_and_bare_unknowns_error() {
-        let engine = &["llama:air", "llama:stone"];
-        // Engine override (known `llama:*`) + a namespaced addition.
+        let engine = &["petramond:air", "petramond:stone"];
+        // Engine override (known `petramond:*`) + a namespaced addition.
         let table = NameTable::build(
             engine,
-            &[vec!["llama:stone".into(), "mymod:gadget".into()]],
+            &[vec!["petramond:stone".into(), "mymod:gadget".into()]],
             "block",
         )
         .expect("valid layers");
         assert_eq!(table.len(), 3, "override adds no id; the addition does");
-        assert_eq!(table.id("llama:stone"), Some(1), "engine ids never move");
+        assert_eq!(
+            table.id("petramond:stone"),
+            Some(1),
+            "engine ids never move"
+        );
         assert_eq!(table.id("mymod:gadget"), Some(2), "appended after engine");
         assert_eq!(table.name(2), Some("mymod:gadget"));
         // Restating a registered dynamic name in a later layer adds no id.
@@ -282,9 +286,12 @@ mod tests {
         let err = NameTable::build(engine, &[vec!["gadget".into()]], "block")
             .expect_err("bare additions are refused");
         assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
-        let err = NameTable::build(engine, &[vec!["llama:gadget".into()]], "block")
+        let err = NameTable::build(engine, &[vec!["petramond:gadget".into()]], "block")
             .expect_err("unknown engine-namespace additions are refused");
-        assert!(err.contains("llama") && err.contains("reserved"), "{err}");
+        assert!(
+            err.contains("petramond") && err.contains("reserved"),
+            "{err}"
+        );
         // Degenerate namespaces are not namespaces.
         for bad in [":gadget", "mymod:", ":"] {
             assert!(!is_namespaced(bad), "{bad}");
@@ -294,14 +301,14 @@ mod tests {
 
     #[test]
     fn registry_caps_at_256_ids() {
-        let engine = &["llama:air"];
+        let engine = &["petramond:air"];
         let keys: Vec<String> = (0..256).map(|i| format!("mymod:thing_{i}")).collect();
         let err = NameTable::build(engine, &[keys], "block").expect_err("cap enforced");
         assert!(err.contains("256"), "{err}");
     }
 
     /// End-to-end dynamic registration: a real pack (blocks.json + items.json
-    /// under a `LLAMACRAFT_MODS` dir) registers a namespaced block + item, the
+    /// under a `PETRAMOND_MODS` dir) registers a namespaced block + item, the
     /// block is placeable/breakable through `World`, and the save palette pins
     /// the dynamic entry by name with engine ids stable.
     ///
@@ -311,7 +318,7 @@ mod tests {
     /// `#[ignore]`d inner test below. Deterministic regardless of test order.
     #[test]
     fn dynamic_pack_content_flows_end_to_end() {
-        let root = std::env::temp_dir().join(format!("llamacraft-dynpack-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("petramond-dynpack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let pack = root.join("mods/testmod");
         std::fs::create_dir_all(&pack).unwrap();
@@ -339,8 +346,8 @@ mod tests {
             .arg("--exact")
             .arg("--ignored")
             .arg("--nocapture")
-            .env("LLAMACRAFT_MODS", root.join("mods"))
-            .env("LLAMACRAFT_DYNPACK_SAVE", root.join("save"))
+            .env("PETRAMOND_MODS", root.join("mods"))
+            .env("PETRAMOND_DYNPACK_SAVE", root.join("save"))
             .output()
             .expect("spawn test binary");
         let _ = std::fs::remove_dir_all(&root);
@@ -352,7 +359,7 @@ mod tests {
         );
     }
 
-    /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
     /// pointing at the fixture pack before first registry touch).
     #[test]
     #[ignore = "spawned by dynamic_pack_content_flows_end_to_end with a fixture pack env"]
@@ -409,7 +416,7 @@ mod tests {
         assert_eq!(Block::from_id(w.chunk_block(x, y, z)), Block::Air);
 
         // --- Save palette: dynamic entry pinned by name, engine ids stable. ---
-        let save = std::path::PathBuf::from(std::env::var_os("LLAMACRAFT_DYNPACK_SAVE").unwrap());
+        let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_DYNPACK_SAVE").unwrap());
         // An "old" palette written before the mod existed, with a stranger
         // entry so disk ids and runtime ids genuinely diverge.
         std::fs::create_dir_all(&save).unwrap();

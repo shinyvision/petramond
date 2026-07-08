@@ -1,4 +1,4 @@
-//! Guest-side SDK for llamacraft mods.
+//! Guest-side SDK for petramond mods.
 //!
 //! A mod implements [`Mod`], calls [`register_mod!`], and builds with plain
 //! `cargo build --target wasm32-unknown-unknown` (see `mods-src/`). The SDK
@@ -215,7 +215,7 @@ pub fn register_ai_node(key: &str, callback_id: u32) {
 }
 
 /// Set one named visual shader parameter (`vec4<f32>`). `key` must be in this
-/// mod's namespace (`mod_id:name`) or an exposed engine `llama:*` key. Shader
+/// mod's namespace (`mod_id:name`) or an exposed engine `petramond:*` key. Shader
 /// packs map names onto fixed GPU slots.
 pub fn shader_set_param(key: &str, value: [f32; 4]) {
     __rt::expect_unit(
@@ -443,7 +443,7 @@ pub fn teleport(pos: [f32; 3]) {
 }
 
 /// Grant the player the status effect `key` (an `effects.json` row — engine
-/// `llama:*` rows and every pack's rows alike) for `ticks` game ticks. An
+/// `petramond:*` rows and every pack's rows alike) for `ticks` game ticks. An
 /// already-active effect is overwritten with the new duration; `0` removes it.
 /// A state primitive like [`set_health`] — no events fire. `false` = unknown
 /// effect key.
@@ -530,7 +530,7 @@ pub fn sound_stop(handle: u64) {
 // --- Phase 3b: persistent KV ----------------------------------------------------
 //
 // Keys are namespaced. Writes must use this mod's own prefix or an exposed
-// engine `llama:*` key (enforced by the host; a violation panics = disables the
+// engine `petramond:*` key (enforced by the host; a violation panics = disables the
 // mod); reads may cross namespaces — the cross-mod interop surface. Key ≤ 256
 // bytes, value ≤ 64 KiB.
 
@@ -542,7 +542,7 @@ pub fn world_kv_get(key: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Write a world KV entry (own namespace or exposed `llama:*` key required).
+/// Write a world KV entry (own namespace or exposed `petramond:*` key required).
 pub fn world_kv_set(key: &str, value: Vec<u8>) {
     __rt::expect_unit(
         "WorldKvSet",
@@ -553,7 +553,7 @@ pub fn world_kv_set(key: &str, value: Vec<u8>) {
     );
 }
 
-/// Delete a world KV entry (own namespace or exposed `llama:*` key required);
+/// Delete a world KV entry (own namespace or exposed `petramond:*` key required);
 /// `false` = absent.
 pub fn world_kv_delete(key: &str) -> bool {
     match __rt::host_call(&HostCall::WorldKvDelete { key: key.into() }) {
@@ -639,7 +639,7 @@ pub fn mob_kv_delete(mob_index: u32, key: &str) -> bool {
 
 // --- Phase 4: worldgen hooks ----------------------------------------------------
 
-/// Resolve a block registry key (`"llama:stone"`, `"mymod:gadget"`) to its
+/// Resolve a block registry key (`"petramond:stone"`, `"mymod:gadget"`) to its
 /// session-scoped runtime id. Works everywhere, worldgen instances included —
 /// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
 /// persist it: ids can change between sessions; names are the stable identity).
@@ -721,9 +721,7 @@ pub fn container_get(pos: [i32; 3]) -> Option<Vec<Option<ItemStackData>>> {
 /// the required shape for a machine mod's tick loop (never loop
 /// `container_get` per placed machine). Parallel to `positions`; `None` =
 /// unloaded or no container there yet.
-pub fn container_get_many(
-    positions: Vec<[i32; 3]>,
-) -> Vec<Option<Vec<Option<ItemStackData>>>> {
+pub fn container_get_many(positions: Vec<[i32; 3]>) -> Vec<Option<Vec<Option<ItemStackData>>>> {
     match __rt::host_call(&HostCall::ContainerGetMany { positions }) {
         HostRet::Containers(containers) => containers,
         other => panic!("ContainerGetMany returned {other:?}"),
@@ -754,7 +752,7 @@ pub fn item_info(key: &str) -> Option<ItemInfoData> {
 
 /// The loaded machine-processing result for one input item key under a recipe
 /// `class` (the same layered catalog engine machines cook from — the furnace
-/// consumes `"llama:smelting"`; name your machine's own class and any pack can
+/// consumes `"petramond:smelting"`; name your machine's own class and any pack can
 /// add recipes for it). `None` = no recipe.
 pub fn recipe_result(class: &str, key: &str) -> Option<ItemStackData> {
     match __rt::host_call(&HostCall::RecipeResult {
@@ -1005,11 +1003,11 @@ mod tests {
 #[macro_export]
 macro_rules! register_mod {
     ($ty:ty) => {
-        static __LLAMACRAFT_MOD: $crate::__rt::ModSlot<$ty> = $crate::__rt::ModSlot::new();
+        static __PETRAMOND_MOD: $crate::__rt::ModSlot<$ty> = $crate::__rt::ModSlot::new();
 
         #[no_mangle]
         pub extern "C" fn mod_init() {
-            $crate::__rt::init(&__LLAMACRAFT_MOD)
+            $crate::__rt::init(&__PETRAMOND_MOD)
         }
 
         #[no_mangle]
@@ -1024,7 +1022,7 @@ macro_rules! register_mod {
 
         #[no_mangle]
         pub extern "C" fn mod_dispatch(ptr: u32, len: u32) -> u64 {
-            $crate::__rt::dispatch(&__LLAMACRAFT_MOD, ptr, len)
+            $crate::__rt::dispatch(&__PETRAMOND_MOD, ptr, len)
         }
     };
 }
@@ -1209,9 +1207,7 @@ pub mod __rt {
             GuestCall::HostileSpawnCandidate {
                 callback_id,
                 candidate,
-            } => GuestRet::HostileSpawn(
-                mod_.hostile_spawn_candidate(callback_id, &candidate),
-            ),
+            } => GuestRet::HostileSpawn(mod_.hostile_spawn_candidate(callback_id, &candidate)),
             GuestCall::BlockBehavior {
                 callback_id,
                 kind,

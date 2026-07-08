@@ -6,7 +6,7 @@
 //! anything untranslatable becomes a `TODO:` label the author replaces.
 
 use crate::doc_edit;
-use llama_ui::{
+use petramond_ui::{
     AbsPos, Anchor, AnchorEdge, DocClass, Document, LayoutProps, Node, NodeKind, Size,
     FORMAT_VERSION,
 };
@@ -252,7 +252,7 @@ fn kind_of(gui_type: &str) -> (String, DocClass) {
     let kind = match gui_type {
         "chest" | "inventory" | "crafting_table" | "furnace" | "hotbar"
         | "furniture_workbench" | "title" | "world_select" | "world_settings" | "create_world"
-        | "delete_world" | "pause" => format!("llama:{gui_type}"),
+        | "delete_world" | "pause" => format!("petramond:{gui_type}"),
         _ => "custom:imported".to_owned(),
     };
     let class = crate::contracts::class_for(&kind);
@@ -331,7 +331,7 @@ mod tests {
     fn pause_import_produces_a_valid_screen_document() {
         let imp = import(LEGACY_PAUSE).unwrap();
         let d = &imp.document;
-        assert_eq!(d.kind, "llama:pause");
+        assert_eq!(d.kind, "petramond:pause");
         assert_eq!(d.class, DocClass::Screen);
         // Buttons carry ids + text; the file layer became an image node; the
         // builtin background was absorbed by the root panel.
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn chest_import_satisfies_the_engine_contract() {
         let imp = import(LEGACY_CHEST).unwrap();
-        let contract = crate::contracts::contract_for("llama:chest");
+        let contract = crate::contracts::contract_for("petramond:chest");
         let issues = imp.document.validate(None, Some(&contract));
         assert!(issues.is_empty(), "{issues:?}");
         assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);

@@ -121,7 +121,7 @@ impl World {
     }
 
     /// Seed the tick counter from a save (`level.dat` v7), so scheduled ticks
-    /// and tick-anchored state (the `llama:clock` day cycle) continue across
+    /// and tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0. Call once at session open, BEFORE
     /// mods initialize — init-time `CurrentTick` host calls must already see
     /// the restored value.

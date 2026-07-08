@@ -1,5 +1,5 @@
-//! Llamacraft GUI Builder — a document editor for llama-ui `*.gui.json` GUIs.
-//! The preview embeds the real llama-ui runtime through its software
+//! Petramond GUI Builder — a document editor for petramond-ui `*.gui.json` GUIs.
+//! The preview embeds the real petramond-ui runtime through its software
 //! rasterizer, so what you see is pixel-exactly what the game renders.
 //!
 //! CLI:
@@ -60,11 +60,11 @@ fn run_gui(open: Option<PathBuf>) -> Result<(), eframe::Error> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([980.0, 620.0])
-            .with_title("Llamacraft GUI Builder"),
+            .with_title("Petramond GUI Builder"),
         ..Default::default()
     };
     eframe::run_native(
-        "Llamacraft GUI Builder",
+        "Petramond GUI Builder",
         native_options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, open)) as Box<dyn eframe::App>)),
     )

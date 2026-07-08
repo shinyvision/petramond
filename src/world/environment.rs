@@ -14,7 +14,7 @@ pub type ShaderParamMap = BTreeMap<String, [f32; 4]>;
 #[derive(Clone, Debug)]
 pub struct WorldEnvironment {
     /// Named visual shader parameters. Shader packs map names onto fixed GPU
-    /// slots; mods write their own namespace or exposed engine `llama:*` keys
+    /// slots; mods write their own namespace or exposed engine `petramond:*` keys
     /// through the host API.
     shader_params: Arc<ShaderParamMap>,
 }

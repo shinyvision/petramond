@@ -53,7 +53,7 @@ impl LanListener {
         let flag = Arc::clone(&stop);
         let (tx, handoff) = mpsc::channel();
         let join = std::thread::Builder::new()
-            .name("llamacraft-accept".to_string())
+            .name("petramond-accept".to_string())
             .spawn(move || {
                 while !flag.load(Ordering::SeqCst) {
                     match listener.accept() {
@@ -569,7 +569,7 @@ mod tests {
     /// ignore Pause while remote players exist, and broadcast joins/leaves.
     #[test]
     fn full_lan_join_place_pause_gate_and_leave() {
-        let dir = std::env::temp_dir().join(format!("llamacraft-lan-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("petramond-lan-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
         // Pre-seed the joining player's save: a known position + dirt to

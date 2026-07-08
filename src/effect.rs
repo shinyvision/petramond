@@ -32,7 +32,7 @@ impl Effect {
 
 /// Engine effect names in frozen id order (`ENGINE_EFFECT_NAMES[id]` names
 /// `Effect(id)`); the completeness oracle `effects.json` is validated against.
-const ENGINE_EFFECT_NAMES: &[&str] = &["llama:regeneration"];
+const ENGINE_EFFECT_NAMES: &[&str] = &["petramond:regeneration"];
 
 impl std::fmt::Debug for Effect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,7 +73,7 @@ pub enum EffectBehavior {
 /// One row of the effect table.
 pub struct EffectDef {
     pub effect: Effect,
-    /// The row's registry name (`"llama:regeneration"`, `"mod_id:haste"`) — the
+    /// The row's registry name (`"petramond:regeneration"`, `"mod_id:haste"`) — the
     /// key host calls and `level.dat` persistence resolve through [`by_name`].
     pub name: &'static str,
     /// Human-readable display name — authored row data reserved for a future
@@ -137,7 +137,7 @@ struct RawFile {
     effects: Vec<RawEffectDef>,
 }
 
-/// The runtime [`Effect`] registered under `name` (engine `llama:*` and pack
+/// The runtime [`Effect`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub fn by_name(name: &str) -> Option<Effect> {
     defs().iter().find(|d| d.name == name).map(|d| d.effect)
@@ -222,13 +222,13 @@ mod tests {
 
     #[test]
     fn engine_row_holds_its_frozen_id_and_pack_rows_register_after() {
-        let base = r#"{"effects": [{"effect": "llama:regeneration", "display": "Regeneration",
+        let base = r#"{"effects": [{"effect": "petramond:regeneration", "display": "Regeneration",
             "icon": "textures/gui/effects/regeneration.png",
             "behavior": {"regen": {"interval": 100, "amount": 1}}}]}"#;
         let pack = r#"{"effects": [{"effect": "mymod:haste", "display": "Haste",
             "icon": "textures/haste.png", "behavior": "none"}]}"#;
         let defs = parse_layers(&[base, pack]).expect("loads");
-        assert_eq!(defs[0].name, "llama:regeneration");
+        assert_eq!(defs[0].name, "petramond:regeneration");
         assert_eq!(defs[0].effect, Effect::Regeneration);
         assert_eq!(
             defs[0].behavior,
@@ -246,25 +246,25 @@ mod tests {
         // Behavior params ride the behavior object — a stray row-level param
         // is an unknown field, rejected loudly.
         assert!(table(
-            r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
+            r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": "none", "interval": 5}]}"#
         )
         .is_err());
         // Regen must carry both params (the enum shape requires them)...
         assert!(table(
-            r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
+            r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": {"regen": {"interval": 100}}}]}"#
         )
         .is_err());
         // ...and they must be positive.
         assert!(table(
-            r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
+            r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": {"regen": {"interval": 0, "amount": 1}}}]}"#
         )
         .is_err());
         // Unknown behavior names are load errors, not silent markers.
         assert!(table(
-            r#"{"effects": [{"effect": "llama:regeneration", "display": "R",
+            r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": "sparkle"}]}"#
         )
         .is_err());

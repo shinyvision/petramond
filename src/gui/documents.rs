@@ -13,7 +13,7 @@
 
 use super::GuiKind;
 use crate::container::{SlotSpec, MAX_CONTAINER_SLOTS};
-use llama_ui::{Document, SlotContract};
+use petramond_ui::{Document, SlotContract};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -313,8 +313,8 @@ fn load() -> Registry {
         let mut images: Vec<DocImageRef> = Vec::new();
         doc.root.visit(&mut |node| {
             let name = match &node.kind {
-                llama_ui::NodeKind::Image { image, .. } => image,
-                llama_ui::NodeKind::Rotimage { image, .. } => image,
+                petramond_ui::NodeKind::Image { image, .. } => image,
+                petramond_ui::NodeKind::Rotimage { image, .. } => image,
                 _ => return,
             };
             // An empty static name is the runtime-bound pattern (`bind.image`
@@ -382,19 +382,19 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
         let kinds = v["kinds"].as_object().expect("catalog has kinds");
         for key in [
-            "llama:title",
-            "llama:world_select",
-            "llama:world_settings",
-            "llama:create_world",
-            "llama:delete_world",
-            "llama:pause",
-            "llama:sleep",
-            "llama:death",
-            "llama:hotbar",
-            "llama:furnace",
-            "llama:connect_server",
-            "llama:mods_missing",
-            "llama:connection_lost",
+            "petramond:title",
+            "petramond:world_select",
+            "petramond:world_settings",
+            "petramond:create_world",
+            "petramond:delete_world",
+            "petramond:pause",
+            "petramond:sleep",
+            "petramond:death",
+            "petramond:hotbar",
+            "petramond:furnace",
+            "petramond:connect_server",
+            "petramond:mods_missing",
+            "petramond:connection_lost",
         ] {
             assert!(
                 kinds.contains_key(key),

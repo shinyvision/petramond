@@ -5,7 +5,7 @@
 //! scale, player name. Distinct from the per-world `settings.json`
 //! (`save::settings`), which holds world state like disabled mods. An absent
 //! file means defaults; unknown fields are ignored so hand-edited files
-//! survive version drift. `LLAMACRAFT_*` env vars override the file for
+//! survive version drift. `PETRAMOND_*` env vars override the file for
 //! one-off runs (see `platform::native` and [`resolve_player_name`]).
 
 use std::path::{Path, PathBuf};
@@ -58,12 +58,12 @@ impl Default for ClientSettings {
     }
 }
 
-/// The local player's effective name: `LLAMACRAFT_PLAYER_NAME` env >
+/// The local player's effective name: `PETRAMOND_PLAYER_NAME` env >
 /// client.json `player_name` > OS `$USER`/`$USERNAME` > `"Player"`.
 /// Candidates are trimmed; blank ones fall through to the next.
 pub fn resolve_player_name(s: &ClientSettings) -> String {
     first_nonempty([
-        std::env::var("LLAMACRAFT_PLAYER_NAME").ok(),
+        std::env::var("PETRAMOND_PLAYER_NAME").ok(),
         s.player_name.clone(),
         std::env::var("USER").ok(),
         std::env::var("USERNAME").ok(),
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn identity_fields_roundtrip_and_default_to_none() {
         let dir = std::env::temp_dir().join(format!(
-            "llamacraft-clienttest-{}-identity",
+            "petramond-clienttest-{}-identity",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

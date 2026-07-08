@@ -300,7 +300,7 @@ impl DropSpec {
 /// its data row, never any recipe code.
 ///
 /// The vocabulary is OPEN: engine tags are the named consts below (bare
-/// snake_case in `items.json`, `#llama:<name>` in recipes); a pack introduces
+/// snake_case in `items.json`, `#petramond:<name>` in recipes); a pack introduces
 /// its own tag by listing a namespaced `mod_id:name` on item rows and
 /// referencing `#mod_id:name` in recipes (interned at load — see
 /// [`crate::registry::TagTable`]).
@@ -312,9 +312,9 @@ static ITEM_TAGS: crate::registry::TagTable =
     crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable"]);
 
 impl ItemTag {
-    /// Any wood-type planks (recipe key `#llama:planks`).
+    /// Any wood-type planks (recipe key `#petramond:planks`).
     pub const PLANKS: ItemTag = ItemTag(0);
-    /// Any wood-type log (recipe key `#llama:logs`).
+    /// Any wood-type log (recipe key `#petramond:logs`).
     pub const LOGS: ItemTag = ItemTag(1);
     /// Anything that burns as furnace fuel — shift-clicked into the fuel slot.
     pub const FUEL: ItemTag = ItemTag(2);
@@ -667,7 +667,7 @@ impl ItemType {
 
     /// Whether this item belongs to `tag`. Membership is item data — each item's
     /// [`ItemDef`](definition::ItemDef) lists its tags — so recipes can require a
-    /// group (e.g. any `#llama:planks`) without naming every member, and a new
+    /// group (e.g. any `#petramond:planks`) without naming every member, and a new
     /// item joins a group by editing its data row, never any recipe code.
     #[inline]
     pub fn has_tag(self, tag: ItemTag) -> bool {
@@ -1021,8 +1021,8 @@ mod tests {
         assert!(!ItemType::Stick.has_tag(LOGS));
         assert!(!ItemType::Stick.has_tag(PLANKS));
         // Tag names resolve from the recipe key.
-        assert_eq!(ItemTag::from_key("llama:planks"), Some(PLANKS));
-        assert_eq!(ItemTag::from_key("llama:logs"), Some(LOGS));
+        assert_eq!(ItemTag::from_key("petramond:planks"), Some(PLANKS));
+        assert_eq!(ItemTag::from_key("petramond:logs"), Some(LOGS));
         assert_eq!(ItemTag::from_key("bogus"), None);
 
         // Furnace routing tags: coal is fuel; raw ores are smeltable; the products
@@ -1035,9 +1035,9 @@ mod tests {
         assert!(!ItemType::RawIron.has_tag(ItemTag::FUEL));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::SMELTABLE));
         assert!(!ItemType::IronIngot.has_tag(ItemTag::FUEL));
-        assert_eq!(ItemTag::from_key("llama:fuel"), Some(ItemTag::FUEL));
+        assert_eq!(ItemTag::from_key("petramond:fuel"), Some(ItemTag::FUEL));
         assert_eq!(
-            ItemTag::from_key("llama:smeltable"),
+            ItemTag::from_key("petramond:smeltable"),
             Some(ItemTag::SMELTABLE)
         );
     }

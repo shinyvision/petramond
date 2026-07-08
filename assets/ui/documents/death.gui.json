@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:death",
+    "kind": "petramond:death",
     "class": "screen",
     "root": {
         "type": "column",

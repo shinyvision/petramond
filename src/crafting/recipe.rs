@@ -8,7 +8,7 @@
 use crate::item::{ItemStack, ItemTag, ItemType};
 
 /// The furnace's processing-recipe class (see [`ProcessingRecipe::class`]).
-pub const SMELTING_CLASS: &str = "llama:smelting";
+pub const SMELTING_CLASS: &str = "petramond:smelting";
 
 /// A machine-processing recipe: one `input` item produces `result` when
 /// processed by the machine consuming `class` — the furnace smelts

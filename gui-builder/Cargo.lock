@@ -1431,7 +1431,7 @@ version = "0.2.0"
 dependencies = [
  "eframe",
  "image",
- "llama-ui",
+ "petramond-ui",
  "rfd",
  "serde",
  "serde_json",
@@ -1773,16 +1773,6 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
-name = "llama-ui"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "image",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "lock_api"
@@ -2352,6 +2342,16 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "petramond-ui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "image",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pin-project"

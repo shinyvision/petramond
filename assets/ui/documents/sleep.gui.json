@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:sleep",
+    "kind": "petramond:sleep",
     "class": "screen",
     "root": {
         "type": "frame",

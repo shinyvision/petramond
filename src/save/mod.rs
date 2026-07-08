@@ -263,14 +263,14 @@ impl Drop for WorldSave {
     }
 }
 
-/// Base data dir: `~/.local/share/llamacraft` (Linux), `~/Library/Application
-/// Support/llamacraft` (macOS), `%APPDATA%\llamacraft` (Windows). Falls back to
+/// Base data dir: `~/.local/share/petramond` (Linux), `~/Library/Application
+/// Support/petramond` (macOS), `%APPDATA%\petramond` (Windows). Falls back to
 /// a hidden dir in the cwd if no home dir can be resolved. Also hosts the
 /// user-installed mod pack root (`<data>/mods` — see `crate::assets`).
 pub(crate) fn base_data_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "", "llamacraft")
+    directories::ProjectDirs::from("", "", "petramond")
         .map(|d| d.data_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".llamacraft"))
+        .unwrap_or_else(|| PathBuf::from(".petramond"))
 }
 
 fn saves_dir() -> PathBuf {
@@ -534,7 +534,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
     let handle = std::thread::Builder::new()
-        .name("llamacraft-save".to_string())
+        .name("petramond-save".to_string())
         .spawn(move || io_thread(dir, rx, load_tx, colgen_tx))
         .expect("spawn save thread");
 
@@ -704,7 +704,7 @@ mod tests {
 
     fn temp_world_dir(tag: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("llamacraft-savetest-{}-{tag}", std::process::id()));
+            std::env::temp_dir().join(format!("petramond-savetest-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -807,13 +807,13 @@ mod tests {
         assert_eq!(seed_from_text("12345"), 12345);
         assert_eq!(seed_from_text(" 12345 "), 12345);
         assert_eq!(
-            seed_from_text("llamacraft"),
-            seed_from_text("llamacraft"),
+            seed_from_text("petramond"),
+            seed_from_text("petramond"),
             "string seeds are stable"
         );
         assert_ne!(
-            seed_from_text("llamacraft"),
-            seed_from_text("Llamacraft"),
+            seed_from_text("petramond"),
+            seed_from_text("Petramond"),
             "different strings choose different compatible seeds"
         );
     }

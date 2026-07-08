@@ -172,14 +172,14 @@ fn asset_path<A: CompiledAsset>(root: &Path, id: &str) -> PathBuf {
     root.join(A::SUBDIR).join(format!("{id}.{}", A::EXTENSION))
 }
 
-/// The cache root: `<OS cache dir>/llamacraft` (e.g. `~/.cache/llamacraft` on Linux), the
+/// The cache root: `<OS cache dir>/petramond` (e.g. `~/.cache/petramond` on Linux), the
 /// conventional home for regenerable derived data and a sibling of the save data under the
 /// OS data dir. Falls back to a hidden cwd dir if no cache dir resolves (mirrors
 /// [`crate::save`]'s data-dir fallback).
 fn cache_root() -> PathBuf {
-    directories::ProjectDirs::from("", "", "llamacraft")
+    directories::ProjectDirs::from("", "", "petramond")
         .map(|d| d.cache_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".llamacraft-cache"))
+        .unwrap_or_else(|| PathBuf::from(".petramond-cache"))
 }
 
 /// Atomically write `bytes` to `path`: create the dir, write a uniquely-named sibling temp,
@@ -238,7 +238,7 @@ mod tests {
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let dir =
-            std::env::temp_dir().join(format!("llamacraft-asset-cache-{}-{n}", std::process::id()));
+            std::env::temp_dir().join(format!("petramond-asset-cache-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

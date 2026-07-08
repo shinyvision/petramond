@@ -5,7 +5,7 @@
 use crate::app::App;
 use crate::doc_edit;
 use eframe::egui;
-use llama_ui::Node;
+use petramond_ui::Node;
 
 const PRESETS: &[(&str, &str)] = &[
     ("Titled section", include_str!("../../assets/presets/titled_section.json")),

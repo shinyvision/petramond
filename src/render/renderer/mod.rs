@@ -398,7 +398,7 @@ pub struct Renderer {
     /// Texture+sampler bind layout used by every UI texture (doc-UI images,
     /// the heart atlas).
     ui_texture_bgl: wgpu::BindGroupLayout,
-    /// GUI-document draw path (llama-ui DrawList upload + batches): every
+    /// GUI-document draw path (petramond-ui DrawList upload + batches): every
     /// screen's chrome. See `doc_ui`.
     doc_ui: doc_ui::DocUi,
     /// Solid-color quads (all stack-count digits) packed into one buffer:

@@ -2,8 +2,8 @@
 //!
 //! Each screen is a GUI document (`assets/ui/documents/<name>.gui.json`) plus
 //! one controller module here: `populate` writes the screen's dynamic values
-//! into the [`llama_ui::UiState`] the document binds, and `handle` maps the
-//! frame's resolved [`llama_ui::UiEvent`]s to app actions (screen
+//! into the [`petramond_ui::UiState`] the document binds, and `handle` maps the
+//! frame's resolved [`petramond_ui::UiEvent`]s to app actions (screen
 //! transitions, world I/O). A screen routes through here exactly when
 //! [`App::doc_ui_kind`] maps it and its document loads.
 //!
@@ -26,7 +26,7 @@ mod world_settings;
 use super::{App, AppScreen};
 use crate::audio::Sound;
 use crate::gui::GuiKind;
-use llama_ui::UiState;
+use petramond_ui::UiState;
 
 /// Split-borrow helper: controllers read `&App` while writing the UI state.
 fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
@@ -35,10 +35,10 @@ fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
     *app.ui.state_mut() = state;
 }
 
-fn is_shell_activation(ev: &llama_ui::UiEvent) -> bool {
+fn is_shell_activation(ev: &petramond_ui::UiEvent) -> bool {
     matches!(
         ev,
-        llama_ui::UiEvent::Click { .. } | llama_ui::UiEvent::Toggle { .. }
+        petramond_ui::UiEvent::Click { .. } | petramond_ui::UiEvent::Toggle { .. }
     )
 }
 
@@ -131,15 +131,15 @@ impl App {
             let gui_state = menu.gui_state;
             let state = self.ui.state_mut();
             if let Some(f) = furnace {
-                state.set("cook01", llama_ui::UiValue::F32(f.cook01));
-                state.set("burn01", llama_ui::UiValue::F32(f.burn01));
+                state.set("cook01", petramond_ui::UiValue::F32(f.cook01));
+                state.set("burn01", petramond_ui::UiValue::F32(f.burn01));
             }
             if let Some(map) = gui_state {
                 for (key, value) in map.iter() {
                     let v = match value {
-                        crate::gui::GuiValue::F32(v) => llama_ui::UiValue::F32(*v),
-                        crate::gui::GuiValue::I32(v) => llama_ui::UiValue::I32(*v),
-                        crate::gui::GuiValue::Str(s) => llama_ui::UiValue::Str(s.clone()),
+                        crate::gui::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
+                        crate::gui::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
+                        crate::gui::GuiValue::Str(s) => petramond_ui::UiValue::Str(s.clone()),
                     };
                     state.set(key.clone(), v);
                 }
@@ -147,17 +147,17 @@ impl App {
         }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
-        let to_button = |b: llama_ui::PointerButton| match b {
-            llama_ui::PointerButton::Primary => crate::controls::PointerButton::Primary,
-            llama_ui::PointerButton::Secondary => crate::controls::PointerButton::Secondary,
+        let to_button = |b: petramond_ui::PointerButton| match b {
+            petramond_ui::PointerButton::Primary => crate::controls::PointerButton::Primary,
+            petramond_ui::PointerButton::Secondary => crate::controls::PointerButton::Secondary,
         };
         for ev in self.ui.take_events() {
             match ev {
                 // Widget (mod GUI button) clicks: primary only, like the
                 // legacy dispatch.
-                llama_ui::UiEvent::Click {
+                petramond_ui::UiEvent::Click {
                     id,
-                    button: llama_ui::PointerButton::Primary,
+                    button: petramond_ui::PointerButton::Primary,
                     ..
                 } => {
                     if let Some(game) = self.game.as_mut() {
@@ -169,7 +169,7 @@ impl App {
                         );
                     }
                 }
-                llama_ui::UiEvent::SlotClick {
+                petramond_ui::UiEvent::SlotClick {
                     role,
                     index,
                     button,
@@ -189,7 +189,7 @@ impl App {
                         game.menu_click(slot, button, shift, gather);
                     }
                 }
-                llama_ui::UiEvent::ClickOutside { button } => {
+                petramond_ui::UiEvent::ClickOutside { button } => {
                     self.gui_router.reset_click_streak();
                     if let Some(game) = self.game.as_mut() {
                         match to_button(button) {

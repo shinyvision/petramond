@@ -288,12 +288,12 @@ impl App {
     }
 
     /// Which GUI document backs the current screen, if any. Document-backed
-    /// screens draw + route input through the llama-ui runtime; a screen with
+    /// screens draw + route input through the petramond-ui runtime; a screen with
     /// no loaded document draws (and routes) nothing.
     pub(crate) fn doc_ui_kind(&self) -> Option<crate::gui::GuiKind> {
         use crate::gui::GuiKind;
         let kind = match self.screen {
-            AppScreen::Title if std::env::var_os("LLAMA_UI_DEMO").is_some() => GuiKind::Demo,
+            AppScreen::Title if std::env::var_os("PETRAMOND_UI_DEMO").is_some() => GuiKind::Demo,
             AppScreen::Title => GuiKind::Title,
             AppScreen::WorldSelect => GuiKind::WorldSelect,
             AppScreen::WorldSettings => GuiKind::WorldSettings,

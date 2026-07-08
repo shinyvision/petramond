@@ -17,7 +17,7 @@ pub enum PointerButton {
 }
 
 /// Semantic (host-keymapped) keys: the host translates ctrl+C → `Copy` etc.,
-/// so llama-ui never owns a keymap.
+/// so petramond-ui never owns a keymap.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NavKey {
     Up,

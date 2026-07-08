@@ -64,22 +64,22 @@ impl Sound {
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
 /// `Sound(id)`); the completeness oracle `sounds.json` is validated against.
 const ENGINE_SOUND_NAMES: &[&str] = &[
-    "llama:wood_punch",
-    "llama:wood_place",
-    "llama:wood_break",
-    "llama:item_pickup",
-    "llama:door_open",
-    "llama:door_close",
-    "llama:chest_open",
-    "llama:chest_close",
-    "llama:stone_punch",
-    "llama:stone_break",
-    "llama:stone_place",
-    "llama:dirt_punch",
-    "llama:dirt_break",
-    "llama:dirt_place",
-    "llama:player_hurt",
-    "llama:ui_click",
+    "petramond:wood_punch",
+    "petramond:wood_place",
+    "petramond:wood_break",
+    "petramond:item_pickup",
+    "petramond:door_open",
+    "petramond:door_close",
+    "petramond:chest_open",
+    "petramond:chest_close",
+    "petramond:stone_punch",
+    "petramond:stone_break",
+    "petramond:stone_place",
+    "petramond:dirt_punch",
+    "petramond:dirt_break",
+    "petramond:dirt_place",
+    "petramond:player_hurt",
+    "petramond:ui_click",
 ];
 
 impl std::fmt::Debug for Sound {
@@ -126,7 +126,7 @@ pub enum SoundCategory {
 /// startup (see [`crate::audio::Audio`]); this is just the static description.
 pub(crate) struct SoundDef {
     pub sound: Sound,
-    /// The row's registry name (`"llama:wood_punch"`, `"mod_id:zap"`) — the key mod
+    /// The row's registry name (`"petramond:wood_punch"`, `"mod_id:zap"`) — the key mod
     /// `EmitSound` HostCalls resolve through [`by_name`].
     pub name: &'static str,
     /// One or more interchangeable source clips (OGG/Vorbis), as asset-relative
@@ -168,7 +168,7 @@ struct RawFile {
     sounds: Vec<RawSoundDef>,
 }
 
-/// The runtime [`Sound`] registered under `name` (engine `llama:*` and pack
+/// The runtime [`Sound`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub(crate) fn by_name(name: &str) -> Option<Sound> {
     defs().iter().find(|d| d.name == name).map(|d| d.sound)
@@ -282,7 +282,7 @@ mod tests {
         let (base, _) =
             crate::assets::read_base_text("sounds.json").expect("assets/sounds.json must ship");
         let layer = r#"{"sounds": [
-            {"sound": "llama:wood_punch", "variants": ["sounds/wood_punch_1.ogg"], "gain": 0.5, "pitch_variation": 0.0, "category": "block"},
+            {"sound": "petramond:wood_punch", "variants": ["sounds/wood_punch_1.ogg"], "gain": 0.5, "pitch_variation": 0.0, "category": "block"},
             {"sound": "mymod:zap", "variants": ["sounds/zap.ogg"], "gain": 1.0, "pitch_variation": 0.1, "attenuation_distance": 48.0, "category": "ui"}
         ]}"#;
         let table = parse_layers(&[&base, layer]).expect("layered table loads");

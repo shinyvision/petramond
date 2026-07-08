@@ -11,7 +11,7 @@ use crate::project::Project;
 use crate::theme_src::{self, ThemeSource};
 use crate::{canvas, io, theme_bar};
 use eframe::egui;
-use llama_ui::{DocIssue, UiState};
+use petramond_ui::{DocIssue, UiState};
 use std::path::PathBuf;
 
 /// Forced widget states for the preview (applied to the selected node).
@@ -71,7 +71,7 @@ pub struct App {
 impl App {
     pub fn new(_cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> App {
         let mut app = App {
-            proj: Project::new("llama:pause"),
+            proj: Project::new("petramond:pause"),
             path: None,
             last_dir: None,
             dirty: false,
@@ -110,14 +110,14 @@ impl App {
     // ---- mutation API (everything routes undo through here) -------------------
 
     /// A discrete document edit: snapshots for undo, then applies `f`.
-    pub fn mutate(&mut self, f: impl FnOnce(&mut llama_ui::Document)) {
+    pub fn mutate(&mut self, f: impl FnOnce(&mut petramond_ui::Document)) {
         self.history.record(&self.proj.document);
         f(&mut self.proj.document);
         self.touch();
     }
 
     /// Start (or continue) a coalescing gesture edit, then apply `f`.
-    pub fn gesture_mutate(&mut self, f: impl FnOnce(&mut llama_ui::Document)) {
+    pub fn gesture_mutate(&mut self, f: impl FnOnce(&mut petramond_ui::Document)) {
         self.history.begin_gesture(&self.proj.document);
         f(&mut self.proj.document);
         self.touch();
@@ -160,7 +160,7 @@ impl App {
         self.tree_scroll_to_sel = true;
     }
 
-    pub fn selected_node(&self) -> Option<&llama_ui::Node> {
+    pub fn selected_node(&self) -> Option<&petramond_ui::Node> {
         doc_edit::node_at(&self.proj.document.root, self.sel.as_deref()?)
     }
 
@@ -369,7 +369,7 @@ impl App {
 
     /// Insert `node` into the selected container (or the selection's parent,
     /// or the root) and select it.
-    pub fn insert_node(&mut self, mut node: llama_ui::Node) {
+    pub fn insert_node(&mut self, mut node: petramond_ui::Node) {
         doc_edit::uniquify_ids(&self.proj.document, &mut node);
         let target: NodePath = match &self.sel {
             Some(path) => match doc_edit::node_at(&self.proj.document.root, path) {
@@ -559,11 +559,11 @@ impl App {
                         .on_hover_text("Appends a 'rows' list two documents' list bindings can read")
                         .clicked()
                     {
-                        let mut row = llama_ui::UiMap::new();
-                        row.insert("name".into(), llama_ui::UiValue::Str("Example".into()));
-                        row.insert("version".into(), llama_ui::UiValue::Str("v0.1.0".into()));
-                        row.insert("enabled".into(), llama_ui::UiValue::Bool(true));
-                        let list = llama_ui::UiValue::List(std::sync::Arc::new(vec![row]));
+                        let mut row = petramond_ui::UiMap::new();
+                        row.insert("name".into(), petramond_ui::UiValue::Str("Example".into()));
+                        row.insert("version".into(), petramond_ui::UiValue::Str("v0.1.0".into()));
+                        row.insert("enabled".into(), petramond_ui::UiValue::Bool(true));
+                        let list = petramond_ui::UiValue::List(std::sync::Arc::new(vec![row]));
                         self.proj
                             .editor
                             .sample_state

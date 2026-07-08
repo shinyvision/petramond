@@ -1,12 +1,12 @@
 //! zombies — the hostile-mob proof-of-concept mod (WIKI/modding.md), and a
-//! MOD-INTEROP consumer: it reads the core `llama:time` world-KV value and
+//! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value and
 //! the engine's split light channels to decide when to spawn and burn.
 //!
 //! What it does, all on the deterministic tick:
 //! - **Light-based spawning**: core selects physical hostile-spawn candidates
 //!   and asks this mod whether a zombie admits each one. Zombies accept only
 //!   when `max(block_light, sky_light * daylight_factor)` is dark enough.
-//!   Daylight comes from `llama:time`, using the same smooth dawn/dusk curve as
+//!   Daylight comes from `petramond:time`, using the same smooth dawn/dusk curve as
 //!   core day/night. Dark caves can spawn zombies during the day; torch/block
 //!   light blocks the spawn.
 //! - **Sunburn**: every second, each zombie in strong direct sky light has a
@@ -25,7 +25,7 @@
 //!
 //! # World-KV keys
 //!
-//! - reads `llama:time` (4-byte LE f32 day fraction) — the sanctioned
+//! - reads `petramond:time` (4-byte LE f32 day fraction) — the sanctioned
 //!   interop surface published by core day/night.
 //! - writes `zombies:invuln_until` — 8 bytes, little-endian u64: the game
 //!   tick the current i-frame window ends at, mirrored for inspection.
@@ -40,7 +40,7 @@ const ZOMBIE_HOSTILE_SPAWNER: u32 = 1;
 const ON_PLAYER_DAMAGE_PRE: u32 = 1;
 
 const ZOMBIE_KEY: &str = "zombies:zombie";
-const TIME_KEY: &str = "llama:time";
+const TIME_KEY: &str = "petramond:time";
 const INVULN_KEY: &str = "zombies:invuln_until";
 
 /// 6-bit effective light strictly below this value allows a spawn. The value

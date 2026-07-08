@@ -3,7 +3,7 @@
 //! handler enforces its 20-tick i-frames — damage AND knockback land at most
 //! once per window. Species registration needs the fixture pack in the
 //! registry, so the assertions run in a child process (the established
-//! `LLAMACRAFT_MODS` re-spawn pattern, staged by `modding::tests`).
+//! `PETRAMOND_MODS` re-spawn pattern, staged by `modding::tests`).
 
 use super::super::tick::TickEvents;
 use crate::camera::Camera;
@@ -19,7 +19,7 @@ fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
     crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_combat_inner");
 }
 
-/// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
 /// pointing at the fixture packs before first registry touch). Uses the
 /// production load path — `Game::new` → `ModHost::load` — so the handler
 /// under test is the real installed wasm, dispatched from the real funnel.
@@ -122,7 +122,7 @@ fn zombie_sunburn_uses_ragdoll_death_path_via_wasm() {
     crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_sunburn_inner");
 }
 
-/// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
 /// pointing at the fixture packs before first registry touch). The assertion
 /// uses the real game tick so the mod's `damage_mob` action must flow through
 /// the mob-damage funnel, emit `mob_died`, and leave a dead/ragdolling corpse

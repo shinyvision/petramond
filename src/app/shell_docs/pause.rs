@@ -3,7 +3,7 @@
 //! close-screen control path).
 
 use crate::app::App;
-use llama_ui::{NavKey, UiEvent, UiState, UiValue};
+use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     let is_remote = app.game.as_ref().is_some_and(|g| g.is_remote());

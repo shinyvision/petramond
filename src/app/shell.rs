@@ -55,16 +55,16 @@ impl App {
             return false;
         }
         let key = match key {
-            TextKey::Backspace => llama_ui::NavKey::Backspace,
-            TextKey::Delete => llama_ui::NavKey::Delete,
-            TextKey::Enter => llama_ui::NavKey::Enter,
-            TextKey::Tab => llama_ui::NavKey::Tab,
-            TextKey::ArrowLeft => llama_ui::NavKey::Left,
-            TextKey::ArrowRight => llama_ui::NavKey::Right,
-            TextKey::ArrowUp => llama_ui::NavKey::Up,
-            TextKey::ArrowDown => llama_ui::NavKey::Down,
+            TextKey::Backspace => petramond_ui::NavKey::Backspace,
+            TextKey::Delete => petramond_ui::NavKey::Delete,
+            TextKey::Enter => petramond_ui::NavKey::Enter,
+            TextKey::Tab => petramond_ui::NavKey::Tab,
+            TextKey::ArrowLeft => petramond_ui::NavKey::Left,
+            TextKey::ArrowRight => petramond_ui::NavKey::Right,
+            TextKey::ArrowUp => petramond_ui::NavKey::Up,
+            TextKey::ArrowDown => petramond_ui::NavKey::Down,
         };
-        self.ui.push_input(llama_ui::InputEvent::Key {
+        self.ui.push_input(petramond_ui::InputEvent::Key {
             key,
             shift: self.modifiers.shift,
         });
@@ -86,13 +86,13 @@ impl App {
             return false;
         }
         let key = match shortcut {
-            TextShortcut::SelectAll => llama_ui::NavKey::SelectAll,
-            TextShortcut::Cut => llama_ui::NavKey::Cut,
-            TextShortcut::Copy => llama_ui::NavKey::Copy,
-            TextShortcut::Paste => llama_ui::NavKey::Paste,
+            TextShortcut::SelectAll => petramond_ui::NavKey::SelectAll,
+            TextShortcut::Cut => petramond_ui::NavKey::Cut,
+            TextShortcut::Copy => petramond_ui::NavKey::Copy,
+            TextShortcut::Paste => petramond_ui::NavKey::Paste,
         };
         self.ui
-            .push_input(llama_ui::InputEvent::Key { key, shift: false });
+            .push_input(petramond_ui::InputEvent::Key { key, shift: false });
         true
     }
 
@@ -101,7 +101,7 @@ impl App {
             return false;
         }
         for ch in text.chars() {
-            self.ui.push_input(llama_ui::InputEvent::Char { ch });
+            self.ui.push_input(petramond_ui::InputEvent::Char { ch });
         }
         true
     }

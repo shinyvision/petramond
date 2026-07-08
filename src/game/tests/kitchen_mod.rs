@@ -10,9 +10,9 @@
 //! `kitchen:cooking` processing recipe — the composition the recipe-class
 //! design exists for: food packs extend the oven with data only. The oven
 //! must cook that food and must NOT smelt ore (its class is `kitchen:cooking`,
-//! never the furnace's `llama:smelting` table). Pack registration needs the
+//! never the furnace's `petramond:smelting` table). Pack registration needs the
 //! fixture in the registry, so the assertions run in a child process (the
-//! established `LLAMACRAFT_MODS` re-spawn pattern).
+//! established `PETRAMOND_MODS` re-spawn pattern).
 
 use super::super::tick::TickEvents;
 use crate::camera::Camera;
@@ -55,7 +55,7 @@ fn kitchen_oven_cooks_food_not_ore_through_the_container_api_via_wasm() {
     crate::modding::tests::run_child_test(&root, "game::tests::kitchen_mod::kitchen_oven_inner");
 }
 
-/// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
 /// pointing at the fixture packs before first registry touch).
 #[test]
 #[ignore = "spawned by kitchen_oven_cooks_food_not_ore_through_the_container_api_via_wasm with a fixture pack env"]
@@ -315,7 +315,7 @@ fn kitchen_oven_inner() {
     assert_eq!(
         s[0],
         Some(ItemStack::new(raw_iron, 3)),
-        "ore sits in the oven untouched — the oven consumes kitchen:cooking, not llama:smelting"
+        "ore sits in the oven untouched — the oven consumes kitchen:cooking, not petramond:smelting"
     );
     assert_eq!(s[2], None, "no smelted product appeared");
     game.close_open_menu();
@@ -661,7 +661,7 @@ fn kitchen_mutton_chain_sheep_loot_then_eating_grants_regen_via_wasm() {
 /// Runs ONLY in the child process spawned above. Proves the pack's food chain
 /// end to end on the real tick paths: the sheep LOOT TABLE layer (1–2 raw
 /// mutton per death), and eating cooked mutton by held button (consume after
-/// the row's eat ticks, `llama:regeneration` granted, interval heals land).
+/// the row's eat ticks, `petramond:regeneration` granted, interval heals land).
 /// The oven cook between the two is covered by `kitchen_oven_inner`.
 #[test]
 #[ignore = "spawned by kitchen_mutton_chain_sheep_loot_then_eating_grants_regen_via_wasm with a fixture pack env"]
@@ -739,7 +739,7 @@ fn kitchen_mutton_inner() {
         .expect("cooked mutton grants an effect");
     assert_eq!(
         crate::effect::defs()[fx.0 as usize].name,
-        "llama:regeneration",
+        "petramond:regeneration",
         "cooked mutton grants the engine regeneration effect"
     );
     game.server.sessions[0]

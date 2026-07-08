@@ -8,10 +8,10 @@
         "PPP"
       ],
       "key": {
-        "C": "llama:cobblestone",
-        "I": "llama:iron_ingot",
-        "F": "llama:furnace",
-        "P": "#llama:planks"
+        "C": "petramond:cobblestone",
+        "I": "petramond:iron_ingot",
+        "F": "petramond:furnace",
+        "P": "#petramond:planks"
       },
       "result": "kitchen:oven",
       "count": 1

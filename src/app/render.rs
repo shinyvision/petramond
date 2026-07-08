@@ -31,7 +31,7 @@ impl App {
                 let active = game.menu_read_model().inventory.active_slot();
                 self.ui
                     .state_mut()
-                    .set("active_slot", llama_ui::UiValue::I32(active as i32));
+                    .set("active_slot", petramond_ui::UiValue::I32(active as i32));
             }
             self.ui.frame(kind, screen_size, now, None);
             doc_kind = Some(kind);

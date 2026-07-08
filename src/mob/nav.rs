@@ -167,15 +167,7 @@ impl Navigator {
             (!goal_changed && self.index < self.path.len()).then(|| self.path[self.index]);
         self.path = old_waypoint
             .and_then(|wp| {
-                preserve_waypoint_path(
-                    start,
-                    wp,
-                    goal,
-                    self.params,
-                    &solid,
-                    &water,
-                    &step_allowed,
-                )
+                preserve_waypoint_path(start, wp, goal, self.params, &solid, &water, &step_allowed)
             })
             .unwrap_or_else(|| {
                 path::find_path_with_step_gate(
@@ -278,16 +270,14 @@ fn preserve_waypoint_path(
     if waypoint == start {
         return None;
     }
-    let step =
-        path::find_path_with_step_gate(start, waypoint, params, solid, water, step_allowed);
+    let step = path::find_path_with_step_gate(start, waypoint, params, solid, water, step_allowed);
     if step.last() != Some(&waypoint) || step.len() > 2 {
         return None;
     }
     if waypoint == goal {
         return Some(step);
     }
-    let suffix =
-        path::find_path_with_step_gate(waypoint, goal, params, solid, water, step_allowed);
+    let suffix = path::find_path_with_step_gate(waypoint, goal, params, solid, water, step_allowed);
     if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
         return None;
     }
@@ -334,15 +324,14 @@ fn door_step_allowed(world: &World, params: PathParams, from: IVec3, to: IVec3) 
     let cz = from.z as f32 + 0.5;
     let min = [cx - half_width, y, cz - half_width];
     let max = [cx + half_width, y + head, cz + half_width];
-    let (moved, _, _) =
-        crate::collision::step_horizontal(min, max, dx, dz, 0.0, |x, y, z| {
-            let block = world.physics_block(x, y, z);
-            if block.render_shape() == crate::block::RenderShape::Door {
-                world.collision_boxes_at(x, y, z)
-            } else {
-                &[]
-            }
-        });
+    let (moved, _, _) = crate::collision::step_horizontal(min, max, dx, dz, 0.0, |x, y, z| {
+        let block = world.physics_block(x, y, z);
+        if block.render_shape() == crate::block::RenderShape::Door {
+            world.collision_boxes_at(x, y, z)
+        } else {
+            &[]
+        }
+    });
     (moved[0] - dx).abs() < 1e-4 && (moved[2] - dz).abs() < 1e-4
 }
 

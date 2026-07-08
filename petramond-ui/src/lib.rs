@@ -1,4 +1,4 @@
-//! llama-ui: the renderer-agnostic GUI runtime shared by the game and the
+//! petramond-ui: the renderer-agnostic GUI runtime shared by the game and the
 //! GUI builder.
 //!
 //! A GUI is a [`Document`] (a tree of themed nodes with auto-layout props and

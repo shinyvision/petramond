@@ -1,7 +1,7 @@
 {
   "sounds": [
     {
-      "sound": "llama:wood_punch",
+      "sound": "petramond:wood_punch",
       "variants": [
         "sounds/wood_punch_1.ogg",
         "sounds/wood_punch_2.ogg",
@@ -12,7 +12,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:wood_place",
+      "sound": "petramond:wood_place",
       "variants": [
         "sounds/wood_place.ogg"
       ],
@@ -21,7 +21,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:wood_break",
+      "sound": "petramond:wood_break",
       "variants": [
         "sounds/wood_break.ogg"
       ],
@@ -30,7 +30,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:item_pickup",
+      "sound": "petramond:item_pickup",
       "variants": [
         "sounds/item_pickup.ogg"
       ],
@@ -39,7 +39,7 @@
       "category": "ui"
     },
     {
-      "sound": "llama:ui_click",
+      "sound": "petramond:ui_click",
       "variants": [
         "sounds/click.ogg"
       ],
@@ -48,7 +48,7 @@
       "category": "ui"
     },
     {
-      "sound": "llama:door_open",
+      "sound": "petramond:door_open",
       "variants": [
         "sounds/door_open.ogg"
       ],
@@ -57,7 +57,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:door_close",
+      "sound": "petramond:door_close",
       "variants": [
         "sounds/door_close.ogg"
       ],
@@ -66,7 +66,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:chest_open",
+      "sound": "petramond:chest_open",
       "variants": [
         "sounds/chest_open.ogg"
       ],
@@ -75,7 +75,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:chest_close",
+      "sound": "petramond:chest_close",
       "variants": [
         "sounds/chest_close.ogg"
       ],
@@ -84,7 +84,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:stone_punch",
+      "sound": "petramond:stone_punch",
       "variants": [
         "sounds/stone_punch_1.ogg",
         "sounds/stone_punch_2.ogg",
@@ -95,7 +95,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:stone_break",
+      "sound": "petramond:stone_break",
       "variants": [
         "sounds/stone_break.ogg"
       ],
@@ -104,7 +104,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:stone_place",
+      "sound": "petramond:stone_place",
       "variants": [
         "sounds/stone_place.ogg"
       ],
@@ -113,7 +113,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:dirt_punch",
+      "sound": "petramond:dirt_punch",
       "variants": [
         "sounds/dirt_punch_1.ogg",
         "sounds/dirt_punch_2.ogg",
@@ -124,7 +124,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:dirt_break",
+      "sound": "petramond:dirt_break",
       "variants": [
         "sounds/dirt_break.ogg"
       ],
@@ -133,7 +133,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:dirt_place",
+      "sound": "petramond:dirt_place",
       "variants": [
         "sounds/dirt_place.ogg"
       ],
@@ -142,7 +142,7 @@
       "category": "block"
     },
     {
-      "sound": "llama:player_hurt",
+      "sound": "petramond:player_hurt",
       "variants": [
         "sounds/player_hurt.ogg"
       ],

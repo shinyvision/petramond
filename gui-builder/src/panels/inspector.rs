@@ -7,10 +7,10 @@ use crate::app::App;
 use crate::bindings::{field_matches, BindField};
 use crate::doc_edit;
 use eframe::egui::{self, DragValue, Response, Ui};
-// NOTE: `ImageFit` isn't re-exported from the llama_ui root (unlike its
+// NOTE: `ImageFit` isn't re-exported from the petramond_ui root (unlike its
 // sibling doc types) — pulled from `doc` directly; worth adding upstream.
-use llama_ui::doc::ImageFit;
-use llama_ui::{
+use petramond_ui::doc::ImageFit;
+use petramond_ui::{
     AbsPos, Align, AlertLevel, Anchor, AnchorEdge, Dir, DocClass, GaugeMode, Justify, NodeKind,
     ScrollAxis, Size,
 };
@@ -538,7 +538,7 @@ fn string_prop(ui: &mut Ui, label: &str, v: &mut String, t: &mut Track) {
     });
 }
 
-fn layout_props(ui: &mut Ui, node: &mut llama_ui::Node, t: &mut Track, is_root: bool) {
+fn layout_props(ui: &mut Ui, node: &mut petramond_ui::Node, t: &mut Track, is_root: bool) {
     let l = &mut node.layout;
     size_edit(ui, "w", &mut l.w, t);
     size_edit(ui, "h", &mut l.h, t);

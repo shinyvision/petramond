@@ -1,19 +1,19 @@
 //! Render a demo document to a PNG with the software rasterizer:
-//! `cargo run -p llama-ui --features raster --example render_demo [out.png]`
+//! `cargo run -p petramond-ui --features raster --example render_demo [out.png]`
 //!
 //! The demo exercises the whole widget catalog against the placeholder (or a
 //! real) theme — the same DrawList the game uploads, so this PNG is what the
 //! game shows.
 
-use llama_ui::raster::TextureSet;
-use llama_ui::{
+use petramond_ui::raster::TextureSet;
+use petramond_ui::{
     Document, FrameArgs, FrameOutput, FrameState, InputEvent, NoImages, Theme, UiMap, UiRuntime,
     UiState, UiValue,
 };
 use std::sync::Arc;
 
 const DEMO: &str = r#"{
-    "format": 1, "kind": "llama:demo", "class": "screen",
+    "format": 1, "kind": "petramond:demo", "class": "screen",
     "root": { "type": "frame", "style": "panel.large",
         "layout": { "pad": [10,10,10,10], "gap": 6 },
         "children": [
@@ -63,8 +63,8 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "render_demo.png".to_owned());
     let doc = Arc::new(Document::from_json(DEMO).expect("demo doc parses"));
-    // LLAMA_UI_THEME_DIR previews a real theme kit; unset = placeholder.
-    let theme = Arc::new(match std::env::var("LLAMA_UI_THEME_DIR") {
+    // PETRAMOND_UI_THEME_DIR previews a real theme kit; unset = placeholder.
+    let theme = Arc::new(match std::env::var("PETRAMOND_UI_THEME_DIR") {
         Ok(dir) => {
             let dir = std::path::PathBuf::from(dir);
             let json = std::fs::read_to_string(dir.join("theme.json")).expect("read theme.json");
@@ -84,7 +84,7 @@ fn main() {
     state.set("burn", UiValue::F32(0.4));
     state.set("mod_sel", UiValue::I32(1));
     let mods: Vec<UiMap> = [
-        ("Smoke Test", "v0.1.0", true),
+        ("Weather Pack", "v0.1.0", true),
         ("Zombies", "v0.1.0", false),
         ("Wheel", "v0.2.3", true),
     ]
@@ -127,7 +127,7 @@ fn main() {
         doc_images: &[],
     };
     let mut rgba = Vec::new();
-    llama_ui::raster::rasterize(&out.draw, &tex, screen, [28, 34, 40, 255], &mut rgba);
+    petramond_ui::raster::rasterize(&out.draw, &tex, screen, [28, 34, 40, 255], &mut rgba);
     image::save_buffer(
         &out_path,
         &rgba,

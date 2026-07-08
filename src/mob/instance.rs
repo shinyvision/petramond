@@ -257,8 +257,8 @@ impl Instance {
 
     /// Apply a damage request with row/hook-composed feedback. Returns `true` if this
     /// hit was lethal. A dead mob ignores damage (no double-kill, no knockback on a
-    /// corpse). `llama:ragdoll` is death-gated: it only starts the ragdoll if a
-    /// `llama:decrease_health` component made this hit cross to zero.
+    /// corpse). `petramond:ragdoll` is death-gated: it only starts the ragdoll if a
+    /// `petramond:decrease_health` component made this hit cross to zero.
     pub fn damage(
         &mut self,
         amount: f32,

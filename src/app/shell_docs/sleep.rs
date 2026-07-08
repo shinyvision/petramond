@@ -6,7 +6,7 @@
 //! morning skip is still waiting on; hidden in single-player.
 
 use crate::app::App;
-use llama_ui::{UiEvent, UiState, UiValue};
+use petramond_ui::{UiEvent, UiState, UiValue};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     let (sleeping, total) = app

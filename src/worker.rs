@@ -81,7 +81,7 @@ impl JobPool {
         for _ in 0..threads.max(1) {
             let shared = shared.clone();
             let h = thread::Builder::new()
-                .name("llamacraft-jobs".to_string())
+                .name("petramond-jobs".to_string())
                 .spawn(move || {
                     loop {
                         let job = {

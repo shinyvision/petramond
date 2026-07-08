@@ -40,7 +40,7 @@ enum RawRecipe {
         count: u8,
     },
     /// A machine-processing recipe: one `ingredient` item produces `result`
-    /// in machines consuming the namespaced `class` (`llama:smelting` = the
+    /// in machines consuming the namespaced `class` (`petramond:smelting` = the
     /// furnace; a mod machine names its own, e.g. `kitchen:cooking`). Any pack
     /// may target any class — that composition is the point.
     Processing {
@@ -348,10 +348,10 @@ mod tests {
     #[test]
     fn processing_recipes_parse_by_class_and_skip_bad_rows() {
         let text = r#"{ "recipes": [
-            { "type": "processing", "class": "llama:smelting", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" },
-            { "type": "processing", "class": "kitchen:cooking", "ingredient": "llama:raw_iron", "result": "llama:coal" },
-            { "type": "processing", "class": "llama:smelting", "ingredient": "mystery", "result": "llama:iron_ingot" },
-            { "type": "processing", "class": "bareclass", "ingredient": "llama:raw_iron", "result": "llama:iron_ingot" }
+            { "type": "processing", "class": "petramond:smelting", "ingredient": "petramond:raw_iron", "result": "petramond:iron_ingot" },
+            { "type": "processing", "class": "kitchen:cooking", "ingredient": "petramond:raw_iron", "result": "petramond:coal" },
+            { "type": "processing", "class": "petramond:smelting", "ingredient": "mystery", "result": "petramond:iron_ingot" },
+            { "type": "processing", "class": "bareclass", "ingredient": "petramond:raw_iron", "result": "petramond:iron_ingot" }
         ] }"#;
         let (grid, processing, _furniture) = parse(text);
         assert!(grid.is_empty());
@@ -364,7 +364,7 @@ mod tests {
         // the lookup key that keeps an oven from smelting ore.
         let recipes = Recipes::new(Vec::new(), processing, Vec::new());
         assert_eq!(
-            recipes.process("llama:smelting", ItemType::RawIron),
+            recipes.process("petramond:smelting", ItemType::RawIron),
             Some(ItemStack::new(ItemType::IronIngot, 1))
         );
         assert_eq!(
@@ -381,9 +381,9 @@ mod tests {
     #[test]
     fn furniture_recipes_parse_and_look_up_by_input() {
         let text = r#"{ "recipes": [
-            { "type": "furniture", "input": "llama:oak_planks", "result": "llama:oak_door", "cost": 1 },
-            { "type": "furniture", "input": "llama:spruce_planks", "result": "llama:spruce_door", "cost": 6 },
-            { "type": "furniture", "input": "mystery", "result": "llama:oak_door" }
+            { "type": "furniture", "input": "petramond:oak_planks", "result": "petramond:oak_door", "cost": 1 },
+            { "type": "furniture", "input": "petramond:spruce_planks", "result": "petramond:spruce_door", "cost": 6 },
+            { "type": "furniture", "input": "mystery", "result": "petramond:oak_door" }
         ] }"#;
         let (grid, processing, furniture) = parse(text);
         assert!(grid.is_empty() && processing.is_empty());
@@ -402,23 +402,23 @@ mod tests {
     #[test]
     fn tag_and_item_ingredients_parse() {
         assert!(matches!(
-            parse_ingredient("#llama:planks"),
+            parse_ingredient("#petramond:planks"),
             Ok(Ingredient::Tag(_))
         ));
         assert!(matches!(
-            parse_ingredient("llama:stick"),
+            parse_ingredient("petramond:stick"),
             Ok(Ingredient::Item(ItemType::Stick))
         ));
         assert!(parse_ingredient("#bogus").is_err());
         assert!(parse_ingredient("bogus_item").is_err());
     }
 
-    /// A mod pack's shaped recipe (stick plus around a `#llama:logs` centre → the
+    /// A mod pack's shaped recipe (stick plus around a `#petramond:logs` centre → the
     /// pack's own dynamic item) resolves through the ENGINE recipe matcher:
     /// pack recipes.json layers append, `#tag` ingredients resolve, and the
     /// namespaced result key finds the dynamically registered item. Pack
     /// registration needs the fixture in the registry, so the assertions run
-    /// in a child process (the established `LLAMACRAFT_MODS` re-spawn
+    /// in a child process (the established `PETRAMOND_MODS` re-spawn
     /// pattern, staged by `modding::tests`).
     #[test]
     fn wheel_mod_shaped_recipe_resolves_through_the_engine_matcher() {
@@ -429,7 +429,7 @@ mod tests {
         crate::modding::tests::run_child_test(&root, "crafting::load::tests::wheel_recipe_inner");
     }
 
-    /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
     /// pointing at the fixture pack before first registry touch).
     #[test]
     #[ignore = "spawned by wheel_mod_shaped_recipe_resolves_through_the_engine_matcher with a fixture pack env"]
@@ -446,7 +446,7 @@ mod tests {
         };
         let (s, log) = (Some(ItemType::Stick), Some(ItemType::BirchLog));
 
-        // The plus arrangement: sticks NESW around any `#llama:logs` centre.
+        // The plus arrangement: sticks NESW around any `#petramond:logs` centre.
         let plus = grid([None, s, None, s, log, s, None, s, None]);
         assert_eq!(
             recipes.find(&plus, 3),
@@ -479,20 +479,20 @@ mod tests {
     /// Per-world disabled mods: a recipe is dropped when its RESULT, any
     /// INGREDIENT (shaped key, shapeless list, processing input, furniture
     /// input — `#tag` keys included), or its processing CLASS is namespaced to
-    /// a disabled mod id; engine `llama:*` keys and other namespaces pass.
+    /// a disabled mod id; engine `petramond:*` keys and other namespaces pass.
     #[test]
     fn recipes_touching_a_disabled_namespace_are_filtered() {
         let disabled: std::collections::BTreeSet<String> = ["wheel".to_owned()].into();
         let raw = |json: &str| serde_json::from_str::<RawRecipe>(json).expect("recipe json");
 
         let hits = [
-            r##"{ "type": "shaped", "pattern": ["L"], "key": {"L": "#llama:logs"}, "result": "wheel:wheel_of_fortune" }"##,
-            r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "llama:stick" }"##,
-            r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "llama:stick" }"##,
-            r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "llama:stick" }"##,
-            r##"{ "type": "processing", "class": "llama:smelting", "ingredient": "wheel:wheel_of_fortune", "result": "llama:coal" }"##,
-            r##"{ "type": "processing", "class": "wheel:spinning", "ingredient": "llama:coal", "result": "llama:stick" }"##,
-            r##"{ "type": "furniture", "input": "llama:oak_planks", "result": "wheel:wheel_of_fortune" }"##,
+            r##"{ "type": "shaped", "pattern": ["L"], "key": {"L": "#petramond:logs"}, "result": "wheel:wheel_of_fortune" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["wheel:wheel_of_fortune"], "result": "petramond:stick" }"##,
+            r##"{ "type": "shaped", "pattern": ["W"], "key": {"W": "wheel:wheel_of_fortune"}, "result": "petramond:stick" }"##,
+            r##"{ "type": "shapeless", "ingredients": ["#wheel:parts"], "result": "petramond:stick" }"##,
+            r##"{ "type": "processing", "class": "petramond:smelting", "ingredient": "wheel:wheel_of_fortune", "result": "petramond:coal" }"##,
+            r##"{ "type": "processing", "class": "wheel:spinning", "ingredient": "petramond:coal", "result": "petramond:stick" }"##,
+            r##"{ "type": "furniture", "input": "petramond:oak_planks", "result": "wheel:wheel_of_fortune" }"##,
         ];
         for json in hits {
             assert_eq!(
@@ -503,8 +503,8 @@ mod tests {
         }
 
         let passes = [
-            r#"{ "type": "shapeless", "ingredients": ["llama:oak_log"], "result": "llama:oak_planks" }"#,
-            r#"{ "type": "shapeless", "ingredients": ["othermod:gear"], "result": "llama:stick" }"#,
+            r#"{ "type": "shapeless", "ingredients": ["petramond:oak_log"], "result": "petramond:oak_planks" }"#,
+            r#"{ "type": "shapeless", "ingredients": ["othermod:gear"], "result": "petramond:stick" }"#,
         ];
         for json in passes {
             assert_eq!(disabled_namespace_in(&raw(json), &disabled), None, "{json}");
@@ -514,9 +514,9 @@ mod tests {
     #[test]
     fn bad_recipes_are_skipped_not_fatal() {
         let text = r#"{ "recipes": [
-            { "type": "shapeless", "ingredients": ["llama:oak_log"], "result": "llama:oak_planks", "count": 4 },
-            { "type": "shapeless", "ingredients": ["mystery"], "result": "llama:oak_planks" },
-            { "type": "shaped", "pattern": ["X"], "key": {}, "result": "llama:stick" }
+            { "type": "shapeless", "ingredients": ["petramond:oak_log"], "result": "petramond:oak_planks", "count": 4 },
+            { "type": "shapeless", "ingredients": ["mystery"], "result": "petramond:oak_planks" },
+            { "type": "shaped", "pattern": ["X"], "key": {}, "result": "petramond:stick" }
         ] }"#;
         // Only the first (valid) recipe survives; the other two are skipped.
         let (grid, processing, furniture) = parse(text);

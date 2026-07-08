@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:chest",
+    "kind": "petramond:chest",
     "class": "container",
     "root": {
         "type": "frame",

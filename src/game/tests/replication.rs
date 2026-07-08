@@ -741,7 +741,7 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     // (After(Spawning)), so the flag survives until the Placement stage.
     game.server
         .world
-        .mod_kv_set("llama:is_night".into(), vec![1]);
+        .mod_kv_set("petramond:is_night".into(), vec![1]);
     game.server.sessions[0].look = Some(super::common::hit(base, IVec3::Y));
     game.server.sessions[0].pending_place = true;
 

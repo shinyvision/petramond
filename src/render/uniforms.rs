@@ -52,7 +52,7 @@ pub struct Uniforms {
     /// prefix of this struct stay layout-compatible.
     pub sky_color: [f32; 4],
     /// `xyz` = the unit sun direction (derived from the engine-owned
-    /// `llama:time` day fraction with the same arc formula as
+    /// `petramond:time` day fraction with the same arc formula as
     /// `daynight_sky.wgsl`); `w` = daylight in `[0,1]` (1 = full day). Read by
     /// the atmosphere haze (`atmosphere.wgsl`) so terrain fog warms toward the
     /// sun the sky shader draws. Appended last for prefix layout compatibility.

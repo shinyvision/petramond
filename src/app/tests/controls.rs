@@ -66,9 +66,9 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
 }
 
 /// End-to-end plumbing for the document-backed create-world screen: platform
-/// text entry points route into the llama-ui runtime, the focused editor
+/// text entry points route into the petramond-ui runtime, the focused editor
 /// applies them, and the controller mirrors the text into bound state.
-/// (Editor semantics themselves are tested in llama-ui's text_edit suite.)
+/// (Editor semantics themselves are tested in petramond-ui's text_edit suite.)
 #[test]
 fn create_world_document_input_types_selects_and_uses_clipboard() {
     use crate::gui::GuiKind;
@@ -244,7 +244,7 @@ fn play_after_rename_opens_the_original_save_directory() {
 /// the OS clipboard).
 struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
 
-impl llama_ui::TextClipboard for SharedClipboard {
+impl petramond_ui::TextClipboard for SharedClipboard {
     fn get_text(&mut self) -> Option<String> {
         self.0.borrow().clone()
     }

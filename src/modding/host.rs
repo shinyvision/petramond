@@ -235,7 +235,7 @@ fn intern_mod_id(id: &str) -> &'static str {
 }
 
 /// The mod-KV write guard: WRITES (set/delete) must use either the calling
-/// mod's own `mod_id:` prefix or an exposed engine `llama:` key. Reads may cross
+/// mod's own `mod_id:` prefix or an exposed engine `petramond:` key. Reads may cross
 /// namespaces (the interop surface), and keys/values are size-capped.
 /// `Some(err)` rejects the call.
 fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> {
@@ -1294,7 +1294,7 @@ mod tests {
                     slots: vec![(
                         0,
                         Some(mod_api::ItemStackData {
-                            key: "llama:coal".into(),
+                            key: "petramond:coal".into(),
                             count: 3,
                         }),
                     )],
@@ -1319,7 +1319,7 @@ mod tests {
     }
 
     /// The KV namespace contract: writes must carry the CALLER's own
-    /// `mod_id:` prefix or an engine-owned `llama:` key (foreign and bare keys
+    /// `mod_id:` prefix or an engine-owned `petramond:` key (foreign and bare keys
     /// are rejected with an error), while reads may cross namespaces — that
     /// asymmetry IS the cross-mod interop surface. Size caps reject oversized
     /// values.
@@ -1344,7 +1344,7 @@ mod tests {
                 handle_host_call(
                     &mut beta,
                     HostCall::WorldKvSet {
-                        key: "llama:time".into(),
+                        key: "petramond:time".into(),
                         value: vec![1],
                     },
                 ),
@@ -1362,7 +1362,7 @@ mod tests {
                 HostRet::Error(_)
             ));
             // ...and so are bare / degenerate keys.
-            for bad in ["x", "alpha:", "llama:", "alphax:y", "beta"] {
+            for bad in ["x", "alpha:", "petramond:", "alphax:y", "beta"] {
                 assert!(
                     matches!(
                         handle_host_call(
@@ -1391,7 +1391,7 @@ mod tests {
                 handle_host_call(
                     &mut alpha,
                     HostCall::WorldKvGet {
-                        key: "llama:time".into(),
+                        key: "petramond:time".into(),
                     },
                 ),
                 HostRet::Bytes(Some(vec![1]))
@@ -1440,7 +1440,7 @@ mod tests {
     }
 
     /// Shader params are the visual environment surface mods use for sky
-    /// shaders and other pack-owned effects: own namespace or engine `llama:*`,
+    /// shaders and other pack-owned effects: own namespace or engine `petramond:*`,
     /// tick-scoped, and stored in the world's neutral environment snapshot.
     #[test]
     fn shader_param_writes_are_namespaced_and_tick_scoped() {
@@ -1484,7 +1484,7 @@ mod tests {
                 handle_host_call(
                     &mut beta,
                     HostCall::ShaderSetParam {
-                        key: "llama:light".into(),
+                        key: "petramond:light".into(),
                         value: [0.8, 0.0, 0.0, 0.0],
                     },
                 ),
@@ -1497,7 +1497,7 @@ mod tests {
             Some(&[0.25, 0.5, 0.75, 1.0])
         );
         assert_eq!(
-            world.environment().shader_params().get("llama:light"),
+            world.environment().shader_params().get("petramond:light"),
             Some(&[0.8, 0.0, 0.0, 0.0])
         );
         assert!(matches!(
@@ -1580,7 +1580,7 @@ mod tests {
             handle_host_call(
                 &mut data,
                 HostCall::ResolveBlock {
-                    key: "llama:air".into()
+                    key: "petramond:air".into()
                 },
             ),
             HostRet::Block(Some(mod_api::BlockId(0)))
@@ -1618,7 +1618,7 @@ mod tests {
                 handle_host_call(
                     &mut data,
                     HostCall::EmitSound {
-                        key: "llama:item_pickup".into(),
+                        key: "petramond:item_pickup".into(),
                         pos: Some([1.0, 64.0, 1.0]),
                     },
                 ),
@@ -1666,7 +1666,7 @@ mod tests {
                 handle_host_call(
                     &mut data,
                     HostCall::SpawnMob {
-                        key: "llama:owl".into(),
+                        key: "petramond:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
                     },
@@ -1705,7 +1705,7 @@ mod tests {
                 handles.0 = match handle_host_call(
                     &mut data,
                     HostCall::SoundPlayAt {
-                        key: "llama:item_pickup".into(),
+                        key: "petramond:item_pickup".into(),
                         pos: [1.0, 81.0, 1.0],
                         volume: 0.5,
                         pitch: 1.25,
@@ -1718,7 +1718,7 @@ mod tests {
                     &mut data,
                     HostCall::SoundPlayOnMob {
                         mob_id,
-                        key: "llama:item_pickup".into(),
+                        key: "petramond:item_pickup".into(),
                         volume: 0.75,
                         pitch: 0.9,
                     },
@@ -1756,7 +1756,8 @@ mod tests {
             "same session inputs produce the same handles"
         );
 
-        let sound = crate::audio::sound_by_name("llama:item_pickup").expect("engine sound exists");
+        let sound =
+            crate::audio::sound_by_name("petramond:item_pickup").expect("engine sound exists");
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],

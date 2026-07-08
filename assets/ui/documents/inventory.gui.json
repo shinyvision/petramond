@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:inventory",
+    "kind": "petramond:inventory",
     "class": "container",
     "root": {
         "type": "frame",

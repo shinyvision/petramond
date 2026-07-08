@@ -899,7 +899,7 @@ mod tests {
         };
         let doc = Document::from_json(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "alert", "level": "info", "text": "A rather long warning message" }
             ] }
@@ -930,7 +930,7 @@ mod tests {
         };
         let doc = Document::from_json(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "button", "id": "b", "text": "OK" },
                 { "type": "checkbox", "id": "c" },

@@ -8,8 +8,8 @@
         " S "
       ],
       "key": {
-        "S": "llama:stick",
-        "L": "#llama:logs"
+        "S": "petramond:stick",
+        "L": "#petramond:logs"
       },
       "result": "wheel:wheel_of_fortune",
       "count": 1

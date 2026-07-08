@@ -4,7 +4,7 @@
 
 use crate::legacy_import;
 use crate::project::{self, Project};
-use llama_ui::Document;
+use petramond_ui::Document;
 use std::path::{Path, PathBuf};
 
 pub fn load_project(path: &Path) -> Result<Project, String> {
@@ -153,7 +153,7 @@ pub fn list_samples() -> Vec<(String, PathBuf)> {
     out
 }
 
-/// Default export file name for a document kind (`llama:pause` → `pause.gui.json`).
+/// Default export file name for a document kind (`petramond:pause` → `pause.gui.json`).
 pub fn export_file_name(doc: &Document) -> String {
     let stem = doc.kind.split(':').last().unwrap_or("document");
     format!("{stem}.gui.json")

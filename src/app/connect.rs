@@ -114,8 +114,8 @@ impl App {
         // which would wipe the seeds below on the screen's first frame.
         self.ui.ensure_active(crate::gui::GuiKind::ConnectServer);
         let state = self.ui.state_mut();
-        state.set("server_addr", llama_ui::UiValue::Str(addr.clone()));
-        state.set("player_name", llama_ui::UiValue::Str(name));
+        state.set("server_addr", petramond_ui::UiValue::Str(addr.clone()));
+        state.set("player_name", petramond_ui::UiValue::Str(name));
         // Ready to type immediately, editing from the prefill.
         self.ui
             .focus_text_input("server_addr", &addr, ADDR_MAX_CHARS);
@@ -161,7 +161,7 @@ impl App {
             label: "Connecting…",
         };
         std::thread::Builder::new()
-            .name("llamacraft-connect".to_owned())
+            .name("petramond-connect".to_owned())
             .spawn(move || {
                 let outcome = run_connect(&host, port, &name, &cancel, |label| {
                     let _ = tx.send((gen, ConnectOutcome::Progress(label)));

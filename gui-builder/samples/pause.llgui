@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:pause",
+    "kind": "petramond:pause",
     "class": "screen",
     "root": {
       "type": "frame",

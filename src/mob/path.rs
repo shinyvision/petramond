@@ -437,11 +437,7 @@ fn neighbors(
         let target = a + IVec3::new(dx, 0, dz);
         let o1 = a + IVec3::new(dx, 0, 0);
         let o2 = a + IVec3::new(0, 0, dz);
-        if foothold(target)
-            && foothold(o1)
-            && foothold(o2)
-            && step_allowed(a, target)
-        {
+        if foothold(target) && foothold(o1) && foothold(o2) && step_allowed(a, target) {
             out.push((target, COST_DIAG));
         }
     }

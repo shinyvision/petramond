@@ -223,7 +223,7 @@ mod tests {
     fn list_doc() -> Document {
         Document::from_json(
             r#"{
-            "format": 1, "kind": "llama:world_settings", "class": "screen",
+            "format": 1, "kind": "petramond:world_settings", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "label", "text": "Mods", "bind": { "text": "heading" } },
                 { "type": "list", "id": "mods", "bind": { "items": "mod_rows", "selected": "mod_sel" },
@@ -255,7 +255,7 @@ mod tests {
         state.set(
             "mod_rows",
             UiValue::List(Arc::new(vec![
-                row("Smoke Test", true, true),
+                row("Weather Pack", true, true),
                 row("Zombies", false, false),
             ])),
         );
@@ -270,7 +270,7 @@ mod tests {
         // First row: label text from item map, toggle on + enabled.
         let row0 = tree.get(list.children[0]);
         let label0 = tree.get(row0.children[0]);
-        assert_eq!(label0.text.as_deref(), Some("Smoke Test"));
+        assert_eq!(label0.text.as_deref(), Some("Weather Pack"));
         let toggle0 = tree.get(row0.children[1]);
         assert_eq!(toggle0.value_bool, Some(true));
         assert!(toggle0.enabled);

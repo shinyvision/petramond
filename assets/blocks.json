@@ -1,7 +1,7 @@
 {
   "blocks": [
     {
-      "block": "llama:air",
+      "block": "petramond:air",
       "shape": "cube",
       "flags": [],
       "tags": [
@@ -22,7 +22,7 @@
       "drops": []
     },
     {
-      "block": "llama:grass",
+      "block": "petramond:grass",
       "shape": "cube",
       "flags": [
         "solid",
@@ -60,7 +60,7 @@
       "hardness": 0.7,
       "drops": [
         {
-          "item": "llama:dirt",
+          "item": "petramond:dirt",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -68,7 +68,7 @@
       ]
     },
     {
-      "block": "llama:dirt",
+      "block": "petramond:dirt",
       "shape": "cube",
       "flags": [
         "solid",
@@ -106,7 +106,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:dirt",
+          "item": "petramond:dirt",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -114,7 +114,7 @@
       ]
     },
     {
-      "block": "llama:stone",
+      "block": "petramond:stone",
       "shape": "cube",
       "flags": [
         "solid",
@@ -151,7 +151,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:cobblestone",
+          "item": "petramond:cobblestone",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -159,7 +159,7 @@
       ]
     },
     {
-      "block": "llama:sand",
+      "block": "petramond:sand",
       "shape": "cube",
       "flags": [
         "solid",
@@ -197,7 +197,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:sand",
+          "item": "petramond:sand",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -205,7 +205,7 @@
       ]
     },
     {
-      "block": "llama:snow",
+      "block": "petramond:snow",
       "shape": "cube",
       "flags": [
         "solid",
@@ -242,7 +242,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:snow",
+          "item": "petramond:snow",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -250,7 +250,7 @@
       ]
     },
     {
-      "block": "llama:water",
+      "block": "petramond:water",
       "shape": "cube",
       "flags": [
         "transparent"
@@ -273,7 +273,7 @@
       "drops": []
     },
     {
-      "block": "llama:oak_log",
+      "block": "petramond:oak_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -310,7 +310,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:oak_log",
+          "item": "petramond:oak_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -318,7 +318,7 @@
       ]
     },
     {
-      "block": "llama:oak_leaves",
+      "block": "petramond:oak_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -356,7 +356,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:oak_sapling",
+          "item": "petramond:oak_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -364,7 +364,7 @@
       ]
     },
     {
-      "block": "llama:spruce_log",
+      "block": "petramond:spruce_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -401,7 +401,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:spruce_log",
+          "item": "petramond:spruce_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -409,7 +409,7 @@
       ]
     },
     {
-      "block": "llama:birch_log",
+      "block": "petramond:birch_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -446,7 +446,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:birch_log",
+          "item": "petramond:birch_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -454,7 +454,7 @@
       ]
     },
     {
-      "block": "llama:jungle_log",
+      "block": "petramond:jungle_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -491,7 +491,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:jungle_log",
+          "item": "petramond:jungle_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -499,7 +499,7 @@
       ]
     },
     {
-      "block": "llama:acacia_log",
+      "block": "petramond:acacia_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -536,7 +536,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:acacia_log",
+          "item": "petramond:acacia_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -544,7 +544,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_log",
+      "block": "petramond:dark_oak_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -581,7 +581,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:dark_oak_log",
+          "item": "petramond:dark_oak_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -589,7 +589,7 @@
       ]
     },
     {
-      "block": "llama:cherry_log",
+      "block": "petramond:cherry_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -626,7 +626,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cherry_log",
+          "item": "petramond:cherry_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -634,7 +634,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_log",
+      "block": "petramond:mangrove_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -671,7 +671,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:mangrove_log",
+          "item": "petramond:mangrove_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -679,7 +679,7 @@
       ]
     },
     {
-      "block": "llama:spruce_leaves",
+      "block": "petramond:spruce_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -717,7 +717,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:spruce_sapling",
+          "item": "petramond:spruce_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -725,7 +725,7 @@
       ]
     },
     {
-      "block": "llama:birch_leaves",
+      "block": "petramond:birch_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -763,7 +763,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:birch_sapling",
+          "item": "petramond:birch_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -771,7 +771,7 @@
       ]
     },
     {
-      "block": "llama:jungle_leaves",
+      "block": "petramond:jungle_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -809,7 +809,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:jungle_sapling",
+          "item": "petramond:jungle_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -817,7 +817,7 @@
       ]
     },
     {
-      "block": "llama:acacia_leaves",
+      "block": "petramond:acacia_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -855,7 +855,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:acacia_sapling",
+          "item": "petramond:acacia_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -863,7 +863,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_leaves",
+      "block": "petramond:dark_oak_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -901,7 +901,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:dark_oak_sapling",
+          "item": "petramond:dark_oak_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -909,7 +909,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_leaves",
+      "block": "petramond:mangrove_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -948,7 +948,7 @@
       "drops": []
     },
     {
-      "block": "llama:cherry_leaves",
+      "block": "petramond:cherry_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -986,7 +986,7 @@
       "hardness": 0.2,
       "drops": [
         {
-          "item": "llama:cherry_sapling",
+          "item": "petramond:cherry_sapling",
           "min": 1,
           "max": 1,
           "chance": 0.1
@@ -994,7 +994,7 @@
       ]
     },
     {
-      "block": "llama:azalea_leaves",
+      "block": "petramond:azalea_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1033,7 +1033,7 @@
       "drops": []
     },
     {
-      "block": "llama:red_sand",
+      "block": "petramond:red_sand",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1070,7 +1070,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:red_sand",
+          "item": "petramond:red_sand",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1078,7 +1078,7 @@
       ]
     },
     {
-      "block": "llama:sandstone",
+      "block": "petramond:sandstone",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1113,7 +1113,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:sandstone",
+          "item": "petramond:sandstone",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1121,7 +1121,7 @@
       ]
     },
     {
-      "block": "llama:red_sandstone",
+      "block": "petramond:red_sandstone",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1156,7 +1156,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:red_sandstone",
+          "item": "petramond:red_sandstone",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1164,7 +1164,7 @@
       ]
     },
     {
-      "block": "llama:terracotta",
+      "block": "petramond:terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1199,7 +1199,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:terracotta",
+          "item": "petramond:terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1207,7 +1207,7 @@
       ]
     },
     {
-      "block": "llama:white_terracotta",
+      "block": "petramond:white_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1242,7 +1242,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:white_terracotta",
+          "item": "petramond:white_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1250,7 +1250,7 @@
       ]
     },
     {
-      "block": "llama:orange_terracotta",
+      "block": "petramond:orange_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1285,7 +1285,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:orange_terracotta",
+          "item": "petramond:orange_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1293,7 +1293,7 @@
       ]
     },
     {
-      "block": "llama:yellow_terracotta",
+      "block": "petramond:yellow_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1328,7 +1328,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:yellow_terracotta",
+          "item": "petramond:yellow_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1336,7 +1336,7 @@
       ]
     },
     {
-      "block": "llama:brown_terracotta",
+      "block": "petramond:brown_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1371,7 +1371,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:brown_terracotta",
+          "item": "petramond:brown_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1379,7 +1379,7 @@
       ]
     },
     {
-      "block": "llama:red_terracotta",
+      "block": "petramond:red_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1414,7 +1414,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:red_terracotta",
+          "item": "petramond:red_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1422,7 +1422,7 @@
       ]
     },
     {
-      "block": "llama:light_gray_terracotta",
+      "block": "petramond:light_gray_terracotta",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1457,7 +1457,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:light_gray_terracotta",
+          "item": "petramond:light_gray_terracotta",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1465,7 +1465,7 @@
       ]
     },
     {
-      "block": "llama:podzol",
+      "block": "petramond:podzol",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1500,7 +1500,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:podzol",
+          "item": "petramond:podzol",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1508,7 +1508,7 @@
       ]
     },
     {
-      "block": "llama:mycelium",
+      "block": "petramond:mycelium",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1543,7 +1543,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:mycelium",
+          "item": "petramond:mycelium",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1551,7 +1551,7 @@
       ]
     },
     {
-      "block": "llama:coarse_dirt",
+      "block": "petramond:coarse_dirt",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1586,7 +1586,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:coarse_dirt",
+          "item": "petramond:coarse_dirt",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1594,7 +1594,7 @@
       ]
     },
     {
-      "block": "llama:gravel",
+      "block": "petramond:gravel",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1629,7 +1629,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:gravel",
+          "item": "petramond:gravel",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1637,7 +1637,7 @@
       ]
     },
     {
-      "block": "llama:clay",
+      "block": "petramond:clay",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1672,7 +1672,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:clay",
+          "item": "petramond:clay",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1680,7 +1680,7 @@
       ]
     },
     {
-      "block": "llama:mud",
+      "block": "petramond:mud",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1715,7 +1715,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:mud",
+          "item": "petramond:mud",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1723,7 +1723,7 @@
       ]
     },
     {
-      "block": "llama:moss_block",
+      "block": "petramond:moss_block",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1758,7 +1758,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:moss_block",
+          "item": "petramond:moss_block",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1766,7 +1766,7 @@
       ]
     },
     {
-      "block": "llama:snow_block",
+      "block": "petramond:snow_block",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1801,7 +1801,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:snow_block",
+          "item": "petramond:snow_block",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1809,7 +1809,7 @@
       ]
     },
     {
-      "block": "llama:packed_ice",
+      "block": "petramond:packed_ice",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1844,7 +1844,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:packed_ice",
+          "item": "petramond:packed_ice",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1852,7 +1852,7 @@
       ]
     },
     {
-      "block": "llama:ice",
+      "block": "petramond:ice",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1887,7 +1887,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:ice",
+          "item": "petramond:ice",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1895,7 +1895,7 @@
       ]
     },
     {
-      "block": "llama:calcite",
+      "block": "petramond:calcite",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1930,7 +1930,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:calcite",
+          "item": "petramond:calcite",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1938,7 +1938,7 @@
       ]
     },
     {
-      "block": "llama:granite",
+      "block": "petramond:granite",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1973,7 +1973,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:granite",
+          "item": "petramond:granite",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1981,7 +1981,7 @@
       ]
     },
     {
-      "block": "llama:diorite",
+      "block": "petramond:diorite",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2016,7 +2016,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:diorite",
+          "item": "petramond:diorite",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2024,7 +2024,7 @@
       ]
     },
     {
-      "block": "llama:andesite",
+      "block": "petramond:andesite",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2059,7 +2059,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:andesite",
+          "item": "petramond:andesite",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2067,7 +2067,7 @@
       ]
     },
     {
-      "block": "llama:tuff",
+      "block": "petramond:tuff",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2102,7 +2102,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:tuff",
+          "item": "petramond:tuff",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2110,7 +2110,7 @@
       ]
     },
     {
-      "block": "llama:coal_ore",
+      "block": "petramond:coal_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2145,7 +2145,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:coal",
+          "item": "petramond:coal",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2153,7 +2153,7 @@
       ]
     },
     {
-      "block": "llama:iron_ore",
+      "block": "petramond:iron_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2188,7 +2188,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:raw_iron",
+          "item": "petramond:raw_iron",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2196,7 +2196,7 @@
       ]
     },
     {
-      "block": "llama:copper_ore",
+      "block": "petramond:copper_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2231,7 +2231,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:raw_copper",
+          "item": "petramond:raw_copper",
           "min": 2,
           "max": 4,
           "chance": 1
@@ -2239,7 +2239,7 @@
       ]
     },
     {
-      "block": "llama:gold_ore",
+      "block": "petramond:gold_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2274,7 +2274,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:raw_gold",
+          "item": "petramond:raw_gold",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2282,7 +2282,7 @@
       ]
     },
     {
-      "block": "llama:redstone_ore",
+      "block": "petramond:redstone_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2318,7 +2318,7 @@
       "drops": []
     },
     {
-      "block": "llama:lapis_ore",
+      "block": "petramond:lapis_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2353,7 +2353,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:lapis_lazuli",
+          "item": "petramond:lapis_lazuli",
           "min": 2,
           "max": 4,
           "chance": 1
@@ -2361,7 +2361,7 @@
       ]
     },
     {
-      "block": "llama:diamond_ore",
+      "block": "petramond:diamond_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2396,7 +2396,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:diamond",
+          "item": "petramond:diamond",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2404,7 +2404,7 @@
       ]
     },
     {
-      "block": "llama:emerald_ore",
+      "block": "petramond:emerald_ore",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2439,7 +2439,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:emerald_ore",
+          "item": "petramond:emerald_ore",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2447,7 +2447,7 @@
       ]
     },
     {
-      "block": "llama:pumpkin",
+      "block": "petramond:pumpkin",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2482,7 +2482,7 @@
       "hardness": 1,
       "drops": [
         {
-          "item": "llama:pumpkin",
+          "item": "petramond:pumpkin",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2490,7 +2490,7 @@
       ]
     },
     {
-      "block": "llama:melon",
+      "block": "petramond:melon",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2525,7 +2525,7 @@
       "hardness": 1,
       "drops": [
         {
-          "item": "llama:melon",
+          "item": "petramond:melon",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2533,7 +2533,7 @@
       ]
     },
     {
-      "block": "llama:cactus",
+      "block": "petramond:cactus",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2571,7 +2571,7 @@
       "hardness": 0.4,
       "drops": [
         {
-          "item": "llama:cactus",
+          "item": "petramond:cactus",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2579,7 +2579,7 @@
       ]
     },
     {
-      "block": "llama:short_grass",
+      "block": "petramond:short_grass",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2604,7 +2604,7 @@
       "drops": []
     },
     {
-      "block": "llama:fern",
+      "block": "petramond:fern",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2628,7 +2628,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:fern",
+          "item": "petramond:fern",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2636,7 +2636,7 @@
       ]
     },
     {
-      "block": "llama:dandelion",
+      "block": "petramond:dandelion",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2659,7 +2659,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:dandelion",
+          "item": "petramond:dandelion",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2667,7 +2667,7 @@
       ]
     },
     {
-      "block": "llama:poppy",
+      "block": "petramond:poppy",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2690,7 +2690,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:poppy",
+          "item": "petramond:poppy",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2698,7 +2698,7 @@
       ]
     },
     {
-      "block": "llama:cornflower",
+      "block": "petramond:cornflower",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2721,7 +2721,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:cornflower",
+          "item": "petramond:cornflower",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2729,7 +2729,7 @@
       ]
     },
     {
-      "block": "llama:allium",
+      "block": "petramond:allium",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2752,7 +2752,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:allium",
+          "item": "petramond:allium",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2760,7 +2760,7 @@
       ]
     },
     {
-      "block": "llama:azure_bluet",
+      "block": "petramond:azure_bluet",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2783,7 +2783,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:azure_bluet",
+          "item": "petramond:azure_bluet",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2791,7 +2791,7 @@
       ]
     },
     {
-      "block": "llama:oxeye_daisy",
+      "block": "petramond:oxeye_daisy",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2814,7 +2814,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:oxeye_daisy",
+          "item": "petramond:oxeye_daisy",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2822,7 +2822,7 @@
       ]
     },
     {
-      "block": "llama:red_tulip",
+      "block": "petramond:red_tulip",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2845,7 +2845,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:red_tulip",
+          "item": "petramond:red_tulip",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2853,7 +2853,7 @@
       ]
     },
     {
-      "block": "llama:dead_bush",
+      "block": "petramond:dead_bush",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2877,7 +2877,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:dead_bush",
+          "item": "petramond:dead_bush",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2885,7 +2885,7 @@
       ]
     },
     {
-      "block": "llama:brown_mushroom",
+      "block": "petramond:brown_mushroom",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2909,7 +2909,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:brown_mushroom",
+          "item": "petramond:brown_mushroom",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2917,7 +2917,7 @@
       ]
     },
     {
-      "block": "llama:red_mushroom",
+      "block": "petramond:red_mushroom",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -2941,7 +2941,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:red_mushroom",
+          "item": "petramond:red_mushroom",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2949,7 +2949,7 @@
       ]
     },
     {
-      "block": "llama:cobblestone",
+      "block": "petramond:cobblestone",
       "shape": "cube",
       "flags": [
         "solid",
@@ -2984,7 +2984,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cobblestone",
+          "item": "petramond:cobblestone",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2992,7 +2992,7 @@
       ]
     },
     {
-      "block": "llama:oak_planks",
+      "block": "petramond:oak_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3027,7 +3027,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:oak_planks",
+          "item": "petramond:oak_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3035,7 +3035,7 @@
       ]
     },
     {
-      "block": "llama:spruce_planks",
+      "block": "petramond:spruce_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3070,7 +3070,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:spruce_planks",
+          "item": "petramond:spruce_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3078,7 +3078,7 @@
       ]
     },
     {
-      "block": "llama:birch_planks",
+      "block": "petramond:birch_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3113,7 +3113,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:birch_planks",
+          "item": "petramond:birch_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3121,7 +3121,7 @@
       ]
     },
     {
-      "block": "llama:jungle_planks",
+      "block": "petramond:jungle_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3156,7 +3156,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:jungle_planks",
+          "item": "petramond:jungle_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3164,7 +3164,7 @@
       ]
     },
     {
-      "block": "llama:acacia_planks",
+      "block": "petramond:acacia_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3199,7 +3199,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:acacia_planks",
+          "item": "petramond:acacia_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3207,7 +3207,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_planks",
+      "block": "petramond:dark_oak_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3242,7 +3242,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:dark_oak_planks",
+          "item": "petramond:dark_oak_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3250,7 +3250,7 @@
       ]
     },
     {
-      "block": "llama:cherry_planks",
+      "block": "petramond:cherry_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3285,7 +3285,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cherry_planks",
+          "item": "petramond:cherry_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3293,7 +3293,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_planks",
+      "block": "petramond:mangrove_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3328,7 +3328,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:mangrove_planks",
+          "item": "petramond:mangrove_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3336,7 +3336,7 @@
       ]
     },
     {
-      "block": "llama:crafting_table",
+      "block": "petramond:crafting_table",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3371,7 +3371,7 @@
       "hardness": 2.5,
       "drops": [
         {
-          "item": "llama:crafting_table",
+          "item": "petramond:crafting_table",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3379,7 +3379,7 @@
       ]
     },
     {
-      "block": "llama:furnace",
+      "block": "petramond:furnace",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3415,7 +3415,7 @@
       "hardness": 3.5,
       "drops": [
         {
-          "item": "llama:furnace",
+          "item": "petramond:furnace",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3423,7 +3423,7 @@
       ]
     },
     {
-      "block": "llama:chest",
+      "block": "petramond:chest",
       "shape": "cube",
       "flags": [
         "solid",
@@ -3459,7 +3459,7 @@
       "hardness": 2.5,
       "drops": [
         {
-          "item": "llama:chest",
+          "item": "petramond:chest",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3467,7 +3467,7 @@
       ]
     },
     {
-      "block": "llama:torch",
+      "block": "petramond:torch",
       "shape": "torch",
       "flags": [
         "transparent"
@@ -3541,7 +3541,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:torch",
+          "item": "petramond:torch",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3549,9 +3549,9 @@
       ]
     },
     {
-      "block": "llama:furniture_workbench",
+      "block": "petramond:furniture_workbench",
       "shape": {
-        "model": "llama:furniture_workbench"
+        "model": "petramond:furniture_workbench"
       },
       "flags": [
         "solid",
@@ -3572,7 +3572,7 @@
       "hardness": 2.5,
       "drops": [
         {
-          "item": "llama:furniture_workbench",
+          "item": "petramond:furniture_workbench",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3580,7 +3580,7 @@
       ]
     },
     {
-      "block": "llama:oak_sapling",
+      "block": "petramond:oak_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3603,7 +3603,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:oak_sapling",
+          "item": "petramond:oak_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3611,7 +3611,7 @@
       ]
     },
     {
-      "block": "llama:spruce_sapling",
+      "block": "petramond:spruce_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3634,7 +3634,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:spruce_sapling",
+          "item": "petramond:spruce_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3642,7 +3642,7 @@
       ]
     },
     {
-      "block": "llama:birch_sapling",
+      "block": "petramond:birch_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3665,7 +3665,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:birch_sapling",
+          "item": "petramond:birch_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3673,7 +3673,7 @@
       ]
     },
     {
-      "block": "llama:jungle_sapling",
+      "block": "petramond:jungle_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3696,7 +3696,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:jungle_sapling",
+          "item": "petramond:jungle_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3704,7 +3704,7 @@
       ]
     },
     {
-      "block": "llama:acacia_sapling",
+      "block": "petramond:acacia_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3727,7 +3727,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:acacia_sapling",
+          "item": "petramond:acacia_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3735,7 +3735,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_sapling",
+      "block": "petramond:dark_oak_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3758,7 +3758,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:dark_oak_sapling",
+          "item": "petramond:dark_oak_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3766,7 +3766,7 @@
       ]
     },
     {
-      "block": "llama:cherry_sapling",
+      "block": "petramond:cherry_sapling",
       "shape": "cross",
       "flags": [
         "transparent"
@@ -3789,7 +3789,7 @@
       "hardness": 0,
       "drops": [
         {
-          "item": "llama:cherry_sapling",
+          "item": "petramond:cherry_sapling",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3797,7 +3797,7 @@
       ]
     },
     {
-      "block": "llama:oak_door",
+      "block": "petramond:oak_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -3832,7 +3832,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:oak_door",
+          "item": "petramond:oak_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3840,7 +3840,7 @@
       ]
     },
     {
-      "block": "llama:spruce_door",
+      "block": "petramond:spruce_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -3875,7 +3875,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:spruce_door",
+          "item": "petramond:spruce_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3883,7 +3883,7 @@
       ]
     },
     {
-      "block": "llama:birch_door",
+      "block": "petramond:birch_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -3918,7 +3918,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:birch_door",
+          "item": "petramond:birch_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3926,7 +3926,7 @@
       ]
     },
     {
-      "block": "llama:jungle_door",
+      "block": "petramond:jungle_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -3961,7 +3961,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:jungle_door",
+          "item": "petramond:jungle_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -3969,7 +3969,7 @@
       ]
     },
     {
-      "block": "llama:acacia_door",
+      "block": "petramond:acacia_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -4004,7 +4004,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:acacia_door",
+          "item": "petramond:acacia_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4012,7 +4012,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_door",
+      "block": "petramond:dark_oak_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -4047,7 +4047,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:dark_oak_door",
+          "item": "petramond:dark_oak_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4055,7 +4055,7 @@
       ]
     },
     {
-      "block": "llama:cherry_door",
+      "block": "petramond:cherry_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -4090,7 +4090,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:cherry_door",
+          "item": "petramond:cherry_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4098,7 +4098,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_door",
+      "block": "petramond:mangrove_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -4133,7 +4133,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:mangrove_door",
+          "item": "petramond:mangrove_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4141,7 +4141,7 @@
       ]
     },
     {
-      "block": "llama:redwood_log",
+      "block": "petramond:redwood_log",
       "shape": "cube",
       "flags": [
         "solid",
@@ -4178,7 +4178,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:redwood_log",
+          "item": "petramond:redwood_log",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4186,7 +4186,7 @@
       ]
     },
     {
-      "block": "llama:redwood_leaves",
+      "block": "petramond:redwood_leaves",
       "shape": "cube",
       "flags": [
         "solid",
@@ -4225,7 +4225,7 @@
       "drops": []
     },
     {
-      "block": "llama:redwood_planks",
+      "block": "petramond:redwood_planks",
       "shape": "cube",
       "flags": [
         "solid",
@@ -4260,7 +4260,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:redwood_planks",
+          "item": "petramond:redwood_planks",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4268,7 +4268,7 @@
       ]
     },
     {
-      "block": "llama:redwood_door",
+      "block": "petramond:redwood_door",
       "shape": "door",
       "flags": [
         "solid"
@@ -4303,7 +4303,7 @@
       "hardness": 3,
       "drops": [
         {
-          "item": "llama:redwood_door",
+          "item": "petramond:redwood_door",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4311,7 +4311,7 @@
       ]
     },
     {
-      "block": "llama:oak_stairs",
+      "block": "petramond:oak_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4333,7 +4333,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:oak_stairs",
+          "item": "petramond:oak_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4341,7 +4341,7 @@
       ]
     },
     {
-      "block": "llama:spruce_stairs",
+      "block": "petramond:spruce_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4363,7 +4363,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:spruce_stairs",
+          "item": "petramond:spruce_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4371,7 +4371,7 @@
       ]
     },
     {
-      "block": "llama:birch_stairs",
+      "block": "petramond:birch_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4393,7 +4393,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:birch_stairs",
+          "item": "petramond:birch_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4401,7 +4401,7 @@
       ]
     },
     {
-      "block": "llama:jungle_stairs",
+      "block": "petramond:jungle_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4423,7 +4423,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:jungle_stairs",
+          "item": "petramond:jungle_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4431,7 +4431,7 @@
       ]
     },
     {
-      "block": "llama:acacia_stairs",
+      "block": "petramond:acacia_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4453,7 +4453,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:acacia_stairs",
+          "item": "petramond:acacia_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4461,7 +4461,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_stairs",
+      "block": "petramond:dark_oak_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4483,7 +4483,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:dark_oak_stairs",
+          "item": "petramond:dark_oak_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4491,7 +4491,7 @@
       ]
     },
     {
-      "block": "llama:cherry_stairs",
+      "block": "petramond:cherry_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4513,7 +4513,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cherry_stairs",
+          "item": "petramond:cherry_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4521,7 +4521,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_stairs",
+      "block": "petramond:mangrove_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4543,7 +4543,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:mangrove_stairs",
+          "item": "petramond:mangrove_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4551,7 +4551,7 @@
       ]
     },
     {
-      "block": "llama:redwood_stairs",
+      "block": "petramond:redwood_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4573,7 +4573,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:redwood_stairs",
+          "item": "petramond:redwood_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4581,7 +4581,7 @@
       ]
     },
     {
-      "block": "llama:cobblestone_stairs",
+      "block": "petramond:cobblestone_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4603,7 +4603,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cobblestone_stairs",
+          "item": "petramond:cobblestone_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4611,7 +4611,7 @@
       ]
     },
     {
-      "block": "llama:stone_stairs",
+      "block": "petramond:stone_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4633,7 +4633,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:stone_stairs",
+          "item": "petramond:stone_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4641,7 +4641,7 @@
       ]
     },
     {
-      "block": "llama:dirt_stairs",
+      "block": "petramond:dirt_stairs",
       "shape": "stair",
       "flags": [
         "solid"
@@ -4663,7 +4663,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:dirt_stairs",
+          "item": "petramond:dirt_stairs",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4671,9 +4671,9 @@
       ]
     },
     {
-      "block": "llama:bed_frame",
+      "block": "petramond:bed_frame",
       "shape": {
-        "model": "llama:bed_frame"
+        "model": "petramond:bed_frame"
       },
       "flags": [
         "solid",
@@ -4694,7 +4694,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:bed_frame",
+          "item": "petramond:bed_frame",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4702,9 +4702,9 @@
       ]
     },
     {
-      "block": "llama:bed",
+      "block": "petramond:bed",
       "shape": {
-        "model": "llama:bed"
+        "model": "petramond:bed"
       },
       "flags": [
         "solid",
@@ -4725,7 +4725,7 @@
       "hardness": 1,
       "drops": [
         {
-          "item": "llama:bed",
+          "item": "petramond:bed",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4733,7 +4733,7 @@
       ]
     },
     {
-      "block": "llama:oak_slab",
+      "block": "petramond:oak_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4755,7 +4755,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:oak_slab",
+          "item": "petramond:oak_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4763,7 +4763,7 @@
       ]
     },
     {
-      "block": "llama:spruce_slab",
+      "block": "petramond:spruce_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4785,7 +4785,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:spruce_slab",
+          "item": "petramond:spruce_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4793,7 +4793,7 @@
       ]
     },
     {
-      "block": "llama:birch_slab",
+      "block": "petramond:birch_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4815,7 +4815,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:birch_slab",
+          "item": "petramond:birch_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4823,7 +4823,7 @@
       ]
     },
     {
-      "block": "llama:jungle_slab",
+      "block": "petramond:jungle_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4845,7 +4845,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:jungle_slab",
+          "item": "petramond:jungle_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4853,7 +4853,7 @@
       ]
     },
     {
-      "block": "llama:acacia_slab",
+      "block": "petramond:acacia_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4875,7 +4875,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:acacia_slab",
+          "item": "petramond:acacia_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4883,7 +4883,7 @@
       ]
     },
     {
-      "block": "llama:dark_oak_slab",
+      "block": "petramond:dark_oak_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4905,7 +4905,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:dark_oak_slab",
+          "item": "petramond:dark_oak_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4913,7 +4913,7 @@
       ]
     },
     {
-      "block": "llama:cherry_slab",
+      "block": "petramond:cherry_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4935,7 +4935,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cherry_slab",
+          "item": "petramond:cherry_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4943,7 +4943,7 @@
       ]
     },
     {
-      "block": "llama:mangrove_slab",
+      "block": "petramond:mangrove_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4965,7 +4965,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:mangrove_slab",
+          "item": "petramond:mangrove_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -4973,7 +4973,7 @@
       ]
     },
     {
-      "block": "llama:redwood_slab",
+      "block": "petramond:redwood_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -4995,7 +4995,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:redwood_slab",
+          "item": "petramond:redwood_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -5003,7 +5003,7 @@
       ]
     },
     {
-      "block": "llama:cobblestone_slab",
+      "block": "petramond:cobblestone_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -5025,7 +5025,7 @@
       "hardness": 2,
       "drops": [
         {
-          "item": "llama:cobblestone_slab",
+          "item": "petramond:cobblestone_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -5033,7 +5033,7 @@
       ]
     },
     {
-      "block": "llama:stone_slab",
+      "block": "petramond:stone_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -5055,7 +5055,7 @@
       "hardness": 1.5,
       "drops": [
         {
-          "item": "llama:stone_slab",
+          "item": "petramond:stone_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -5063,7 +5063,7 @@
       ]
     },
     {
-      "block": "llama:dirt_slab",
+      "block": "petramond:dirt_slab",
       "shape": "slab",
       "flags": [
         "solid"
@@ -5085,7 +5085,7 @@
       "hardness": 0.5,
       "drops": [
         {
-          "item": "llama:dirt_slab",
+          "item": "petramond:dirt_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -5093,7 +5093,7 @@
       ]
     },
     {
-      "block": "llama:glass",
+      "block": "petramond:glass",
       "shape": "cube",
       "flags": [
         "solid",
@@ -5130,7 +5130,7 @@
       "drops": []
     },
     {
-      "block": "llama:glass_pane",
+      "block": "petramond:glass_pane",
       "shape": "pane",
       "flags": [
         "solid",

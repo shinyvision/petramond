@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:connection_lost",
+    "kind": "petramond:connection_lost",
     "class": "screen",
     "root": {
         "type": "frame",

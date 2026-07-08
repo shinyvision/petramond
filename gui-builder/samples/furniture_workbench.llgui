@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:furniture_workbench",
+    "kind": "petramond:furniture_workbench",
     "class": "container",
     "root": {
       "type": "frame",

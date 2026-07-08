@@ -26,7 +26,7 @@ fn frame_period(fps: u32) -> Duration {
 
 pub fn run() {
     env_logger::init();
-    let seed: u32 = std::env::var("LLAMACRAFT_SEED")
+    let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0x1234_5678);
@@ -34,12 +34,12 @@ pub fn run() {
     // the persistent setting.
     crate::save::client::ensure_file();
     let client = crate::save::client::load();
-    let rd: i32 = std::env::var("LLAMACRAFT_RD")
+    let rd: i32 = std::env::var("PETRAMOND_RD")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(client.render_dist)
         .clamp(4, 64);
-    let fps: u32 = std::env::var("LLAMACRAFT_FPS")
+    let fps: u32 = std::env::var("PETRAMOND_FPS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(client.fps_cap);
@@ -72,14 +72,14 @@ struct NativeHost {
     /// to the renderer at creation.
     render_scale: f32,
     grade: bool,
-    /// Gameplay frame period (from the `fps_cap` client setting / `LLAMACRAFT_FPS`).
+    /// Gameplay frame period (from the `fps_cap` client setting / `PETRAMOND_FPS`).
     frame: Duration,
     /// Frame period while a modal screen is up (cursor released): near-static
     /// screens don't need the full gameplay rate. Still renders every frame.
     menu_frame: Duration,
     /// When the next frame (`App::update` + redraw) is due — the frame cap.
     next_update: Instant,
-    /// Per-second update/render counters logged to stderr when `LLAMACRAFT_PERF` is set.
+    /// Per-second update/render counters logged to stderr when `PETRAMOND_PERF` is set.
     perf_log: bool,
     perf_since: Instant,
     perf_updates: u32,
@@ -115,7 +115,7 @@ impl NativeHost {
             frame: frame_period(fps_cap),
             menu_frame: frame_period(menu_fps_cap),
             next_update: Instant::now(),
-            perf_log: std::env::var_os("LLAMACRAFT_PERF").is_some(),
+            perf_log: std::env::var_os("PETRAMOND_PERF").is_some(),
             perf_since: Instant::now(),
             perf_updates: 0,
             perf_renders: 0,
@@ -171,7 +171,7 @@ impl ApplicationHandler for NativeHost {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("Llamacraft")
+            .with_title("Petramond")
             .with_inner_size(PhysicalSize::new(1280, 720));
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let size = window.inner_size();
@@ -186,7 +186,7 @@ impl ApplicationHandler for NativeHost {
             size.width as f32 / size.height.max(1) as f32,
         );
         let mut app = App::new(cam, self.render_dist);
-        if let Ok(world_name) = std::env::var("LLAMACRAFT_WORLD") {
+        if let Ok(world_name) = std::env::var("PETRAMOND_WORLD") {
             if !world_name.is_empty() {
                 app.start_game(&world_name, self.seed);
             }

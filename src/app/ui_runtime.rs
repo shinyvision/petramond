@@ -9,7 +9,7 @@
 //! [`UiEvent`] the caller explicitly latches.
 
 use crate::gui::{doc_theme, documents, gui_scale, GuiKind};
-use llama_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
+use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
 
 /// A document's image registry: document-local images first, then the
 /// host-registered extras (controller-provided icons), in one
@@ -44,7 +44,7 @@ pub(super) struct AppUi {
     image_paths: Vec<std::path::PathBuf>,
     /// Native clipboard by default; tests inject an in-memory one so text
     /// tests never touch the OS.
-    clipboard: Box<dyn llama_ui::TextClipboard>,
+    clipboard: Box<dyn petramond_ui::TextClipboard>,
 }
 
 /// Lazy native clipboard for document text inputs (its own arboard handle —
@@ -66,7 +66,7 @@ impl DocClipboard {
     }
 }
 
-impl llama_ui::TextClipboard for DocClipboard {
+impl petramond_ui::TextClipboard for DocClipboard {
     fn get_text(&mut self) -> Option<String> {
         self.ensure()?.get_text().ok()
     }
@@ -92,7 +92,7 @@ impl AppUi {
     }
 
     #[cfg(test)]
-    pub fn set_clipboard(&mut self, clipboard: Box<dyn llama_ui::TextClipboard>) {
+    pub fn set_clipboard(&mut self, clipboard: Box<dyn petramond_ui::TextClipboard>) {
         self.clipboard = clipboard;
     }
 
@@ -145,7 +145,7 @@ impl AppUi {
     /// clicked — controllers use this when they reveal an inline editor.
     pub fn focus_text_input(&mut self, id: &str, text: &str, max_chars: usize) {
         self.fs.focus_text_input(
-            llama_ui::InstKey {
+            petramond_ui::InstKey {
                 id: id.to_owned(),
                 item: None,
             },
@@ -212,7 +212,7 @@ impl AppUi {
     }
 
     /// The events the last frame resolved (drained).
-    pub fn take_events(&mut self) -> Vec<llama_ui::UiEvent> {
+    pub fn take_events(&mut self) -> Vec<petramond_ui::UiEvent> {
         std::mem::take(&mut self.out.events)
     }
 
@@ -257,9 +257,9 @@ impl AppUi {
 }
 
 /// Sample state + event handling for the dev widget-catalog demo screen
-/// (`LLAMA_UI_DEMO=1`) — the seam proof, not a real controller.
+/// (`PETRAMOND_UI_DEMO=1`) — the seam proof, not a real controller.
 pub(super) mod demo {
-    use llama_ui::{UiEvent, UiMap, UiState, UiValue};
+    use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
     use std::sync::Arc;
 
     pub fn populate(state: &mut UiState) {
@@ -273,7 +273,7 @@ pub(super) mod demo {
         state.set("demo_burn", UiValue::F32(0.4));
         state.set("demo_sel", UiValue::I32(-1));
         let rows: Vec<UiMap> = [
-            ("Smoke Test", "v0.1.0", true),
+            ("Weather Pack", "v0.1.0", true),
             ("Zombies", "v0.1.0", false),
             ("Wheel of Fortune", "v0.2.3", true),
             ("Daylight", "v0.1.1", true),

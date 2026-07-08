@@ -2,7 +2,7 @@
 name = "mod-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "Llamacraft guest-side mod SDK: allocator/dispatch glue, the Mod trait, and safe host-call wrappers over mod-api."
+description = "Petramond guest-side mod SDK: allocator/dispatch glue, the Mod trait, and safe host-call wrappers over mod-api."
 license = "MIT"
 
 # Standalone: keep this crate OUT of the engine workspace (it is linked into

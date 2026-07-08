@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn settings_roundtrip_and_absent_file_defaults() {
         let dir =
-            std::env::temp_dir().join(format!("llamacraft-settings-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("petramond-settings-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         // Absent file (directory doesn't even exist) = all mods enabled.

@@ -134,23 +134,23 @@ struct RawMobSound {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "component", deny_unknown_fields)]
 enum RawMobDamageFeedback {
-    #[serde(rename = "llama:decrease_health")]
+    #[serde(rename = "petramond:decrease_health")]
     DecreaseHealth,
-    #[serde(rename = "llama:flash")]
+    #[serde(rename = "petramond:flash")]
     Flash {
         #[serde(default = "default_flash_duration")]
         duration: f64,
     },
-    #[serde(rename = "llama:knockback")]
+    #[serde(rename = "petramond:knockback")]
     Knockback {
         #[serde(default = "default_knockback_scale")]
         scale: f64,
         #[serde(default = "default_knockback_duration")]
         duration: f64,
     },
-    #[serde(rename = "llama:sound")]
+    #[serde(rename = "petramond:sound")]
     Sound { when: RawMobDamageSound },
-    #[serde(rename = "llama:ragdoll")]
+    #[serde(rename = "petramond:ragdoll")]
     Ragdoll,
 }
 
@@ -331,7 +331,7 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
             RawMobDamageFeedback::Flash { duration } => {
                 if !duration.is_finite() || duration < 0.0 {
                     return Err(format!(
-                        "damage_feedback llama:flash duration must be finite and non-negative, got {duration}"
+                        "damage_feedback petramond:flash duration must be finite and non-negative, got {duration}"
                     ));
                 }
                 MobDamageFeedbackComponent::Flash {
@@ -341,12 +341,12 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
             RawMobDamageFeedback::Knockback { scale, duration } => {
                 if !scale.is_finite() || scale < 0.0 {
                     return Err(format!(
-                        "damage_feedback llama:knockback scale must be finite and non-negative, got {scale}"
+                        "damage_feedback petramond:knockback scale must be finite and non-negative, got {scale}"
                     ));
                 }
                 if !duration.is_finite() || duration < 0.0 {
                     return Err(format!(
-                        "damage_feedback llama:knockback duration must be finite and non-negative, got {duration}"
+                        "damage_feedback petramond:knockback duration must be finite and non-negative, got {duration}"
                     ));
                 }
                 MobDamageFeedbackComponent::Knockback {
@@ -464,11 +464,11 @@ mod tests {
     #[test]
     fn pack_layer_overrides_rows_by_mob() {
         let layer = r#"{"mobs": [{
-            "mob": "llama:owl", "key": "llama:owl", "model": "models/owl.bbmodel", "scale": 0.5,
+            "mob": "petramond:owl", "key": "petramond:owl", "model": "models/owl.bbmodel", "scale": 0.5,
             "size": {"half_width": 0.3, "height": 0.9}, "max_health": 6.0,
             "walk_speed": 3.0, "jump_speed": 7.2, "turn_rate": 7.0, "walk_anim_rate": 1.2,
             "category": "passive", "cap": 4,
-            "spawn": {"biomes": ["forest"], "ground": ["llama:grass"]},
+            "spawn": {"biomes": ["forest"], "ground": ["petramond:grass"]},
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": ["forest"]},
@@ -576,9 +576,9 @@ mod tests {
             "habitat": {"avoid": [], "prefer": []},
             "avoid_water": false,
             "sounds": [
-                {"category": "idle", "sound": "llama:item_pickup", "tick_interval": 40, "tick_interval_variance": 10},
-                {"category": "hurt", "sound": "llama:wood_punch"},
-                {"category": "death", "sound": "llama:wood_break"}
+                {"category": "idle", "sound": "petramond:item_pickup", "tick_interval": 40, "tick_interval_variance": 10},
+                {"category": "hurt", "sound": "petramond:wood_punch"},
+                {"category": "death", "sound": "petramond:wood_break"}
             ],
             "brain": []
         }]}"#;
@@ -644,11 +644,11 @@ mod tests {
             "habitat": {"avoid": [], "prefer": []},
             "avoid_water": false,
             "damage_feedback": [
-                {"component": "llama:decrease_health"},
-                {"component": "llama:flash", "duration": 0.5},
-                {"component": "llama:knockback", "scale": 1.5, "duration": 0.2},
-                {"component": "llama:sound", "when": "death"},
-                {"component": "llama:ragdoll"}
+                {"component": "petramond:decrease_health"},
+                {"component": "petramond:flash", "duration": 0.5},
+                {"component": "petramond:knockback", "scale": 1.5, "duration": 0.2},
+                {"component": "petramond:sound", "when": "death"},
+                {"component": "petramond:ragdoll"}
             ],
             "brain": []
         }]}"#;
@@ -686,7 +686,7 @@ mod tests {
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
             "avoid_water": false,
-            "sounds": [{"category": "idle", "sound": "llama:item_pickup"}],
+            "sounds": [{"category": "idle", "sound": "petramond:item_pickup"}],
             "brain": []
         }]}"#;
         let err = parse_layers(&[&base(), layer])
@@ -796,7 +796,7 @@ mod tests {
         assert!(err.contains("missing row"), "{err}");
 
         // Two DIFFERENT mobs sharing one key: rejected (loot resolves by key).
-        let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "llama:owl", "model": "m", "scale": 1.0,
+        let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "petramond:owl", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
@@ -814,12 +814,12 @@ mod tests {
     ///
     /// The global registries are process-wide LazyLocks, so pack injection must
     /// happen before ANY test touches them — this outer test re-spawns the test
-    /// binary with `LLAMACRAFT_MODS` set, running only the `#[ignore]`d inner test
+    /// binary with `PETRAMOND_MODS` set, running only the `#[ignore]`d inner test
     /// below (the pattern pinned by `registry::tests::dynamic_pack_content_flows_
     /// end_to_end`).
     #[test]
     fn dynamic_pack_mob_flows_end_to_end() {
-        let root = std::env::temp_dir().join(format!("llamacraft-mobpack-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("petramond-mobpack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let pack = root.join("mods/testmob");
         std::fs::create_dir_all(&pack).unwrap();
@@ -858,8 +858,8 @@ mod tests {
             .arg("--exact")
             .arg("--ignored")
             .arg("--nocapture")
-            .env("LLAMACRAFT_MODS", root.join("mods"))
-            .env("LLAMACRAFT_MOBPACK_SAVE", root.join("save"))
+            .env("PETRAMOND_MODS", root.join("mods"))
+            .env("PETRAMOND_MOBPACK_SAVE", root.join("save"))
             .output()
             .expect("spawn test binary");
         let _ = std::fs::remove_dir_all(&root);
@@ -871,7 +871,7 @@ mod tests {
         );
     }
 
-    /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
     /// pointing at the fixture pack before first registry touch).
     #[test]
     #[ignore = "spawned by dynamic_pack_mob_flows_end_to_end with a fixture pack env"]
@@ -927,7 +927,7 @@ mod tests {
         );
 
         // --- Save palette: the namespaced mob pins by name; strangers skip. ---
-        let save = std::path::PathBuf::from(std::env::var_os("LLAMACRAFT_MOBPACK_SAVE").unwrap());
+        let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_MOBPACK_SAVE").unwrap());
         std::fs::create_dir_all(&save).unwrap();
         // An "old" palette with a stranger between the engine mobs and ours, so
         // disk ids and runtime ids genuinely diverge.
@@ -938,7 +938,7 @@ mod tests {
             serde_json::json!({
                 "blocks": blocks,
                 "items": items,
-                "mobs": ["llama:owl", "othermod:phantom", "llama:sheep"],
+                "mobs": ["petramond:owl", "othermod:phantom", "petramond:sheep"],
             })
             .to_string(),
         )

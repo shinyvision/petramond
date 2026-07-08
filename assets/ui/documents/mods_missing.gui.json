@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:mods_missing",
+    "kind": "petramond:mods_missing",
     "class": "screen",
     "root": {
         "type": "frame",

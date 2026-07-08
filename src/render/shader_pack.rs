@@ -145,19 +145,19 @@ mod tests {
             r#"{
                 "sky": {
                     "shader": "shaders/daynight_sky.wgsl",
-                    "params": ["llama:time", "llama:light"],
+                    "params": ["petramond:time", "petramond:light"],
                     "textures": [
                         "textures/environment/sun.png",
                         "textures/environment/moon_phases.png"
                     ],
-                    "sky_light_param": "llama:light"
+                    "sky_light_param": "petramond:light"
                 }
             }"#,
         )
         .expect("catalog parses");
         let row = catalog.sky.expect("sky row");
         assert_eq!(row.shader, "shaders/daynight_sky.wgsl");
-        assert_eq!(row.params, ["llama:time", "llama:light"]);
+        assert_eq!(row.params, ["petramond:time", "petramond:light"]);
         assert_eq!(
             row.textures,
             [
@@ -165,7 +165,7 @@ mod tests {
                 "textures/environment/moon_phases.png"
             ]
         );
-        assert_eq!(row.sky_light_param.as_deref(), Some("llama:light"));
+        assert_eq!(row.sky_light_param.as_deref(), Some("petramond:light"));
     }
 
     #[test]

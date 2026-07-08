@@ -1,8 +1,8 @@
-# Llamacraft GUI Builder
+# Petramond GUI Builder
 
-A document editor for the game's llama-ui GUIs. GUIs are live widget-tree
+A document editor for the game's petramond-ui GUIs. GUIs are live widget-tree
 documents (`*.gui.json`) interpreted at runtime against a theme kit; the
-builder edits those documents and previews them through the **real llama-ui
+builder edits those documents and previews them through the **real petramond-ui
 runtime + software rasterizer**, so the canvas is pixel-exactly what the game
 renders.
 
@@ -14,7 +14,7 @@ cargo run --release -- samples/pause.llgui
 ```
 
 The builder loads the game theme from `../assets/ui/theme/theme.json` when it
-exists, else falls back to llama-ui's placeholder kit (toolbar shows which).
+exists, else falls back to petramond-ui's placeholder kit (toolbar shows which).
 
 ## Layout
 
@@ -44,7 +44,7 @@ duplicate, `Delete` remove selection.
 
 ## Files
 
-- `.llgui` (v2) — project file: the llama-ui document verbatim plus editor
+- `.llgui` (v2) — project file: the petramond-ui document verbatim plus editor
   settings (`sample_state`, zoom, preview scale, screen). See `src/project.rs`
   for the tagged sample-state JSON codec.
 - **Export** writes the bare document to `assets/ui/documents/<kind>.gui.json`
@@ -86,7 +86,7 @@ gui-builder --make-samples                          # regenerate samples/
 ## Notes
 
 - This crate is deliberately excluded from the game workspace (own
-  `Cargo.lock`); it depends on `llama-ui` by path with the `raster` feature.
+  `Cargo.lock`); it depends on `petramond-ui` by path with the `raster` feature.
 - The builder replicates the engine's slot-contract table in
   `src/contracts.rs` — keep it in sync with `src/gui/documents.rs` by hand
   (a unit test pins the expected values).

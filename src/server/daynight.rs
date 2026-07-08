@@ -1,7 +1,7 @@
 //! Core day/night cycle.
 //!
 //! This is intentionally built through the same tick-stage and shader-param
-//! surfaces mods use. The `llama:*` keys are engine-owned public surface.
+//! surfaces mods use. The `petramond:*` keys are engine-owned public surface.
 
 use crate::events::{Attach, Stage, TickSystems};
 use crate::world::World;
@@ -16,11 +16,11 @@ const NIGHT_SKY_SCALE: f32 = 0.04;
 const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
 const MOON_PHASES: u64 = 8;
 
-pub(crate) const CLOCK_KEY: &str = "llama:clock";
-pub(crate) const TIME_KEY: &str = "llama:time";
-pub(crate) const NIGHT_KEY: &str = "llama:is_night";
-pub(crate) const SKY_TIME_PARAM: &str = "llama:time";
-pub(crate) const SKY_LIGHT_PARAM: &str = "llama:light";
+pub(crate) const CLOCK_KEY: &str = "petramond:clock";
+pub(crate) const TIME_KEY: &str = "petramond:time";
+pub(crate) const NIGHT_KEY: &str = "petramond:is_night";
+pub(crate) const SKY_TIME_PARAM: &str = "petramond:time";
+pub(crate) const SKY_LIGHT_PARAM: &str = "petramond:light";
 
 pub(crate) fn install_core(world: &mut World, systems: &mut TickSystems) {
     let mut cycle = DayNightCycle::from_world(world);
@@ -100,14 +100,14 @@ impl DayNightCycle {
     }
 }
 
-/// Whether it is night per the published `llama:is_night` KV (day fraction in
+/// Whether it is night per the published `petramond:is_night` KV (day fraction in
 /// [0.5, 1.0) — sunset through sunrise). False on a world where the cycle has
 /// not published yet.
 pub(super) fn is_night(world: &World) -> bool {
     world.mod_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
 }
 
-/// The published day clock (`llama:clock`), or 0 on a world whose cycle has
+/// The published day clock (`petramond:clock`), or 0 on a world whose cycle has
 /// not published yet — stamped on every `TickUpdate` so a client's sky follows
 /// the server's.
 pub(super) fn current_clock(world: &World) -> u64 {
@@ -115,7 +115,7 @@ pub(super) fn current_clock(world: &World) -> u64 {
 }
 
 /// Skip the clock to early morning of the NEXT day (sleeping through the
-/// night — or the day). Written as a `llama:clock` KV like any external write;
+/// night — or the day). Written as a `petramond:clock` KV like any external write;
 /// the core cycle adopts it on its next tick (clock writes win exactly).
 pub(super) fn skip_to_morning(world: &mut World) {
     let clock = read_clock(world).unwrap_or(FRESH_CLOCK);
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(
             world.mod_kv_get(CLOCK_KEY),
             Some(&(CYCLE_TICKS + FRESH_CLOCK).to_le_bytes()[..]),
-            "the skip writes the adopted llama:clock format"
+            "the skip writes the adopted petramond:clock format"
         );
     }
 
@@ -200,7 +200,7 @@ mod tests {
     use crate::player::Player;
 
     fn published_time(world: &World) -> f32 {
-        let bytes = world.mod_kv_get(TIME_KEY).expect("llama time");
+        let bytes = world.mod_kv_get(TIME_KEY).expect("petramond time");
         f32::from_le_bytes(bytes.try_into().expect("4-byte LE f32"))
     }
 
@@ -264,7 +264,7 @@ mod tests {
         );
         assert!(
             (published_time(&world) - (3001.0 / CYCLE_TICKS as f32)).abs() < 1e-6,
-            "external llama:time write is adopted on the next core tick"
+            "external petramond:time write is adopted on the next core tick"
         );
 
         world.mod_kv_set(CLOCK_KEY.into(), 6000u64.to_le_bytes().to_vec());
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(
             world.mod_kv_get(CLOCK_KEY),
             Some(&6001u64.to_le_bytes()[..]),
-            "external llama:clock write wins exactly"
+            "external petramond:clock write wins exactly"
         );
     }
 }

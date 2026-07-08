@@ -1,7 +1,7 @@
 //! The server thread and its client-side handle (multiplayer Phase D).
 //!
 //! [`ServerHandle::spawn`] moves a fully-constructed [`ServerGame`] onto its
-//! OWN thread ("llamacraft-server", NORMAL priority — it IS the sim, not a
+//! OWN thread ("petramond-server", NORMAL priority — it IS the sim, not a
 //! background worker), self-clocked at 20 TPS. The client talks to it
 //! exclusively over std::sync::mpsc channels of protocol MESSAGE VALUES — no
 //! serialization; `Arc` payloads are refcount bumps (the same messages Phase E
@@ -84,7 +84,7 @@ impl ServerHandle {
         let crashed = Arc::new(AtomicBool::new(false));
         let crash_flag = Arc::clone(&crashed);
         let join = std::thread::Builder::new()
-            .name("llamacraft-server".to_string())
+            .name("petramond-server".to_string())
             .spawn(move || {
                 // The whole loop under one catch_unwind: a panic sets the
                 // crash flag and drops the world WITHOUT saving (see the
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn panicking_server_crashes_loud_and_saves_nothing() {
         let dir =
-            std::env::temp_dir().join(format!("llamacraft-handle-panic-{}", std::process::id()));
+            std::env::temp_dir().join(format!("petramond-handle-panic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut server = server_game();

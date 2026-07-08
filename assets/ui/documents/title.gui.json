@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:title",
+    "kind": "petramond:title",
     "class": "screen",
     "root": {
         "type": "frame",
@@ -18,7 +18,7 @@
         "children": [
             {
                 "type": "label",
-                "text": "Llamacraft",
+                "text": "Petramond",
                 "scale": 3
             },
             {

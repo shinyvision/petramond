@@ -308,7 +308,7 @@ mod tests {
         Arc::new(
             Document::from_json(
                 r#"{
-                "format": 1, "kind": "llama:test_screen", "class": "screen",
+                "format": 1, "kind": "petramond:test_screen", "class": "screen",
                 "root": { "type": "column", "layout": { "w": 200, "h": 200, "pad": [10,10,10,10], "gap": 4 },
                     "children": [
                         { "type": "button", "id": "ok", "text": "OK" },
@@ -590,7 +590,7 @@ mod tests {
         let doc = Arc::new(
             Document::from_json(
                 r#"{
-                "format": 1, "kind": "llama:test_chest", "class": "container",
+                "format": 1, "kind": "petramond:test_chest", "class": "container",
                 "root": { "type": "column", "children": [
                     { "type": "slot_grid", "role": "storage", "cols": 3, "rows": 2 },
                     { "type": "slot", "role": "storage" }

@@ -1,8 +1,8 @@
 {
   "mobs": [
     {
-      "mob": "llama:owl",
-      "key": "llama:owl",
+      "mob": "petramond:owl",
+      "key": "petramond:owl",
       "model": "models/owl.bbmodel",
       "scale": 0.25,
       "size": {
@@ -22,9 +22,9 @@
           "redwood_forest"
         ],
         "ground": [
-          "llama:oak_leaves",
-          "llama:birch_leaves",
-          "llama:grass"
+          "petramond:oak_leaves",
+          "petramond:birch_leaves",
+          "petramond:grass"
         ]
       },
       "spawn_group": {
@@ -67,8 +67,8 @@
       ]
     },
     {
-      "mob": "llama:sheep",
-      "key": "llama:sheep",
+      "mob": "petramond:sheep",
+      "key": "petramond:sheep",
       "model": "models/sheep.bbmodel",
       "scale": 0.0625,
       "size": {
@@ -100,9 +100,9 @@
           "mountain_edge"
         ],
         "ground": [
-          "llama:grass",
-          "llama:podzol",
-          "llama:dirt"
+          "petramond:grass",
+          "petramond:podzol",
+          "petramond:dirt"
         ]
       },
       "spawn_group": {
@@ -113,7 +113,7 @@
         "chance_per_tick": 0.01,
         "radius": 10,
         "cohesion": {
-          "companion": "llama:sheep",
+          "companion": "petramond:sheep",
           "search_radius_multiplier": 2
         }
       },
@@ -151,7 +151,7 @@
       },
       "avoid_water": true,
       "shear": {
-        "drop": "llama:wool",
+        "drop": "petramond:wool",
         "min": 1,
         "max": 3,
         "regrow_min": 1200,

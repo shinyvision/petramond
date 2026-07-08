@@ -18,7 +18,7 @@ pub struct LevelData {
     pub seed: u32,
     /// The world's game-tick counter at save time, restored through
     /// [`crate::world::World::restore_tick`] so scheduled ticks and
-    /// tick-anchored state (the `llama:clock` day cycle) continue across
+    /// tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0.
     pub tick: u64,
     /// The mod world KV map (`mod_id:key` → bytes; WIKI/modding.md Phase 3b).
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn level_roundtrips() {
         let kv = BTreeMap::from([
-            ("llama:time".to_owned(), vec![0x10, 0x20]),
+            ("petramond:time".to_owned(), vec![0x10, 0x20]),
             ("zombies:invuln_until".to_owned(), Vec::new()),
         ]);
 

@@ -28,7 +28,7 @@ fn join_data() -> Box<JoinData> {
             mode: 0,
             health: 13,
             bed_spawn: Some((IVec3::new(1, 70, 2), IVec3::new(2, 70, 2))),
-            effects: vec![("llama:regeneration".to_string(), 400)],
+            effects: vec![("petramond:regeneration".to_string(), 400)],
             inventory: slots,
             active_slot: 2,
         },

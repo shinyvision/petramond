@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:create_world",
+    "kind": "petramond:create_world",
     "class": "screen",
     "root": {
       "type": "frame",

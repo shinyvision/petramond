@@ -22,7 +22,7 @@ const RENDER_ORIGIN_GRID: f32 = 16.0;
 const SUN_ARC_TILT: f32 = 0.15;
 
 /// The atmosphere's sun lane: unit sun direction (xyz) + daylight (w), derived
-/// from the engine-owned `llama:time` shader param (`[fraction, daylight,
+/// from the engine-owned `petramond:time` shader param (`[fraction, daylight,
 /// moon_phase, 0]`, see WIKI/day-night.md) with the same arc formula as
 /// `daynight_sky.wgsl`. Without a day/night cycle the sun holds late morning at
 /// full daylight.
@@ -30,7 +30,7 @@ pub(super) fn sun_uniform(
     shader_params: Option<&crate::world::environment::ShaderParamMap>,
 ) -> [f32; 4] {
     let (fraction, daylight) = shader_params
-        .and_then(|params| params.get("llama:time"))
+        .and_then(|params| params.get("petramond:time"))
         .map(|time| (time[0].fract(), time[1].clamp(0.0, 1.0)))
         .unwrap_or((0.25, 1.0));
     let angle = std::f32::consts::TAU * fraction;

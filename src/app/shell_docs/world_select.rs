@@ -3,7 +3,7 @@
 //! back to title.
 
 use crate::app::{App, AppScreen};
-use llama_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
+use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
 pub(super) fn populate(app: &App, state: &mut UiState) {

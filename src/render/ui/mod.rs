@@ -2,7 +2,7 @@
 //! vertex buffers for the GAME-OWNED content of a document-drawn screen.
 //!
 //! Every screen's chrome (panels, slot faces, hover, gauges, text, dim) is
-//! drawn by the GUI-document runtime (`llama-ui` draw list → `renderer::doc_ui`).
+//! drawn by the GUI-document runtime (`petramond-ui` draw list → `renderer::doc_ui`).
 //! [`build_ui`] emits only what the game owns on top of that: item icons +
 //! stack counts in the document's solved slot cells, greyed workbench results,
 //! the HUD hearts, and the cursor-held drag stack. When no document backs the

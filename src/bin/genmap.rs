@@ -14,10 +14,10 @@
 //!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
 //!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
 
-use llamacraft::tooling::biome::Biome;
-use llamacraft::tooling::block::Block;
-use llamacraft::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use llamacraft::tooling::worldgen::{generate_chunk, macro_surface_map};
+use petramond::tooling::biome::Biome;
+use petramond::tooling::block::Block;
+use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use petramond::tooling::worldgen::{generate_chunk, macro_surface_map};
 
 /// Highest non-air block in a column + its Y.
 fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
@@ -294,7 +294,7 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
 /// Audit overhangs + floating debris across a region (computed by
 /// `worldgen::audit::audit`); prints its [`DebrisAudit`] in the previewer format.
 fn audit(seed: u32) {
-    use llamacraft::tooling::worldgen::audit;
+    use petramond::tooling::worldgen::audit;
     let a = audit::audit(seed);
     println!(
         "seed {seed:#x}: overhang-ceilings {}  floating-debris {}  deepest-ocean-floor y{}  tallest y{} @ (x{},z{})",
@@ -321,7 +321,7 @@ fn audit(seed: u32) {
 /// True 3-D detached-debris census (computed by `worldgen::audit::flood_audit`);
 /// prints its [`FloodAudit`] in the previewer format.
 fn flood_audit(seed: u32) {
-    use llamacraft::tooling::worldgen::audit;
+    use petramond::tooling::worldgen::audit;
     let f = audit::flood_audit(seed);
     let (w, _, hgt) = f.region;
     println!(
@@ -335,7 +335,7 @@ fn flood_audit(seed: u32) {
 /// Lowland-relief diagnostic (computed by `worldgen::audit::relief_audit`);
 /// prints its [`ReliefStats`] in the previewer format.
 fn relief_audit(seed: u32) {
-    use llamacraft::tooling::worldgen::audit::{self, RELIEF_HIST_LABELS};
+    use petramond::tooling::worldgen::audit::{self, RELIEF_HIST_LABELS};
     let r = audit::relief_audit(seed);
     if r.land.count == 0 {
         println!("seed {seed:#x}: no land-biome columns in window");
@@ -441,7 +441,7 @@ fn render_shaded(
 /// Walkability / spikiness metric (computed by `worldgen::audit::roughness`);
 /// prints its [`RoughnessStats`] in the previewer format.
 fn roughness(seed: u32) {
-    use llamacraft::tooling::worldgen::audit;
+    use petramond::tooling::worldgen::audit;
     let Some(s) = audit::roughness(seed) else {
         println!("seed {seed:#x}: no mountain-like biome columns in region");
         return;

@@ -3,7 +3,7 @@
 //! `Create` enablement and the duplicate-name warning stay live.
 
 use crate::app::{App, AppScreen};
-use llama_ui::{UiEvent, UiState, UiValue};
+use petramond_ui::{UiEvent, UiState, UiValue};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     for key in ["create_name", "create_seed"] {

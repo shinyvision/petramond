@@ -9,7 +9,7 @@ use crate::mathh::IVec3;
 use crate::player::{MAX_HEALTH, PITCH_LIMIT};
 use crate::server::bed::SLEEP_TICKS;
 
-const CLOCK_KEY: &str = "llama:clock";
+const CLOCK_KEY: &str = "petramond:clock";
 
 /// A game with a flat stone floor at y=63 and a bed at (7, 64, 7).
 fn game_with_bed() -> (super::common::TestGame, IVec3) {
@@ -33,12 +33,12 @@ fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEve
     events
 }
 
-/// Publish the night flag the sleep gate reads (`llama:is_night`); the tests
+/// Publish the night flag the sleep gate reads (`petramond:is_night`); the tests
 /// drive tick steps directly, so the day/night system never overwrites it.
 fn make_night(game: &mut super::common::TestGame) {
     game.server
         .world
-        .mod_kv_set("llama:is_night".into(), vec![1]);
+        .mod_kv_set("petramond:is_night".into(), vec![1]);
 }
 
 fn clock(game: &super::common::TestGame) -> u64 {

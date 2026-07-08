@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use llamacraft::tooling::stream::{stage_stats, World};
+use petramond::tooling::stream::{stage_stats, World};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -123,7 +123,7 @@ pub(crate) struct SelfRestore {
 pub(crate) struct JoinData {
     pub player_id: PlayerId,
     pub seed: u32,
-    /// The day/night clock (`llama:clock` contract) so the sky renders right
+    /// The day/night clock (`petramond:clock` contract) so the sky renders right
     /// from the first frame.
     pub clock: u64,
     pub tables: NameTables,
@@ -707,7 +707,7 @@ pub(crate) struct TickUpdate {
     pub open_chests: Vec<IVec3>,
     /// The server `WorldEnvironment`'s FULL named-shader-param map, present
     /// only when any value changed since the last shipped copy (`None` =
-    /// unchanged, keep). Names are strings (engine `llama:*` keys + mod
+    /// unchanged, keep). Names are strings (engine `petramond:*` keys + mod
     /// namespaces) — no registry ids ride here. The client applies it into
     /// its REPLICA world's environment, which the renderer reads.
     pub env: Option<Vec<(String, [f32; 4])>>,
@@ -1065,8 +1065,8 @@ mod tests {
             }),
             open_chests: vec![IVec3::new(1, 65, 1)],
             env: Some(vec![
-                ("llama:time".into(), [0.5, 1.0, 3.0, 0.0]),
-                ("llama:light".into(), [1.0, 1.0, 1.0, 1.0]),
+                ("petramond:time".into(), [0.5, 1.0, 3.0, 0.0]),
+                ("petramond:light".into(), [1.0, 1.0, 1.0, 1.0]),
             ]),
             events: vec![
                 WorldEventMsg::BlockBroken {

@@ -9,8 +9,8 @@
 //!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 side 8
 //!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8
 
-use llamacraft::tooling::block::Block;
-use llamacraft::tooling::worldgen::{feature_preview_names, preview_feature, FeaturePreview};
+use petramond::tooling::block::Block;
+use petramond::tooling::worldgen::{feature_preview_names, preview_feature, FeaturePreview};
 
 #[derive(Copy, Clone)]
 enum View {

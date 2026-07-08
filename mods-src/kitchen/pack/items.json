@@ -29,7 +29,7 @@
       "food": {
         "eat_ticks": 20,
         "effects": [
-          { "effect": "llama:regeneration", "ticks": 1200 }
+          { "effect": "petramond:regeneration", "ticks": 1200 }
         ]
       }
     }

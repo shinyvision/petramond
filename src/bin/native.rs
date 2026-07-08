@@ -1,3 +1,3 @@
 fn main() {
-    llamacraft::platform::native::run();
+    petramond::platform::native::run();
 }

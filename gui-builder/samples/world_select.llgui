@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:world_select",
+    "kind": "petramond:world_select",
     "class": "screen",
     "root": {
       "type": "column",

@@ -15,7 +15,7 @@ use crate::mathh::Vec3;
 use crate::net::protocol::{JoinData, ModEntry, SelfRestore};
 use crate::server::handle::ServerHandle;
 use crate::server::player::PlayerId;
-use llama_ui::UiValue;
+use petramond_ui::UiValue;
 
 const SCREEN: (u32, u32) = (1280, 720);
 

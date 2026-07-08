@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:demo",
+    "kind": "petramond:demo",
     "class": "screen",
     "root": {
       "type": "frame",
@@ -155,7 +155,7 @@
         {
           "type": "alert",
           "level": "info",
-          "text": "Rendered by the llama-ui document runtime."
+          "text": "Rendered by the petramond-ui document runtime."
         },
         {
           "type": "row",

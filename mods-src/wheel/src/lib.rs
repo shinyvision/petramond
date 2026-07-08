@@ -64,8 +64,8 @@ const SEG_ANGLE: f32 = TAU / SEGMENTS as f32;
 
 /// Engine sound keys (assets/sounds.json): a mechanical clunk on spin start,
 /// a bright UI ding on landing.
-const SPIN_SOUND: &str = "llama:chest_open";
-const LAND_SOUND: &str = "llama:item_pickup";
+const SPIN_SOUND: &str = "petramond:chest_open";
+const LAND_SOUND: &str = "petramond:item_pickup";
 
 const SHEEP_COUNT: u32 = 5;
 const SHEEP_RING_RADIUS: f32 = 3.0;
@@ -225,13 +225,13 @@ fn apply_reward(reward: Reward) {
         // the player; an impossible-key false would only mean a broken engine
         // catalog, so the bool is deliberately ignored.
         Reward::Diamond => {
-            give_item("llama:diamond", 1);
+            give_item("petramond:diamond", 1);
         }
         Reward::Stick => {
-            give_item("llama:stick", 1);
+            give_item("petramond:stick", 1);
         }
         Reward::Coal => {
-            give_item("llama:coal", 1);
+            give_item("petramond:coal", 1);
         }
         Reward::SheepParty => sheep_party(),
         Reward::Death => kill_player(),
@@ -252,7 +252,7 @@ fn sheep_party() {
             Some(y) => [wx as f32 + 0.5, y as f32, wz as f32 + 0.5],
             None => player.pos,
         };
-        spawn_mob("llama:sheep", pos, angle);
+        spawn_mob("petramond:sheep", pos, angle);
     }
 }
 

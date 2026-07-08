@@ -1,6 +1,6 @@
 {
     "format": 1,
-    "kind": "llama:connect_server",
+    "kind": "petramond:connect_server",
     "class": "screen",
     "root": {
         "type": "frame",

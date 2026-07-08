@@ -1,8 +1,8 @@
-//! GUI-document draw path: uploads a [`llama_ui::DrawList`] and draws it in
+//! GUI-document draw path: uploads a [`petramond_ui::DrawList`] and draws it in
 //! the UI pass — every screen's chrome (panels, widgets, text, dim) comes
 //! through here; `ui_frame.rs` adds only game-owned content on top.
 //!
-//! llama-ui vertices are physical px (y down); the px→NDC conversion happens
+//! petramond-ui vertices are physical px (y down); the px→NDC conversion happens
 //! here on upload so the shared crate stays resolution-agnostic. Batches map
 //! `TexId` to bind groups: the theme atlas + font upload once (lazily), and
 //! per-batch scissor rects carry the runtime's clip semantics to the GPU.
@@ -11,7 +11,7 @@ use super::*;
 
 /// One uploaded batch: which texture, which vertex range, which scissor.
 pub(super) struct DocBatch {
-    tex: llama_ui::TexId,
+    tex: petramond_ui::TexId,
     start: u32,
     count: u32,
     clip: Option<[i32; 4]>,
@@ -38,7 +38,7 @@ struct ThemeBinds {
 impl Renderer {
     /// Upload this frame's GUI-document draw list (`None` = no document UI).
     /// `images` is the frame's `TexId::DocImage` index → path order.
-    pub fn set_doc_ui(&mut self, draw: Option<(&llama_ui::DrawList, &[std::path::PathBuf])>) {
+    pub fn set_doc_ui(&mut self, draw: Option<(&petramond_ui::DrawList, &[std::path::PathBuf])>) {
         self.doc_ui.batches.clear();
         self.doc_ui.frame_paths.clear();
         let Some((draw, images)) = draw else {
@@ -113,7 +113,7 @@ impl Renderer {
             };
             let img = img.to_rgba8();
             let size = img.dimensions();
-            let data = llama_ui::ImageData {
+            let data = petramond_ui::ImageData {
                 rgba: img.into_raw(),
                 size,
             };
@@ -122,7 +122,7 @@ impl Renderer {
         }
     }
 
-    fn doc_texture_bind(&self, image: &llama_ui::ImageData, label: &str) -> wgpu::BindGroup {
+    fn doc_texture_bind(&self, image: &petramond_ui::ImageData, label: &str) -> wgpu::BindGroup {
         let (w, h) = image.size;
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -190,10 +190,10 @@ impl Renderer {
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in &self.doc_ui.batches {
             let bind = match batch.tex {
-                llama_ui::TexId::Solid => &self.icon_atlas.bind,
-                llama_ui::TexId::ThemeAtlas => &binds.atlas,
-                llama_ui::TexId::Font => &binds.font,
-                llama_ui::TexId::DocImage(i) => {
+                petramond_ui::TexId::Solid => &self.icon_atlas.bind,
+                petramond_ui::TexId::ThemeAtlas => &binds.atlas,
+                petramond_ui::TexId::Font => &binds.font,
+                petramond_ui::TexId::DocImage(i) => {
                     match self
                         .doc_ui
                         .frame_paths

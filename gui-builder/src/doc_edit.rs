@@ -2,7 +2,7 @@
 //! root), structural mutations, id generation, and the DocIssue path resolver.
 //! No egui in here — everything is unit-testable.
 
-use llama_ui::{Document, LayoutProps, Node, NodeKind};
+use petramond_ui::{Document, LayoutProps, Node, NodeKind};
 
 /// A node path: child indices from the root. `[]` is the root itself.
 pub type NodePath = Vec<usize>;
@@ -144,13 +144,13 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "toggle" => NodeKind::Toggle,
         "slider" => NodeKind::Slider { min: 0.0, max: 100.0, step: None },
         "text_input" => NodeKind::TextInput { placeholder: None, max_chars: 64 },
-        "scroll" => NodeKind::Scroll { axis: llama_ui::ScrollAxis::Vertical },
+        "scroll" => NodeKind::Scroll { axis: petramond_ui::ScrollAxis::Vertical },
         "list" => NodeKind::List,
         "slot" => NodeKind::Slot { role: "storage".into(), accepts: Vec::new(), take_only: false },
         "slot_grid" => NodeKind::SlotGrid { role: "storage".into(), cols: 9, rows: 3, accepts: Vec::new(), take_only: false },
-        "gauge" => NodeKind::Gauge { mode: llama_ui::GaugeMode::GrowLr },
+        "gauge" => NodeKind::Gauge { mode: petramond_ui::GaugeMode::GrowLr },
         "badge" => NodeKind::Badge { text: Some("badge".into()) },
-        "alert" => NodeKind::Alert { level: llama_ui::AlertLevel::Info, text: Some("Alert text".into()) },
+        "alert" => NodeKind::Alert { level: petramond_ui::AlertLevel::Info, text: Some("Alert text".into()) },
         "hook" => NodeKind::Hook,
         _ => return None,
     };
@@ -215,16 +215,16 @@ pub fn static_image_names(doc: &Document) -> Vec<String> {
 pub fn missing_image_issues(
     doc: &Document,
     exists: &dyn Fn(&str) -> bool,
-) -> Vec<llama_ui::DocIssue> {
+) -> Vec<petramond_ui::DocIssue> {
     fn walk(
         node: &Node,
         path: &str,
         exists: &dyn Fn(&str) -> bool,
-        out: &mut Vec<llama_ui::DocIssue>,
+        out: &mut Vec<petramond_ui::DocIssue>,
     ) {
         if let NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } = &node.kind {
             if !exists(image) {
-                out.push(llama_ui::DocIssue {
+                out.push(petramond_ui::DocIssue {
                     path: format!("{path}({})", node.kind.type_name()),
                     message: format!(
                         "image '{image}' not found beside the project (won't draw; \
@@ -275,7 +275,7 @@ mod tests {
 
     fn sample() -> Document {
         doc(r#"{
-            "format": 1, "kind": "llama:pause", "class": "screen",
+            "format": 1, "kind": "petramond:pause", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "label", "text": "Paused" },
                 { "type": "row", "children": [
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn missing_image_issues_point_at_the_node_and_resolve() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:pause", "class": "screen",
+            "format": 1, "kind": "petramond:pause", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "image", "image": "ok.png" },
                 { "type": "row", "children": [

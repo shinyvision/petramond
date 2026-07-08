@@ -7,7 +7,7 @@
 //! a panic or a blank screen, and the loud magenta missing-part color makes
 //! gaps obvious.
 
-use llama_ui::Theme;
+use petramond_ui::Theme;
 use std::sync::{Arc, OnceLock};
 
 const THEME_JSON: &str = "ui/theme/theme.json";

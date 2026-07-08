@@ -4,7 +4,7 @@
 //! inspector's binding pickers, the Screen-data panel, and preview
 //! sample-state seeding. Missing file = features hide gracefully.
 
-use llama_ui::{UiMap, UiState, UiValue};
+use petramond_ui::{UiMap, UiState, UiValue};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -223,7 +223,7 @@ mod tests {
     const SAMPLE: &str = r#"{
         "format": 1,
         "kinds": {
-            "llama:world_select": {
+            "petramond:world_select": {
                 "state": {
                     "worlds": { "type": "list", "item": { "name": "str", "icon": "str" }, "doc": "one row per saved world" },
                     "filter_text": { "type": "str", "doc": "search filter" },
@@ -233,7 +233,7 @@ mod tests {
                 },
                 "handles": { "play": "click: play the selected world" }
             },
-            "llama:furnace": {
+            "petramond:furnace": {
                 "state": { "cook01": { "type": "f32", "doc": "smelt progress" } },
                 "handles": {},
                 "notes": "container: slots route by role"
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn catalog_parses_and_the_shipped_file_loads_when_present() {
         let c = Catalog::parse(SAMPLE).unwrap();
-        let ws = c.kind("llama:world_select").unwrap();
+        let ws = c.kind("petramond:world_select").unwrap();
         assert_eq!(ws.state.len(), 5);
         assert_eq!(ws.state["worlds"].ty, "list");
         assert_eq!(ws.state["worlds"].item["name"], "str");
@@ -252,14 +252,14 @@ mod tests {
         assert!(c.kind("somemod:wheel").is_none(), "mod kinds are open-ended");
         // The real repo file, when present, must parse too.
         if let Some(real) = Catalog::load() {
-            assert!(real.kind("llama:world_select").is_some());
+            assert!(real.kind("petramond:world_select").is_some());
         }
     }
 
     #[test]
     fn bind_field_filters_offer_only_matching_types() {
         let c = Catalog::parse(SAMPLE).unwrap();
-        let ws = c.kind("llama:world_select").unwrap();
+        let ws = c.kind("petramond:world_select").unwrap();
         let names = |f| ws.keys_for(f).iter().map(|(n, _)| *n).collect::<Vec<_>>();
         assert_eq!(names(BindField::Items), vec!["worlds"]);
         assert_eq!(names(BindField::Selected), vec!["world_sel"]);
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn seeding_fills_lists_with_three_complete_items_and_is_non_destructive() {
         let c = Catalog::parse(SAMPLE).unwrap();
-        let ws = c.kind("llama:world_select").unwrap();
+        let ws = c.kind("petramond:world_select").unwrap();
         let mut state = UiState::new();
         state.set("world_sel", UiValue::I32(2)); // author's own value survives
         apply_seeds(&mut state, ws);
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(worlds[1]["name"], UiValue::Str("Second item".into()));
         assert_eq!(worlds[2]["name"], UiValue::Str("Third item".into()));
 
-        let furnace = c.kind("llama:furnace").unwrap();
+        let furnace = c.kind("petramond:furnace").unwrap();
         let mut s2 = UiState::new();
         apply_seeds(&mut s2, furnace);
         assert_eq!(s2.get_f32("cook01"), Some(0.5));

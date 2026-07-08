@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "llama:hotbar",
+    "kind": "petramond:hotbar",
     "class": "hud",
     "root": {
       "type": "row",

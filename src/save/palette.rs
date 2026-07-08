@@ -158,7 +158,7 @@ fn mob_from_name(name: &str) -> Option<Mob> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
 }
 
-/// Whether `name` belongs to a mod id in `disabled`. The engine `llama`
+/// Whether `name` belongs to a mod id in `disabled`. The engine `petramond`
 /// namespace is reserved and never appears in the disabled mod-id set.
 fn name_disabled(name: &str, disabled: &BTreeSet<String>) -> bool {
     crate::registry::namespace(name).is_some_and(|ns| disabled.contains(ns))
@@ -216,11 +216,11 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             changed = true;
         }
     }
-    if file.blocks.first().map(String::as_str) != Some("llama:air")
-        || file.items.first().map(String::as_str) != Some("llama:air")
+    if file.blocks.first().map(String::as_str) != Some("petramond:air")
+        || file.items.first().map(String::as_str) != Some("petramond:air")
     {
         panic!(
-            "corrupt save palette {}: disk id 0 must be 'llama:air' (the empty-slot sentinel)",
+            "corrupt save palette {}: disk id 0 must be 'petramond:air' (the empty-slot sentinel)",
             path.display()
         );
     }
@@ -330,7 +330,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("llamacraft-palette-{tag}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("petramond-palette-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -390,7 +390,7 @@ mod tests {
     fn unknown_disk_names_decode_to_air_and_registry_gets_appended() {
         let dir = temp_dir("unknown");
         // A save from "the future": disk id 1 is a block this build lacks.
-        let mut blocks = vec!["llama:air".to_string(), "unobtainium".to_string()];
+        let mut blocks = vec!["petramond:air".to_string(), "unobtainium".to_string()];
         blocks.extend(Block::all().iter().skip(1).map(|&b| block_name(b)));
         let items: Vec<String> = ItemType::all().iter().map(|&i| item_name(i)).collect();
         let mobs: Vec<String> = Mob::all().iter().map(|&m| mob_name(m)).collect();
@@ -475,11 +475,11 @@ mod tests {
     /// entries and existing entries decode as unknown (blocks→air, items→
     /// empty, no to-disk pin); re-enabling restores the mapping from the
     /// untouched append-only file. Needs a registered dynamic name, so it runs
-    /// in a child process with a fixture pack (the 2a `LLAMACRAFT_MODS`
+    /// in a child process with a fixture pack (the 2a `PETRAMOND_MODS`
     /// re-spawn pattern).
     #[test]
     fn disabled_mod_content_gets_the_unknown_treatment_and_reenabling_restores() {
-        let root = std::env::temp_dir().join(format!("llamacraft-paldis-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("petramond-paldis-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let pack = root.join("mods/palmod");
         std::fs::create_dir_all(&pack).unwrap();
@@ -505,8 +505,8 @@ mod tests {
             .arg("--exact")
             .arg("--ignored")
             .arg("--nocapture")
-            .env("LLAMACRAFT_MODS", root.join("mods"))
-            .env("LLAMACRAFT_PALDIS_SAVE", root.join("save"))
+            .env("PETRAMOND_MODS", root.join("mods"))
+            .env("PETRAMOND_PALDIS_SAVE", root.join("save"))
             .output()
             .expect("spawn test binary");
         let _ = std::fs::remove_dir_all(&root);
@@ -518,12 +518,12 @@ mod tests {
         );
     }
 
-    /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
     /// pointing at the fixture pack before first registry touch).
     #[test]
     #[ignore = "spawned by disabled_mod_content_gets_the_unknown_treatment_and_reenabling_restores"]
     fn disabled_mod_palette_inner() {
-        let save = std::path::PathBuf::from(std::env::var_os("LLAMACRAFT_PALDIS_SAVE").unwrap());
+        let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_PALDIS_SAVE").unwrap());
         std::fs::create_dir_all(&save).unwrap();
         let disabled: BTreeSet<String> = ["palmod".to_owned()].into();
 

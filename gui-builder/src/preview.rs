@@ -1,11 +1,11 @@
-//! The live preview pipeline: run the real llama-ui runtime over the edited
+//! The live preview pipeline: run the real petramond-ui runtime over the edited
 //! document and rasterize its DrawList with the software rasterizer — the
 //! preview *is* the game's renderer, pixel for pixel.
 
 use crate::doc_edit::NodePath;
 use crate::project::Project;
-use llama_ui::raster::TextureSet;
-use llama_ui::{
+use petramond_ui::raster::TextureSet;
+use petramond_ui::{
     DocImages, Document, FrameArgs, FrameOutput, FrameState, ImageData, InstTree, PreviewState,
     RectI, Theme, ThemeEnv, UiRuntime, UiState,
 };
@@ -32,7 +32,7 @@ impl DiskImages {
     fn wanted(doc: &Document) -> Vec<String> {
         let mut names = Vec::new();
         doc.root.visit(&mut |n| {
-            if let llama_ui::NodeKind::Image { image, .. } | llama_ui::NodeKind::Rotimage { image, .. } =
+            if let petramond_ui::NodeKind::Image { image, .. } | petramond_ui::NodeKind::Rotimage { image, .. } =
                 &n.kind
             {
                 if !names.contains(image) {
@@ -127,7 +127,7 @@ pub fn render_rgba(
         doc_images: &images.texture_refs(),
     };
     let mut rgba = Vec::new();
-    llama_ui::raster::rasterize(&out.draw, &tex, screen, CLEAR, &mut rgba);
+    petramond_ui::raster::rasterize(&out.draw, &tex, screen, CLEAR, &mut rgba);
     rgba
 }
 
@@ -173,8 +173,8 @@ pub fn layout_rects(
     viewport: (i32, i32),
 ) -> Vec<RectEntry> {
     // Pointer-identity map doc node -> path.
-    let mut by_ptr: Vec<(*const llama_ui::Node, NodePath)> = Vec::new();
-    fn walk(n: &llama_ui::Node, path: &mut NodePath, out: &mut Vec<(*const llama_ui::Node, NodePath)>) {
+    let mut by_ptr: Vec<(*const petramond_ui::Node, NodePath)> = Vec::new();
+    fn walk(n: &petramond_ui::Node, path: &mut NodePath, out: &mut Vec<(*const petramond_ui::Node, NodePath)>) {
         out.push((n as *const _, path.clone()));
         for (i, c) in n.children.iter().enumerate() {
             path.push(i);
@@ -192,7 +192,7 @@ pub fn layout_rects(
         theme,
         image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
     };
-    let solved = llama_ui::solve(&tree, &env, viewport, &|_| 0);
+    let solved = petramond_ui::solve(&tree, &env, viewport, &|_| 0);
     let mut out = Vec::with_capacity(tree.len());
     for i in 0..tree.len() {
         let inst = tree.get(i as u32);
@@ -201,7 +201,7 @@ pub fn layout_rects(
             continue;
         };
         let slot_role = match &inst.node.kind {
-            llama_ui::NodeKind::Slot { role, .. } | llama_ui::NodeKind::SlotGrid { role, .. } => {
+            petramond_ui::NodeKind::Slot { role, .. } | petramond_ui::NodeKind::SlotGrid { role, .. } => {
                 Some(role.clone())
             }
             _ => None,
@@ -225,7 +225,7 @@ mod tests {
     fn project_round_trip_export_parses_and_renders() {
         // Create → save v2 → load → export .gui.json → runtime parses,
         // validates, and rasterizes to a plausibly non-empty image.
-        let p = crate::project::Project::new("llama:pause");
+        let p = crate::project::Project::new("petramond:pause");
         let saved = p.to_json_pretty();
         let loaded = crate::project::Project::from_json(&saved).unwrap();
         let exported = loaded.document.to_json_pretty();
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn layout_rects_map_back_to_document_paths() {
-        let p = crate::project::Project::new("llama:chest");
+        let p = crate::project::Project::new("petramond:chest");
         let theme = Theme::placeholder();
         let state = UiState::new();
         let images = DiskImages::empty();

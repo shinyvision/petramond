@@ -23,14 +23,14 @@
 //! The cook algorithm mirrors the engine furnace's pacing (600-tick cook,
 //! regress by 2 while unlit, relight only when there is work), but consumes
 //! its OWN recipe class: `kitchen:cooking` rows in any pack's recipes.json
-//! (via `recipe_result`), never the furnace's `llama:smelting` table — an
+//! (via `recipe_result`), never the furnace's `petramond:smelting` table — an
 //! oven cooks food, it does not smelt ore. Fuel data comes from `item_info`.
 //! Any pack adds `kitchen:cooking` recipes + the `kitchen:cookable` item tag
 //! and the oven picks them up with no code change here or in the engine.
 //!
 //! Shipped food: sheep drop 1–2 `kitchen:raw_mutton` (this pack's
 //! `loot_tables.json` layer replaces the sheep table — pure data), which cooks
-//! into `kitchen:cooked_mutton`; eating that grants `llama:regeneration`
+//! into `kitchen:cooked_mutton`; eating that grants `petramond:regeneration`
 //! (engine status effect, 1200 ticks) through the item row's `food` data.
 //!
 //! While burning, the oven flips to the `kitchen:oven_lit` block row (same

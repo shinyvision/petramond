@@ -508,9 +508,7 @@ impl ServerGame {
     /// its revision moved since the last state this session was sent (always
     /// on the first update after join).
     pub(crate) fn build_self_state(&mut self, s: usize) -> SelfState {
-        let sleeping = self
-            .sleep_progress01(s)
-            .map(|p| (p * 255.0).round() as u8);
+        let sleeping = self.sleep_progress01(s).map(|p| (p * 255.0).round() as u8);
         let sleep_bed = self.sleep_bed_base(s);
         let sess = &mut self.sessions[s];
         let player = &sess.player;
@@ -836,11 +834,13 @@ impl ServerGame {
         // drop returns to the pool this tick instead of staying claimed.
         {
             let sessions = &self.sessions;
-            self.world.dropped_items_mut().release_requests_not_from(|id| {
-                sessions
-                    .iter()
-                    .any(|sess| sess.id == id && sess.player.health() > 0)
-            });
+            self.world
+                .dropped_items_mut()
+                .release_requests_not_from(|id| {
+                    sessions
+                        .iter()
+                        .any(|sess| sess.id == id && sess.player.health() > 0)
+                });
         }
         for s in 0..self.sessions.len() {
             if self.item_pickup_tick(s) {

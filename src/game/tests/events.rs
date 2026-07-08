@@ -96,7 +96,7 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
 #[test]
 fn spatial_sound_commands_reach_game_events_without_loss() {
     let mut game = game();
-    let sound = crate::audio::sound_by_name("llama:item_pickup").expect("engine sound exists");
+    let sound = crate::audio::sound_by_name("petramond:item_pickup").expect("engine sound exists");
     game.server
         .systems
         .attach(Attach::Before(Stage::Mining), 0, move |ctx| {

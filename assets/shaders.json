@@ -2,13 +2,13 @@
   "sky": {
     "shader": "shaders/daynight_sky.wgsl",
     "params": [
-      "llama:time",
-      "llama:light"
+      "petramond:time",
+      "petramond:light"
     ],
     "textures": [
       "textures/environment/sun.png",
       "textures/environment/moon_phases.png"
     ],
-    "sky_light_param": "llama:light"
+    "sky_light_param": "petramond:light"
   }
 }

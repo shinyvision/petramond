@@ -712,7 +712,7 @@ mod tests {
     fn column_pad_gap_and_centering() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column",
                 "layout": { "pad": [8,6,8,6], "gap": 4 },
                 "children": [
@@ -757,7 +757,7 @@ mod tests {
     fn grow_distributes_leftover_with_remainder_to_first() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "row", "layout": { "w": 103, "h": 20 },
                 "children": [
                     { "type": "spacer", "id": "a", "layout": { "w": { "grow": 1 } } },
@@ -777,7 +777,7 @@ mod tests {
     fn justify_and_align_position_children() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "row",
                 "layout": { "w": 100, "h": 40, "justify": "space_between", "align": "center" },
                 "children": [
@@ -800,7 +800,7 @@ mod tests {
     fn stretch_fills_cross_axis() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "layout": { "w": 120, "h": 60, "align": "stretch" },
                 "children": [ { "type": "button", "id": "ok", "text": "OK" } ] }
         }"#,
@@ -814,7 +814,7 @@ mod tests {
     fn abs_children_leave_the_flow() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "frame", "layout": { "w": 100, "h": 100, "pad": [10,10,10,10] },
                 "children": [
                     { "type": "checkbox", "id": "flow" },
@@ -848,7 +848,7 @@ mod tests {
     fn scroll_shifts_clips_and_reports_content() {
         let doc = Document::from_json(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "scroll", "id": "sc", "layout": { "w": 50, "h": 30, "gap": 2 },
                 "children": [
                     { "type": "checkbox", "id": "a" },
@@ -892,7 +892,7 @@ mod tests {
         // back the 3px deficit and everything fits.
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "layout": { "w": 80, "h": 60 }, "children": [
                 { "type": "label", "text": "hey" },
                 { "type": "scroll", "id": "sc", "layout": { "h": { "grow": 1 }, "min_h": 12, "gap": 2 },
@@ -923,7 +923,7 @@ mod tests {
     fn shrink_stops_at_min_and_the_rest_overflows() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "layout": { "w": 80, "h": 30 }, "children": [
                 { "type": "scroll", "id": "sc", "layout": { "h": { "grow": 1 }, "min_h": 20, "gap": 2 },
                   "children": [
@@ -948,7 +948,7 @@ mod tests {
     fn two_growers_shrink_by_weight() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "row", "layout": { "w": 70, "h": 10 }, "children": [
                 { "type": "spacer", "id": "a", "layout": { "w": { "grow": 1 }, "min_w": 10 } },
                 { "type": "spacer", "id": "b", "layout": { "w": { "grow": 2 }, "min_w": 10 } }
@@ -965,7 +965,7 @@ mod tests {
     fn fitting_scroll_content_reserves_no_scrollbar_lane() {
         let doc = Document::from_json(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "scroll", "id": "sc", "layout": { "w": 50, "h": 40, "gap": 2 },
                 "children": [
                     { "type": "checkbox", "id": "a" },
@@ -985,7 +985,7 @@ mod tests {
     fn wrapping_label_uses_column_width_hint() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "layout": { "w": 66, "pad": [3,0,3,0] },
                 "children": [
                     { "type": "label", "text": "hello world!", "wrap": true }
@@ -1002,7 +1002,7 @@ mod tests {
     fn slot_grid_natural_size_and_row_major_cells() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "container",
+            "format": 1, "kind": "petramond:x", "class": "container",
             "root": { "type": "frame", "children": [
                 { "type": "slot_grid", "id": "g", "role": "storage", "cols": 9, "rows": 3 }
             ] }
@@ -1046,7 +1046,7 @@ mod tests {
     fn root_anchor_end_with_margin_is_the_hotbar_rule() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:hotbar", "class": "hud",
+            "format": 1, "kind": "petramond:hotbar", "class": "hud",
             "root": { "type": "row", "layout": { "margin": [0,0,0,1], "anchor": { "h": "center", "v": "end" } },
                 "children": [ { "type": "slot_grid", "role": "hotbar", "cols": 9, "rows": 1 } ] }
         }"#,
@@ -1063,7 +1063,7 @@ mod tests {
     #[test]
     fn solving_twice_is_identical() {
         let json = r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "layout": { "w": { "grow": 1 }, "h": { "grow": 1 }, "gap": 3 },
                 "children": [
                     { "type": "label", "text": "abc" },
@@ -1090,7 +1090,7 @@ mod tests {
     fn min_max_clamps_apply() {
         let (s, _) = solve_doc(
             r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "row", "layout": { "w": 300, "h": 20 }, "children": [
                 { "type": "spacer", "id": "capped", "layout": { "w": { "grow": 1 }, "max_w": 40 } },
                 { "type": "checkbox", "id": "padded", "layout": { "min_w": 25 } }

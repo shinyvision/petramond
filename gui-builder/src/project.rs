@@ -1,9 +1,9 @@
-//! `.llgui` v2 project format: the llama-ui [`Document`] verbatim plus
+//! `.llgui` v2 project format: the petramond-ui [`Document`] verbatim plus
 //! editor-only settings that never ship to the game.
 //!
 //! ```json
 //! { "version": 2,
-//!   "document": { ...llama_ui::Document JSON... },
+//!   "document": { ...petramond_ui::Document JSON... },
 //!   "editor": { "sample_state": {...}, "zoom": 2.0, "preview_scale": 2,
 //!               "screen": [1280, 720] } }
 //! ```
@@ -19,7 +19,7 @@
 //! (list items are string-keyed maps of tagged values, mirroring `UiMap`).
 
 use crate::contracts;
-use llama_ui::{
+use petramond_ui::{
     Anchor, AnchorEdge, Document, LayoutProps, Node, NodeKind, UiMap, UiState, UiValue,
     FORMAT_VERSION,
 };
@@ -76,11 +76,11 @@ impl Project {
             gap: 6,
             anchor: Some(Anchor {
                 h: AnchorEdge::Center,
-                v: if kind == "llama:hotbar" { AnchorEdge::End } else { AnchorEdge::Center },
+                v: if kind == "petramond:hotbar" { AnchorEdge::End } else { AnchorEdge::Center },
             }),
             ..LayoutProps::default()
         };
-        if kind != "llama:hotbar" {
+        if kind != "petramond:hotbar" {
             let title = kind.split(':').last().unwrap_or(kind).replace('_', " ").to_uppercase();
             root.children
                 .push(Node::leaf(NodeKind::Label { text: Some(title), wrap: false, scale: 1 }));
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn save_load_save_is_idempotent() {
-        let mut p = Project::new("llama:furnace");
+        let mut p = Project::new("petramond:furnace");
         p.editor.sample_state.insert("cook01".into(), json!({ "f32": 0.5 }));
         p.editor.zoom = 3.0;
         let s1 = p.to_json_pretty();
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn sample_ui_state_reports_bad_entries_without_dying() {
-        let mut p = Project::new("llama:pause");
+        let mut p = Project::new("petramond:pause");
         p.editor.sample_state.insert("ok".into(), json!({ "i32": 4 }));
         p.editor.sample_state.insert("bad".into(), json!("untagged"));
         let (state, errors) = p.sample_ui_state();
@@ -259,8 +259,8 @@ mod tests {
 
     #[test]
     fn image_fit_and_bind_image_round_trip_through_save_load() {
-        use llama_ui::doc::ImageFit;
-        let mut p = Project::new("llama:pause");
+        use petramond_ui::doc::ImageFit;
+        let mut p = Project::new("petramond:pause");
         for fit in [ImageFit::Stretch, ImageFit::Tile, ImageFit::Slice([2, 3, 4, 5])] {
             p.document
                 .root

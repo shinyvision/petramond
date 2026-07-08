@@ -1,6 +1,6 @@
 {
   "tables": {
-    "llama:sheep": [
+    "petramond:sheep": [
       { "item": "kitchen:raw_mutton", "min": 1, "max": 2 }
     ]
   }

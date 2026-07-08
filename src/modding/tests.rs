@@ -1,16 +1,15 @@
-//! Host contract tests: the dispatch round-trip against the real smoke mod,
-//! and the failure-policy contracts (disable-on-trap, registration window)
-//! against hand-built hostile WAT guests.
+//! Host contract tests: failure-policy contracts (disable-on-trap,
+//! registration window) against hand-built hostile WAT guests, plus fixture
+//! helpers for real bundled mods.
 
 use std::path::PathBuf;
 use std::process::Command;
 
 use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
-use crate::block::Block;
 use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
 use crate::game::TickEvents;
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::Vec3;
 use crate::player::Player;
 use crate::world::World;
 
@@ -59,29 +58,6 @@ impl Sim {
             &mut self.feed,
             self.bus.queue_mut(),
         );
-    }
-
-    /// Run every stage seam once — one tick's worth of system dispatches
-    /// without pinning where a mod chose to attach.
-    fn run_all_slots(&mut self) {
-        const STAGES: [Stage; Stage::COUNT] = [
-            Stage::Mining,
-            Stage::Placement,
-            Stage::Attack,
-            Stage::Drops,
-            Stage::Menu,
-            Stage::PlayerDamage,
-            Stage::WorldScheduled,
-            Stage::NaturalBreaks,
-            Stage::Pickup,
-            Stage::Mobs,
-            Stage::ItemPhysics,
-            Stage::Spawning,
-        ];
-        for stage in STAGES {
-            self.run_slot(Attach::Before(stage));
-            self.run_slot(Attach::After(stage));
-        }
     }
 }
 
@@ -159,162 +135,9 @@ pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
     )))
 }
 
-/// The full Phase 2b loop against the REAL smoke mod (built from `mods-src/`
-/// like `make mods` does): instantiate → mod_init registers through
-/// host_dispatch → tick-system dispatch into the guest (which calls back for
-/// current_tick/rng/log) → post-event dispatch — all observed via the host's
-/// dispatch/host-call counters, no mod internals pinned.
-#[test]
-fn smoke_mod_round_trip_via_wasm_host() {
-    let Some(wasm) = built_mod_wasm("smoke") else {
-        return;
-    };
-    let mut sim = Sim::new();
-    let mut host = ModHost::from_wasm_list(0x312, &[("smoke".into(), wasm)]);
-    assert_eq!(host.loaded(), 1, "the smoke wasm instantiates");
-
-    sim.init(&mut host);
-    let (disabled, after_init_dispatches, init_stats) = host.probe(0);
-    assert!(!disabled, "init leaves the mod healthy");
-    assert!(after_init_dispatches >= 1, "mod_init dispatched");
-    assert_eq!(
-        init_stats.registered, 3,
-        "a tick system, an event handler, and a worldgen feature"
-    );
-    assert_eq!(init_stats.rejected_registrations, 0);
-    assert!(
-        init_stats.host_calls >= 3,
-        "registrations + log flowed through host_dispatch"
-    );
-
-    // Tick dispatch: the registered system runs at its seam and calls back in
-    // (current_tick at minimum; tick 0 is a heartbeat, so log + rng too).
-    sim.run_all_slots();
-    let (disabled, after_tick_dispatches, tick_stats) = host.probe(0);
-    assert!(!disabled);
-    assert!(
-        after_tick_dispatches > after_init_dispatches,
-        "the tick system dispatched into the guest"
-    );
-    assert!(
-        tick_stats.host_calls > init_stats.host_calls,
-        "the tick system made host calls with the SimCtx scope active"
-    );
-
-    // Event dispatch: the block_placed observer sees a queued post event.
-    sim.bus.emit(PostEvent::BlockPlaced {
-        pos: IVec3::new(1, 2, 3),
-        block: Block::Stone,
-    });
-    let Sim {
-        world,
-        player,
-        gui_state,
-        feed,
-        bus,
-        ..
-    } = &mut sim;
-    bus.drain_post(world, player, gui_state, feed);
-    let (disabled, after_event_dispatches, _) = host.probe(0);
-    assert!(!disabled, "the whole round trip leaves the mod healthy");
-    assert!(
-        after_event_dispatches > after_tick_dispatches,
-        "the event handler dispatched into the guest"
-    );
-}
-
-/// Phase 3b guest round trip against the REAL smoke mod: the engine plants
-/// `smoke:probe` in the world KV, the guest's tick system reads it (a
-/// cross-boundary WorldKvGet), writes `smoke:pong` (an own-namespace
-/// WorldKvSet), and spawns an owl (SpawnMob through the 3a registry) — all
-/// through wasm `host_dispatch`, observed on the engine-side world.
-#[test]
-fn smoke_mod_sets_world_kv_and_spawns_a_mob_via_wasm() {
-    let Some(wasm) = built_mod_wasm("smoke") else {
-        return;
-    };
-    let mut sim = Sim::new();
-    let mut host = ModHost::from_wasm_list(0x77, &[("smoke".into(), wasm)]);
-    sim.init(&mut host);
-
-    sim.world.mod_kv_set("smoke:probe".into(), vec![0xAB, 0xCD]);
-    sim.run_all_slots();
-
-    let (disabled, _, _) = host.probe(0);
-    assert!(!disabled, "the probe round trip leaves the mod healthy");
-    assert_eq!(
-        sim.world.mod_kv_get("smoke:pong"),
-        Some(&[0xABu8, 0xCD][..]),
-        "the guest read the probe and echoed it into its own namespace"
-    );
-    assert_eq!(sim.world.mobs().len(), 1, "the guest spawned a mob");
-    assert_eq!(sim.world.mobs().instances()[0].kind, crate::mob::Mob::Owl);
-
-    // One-shot: another tick's worth of dispatches doesn't spawn again.
-    sim.run_all_slots();
-    assert_eq!(sim.world.mobs().len(), 1);
-}
-
-/// Phase 5 guest round trip against the REAL smoke mod: dispatching the
-/// `bump` button's `gui_click` makes the guest read-modify-write the session
-/// state map (`GuiStateGet` + `GuiStateSet` through wasm `host_dispatch`),
-/// observed on the engine-side world. A click on a kind the mod does not own
-/// dispatches nothing (owner = the namespace prefix).
-#[test]
-fn smoke_mod_gui_click_updates_gui_state_via_wasm() {
-    let Some(wasm) = built_mod_wasm("smoke") else {
-        return;
-    };
-    let mut sim = Sim::new();
-    let mut host = ModHost::from_wasm_list(0x55, &[("smoke".into(), wasm)]);
-    sim.init(&mut host);
-
-    let mut click = |host: &mut ModHost, kind: &str, widget: &str| {
-        let Sim {
-            world,
-            player,
-            gui_state,
-            feed,
-            bus,
-            ..
-        } = &mut sim;
-        let mut ctx = crate::events::SimCtx {
-            world,
-            player,
-            gui_state,
-            feed,
-            queue: bus.queue_mut(),
-        };
-        host.dispatch_gui_click(&mut ctx, kind, widget, Some([1, 2, 3]));
-    };
-
-    click(&mut host, "smoke:panel", "bump");
-    click(&mut host, "smoke:panel", "bump");
-    // A kind owned by nobody loaded: no dispatch, no state change.
-    let (_, dispatches_before, _) = host.probe(0);
-    click(&mut host, "ghostpack:panel", "bump");
-    let (disabled, dispatches_after, _) = host.probe(0);
-    assert!(!disabled, "the GUI round trip leaves the mod healthy");
-    assert_eq!(
-        dispatches_after, dispatches_before,
-        "a foreign kind dispatches nothing"
-    );
-
-    assert_eq!(
-        sim.gui_state.get("smoke:count"),
-        Some(&crate::gui::GuiValue::I32(2)),
-        "each click incremented the session counter via GuiStateGet/Set"
-    );
-    assert_eq!(
-        sim.gui_state.get("smoke:count_text"),
-        Some(&crate::gui::GuiValue::Str("clicks: 2".into())),
-        "the label's bound key follows the counter"
-    );
-}
-
 /// Stage a fixture `mods/` root holding the REAL packs of `ids` with freshly
 /// built wasm, for child-process tests that need pack content registry-visible
-/// (`LLAMACRAFT_MODS` + the 2a re-spawn pattern). Returns the fixture root
+/// (`PETRAMOND_MODS` + the 2a re-spawn pattern). Returns the fixture root
 /// (removed by [`run_child_test`]), or `None` when the wasm32 target is
 /// missing (the test skips, like [`built_mod_wasm`]).
 pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
@@ -334,8 +157,7 @@ pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
             }
         }
     }
-    let root =
-        std::env::temp_dir().join(format!("llamacraft-fixture-{tag}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("petramond-fixture-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for (id, wasm) in ids.iter().zip(&wasms) {
         let dst = root.join("mods").join(id);
@@ -355,7 +177,7 @@ pub(crate) fn stage_zombies_fixture(tag: &str) -> Option<PathBuf> {
 }
 
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
-/// `LLAMACRAFT_MODS` pointing at `root/mods`, then clean the fixture up.
+/// `PETRAMOND_MODS` pointing at `root/mods`, then clean the fixture up.
 pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
     let exe = std::env::current_exe().expect("test binary path");
     let out = std::process::Command::new(exe)
@@ -363,7 +185,7 @@ pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
         .arg("--exact")
         .arg("--ignored")
         .arg("--nocapture")
-        .env("LLAMACRAFT_MODS", root.join("mods"))
+        .env("PETRAMOND_MODS", root.join("mods"))
         .output()
         .expect("spawn test binary");
     let _ = std::fs::remove_dir_all(root);

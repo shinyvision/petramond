@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn valid_container_passes_its_contract() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:chest", "class": "container",
+            "format": 1, "kind": "petramond:chest", "class": "container",
             "root": { "type": "column", "children": [
                 { "type": "slot_grid", "role": "storage", "cols": 9, "rows": 3 },
                 { "type": "slot_grid", "role": "player_inv", "cols": 9, "rows": 3 },
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn contract_catches_wrong_count_missing_and_foreign_roles() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:chest", "class": "container",
+            "format": 1, "kind": "petramond:chest", "class": "container",
             "root": { "type": "column", "children": [
                 { "type": "slot_grid", "role": "storage", "cols": 9, "rows": 2 },
                 { "type": "slot", "role": "mystery" }
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn ids_must_be_present_on_event_widgets_and_unique() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:pause", "class": "screen",
+            "format": 1, "kind": "petramond:pause", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "button", "text": "Resume" },
                 { "type": "button", "id": "a", "text": "X" },
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn structural_widget_rules() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "column", "children": [
                 { "type": "list", "id": "l", "bind": { "items": "rows" } },
                 { "type": "gauge", "mode": "grow_lr" },
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn style_refs_check_against_the_lookup() {
         let d = doc(r#"{
-            "format": 1, "kind": "llama:x", "class": "screen",
+            "format": 1, "kind": "petramond:x", "class": "screen",
             "root": { "type": "frame", "style": "panel.large", "children": [
                 { "type": "button", "id": "b", "text": "OK", "style": "button.bogus" }
             ] }

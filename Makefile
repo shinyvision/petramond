@@ -1,4 +1,4 @@
-# Llamacraft build/run targets.
+# Petramond build/run targets.
 #
 #   make run             -- build (playtest: release-speed, fast rebuilds) & run
 #   make run-release     -- build (full release: thin LTO, 1 CGU) & run
@@ -30,20 +30,20 @@ NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GL
 # seconds. `run-release` is the exact shipped configuration.
 run: run-native
 run-native:
-	$(NV_OFFLOAD) LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
-		$(CARGO) run --profile playtest --bin llamacraft_native
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+		$(CARGO) run --profile playtest --bin petramond_native
 
 run-release: build-native
-	$(NV_OFFLOAD) LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
-		$(CARGO) run --release --bin llamacraft_native
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+		$(CARGO) run --release --bin petramond_native
 
 dev:
-	$(NV_OFFLOAD) LLAMACRAFT_SEED=$(SEED) LLAMACRAFT_RD=$(RD) \
-		$(CARGO) run --bin llamacraft_native
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+		$(CARGO) run --bin petramond_native
 
 build: build-native
 build-native:
-	$(CARGO) build --release --bin llamacraft_native
+	$(CARGO) build --release --bin petramond_native
 
 clean:
 	$(CARGO) clean

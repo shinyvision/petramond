@@ -2,7 +2,7 @@
 name = "zombies"
 version = "0.1.0"
 edition = "2021"
-description = "Proof-of-concept hostile mob mod: light-based zombie spawning driven by llama time, sunburn, data-driven mob sounds, chase + melee combat, and 1s player i-frames."
+description = "Proof-of-concept hostile mob mod: light-based zombie spawning driven by petramond time, sunburn, data-driven mob sounds, chase + melee combat, and 1s player i-frames."
 license = "MIT"
 
 [lib]
