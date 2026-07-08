@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "petramond:create_world",
+    "kind": "petramond:connect_server",
     "class": "screen",
     "root": {
       "type": "frame",
@@ -89,7 +89,7 @@
           "children": [
             {
               "type": "label",
-              "text": "Create New World",
+              "text": "Connect to Server",
               "scale": 2
             },
             {
@@ -116,38 +116,47 @@
             },
             {
               "type": "label",
-              "text": "World Name",
+              "text": "Server Address",
               "style": "label.muted"
             },
             {
-              "id": "create_name",
+              "id": "server_addr",
               "type": "text_input",
-              "placeholder": "My World",
-              "max_chars": 48,
+              "placeholder": "host or host:port",
+              "max_chars": 64,
               "bind": {
-                "text": "create_name"
+                "text": "server_addr"
               }
             },
             {
               "type": "label",
-              "text": "Name already exists",
+              "text": "Player Name",
+              "style": "label.muted"
+            },
+            {
+              "id": "player_name",
+              "type": "text_input",
+              "placeholder": "Player",
+              "max_chars": 32,
+              "bind": {
+                "text": "player_name"
+              }
+            },
+            {
+              "type": "label",
+              "wrap": true,
               "style": "label.danger",
               "bind": {
-                "visible": "name_exists"
+                "text": "status_text",
+                "visible": "has_status"
               }
             },
             {
               "type": "label",
-              "text": "Seed",
-              "style": "label.muted"
-            },
-            {
-              "id": "create_seed",
-              "type": "text_input",
-              "placeholder": "Blank = random",
-              "max_chars": 48,
+              "style": "label.muted",
               "bind": {
-                "text": "create_seed"
+                "text": "connect_phase",
+                "visible": "connecting"
               }
             },
             {
@@ -196,9 +205,9 @@
               },
               "children": [
                 {
-                  "id": "create",
+                  "id": "connect",
                   "type": "button",
-                  "text": "Create",
+                  "text": "Connect",
                   "layout": {
                     "w": {
                       "grow": 1
@@ -222,13 +231,42 @@
                   },
                   "style": "button.success",
                   "bind": {
-                    "enabled": "can_create"
+                    "enabled": "can_connect"
                   }
                 },
                 {
                   "id": "cancel",
                   "type": "button",
                   "text": "Cancel",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "visible": "connecting"
+                  }
+                },
+                {
+                  "id": "back",
+                  "type": "button",
+                  "text": "Back",
                   "layout": {
                     "w": {
                       "grow": 1
@@ -260,17 +298,26 @@
   },
   "editor": {
     "sample_state": {
-      "can_create": {
+      "can_connect": {
         "bool": true
       },
-      "create_name": {
+      "connect_phase": {
         "str": "Sample text"
       },
-      "create_seed": {
-        "str": "Sample text"
-      },
-      "name_exists": {
+      "connecting": {
         "bool": true
+      },
+      "has_status": {
+        "bool": true
+      },
+      "player_name": {
+        "str": "Sample text"
+      },
+      "server_addr": {
+        "str": "Sample text"
+      },
+      "status_text": {
+        "str": "Sample text"
       }
     },
     "zoom": 1.0,

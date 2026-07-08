@@ -14,9 +14,10 @@ use std::sync::Arc;
 
 // ---- document images ----------------------------------------------------------
 
-/// PNGs referenced by `image`/`rotimage` nodes, loaded from beside the project
-/// (the same rule the game uses: images live beside the exported document).
-/// Missing images resolve to nothing and simply don't draw.
+/// PNGs referenced by `image`/`rotimage` nodes, loaded from beside the project.
+/// Generated samples keep shipped document paths, so those also fall back to
+/// the game's `assets/ui/documents/` directory. Missing images resolve to
+/// nothing and simply don't draw.
 pub struct DiskImages {
     names: Vec<String>,
     images: Vec<ImageData>,
@@ -61,7 +62,10 @@ impl DiskImages {
         let mut images = Vec::new();
         if let Some(dir) = &key.1 {
             for name in &key.0 {
-                let Ok(bytes) = std::fs::read(dir.join(name)) else {
+                let Some(path) = crate::io::resolve_document_image_path(Some(dir), name) else {
+                    continue;
+                };
+                let Ok(bytes) = std::fs::read(path) else {
                     continue;
                 };
                 let Ok(img) = image::load_from_memory(&bytes) else {

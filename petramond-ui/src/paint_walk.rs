@@ -127,6 +127,9 @@ impl PaintCtx<'_> {
                         crate::doc::ImageFit::Stretch => {
                             p.sprite(TexId::DocImage(tex), rect, src, size, [1.0; 4], clip)
                         }
+                        crate::doc::ImageFit::Cover => {
+                            p.cover_sprite(TexId::DocImage(tex), rect, src, size, [1.0; 4], clip)
+                        }
                         crate::doc::ImageFit::Tile => {
                             p.tiled_sprite(TexId::DocImage(tex), rect, src, size, [1.0; 4], clip)
                         }

@@ -234,8 +234,14 @@
   },
   "petramond:sleep": {
    "state": {
-    "sleep_count": "str: 'x/y players sleeping' from the replicated player rows + self",
-    "sleep_count_visible": "bool: true only with more than one connected player"
+    "sleep_count": {
+     "type": "str",
+     "doc": "'x/y players sleeping' from the replicated player rows + self"
+    },
+    "sleep_count_visible": {
+     "type": "bool",
+     "doc": "true only with more than one connected player"
+    }
    },
    "handles": {
     "leave_bed": "click: cancel the sleep and wake beside the bed",

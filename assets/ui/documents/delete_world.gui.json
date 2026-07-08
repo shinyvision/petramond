@@ -4,57 +4,89 @@
     "class": "screen",
     "root": {
         "type": "frame",
-        "style": "panel.large",
         "layout": {
-            "w": 220,
-            "pad": [
-                4,
-                2,
-                4,
-                4
-            ],
-            "gap": 7,
-            "align": "center"
+            "w": {
+                "grow": 1
+            },
+            "h": {
+                "grow": 1
+            },
+            "align": "center",
+            "justify": "center"
         },
         "children": [
             {
-                "type": "label",
-                "text": "Delete World",
-                "scale": 2
-            },
-            {
-                "type": "label",
-                "bind": {
-                    "text": "world_name"
-                }
-            },
-            {
-                "type": "label",
-                "text": "Delete this world?",
-                "style": "label.muted"
-            },
-            {
-                "type": "spacer",
+                "type": "image",
+                "image": "../../textures/gui/screenshot.png",
+                "fit": "cover",
                 "layout": {
-                    "h": 2
+                    "w": {
+                        "grow": 1
+                    },
+                    "h": {
+                        "grow": 1
+                    },
+                    "abs": {
+                        "x": 0,
+                        "y": 0
+                    }
                 }
             },
             {
-                "type": "button",
-                "id": "confirm",
-                "text": "Delete World",
-                "style": "button.danger",
+                "type": "frame",
+                "style": "panel.large",
                 "layout": {
-                    "w": 130
-                }
-            },
-            {
-                "type": "button",
-                "id": "cancel",
-                "text": "Cancel",
-                "layout": {
-                    "w": 130
-                }
+                    "w": 220,
+                    "pad": [
+                        4,
+                        2,
+                        4,
+                        4
+                    ],
+                    "gap": 7,
+                    "align": "center"
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "text": "Delete World",
+                        "scale": 2
+                    },
+                    {
+                        "type": "label",
+                        "bind": {
+                            "text": "world_name"
+                        }
+                    },
+                    {
+                        "type": "label",
+                        "text": "Delete this world?",
+                        "style": "label.muted"
+                    },
+                    {
+                        "type": "spacer",
+                        "layout": {
+                            "h": 2
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "confirm",
+                        "text": "Delete World",
+                        "style": "button.danger",
+                        "layout": {
+                            "w": 130
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "cancel",
+                        "text": "Cancel",
+                        "layout": {
+                            "w": 130
+                        }
+                    }
+                ]
             }
         ]
     }

@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "petramond:delete_world",
+    "kind": "petramond:connection_lost",
     "class": "screen",
     "root": {
       "type": "frame",
@@ -89,19 +89,35 @@
           "children": [
             {
               "type": "label",
-              "text": "Delete World",
+              "text": "Disconnected",
               "scale": 2
             },
             {
               "type": "label",
+              "wrap": true,
+              "layout": {
+                "w": 200,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "label.muted",
               "bind": {
-                "text": "world_name"
+                "text": "disconnect_message"
               }
-            },
-            {
-              "type": "label",
-              "text": "Delete this world?",
-              "style": "label.muted"
             },
             {
               "type": "spacer",
@@ -126,34 +142,9 @@
               }
             },
             {
-              "id": "confirm",
+              "id": "ok",
               "type": "button",
-              "text": "Delete World",
-              "layout": {
-                "w": 130,
-                "h": "auto",
-                "pad": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "margin": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "gap": 0,
-                "dir": "column",
-                "justify": "start"
-              },
-              "style": "button.danger"
-            },
-            {
-              "id": "cancel",
-              "type": "button",
-              "text": "Cancel",
+              "text": "OK",
               "layout": {
                 "w": 130,
                 "h": "auto",
@@ -181,7 +172,7 @@
   },
   "editor": {
     "sample_state": {
-      "world_name": {
+      "disconnect_message": {
         "str": "Sample text"
       }
     },

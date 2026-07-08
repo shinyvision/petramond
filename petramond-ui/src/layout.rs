@@ -615,7 +615,19 @@ impl Solver<'_, '_, '_> {
             let Some(abs) = cn.node.layout.abs else {
                 continue;
             };
-            let (w, h) = self.naturals[c as usize];
+            let (nw, nh) = self.naturals[c as usize];
+            let w = match cn.node.layout.w {
+                Size::Px(p) => p,
+                Size::Grow(_) => (content.w - abs.x).max(0),
+                Size::Auto => nw,
+            };
+            let h = match cn.node.layout.h {
+                Size::Px(p) => p,
+                Size::Grow(_) => (content.h - abs.y).max(0),
+                Size::Auto => nh,
+            };
+            let w = clamp_opt(w, cn.node.layout.min_w, cn.node.layout.max_w);
+            let h = clamp_opt(h, cn.node.layout.min_h, cn.node.layout.max_h);
             self.arrange(
                 c,
                 RectI {
@@ -841,6 +853,42 @@ mod tests {
                 w: 10,
                 h: 10
             }
+        );
+    }
+
+    #[test]
+    fn abs_grow_children_fill_parent_content() {
+        let (s, _) = solve_doc(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "frame", "layout": { "w": 100, "h": 80, "pad": [10,6,14,8] },
+                "children": [
+                    { "type": "checkbox", "id": "bg", "layout": {
+                        "w": { "grow": 1 }, "h": { "grow": 1 }, "abs": { "x": 3, "y": 4 }
+                    } },
+                    { "type": "checkbox", "id": "flow" }
+                ] }
+        }"#,
+            (100, 80),
+        );
+        assert_eq!(
+            s.rects[1],
+            RectI {
+                x: 13,
+                y: 10,
+                w: 73,
+                h: 62
+            }
+        );
+        assert_eq!(
+            s.rects[2],
+            RectI {
+                x: 10,
+                y: 6,
+                w: 10,
+                h: 10
+            },
+            "absolute decoration still leaves normal flow alone"
         );
     }
 

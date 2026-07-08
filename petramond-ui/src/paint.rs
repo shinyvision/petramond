@@ -195,6 +195,37 @@ impl Painter<'_> {
         );
     }
 
+    /// A texture sub-rect over `r`, preserving aspect ratio and cropping the
+    /// source symmetrically so the destination is fully covered.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cover_sprite(
+        &mut self,
+        tex: TexId,
+        r: RectI,
+        src: [u32; 4],
+        tex_size: (u32, u32),
+        color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
+        if r.w <= 0 || r.h <= 0 || src[2] == 0 || src[3] == 0 {
+            return;
+        }
+        let [sx, sy, sw, sh] = src.map(|v| v as f32);
+        let (rw, rh) = (r.w as f32, r.h as f32);
+        let rect_aspect = rw / rh;
+        let image_aspect = sw / sh;
+        let crop = if rect_aspect > image_aspect {
+            let crop_h = (sw / rect_aspect).min(sh);
+            [sx, sy + (sh - crop_h) * 0.5, sw, crop_h]
+        } else {
+            let crop_w = (sh * rect_aspect).min(sw);
+            [sx + (sw - crop_w) * 0.5, sy, crop_w, sh]
+        };
+        let clip = self.phys_clip(clip);
+        self.list
+            .push_rect(tex, self.phys(r), crop, tex_size, color, clip);
+    }
+
     /// The texture repeated over `r` at its natural 1x-art size (logical px),
     /// with partial tiles at the right/bottom edges.
     #[allow(clippy::too_many_arguments)]
@@ -468,6 +499,32 @@ mod tests {
         );
         assert_eq!(dl.vertices[0].pos, [15.0, 21.0]);
         assert_eq!(dl.vertices[2].pos, [45.0, 27.0]); // br corner
+    }
+
+    #[test]
+    fn cover_sprite_crops_source_without_squishing() {
+        let mut dl = DrawList::default();
+        let mut p = Painter {
+            list: &mut dl,
+            scale: 1,
+        };
+        p.cover_sprite(
+            TexId::DocImage(0),
+            RectI {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+            [0, 0, 200, 100],
+            (200, 100),
+            [1.0; 4],
+            None,
+        );
+        assert_eq!(dl.vertices[0].pos, [0.0, 0.0]);
+        assert_eq!(dl.vertices[2].pos, [100.0, 100.0]);
+        assert_eq!(dl.vertices[0].uv, [0.25, 0.0]);
+        assert_eq!(dl.vertices[2].uv, [0.75, 1.0]);
     }
 
     #[test]

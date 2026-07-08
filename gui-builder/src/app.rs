@@ -188,7 +188,7 @@ impl App {
             let dir = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
             self.validation.extend(doc_edit::missing_image_issues(
                 &self.proj.document,
-                &|name| dir.as_ref().is_some_and(|d| d.join(name).is_file()),
+                &|name| crate::io::resolve_document_image_path(dir.as_deref(), name).is_some(),
             ));
             self.validation_rev = Some(self.doc_rev);
         }

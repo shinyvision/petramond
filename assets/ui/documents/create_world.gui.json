@@ -4,102 +4,134 @@
     "class": "screen",
     "root": {
         "type": "frame",
-        "style": "panel.large",
         "layout": {
-            "w": 240,
-            "pad": [
-                4,
-                2,
-                4,
-                4
-            ],
-            "gap": 6,
-            "align": "stretch"
+            "w": {
+                "grow": 1
+            },
+            "h": {
+                "grow": 1
+            },
+            "align": "center",
+            "justify": "center"
         },
         "children": [
             {
-                "type": "label",
-                "text": "Create New World",
-                "scale": 2
-            },
-            {
-                "type": "spacer",
+                "type": "image",
+                "image": "../../textures/gui/screenshot.png",
+                "fit": "cover",
                 "layout": {
-                    "h": 2
+                    "w": {
+                        "grow": 1
+                    },
+                    "h": {
+                        "grow": 1
+                    },
+                    "abs": {
+                        "x": 0,
+                        "y": 0
+                    }
                 }
             },
             {
-                "type": "label",
-                "text": "World Name",
-                "style": "label.muted"
-            },
-            {
-                "type": "text_input",
-                "id": "create_name",
-                "placeholder": "My World",
-                "max_chars": 48,
-                "bind": {
-                    "text": "create_name"
-                }
-            },
-            {
-                "type": "label",
-                "text": "Name already exists",
-                "bind": {
-                    "visible": "name_exists"
-                },
-                "style": "label.danger"
-            },
-            {
-                "type": "label",
-                "text": "Seed",
-                "style": "label.muted"
-            },
-            {
-                "type": "text_input",
-                "id": "create_seed",
-                "placeholder": "Blank = random",
-                "max_chars": 48,
-                "bind": {
-                    "text": "create_seed"
-                }
-            },
-            {
-                "type": "spacer",
+                "type": "frame",
+                "style": "panel.large",
                 "layout": {
-                    "h": 4
-                }
-            },
-            {
-                "type": "row",
-                "layout": {
-                    "gap": 5,
+                    "w": 240,
+                    "pad": [
+                        4,
+                        2,
+                        4,
+                        4
+                    ],
+                    "gap": 6,
                     "align": "stretch"
                 },
                 "children": [
                     {
-                        "type": "button",
-                        "id": "create",
-                        "text": "Create",
-                        "style": "button.success",
+                        "type": "label",
+                        "text": "Create New World",
+                        "scale": 2
+                    },
+                    {
+                        "type": "spacer",
                         "layout": {
-                            "w": {
-                                "grow": 1
-                            }
-                        },
-                        "bind": {
-                            "enabled": "can_create"
+                            "h": 2
                         }
                     },
                     {
-                        "type": "button",
-                        "id": "cancel",
-                        "text": "Cancel",
-                        "layout": {
-                            "w": {
-                                "grow": 1
-                            }
+                        "type": "label",
+                        "text": "World Name",
+                        "style": "label.muted"
+                    },
+                    {
+                        "type": "text_input",
+                        "id": "create_name",
+                        "placeholder": "My World",
+                        "max_chars": 48,
+                        "bind": {
+                            "text": "create_name"
                         }
+                    },
+                    {
+                        "type": "label",
+                        "text": "Name already exists",
+                        "bind": {
+                            "visible": "name_exists"
+                        },
+                        "style": "label.danger"
+                    },
+                    {
+                        "type": "label",
+                        "text": "Seed",
+                        "style": "label.muted"
+                    },
+                    {
+                        "type": "text_input",
+                        "id": "create_seed",
+                        "placeholder": "Blank = random",
+                        "max_chars": 48,
+                        "bind": {
+                            "text": "create_seed"
+                        }
+                    },
+                    {
+                        "type": "spacer",
+                        "layout": {
+                            "h": 4
+                        }
+                    },
+                    {
+                        "type": "row",
+                        "layout": {
+                            "gap": 5,
+                            "align": "stretch"
+                        },
+                        "children": [
+                            {
+                                "type": "button",
+                                "id": "create",
+                                "text": "Create",
+                                "style": "button.success",
+                                "layout": {
+                                    "w": {
+                                        "grow": 1
+                                    }
+                                },
+                                "bind": {
+                                    "enabled": "can_create"
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "id": "cancel",
+                                "text": "Cancel",
+                                "layout": {
+                                    "w": {
+                                        "grow": 1
+                                    }
+                                }
+                            }
+                        ]
                     }
                 ]
             }

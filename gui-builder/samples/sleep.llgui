@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:sleep",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          28
+        ],
+        "gap": 6,
+        "dir": "column",
+        "align": "center",
+        "justify": "start",
+        "anchor": {
+          "h": "center",
+          "v": "end"
+        }
+      },
+      "children": [
+        {
+          "type": "label",
+          "style": "label.muted",
+          "bind": {
+            "text": "sleep_count",
+            "visible": "sleep_count_visible"
+          }
+        },
+        {
+          "id": "leave_bed",
+          "type": "button",
+          "text": "LEAVE BED",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "sleep_count": {
+        "str": "Sample text"
+      },
+      "sleep_count_visible": {
+        "bool": true
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

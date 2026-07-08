@@ -261,7 +261,12 @@ mod tests {
     fn image_fit_and_bind_image_round_trip_through_save_load() {
         use petramond_ui::doc::ImageFit;
         let mut p = Project::new("petramond:pause");
-        for fit in [ImageFit::Stretch, ImageFit::Tile, ImageFit::Slice([2, 3, 4, 5])] {
+        for fit in [
+            ImageFit::Stretch,
+            ImageFit::Cover,
+            ImageFit::Tile,
+            ImageFit::Slice([2, 3, 4, 5]),
+        ] {
             p.document
                 .root
                 .children

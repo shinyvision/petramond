@@ -7,13 +7,17 @@
     "root": {
       "type": "frame",
       "layout": {
-        "w": "auto",
-        "h": "auto",
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
         "pad": [
-          10,
-          6,
-          10,
-          8
+          0,
+          0,
+          0,
+          0
         ],
         "margin": [
           0,
@@ -24,43 +28,45 @@
         "gap": 8,
         "dir": "column",
         "align": "center",
-        "justify": "start"
+        "justify": "center"
       },
-      "style": "panel.large",
       "children": [
         {
-          "type": "label",
-          "text": "Petramond",
-          "scale": 3
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          }
         },
         {
-          "type": "spacer",
+          "type": "column",
           "layout": {
             "w": "auto",
-            "h": 8,
-            "pad": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "margin": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "gap": 0,
-            "dir": "column",
-            "justify": "start"
-          }
-        },
-        {
-          "id": "start",
-          "type": "button",
-          "text": "Start Game",
-          "layout": {
-            "w": 130,
             "h": "auto",
             "pad": [
               0,
@@ -74,34 +80,134 @@
               0,
               0
             ],
-            "gap": 0,
+            "gap": 8,
             "dir": "column",
+            "align": "center",
             "justify": "start"
-          }
-        },
-        {
-          "id": "quit",
-          "type": "button",
-          "text": "Quit",
-          "layout": {
-            "w": 130,
-            "h": "auto",
-            "pad": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "margin": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "gap": 0,
-            "dir": "column",
-            "justify": "start"
-          }
+          },
+          "children": [
+            {
+              "type": "image",
+              "image": "../../textures/gui/petramond-logo.png",
+              "layout": {
+                "w": 220,
+                "h": 61,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "type": "frame",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  10,
+                  8,
+                  10,
+                  10
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 7,
+                "dir": "column",
+                "align": "center",
+                "justify": "start"
+              },
+              "style": "panel.large",
+              "children": [
+                {
+                  "id": "start",
+                  "type": "button",
+                  "text": "Start Game",
+                  "layout": {
+                    "w": 130,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "connect",
+                  "type": "button",
+                  "text": "Connect to Server",
+                  "layout": {
+                    "w": 130,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "quit",
+                  "type": "button",
+                  "text": "Quit",
+                  "layout": {
+                    "w": 130,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                }
+              ]
+            }
+          ]
         }
       ]
     }

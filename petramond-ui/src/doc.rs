@@ -243,6 +243,8 @@ pub enum ImageFit {
     /// Stretch the whole texture over the rect.
     #[default]
     Stretch,
+    /// Preserve aspect ratio while filling the rect, cropping the overflow.
+    Cover,
     /// Repeat the texture at its natural (1x art) size.
     Tile,
     /// 9-slice with insets `[l, t, r, b]` (1x-art px).

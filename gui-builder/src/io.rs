@@ -83,6 +83,24 @@ pub fn game_documents_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
+/// Resolve a document image the way the game will after export. Normal
+/// projects resolve beside the `.llgui`; generated samples may reference paths
+/// that are correct beside `assets/ui/documents`, so fall back there for
+/// preview/validation without rewriting the document.
+pub fn resolve_document_image_path(project_dir: Option<&Path>, name: &str) -> Option<PathBuf> {
+    if name.is_empty() {
+        return None;
+    }
+    if let Some(dir) = project_dir {
+        let path = dir.join(name);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let path = game_documents_dir()?.join(name);
+    path.is_file().then_some(path)
+}
+
 /// The builder's sample-project dir (`gui-builder/samples/`).
 pub fn samples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("samples")
@@ -187,6 +205,29 @@ mod tests {
                 "sample '{stem}' does not match the shipped document — \
                  re-run `gui-builder --make-samples` after editing shipped documents"
             );
+            let out_dir = std::env::temp_dir().join(format!(
+                "petramond-gui-builder-export-{}-{stem}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&out_dir).unwrap();
+            let out = out_dir.join(format!("{stem}.gui.json"));
+            export_document(&out, &sample.document, sample_path.parent()).unwrap();
+            let exported = Document::from_json(&std::fs::read_to_string(&out).unwrap()).unwrap();
+            assert_eq!(
+                exported, shipped_doc,
+                "exporting sample '{stem}' must reproduce the shipped document"
+            );
+            for image in crate::doc_edit::static_image_names(&sample.document) {
+                if image.is_empty() {
+                    continue;
+                }
+                assert!(
+                    resolve_document_image_path(sample_path.parent(), &image).is_some(),
+                    "sample '{stem}' image '{image}' must resolve for preview"
+                );
+            }
+            let _ = std::fs::remove_file(out);
+            let _ = std::fs::remove_dir(out_dir);
         }
     }
 }

@@ -430,7 +430,11 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
             ui.horizontal(|ui| {
                 ui.label("fit");
                 let is_slice = matches!(fit, ImageFit::Slice(_));
-                for (mode, name) in [(ImageFit::Stretch, "stretch"), (ImageFit::Tile, "tile")] {
+                for (mode, name) in [
+                    (ImageFit::Stretch, "stretch"),
+                    (ImageFit::Cover, "cover"),
+                    (ImageFit::Tile, "tile"),
+                ] {
                     if ui.selectable_label(*fit == mode, name).clicked() {
                         *fit = mode;
                         t.changed = true;

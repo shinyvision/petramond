@@ -80,6 +80,96 @@
           }
         },
         {
+          "id": "open_lan",
+          "type": "button",
+          "text": "OPEN TO LAN",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          },
+          "bind": {
+            "visible": "lan_closed"
+          }
+        },
+        {
+          "type": "label",
+          "style": "label.muted",
+          "bind": {
+            "text": "lan_status",
+            "visible": "lan_open"
+          }
+        },
+        {
+          "type": "label",
+          "wrap": true,
+          "layout": {
+            "w": 140,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          },
+          "style": "label.danger",
+          "bind": {
+            "text": "lan_error",
+            "visible": "has_lan_error"
+          }
+        },
+        {
+          "id": "disconnect",
+          "type": "button",
+          "text": "DISCONNECT",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          },
+          "bind": {
+            "visible": "is_remote"
+          }
+        },
+        {
           "id": "save_quit",
           "type": "button",
           "text": "SAVE AND QUIT",
@@ -101,13 +191,38 @@
             "gap": 0,
             "dir": "column",
             "justify": "start"
+          },
+          "bind": {
+            "visible": "is_host"
           }
         }
       ]
     }
   },
   "editor": {
-    "sample_state": {},
+    "sample_state": {
+      "has_lan_error": {
+        "bool": true
+      },
+      "is_host": {
+        "bool": true
+      },
+      "is_remote": {
+        "bool": true
+      },
+      "lan_closed": {
+        "bool": true
+      },
+      "lan_error": {
+        "str": "Sample text"
+      },
+      "lan_open": {
+        "bool": true
+      },
+      "lan_status": {
+        "str": "Sample text"
+      }
+    },
     "zoom": 1.0,
     "preview_scale": 2,
     "screen": [

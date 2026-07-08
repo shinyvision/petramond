@@ -4,48 +4,80 @@
     "class": "screen",
     "root": {
         "type": "frame",
-        "style": "panel.large",
         "layout": {
-            "w": 220,
-            "pad": [
-                4,
-                2,
-                4,
-                4
-            ],
-            "gap": 7,
-            "align": "center"
+            "w": {
+                "grow": 1
+            },
+            "h": {
+                "grow": 1
+            },
+            "align": "center",
+            "justify": "center"
         },
         "children": [
             {
-                "type": "label",
-                "text": "Disconnected",
-                "scale": 2
+                "type": "image",
+                "image": "../../textures/gui/screenshot.png",
+                "fit": "cover",
+                "layout": {
+                    "w": {
+                        "grow": 1
+                    },
+                    "h": {
+                        "grow": 1
+                    },
+                    "abs": {
+                        "x": 0,
+                        "y": 0
+                    }
+                }
             },
             {
-                "type": "label",
-                "wrap": true,
-                "style": "label.muted",
+                "type": "frame",
+                "style": "panel.large",
                 "layout": {
-                    "w": 200
+                    "w": 220,
+                    "pad": [
+                        4,
+                        2,
+                        4,
+                        4
+                    ],
+                    "gap": 7,
+                    "align": "center"
                 },
-                "bind": {
-                    "text": "disconnect_message"
-                }
-            },
-            {
-                "type": "spacer",
-                "layout": {
-                    "h": 2
-                }
-            },
-            {
-                "type": "button",
-                "id": "ok",
-                "text": "OK",
-                "layout": {
-                    "w": 130
-                }
+                "children": [
+                    {
+                        "type": "label",
+                        "text": "Disconnected",
+                        "scale": 2
+                    },
+                    {
+                        "type": "label",
+                        "wrap": true,
+                        "style": "label.muted",
+                        "layout": {
+                            "w": 200
+                        },
+                        "bind": {
+                            "text": "disconnect_message"
+                        }
+                    },
+                    {
+                        "type": "spacer",
+                        "layout": {
+                            "h": 2
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "ok",
+                        "text": "OK",
+                        "layout": {
+                            "w": 130
+                        }
+                    }
+                ]
             }
         ]
     }

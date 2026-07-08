@@ -58,7 +58,10 @@ Document images (`image`/`rotimage` nodes) are PNGs beside the project file /
 exported document; missing ones simply don't draw (the validation panel warns).
 The Image inspector's "Choose image…" copies a picked PNG next to the project,
 and Export copies every referenced image next to the `.gui.json`. Image nodes
-support fit modes (stretch / tile / 9-slice with insets).
+support fit modes (stretch / cover / tile / 9-slice with insets). Generated
+samples preserve shipped document image paths and preview them through the
+shipped `assets/ui/documents/` location when those files are not beside the
+sample project.
 
 ## Samples
 

@@ -4,52 +4,91 @@
     "class": "screen",
     "root": {
         "type": "frame",
-        "style": "panel.large",
         "layout": {
-            "pad": [
-                10,
-                6,
-                10,
-                8
-            ],
+            "w": {
+                "grow": 1
+            },
+            "h": {
+                "grow": 1
+            },
             "gap": 8,
-            "align": "center"
+            "align": "center",
+            "justify": "center"
         },
         "children": [
             {
-                "type": "label",
-                "text": "Petramond",
-                "scale": 3
-            },
-            {
-                "type": "spacer",
+                "type": "image",
+                "image": "../../textures/gui/screenshot.png",
+                "fit": "cover",
                 "layout": {
-                    "h": 8
+                    "w": {
+                        "grow": 1
+                    },
+                    "h": {
+                        "grow": 1
+                    },
+                    "abs": {
+                        "x": 0,
+                        "y": 0
+                    }
                 }
             },
             {
-                "type": "button",
-                "id": "start",
-                "text": "Start Game",
+                "type": "column",
                 "layout": {
-                    "w": 130
-                }
-            },
-            {
-                "type": "button",
-                "id": "connect",
-                "text": "Connect to Server",
-                "layout": {
-                    "w": 130
-                }
-            },
-            {
-                "type": "button",
-                "id": "quit",
-                "text": "Quit",
-                "layout": {
-                    "w": 130
-                }
+                    "gap": 8,
+                    "align": "center"
+                },
+                "children": [
+                    {
+                        "type": "image",
+                        "image": "../../textures/gui/petramond-logo.png",
+                        "layout": {
+                            "w": 220,
+                            "h": 61
+                        }
+                    },
+                    {
+                        "type": "frame",
+                        "style": "panel.large",
+                        "layout": {
+                            "pad": [
+                                10,
+                                8,
+                                10,
+                                10
+                            ],
+                            "gap": 7,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "button",
+                                "id": "start",
+                                "text": "Start Game",
+                                "layout": {
+                                    "w": 130
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "id": "connect",
+                                "text": "Connect to Server",
+                                "layout": {
+                                    "w": 130
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "id": "quit",
+                                "text": "Quit",
+                                "layout": {
+                                    "w": 130
+                                }
+                            }
+                        ]
+                    }
+                ]
             }
         ]
     }

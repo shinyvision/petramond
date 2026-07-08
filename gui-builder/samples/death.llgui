@@ -1,0 +1,118 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:death",
+    "class": "screen",
+    "root": {
+      "type": "column",
+      "layout": {
+        "w": "auto",
+        "h": "auto",
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 8,
+        "dir": "column",
+        "align": "center",
+        "justify": "start"
+      },
+      "children": [
+        {
+          "type": "label",
+          "text": "You died",
+          "scale": 3
+        },
+        {
+          "type": "spacer",
+          "layout": {
+            "w": "auto",
+            "h": 10,
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "respawn",
+          "type": "button",
+          "text": "RESPAWN",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
+          "id": "save_quit",
+          "type": "button",
+          "text": "SAVE AND QUIT",
+          "layout": {
+            "w": 130,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {},
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

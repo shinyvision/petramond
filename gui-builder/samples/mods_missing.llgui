@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "petramond:create_world",
+    "kind": "petramond:mods_missing",
     "class": "screen",
     "root": {
       "type": "frame",
@@ -66,8 +66,8 @@
         {
           "type": "frame",
           "layout": {
-            "w": 240,
-            "h": "auto",
+            "w": 280,
+            "h": 200,
             "pad": [
               4,
               2,
@@ -89,19 +89,28 @@
           "children": [
             {
               "type": "label",
-              "text": "Create New World",
+              "text": "Missing Mods",
               "scale": 2
             },
             {
-              "type": "spacer",
+              "type": "label",
+              "text": "This server requires mods you don't have installed:",
+              "wrap": true
+            },
+            {
+              "id": "missing_scroll",
+              "type": "scroll",
+              "axis": "vertical",
               "layout": {
                 "w": "auto",
-                "h": 2,
+                "h": {
+                  "grow": 1
+                },
                 "pad": [
-                  0,
-                  0,
-                  0,
-                  0
+                  1,
+                  1,
+                  1,
+                  1
                 ],
                 "margin": [
                   0,
@@ -111,50 +120,91 @@
                 ],
                 "gap": 0,
                 "dir": "column",
-                "justify": "start"
-              }
+                "justify": "start",
+                "min_h": 36
+              },
+              "style": "panel.inset",
+              "children": [
+                {
+                  "id": "missing",
+                  "type": "list",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 2,
+                    "dir": "column",
+                    "align": "stretch",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "items": "missing_rows"
+                  },
+                  "children": [
+                    {
+                      "type": "row",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          3,
+                          1,
+                          3,
+                          1
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 5,
+                        "dir": "column",
+                        "align": "center",
+                        "justify": "start"
+                      },
+                      "style": "list.row",
+                      "children": [
+                        {
+                          "type": "label",
+                          "bind": {
+                            "text": "id"
+                          }
+                        },
+                        {
+                          "type": "badge",
+                          "bind": {
+                            "text": "version",
+                            "visible": "has_version"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             },
             {
               "type": "label",
-              "text": "World Name",
+              "text": "Install them, then try again.",
               "style": "label.muted"
-            },
-            {
-              "id": "create_name",
-              "type": "text_input",
-              "placeholder": "My World",
-              "max_chars": 48,
-              "bind": {
-                "text": "create_name"
-              }
-            },
-            {
-              "type": "label",
-              "text": "Name already exists",
-              "style": "label.danger",
-              "bind": {
-                "visible": "name_exists"
-              }
-            },
-            {
-              "type": "label",
-              "text": "Seed",
-              "style": "label.muted"
-            },
-            {
-              "id": "create_seed",
-              "type": "text_input",
-              "placeholder": "Blank = random",
-              "max_chars": 48,
-              "bind": {
-                "text": "create_seed"
-              }
             },
             {
               "type": "spacer",
               "layout": {
                 "w": "auto",
-                "h": 4,
+                "h": 2,
                 "pad": [
                   0,
                   0,
@@ -191,48 +241,15 @@
                 ],
                 "gap": 5,
                 "dir": "column",
-                "align": "stretch",
                 "justify": "start"
               },
               "children": [
                 {
-                  "id": "create",
+                  "id": "back",
                   "type": "button",
-                  "text": "Create",
+                  "text": "Back",
                   "layout": {
-                    "w": {
-                      "grow": 1
-                    },
-                    "h": "auto",
-                    "pad": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 0,
-                    "dir": "column",
-                    "justify": "start"
-                  },
-                  "style": "button.success",
-                  "bind": {
-                    "enabled": "can_create"
-                  }
-                },
-                {
-                  "id": "cancel",
-                  "type": "button",
-                  "text": "Cancel",
-                  "layout": {
-                    "w": {
-                      "grow": 1
-                    },
+                    "w": 110,
                     "h": "auto",
                     "pad": [
                       0,
@@ -260,17 +277,42 @@
   },
   "editor": {
     "sample_state": {
-      "can_create": {
-        "bool": true
-      },
-      "create_name": {
-        "str": "Sample text"
-      },
-      "create_seed": {
-        "str": "Sample text"
-      },
-      "name_exists": {
-        "bool": true
+      "missing_rows": {
+        "list": [
+          {
+            "has_version": {
+              "bool": true
+            },
+            "id": {
+              "str": "First item"
+            },
+            "version": {
+              "str": "First item"
+            }
+          },
+          {
+            "has_version": {
+              "bool": true
+            },
+            "id": {
+              "str": "Second item"
+            },
+            "version": {
+              "str": "Second item"
+            }
+          },
+          {
+            "has_version": {
+              "bool": true
+            },
+            "id": {
+              "str": "Third item"
+            },
+            "version": {
+              "str": "Third item"
+            }
+          }
+        ]
       }
     },
     "zoom": 1.0,
