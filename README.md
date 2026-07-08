@@ -1,142 +1,114 @@
+<p align="center">
+  <img src="assets/textures/gui/petramond-logo.png" alt="Petramond" width="520">
+</p>
+
 # Petramond
 
-Petramond is a native Rust voxel game engine and sandbox world. It is built
-around deterministic simulation, data-driven content, fast world streaming, and
-a modding path that uses the same systems as core gameplay.
+A voxel sandbox about wild landscapes, player-built homes, and worlds that can
+grow through mods.
+
+<p align="center">
+  <a href="https://github.com/shinyvision/petramond/releases/latest">
+    <img src="assets/textures/gui/download-petramond.png" alt="Download Petramond from the latest GitHub release" width="420">
+  </a>
+</p>
 
 ![Petramond world screenshot](assets/textures/gui/screenshot.png)
 
-The project is currently unreleased and optimized for developer playtesting.
-Expect rapid iteration, clean breaks, and no compatibility promises yet.
+Petramond starts with the best part of a block world: stepping over a ridge and
+seeing somewhere you want to go. Its worlds are built for long views and varied
+journeys, with mountains, oceans, rivers, caves, forests, wetlands, snowy peaks,
+deserts, and redwood groves waiting past the next hill.
 
-## What is here
+Mine what you need, craft better tools, build a shelter, place chests and
+furnaces, sleep through the night, and turn a raw landscape into a place that
+feels like yours.
 
-- Native desktop client using `winit` and `wgpu`.
-- Noise-driven terrain with biomes, caves, oceans, rivers, mountains, forests,
-  vegetation features, and worldgen preview tooling.
-- Cubic chunk storage and streaming with worker-side generation, lighting, and
-  terrain mesh preparation.
-- Data-driven blocks, items, recipes, loot tables, models, sounds, shaders, UI
-  documents, and texture atlases.
-- Core gameplay systems for mining, placement, water, doors, stairs, panes,
-  slabs, torches, chests, furnaces, beds, health, fall damage, food, effects,
-  drops, crafting, mobs, and day/night presentation.
-- Renderer-owned presentation for terrain, block models, items, mobs,
-  particles, outlines, sky, UI, held items, and third-person player bodies.
-- Deterministic tick-side events and stage hooks for gameplay behavior.
-- Mod packs with layered content catalogs plus sandboxed WASM logic through
-  `mod-api`, `mod-sdk`, and sample source packs in `mods-src/`.
-- `petramond-ui`, a renderer-agnostic GUI runtime, plus a standalone
-  `gui-builder` editor that previews game UI documents through the same runtime.
+## Play The World
 
-## Repository layout
+- Explore wide procedural worlds with dramatic terrain, water, caves, and
+  biome-to-biome variety.
+- Build with familiar materials plus shape-rich blocks like stairs, slabs,
+  doors, beds, glass panes, torches, and workbenches.
+- Craft tools, cook resources, store supplies, gather drops, and keep your
+  player alive through health, food, fall damage, and status effects.
+- Meet wildlife and hostile experiments, including sample mod packs for
+  zombies, kitchen ovens, and wheel blocks.
+- Switch between first-person and third-person views while you build, fight, or
+  just take in the world.
+- Play with a mod-ready content system designed for new blocks, items, mobs,
+  recipes, sounds, GUIs, and world behavior.
+- There's technically multiplayer.
 
-```text
-assets/          Base game catalogs, textures, models, sounds, shaders, and UI docs
-src/             Engine, native app, simulation, rendering, worldgen, save, net
-petramond-ui/    Shared document UI runtime
-gui-builder/     Standalone GUI document editor and preview tool
-mod-api/         Shared host/guest ABI types for mods
-mod-sdk/         Guest-side helper crate for WASM mods
-mods-src/        Source workspaces for sample mods
-docs/            Project notes that are safe to track
-```
+## No recipe book
+Crafting recipes are less discoverable at this moment. [You can look here](https://github.com/shinyvision/petramond/blob/main/assets/recipes.json) and [here](https://github.com/shinyvision/petramond/blob/main/mods-src/kitchen/pack/recipes.json) to see how to craft things. It's not great, but most recipes look like ones from similar voxel sandbox games. Just remember you need coal at the bottom of a furnace to craft it.
 
-Generated build output lives under `target/`. Installed local mod packs live in
-`mods/` after `make mods`; their source of truth is `mods-src/`.
+## Current Status
 
-## Requirements
+Petramond is in development. It's here for those who want to try it out, but don't expect it to be big like Minecraft.
+I want the base game to be a game engine with some sandbox features, but add content packs like combat, farming and cooking through mods.
+The mods will be first-class curated packs but there will also be an API to add your own content.
 
-- Rust stable.
-- A desktop GPU/driver stack supported by `wgpu`.
-- `wasm32-unknown-unknown` target when building sample mods:
+There is also something that looks like multiplayer that does work, but don't expect it to be amazing.
 
-```sh
-rustup target add wasm32-unknown-unknown
-```
+I am using AI assistance and a very strong preference about how I want the code to be architected to build this game.
 
-## Run the game
+## Play From Source
 
-Use the playtest profile for day-to-day work. It keeps release-grade
-optimization where it matters, while preserving fast incremental rebuilds.
+You need Rust stable and a desktop GPU/driver stack supported by `wgpu`.
 
 ```sh
 make run
 ```
 
-Useful overrides:
+Useful playtest options:
 
 ```sh
 SEED=0x12345678 RD=24 make run
-NV_OFFLOAD= make run
 PETRAMOND_WORLD=my-world make run
-PETRAMOND_FPS=120 PETRAMOND_PERF=1 make run
+PETRAMOND_FPS=120 make run
 ```
 
-The main binary is `petramond_native`:
+To build and install the sample mods:
 
 ```sh
-cargo run --profile playtest --bin petramond_native
+rustup target add wasm32-unknown-unknown
+make mods
 ```
 
-## Developer workflows
+## Controls
 
-Build the native game:
+- `WASD` move, mouse look, scroll wheel selects the hotbar.
+- Left click mines or attacks; right click places, uses, or opens blocks.
+- `Space` jumps, `Shift` sneaks, and `Ctrl` sprints.
+- `E` opens inventory, `1`-`9` selects hotbar slots, and `Q` drops the held item.
+- `R` rotates supported held blocks, `V` changes perspective, and `Esc` closes
+  screens or pauses.
+
+## Modding
+
+Mods are part of the game's identity, not an afterthought. Sample packs live in
+`mods-src/` and can add content such as blocks, items, mobs, recipes, sounds,
+models, and custom interfaces. After `make mods`, the installed local packs live
+in `mods/`.
+
+## Source Extras
+
+Build the game without running it:
 
 ```sh
 make build
 ```
 
-Run tests:
-
-```sh
-cargo test
-```
-
-Worldgen-heavy tests are opt-in:
-
-```sh
-cargo test --features worldgen-tests
-```
-
-Generate world and feature previews:
-
-```sh
-cargo run --quiet --bin genmap -- 42 /tmp/top.png top
-cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8
-```
-
-Build and install sample mods into the local `mods/` directory:
-
-```sh
-make mods
-```
-
-Run the GUI builder:
+Open the GUI builder:
 
 ```sh
 make gui-builder
 ```
 
-## Architecture notes
+Generate world preview images:
 
-Petramond keeps simulation and presentation deliberately separate. Gameplay
-mutation belongs to deterministic tick systems on the game side; rendering,
-audio, UI, and client-only feedback consume presentation snapshots and events.
-World ownership stays on the owning thread, while workers compute generation,
-lighting, meshing, or streaming results for the owner to apply.
-
-Content is intended to be data first. Engine-owned rows use the `petramond:`
-namespace, and mod rows use their own `mod_id:name` namespace. Save data stores
-name-addressed palettes so dynamic registry ids can be assigned at load time
-without making saves depend on runtime numeric ids.
-
-Mods are not a side channel. New gameplay systems are expected to prove out the
-same seams that mods use: content catalogs, events, tick stages, registries, and
-WASM host calls.
-
-## Status
-
-Petramond is private, unreleased, and in active development. The current goal is
-to keep the engine clean, deterministic, moddable, and pleasant to playtest
-before stabilizing any public compatibility surface.
+```sh
+cargo run --quiet --bin genmap -- 42 /tmp/top.png top
+cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8
+```
