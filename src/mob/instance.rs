@@ -17,7 +17,6 @@ use super::brain::{AiCtx, AiMob, AttackIntent, BehaviorOutput, Brain};
 use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
-use super::push;
 use super::ragdoll::Ragdoll;
 use super::{def, Mob, MobDef, MobRng};
 
@@ -256,25 +255,13 @@ impl Instance {
     /// The mob's collision/selection AABB: feet at `pos`, extending up by the body
     /// height and out by its half-width. The single source of truth for ray-vs-mob.
     pub fn aabb(&self) -> (Vec3, Vec3) {
-        let s = def(self.kind).size;
-        (
-            Vec3::new(
-                self.pos.x - s.half_width,
-                self.pos.y,
-                self.pos.z - s.half_width,
-            ),
-            Vec3::new(
-                self.pos.x + s.half_width,
-                self.pos.y + s.height,
-                self.pos.z + s.half_width,
-            ),
-        )
+        self.body().aabb()
     }
 
-    /// This mob's body for soft entity pushing (feet at `pos`, sized to its species).
-    pub(super) fn push_body(&self) -> push::Body {
+    /// This mob's gameplay body (feet at `pos`, sized to its species).
+    pub(super) fn body(&self) -> crate::body::Body {
         let s = def(self.kind).size;
-        push::Body::new(self.pos, s.half_width, s.height)
+        crate::body::Body::new(self.pos, s.half_width, s.height)
     }
 
     /// Set this tick's soft entity-push velocity (the sum of the pushes from every

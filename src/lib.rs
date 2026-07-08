@@ -21,6 +21,7 @@ mod biome;
 mod block;
 mod block_model;
 mod block_state;
+mod body;
 mod camera;
 mod chunk;
 mod collision;

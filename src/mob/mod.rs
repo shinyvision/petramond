@@ -26,7 +26,6 @@ mod manager;
 mod model_meta;
 mod nav;
 mod path;
-mod push;
 mod ragdoll;
 mod spawn;
 
@@ -34,7 +33,6 @@ pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, Mobs, PlayerAnchor, ShearDrop};
-pub use push::{separation, Body};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_cap_full,
     HOSTILE_SPAWN_ATTEMPTS,

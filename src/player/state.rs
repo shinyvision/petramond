@@ -316,6 +316,12 @@ impl Player {
         Vec3::new(self.pos.x, self.pos.y + HEIGHT * 0.5, self.pos.z)
     }
 
+    /// Gameplay body: feet at `pos`, using the player's collision dimensions.
+    #[inline]
+    pub(crate) fn body(&self) -> crate::body::Body {
+        crate::body::Body::new(self.pos, HALF_W, HEIGHT)
+    }
+
     /// AABB min corner.
     #[inline]
     pub(super) fn aabb_min(&self) -> Vec3 {

@@ -863,9 +863,7 @@ impl ServerGame {
             .map(|sess| crate::mob::PlayerAnchor {
                 id: sess.id,
                 pos: sess.player.body_center(),
-                body: (!sess.player.is_spectator()).then(|| {
-                    crate::mob::Body::new(sess.player.pos, player::HALF_W, player::HEIGHT)
-                }),
+                body: (!sess.player.is_spectator()).then(|| sess.player.body()),
             })
             .collect();
         // Natural + mod hostile spawning centre on ONE anchor per tick,

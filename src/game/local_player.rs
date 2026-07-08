@@ -115,15 +115,15 @@ impl Game {
         if self.player.is_spectator() {
             return;
         }
-        let body = crate::mob::Body::new(self.player.pos, player::HALF_W, player::HEIGHT);
+        let body = self.player.body();
         let mut push = Vec3::ZERO;
         for entry in self.replicated_mobs.iter() {
             if entry.curr.dead {
                 continue; // a ragdolling corpse doesn't push
             }
             let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
-            let mob = crate::mob::Body::new(entry.curr.pos, size.half_width, size.height);
-            if let Some(p) = crate::mob::separation(body, mob) {
+            let mob = crate::body::Body::new(entry.curr.pos, size.half_width, size.height);
+            if let Some(p) = crate::body::separation(body, mob) {
                 push += p;
             }
         }
@@ -131,7 +131,7 @@ impl Game {
             let Some(other) = remote.push_body() else {
                 continue; // hidden (spectator/dead) or asleep in a bed
             };
-            if let Some(p) = crate::mob::separation(body, other) {
+            if let Some(p) = crate::body::separation(body, other) {
                 push += p;
             }
         }

@@ -1,5 +1,5 @@
 use super::game::ServerGame;
-use crate::block::{Block, BlockInteraction, RenderShape};
+use crate::block::{Aabb, Block, BlockInteraction, RenderShape};
 use crate::block_state::StairState;
 use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::facing::Facing;
@@ -280,10 +280,7 @@ impl ServerGame {
             }
             let next_state = self.world.slab_layer_target_state(target, block, slot)?;
             let boxes = crate::slab::boxes_for_state(next_state);
-            let blocked = self.sessions[s]
-                .player
-                .intersects_block_boxes(target, boxes)
-                || self.world.mobs().any_overlapping_boxes(target, boxes);
+            let blocked = self.placement_occupied_by_body(s, target, boxes);
             if !blocked && self.world.place_slab_layer(target, block, slot) {
                 self.sessions[s].player.inventory.decrement_selected();
                 return Some(target);
@@ -292,7 +289,7 @@ impl ServerGame {
         }
 
         // A bbmodel block places its WHOLE footprint (the workbench is 2×2×1): every
-        // occupied cell must be loaded + replaceable AND clear of the player/mobs, or the
+        // occupied cell must be loaded + replaceable AND clear of blocking bodies, or the
         // placement fails as a unit (nothing placed, the held item kept). Multi-cell
         // models, and models marked directionalView, are oriented from the player's
         // facing through the model's own placement orientation (the workbench spans
@@ -318,11 +315,11 @@ impl ServerGame {
             let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
                 .into_iter()
                 .any(|(c, off)| {
-                    self.sessions[s].player.intersects_block(c)
-                        || self.world.mobs().any_overlapping_boxes(
-                            c,
-                            crate::block_model::collision_boxes_oriented(kind, off, facing),
-                        )
+                    self.placement_occupied_by_body(
+                        s,
+                        c,
+                        crate::block_model::collision_boxes_oriented(kind, off, facing),
+                    )
                 });
             if !blocked && self.world.place_model_block_facing(base, block, facing) {
                 self.sessions[s].player.inventory.decrement_selected();
@@ -349,10 +346,9 @@ impl ServerGame {
                     top,
                 })
             };
-            let blocked = [(p, false), (upper, true)].into_iter().any(|(c, top)| {
-                self.sessions[s].player.intersects_block(c)
-                    || self.world.mobs().any_overlapping_boxes(c, closed(top))
-            });
+            let blocked = [(p, false), (upper, true)]
+                .into_iter()
+                .any(|(c, top)| self.placement_occupied_by_body(s, c, closed(top)));
             if !blocked && self.world.place_door(p, block, facing) {
                 self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
@@ -367,8 +363,7 @@ impl ServerGame {
                 return None;
             }
             let boxes = self.world.resolved_stair_boxes(p, state);
-            let blocked = self.sessions[s].player.intersects_block_boxes(p, boxes)
-                || self.world.mobs().any_overlapping_boxes(p, boxes);
+            let blocked = self.placement_occupied_by_body(s, p, boxes);
             if !blocked && self.world.place_stair(p, block, state) {
                 self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
@@ -385,8 +380,7 @@ impl ServerGame {
                 return None;
             }
             let boxes = self.world.pane_boxes_at(p);
-            let blocked = self.sessions[s].player.intersects_block_boxes(p, boxes)
-                || self.world.mobs().any_overlapping_boxes(p, boxes);
+            let blocked = self.placement_occupied_by_body(s, p, boxes);
             if !blocked && self.world.set_block_world(p.x, p.y, p.z, block) {
                 self.sessions[s].player.inventory.decrement_selected();
                 return Some(p);
@@ -404,17 +398,13 @@ impl ServerGame {
             return None;
         }
 
-        let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
         // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
-        // may be placed inside an entity; a block that WOULD collide can't be placed where
-        // it overlaps the player or a mob — the placement simply fails (the click does
-        // nothing and the held item isn't consumed).
-        let collides = block.blocks_movement();
-        let clear_of_player = !collides || !self.sessions[s].player.intersects_block(p);
-        let clear_of_mobs = !collides || !self.world.mobs().any_overlapping_placement(p, block);
+        // may be placed inside an entity; a block that WOULD collide cannot be placed
+        // where its placed shape overlaps a gameplay body.
+        let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
+        let clear_of_bodies = !self.placement_occupied_by_body(s, p, block.collision_boxes());
         if target.is_replaceable()
-            && clear_of_player
-            && clear_of_mobs
+            && clear_of_bodies
             && if block.is_log() {
                 let axis = self.sessions[s].held_log_axis_for_facing(player_facing);
                 self.world.place_log(p, block, axis)
@@ -443,6 +433,18 @@ impl ServerGame {
         } else {
             None
         }
+    }
+
+    /// Whether the placed collision boxes at `cell` overlap a gameplay body that
+    /// blocks placement. The acting player always counts, preserving the
+    /// self-trapping guard. Other sessions count while alive and non-spectator;
+    /// sleeping players still count because sleep keeps the gameplay body on
+    /// the mattress. Dead mobs do not count, matching the ragdoll rule.
+    fn placement_occupied_by_body(&self, actor: usize, cell: IVec3, boxes: &[Aabb]) -> bool {
+        self.sessions.iter().enumerate().any(|(i, sess)| {
+            (i == actor || (sess.player.health() > 0 && !sess.player.is_spectator()))
+                && sess.player.body().overlaps_block_boxes(cell, boxes)
+        }) || self.world.mobs().any_overlapping_boxes(cell, boxes)
     }
 
     /// Test-only wrapper keeping the old bool-shaped call for placement tests.

@@ -421,11 +421,7 @@ fn a_killed_mob_ragdolls_then_despawns() {
         "the corpse is present while ragdolling"
     );
     let player_pos = game.server.sessions[0].player.body_center();
-    let player_body = crate::mob::Body::new(
-        game.server.sessions[0].player.pos,
-        player::HALF_W,
-        player::HEIGHT,
-    );
+    let player_body = game.server.sessions[0].player.body();
     // 1.5 s ragdoll lifetime at 20 TPS = 30 ticks; run extra for margin.
     for _ in 0..50 {
         game.server.world.tick_mobs(
@@ -621,6 +617,70 @@ fn cannot_place_a_solid_block_inside_a_mob() {
     assert_eq!(
         Block::from_id(game.server.world.chunk_block(0, 200, 0)),
         Block::Dirt
+    );
+}
+
+#[test]
+fn cannot_place_a_solid_block_inside_another_player() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
+    game.server.sessions[0].player.inventory.set_active(0);
+    // Park the placer far off so only the other session can block placement here.
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+
+    let other = game
+        .server
+        .add_session_for_test(crate::player::Player::new(Vec3::new(8.5, 200.0, 8.5)));
+
+    let before = game.server.sessions[0]
+        .player
+        .inventory
+        .selected()
+        .unwrap()
+        .count;
+    game.server.sessions[0].look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
+    assert!(
+        !game.server.try_place_for_test(),
+        "a solid block can't be placed inside another live player"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(8, 200, 8)),
+        Block::Air,
+        "nothing was placed"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .count,
+        before,
+        "the held item wasn't consumed"
+    );
+
+    game.server.sessions[other]
+        .player
+        .set_mode(crate::player::PlayerMode::Spectator);
+    game.server.sessions[0].look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y));
+    assert!(
+        game.server.try_place_for_test(),
+        "a spectator has no placement-blocking body"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(8, 200, 8)),
+        Block::Dirt
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .count,
+        before - 1,
+        "successful placement consumes one item"
     );
 }
 

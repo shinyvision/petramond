@@ -12,13 +12,14 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::block::Block;
+use crate::body::{separation, Body};
 use crate::chunk::SectionPos;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::brain::AiMob;
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{def, defs, model, push, spawn, Instance, Mob, MobRng, SavedMob};
+use super::{def, defs, model, spawn, Instance, Mob, MobRng, SavedMob};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -52,7 +53,7 @@ pub struct PlayerAnchor {
     /// `player_pos` argument).
     pub pos: Vec3,
     /// The pushable body; `None` for a spectator (nothing to jostle or strike).
-    pub body: Option<push::Body>,
+    pub body: Option<Body>,
 }
 
 /// A melee strike a mob landed on a player this tick. Drained from
@@ -130,8 +131,8 @@ pub struct Mobs {
     rng: MobRng,
     /// Reused per-tick AI snapshot buffer (one entry per live mob).
     ai_scratch: Vec<AiMob>,
-    /// Reused per-tick push-body snapshot buffer (index-aligned with `list`).
-    push_scratch: Vec<Option<push::Body>>,
+    /// Reused per-tick body snapshot buffer (index-aligned with `list`).
+    push_scratch: Vec<Option<Body>>,
 }
 
 impl Default for Mobs {
@@ -281,7 +282,7 @@ impl Mobs {
     ///
     /// Computed from a single up-front snapshot of every pushable body, so the result is
     /// order-independent and symmetric — each member of a pair is pushed at the full
-    /// speed on its own pass (see [`push::separation`]) regardless of list order. A mob
+    /// speed on its own pass (see [`separation`]) regardless of list order. A mob
     /// that isn't pushable this tick (dead, or frozen over an unloaded chunk) neither
     /// pushes nor is pushed.
     fn resolve_pushes(&mut self, world: &World, anchors: &[PlayerAnchor], freeze_unloaded: bool) {
@@ -291,7 +292,7 @@ impl Mobs {
         bodies.extend(
             self.list
                 .iter()
-                .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.push_body())),
+                .map(|m| is_pushable(m, world, freeze_unloaded).then(|| m.body())),
         );
 
         for i in 0..self.list.len() {
@@ -304,7 +305,7 @@ impl Mobs {
                     continue;
                 }
                 if let Some(bj) = *bj {
-                    if let Some(p) = push::separation(bi, bj) {
+                    if let Some(p) = separation(bi, bj) {
                         push_vel += p;
                     }
                 }
@@ -313,7 +314,7 @@ impl Mobs {
             // applied per-frame elsewhere, so nothing is accumulated for players here.
             for anchor in anchors {
                 if let Some(player) = anchor.body {
-                    if let Some(p) = push::separation(bi, player) {
+                    if let Some(p) = separation(bi, player) {
                         push_vel += p;
                     }
                 }
@@ -329,13 +330,13 @@ impl Mobs {
     /// overlap perfectly smoothly: player movement is integrated every frame, and a 20 Hz
     /// shove would pulse. A dead mob (a ragdolling corpse) doesn't push; a frozen mob over
     /// an unloaded chunk is far from the player and never overlaps, so it's moot here.
-    pub fn push_on_player(&self, player: push::Body) -> Vec3 {
+    pub fn push_on_player(&self, player: Body) -> Vec3 {
         let mut push = Vec3::ZERO;
         for m in &self.list {
             if m.is_dead() {
                 continue;
             }
-            if let Some(p) = push::separation(player, m.push_body()) {
+            if let Some(p) = separation(player, m.body()) {
                 push += p;
             }
         }
@@ -528,29 +529,11 @@ impl Mobs {
     /// Used by oriented bbmodel placement, where each occupied cell has its own rotated
     /// per-cell shape.
     pub fn any_overlapping_boxes(&self, p: IVec3, boxes: &[crate::block::Aabb]) -> bool {
-        let cell = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-        boxes.iter().any(|b| {
-            let bmin = cell + Vec3::new(b.min[0], b.min[1], b.min[2]);
-            let bmax = cell + Vec3::new(b.max[0], b.max[1], b.max[2]);
-            self.list
-                .iter()
-                .filter(|m| !m.is_dead())
-                .any(|m| aabb_overlaps(m.aabb(), (bmin, bmax)))
-        })
+        self.list
+            .iter()
+            .filter(|m| !m.is_dead())
+            .any(|m| m.body().overlaps_block_boxes(p, boxes))
     }
-}
-
-/// Strict AABB overlap with a small epsilon, so a block placed exactly flush against a
-/// mob (touching faces, not interpenetrating) is still allowed — only a genuine clip
-/// counts as an overlap.
-fn aabb_overlaps((amin, amax): (Vec3, Vec3), (bmin, bmax): (Vec3, Vec3)) -> bool {
-    const EPS: f32 = 1e-4;
-    amin.x < bmax.x - EPS
-        && bmin.x < amax.x - EPS
-        && amin.y < bmax.y - EPS
-        && bmin.y < amax.y - EPS
-        && amin.z < bmax.z - EPS
-        && bmin.z < amax.z - EPS
 }
 
 /// Whether the chunk `mob` stands over is loaded — the freeze gate shared by the tick
@@ -820,7 +803,7 @@ mod tests {
         let mut mobs = Mobs::new(0);
         // Owl just east (+X) of the player's column, footprints overlapping.
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
-        let player_body = push::Body::new(Vec3::new(8.0, 64.0, 8.0), 0.3, 1.8);
+        let player_body = Body::new(Vec3::new(8.0, 64.0, 8.0), 0.3, 1.8);
         let push = mobs.push_on_player(player_body);
         assert!(
             push.x < 0.0,
@@ -834,7 +817,7 @@ mod tests {
         // No overlap, no push — a mob across the world leaves the player be.
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
-        let player_body = push::Body::new(far(), 0.3, 1.8);
+        let player_body = Body::new(far(), 0.3, 1.8);
         assert_eq!(
             mobs.push_on_player(player_body),
             Vec3::ZERO,
