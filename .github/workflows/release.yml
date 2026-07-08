@@ -1,0 +1,260 @@
+name: Release
+
+# Builds ready-to-play bundles for all supported platforms and, on a version
+# tag, publishes them as a GitHub Release.
+#
+#   - Push a tag `vX.Y.Z`        -> builds + creates/updates the release.
+#   - Run manually (Actions tab) -> builds + uploads the bundles as run
+#                                    artifacts (no release), for testing.
+#
+# Each bundle is the native binary plus the `assets/` and `mods/` folders next
+# to it; the game resolves both relative to the executable (see src/assets.rs),
+# so a player just unzips and double-clicks. The `kitchen` and `zombies` sample
+# mods ship inside every bundle.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Sample mods compile to wasm32, which is architecture-independent, so build
+  # them once here and hand the exact same bytes to every platform bundle. This
+  # also avoids needing `make` on the Windows runners.
+  mods:
+    name: Build sample mods (wasm)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mods
+          workspaces: mods-src
+
+      - name: Build and install mods
+        run: make mods
+
+      - name: Stage bundled mods (kitchen + zombies)
+        run: |
+          set -euo pipefail
+          mkdir -p staged-mods
+          cp -r mods/kitchen staged-mods/kitchen
+          cp -r mods/zombies staged-mods/zombies
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mods
+          path: staged-mods
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.id }}
+    needs: mods
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-amd64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - id: linux-arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - id: windows-amd64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - id: windows-arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - id: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.id }}
+
+      # cpal/rodio link against ALSA at build time on Linux.
+      - name: Install Linux build deps (ALSA)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --bin petramond_native --target ${{ matrix.target }}
+
+      - name: Download bundled mods
+        uses: actions/download-artifact@v4
+        with:
+          name: mods
+          path: staged-mods
+
+      - name: Stage bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="$GITHUB_REF_NAME"
+          else
+            VERSION="$(git rev-parse --short HEAD)"
+          fi
+          PKG="petramond-${VERSION}-${{ matrix.id }}"
+          echo "PKG=$PKG" >> "$GITHUB_ENV"
+
+          EXT=""
+          [ "${{ runner.os }}" = "Windows" ] && EXT=".exe"
+
+          DEST="stage/$PKG"
+          mkdir -p "$DEST/mods"
+          cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
+          cp -r assets "$DEST/assets"
+          cp -r staged-mods/kitchen "$DEST/mods/kitchen"
+          cp -r staged-mods/zombies "$DEST/mods/zombies"
+
+          README="$DEST/README.txt"
+          {
+            echo "Petramond"
+            echo "========="
+            echo
+            echo "A voxel sandbox about wild landscapes, player-built homes, and"
+            echo "worlds that can grow through mods."
+            echo
+            echo "HOW TO RUN"
+          } > "$README"
+
+          case "${{ matrix.id }}" in
+            windows-*)
+              {
+                echo "  Double-click petramond.exe."
+                echo
+                echo "  Windows may show a blue \"Windows protected your PC\" box because"
+                echo "  this build is not code-signed. Click \"More info\", then \"Run anyway\"."
+              } >> "$README"
+              ;;
+            macos-*)
+              {
+                echo "  Double-click petramond. Because this build is not signed by an"
+                echo "  identified developer, macOS may block the first launch."
+                echo "  Right-click (or Control-click) petramond, choose Open, then Open again."
+                echo
+                echo "  If that still fails, open Terminal in this folder and run:"
+                echo "    xattr -dr com.apple.quarantine ./petramond"
+                echo "    ./petramond"
+              } >> "$README"
+              ;;
+            linux-*)
+              {
+                echo "  Run ./petramond from a terminal in this folder, or mark it"
+                echo "  executable in your file manager and launch it."
+                echo
+                echo "  Needs a Vulkan-capable GPU and driver."
+              } >> "$README"
+              ;;
+          esac
+
+          {
+            echo
+            echo "IMPORTANT"
+            echo "  Keep the \"assets\" and \"mods\" folders next to the petramond"
+            echo "  program. The game loads them from here."
+            echo
+            echo "MODS"
+            echo "  Bundled: kitchen (cooking + oven) and zombies."
+            echo "  To add more, drop a mod folder into the \"mods\" folder."
+            echo
+            echo "SAVES"
+            echo "  Worlds and settings are stored in your user data folder, not"
+            echo "  here, so you can move or replace this folder safely."
+            echo
+            echo "CONTROLS"
+            echo "  WASD move, mouse look, scroll to pick a hotbar slot."
+            echo "  Left click mine/attack, right click place/use/open."
+            echo "  Space jump, Shift sneak, Ctrl sprint."
+            echo "  E inventory, 1-9 hotbar, Q drop, R rotate block, V perspective,"
+            echo "  Esc close/pause."
+          } >> "$README"
+
+      - name: Archive (tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C stage -czf "${PKG}.tar.gz" "$PKG"
+          echo "ASSET=${PKG}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Archive (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "stage/$env:PKG" -DestinationPath "$env:PKG.zip"
+          "ASSET=$env:PKG.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.id }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PRERELEASE=""
+          case "$TAG" in *-*) PRERELEASE="--prerelease";; esac
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Petramond $TAG" \
+              --generate-notes \
+              $PRERELEASE
+          fi
