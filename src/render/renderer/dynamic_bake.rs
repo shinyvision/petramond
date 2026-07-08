@@ -478,8 +478,12 @@ impl Renderer {
             &mut sprite_indices,
             prebuilt,
         );
-        self.player_model_item_draw
-            .bake(&self.queue, &mut model_verts, &mut model_indices, prebuilt);
+        self.player_model_item_draw.bake(
+            &self.queue,
+            &mut model_verts,
+            &mut model_indices,
+            prebuilt,
+        );
         self.player_block_item_draw.bake(
             &self.queue,
             &mut block_verts,

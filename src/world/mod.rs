@@ -38,8 +38,8 @@ pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub(crate) use store::VERTICAL_LOAD_RADIUS;
-pub use store::{World, RENDER_DIST};
 pub(crate) use store::{LoadAnchor, WorldRole};
+pub use store::{World, RENDER_DIST};
 pub(crate) use stream::StreamEvent;
 
 /// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).

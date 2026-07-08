@@ -57,8 +57,13 @@ impl ServerGame {
                 ..
             } = self;
             let sess = &mut sessions[s];
-            bus.item_use_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
-                == Outcome::Cancel
+            bus.item_use_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
         };
         if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });
@@ -132,8 +137,13 @@ impl ServerGame {
                 ..
             } = self;
             let sess = &mut sessions[s];
-            bus.item_use_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
-                == Outcome::Cancel
+            bus.item_use_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
         };
         if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });

@@ -165,7 +165,9 @@ pub(crate) enum PlayerAction {
     /// Secondary press: the interact/eat/use/place ladder. `mob` is the mob
     /// under the crosshair at click time (stable id) — the shear target, like
     /// `AttackClick`'s.
-    UseClick { mob: Option<u64> },
+    UseClick {
+        mob: Option<u64>,
+    },
     /// Primary press: attack the mob under the crosshair (stable mob id), the
     /// remote PLAYER under the crosshair (`PlayerId` byte — PvP), or punch the
     /// air. The client sends AT MOST ONE of `mob`/`player` (targeting picks
@@ -175,7 +177,9 @@ pub(crate) enum PlayerAction {
         mob: Option<u64>,
         player: Option<u8>,
     },
-    Drop { all: bool },
+    Drop {
+        all: bool,
+    },
     ThrowCursorStack,
     ThrowCursorOne,
     Wake,
@@ -720,11 +724,15 @@ pub(crate) struct TickUpdate {
 pub(crate) enum ClientToServer {
     /// First frame on any fresh connection; nothing else parses across a
     /// protocol mismatch.
-    Hello { protocol: u16 },
+    Hello {
+        protocol: u16,
+    },
     /// "Which mods do you have?" — asked (and answered) BEFORE joining, per
     /// the mod-handshake contract.
     ModQuery,
-    Join { player_name: String },
+    Join {
+        player_name: String,
+    },
     PlayerUpdate(PlayerUpdate),
     Action(PlayerAction),
     /// A hit-tested container-menu click (slot identity + button + Shift +
@@ -743,12 +751,20 @@ pub(crate) enum ClientToServer {
 /// Server → client messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ServerToClient {
-    HelloAck { protocol: u16 },
-    HelloReject { server_protocol: u16 },
+    HelloAck {
+        protocol: u16,
+    },
+    HelloReject {
+        server_protocol: u16,
+    },
     /// The hosted world's ENABLED mod set (`modding/modset.rs::active`).
-    ModList { mods: Vec<ModEntry> },
+    ModList {
+        mods: Vec<ModEntry>,
+    },
     JoinAccept(Box<JoinData>),
-    JoinReject { reason: JoinRejectReason },
+    JoinReject {
+        reason: JoinRejectReason,
+    },
     ColumnData(ColumnPayload),
     SectionData(SectionPayload),
     /// A server light bake landed for a section already sent to this
@@ -758,11 +774,18 @@ pub(crate) enum ServerToClient {
     SectionUnload(SectionPos),
     ColumnUnload(ChunkPos),
     Tick(Box<TickUpdate>),
-    PlayerJoined { id: PlayerId, name: String },
-    PlayerLeft { id: PlayerId },
+    PlayerJoined {
+        id: PlayerId,
+        name: String,
+    },
+    PlayerLeft {
+        id: PlayerId,
+    },
     ServerClosing,
     KeepAlive,
-    Disconnect { reason: String },
+    Disconnect {
+        reason: String,
+    },
 }
 
 /// A column's client-relevant facts: the biome skin, the heightmap, and a
@@ -931,8 +954,8 @@ mod tests {
                 ..Default::default()
             },
         };
-        let bytes = postcard::to_allocvec(&ServerToClient::SectionData(payload.clone()))
-            .expect("encode");
+        let bytes =
+            postcard::to_allocvec(&ServerToClient::SectionData(payload.clone())).expect("encode");
         let back: ServerToClient = postcard::from_bytes(&bytes).expect("decode");
         let ServerToClient::SectionData(got) = back else {
             panic!("variant preserved");
@@ -1084,10 +1107,7 @@ mod tests {
                         }),
                         None,
                     ]),
-                    gui_state: Some(vec![(
-                        "kitchen:burn01".into(),
-                        GuiValueWire::F32(0.5),
-                    )]),
+                    gui_state: Some(vec![("kitchen:burn01".into(), GuiValueWire::F32(0.5))]),
                 },
                 craft_grid: Vec::new(),
                 craft_result: None,

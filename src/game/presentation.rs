@@ -409,14 +409,16 @@ impl GamePresentationScratch {
     fn collect_break_overlays(&mut self, game: &Game) {
         self.break_overlays.clear();
         if let Some((block, stage)) = game.self_view.mining {
-            self.break_overlays.push(break_overlay_at(game, block, stage));
+            self.break_overlays
+                .push(break_overlay_at(game, block, stage));
         }
         for p in game.remote_players.iter() {
             if !p.curr.visible {
                 continue;
             }
             if let Some((block, stage)) = p.curr.mining {
-                self.break_overlays.push(break_overlay_at(game, block, stage));
+                self.break_overlays
+                    .push(break_overlay_at(game, block, stage));
             }
         }
         if self.break_overlays.len() > MAX_BREAK_OVERLAYS {
@@ -429,7 +431,8 @@ impl GamePresentationScratch {
                 ) - cam)
                     .length_squared()
             };
-            self.break_overlays.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+            self.break_overlays
+                .sort_by(|a, b| dist(a).total_cmp(&dist(b)));
             self.break_overlays.truncate(MAX_BREAK_OVERLAYS);
         }
     }
@@ -477,22 +480,21 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
 /// from replicated state (the own `SelfState::mining` or a remote row's); the
 /// shape details are derived from the REPLICA world at that cell.
 fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
-    let model = match Block::from_id(game.replica.chunk_block(block.x, block.y, block.z))
-        .render_shape()
-    {
-        RenderShape::Model(kind) => Some((
-            kind,
-            game.replica.model_offset_at(block.x, block.y, block.z),
-            game.replica.model_facing_at(block.x, block.y, block.z),
-        )),
-        _ => None,
-    };
+    let model =
+        match Block::from_id(game.replica.chunk_block(block.x, block.y, block.z)).render_shape() {
+            RenderShape::Model(kind) => Some((
+                kind,
+                game.replica.model_offset_at(block.x, block.y, block.z),
+                game.replica.model_facing_at(block.x, block.y, block.z),
+            )),
+            _ => None,
+        };
     let block_type = Block::from_id(game.replica.chunk_block(block.x, block.y, block.z));
     let stair_shape = (block_type.render_shape() == RenderShape::Stair)
         .then(|| game.replica.stair_shape_at(block.x, block.y, block.z));
     let slab_state = game.replica.slab_state_if_slab(block);
-    let pane_mask = (block_type.render_shape() == RenderShape::Pane)
-        .then(|| game.replica.pane_mask_at(block));
+    let pane_mask =
+        (block_type.render_shape() == RenderShape::Pane).then(|| game.replica.pane_mask_at(block));
     BreakOverlayView {
         block,
         visual_box: if model.is_some()

@@ -568,7 +568,11 @@ mod tests {
         };
         let near_b = Vec3::new(8.0, 64.0, 0.0);
         assert_eq!(super::nearest_anchor(&[a, b], near_b).id.0, 1);
-        assert_eq!(super::nearest_anchor(&[b, a], near_b).id.0, 1, "order-independent");
+        assert_eq!(
+            super::nearest_anchor(&[b, a], near_b).id.0,
+            1,
+            "order-independent"
+        );
         let near_a = Vec3::new(1.0, 64.0, 0.0);
         assert_eq!(super::nearest_anchor(&[a, b], near_a).id.0, 0);
     }
@@ -691,7 +695,11 @@ mod tests {
             mobs.tick(
                 0.05,
                 &world,
-                &[crate::mob::PlayerAnchor { id: Default::default(), pos: far(), body: None }],
+                &[crate::mob::PlayerAnchor {
+                    id: Default::default(),
+                    pos: far(),
+                    body: None,
+                }],
                 false,
             );
             ticks += 1;
@@ -762,7 +770,11 @@ mod tests {
             mobs.tick(
                 0.05,
                 &world,
-                &[crate::mob::PlayerAnchor { id: Default::default(), pos: far(), body: None }],
+                &[crate::mob::PlayerAnchor {
+                    id: Default::default(),
+                    pos: far(),
+                    body: None,
+                }],
                 false,
             );
             let next = horizontal_gap(&mobs);
@@ -838,7 +850,11 @@ mod tests {
         mobs.tick(
             0.05,
             &world,
-            &[crate::mob::PlayerAnchor { id: Default::default(), pos: spot, body: None }],
+            &[crate::mob::PlayerAnchor {
+                id: Default::default(),
+                pos: spot,
+                body: None,
+            }],
             false,
         );
         let after = mobs.instances()[0].pos;

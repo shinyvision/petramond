@@ -57,8 +57,10 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         .selected()
         .expect("holding dirt")
         .count;
-    game.server
-        .apply_message(0, ClientToServer::Action(PlayerAction::UseClick { mob: None }));
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::UseClick { mob: None }),
+    );
     let mut ev = TickEvents::default();
     game.server.tick_place(0, &mut ev);
     assert_eq!(

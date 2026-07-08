@@ -125,10 +125,7 @@ fn fast_double_click_keeps_stack_on_cursor_to_gather() {
         app.inventory().cursor().is_some(),
         "stack stays on the cursor"
     );
-    assert!(
-        app.inventory().slot(0).is_none(),
-        "source slot stays empty"
-    );
+    assert!(app.inventory().slot(0).is_none(), "source slot stays empty");
 }
 
 #[test]
@@ -143,10 +140,7 @@ fn slow_second_click_drops_the_stack_back() {
     // click that drops the held stack back into the now-empty slot.
     app.click_screen_for_test(screen, 0.0);
     app.click_screen_for_test(screen, 1.0);
-    assert!(
-        app.inventory().cursor().is_none(),
-        "stack dropped back"
-    );
+    assert!(app.inventory().cursor().is_none(), "stack dropped back");
     assert!(app.inventory().slot(0).is_some(), "slot refilled");
 }
 
@@ -221,10 +215,7 @@ fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
     app.set_cursor_position(cx, cy);
     let item0 = app.inventory().slot(0).unwrap().item;
     app.click_screen_for_test(screen, 0.0);
-    assert!(
-        app.inventory().slot(0).is_none(),
-        "hotbar slot emptied"
-    );
+    assert!(app.inventory().slot(0).is_none(), "hotbar slot emptied");
     assert_eq!(
         app.inventory()
             .slot(crate::inventory::HOTBAR_LEN)

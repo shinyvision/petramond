@@ -24,7 +24,9 @@ fn floored_game_at(feet: Vec3) -> super::common::TestGame {
             chunk.set_block(x, 64, z, Block::Stone);
         }
     }
-    game.server.world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    game.server
+        .world
+        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     place_player(&mut game, feet);
     game
 }
@@ -85,17 +87,24 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // block-id change) flips the replica's door map — collision + resting
     // swing angle read it.
     let door = IVec3::new(5, 65, 5);
-    assert!(game.server.world.place_door(door, Block::OakDoor, Facing::East));
+    assert!(game
+        .server
+        .world
+        .place_door(door, Block::OakDoor, Facing::East));
     frame(&mut game);
     assert_eq!(
-        game.replica.door_state_at(door.x, door.y, door.z).map(|s| s.open),
+        game.replica
+            .door_state_at(door.x, door.y, door.z)
+            .map(|s| s.open),
         Some(false),
         "the placed door replicated closed"
     );
     assert_eq!(game.server.world.toggle_door(door), Some(door));
     frame(&mut game);
     assert_eq!(
-        game.replica.door_state_at(door.x, door.y, door.z).map(|s| s.open),
+        game.replica
+            .door_state_at(door.x, door.y, door.z)
+            .map(|s| s.open),
         Some(true),
         "the toggle updated the replica door map"
     );
@@ -170,7 +179,10 @@ fn server_rebakes_replicate_as_light_data() {
 fn open_chest_state_replicates_and_drives_the_lid_target() {
     let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
     let pos = IVec3::new(3, 65, 3);
-    assert!(game.server.world.set_block_world(pos.x, pos.y, pos.z, Block::Chest));
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Chest));
     game.server.world.insert_chest(pos, Facing::West);
 
     game.server

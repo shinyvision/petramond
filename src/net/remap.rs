@@ -466,7 +466,11 @@ mod tests {
         assert_eq!(t.block_deltas[0].block_id, 1 % n);
         assert_eq!(
             t.block_deltas[1].state,
-            Some(crate::net::protocol::CellState::Slab([0b0111, 3 % n, 4 % n])),
+            Some(crate::net::protocol::CellState::Slab([
+                0b0111,
+                3 % n,
+                4 % n
+            ])),
             "CellState::Slab layer ids rewrite through the block LUT"
         );
 

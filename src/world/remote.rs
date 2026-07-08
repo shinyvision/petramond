@@ -230,8 +230,10 @@ impl World {
             map_entries(&s.log_axes, LogAxis::from_u8),
             cell_kv,
         );
-        let light_seeded =
-            payload.skylight.as_ref().is_some_and(|l| l.0.len() == SECTION_VOLUME);
+        let light_seeded = payload
+            .skylight
+            .as_ref()
+            .is_some_and(|l| l.0.len() == SECTION_VOLUME);
         if light_seeded {
             section.set_skylight(payload.skylight.expect("checked above").0);
             if let Some(bl) = payload.blocklight.filter(|l| l.0.len() == SECTION_VOLUME) {
@@ -324,7 +326,9 @@ impl World {
             section.take_furnace(lx, ly, lz);
             match delta.state {
                 None => {}
-                Some(CellState::Door(b)) => section.set_door_state(lx, ly, lz, DoorState::decode(b)),
+                Some(CellState::Door(b)) => {
+                    section.set_door_state(lx, ly, lz, DoorState::decode(b))
+                }
                 Some(CellState::Stair(b)) => {
                     section.set_stair_state(lx, ly, lz, StairState::decode(b))
                 }
@@ -654,7 +658,10 @@ mod tests {
         // Join-time capture: columns + sections. One deep all-stone section is
         // deliberately withheld so the summaries have to answer for it.
         let held_back = SectionPos::new(0, -2, 0);
-        assert!(server.sections.contains_key(&held_back), "fixture: deep stone loaded");
+        assert!(
+            server.sections.contains_key(&held_back),
+            "fixture: deep stone loaded"
+        );
         let columns: Vec<_> = server
             .columns
             .keys()
@@ -725,13 +732,31 @@ mod tests {
         assert!(replica.is_water_source_world(IVec3::new(3, 65, 3)));
 
         // Every state map reads back through the public query surface.
-        assert_eq!(replica.cell_kv_get(2, 65, 2, "testmod:heat"), Some(&[7u8, 1][..]));
-        assert_eq!(replica.door_state_at(5, 65, 5), server.door_state_at(5, 65, 5));
-        assert_eq!(replica.door_state_at(5, 66, 5), server.door_state_at(5, 66, 5));
-        assert_eq!(replica.stair_state_at(6, 65, 6), server.stair_state_at(6, 65, 6));
-        assert_eq!(replica.torch_placement(IVec3::new(7, 65, 7)), TorchPlacement::East);
+        assert_eq!(
+            replica.cell_kv_get(2, 65, 2, "testmod:heat"),
+            Some(&[7u8, 1][..])
+        );
+        assert_eq!(
+            replica.door_state_at(5, 65, 5),
+            server.door_state_at(5, 65, 5)
+        );
+        assert_eq!(
+            replica.door_state_at(5, 66, 5),
+            server.door_state_at(5, 66, 5)
+        );
+        assert_eq!(
+            replica.stair_state_at(6, 65, 6),
+            server.stair_state_at(6, 65, 6)
+        );
+        assert_eq!(
+            replica.torch_placement(IVec3::new(7, 65, 7)),
+            TorchPlacement::East
+        );
         assert_eq!(replica.log_axis_at(1, 65, 6), LogAxis::X);
-        assert_eq!(replica.slab_state_at(6, 65, 1), server.slab_state_at(6, 65, 1));
+        assert_eq!(
+            replica.slab_state_at(6, 65, 1),
+            server.slab_state_at(6, 65, 1)
+        );
         assert_eq!(
             replica
                 .section_at_world_for_test(2, 65, 6)
@@ -739,7 +764,10 @@ mod tests {
                 .sapling_stage(2, 1, 6),
             2
         );
-        assert_eq!(replica.model_offset_at(11, 65, 10), server.model_offset_at(11, 65, 10));
+        assert_eq!(
+            replica.model_offset_at(11, 65, 10),
+            server.model_offset_at(11, 65, 10)
+        );
         assert_eq!(replica.model_facing_at(10, 65, 10), Facing::East);
         let mut chests = Vec::new();
         replica.collect_chests(&mut chests);
@@ -774,7 +802,10 @@ mod tests {
         // when it never bakes) — the replica must never queue its own bake.
         assert!(replica.dirty_mesh_count() > 0, "installs queue mesh work");
         assert!(
-            !replica.section_at_world_for_test(2, 65, 2).unwrap().light_dirty,
+            !replica
+                .section_at_world_for_test(2, 65, 2)
+                .unwrap()
+                .light_dirty,
             "a replica install never queues a replica-side bake"
         );
     }
@@ -845,7 +876,10 @@ mod tests {
         assert!(matches!(state_at(stair), Some(CellState::Stair(_))));
         assert!(matches!(state_at(torch), Some(CellState::Torch(_))));
         assert!(matches!(state_at(door), Some(CellState::Door(_))));
-        assert!(matches!(state_at(door + IVec3::Y), Some(CellState::Door(_))));
+        assert!(matches!(
+            state_at(door + IVec3::Y),
+            Some(CellState::Door(_))
+        ));
         let Some(CellState::Slab([_, a, b])) = state_at(slab) else {
             panic!("slab delta carries the 3-byte record");
         };
@@ -864,23 +898,38 @@ mod tests {
         for d in &deltas {
             replica.apply_remote_delta(*d);
         }
-        assert_eq!(replica.stair_state_at(stair.x, stair.y, stair.z),
-            server.stair_state_at(stair.x, stair.y, stair.z));
+        assert_eq!(
+            replica.stair_state_at(stair.x, stair.y, stair.z),
+            server.stair_state_at(stair.x, stair.y, stair.z)
+        );
         assert_eq!(replica.torch_placement(torch), TorchPlacement::East);
-        assert_eq!(replica.door_state_at(door.x, door.y, door.z),
-            server.door_state_at(door.x, door.y, door.z));
-        assert_eq!(replica.door_state_at(door.x, door.y + 1, door.z),
-            server.door_state_at(door.x, door.y + 1, door.z));
-        assert_eq!(replica.slab_state_at(slab.x, slab.y, slab.z),
-            server.slab_state_at(slab.x, slab.y, slab.z));
+        assert_eq!(
+            replica.door_state_at(door.x, door.y, door.z),
+            server.door_state_at(door.x, door.y, door.z)
+        );
+        assert_eq!(
+            replica.door_state_at(door.x, door.y + 1, door.z),
+            server.door_state_at(door.x, door.y + 1, door.z)
+        );
+        assert_eq!(
+            replica.slab_state_at(slab.x, slab.y, slab.z),
+            server.slab_state_at(slab.x, slab.y, slab.z)
+        );
         assert_eq!(replica.log_axis_at(log.x, log.y, log.z), LogAxis::X);
-        assert_eq!(replica.model_offset_at(model.x + 1, model.y, model.z),
-            server.model_offset_at(model.x + 1, model.y, model.z));
-        assert_eq!(replica.model_facing_at(model.x, model.y, model.z), Facing::East);
+        assert_eq!(
+            replica.model_offset_at(model.x + 1, model.y, model.z),
+            server.model_offset_at(model.x + 1, model.y, model.z)
+        );
+        assert_eq!(
+            replica.model_facing_at(model.x, model.y, model.z),
+            Facing::East
+        );
         let mut chests = Vec::new();
         replica.collect_chests(&mut chests);
         assert!(
-            chests.iter().any(|&(p, f, ..)| p == chest && f == Facing::West),
+            chests
+                .iter()
+                .any(|&(p, f, ..)| p == chest && f == Facing::West),
             "the chest placed post-join renders on the replica with its facing"
         );
 
@@ -1012,7 +1061,10 @@ mod tests {
             .unwrap()
             .set_skylight(sky());
         let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
-        assert!(plan.sections.contains(&sp), "the loaded, lit, wanted section ships");
+        assert!(
+            plan.sections.contains(&sp),
+            "the loaded, lit, wanted section ships"
+        );
         assert!(!plan.saturated);
         sent_columns.insert(sp.chunk_pos());
         sent_sections.insert(sp);
@@ -1083,4 +1135,3 @@ mod tests {
         );
     }
 }
-

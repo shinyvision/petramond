@@ -361,11 +361,18 @@ mod state_tests {
         // lands on a FRESH allocation (identity change = "changed" on the wire).
         let snap = map.clone();
         gui_state_set(&mut map, "wheel:angle".into(), GuiValue::F32(2.0));
-        gui_state_set(&mut map, "wheel:result".into(), GuiValue::Str("stick".into()));
+        gui_state_set(
+            &mut map,
+            "wheel:result".into(),
+            GuiValue::Str("stick".into()),
+        );
         assert_eq!(snap.get("wheel:angle"), Some(&GuiValue::F32(1.5)));
         assert_eq!(snap.get("wheel:result"), None);
         assert_eq!(map.get("wheel:angle"), Some(&GuiValue::F32(2.0)));
-        assert!(!Arc::ptr_eq(&snap, &map), "a write under a snapshot re-allocates");
+        assert!(
+            !Arc::ptr_eq(&snap, &map),
+            "a write under a snapshot re-allocates"
+        );
 
         // Unchanged between snapshots = the same allocation (no per-frame copy).
         let a = map.clone();

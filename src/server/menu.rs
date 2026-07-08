@@ -205,6 +205,9 @@ impl ServerGame {
         kind: crate::gui::GuiKind,
         pos: Option<IVec3>,
     ) {
+        if !self.any_mod_gui_open() {
+            self.clear_all_mod_gui_states();
+        }
         let sess = &mut self.sessions[s];
         crate::gui::gui_state_clear(&mut sess.gui_state);
         sess.menu.open_mod_gui(&mut self.world, kind, pos);
@@ -265,6 +268,22 @@ impl ServerGame {
             let sess = &mut self.sessions[s];
             crate::gui::gui_state_clear(&mut sess.gui_state);
             sess.menu.close_mod_gui();
+            if !self.any_mod_gui_open() {
+                self.clear_all_mod_gui_states();
+            }
+        }
+    }
+
+    fn any_mod_gui_open(&self) -> bool {
+        self.sessions
+            .iter()
+            .any(|sess| matches!(sess.menu.target(), ContainerTarget::ModGui { .. }))
+    }
+
+    fn clear_all_mod_gui_states(&mut self) {
+        for sess in &mut self.sessions {
+            crate::gui::gui_state_clear(&mut sess.gui_state);
+            sess.last_sent_gui_state = None;
         }
     }
 

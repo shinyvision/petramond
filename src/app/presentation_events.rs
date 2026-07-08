@@ -43,7 +43,11 @@ impl App {
                     .sound(BlockSoundAction::Break)
                     .map(|s| (s, cell_centre(pos))),
                 WorldEvent::DoorToggled { lower, open } => Some((
-                    if open { Sound::DoorOpen } else { Sound::DoorClose },
+                    if open {
+                        Sound::DoorOpen
+                    } else {
+                        Sound::DoorClose
+                    },
                     cell_centre(lower),
                 )),
                 WorldEvent::ChestOpened { pos } => Some((Sound::ChestOpen, cell_centre(pos))),
@@ -96,9 +100,5 @@ fn mod_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
 
 /// A cell's audible centre.
 fn cell_centre(pos: IVec3) -> Vec3 {
-    Vec3::new(
-        pos.x as f32 + 0.5,
-        pos.y as f32 + 0.5,
-        pos.z as f32 + 0.5,
-    )
+    Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5)
 }

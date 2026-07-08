@@ -284,8 +284,10 @@ async fn new_renderer_inner(
     };
     let (player_item_vbuf, player_item_ibuf) =
         player_dyn_buffers("player item", std::mem::size_of::<ItemVertex>() as u64);
-    let (player_model_item_vbuf, player_model_item_ibuf) =
-        player_dyn_buffers("player model item", std::mem::size_of::<ItemVertex>() as u64);
+    let (player_model_item_vbuf, player_model_item_ibuf) = player_dyn_buffers(
+        "player model item",
+        std::mem::size_of::<ItemVertex>() as u64,
+    );
     let (player_block_item_vbuf, player_block_item_ibuf) = player_dyn_buffers(
         "player block item",
         std::mem::size_of::<crate::mesh::Vertex>() as u64,

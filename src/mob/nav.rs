@@ -160,13 +160,33 @@ impl Navigator {
     /// (Re)compute the path from `start` to `goal`, resetting the waypoint cursor to the
     /// first step and the repath timer. Shared by a goal change and the periodic refresh.
     fn recompute(&mut self, start: IVec3, goal: IVec3, world: &World, goal_changed: bool) {
-        let solid = solid_fn(world);
+        let solid = navigation_solid_fn(world);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        let step_allowed = door_step_gate(world, self.params);
         let old_waypoint =
             (!goal_changed && self.index < self.path.len()).then(|| self.path[self.index]);
         self.path = old_waypoint
-            .and_then(|wp| preserve_waypoint_path(start, wp, goal, self.params, &solid, &water))
-            .unwrap_or_else(|| path::find_path(start, goal, self.params, &solid, water));
+            .and_then(|wp| {
+                preserve_waypoint_path(
+                    start,
+                    wp,
+                    goal,
+                    self.params,
+                    &solid,
+                    &water,
+                    &step_allowed,
+                )
+            })
+            .unwrap_or_else(|| {
+                path::find_path_with_step_gate(
+                    start,
+                    goal,
+                    self.params,
+                    &solid,
+                    water,
+                    step_allowed,
+                )
+            });
         self.path_reaches_goal = self.path.last().is_some_and(|&last| last == goal);
         // Index 1 = the first cell to walk to (path[0] is the start).
         self.index = if self.path.len() > 1 {
@@ -253,18 +273,21 @@ fn preserve_waypoint_path(
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
+    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
 ) -> Option<Vec<IVec3>> {
     if waypoint == start {
         return None;
     }
-    let step = path::find_path(start, waypoint, params, solid, water);
+    let step =
+        path::find_path_with_step_gate(start, waypoint, params, solid, water, step_allowed);
     if step.last() != Some(&waypoint) || step.len() > 2 {
         return None;
     }
     if waypoint == goal {
         return Some(step);
     }
-    let suffix = path::find_path(waypoint, goal, params, solid, water);
+    let suffix =
+        path::find_path_with_step_gate(waypoint, goal, params, solid, water, step_allowed);
     if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
         return None;
     }
@@ -280,15 +303,54 @@ fn next_repath_backoff(current: u32) -> u32 {
         .min(MAX_REPATH_BACKOFF_TICKS)
 }
 
-/// `true` if a cell blocks movement (has a collision box), via the world's blocks.
-fn solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
-    move |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z)
+/// Coarse navigation occupancy. Doors are handled by [`door_step_gate`] because their
+/// blocking shape is an edge slab, not a whole blocked cell.
+fn navigation_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
+    move |c: IVec3| {
+        let block = world.physics_block(c.x, c.y, c.z);
+        if block.render_shape() == crate::block::RenderShape::Door {
+            false
+        } else {
+            block.blocks_movement()
+        }
+    }
+}
+
+fn door_step_gate(world: &World, params: PathParams) -> impl Fn(IVec3, IVec3) -> bool + '_ {
+    move |from, to| door_step_allowed(world, params, from, to)
+}
+
+fn door_step_allowed(world: &World, params: PathParams, from: IVec3, to: IVec3) -> bool {
+    let dx = (to.x - from.x) as f32;
+    let dz = (to.z - from.z) as f32;
+    if dx == 0.0 && dz == 0.0 {
+        return true;
+    }
+
+    let half_width = params.half_width.max(0.0);
+    let head = params.head.max(1) as f32;
+    let y = from.y.min(to.y) as f32;
+    let cx = from.x as f32 + 0.5;
+    let cz = from.z as f32 + 0.5;
+    let min = [cx - half_width, y, cz - half_width];
+    let max = [cx + half_width, y + head, cz + half_width];
+    let (moved, _, _) =
+        crate::collision::step_horizontal(min, max, dx, dz, 0.0, |x, y, z| {
+            let block = world.physics_block(x, y, z);
+            if block.render_shape() == crate::block::RenderShape::Door {
+                world.collision_boxes_at(x, y, z)
+            } else {
+                &[]
+            }
+        });
+    (moved[0] - dx).abs() < 1e-4 && (moved[2] - dz).abs() < 1e-4
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block::Block;
+    use crate::facing::Facing;
 
     #[test]
     fn idle_until_given_a_goal() {
@@ -418,6 +480,80 @@ mod tests {
         world.set_block_world(goal.x, 64, goal.z, Block::Stone);
         world.set_block_world(goal.x, 65, goal.z, Block::Stone);
         (world, start, goal)
+    }
+
+    fn world_with_door_in_wall(open: bool) -> (World, IVec3, IVec3, IVec3) {
+        let mut world = flat_world();
+        let door = IVec3::new(4, 64, 1);
+        for x in 0..12 {
+            if x == door.x {
+                continue;
+            }
+            world.set_block_world(x, 64, door.z, Block::Stone);
+            world.set_block_world(x, 65, door.z, Block::Stone);
+        }
+        assert!(world.place_door(door, Block::OakDoor, Facing::South));
+        if open {
+            assert_eq!(world.toggle_door(door), Some(door));
+        }
+        (world, IVec3::new(4, 64, 0), IVec3::new(4, 64, 2), door)
+    }
+
+    #[test]
+    fn closed_door_blocks_the_crossing_edge() {
+        let (world, start, goal, door) = world_with_door_in_wall(false);
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+
+        assert_ne!(
+            nav.path().last(),
+            Some(&goal),
+            "closed door must not route through the wall opening: {:?}",
+            nav.path()
+        );
+        assert!(
+            nav.path().last().is_some_and(|p| p.z <= door.z),
+            "partial route should stop on the near side or in the door cell: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn open_door_allows_the_cleared_crossing_edge() {
+        let (world, start, goal, door) = world_with_door_in_wall(true);
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+
+        assert_eq!(nav.path().last(), Some(&goal), "open door is routeable");
+        assert!(
+            nav.path().contains(&door),
+            "the route should pass through the door cell: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn open_door_still_blocks_the_swung_edge() {
+        let mut world = flat_world();
+        let door = IVec3::new(4, 64, 1);
+        assert!(world.place_door(door, Block::OakDoor, Facing::South));
+        assert_eq!(world.toggle_door(door), Some(door));
+        let start = IVec3::new(3, 64, 1);
+        let goal = IVec3::new(5, 64, 1);
+        let mut nav = Navigator::new(1, 0.25);
+
+        nav.update_goal_when_supported(Some(goal), start, &world, true);
+
+        assert_eq!(nav.path().last(), Some(&goal), "a detour remains possible");
+        assert!(
+            !nav.path()
+                .windows(2)
+                .any(|w| w[0] == start && w[1] == door),
+            "the open door's swung slab sits on the west edge, so the route must not enter straight from the west: {:?}",
+            nav.path()
+        );
     }
 
     #[test]

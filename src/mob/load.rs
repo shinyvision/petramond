@@ -743,17 +743,25 @@ mod tests {
             mobs.tick(
                 0.05,
                 &world,
-                &[crate::mob::PlayerAnchor { id: Default::default(), pos: near, body: None }],
+                &[crate::mob::PlayerAnchor {
+                    id: Default::default(),
+                    pos: near,
+                    body: None,
+                }],
                 false,
             );
         }
         assert_eq!(mobs.len(), 1, "a near player keeps the hostile mob alive");
         mobs.tick(
-                0.05,
-                &world,
-                &[crate::mob::PlayerAnchor { id: Default::default(), pos: far, body: None }],
-                false,
-            );
+            0.05,
+            &world,
+            &[crate::mob::PlayerAnchor {
+                id: Default::default(),
+                pos: far,
+                body: None,
+            }],
+            false,
+        );
         assert!(
             mobs.is_empty(),
             "a far player culls the hostile mob immediately"

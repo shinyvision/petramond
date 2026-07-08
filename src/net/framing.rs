@@ -34,8 +34,7 @@ pub(crate) fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Resul
         return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
     }
     let (flags, body) = if body.len() > COMPRESS_MIN {
-        let mut enc =
-            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
         enc.write_all(&body)?;
         let compressed = enc.finish()?;
         if compressed.len() < body.len() {
@@ -154,8 +153,8 @@ mod tests {
         let mut header = Vec::new();
         header.extend_from_slice(&((MAX_FRAME as u32) + 1).to_le_bytes());
         header.push(0);
-        let err = read_msg::<ClientToServer, _>(&mut &header[..])
-            .expect_err("oversize read rejected");
+        let err =
+            read_msg::<ClientToServer, _>(&mut &header[..]).expect_err("oversize read rejected");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

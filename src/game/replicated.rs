@@ -210,7 +210,8 @@ impl MenuView {
     pub(crate) fn apply(&mut self, msg: MenuSyncMsg) {
         let cells: Vec<Option<ItemStack>> =
             msg.craft_grid.iter().map(|s| stack_from_wire(*s)).collect();
-        self.craft.set_view(&cells, stack_from_wire(msg.craft_result));
+        self.craft
+            .set_view(&cells, stack_from_wire(msg.craft_result));
         self.furnace = None;
         self.chest = None;
         self.workbench = None;
@@ -409,7 +410,9 @@ impl Game {
         for msg in update.events {
             self.buffer_world_event(msg);
         }
-        self.pending_events.self_events.merge_from(update.self_events);
+        self.pending_events
+            .self_events
+            .merge_from(update.self_events);
     }
 
     /// Translate one wire world event to local types into the frame buffer.
@@ -490,5 +493,4 @@ impl Game {
             }),
         }
     }
-
 }

@@ -674,8 +674,7 @@ mod tests {
             let mut state = MiningState::new();
             let total = break_time(block, tool);
             for _ in 0..((total / dt) as usize + 2) {
-                if let Some(e) =
-                    step_with_tool(&mut state, dt, Some(hit), true, false, tool, block)
+                if let Some(e) = step_with_tool(&mut state, dt, Some(hit), true, false, tool, block)
                 {
                     return e;
                 }

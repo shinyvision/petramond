@@ -385,7 +385,6 @@ impl World {
         drops.tick_lifetime(self, pause_unloaded);
         self.dropped_items = drops;
     }
-
 }
 
 /// Chunk (column) coordinates owning world position `pos`. Used for the
@@ -440,7 +439,8 @@ mod tests {
         let player = Vec3::new(0.5, 64.0, 0.5);
         w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
         let mut collected = 0u32;
-        w.dropped_items_mut().request_pickups(P0, player, |s| s.count);
+        w.dropped_items_mut()
+            .request_pickups(P0, player, |s| s.count);
         w.dropped_items_mut()
             .collect_requested_pickups(P0, player, |s| {
                 collected += s.count as u32;
@@ -454,7 +454,8 @@ mod tests {
         );
 
         w.item_entities_mut()[0].ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-        w.dropped_items_mut().request_pickups(P0, player, |s| s.count);
+        w.dropped_items_mut()
+            .request_pickups(P0, player, |s| s.count);
         w.dropped_items_mut()
             .collect_requested_pickups(P0, player, |s| {
                 collected += s.count as u32;

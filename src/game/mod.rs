@@ -51,9 +51,9 @@ use crate::camera::Camera;
 use crate::entity::ParticleSystem;
 use crate::mathh::IVec3;
 use crate::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, SelfTransform};
-use crate::player::{Player, RaycastHit};
 #[cfg(test)]
 use crate::player::PlayerMode;
+use crate::player::{Player, RaycastHit};
 use crate::server::handle::ServerHandle;
 use crate::server::player::HeldRotation;
 use crate::world::World;
@@ -568,7 +568,6 @@ impl Game {
         }
         self.self_view.effects.iter().map(|&(e, _)| e).collect()
     }
-
 }
 
 #[cfg(test)]

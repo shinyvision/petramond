@@ -149,7 +149,13 @@ fn zombie_sunburn_inner() {
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
 
-    fn install_chunk(game: &mut super::common::TestGame, cx: i32, cz: i32, sky_x2: u8, block_x2: u8) {
+    fn install_chunk(
+        game: &mut super::common::TestGame,
+        cx: i32,
+        cz: i32,
+        sky_x2: u8,
+        block_x2: u8,
+    ) {
         let pos = ChunkPos::new(cx, cz);
         game.server.world.insert_empty_column_for_test(pos);
         let mut chunk = Chunk::new(cx, cz);

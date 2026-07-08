@@ -83,8 +83,13 @@ impl ServerGame {
                 ..
             } = self;
             let sess = &mut sessions[s];
-            bus.player_damage_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
-                == Outcome::Cancel
+            bus.player_damage_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
         };
         if cancelled {
             return false;
@@ -169,7 +174,6 @@ impl ServerGame {
             }
         }
     }
-
 }
 
 #[cfg(test)]

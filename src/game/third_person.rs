@@ -81,9 +81,7 @@ impl Game {
         // flag reads the replicated self view; `sleep_head_yaw` derives from
         // the session's bed cell against the REPLICA's model group.
         if self.self_view.sleeping.is_some() {
-            let head_yaw = self
-                .sleep_head_yaw()
-                .unwrap_or(self.player.yaw);
+            let head_yaw = self.sleep_head_yaw().unwrap_or(self.player.yaw);
             self.third_person.pose.lie(head_yaw);
             let mut cam = self.cam.clone();
             cam.yaw = head_yaw;
@@ -106,12 +104,9 @@ impl Game {
 
         let vel = self.player.vel;
         let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
-        self.third_person.pose.advance(
-            dt,
-            hspeed,
-            self.player.yaw,
-            !self.player.is_spectator(),
-        );
+        self.third_person
+            .pose
+            .advance(dt, hspeed, self.player.yaw, !self.player.is_spectator());
 
         // Boom camera: retreat from the eye opposite the look direction, stopped
         // early by any block collision box so the camera never enters geometry.

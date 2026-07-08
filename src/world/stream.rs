@@ -162,9 +162,7 @@ impl World {
             _ => {
                 let targets: Vec<LoadTarget> = anchors
                     .iter()
-                    .map(|a| {
-                        LoadTarget::new_facing(a.cx, a.cy, a.cz, self.render_dist, a.fx, a.fz)
-                    })
+                    .map(|a| LoadTarget::new_facing(a.cx, a.cy, a.cz, self.render_dist, a.fx, a.fz))
                     .collect();
                 self.update_load_multi_targets(targets);
             }
@@ -172,8 +170,8 @@ impl World {
     }
 
     fn update_load_multi_targets(&mut self, targets: Vec<LoadTarget>) {
-        let unchanged = self.last_load_target == Some(targets[0])
-            && self.extra_load_targets == targets[1..];
+        let unchanged =
+            self.last_load_target == Some(targets[0]) && self.extra_load_targets == targets[1..];
         if unchanged {
             self.request_missing_columns_multi(&targets);
             return;
@@ -296,24 +294,24 @@ impl World {
             .filter(|p| !targets.iter().any(|t| Self::column_kept(*t, **p)))
             .copied()
             .collect();
-        let drop_sections: Vec<SectionPos> = self
-            .sections
-            .keys()
-            .filter(|sp| {
-                if targets
-                    .iter()
-                    .any(|t| Self::vertical_window(t.center_cy, 2).contains(&sp.cy))
-                {
-                    return false;
-                }
-                let cp = sp.chunk_pos();
-                targets.iter().any(|t| Self::column_kept(*t, cp))
-                    && !self.column_gen.get(&cp).is_some_and(|col| {
-                        Self::surface_window_for_column(col, 2).contains(&sp.cy)
-                    })
-            })
-            .copied()
-            .collect();
+        let drop_sections: Vec<SectionPos> =
+            self.sections
+                .keys()
+                .filter(|sp| {
+                    if targets
+                        .iter()
+                        .any(|t| Self::vertical_window(t.center_cy, 2).contains(&sp.cy))
+                    {
+                        return false;
+                    }
+                    let cp = sp.chunk_pos();
+                    targets.iter().any(|t| Self::column_kept(*t, cp))
+                        && !self.column_gen.get(&cp).is_some_and(|col| {
+                            Self::surface_window_for_column(col, 2).contains(&sp.cy)
+                        })
+                })
+                .copied()
+                .collect();
         self.evict_columns_and_sections(drop_columns, drop_sections);
     }
 

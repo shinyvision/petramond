@@ -279,12 +279,27 @@ fn supported_foothold(
 /// surface), so a route may cross a body of water of any depth — the kinematics float
 /// the mob up while it does. Avoiding water is a *destination* preference (see the
 /// wander behavior), not a routing constraint: the shortest path still cuts across.
+#[allow(dead_code)]
 pub fn find_path(
     start: IVec3,
     goal: IVec3,
     params: PathParams,
     solid: impl Fn(IVec3) -> bool,
     water: impl Fn(IVec3) -> bool,
+) -> Vec<IVec3> {
+    find_path_with_step_gate(start, goal, params, solid, water, |_, _| true)
+}
+
+/// [`find_path`] with an extra per-edge movement gate. The cell probes still decide
+/// which footholds exist; `step_allowed(from, to)` rejects a specific transition
+/// between two accepted footholds when dynamic edge collision blocks that move.
+pub fn find_path_with_step_gate(
+    start: IVec3,
+    goal: IVec3,
+    params: PathParams,
+    solid: impl Fn(IVec3) -> bool,
+    water: impl Fn(IVec3) -> bool,
+    step_allowed: impl Fn(IVec3, IVec3) -> bool,
 ) -> Vec<IVec3> {
     let passable_col = |c: IVec3| body_clear(c, params, &solid);
     // A cell is a foothold if its floor *supports* it (solid ground or water surface)
@@ -341,7 +356,14 @@ pub fn find_path(
             break;
         }
 
-        for (next, step_cost) in neighbors(current, &params, &foothold, &passable_col, &solid) {
+        for (next, step_cost) in neighbors(
+            current,
+            &params,
+            &foothold,
+            &passable_col,
+            &solid,
+            &step_allowed,
+        ) {
             let tentative = g_score[&current].saturating_add(step_cost);
             if tentative < *g_score.get(&next).unwrap_or(&u32::MAX) {
                 came_from.insert(next, current);
@@ -364,6 +386,7 @@ fn neighbors(
     foothold: &impl Fn(IVec3) -> bool,
     passable_col: &impl Fn(IVec3) -> bool,
     solid: &impl Fn(IVec3) -> bool,
+    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
 ) -> Vec<(IVec3, u32)> {
     const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
     let mut out = Vec::with_capacity(4);
@@ -374,13 +397,16 @@ fn neighbors(
         // above the mob's head at the start to rise. (If the higher cell is a
         // foothold, `side` itself is solid, so a flat step is impossible anyway.)
         let up = side + IVec3::Y;
-        if foothold(up) && body_layer_clear(a + IVec3::Y * params.head_cells(), *params, solid) {
+        if foothold(up)
+            && step_allowed(a, up)
+            && body_layer_clear(a + IVec3::Y * params.head_cells(), *params, solid)
+        {
             out.push((up, COST_JUMP));
             continue;
         }
 
         // Flat step: the neighbour at the same level is a foothold.
-        if foothold(side) {
+        if foothold(side) && step_allowed(a, side) {
             out.push((side, COST_FLAT));
             continue;
         }
@@ -394,7 +420,7 @@ fn neighbors(
                 if solid(c) {
                     break; // hit a wall/ground that isn't cleanly standable-into
                 }
-                if foothold(c) {
+                if foothold(c) && step_allowed(a, c) {
                     out.push((c, COST_FLAT + dy as u32 * COST_DROP_PER_BLOCK));
                     break;
                 }
@@ -411,7 +437,11 @@ fn neighbors(
         let target = a + IVec3::new(dx, 0, dz);
         let o1 = a + IVec3::new(dx, 0, 0);
         let o2 = a + IVec3::new(0, 0, dz);
-        if foothold(target) && foothold(o1) && foothold(o2) {
+        if foothold(target)
+            && foothold(o1)
+            && foothold(o2)
+            && step_allowed(a, target)
+        {
             out.push((target, COST_DIAG));
         }
     }

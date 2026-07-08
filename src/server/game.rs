@@ -1033,9 +1033,10 @@ impl ServerGame {
         use crate::net::protocol::{GuiValueWire, MenuTargetWire};
 
         let base = self.build_menu_sync_base(s);
+        let target = self.sessions[s].menu.target();
+        let gui_arc = matches!(target, ContainerTarget::ModGui { .. })
+            .then(|| self.mod_gui_state_for_menu_sync(s, target));
         let sess = &mut self.sessions[s];
-        let gui_arc = matches!(sess.menu.target(), ContainerTarget::ModGui { .. })
-            .then(|| sess.gui_state.clone());
         let gui_changed = match (&gui_arc, &sess.last_sent_gui_state) {
             (None, None) => false,
             (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
@@ -1060,6 +1061,44 @@ impl ServerGame {
         }
         sess.last_menu_sync = Some(base);
         Some(out)
+    }
+
+    fn mod_gui_state_for_menu_sync(
+        &self,
+        s: usize,
+        target: crate::game::container::ContainerTarget,
+    ) -> std::sync::Arc<crate::gui::GuiStateMap> {
+        let own = self.sessions[s].gui_state.clone();
+        if s == 0 || !own.is_empty() {
+            return own;
+        }
+        let host = self.sessions[0].gui_state.clone();
+        if host.is_empty() || !self.host_mod_gui_state_applies_to(target) {
+            return own;
+        }
+        host
+    }
+
+    fn host_mod_gui_state_applies_to(
+        &self,
+        target: crate::game::container::ContainerTarget,
+    ) -> bool {
+        use crate::game::container::ContainerTarget;
+
+        if self.sessions[0].menu.target() == target {
+            return true;
+        }
+        let mut open_target = None;
+        for sess in &self.sessions {
+            let t @ ContainerTarget::ModGui { .. } = sess.menu.target() else {
+                continue;
+            };
+            if open_target.is_some_and(|seen| seen != t) {
+                return false;
+            }
+            open_target = Some(t);
+        }
+        open_target == Some(target)
     }
 
     /// Hand the section stream events buffered by the per-frame `World::poll` to

@@ -658,7 +658,10 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
         assert!(game.server.item_pickup_tick(s), "session {s} collects");
     }
 
-    assert!(game.server.world.item_entities().is_empty(), "both drops collected");
+    assert!(
+        game.server.world.item_entities().is_empty(),
+        "both drops collected"
+    );
     for s in [0, other] {
         assert_eq!(
             count_item(&game.server.sessions[s].player.inventory, item),
@@ -690,7 +693,10 @@ fn a_single_drop_between_two_players_goes_to_exactly_one() {
     let took_0 = game.server.item_pickup_tick(0);
     let took_1 = game.server.item_pickup_tick(other);
 
-    assert!(game.server.world.item_entities().is_empty(), "the drop is gone");
+    assert!(
+        game.server.world.item_entities().is_empty(),
+        "the drop is gone"
+    );
     assert!(took_0 && !took_1, "first come in session order takes it");
     let total = count_item(&game.server.sessions[0].player.inventory, item)
         + count_item(&game.server.sessions[other].player.inventory, item);

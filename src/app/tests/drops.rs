@@ -30,10 +30,7 @@ fn ctrl_q_drops_whole_held_stack_while_playing() {
         "drop-all is latched until the fixed tick applies it"
     );
     app.apply_latched_actions_for_test();
-    assert!(
-        app.inventory().selected().is_none(),
-        "whole stack dropped"
-    );
+    assert!(app.inventory().selected().is_none(), "whole stack dropped");
 }
 
 #[test]

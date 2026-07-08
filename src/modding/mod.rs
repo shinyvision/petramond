@@ -375,7 +375,8 @@ impl ModHost {
                 None | Some(GuestRet::Unit) => {}
                 Some(_) => reg
                     .instance
-                    .lock().unwrap()
+                    .lock()
+                    .unwrap()
                     .disable("returned a non-unit reply to a block behavior dispatch"),
             }
         }
@@ -408,7 +409,8 @@ impl ModHost {
                 _ => {
                     spawner
                         .instance
-                        .lock().unwrap()
+                        .lock()
+                        .unwrap()
                         .disable("returned a non-hostile-spawn reply to a hostile spawn dispatch");
                 }
             }
@@ -531,7 +533,8 @@ fn call_event(
     match inst.lock().unwrap().call_guest(ctx, &call)? {
         GuestRet::Event { outcome, payload } => Some((outcome, payload)),
         _ => {
-            inst.lock().unwrap()
+            inst.lock()
+                .unwrap()
                 .disable("returned a non-event reply to an event dispatch");
             None
         }

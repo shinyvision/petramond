@@ -554,7 +554,10 @@ impl Game {
     /// everything the app-facing methods queued since the last frame.
     fn build_outgoing_messages(&mut self, input: &GameInput, update: PlayerUpdate) {
         debug_assert!(self.frame_messages.is_empty(), "pump drains every frame");
-        let use_mob = input.place_clicked.then(|| self.targeted_mob_id()).flatten();
+        let use_mob = input
+            .place_clicked
+            .then(|| self.targeted_mob_id())
+            .flatten();
         let attack_mob = input
             .attack_clicked
             .then(|| self.targeted_mob_id())

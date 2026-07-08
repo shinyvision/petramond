@@ -25,7 +25,9 @@ pub(crate) enum HandshakeError {
     /// A reply did not arrive within the stream's read deadline.
     Timeout,
     /// The server speaks a different protocol version.
-    ProtocolMismatch { server: u16 },
+    ProtocolMismatch {
+        server: u16,
+    },
     /// The server runs mods this client does not have installed.
     MissingMods(Vec<ModEntry>),
     /// The server refused the join (e.g. the name is taken).

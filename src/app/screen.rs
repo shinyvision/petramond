@@ -120,7 +120,6 @@ impl AppScreen {
             | AppScreen::Pause => GuiKind::Other,
         }
     }
-
 }
 
 /// Known polish gap: document text inputs don't request a Text (I-beam)

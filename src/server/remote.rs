@@ -552,7 +552,10 @@ mod tests {
         let (_, first) = server.admit_remote_player("Rachel");
         assert_eq!(first, "Rachel");
         let (_, second) = server.admit_remote_player("rachel");
-        assert_eq!(second, "rachel2", "case-insensitive dedupe, suffix appended");
+        assert_eq!(
+            second, "rachel2",
+            "case-insensitive dedupe, suffix appended"
+        );
         let (_, third) = server.admit_remote_player("RACHEL");
         assert_eq!(third, "RACHEL3", "the lowest FREE suffix (2 is taken)");
         let names: Vec<&str> = server.sessions.iter().map(|s| s.name.as_str()).collect();
@@ -572,9 +575,7 @@ mod tests {
         // Pre-seed the joining player's save: a known position + dirt to
         // place (a fresh spawn would be random and empty-handed).
         let mut visitor = crate::player::Player::new(Vec3::new(8.5, 80.0, 8.5));
-        visitor
-            .inventory
-            .add(ItemStack::new(ItemType::Dirt, 64));
+        visitor.inventory.add(ItemStack::new(ItemType::Dirt, 64));
         std::fs::write(
             dir.join("players/Visitor.dat"),
             crate::save::player::encode(&visitor),
@@ -730,7 +731,10 @@ mod tests {
                 _ => None,
             })
             .expect("host hears the deduped join");
-            assert_eq!(name, "vISITOR2", "the requested name gains a numeric suffix");
+            assert_eq!(
+                name, "vISITOR2",
+                "the requested name gains a numeric suffix"
+            );
             drop(dup); // socket drop -> leave path
             drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
                 ServerToClient::PlayerLeft { id } if id == dup_id => Some(()),
@@ -743,8 +747,8 @@ mod tests {
         // everyone else hears PlayerJoined then PlayerLeft.
         let guest_id = {
             let mut guest = connect(port);
-            let data = client_handshake(&mut guest, "Guest", &installed_mod_ids())
-                .expect("guest joins");
+            let data =
+                client_handshake(&mut guest, "Guest", &installed_mod_ids()).expect("guest joins");
             assert_eq!(
                 data.players.len(),
                 2,
@@ -810,4 +814,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-

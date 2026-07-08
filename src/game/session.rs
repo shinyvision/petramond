@@ -151,7 +151,8 @@ pub(crate) fn build_session(
     // process would oversubscribe every core.
     let pool = Arc::new(JobPool::new(JobPool::default_threads()));
     // The SERVER world: sim + gen + light, no meshing (the replica draws).
-    let mut world = World::new_with_pool(seed, render_dist, WorldRole::ServerHeadless, pool.clone());
+    let mut world =
+        World::new_with_pool(seed, render_dist, WorldRole::ServerHeadless, pool.clone());
     attach_save(&mut world, opened.save);
     // Per-world mod enablement: the palette already applied it in
     // `save::open_at`; the world carries it for the natural spawner and

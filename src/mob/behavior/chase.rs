@@ -9,9 +9,9 @@
 //!
 //! Engagement additionally requires collision line of sight ([`los`]) from the mob's
 //! body to the player: a player fully behind colliding blocks (walls, leaves, any
-//! future glass) never aggros mobs through them. Sight only gates the START of a
-//! chase — an engaged chase persists on distance alone, so breaking sight mid-hunt
-//! (ducking behind a wall) does not shake a mob that already saw you.
+//! future glass) never aggros mobs through them. Sight gates the START of a chase,
+//! and an engaged chase tolerates brief occlusion: once sight stays blocked for more
+//! than [`LOST_SIGHT_GIVE_UP_TICKS`] consecutive ticks, the mob gives up.
 //!
 //! The goal is a *valid mob foothold* near the player (the same navigation-foothold
 //! test the pathfinder uses), scanned vertically around the player's feet. A player
@@ -29,6 +29,9 @@ use super::los;
 /// How many cells above/below the player's feet cell to scan for a mob-standable
 /// goal (covers a player on a ledge lip, in shallow water, or mid-jump).
 const GOAL_SCAN_CELLS: i32 = 3;
+/// Consecutive no-LOS ticks tolerated after a chase has already engaged. "More than"
+/// this many ticks means the 201st blocked-sight tick ends the chase.
+const LOST_SIGHT_GIVE_UP_TICKS: u16 = 200;
 
 /// `chase_player` params as written in a `mobs.json` brain row.
 #[derive(Deserialize)]
@@ -44,6 +47,7 @@ pub struct ChasePlayerAi {
     radius: f32,
     give_up_radius: f32,
     chasing: bool,
+    lost_sight_ticks: u16,
 }
 
 impl ChasePlayerAi {
@@ -52,6 +56,7 @@ impl ChasePlayerAi {
             radius,
             give_up_radius: give_up_radius.max(radius),
             chasing: false,
+            lost_sight_ticks: 0,
         }
     }
 
@@ -75,13 +80,24 @@ impl AiBehavior for ChasePlayerAi {
         if self.chasing {
             if d2 > self.give_up_radius * self.give_up_radius {
                 self.chasing = false;
+                self.lost_sight_ticks = 0;
+            } else {
+                let body = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
+                if los::line_clear(ctx.world, body, ctx.player_pos) {
+                    self.lost_sight_ticks = 0;
+                } else {
+                    self.lost_sight_ticks = self.lost_sight_ticks.saturating_add(1);
+                    if self.lost_sight_ticks > LOST_SIGHT_GIVE_UP_TICKS {
+                        self.chasing = false;
+                        self.lost_sight_ticks = 0;
+                    }
+                }
             }
         } else if d2 <= self.radius * self.radius {
-            // Sight gates engagement only; the engaged branch above never re-checks
-            // it, so a wall between mob and player can't shake an ongoing chase.
             let body = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
             if los::line_clear(ctx.world, body, ctx.player_pos) {
                 self.chasing = true;
+                self.lost_sight_ticks = 0;
             }
         }
         if !self.chasing {
@@ -235,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_sight_gates_engagement_but_never_breaks_an_engaged_chase() {
+    fn blocked_sight_gates_engagement_and_long_occlusion_breaks_chase() {
         let mut world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(10.0, 14.0);
@@ -265,11 +281,18 @@ mod tests {
         for y in 64..=66 {
             assert!(world.set_block_world(5, y, 2, Block::OakLeaves));
         }
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, mob, player))
-                .goal
-                .is_some(),
-            "breaking sight does not shake an engaged chase"
+        for tick in 1..=LOST_SIGHT_GIVE_UP_TICKS {
+            assert!(
+                ai.tick(&mut ctx(&world, &mut rng, mob, player))
+                    .goal
+                    .is_some(),
+                "brief sight loss is tolerated; tick {tick} should still chase"
+            );
+        }
+        assert_eq!(
+            ai.tick(&mut ctx(&world, &mut rng, mob, player)).goal,
+            None,
+            "more than {LOST_SIGHT_GIVE_UP_TICKS} consecutive no-LOS ticks ends the chase"
         );
     }
 

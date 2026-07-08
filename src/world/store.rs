@@ -519,8 +519,7 @@ impl World {
     /// per-cell state is re-read once more at the drain (`take_block_deltas`).
     pub(super) fn record_block_delta(&mut self, wx: i32, wy: i32, wz: i32) {
         let block_id = self.chunk_block(wx, wy, wz);
-        let water =
-            (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
+        let water = (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
         let pos = crate::mathh::IVec3::new(wx, wy, wz);
         let state = self.cell_state_at(wx, wy, wz);
         self.block_delta_log.insert(
@@ -642,10 +641,7 @@ impl World {
         // spill) rewrites, or its saved cubes diverge from its neighbours'.
         let relit_persisted = light_final
             && self.relit_since_persist.contains(&pos)
-            && self
-                .save
-                .as_ref()
-                .is_some_and(|s| s.manifest_contains(pos));
+            && self.save.as_ref().is_some_and(|s| s.manifest_contains(pos));
         if section.modified
             || !entities.is_empty()
             || !mobs.is_empty()

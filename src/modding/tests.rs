@@ -436,7 +436,10 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
         dispatches, dispatches_after_init,
         "the dispatch never completed"
     );
-    assert!(ran_after.load(std::sync::atomic::Ordering::Relaxed), "the tick continued past the trapping mod");
+    assert!(
+        ran_after.load(std::sync::atomic::Ordering::Relaxed),
+        "the tick continued past the trapping mod"
+    );
 
     // Still ticking, and the disabled mod is not dispatched again.
     ran_after.store(false, std::sync::atomic::Ordering::Relaxed);

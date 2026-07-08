@@ -117,7 +117,8 @@ impl App {
         state.set("server_addr", llama_ui::UiValue::Str(addr.clone()));
         state.set("player_name", llama_ui::UiValue::Str(name));
         // Ready to type immediately, editing from the prefill.
-        self.ui.focus_text_input("server_addr", &addr, ADDR_MAX_CHARS);
+        self.ui
+            .focus_text_input("server_addr", &addr, ADDR_MAX_CHARS);
         self.screen = AppScreen::ConnectServer;
         self.pointer.release_for_menu();
     }

@@ -155,7 +155,9 @@ impl RemotePlayers {
             if row.id == self_id {
                 continue;
             }
-            let mut entry = old.remove(&row.id).unwrap_or_else(|| RemotePlayer::new(*row));
+            let mut entry = old
+                .remove(&row.id)
+                .unwrap_or_else(|| RemotePlayer::new(*row));
             entry.prev = if row.snap { *row } else { entry.curr };
             if row.snap {
                 entry.pose.reset_facing(row.yaw);

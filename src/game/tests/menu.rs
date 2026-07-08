@@ -180,7 +180,10 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
     game.server
         .open_mod_gui_screen_for(0, kind, Some(crate::mathh::IVec3::new(1, 2, 3)));
     assert!(
-        game.server.sessions[0].gui_state.get("modtest:stale").is_none(),
+        game.server.sessions[0]
+            .gui_state
+            .get("modtest:stale")
+            .is_none(),
         "opening a mod GUI clears the session state map"
     );
 
@@ -222,7 +225,10 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
     );
     game.close_open_menu();
     game.apply_latched_actions_for_test();
-    assert!(game.server.sessions[0].gui_state.get("modtest:mid").is_none());
+    assert!(game.server.sessions[0]
+        .gui_state
+        .get("modtest:mid")
+        .is_none());
 
     // With no mod GUI session open, a stray widget click dispatches nothing.
     game.menu_click(

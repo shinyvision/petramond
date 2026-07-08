@@ -67,7 +67,8 @@ fn wheel_spin_inner() {
     assert!(game.server.world.set_block_world(12, 64, 8, wheel_block));
     let kind = crate::gui::resolve_kind("wheel:wheel")
         .expect("the pack's open_gui interaction registered the kind");
-    game.server.open_mod_gui_screen_for(0, kind, Some(block_pos));
+    game.server
+        .open_mod_gui_screen_for(0, kind, Some(block_pos));
 
     let count = |game: &super::common::TestGame, item: ItemType| -> u32 {
         (0..crate::inventory::TOTAL_SLOTS)

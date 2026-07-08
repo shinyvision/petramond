@@ -293,7 +293,12 @@ mod tests {
     use crate::item::ItemType;
     use crate::mathh::{IVec3, Vec3};
 
-    fn sim() -> (World, Player, std::sync::Arc<crate::gui::GuiStateMap>, TickEvents) {
+    fn sim() -> (
+        World,
+        Player,
+        std::sync::Arc<crate::gui::GuiStateMap>,
+        TickEvents,
+    ) {
         (
             World::new(1, 1),
             Player::new(Vec3::new(0.0, 80.0, 0.0)),

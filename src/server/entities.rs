@@ -174,8 +174,13 @@ impl ServerGame {
                 ..
             } = self;
             let sess = &mut sessions[s];
-            bus.mob_hurt_pre(world, &mut sess.player, &mut sess.gui_state, events, &mut pre)
-                == Outcome::Cancel
+            bus.mob_hurt_pre(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
         };
         if cancelled {
             return false;

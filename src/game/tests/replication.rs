@@ -476,6 +476,41 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     assert!(up.menu_sync.is_none(), "same Arc → nothing ships");
 }
 
+#[test]
+fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
+    use crate::gui::GuiValue;
+    use crate::net::protocol::{GuiValueWire, MenuTargetWire};
+
+    let mut game = super::common::game();
+    game.set_mods_for_test(crate::modding::ModHost::test_unit_guest_host("kitchen"));
+    let remote = game
+        .server
+        .add_session_for_test(crate::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+    let kind = crate::gui::intern_kind("kitchen:oven").expect("mod kind registers");
+    let pos = crate::mathh::IVec3::new(4, 64, 4);
+
+    game.server.open_mod_gui_screen_for(remote, kind, Some(pos));
+    crate::gui::gui_state_set(
+        &mut game.server.sessions[0].gui_state,
+        "kitchen:cook01".into(),
+        GuiValue::F32(0.5),
+    );
+
+    let MenuTargetWire::ModGui { gui_state, .. } = game
+        .server
+        .build_menu_sync(remote)
+        .expect("remote menu sync includes the shared mod GUI state")
+        .target
+    else {
+        panic!("expected a ModGui target");
+    };
+    assert_eq!(
+        gui_state,
+        Some(vec![("kitchen:cook01".into(), GuiValueWire::F32(0.5))]),
+        "a single-instance mod machine's gauge publish reaches the remote opener"
+    );
+}
+
 /// The screen-open request queued at the tick's interaction site arrives as
 /// `SelfEvents.open_screen` and `Game::tick` maps it onto the app-facing
 /// `GameEvents` field unchanged-consumer-side.

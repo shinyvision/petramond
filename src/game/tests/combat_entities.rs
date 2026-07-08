@@ -253,7 +253,8 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
     game.replicated_mobs.apply(batch);
 
     assert_eq!(
-        game.closest_mob(game.cam.pos, dir, player::REACH).map(|(id, _)| id),
+        game.closest_mob(game.cam.pos, dir, player::REACH)
+            .map(|(id, _)| id),
         Some(id),
         "a mob in front within reach is targeted (stable id)"
     );
@@ -474,21 +475,22 @@ fn a_mob_pushes_the_player_per_frame() {
     // mob rows (the shove reaches the server in the next PlayerUpdate).
     let mut game = game();
     game.player.pos = Vec3::new(8.0, 64.0, 8.0);
-    game.replicated_mobs.apply(vec![crate::net::protocol::MobStateRow {
-        id: 1,
-        kind_id: Mob::Owl.0,
-        pos: Vec3::new(8.2, 64.0, 8.0),
-        yaw: 0.0,
-        anim_time: 0.0,
-        moving: false,
-        idle_anim: None,
-        head_yaw: 0.0,
-        head_pitch: 0.0,
-        hurt_timer: 0.0,
-        dead: false,
-        shorn: false,
-        ragdoll: None,
-    }]);
+    game.replicated_mobs
+        .apply(vec![crate::net::protocol::MobStateRow {
+            id: 1,
+            kind_id: Mob::Owl.0,
+            pos: Vec3::new(8.2, 64.0, 8.0),
+            yaw: 0.0,
+            anim_time: 0.0,
+            moving: false,
+            idle_anim: None,
+            head_yaw: 0.0,
+            head_pitch: 0.0,
+            hurt_timer: 0.0,
+            dead: false,
+            shorn: false,
+            ragdoll: None,
+        }]);
     let x0 = game.player.pos.x;
     for _ in 0..30 {
         game.apply_entity_push(1.0 / 60.0);
@@ -541,9 +543,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.player.pos = start;
-        game.game
-            .remote_players
-            .apply(&[row], &[], own_id, &roster);
+        game.game.remote_players.apply(&[row], &[], own_id, &roster);
         for _ in 0..30 {
             game.apply_entity_push(1.0 / 60.0);
         }
@@ -686,7 +686,10 @@ fn cannot_place_a_solid_block_inside_another_player() {
 
 /// Latch a PvP attack click at `target`, the way an `Action(AttackClick)`
 /// message does (mob and player are mutually exclusive on a click).
-fn click_attack_player(game: &mut super::common::TestGame, target: crate::server::player::PlayerId) {
+fn click_attack_player(
+    game: &mut super::common::TestGame,
+    target: crate::server::player::PlayerId,
+) {
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::AttackClick {
@@ -722,8 +725,7 @@ fn a_pvp_attack_damages_the_target_through_the_funnel_with_knockback_and_cooldow
 
     assert!(ev.player_at(0).swung_hand, "the hit swings the hand");
     assert_eq!(
-        game.server.sessions[0].attack_cooldown,
-        ATTACK_COOLDOWN_TICKS,
+        game.server.sessions[0].attack_cooldown, ATTACK_COOLDOWN_TICKS,
         "the swing arms the cooldown, exactly like a mob hit"
     );
     assert_eq!(
@@ -761,7 +763,11 @@ fn a_pvp_attack_out_of_reach_lands_no_damage() {
     game.server.tick_attack(0, &mut ev);
 
     assert_eq!(game.server.sessions[t].player.health(), h0, "no damage");
-    assert_eq!(game.server.sessions[t].player.vel, Vec3::ZERO, "no knockback");
+    assert_eq!(
+        game.server.sessions[t].player.vel,
+        Vec3::ZERO,
+        "no knockback"
+    );
 }
 
 #[test]
@@ -867,10 +873,12 @@ fn pvp_knockback_ships_the_victims_vel_echo() {
         .transform
         .expect("a vel-only knockback still ships the transform correction");
     assert_eq!(echo.pos, reported.pos, "the tick moved no position");
-    assert_ne!(echo.vel, reported.vel, "the echo carries the knocked velocity");
+    assert_ne!(
+        echo.vel, reported.vel,
+        "the echo carries the knocked velocity"
+    );
     assert_eq!(
-        echo.vel,
-        game.server.sessions[t].player.vel,
+        echo.vel, game.server.sessions[t].player.vel,
         "the echoed velocity is the session's post-knockback one"
     );
 }
@@ -922,7 +930,10 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     game.refresh_target();
     assert_eq!(game.targeted_player, Some(1), "the remote body is targeted");
     assert!(game.targeted_mob.is_none(), "at most one target kind");
-    assert!(game.look.is_none(), "an entity target clears the block look");
+    assert!(
+        game.look.is_none(),
+        "an entity target clears the block look"
+    );
 
     // A mob NEARER than the remote wins the distance competition.
     let mut mob_feet = game.cam.pos + dir * 1.2;
@@ -954,5 +965,8 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
         .remote_players
         .apply(&[remote_row(1, feet, false)], &[], own_id, &roster);
     game.refresh_target();
-    assert!(game.targeted_player.is_none(), "hidden bodies are untargetable");
+    assert!(
+        game.targeted_player.is_none(),
+        "hidden bodies are untargetable"
+    );
 }

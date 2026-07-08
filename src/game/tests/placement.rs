@@ -81,10 +81,7 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
                 );
             }
             ExpectedOpen::FurnitureWorkbench => {
-                assert!(
-                    game.server.sessions[0].request_open_workbench,
-                    "{block:?}"
-                );
+                assert!(game.server.sessions[0].request_open_workbench, "{block:?}");
             }
         }
     }
@@ -255,7 +252,12 @@ fn rooted_plants_place_only_on_their_required_ground() {
     // The data-driven substrate gate: a flower roots in soil (grass/dirt), a cactus
     // in sand (sand/red sand). Building onto the wrong ground is a no-op; the right
     // ground accepts it. Each case uses its own column so they don't interfere.
-    fn place_on(game: &mut super::common::TestGame, ground: Block, item: ItemType, col: i32) -> bool {
+    fn place_on(
+        game: &mut super::common::TestGame,
+        ground: Block,
+        item: ItemType,
+        col: i32,
+    ) -> bool {
         let g = IVec3::new(col, 100, col);
         game.server.world.set_block_world(g.x, g.y, g.z, ground);
         let mut inv = Inventory::new();
@@ -703,7 +705,9 @@ fn model_placement_orientation_spans_across_or_away() {
         assert!(game.server.try_place_for_test(), "{item:?} should place");
         game
     };
-    let at = |game: &super::common::TestGame, p: IVec3| Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z));
+    let at = |game: &super::common::TestGame, p: IVec3| {
+        Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z))
+    };
 
     // FrontToBack: the bed occupies the clicked cell and the cell BEYOND it (south,
     // away from the player) — never the cells beside it.

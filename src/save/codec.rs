@@ -657,7 +657,10 @@ mod tests {
         let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, ..) = decode_section(SectionPos::new(0, 4, 0), &rec).expect("decodes");
         assert!(!back.has_baked_light(), "no light was persisted");
-        assert!(back.light_dirty, "absent persisted light means bake on load");
+        assert!(
+            back.light_dirty,
+            "absent persisted light means bake on load"
+        );
 
         // Clean baked light: roundtrips byte-exact, loads clean.
         let sky: Vec<u8> = (0..SECTION_VOLUME).map(|i| (i % 16) as u8).collect();
@@ -667,8 +670,14 @@ mod tests {
         s.set_blocklight(Arc::from(bl.clone().into_boxed_slice()));
         let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
         let (back, ..) = decode_section(SectionPos::new(0, 4, 0), &rec).expect("decodes");
-        assert!(!back.light_dirty, "persisted light loads clean — no re-bake");
-        assert_eq!(&back.skylight_arc().expect("skylight persisted")[..], &sky[..]);
+        assert!(
+            !back.light_dirty,
+            "persisted light loads clean — no re-bake"
+        );
+        assert_eq!(
+            &back.skylight_arc().expect("skylight persisted")[..],
+            &sky[..]
+        );
         assert_eq!(
             &back.blocklight_arc().expect("blocklight persisted")[..],
             &bl[..]

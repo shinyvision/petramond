@@ -376,8 +376,8 @@ fn server_main(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::protocol::PlayerUpdate;
     use crate::mathh::Vec3;
+    use crate::net::protocol::PlayerUpdate;
 
     /// A real, fully-built ServerGame (no save attached), as `Game::new`
     /// builds it.
@@ -403,7 +403,10 @@ mod tests {
         }
     }
 
-    fn recv_tick(handle: &ServerHandle, timeout: Duration) -> Option<Box<crate::net::protocol::TickUpdate>> {
+    fn recv_tick(
+        handle: &ServerHandle,
+        timeout: Duration,
+    ) -> Option<Box<crate::net::protocol::TickUpdate>> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match handle.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -457,7 +460,9 @@ mod tests {
             .expect("live server");
         let _ = recv_tick(&handle, Duration::from_secs(5)).expect("running before the pause");
 
-        handle.send(ClientToServer::Pause(true)).expect("live server");
+        handle
+            .send(ClientToServer::Pause(true))
+            .expect("live server");
         // Let the pause land and drain any in-flight updates from before it.
         std::thread::sleep(Duration::from_millis(200));
         let mut drained = Vec::new();
@@ -479,7 +484,9 @@ mod tests {
         handle.send(ClientToServer::KeepAlive).expect("still alive");
         assert!(!handle.is_crashed());
 
-        handle.send(ClientToServer::Pause(false)).expect("live server");
+        handle
+            .send(ClientToServer::Pause(false))
+            .expect("live server");
         let resumed = recv_tick(&handle, Duration::from_secs(5)).expect("ticks resume");
         if let Some(last) = last_tick {
             assert!(resumed.tick > last, "the world advances again");
@@ -499,10 +506,8 @@ mod tests {
     /// through `is_crashed`.
     #[test]
     fn panicking_server_crashes_loud_and_saves_nothing() {
-        let dir = std::env::temp_dir().join(format!(
-            "llamacraft-handle-panic-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("llamacraft-handle-panic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut server = server_game();

@@ -67,7 +67,12 @@ impl TestApp {
         self.press_screen_for_test(screen, now, PointerButton::Secondary)
     }
 
-    fn press_screen_for_test(&mut self, screen: (u32, u32), now: f64, button: PointerButton) -> bool {
+    fn press_screen_for_test(
+        &mut self,
+        screen: (u32, u32),
+        now: f64,
+        button: PointerButton,
+    ) -> bool {
         if !self.screen.ui_open() {
             return false;
         }
