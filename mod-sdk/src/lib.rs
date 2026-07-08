@@ -347,16 +347,17 @@ pub fn mobs_in_radius(pos: [f32; 3], radius: f32) -> Vec<MobSnapshot> {
     }
 }
 
-/// Hurt a mob through the `mob_hurt_pre` pipeline, exactly like a player
-/// attack (applied at the next in-tick drain point; a cancelling handler
-/// blocks it).
-pub fn hurt_mob(index: u32, amount: f32, from: [f32; 3]) {
+/// Damage a mob through the `mob_damage_pre` pipeline (applied at the next
+/// in-tick drain point; a cancelling handler blocks it). Mod damage is not an
+/// attack, so the default engine knockback is not applied; `origin` is spatial
+/// context for handlers/feedback.
+pub fn damage_mob(index: u32, amount: f32, origin: Option<[f32; 3]>) {
     __rt::expect_unit(
-        "HurtMob",
-        __rt::host_call(&HostCall::HurtMob {
+        "DamageMob",
+        __rt::host_call(&HostCall::DamageMob {
             index,
             amount,
-            from,
+            origin,
         }),
     );
 }

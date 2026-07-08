@@ -32,7 +32,7 @@ mod spawn;
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
-pub use manager::{DeathDrop, MobAttack, Mobs, PlayerAnchor, ShearDrop};
+pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_cap_full,
     HOSTILE_SPAWN_ATTEMPTS,
@@ -259,6 +259,79 @@ pub enum MobSoundCategory {
     Death,
 }
 
+pub(crate) const DEFAULT_DAMAGE_FLASH_SECS: f32 = 0.3;
+pub(crate) const DEFAULT_DAMAGE_KNOCKBACK_SECS: f32 = 0.3;
+
+/// Damage feedback components a species applies when a damage request survives
+/// `mob_damage_pre`. Empty `damage_feedback` rows resolve to [`Default`], so a mob
+/// row can opt into the normal engine bundle without enumerating it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MobDamageFeedback {
+    pub components: Vec<MobDamageFeedbackComponent>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MobDamageFeedbackComponent {
+    DecreaseHealth,
+    Flash { duration: f32 },
+    Knockback { scale: f32, duration: f32 },
+    Sound { category: MobDamageSound },
+    Ragdoll,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MobDamageSound {
+    Hurt,
+    Death,
+}
+
+impl MobDamageFeedback {
+    pub fn none() -> Self {
+        Self {
+            components: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn has_any_component(&self) -> bool {
+        !self.components.is_empty()
+    }
+
+    #[inline]
+    pub fn plays_sound(&self, sound: MobDamageSound) -> bool {
+        self.components.iter().any(|c| {
+            matches!(
+                c,
+                MobDamageFeedbackComponent::Sound { category } if *category == sound
+            )
+        })
+    }
+}
+
+impl Default for MobDamageFeedback {
+    fn default() -> Self {
+        Self {
+            components: vec![
+                MobDamageFeedbackComponent::DecreaseHealth,
+                MobDamageFeedbackComponent::Flash {
+                    duration: DEFAULT_DAMAGE_FLASH_SECS,
+                },
+                MobDamageFeedbackComponent::Knockback {
+                    scale: 1.0,
+                    duration: DEFAULT_DAMAGE_KNOCKBACK_SECS,
+                },
+                MobDamageFeedbackComponent::Sound {
+                    category: MobDamageSound::Hurt,
+                },
+                MobDamageFeedbackComponent::Sound {
+                    category: MobDamageSound::Death,
+                },
+                MobDamageFeedbackComponent::Ragdoll,
+            ],
+        }
+    }
+}
+
 impl MobSoundCategory {
     /// Wire discriminant (net protocol `WorldEventMsg::MobSound`).
     pub(crate) fn to_u8(self) -> u8 {
@@ -447,6 +520,8 @@ pub struct MobDef {
     pub avoid_water: bool,
     /// What shearing this species yields, or `None` for species that can't be shorn.
     pub shear: Option<ShearSpec>,
+    /// Damage feedback components resolved from this species' `damage_feedback` row.
+    pub damage_feedback: MobDamageFeedback,
     /// Presentation sound hooks keyed by semantic mob event. The actual clip
     /// variants, gain, pitch jitter, and attenuation live in `sounds.json`.
     pub sounds: &'static [MobSoundSpec],

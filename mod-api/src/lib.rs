@@ -6,21 +6,16 @@
 //! directly; mods reach it through `mod-sdk`, which re-exports it and hides the
 //! raw ABI (`mod_alloc`/`mod_free`/pointer packing) behind safe wrappers.
 //!
-//! # APPEND-ONLY evolution
+//! # Evolving the ABI
 //!
 //! postcard has no schema: enum variants encode as their **declaration index**
-//! and struct fields encode **positionally**. A shipped mod keeps its compiled
-//! copy of these types forever, so the wire contract is:
-//!
-//! - NEVER reorder, remove, or insert enum variants — new variants go at the END.
-//! - NEVER add, remove, or reorder fields of a shipped variant — new capability
-//!   means a NEW variant, not a wider old one.
-//! - The same applies to every type reachable from [`HostCall`]/[`GuestCall`]
-//!   ([`EventPayload`], [`Stage`], [`EventKind`], ...).
-//!
-//! An old mod then keeps decoding everything it registered for, and the host
-//! rejects (disables, never crashes on) a mod speaking a newer dialect only when
-//! it actually sends an unknown variant.
+//! and struct fields **positionally**, so reordering variants, reshaping a
+//! variant's fields, or inserting a variant anywhere but the end all change the
+//! wire encoding. Nothing is released and the only mods are the ones bundled in
+//! this repo, so shape these types however stays cleanest and rebuild the mods
+//! (`make mods`) — there is no external mod whose compiled copy must keep
+//! decoding an old dialect. The host still disables (never crashes on) a mod
+//! that sends a variant it cannot decode.
 
 use serde::{Deserialize, Serialize};
 
@@ -80,8 +75,7 @@ pub enum AttachSide {
     After,
 }
 
-/// The worldgen pipeline's addressable stages, in execution order. APPEND-ONLY
-/// like every ABI enum.
+/// The worldgen pipeline's addressable stages, in execution order.
 ///
 /// `Climate` assigns the per-column biome map; `Terrain` is the block fill plus
 /// cave carve; `Underground` scatters ores/blobs; `Vegetation` places
@@ -107,7 +101,7 @@ pub enum EventKind {
     BlockBreakPre,
     BlockInteract,
     ItemUsePre,
-    MobHurtPre,
+    MobDamagePre,
     PlayerDamagePre,
     BlockPlaced,
     BlockBroken,
@@ -122,13 +116,17 @@ pub enum EventKind {
     SectionLoaded,
 }
 
-/// Why the player is taking damage. APPEND-ONLY like every ABI enum.
+/// Why an entity is taking damage.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum DamageSource {
     Fall,
-    /// A mob's melee strike; `key` is the attacking species' registry name
+    /// A player's melee strike; `id` is the attacking session's player id.
+    PlayerAttack {
+        id: u8,
+    },
+    /// A mob's melee strike; `key` is the attacking species' key
     /// (`"llama:owl"`, `"zombies:zombie"`).
-    Mob {
+    MobAttack {
         key: String,
     },
     /// A mod's [`HostCall::DamagePlayer`] / [`HostCall::KillPlayer`]; `mod_id`
@@ -136,16 +134,9 @@ pub enum DamageSource {
     Mod {
         mod_id: String,
     },
-    /// Another player's melee strike (PvP); `id` is the attacking session's
-    /// player id — session-scoped (ids recycle after a disconnect), so filter
-    /// per-hit, not across sessions. Appended for engine PvP; older mods'
-    /// exhaustive matches gain a no-op arm when they recompile.
-    Player {
-        id: u8,
-    },
 }
 
-/// Which container GUI opened/closed. APPEND-ONLY like every ABI enum.
+/// Which container GUI opened/closed.
 /// (`Copy` was dropped when `Mod` gained its String payload — a Rust-trait
 /// change, not a wire change.)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -171,13 +162,58 @@ pub enum Facing {
     East,
 }
 
+/// Default feedback controls for mob damage that survived `mob_damage_pre`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MobDamageFeedback {
+    pub components: Vec<MobDamageFeedbackComponent>,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub enum MobDamageFeedbackComponent {
+    DecreaseHealth,
+    Flash { duration: f32 },
+    Knockback { scale: f32, duration: f32 },
+    Sound { category: MobDamageSound },
+    Ragdoll,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MobDamageSound {
+    Hurt,
+    Death,
+}
+
+impl Default for MobDamageFeedback {
+    fn default() -> Self {
+        Self {
+            components: vec![
+                MobDamageFeedbackComponent::DecreaseHealth,
+                MobDamageFeedbackComponent::Flash { duration: 0.3 },
+                MobDamageFeedbackComponent::Knockback {
+                    scale: 1.0,
+                    duration: 0.3,
+                },
+                MobDamageFeedbackComponent::Sound {
+                    category: MobDamageSound::Hurt,
+                },
+                MobDamageFeedbackComponent::Sound {
+                    category: MobDamageSound::Death,
+                },
+                MobDamageFeedbackComponent::Ragdoll,
+            ],
+        }
+    }
+}
+
 /// One event's data, mirrored from the engine payloads (WIKI/modding.md
 /// taxonomy). Pre events hand the payload to the guest `&mut`; the engine reads
-/// back ONLY the fields the taxonomy marks mutable ([`MobHurtPre::amount`],
-/// [`PlayerDamagePre::amount`]) — everything else is observational.
+/// back ONLY the fields the taxonomy marks mutable ([`MobDamagePre::amount`],
+/// [`MobDamagePre::feedback`], [`PlayerDamagePre::amount`]) — everything else
+/// is observational.
 ///
-/// [`MobHurtPre::amount`]: EventPayload::MobHurtPre
+/// [`MobDamagePre::amount`]: EventPayload::MobDamagePre
 /// [`PlayerDamagePre::amount`]: EventPayload::PlayerDamagePre
+/// [`MobDamagePre::feedback`]: EventPayload::MobDamagePre
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum EventPayload {
     BlockPlacePre {
@@ -198,18 +234,24 @@ pub enum EventPayload {
         item: ItemId,
         target: Option<[i32; 3]>,
     },
-    MobHurtPre {
+    MobDamagePre {
         /// Index into the live mob set, valid this tick only.
         mob: u32,
         kind: MobId,
         /// Mutable: written back by the engine after the dispatch.
         amount: f32,
-        source: [f32; 3],
+        source: DamageSource,
+        /// Optional world-space origin for attack knockback or spatial feedback.
+        origin: Option<[f32; 3]>,
+        /// Mutable: written back by the engine after the dispatch.
+        feedback: MobDamageFeedback,
     },
     PlayerDamagePre {
         /// Mutable: written back by the engine after the dispatch.
         amount: i32,
         source: DamageSource,
+        /// Optional world-space origin for attack knockback or spatial feedback.
+        origin: Option<[f32; 3]>,
     },
     BlockPlaced {
         pos: [i32; 3],
@@ -261,7 +303,7 @@ impl EventPayload {
             EventPayload::BlockBreakPre { .. } => EventKind::BlockBreakPre,
             EventPayload::BlockInteract { .. } => EventKind::BlockInteract,
             EventPayload::ItemUsePre { .. } => EventKind::ItemUsePre,
-            EventPayload::MobHurtPre { .. } => EventKind::MobHurtPre,
+            EventPayload::MobDamagePre { .. } => EventKind::MobDamagePre,
             EventPayload::PlayerDamagePre { .. } => EventKind::PlayerDamagePre,
             EventPayload::BlockPlaced { .. } => EventKind::BlockPlaced,
             EventPayload::BlockBroken { .. } => EventKind::BlockBroken,
@@ -291,13 +333,13 @@ pub enum GuiValue {
 }
 
 /// A live mob's snapshot for [`HostCall::MobsInRadius`]. `index` addresses the
-/// mob in later calls ([`HostCall::HurtMob`], the mob KV calls) and is valid
+/// mob in later calls ([`HostCall::DamageMob`], the mob KV calls) and is valid
 /// THIS TICK ONLY — any engine mob removal (deaths finishing, despawns, section
 /// unloads, [`HostCall::DespawnMob`]) renumbers; re-query, never store indices.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
     pub index: u32,
-    /// The species' registry name (`"llama:owl"`, `"zombies:zombie"`).
+    /// The species' key (`"llama:owl"`, `"zombies:zombie"`).
     pub key: String,
     /// Feet position.
     pub pos: [f32; 3],
@@ -340,7 +382,7 @@ pub struct HostileSpawnCandidate {
 
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
 /// Phase 2b surface + the Phase 3b world/entity/player/KV calls (one match on
-/// the host, room to append).
+/// the host).
 ///
 /// The world-touching calls are sim-scoped: legal wherever a `SimCtx` is
 /// published (`mod_init`, tick systems, event handlers), [`HostRet::Error`]
@@ -398,7 +440,7 @@ pub enum HostCall {
     LightAt { pos: [i32; 3] },
 
     // --- Phase 3b: entities -----------------------------------------------
-    /// Spawn a mob by species registry name at `pos` (feet) facing `yaw`.
+    /// Spawn a mob by species key at `pos` (feet) facing `yaw`.
     /// `false` = unknown key or the mob cap is reached. → [`HostRet::Bool`].
     SpawnMob {
         key: String,
@@ -410,14 +452,15 @@ pub enum HostCall {
     /// perturbed only by removals). Dead (ragdolling) mobs are excluded.
     /// → [`HostRet::Mobs`].
     MobsInRadius { pos: [f32; 3], radius: f32 },
-    /// Hurt the mob at `index` (from attacker point `from`, which the
-    /// knockback pushes away from), through the `mob_hurt_pre` pipeline
-    /// exactly like a player attack. Applied at the next action drain point
-    /// (same tick), so a handler cannot re-enter the bus. → [`HostRet::Unit`].
-    HurtMob {
+    /// Damage the mob at `index` through the `mob_damage_pre` pipeline. Mod
+    /// damage is not an attack, so default knockback is not applied; `origin`
+    /// is only spatial context for feedback/handlers. Applied at the next
+    /// action drain point (same tick), so a handler cannot re-enter the bus.
+    /// → [`HostRet::Unit`].
+    DamageMob {
         index: u32,
         amount: f32,
-        from: [f32; 3],
+        origin: Option<[f32; 3]>,
     },
     /// Remove the mob at `index` from the live world immediately (not saved,
     /// no death/loot). Renumbers later indices — re-query after use.
@@ -1032,10 +1075,10 @@ mod tests {
             pos: [0.0, 64.0, 0.0],
             radius: 16.0,
         });
-        roundtrip(HostCall::HurtMob {
+        roundtrip(HostCall::DamageMob {
             index: 3,
             amount: 2.5,
-            from: [1.0, 64.0, 1.0],
+            origin: Some([1.0, 64.0, 1.0]),
         });
         roundtrip(HostCall::DespawnMob { index: 7 });
         roundtrip(HostCall::SpawnItem {
@@ -1256,20 +1299,23 @@ mod tests {
             outcome: Outcome::Continue,
             payload: EventPayload::PlayerDamagePre {
                 amount: 2,
-                source: DamageSource::Mob {
+                source: DamageSource::MobAttack {
                     key: "zombies:zombie".into(),
                 },
+                origin: Some([0.0, 80.0, 0.0]),
             },
         });
         roundtrip(GuestCall::TickSystem { id: 3 });
         roundtrip(GuestCall::HandleEvent {
             id: 1,
-            kind: EventKind::MobHurtPre,
-            payload: EventPayload::MobHurtPre {
+            kind: EventKind::MobDamagePre,
+            payload: EventPayload::MobDamagePre {
                 mob: 5,
                 kind: MobId(1),
                 amount: 2.5,
-                source: [1.0, -2.0, 0.5],
+                source: DamageSource::PlayerAttack { id: 0 },
+                origin: Some([1.0, -2.0, 0.5]),
+                feedback: MobDamageFeedback::default(),
             },
         });
         roundtrip(GuestRet::Event {
@@ -1277,6 +1323,7 @@ mod tests {
             payload: EventPayload::PlayerDamagePre {
                 amount: -4,
                 source: DamageSource::Fall,
+                origin: None,
             },
         });
         roundtrip(EventPayload::ContainerOpened {

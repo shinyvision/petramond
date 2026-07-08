@@ -56,7 +56,7 @@ fn kill_player(game: &mut super::common::TestGame) -> TickEvents {
     let mut events = TickEvents::default();
     assert!(game
         .server
-        .damage_player(0, MAX_HEALTH, DamageSource::Fall, &mut events));
+        .damage_player(0, MAX_HEALTH, DamageSource::Fall, None, &mut events));
     assert!(
         events.player_at(0).player_died,
         "lethal damage fires the death event"
@@ -193,7 +193,7 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
     let mut events = TickEvents::default();
     assert!(game
         .server
-        .damage_player(0, 2, DamageSource::Fall, &mut events));
+        .damage_player(0, 2, DamageSource::Fall, None, &mut events));
 
     assert!(
         events.player_at(0).sleep_ended,

@@ -2,8 +2,8 @@
 //!
 //! Fields mirror today's hardcoded data flows. Pre-event payloads are handed to
 //! handlers as `&mut`, but the engine only reads back the fields the taxonomy
-//! marks mutable (`MobHurtPre::amount`, `PlayerDamagePre::amount`); everything
-//! else is observational in Phase 1.
+//! marks mutable (`MobDamagePre::amount`, `MobDamagePre::feedback`,
+//! `PlayerDamagePre::amount`); everything else is observational in Phase 1.
 
 // The payloads are the mod-facing API: the engine constructs them and only
 // handlers read them, and no engine handlers exist until Phase 2 — so dead-code
@@ -15,7 +15,7 @@ use crate::chunk::SectionPos;
 use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mathh::{IVec3, Vec3};
-use crate::mob::Mob;
+use crate::mob::{Mob, MobDamageFeedback};
 
 /// `block_place_pre` — cancel = placement refused (the click does nothing and the
 /// held item is kept).
@@ -56,15 +56,18 @@ pub(crate) struct ItemUsePre {
     pub target: Option<IVec3>,
 }
 
-/// `mob_hurt_pre` — `amount` is mutable; cancel = no damage.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct MobHurtPre {
+/// `mob_damage_pre` — `amount` and `feedback` are mutable; cancel = no damage.
+#[derive(Clone, Debug)]
+pub(crate) struct MobDamagePre {
     /// Index into the live mob set, valid this tick only.
     pub mob: usize,
     pub kind: Mob,
     pub amount: f32,
-    /// Attacker position the knockback pushes away from.
-    pub source: Vec3,
+    pub source: DamageSource,
+    /// Optional world-space origin for attack knockback or spatial feedback.
+    pub origin: Option<Vec3>,
+    /// Mutable default feedback controls for damage that survives this hook.
+    pub feedback: MobDamageFeedback,
 }
 
 /// `player_damage_pre` — `amount` is mutable; cancel = no damage (i-frames live
@@ -73,22 +76,31 @@ pub(crate) struct MobHurtPre {
 pub(crate) struct PlayerDamagePre {
     pub amount: i32,
     pub source: DamageSource,
+    /// Optional world-space origin for attack knockback or spatial feedback.
+    pub origin: Option<Vec3>,
 }
 
-/// Why the player is taking damage. Every source must route through the same
-/// `Game::damage_player` funnel.
+/// Why an entity is taking damage. Knockback is only a default consequence for
+/// explicit attack sources; `origin` on a payload is spatial context, not proof
+/// that knockback should happen.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DamageSource {
     Fall,
+    /// A player's melee strike; carries the attacking session.
+    PlayerAttack(crate::server::player::PlayerId),
     /// A mob's melee strike; carries the attacking species.
-    Mob(Mob),
+    MobAttack(Mob),
     /// A mod's `DamagePlayer`/`KillPlayer` HostCall; carries the mod's pack id
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
     Mod(&'static str),
-    /// Another player's melee strike (PvP); carries the attacking session's
-    /// `PlayerId`.
-    Player(crate::server::player::PlayerId),
+}
+
+impl DamageSource {
+    #[inline]
+    pub(crate) fn is_attack(self) -> bool {
+        matches!(self, Self::PlayerAttack(_) | Self::MobAttack(_))
+    }
 }
 
 /// An engine action a mod HostCall queued from inside a guest dispatch, where
@@ -102,12 +114,14 @@ pub(crate) enum ModAction {
     DamagePlayer { amount: i32, mod_id: &'static str },
     /// Damage equal to the player's health at drain time, same funnel.
     KillPlayer { mod_id: &'static str },
-    /// The mob-hurt pipeline (`mob_hurt_pre` → `Mobs::hurt_mob` → death loot),
-    /// exactly like a player attack. `index` is storage order at drain time.
-    HurtMob {
+    /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).
+    /// `index` is storage order at drain time. Mod damage is not an attack, so
+    /// it does not receive default knockback.
+    DamageMob {
         index: usize,
         amount: f32,
-        from: Vec3,
+        mod_id: &'static str,
+        origin: Option<Vec3>,
     },
     /// A mod's `GuiOpen` HostCall: request the app shell open this mod GUI
     /// (honoured only from gameplay, like a block-interact open request).

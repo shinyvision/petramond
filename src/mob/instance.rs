@@ -18,14 +18,16 @@ use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
 use super::ragdoll::Ragdoll;
-use super::{def, Mob, MobDef, MobRng};
+use super::{
+    def, Mob, MobDamageFeedback, MobDamageFeedbackComponent, MobDef, MobRng,
+    DEFAULT_DAMAGE_FLASH_SECS,
+};
 
 /// Downward acceleration (m/s²) applied to airborne mobs.
 const GRAVITY: f32 = -22.0;
-/// How long (seconds) the hurt flash + knockback stagger lasts after a non-lethal hit.
-/// During it the mob's locomotion is suppressed so the knockback reads, and the
-/// renderer tints it red.
-const HURT_FLASH_SECS: f32 = 0.3;
+/// Default duration used to normalize hurt-flash intensity. Individual feedback
+/// components may start shorter or longer flash timers.
+const HURT_FLASH_SECS: f32 = DEFAULT_DAMAGE_FLASH_SECS;
 
 /// Hurt-flash intensity in `[0, 1]` from a previous/current hurt-timer pair at
 /// `alpha` into the tick — the ONE derivation, shared by the live instance
@@ -112,14 +114,22 @@ pub struct Instance {
 
     vel: Vec3,
     on_ground: bool,
-    /// Current health; at `0` the mob dies and `death` becomes `Some`.
+    /// Current health; at `0` the mob enters a dead `DeathState`.
     health: f32,
+    /// Highest feet Y reached since the mob last stood/swum. A landing compares this
+    /// peak to the landed feet Y to produce deterministic fall damage.
+    fall_peak_y: f32,
+    /// Landing distance latched by [`track_fall`](Self::track_fall) and drained by the
+    /// manager after the tick so `ServerGame` can route damage through `mob_damage_pre`.
+    fall_distance: f32,
     /// True once this mob is beyond its row-level despawn radius this tick. The manager
     /// culls it at the end of the tick. Never persisted.
     distance_despawned: bool,
-    /// Seconds of hurt flash + stagger remaining (non-lethal hits). Drives the red
-    /// tint and suppresses locomotion so the knockback reads.
+    /// Seconds of hurt flash remaining. Drives the replicated red tint only.
     hurt_timer: f32,
+    /// Seconds of knockback stagger remaining. Kept separate from the flash timer so
+    /// feedback can compose knockback without forcing a red flash, or vice versa.
+    stagger_timer: f32,
     /// Horizontal knockback velocity (m/s), decaying over the stagger. Kept separate
     /// from `vel` so the per-tick wish-velocity overwrite can't wipe it.
     knockback: Vec3,
@@ -137,9 +147,9 @@ pub struct Instance {
     /// by mod HostCalls on the tick, persisted with the mob's save record
     /// (see [`super::SavedMob`]). BTreeMap so the save encoding is deterministic.
     mod_kv: std::collections::BTreeMap<String, Vec<u8>>,
-    /// `Some` once the mob has died — the physics ragdoll that plays before it
-    /// despawns. While set, the mob runs no AI and takes no further damage.
-    death: Option<Ragdoll>,
+    /// Once the mob has died it runs no AI and takes no further damage. The default
+    /// death presentation is a ragdoll, but a custom feedback bundle may omit it.
+    death: DeathState,
     /// The animation kind playing last tick, to detect changes (and reset `anim_time`).
     anim_kind: AnimKind,
     /// A melee strike the brain wants landed on the player THIS tick — latched during
@@ -157,6 +167,28 @@ enum AnimKind {
     Walk,
     Idle(u8),
     Rest,
+}
+
+enum DeathState {
+    Alive,
+    NoPresentation,
+    Ragdoll(Ragdoll),
+}
+
+impl DeathState {
+    #[inline]
+    fn is_dead(&self) -> bool {
+        !matches!(self, Self::Alive)
+    }
+
+    #[inline]
+    fn is_despawned(&self) -> bool {
+        match self {
+            Self::Alive => false,
+            Self::NoPresentation => true,
+            Self::Ragdoll(ragdoll) => ragdoll.is_done(),
+        }
+    }
 }
 
 impl Instance {
@@ -185,13 +217,16 @@ impl Instance {
             vel: Vec3::ZERO,
             on_ground: false,
             health: d.max_health,
+            fall_peak_y: pos.y,
+            fall_distance: 0.0,
             distance_despawned: false,
             hurt_timer: 0.0,
+            stagger_timer: 0.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             shear_regrow: 0,
             mod_kv: std::collections::BTreeMap::new(),
-            death: None,
+            death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
             attack: None,
             brain: super::build_brain(d),
@@ -215,40 +250,88 @@ impl Instance {
         self.attack.take()
     }
 
-    /// Apply `amount` damage from a point `from` (the attacker). Returns `true` if this
+    pub(super) fn take_fall_distance(&mut self) -> Option<f32> {
+        let distance = std::mem::replace(&mut self.fall_distance, 0.0);
+        (distance > 0.0).then_some(distance)
+    }
+
+    /// Apply a damage request with row/hook-composed feedback. Returns `true` if this
     /// hit was lethal. A dead mob ignores damage (no double-kill, no knockback on a
-    /// corpse). Every hit — lethal or not — starts the red hurt flash (so the killing
-    /// blow reads the same as any other); a non-lethal hit also knocks the mob back away
-    /// from `from`, while a lethal hit instead launches the death ragdoll.
-    pub fn hurt(&mut self, amount: f32, from: Vec3) -> bool {
-        if self.death.is_some() {
+    /// corpse). `llama:ragdoll` is death-gated: it only starts the ragdoll if a
+    /// `llama:decrease_health` component made this hit cross to zero.
+    pub fn damage(
+        &mut self,
+        amount: f32,
+        origin: Option<Vec3>,
+        attack: bool,
+        feedback: &MobDamageFeedback,
+    ) -> bool {
+        if self.death.is_dead() {
             return false;
         }
-        self.health -= amount;
-        if self.health <= 0.0 {
+        let decreases_health = feedback
+            .components
+            .iter()
+            .any(|c| matches!(c, MobDamageFeedbackComponent::DecreaseHealth));
+        let lethal = if decreases_health && amount > 0.0 {
+            self.health -= amount;
+            self.health <= 0.0
+        } else {
+            false
+        };
+        if lethal {
             self.health = 0.0;
-            // The killing blow flings the corpse in the punched direction (away from the
-            // attacker, horizontally); the ragdoll launches + somersaults along it.
-            let mut away = self.pos - from;
-            away.y = 0.0;
-            let launch = away.normalize_or_zero();
-            // Ragdoll is initialised on the next tick (which has world access to find
-            // the floor). Seed it from this mob's RNG stream for a distinct fling.
-            self.death = Some(Ragdoll::pending(self.rng.next_u64(), launch));
+        }
+
+        for component in &feedback.components {
+            match *component {
+                MobDamageFeedbackComponent::DecreaseHealth => {}
+                MobDamageFeedbackComponent::Flash { duration } => {
+                    self.hurt_timer = self.hurt_timer.max(duration.max(0.0));
+                }
+                MobDamageFeedbackComponent::Knockback { scale, duration } => {
+                    if !lethal && attack && scale > 0.0 {
+                        if let Some(from) = origin {
+                            let mut away = self.pos - from;
+                            away.y = 0.0;
+                            self.knockback = away.normalize_or_zero() * KNOCKBACK_SPEED * scale;
+                            self.vel.y = KNOCKBACK_UP * scale;
+                            self.stagger_timer = self.stagger_timer.max(duration.max(0.0));
+                            self.on_ground = false;
+                        }
+                    }
+                }
+                MobDamageFeedbackComponent::Sound { .. } => {}
+                MobDamageFeedbackComponent::Ragdoll => {
+                    if lethal && matches!(self.death, DeathState::Alive) {
+                        // The killing blow flings the corpse in the punched direction
+                        // (away from the attacker, horizontally); the ragdoll launches
+                        // + somersaults along it.
+                        let mut away = origin
+                            .filter(|_| attack)
+                            .map_or(Vec3::ZERO, |from| self.pos - from);
+                        away.y = 0.0;
+                        let launch = away.normalize_or_zero();
+                        // Ragdoll is initialised on the next tick (which has world
+                        // access to find the floor). Seed it from this mob's RNG
+                        // stream for a distinct fling.
+                        self.death =
+                            DeathState::Ragdoll(Ragdoll::pending(self.rng.next_u64(), launch));
+                    }
+                }
+            }
+        }
+
+        if lethal {
+            if matches!(self.death, DeathState::Alive) {
+                self.death = DeathState::NoPresentation;
+            }
             self.knockback = Vec3::ZERO;
-            // Flash red on the kill too, so it looks like any other hit (the flash fades
-            // over the first moments of the ragdoll).
-            self.hurt_timer = HURT_FLASH_SECS;
+            self.stagger_timer = 0.0;
             self.moving = false;
             self.idle_anim = None;
             return true;
         }
-        self.hurt_timer = HURT_FLASH_SECS;
-        let mut away = self.pos - from;
-        away.y = 0.0;
-        self.knockback = away.normalize_or_zero() * KNOCKBACK_SPEED;
-        self.vel.y = KNOCKBACK_UP; // one-shot vertical pop, like a jump impulse
-        self.on_ground = false;
         false
     }
 
@@ -275,7 +358,7 @@ impl Instance {
     /// Is the mob dead (ragdolling or done)? A dead mob can't be targeted or hurt.
     #[inline]
     pub fn is_dead(&self) -> bool {
-        self.death.is_some()
+        self.death.is_dead()
     }
 
     /// Is the mob currently shorn (its coat still regrowing)? The renderer hides the
@@ -303,6 +386,24 @@ impl Instance {
         self.health
     }
 
+    /// Update fall bookkeeping after a tick's movement has resolved `on_ground` and
+    /// feet position. Water breaks falls by re-anchoring the peak while submerged.
+    fn track_fall(&mut self, was_on_ground: bool, in_water: bool) {
+        if in_water {
+            self.fall_peak_y = self.pos.y;
+        } else if self.on_ground {
+            if !was_on_ground {
+                let dist = self.fall_peak_y - self.pos.y;
+                if dist > self.fall_distance {
+                    self.fall_distance = dist;
+                }
+            }
+            self.fall_peak_y = self.pos.y;
+        } else {
+            self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
+        }
+    }
+
     /// The mob's mod KV entries (see the field docs).
     #[inline]
     pub fn mod_kv(&self) -> &std::collections::BTreeMap<String, Vec<u8>> {
@@ -321,7 +422,7 @@ impl Instance {
     /// the coat is still regrowing, or the mob is dead.
     pub(super) fn shear(&mut self) -> Option<u8> {
         let spec = def(self.kind).shear?;
-        if self.death.is_some() || self.shear_regrow > 0 {
+        if self.death.is_dead() || self.shear_regrow > 0 {
             return None;
         }
         let count = self
@@ -337,7 +438,7 @@ impl Instance {
     /// Has the death ragdoll finished, so the corpse should be removed from the world?
     #[inline]
     pub fn is_despawned(&self) -> bool {
-        self.death.as_ref().is_some_and(Ragdoll::is_done)
+        self.death.is_despawned()
     }
 
     /// Has this mob moved beyond its row-level despawn radius and should be culled at
@@ -368,7 +469,9 @@ impl Instance {
     /// or `None` if the mob isn't ragdolling yet. The renderer builds each bone's pose
     /// as `T(pos)·R(rot)·T(-pivot)`.
     pub fn ragdoll_pose(&self, alpha: f32) -> Option<Vec<(Vec3, glam::Quat)>> {
-        let rag = self.death.as_ref()?;
+        let DeathState::Ragdoll(rag) = &self.death else {
+            return None;
+        };
         if !rag.is_initialized() {
             return None;
         }
@@ -404,16 +507,22 @@ impl Instance {
         // Dead: freeze the body (pos/yaw stay put — they're the ragdoll's `global`) and
         // advance only the physics ragdoll. No brain, no locomotion. The kill's red flash
         // still fades out over these first ticks.
-        if self.death.is_some() {
+        if self.death.is_dead() {
             self.hurt_timer = (self.hurt_timer - dt).max(0.0);
-            self.tick_ragdoll(dt, world, d, skeleton);
+            self.stagger_timer = (self.stagger_timer - dt).max(0.0);
+            if matches!(self.death, DeathState::Ragdoll(_)) {
+                self.tick_ragdoll(dt, world, d, skeleton);
+            }
             return;
         }
 
-        // Hurt flash + knockback stagger counts down on the fixed tick (frame-rate
-        // independent).
+        // Hurt flash and knockback stagger count down independently on the fixed tick
+        // (frame-rate independent).
         if self.hurt_timer > 0.0 {
             self.hurt_timer = (self.hurt_timer - dt).max(0.0);
+        }
+        if self.stagger_timer > 0.0 {
+            self.stagger_timer = (self.stagger_timer - dt).max(0.0);
         }
 
         // Shear regrowth counts down on the tick; at zero the coat is back. Pauses
@@ -488,6 +597,7 @@ impl Instance {
             (Vec3::ZERO, false)
         };
         let water_flow = |c: IVec3| world.water_flow_dir_at(c.x, c.y, c.z);
+        let was_on_ground = self.on_ground;
         self.integrate_with_flow(
             dt,
             d,
@@ -499,6 +609,9 @@ impl Instance {
             &water,
             &water_flow,
         );
+        let feet = voxel_at(self.pos);
+        let in_water_after = water(feet) || water(feet - IVec3::Y);
+        self.track_fall(was_on_ground, in_water_after);
         self.apply_expression(dt, d, &decision);
     }
 
@@ -510,10 +623,9 @@ impl Instance {
         let vel = self.vel;
         let yaw = self.yaw;
         let pos = self.pos;
-        let rag = self
-            .death
-            .as_mut()
-            .expect("tick_ragdoll only runs when dead");
+        let DeathState::Ragdoll(rag) = &mut self.death else {
+            return;
+        };
         if rag.is_initialized() {
             let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
             rag.step(dt, d.scale, pos, yaw, &solid);
@@ -550,7 +662,7 @@ impl Instance {
         // (so a hit shoves the mob even against where it wants to go); otherwise the
         // wish velocity drives normal locomotion. Keeping knockback separate from `vel`
         // is why this overwrite can't wipe it.
-        if self.hurt_timer > 0.0 {
+        if self.stagger_timer > 0.0 {
             self.vel.x = self.knockback.x;
             self.vel.z = self.knockback.z;
             self.knockback *= KNOCKBACK_DAMP;
@@ -564,7 +676,7 @@ impl Instance {
                 self.moving = false;
             }
         }
-        let preserve_air_carry = self.hurt_timer <= 0.0 && !can_steer;
+        let preserve_air_carry = self.stagger_timer <= 0.0 && !can_steer;
         let carried_x = self.vel.x;
         let carried_z = self.vel.z;
 
@@ -863,6 +975,10 @@ mod tests {
 
     fn owl_def() -> &'static MobDef {
         def(Mob::Owl)
+    }
+
+    fn default_feedback() -> MobDamageFeedback {
+        MobDamageFeedback::default()
     }
 
     fn sheep_def() -> &'static MobDef {
@@ -1240,27 +1356,117 @@ mod tests {
     }
 
     #[test]
-    fn hurt_reduces_health_and_dies_at_zero() {
+    fn damage_reduces_health_and_dies_at_zero() {
         // A 4-health owl: three 1-damage hits don't kill; the fourth does.
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         let from = Vec3::new(5.0, 0.0, 0.5);
-        assert!(!owl.hurt(1.0, from));
-        assert!(!owl.hurt(1.0, from));
-        assert!(!owl.hurt(1.0, from));
+        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
+        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
+        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
         assert!(!owl.is_dead(), "still alive at 1 health");
-        assert!(owl.hurt(1.0, from), "the lethal hit reports true");
+        assert!(
+            owl.damage(1.0, Some(from), true, &default_feedback()),
+            "the lethal hit reports true"
+        );
         assert!(owl.is_dead(), "dead at 0 health");
+    }
+
+    #[test]
+    fn empty_damage_feedback_does_nothing() {
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
+            false
+        });
+        let health = owl.health();
+        let x0 = owl.pos.x;
+
+        assert!(!owl.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &MobDamageFeedback::none()
+        ));
+        assert_eq!(owl.health(), health);
+        assert!(!owl.is_dead());
+        assert_eq!(owl.hurt_flash(1.0), 0.0);
+
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
+            false
+        });
+        assert!(
+            (owl.pos.x - x0).abs() < 1e-4,
+            "empty feedback should not apply knockback: {x0} -> {}",
+            owl.pos.x
+        );
+    }
+
+    #[test]
+    fn ragdoll_feedback_is_death_gated() {
+        let mut ragdoll_only = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let ragdoll = MobDamageFeedback {
+            components: vec![MobDamageFeedbackComponent::Ragdoll],
+        };
+        assert!(!ragdoll_only.damage(100.0, Some(Vec3::new(5.0, 0.0, 0.5)), true, &ragdoll));
+        assert!(
+            !ragdoll_only.is_dead(),
+            "ragdoll alone cannot kill without health feedback"
+        );
+
+        let mut dead_with_ragdoll = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let health_and_ragdoll = MobDamageFeedback {
+            components: vec![
+                MobDamageFeedbackComponent::DecreaseHealth,
+                MobDamageFeedbackComponent::Ragdoll,
+            ],
+        };
+        assert!(dead_with_ragdoll.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &health_and_ragdoll
+        ));
+        assert!(dead_with_ragdoll.is_dead());
+        assert!(
+            !dead_with_ragdoll.is_despawned(),
+            "ragdoll presentation keeps the corpse until the ragdoll finishes"
+        );
+
+        let mut dead_without_ragdoll = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let health_only = MobDamageFeedback {
+            components: vec![MobDamageFeedbackComponent::DecreaseHealth],
+        };
+        assert!(dead_without_ragdoll.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &health_only
+        ));
+        assert!(dead_without_ragdoll.is_dead());
+        assert!(
+            dead_without_ragdoll.is_despawned(),
+            "without a death presentation component, the dead mob has no corpse to keep"
+        );
     }
 
     #[test]
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
-            owl.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)),
+            owl.damage(
+                100.0,
+                Some(Vec3::new(5.0, 0.0, 0.5)),
+                true,
+                &default_feedback()
+            ),
             "one big hit kills"
         );
         // A corpse takes no more damage and reports no further lethal hits.
-        assert!(!owl.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)));
+        assert!(!owl.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &default_feedback()
+        ));
         assert!(owl.is_dead());
     }
 
@@ -1274,7 +1480,12 @@ mod tests {
         let x0 = owl.pos.x;
         // Hit from the +X side → knockback toward -X. This is the key invariant: the
         // knockback survives `integrate`'s per-tick wish-velocity overwrite.
-        assert!(!owl.hurt(1.0, Vec3::new(5.0, 0.0, 0.5)));
+        assert!(!owl.damage(
+            1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &default_feedback()
+        ));
         // Wish toward +X (toward the attacker); the knockback must win during the stagger.
         for _ in 0..4 {
             owl.integrate(
@@ -1295,14 +1506,47 @@ mod tests {
     }
 
     #[test]
+    fn non_attack_damage_does_not_apply_default_knockback() {
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
+            false
+        });
+        let x0 = owl.pos.x;
+        assert!(!owl.damage(
+            1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            false,
+            &default_feedback()
+        ));
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
+            false
+        });
+        assert!(
+            (owl.pos.x - x0).abs() < 1e-4,
+            "non-attack damage should not shove the mob: {x0} -> {}",
+            owl.pos.x
+        );
+    }
+
+    #[test]
     fn every_hit_flashes_red_including_the_kill() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        owl.hurt(1.0, Vec3::new(5.0, 0.0, 0.5));
+        owl.damage(
+            1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &default_feedback(),
+        );
         assert!(owl.hurt_flash(1.0) > 0.0, "a non-lethal hit flashes red");
 
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(dead.hurt(100.0, Vec3::new(5.0, 0.0, 0.5)));
+        assert!(dead.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            &default_feedback()
+        ));
         assert!(
             dead.hurt_flash(1.0) > 0.0,
             "the kill flashes red like a normal hit"

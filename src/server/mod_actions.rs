@@ -1,6 +1,6 @@
 //! The drain for engine actions mod HostCalls queue mid-dispatch
 //! ([`ModAction`]): a guest call arrives while the event bus is borrowed, so
-//! calls that must run through a bus funnel (`DamagePlayer`, `HurtMob`) queue
+//! calls that must run through a bus funnel (`DamagePlayer`, `DamageMob`) queue
 //! here and `ServerGame` applies them at its per-tick action points (after every
 //! systems batch and before each post-event drain — see `server::game`), on the
 //! same tick, in queue order.
@@ -27,20 +27,28 @@ impl ServerGame {
         for action in self.bus.queue_mut().take_actions() {
             match action {
                 ModAction::DamagePlayer { amount, mod_id } => {
-                    self.damage_player(s, amount, DamageSource::Mod(mod_id), events);
+                    self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }
                 ModAction::KillPlayer { mod_id } => {
                     // Damage = current health, through the same funnel: a
                     // cancelling handler still saves the player.
                     let amount = self.sessions[s].player.health();
-                    self.damage_player(s, amount, DamageSource::Mod(mod_id), events);
+                    self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }
-                ModAction::HurtMob {
+                ModAction::DamageMob {
                     index,
                     amount,
-                    from,
+                    mod_id,
+                    origin,
                 } => {
-                    self.hurt_mob_through_pipeline(s, index, amount, from, events);
+                    self.damage_mob_through_pipeline(
+                        s,
+                        index,
+                        amount,
+                        DamageSource::Mod(mod_id),
+                        origin,
+                        events,
+                    );
                 }
                 // Screen opens run server-side on this tick (like a block
                 // interact's) and queue the one-shot the recipient's

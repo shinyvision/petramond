@@ -12,7 +12,7 @@ use crate::player::Player;
 use crate::world::World;
 
 use super::payload::{
-    BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobHurtPre, ModAction,
+    BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamagePre, ModAction,
     PlayerDamagePre, PostEvent, PostEventKind,
 };
 
@@ -110,7 +110,7 @@ pub(crate) struct EventBus {
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
     pre_block_interact: Vec<PreHandler<BlockInteract>>,
     pre_item_use: Vec<PreHandler<ItemUsePre>>,
-    pre_mob_hurt: Vec<PreHandler<MobHurtPre>>,
+    pre_mob_damage: Vec<PreHandler<MobDamagePre>>,
     pre_player_damage: Vec<PreHandler<PlayerDamagePre>>,
     post: [Vec<PostHandler>; PostEventKind::COUNT],
     queue: PostQueue,
@@ -189,7 +189,12 @@ pre_events!(
         BlockInteract
     ),
     (on_item_use_pre, item_use_pre, pre_item_use, ItemUsePre),
-    (on_mob_hurt_pre, mob_hurt_pre, pre_mob_hurt, MobHurtPre),
+    (
+        on_mob_damage_pre,
+        mob_damage_pre,
+        pre_mob_damage,
+        MobDamagePre
+    ),
     (
         on_player_damage_pre,
         player_damage_pre,
@@ -349,6 +354,7 @@ mod tests {
         let mut ev = PlayerDamagePre {
             amount: 7,
             source: DamageSource::Fall,
+            origin: None,
         };
         let out = bus.player_damage_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
         assert_eq!(out, Outcome::Cancel);

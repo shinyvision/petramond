@@ -1,14 +1,15 @@
 use crate::entity::DroppedItem;
-use crate::events::{DamageSource, MobHurtPre, Outcome, PostEvent};
+use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
-use crate::mob::{DeathDrop, MobAttack, MobSoundCategory};
+use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
 use crate::player;
 use crate::world::World;
 
 use super::game::{ServerGame, ATTACK_COOLDOWN_TICKS};
 use super::player::PlayerId;
 use crate::game::tick::TickEvents;
+use crate::server::health::fall_damage_health;
 
 /// Upward pop of a mob strike's knockback, as a fraction of its horizontal strength —
 /// mirrors the mob-side knockback feel (`KNOCKBACK_UP / KNOCKBACK_SPEED` ≈ 0.65 in
@@ -70,7 +71,14 @@ impl ServerGame {
             let from = self.sessions[s].player.body_center();
             // The pipeline may cancel the damage; the swing still happened and
             // still arms the cooldown.
-            self.hurt_mob_through_pipeline(s, idx, damage, from, events);
+            self.damage_mob_through_pipeline(
+                s,
+                idx,
+                damage,
+                DamageSource::PlayerAttack(self.sessions[s].id),
+                Some(from),
+                events,
+            );
             true
         } else if mob_target.is_some() {
             // The clicked mob vanished before the tick: the swing still
@@ -92,7 +100,7 @@ impl ServerGame {
 
     /// PvP: one validated melee hit on another session, through the single
     /// [`damage_player`](ServerGame::damage_player) funnel with
-    /// [`DamageSource::Player`]. Validation (any failure = silent no-op — the
+    /// [`DamageSource::PlayerAttack`]. Validation (any failure = silent no-op — the
     /// swing already happened): the target session exists, is not the
     /// attacker, both ends are alive non-spectators, and the target's body
     /// AABB is within `player::REACH + 1.0` of the attacker's EYE measured to
@@ -128,7 +136,8 @@ impl ServerGame {
         let damage = self.roll_attack_damage(s);
         let amount = damage.max(0.0).round() as i32;
         let attacker_id = self.sessions[s].id;
-        if self.damage_player(t, amount, DamageSource::Player(attacker_id), events) {
+        let source = DamageSource::PlayerAttack(attacker_id);
+        if self.damage_player(t, amount, source, Some(from), events) {
             let away = victim_center - from;
             let dir = Vec3::new(away.x, 0.0, away.z).normalize_or_zero();
             let impulse = dir * PVP_ATTACK_KNOCKBACK
@@ -137,17 +146,18 @@ impl ServerGame {
         }
     }
 
-    /// THE mob-hurt pipeline, shared by player attacks and mod `HurtMob`
-    /// actions: dispatch `mob_hurt_pre` (mutable amount, cancellable), apply
-    /// what survives through [`Mobs::hurt_mob`](crate::mob::Mobs::hurt_mob),
+    /// THE mob-damage pipeline, shared by player attacks and mod `DamageMob`
+    /// actions: dispatch `mob_damage_pre` (mutable amount, cancellable), apply
+    /// what survives through [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob),
     /// and on a kill queue `mob_died` + roll the loot. Returns whether damage
     /// was applied (false = no such mob or a handler cancelled).
-    pub(crate) fn hurt_mob_through_pipeline(
+    pub(crate) fn damage_mob_through_pipeline(
         &mut self,
         s: usize,
         idx: usize,
         amount: f32,
-        from: Vec3,
+        source: DamageSource,
+        origin: Option<Vec3>,
         events: &mut TickEvents,
     ) -> bool {
         let Some(snapshot) = self
@@ -160,11 +170,13 @@ impl ServerGame {
             return false;
         };
         let (kind, mob_id, pos, was_dead) = snapshot;
-        let mut pre = MobHurtPre {
+        let mut pre = MobDamagePre {
             mob: idx,
             kind,
             amount,
-            source: from,
+            source,
+            origin,
+            feedback: mob_def(kind).damage_feedback.clone(),
         };
         let cancelled = {
             let Self {
@@ -174,7 +186,7 @@ impl ServerGame {
                 ..
             } = self;
             let sess = &mut sessions[s];
-            bus.mob_hurt_pre(
+            bus.mob_damage_pre(
                 world,
                 &mut sess.player,
                 &mut sess.gui_state,
@@ -185,9 +197,21 @@ impl ServerGame {
         if cancelled {
             return false;
         }
-        let soundable_hit = pre.amount > 0.0 && !was_dead;
-        if let Some(death) = self.world.mobs_mut().hurt_mob(idx, pre.amount, from) {
-            queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
+        if !pre.feedback.has_any_component() {
+            return false;
+        }
+        let soundable_hit =
+            pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0 && !was_dead;
+        if let Some(death) = self.world.mobs_mut().damage_mob(
+            idx,
+            pre.amount,
+            pre.origin,
+            pre.source.is_attack(),
+            &pre.feedback,
+        ) {
+            if pre.feedback.plays_sound(MobDamageSound::Death) {
+                queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
+            }
             self.bus.emit(PostEvent::MobDied {
                 kind: death.kind,
                 pos: death.pos,
@@ -219,11 +243,28 @@ impl ServerGame {
                 continue;
             }
             let amount = a.damage.max(0.0).round() as i32;
-            if self.damage_player(s, amount, DamageSource::Mob(a.mob), events) {
+            let source = DamageSource::MobAttack(a.mob);
+            if self.damage_player(s, amount, source, Some(a.origin), events) {
                 let impulse = a.knockback_dir * a.knockback
                     + Vec3::new(0.0, a.knockback * MOB_ATTACK_UP_RATIO, 0.0);
                 self.sessions[s].player.apply_knockback(impulse);
             }
+        }
+    }
+
+    /// Apply fall landings reported by `World::tick_mobs` through the mob damage
+    /// pipeline. Mobs use the same distance curve as players, but fall damage is not an
+    /// attack and carries no origin, so default knockback does not run.
+    pub(crate) fn apply_mob_fall_damage(&mut self, falls: Vec<MobFall>, events: &mut TickEvents) {
+        for fall in falls {
+            let amount = fall_damage_health(fall.distance) as f32;
+            if amount <= 0.0 {
+                continue;
+            }
+            let Some(idx) = self.world.mobs().index_of_id(fall.mob_id) else {
+                continue;
+            };
+            self.damage_mob_through_pipeline(0, idx, amount, DamageSource::Fall, None, events);
         }
     }
 

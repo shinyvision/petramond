@@ -850,15 +850,15 @@ impl World {
 
     /// Advance the mobs one fixed game tick against an immutable view of the rest of
     /// the world (the field is moved out so the `&mut Mobs` and `&World` borrows stay
-    /// disjoint). Returns the melee strikes the mobs landed on the player this tick,
-    /// for `Game` to apply through the player damage pipeline.
+    /// disjoint). Returns the gameplay events mobs produced this tick, for `Game` to
+    /// apply through the relevant damage pipelines.
     pub fn tick_mobs(
         &mut self,
         dt: f32,
         anchors: &[crate::mob::PlayerAnchor],
-    ) -> Vec<crate::mob::MobAttack> {
+    ) -> crate::mob::MobTickEvents {
         if self.mobs.is_empty() {
-            return Vec::new();
+            return crate::mob::MobTickEvents::default();
         }
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);

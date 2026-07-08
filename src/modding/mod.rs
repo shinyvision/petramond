@@ -47,7 +47,10 @@ use std::sync::{Arc, Mutex};
 
 use mod_api::{EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
 
-use crate::events::{EventBus, Outcome, SimCtx, TickSystems};
+use crate::events::{
+    EventBus, MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, Outcome, SimCtx,
+    TickSystems,
+};
 use crate::game::TickEvents;
 use crate::mathh::IVec3;
 use crate::mob::{Mob, MobCategory};
@@ -439,7 +442,7 @@ fn hostile_kind_for_key(
 ) -> Option<Mob> {
     let kind = crate::mob::defs()
         .iter()
-        .position(|d| d.name == key)
+        .position(|d| d.key == key)
         .map(|i| Mob(i as u8))?;
     let def = crate::mob::def(kind);
     if def.category != MobCategory::Hostile {
@@ -590,17 +593,23 @@ fn wire_event_handler(
                 None => Outcome::Continue,
             }
         }),
-        EventKind::MobHurtPre => bus.on_mob_hurt_pre(priority, move |ctx, ev| {
-            match call_event(&inst, ctx, handler_id, convert::mob_hurt_pre(ev)) {
-                Some((outcome, echoed)) => {
-                    if let EventPayload::MobHurtPre { amount, .. } = echoed {
-                        ev.amount = amount;
+        EventKind::MobDamagePre => {
+            bus.on_mob_damage_pre(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::mob_damage_pre(ev)) {
+                    Some((outcome, echoed)) => {
+                        if let EventPayload::MobDamagePre {
+                            amount, feedback, ..
+                        } = echoed
+                        {
+                            ev.amount = amount;
+                            ev.feedback = mob_damage_feedback(feedback);
+                        }
+                        convert::outcome(outcome)
                     }
-                    convert::outcome(outcome)
+                    None => Outcome::Continue,
                 }
-                None => Outcome::Continue,
-            }
-        }),
+            })
+        }
         EventKind::PlayerDamagePre => bus.on_player_damage_pre(priority, move |ctx, ev| {
             match call_event(&inst, ctx, handler_id, convert::player_damage_pre(ev)) {
                 Some((outcome, echoed)) => {
@@ -614,6 +623,54 @@ fn wire_event_handler(
         }),
         // Handled by the post branch above.
         _ => unreachable!("post kind fell through"),
+    }
+}
+
+fn mob_damage_feedback(feedback: mod_api::MobDamageFeedback) -> MobDamageFeedback {
+    MobDamageFeedback {
+        components: feedback
+            .components
+            .into_iter()
+            .map(mob_damage_feedback_component)
+            .collect(),
+    }
+}
+
+fn mob_damage_feedback_component(
+    component: mod_api::MobDamageFeedbackComponent,
+) -> MobDamageFeedbackComponent {
+    match component {
+        mod_api::MobDamageFeedbackComponent::DecreaseHealth => {
+            MobDamageFeedbackComponent::DecreaseHealth
+        }
+        mod_api::MobDamageFeedbackComponent::Flash { duration } => {
+            MobDamageFeedbackComponent::Flash {
+                duration: finite_nonnegative(duration, 0.0),
+            }
+        }
+        mod_api::MobDamageFeedbackComponent::Knockback { scale, duration } => {
+            MobDamageFeedbackComponent::Knockback {
+                scale: finite_nonnegative(scale, 0.0).clamp(0.0, 8.0),
+                duration: finite_nonnegative(duration, 0.0),
+            }
+        }
+        mod_api::MobDamageFeedbackComponent::Sound { category } => {
+            MobDamageFeedbackComponent::Sound {
+                category: match category {
+                    mod_api::MobDamageSound::Hurt => MobDamageSound::Hurt,
+                    mod_api::MobDamageSound::Death => MobDamageSound::Death,
+                },
+            }
+        }
+        mod_api::MobDamageFeedbackComponent::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+    }
+}
+
+fn finite_nonnegative(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        fallback
     }
 }
 

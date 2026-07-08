@@ -24,13 +24,13 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
     let mut feed = TickEvents::default();
     game.server.sessions[0].player.set_health(3);
     game.server
-        .damage_player(0, 2, DamageSource::Fall, &mut feed); // 3 → 1: alive
+        .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 3 → 1: alive
     game.server
-        .damage_player(0, 2, DamageSource::Fall, &mut feed); // 1 → 0: dies
+        .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 1 → 0: dies
     game.server
-        .damage_player(0, 2, DamageSource::Fall, &mut feed); // already dead: no re-fire
+        .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // already dead: no re-fire
     game.server
-        .damage_player(0, 0, DamageSource::Fall, &mut feed); // the zero fall drain: non-event
+        .damage_player(0, 0, DamageSource::Fall, None, &mut feed); // the zero fall drain: non-event
     {
         let crate::server::game::ServerGame {
             world,

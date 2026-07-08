@@ -8,8 +8,8 @@
 //! transport speaks purely client-local ids. The local connection skips the
 //! remap entirely (same process, same registries).
 //!
-//! Wire-compat rules while UNRELEASED: break freely, bump
-//! [`super::PROTOCOL_VERSION`]. After release: append-only, like the mod ABI.
+//! Wire-compat: break freely and bump [`super::PROTOCOL_VERSION`] — nothing is
+//! released, so there are no old clients to keep decoding an older dialect.
 
 use std::sync::Arc;
 

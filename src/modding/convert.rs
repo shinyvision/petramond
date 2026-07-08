@@ -8,8 +8,8 @@
 
 use crate::chunk::SectionPos;
 use crate::events::{
-    self, BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobHurtPre, PlayerDamagePre,
-    PostEvent, PostEventKind,
+    self, BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamageFeedbackComponent,
+    MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
 };
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
@@ -78,7 +78,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         | K::BlockBreakPre
         | K::BlockInteract
         | K::ItemUsePre
-        | K::MobHurtPre
+        | K::MobDamagePre
         | K::PlayerDamagePre => return None,
         K::BlockPlaced => PostEventKind::BlockPlaced,
         K::BlockBroken => PostEventKind::BlockBroken,
@@ -137,13 +137,13 @@ pub(super) fn gui_value_out(v: &crate::gui::GuiValue) -> api::GuiValue {
 fn damage_source(s: events::DamageSource) -> api::DamageSource {
     match s {
         events::DamageSource::Fall => api::DamageSource::Fall,
-        events::DamageSource::Mob(mob) => api::DamageSource::Mob {
-            key: crate::mob::def(mob).name.to_owned(),
+        events::DamageSource::PlayerAttack(id) => api::DamageSource::PlayerAttack { id: id.0 },
+        events::DamageSource::MobAttack(mob) => api::DamageSource::MobAttack {
+            key: crate::mob::def(mob).key.to_owned(),
         },
         events::DamageSource::Mod(mod_id) => api::DamageSource::Mod {
             mod_id: mod_id.to_owned(),
         },
-        events::DamageSource::Player(id) => api::DamageSource::Player { id: id.0 },
     }
 }
 
@@ -177,12 +177,45 @@ pub(super) fn item_use_pre(ev: &ItemUsePre) -> api::EventPayload {
     }
 }
 
-pub(super) fn mob_hurt_pre(ev: &MobHurtPre) -> api::EventPayload {
-    api::EventPayload::MobHurtPre {
+pub(super) fn mob_damage_pre(ev: &MobDamagePre) -> api::EventPayload {
+    api::EventPayload::MobDamagePre {
         mob: ev.mob as u32,
         kind: api::MobId(ev.kind.id()),
         amount: ev.amount,
-        source: vec(ev.source),
+        source: damage_source(ev.source),
+        origin: ev.origin.map(vec),
+        feedback: api::MobDamageFeedback {
+            components: ev
+                .feedback
+                .components
+                .iter()
+                .copied()
+                .map(mob_damage_feedback_component)
+                .collect(),
+        },
+    }
+}
+
+fn mob_damage_feedback_component(
+    component: MobDamageFeedbackComponent,
+) -> api::MobDamageFeedbackComponent {
+    match component {
+        MobDamageFeedbackComponent::DecreaseHealth => {
+            api::MobDamageFeedbackComponent::DecreaseHealth
+        }
+        MobDamageFeedbackComponent::Flash { duration } => {
+            api::MobDamageFeedbackComponent::Flash { duration }
+        }
+        MobDamageFeedbackComponent::Knockback { scale, duration } => {
+            api::MobDamageFeedbackComponent::Knockback { scale, duration }
+        }
+        MobDamageFeedbackComponent::Sound { category } => api::MobDamageFeedbackComponent::Sound {
+            category: match category {
+                MobDamageSound::Hurt => api::MobDamageSound::Hurt,
+                MobDamageSound::Death => api::MobDamageSound::Death,
+            },
+        },
+        MobDamageFeedbackComponent::Ragdoll => api::MobDamageFeedbackComponent::Ragdoll,
     }
 }
 
@@ -190,6 +223,7 @@ pub(super) fn player_damage_pre(ev: &PlayerDamagePre) -> api::EventPayload {
     api::EventPayload::PlayerDamagePre {
         amount: ev.amount,
         source: damage_source(ev.source),
+        origin: ev.origin.map(vec),
     }
 }
 

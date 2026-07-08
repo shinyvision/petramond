@@ -50,6 +50,7 @@
         ]
       },
       "avoid_water": true,
+      "damage_feedback": [],
       "brain": [
         {
           "node": "wander",
@@ -156,6 +157,7 @@
         "regrow_min": 1200,
         "regrow_max": 6000
       },
+      "damage_feedback": [],
       "brain": [
         {
           "node": "wander",

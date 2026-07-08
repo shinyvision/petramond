@@ -19,7 +19,7 @@ use crate::world::World;
 
 use super::brain::AiMob;
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
-use super::{def, defs, model, spawn, Instance, Mob, MobRng, SavedMob};
+use super::{def, defs, model, spawn, Instance, Mob, MobDamageFeedback, MobRng, SavedMob};
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
 /// spawn the drops (the manager has only `&World` and can't spawn item entities itself).
@@ -62,9 +62,11 @@ pub struct PlayerAnchor {
 #[derive(Copy, Clone, Debug)]
 pub struct MobAttack {
     /// Index into the live mob set — valid this tick only (mirrors
-    /// `MobHurtPre::mob`).
+    /// `MobDamagePre::mob`).
     pub mob_index: usize,
     pub mob: Mob,
+    /// Attacker position for damage origin / presentation context.
+    pub origin: Vec3,
     /// The player the strike targets — the anchor nearest the mob at strike time.
     pub target: crate::server::player::PlayerId,
     /// Damage in half-heart points (rounded when applied to the player).
@@ -74,6 +76,21 @@ pub struct MobAttack {
     pub knockback_dir: Vec3,
     /// Horizontal knockback speed (m/s) added to the player's velocity.
     pub knockback: f32,
+}
+
+/// A fall landing measured by a mob during its deterministic tick. The stable id is
+/// resolved back to a live index by `ServerGame` before applying damage through the
+/// mob damage pipeline.
+#[derive(Copy, Clone, Debug)]
+pub struct MobFall {
+    pub mob_id: u64,
+    pub distance: f32,
+}
+
+#[derive(Default, Debug)]
+pub struct MobTickEvents {
+    pub attacks: Vec<MobAttack>,
+    pub falls: Vec<MobFall>,
 }
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
@@ -201,8 +218,8 @@ impl Mobs {
     /// metadata + ragdoll skeleton) and refresh its cached skylight, then resolve soft
     /// entity pushing and remove any mob that should leave the live world: a finished
     /// death corpse, or a hostile mob that has distance-despawned (culled, and so not
-    /// saved). Returns the melee strikes the brains landed on the player this tick,
-    /// for `Game` to route through the player damage pipeline.
+    /// saved). Returns gameplay events the mobs produced this tick: melee strikes for
+    /// the player damage pipeline, and landed falls for the mob damage pipeline.
     ///
     /// `player_pos` is the player's body centre — the AI's player anchor for head-look
     /// and distance-despawn. `player_body` is the player's *pushable* body, present only
@@ -222,7 +239,7 @@ impl Mobs {
         world: &World,
         anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
-    ) -> Vec<MobAttack> {
+    ) -> MobTickEvents {
         let mut ai_mobs = std::mem::take(&mut self.ai_scratch);
         ai_mobs.clear();
         ai_mobs.extend(self.list.iter().map(|m| AiMob {
@@ -230,7 +247,7 @@ impl Mobs {
             pos: m.pos,
             active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
         }));
-        let mut attacks = Vec::new();
+        let mut out = MobTickEvents::default();
         for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !chunk_loaded_at(world, mob) {
                 continue;
@@ -254,13 +271,20 @@ impl Mobs {
                 // geometry at strike time — horizontal, away from the attacker.
                 let mut away = anchor.pos - mob.pos;
                 away.y = 0.0;
-                attacks.push(MobAttack {
+                out.attacks.push(MobAttack {
                     mob_index: i,
                     mob: mob.kind,
+                    origin: mob.pos,
                     target: anchor.id,
                     damage: intent.damage,
                     knockback_dir: away.normalize_or_zero(),
                     knockback: intent.knockback,
+                });
+            }
+            if let Some(distance) = mob.take_fall_distance() {
+                out.falls.push(MobFall {
+                    mob_id: mob.id(),
+                    distance,
                 });
             }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
@@ -271,7 +295,7 @@ impl Mobs {
         self.resolve_pushes(world, anchors, freeze_unloaded);
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
-        attacks
+        out
     }
 
     /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob←player when
@@ -343,12 +367,19 @@ impl Mobs {
         push
     }
 
-    /// Apply `amount` damage to the mob at `index` (from attacker point `from`).
+    /// Apply `amount` damage to the mob at `index`.
     /// Returns the loot drop the mob leaves if the hit killed it, else `None`. Keeps
     /// `list` private — `Game` never holds a `&mut Instance`.
-    pub fn hurt_mob(&mut self, index: usize, amount: f32, from: Vec3) -> Option<DeathDrop> {
+    pub fn damage_mob(
+        &mut self,
+        index: usize,
+        amount: f32,
+        origin: Option<Vec3>,
+        attack: bool,
+        feedback: &MobDamageFeedback,
+    ) -> Option<DeathDrop> {
         let mob = self.list.get_mut(index)?;
-        if mob.hurt(amount, from) {
+        if mob.damage(amount, origin, attack, feedback) {
             Some(DeathDrop {
                 kind: mob.kind,
                 pos: mob.pos,
@@ -362,7 +393,7 @@ impl Mobs {
 
     /// Shear the mob at `index`: `Some` drop when it is a coated shearable species
     /// (its coat is hidden and the regrow countdown starts), else `None`. Keeps
-    /// `list` private, like [`hurt_mob`](Self::hurt_mob).
+    /// `list` private, like [`damage_mob`](Self::damage_mob).
     pub fn shear_mob(&mut self, index: usize) -> Option<ShearDrop> {
         let mob = self.list.get_mut(index)?;
         let spec = super::def(mob.kind).shear?;
@@ -730,7 +761,15 @@ mod tests {
     fn a_corpse_cannot_be_shorn() {
         let mut mobs = Mobs::new(0);
         assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
-        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(5.0, 64.0, 8.5)).is_some());
+        assert!(mobs
+            .damage_mob(
+                0,
+                100.0,
+                Some(Vec3::new(5.0, 64.0, 8.5)),
+                true,
+                &MobDamageFeedback::default()
+            )
+            .is_some());
         assert!(
             mobs.shear_mob(0).is_none(),
             "a ragdolling corpse keeps its coat"
@@ -871,7 +910,15 @@ mod tests {
         assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0));
         // Kill it: now a ragdolling corpse. Harvesting its section removes it but does not
         // persist it (its loot already fell when it died).
-        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(5.0, 64.0, 2.5)).is_some());
+        assert!(mobs
+            .damage_mob(
+                0,
+                100.0,
+                Some(Vec3::new(5.0, 64.0, 2.5)),
+                true,
+                &MobDamageFeedback::default()
+            )
+            .is_some());
         let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
         assert!(taken.is_empty(), "a corpse is not persisted");
         assert_eq!(mobs.len(), 0, "but it is removed from the live set");
@@ -901,7 +948,15 @@ mod tests {
         );
 
         // A ragdolling corpse doesn't block placement (it's about to vanish).
-        assert!(mobs.hurt_mob(0, 100.0, Vec3::new(9.0, 64.0, 8.5)).is_some());
+        assert!(mobs
+            .damage_mob(
+                0,
+                100.0,
+                Some(Vec3::new(9.0, 64.0, 8.5)),
+                true,
+                &MobDamageFeedback::default()
+            )
+            .is_some());
         assert!(
             !mobs.any_overlapping_placement(here, Block::Dirt),
             "a corpse doesn't block placement"

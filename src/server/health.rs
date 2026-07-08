@@ -44,7 +44,13 @@ impl ServerGame {
         if self.sessions[s].player.is_spectator() {
             return;
         }
-        self.damage_player(s, fall_damage_health(distance), DamageSource::Fall, events);
+        self.damage_player(
+            s,
+            fall_damage_health(distance),
+            DamageSource::Fall,
+            None,
+            events,
+        );
     }
 
     /// The single player-damage funnel: dispatch `player_damage_pre` (mutable
@@ -60,6 +66,7 @@ impl ServerGame {
         s: usize,
         amount: i32,
         source: DamageSource,
+        origin: Option<crate::mathh::Vec3>,
         events: &mut TickEvents,
     ) -> bool {
         // Non-positive damage is a non-event (matching Player::apply_damage's
@@ -74,7 +81,11 @@ impl ServerGame {
         if self.sessions[s].player.health() == 0 {
             return false;
         }
-        let mut pre = PlayerDamagePre { amount, source };
+        let mut pre = PlayerDamagePre {
+            amount,
+            source,
+            origin,
+        };
         let cancelled = {
             let Self {
                 world,

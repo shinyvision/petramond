@@ -3,7 +3,7 @@ use super::common::{self, filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
 use crate::events::Outcome;
 use crate::mathh::{IVec3, Vec3};
-use crate::mob::{Mob, MobAttack};
+use crate::mob::{Mob, MobAttack, MobDamageFeedback};
 use crate::net::protocol::{ClientToServer, PlayerAction};
 use crate::player;
 use crate::server::game::ATTACK_COOLDOWN_TICKS;
@@ -13,6 +13,7 @@ fn strike() -> MobAttack {
         target: Default::default(),
         mob_index: 0,
         mob: Mob::Owl,
+        origin: Vec3::new(7.0, 64.0, 8.0),
         damage: 2.0,
         knockback_dir: Vec3::new(1.0, 0.0, 0.0),
         knockback: 5.0,
@@ -269,7 +270,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         .server
         .world
         .mobs_mut()
-        .hurt_mob(0, 100.0, cam_pos)
+        .damage_mob(0, 100.0, Some(cam_pos), true, &MobDamageFeedback::default())
         .is_some());
     let batch = rows(&game);
     game.replicated_mobs.apply(batch);
@@ -292,7 +293,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
             game.server
                 .world
                 .mobs_mut()
-                .hurt_mob(0, 1.0, from)
+                .damage_mob(0, 1.0, Some(from), true, &MobDamageFeedback::default())
                 .is_none(),
             "fist hit {i} isn't lethal"
         );
@@ -301,7 +302,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
         game.server
             .world
             .mobs_mut()
-            .hurt_mob(0, 1.0, from)
+            .damage_mob(0, 1.0, Some(from), true, &MobDamageFeedback::default())
             .is_some(),
         "the 4th fist hit kills"
     );
@@ -414,7 +415,13 @@ fn a_killed_mob_ragdolls_then_despawns() {
         .server
         .world
         .mobs_mut()
-        .hurt_mob(0, 100.0, pos + Vec3::X)
+        .damage_mob(
+            0,
+            100.0,
+            Some(pos + Vec3::X),
+            true,
+            &MobDamageFeedback::default()
+        )
         .is_some());
     assert_eq!(
         game.server.world.mobs().len(),
@@ -442,6 +449,51 @@ fn a_killed_mob_ragdolls_then_despawns() {
 }
 
 #[test]
+fn mobs_take_player_rule_fall_damage_when_they_land() {
+    let mut game = game();
+    game.server.world.clear_world();
+    let mut chunk = crate::chunk::Chunk::new(0, 0);
+    for z in 0..crate::chunk::CHUNK_SZ {
+        for x in 0..crate::chunk::CHUNK_SX {
+            chunk.set_block(x, 63, z, Block::Grass);
+        }
+    }
+    game.server
+        .world
+        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), chunk);
+
+    let spawn = Vec3::new(8.5, 70.0, 8.5);
+    assert!(game.server.world.mobs_mut().spawn(Mob::Owl, spawn, 0.0));
+    let health0 = game.server.world.mobs().instances()[0].health();
+    let player = game.server.sessions[0].player.body_center();
+    let body = game.server.sessions[0].player.body();
+    let anchors = [crate::mob::PlayerAnchor {
+        id: game.server.sessions[0].id,
+        pos: player,
+        body: Some(body),
+    }];
+
+    let mut feed = TickEvents::default();
+    let mut landed = false;
+    for _ in 0..80 {
+        let mob_events = game.server.world.tick_mobs(TICK_DT, &anchors);
+        landed |= !mob_events.falls.is_empty();
+        game.server
+            .apply_mob_fall_damage(mob_events.falls, &mut feed);
+        if landed {
+            break;
+        }
+    }
+
+    assert!(landed, "the mob landed and reported a fall");
+    let mob = &game.server.world.mobs().instances()[0];
+    let expected = crate::server::health::fall_damage_health(spawn.y - 64.0) as f32;
+    assert_eq!(expected, 3.0, "fixture is a six-block fall");
+    assert_eq!(mob.health(), health0 - expected);
+    assert!(!mob.is_dead(), "the owl survives this fall at one health");
+}
+
+#[test]
 fn killing_owls_drops_loot_into_the_world() {
     let mut game = game();
     install_empty_chunk(&mut game);
@@ -452,12 +504,13 @@ fn killing_owls_drops_loot_into_the_world() {
     for _ in 0..40 {
         assert!(game.server.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
         let idx = game.server.world.mobs().len() - 1;
-        if let Some(death) = game
-            .server
-            .world
-            .mobs_mut()
-            .hurt_mob(idx, 100.0, pos + Vec3::X)
-        {
+        if let Some(death) = game.server.world.mobs_mut().damage_mob(
+            idx,
+            100.0,
+            Some(pos + Vec3::X),
+            true,
+            &MobDamageFeedback::default(),
+        ) {
             game.server.spawn_mob_loot(death);
         }
     }
@@ -837,7 +890,7 @@ fn a_cancelled_player_damage_pre_suppresses_pvp_damage_and_knockback() {
     );
     assert_eq!(
         *seen.lock().unwrap(),
-        Some(DamageSource::Player(attacker_id)),
+        Some(DamageSource::PlayerAttack(attacker_id)),
         "the funnel saw the PvP source with the attacker's id"
     );
 }

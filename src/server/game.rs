@@ -872,11 +872,12 @@ impl ServerGame {
         let spawn_s = (self.world.current_tick() as usize) % self.sessions.len();
 
         self.begin_stage(Stage::Mobs, events);
-        let attacks = self.world.tick_mobs(TICK_DT, &anchors);
+        let mob_events = self.world.tick_mobs(TICK_DT, &anchors);
+        self.apply_mob_fall_damage(mob_events.falls, events);
         // Mob→player combat resolves right after the mobs moved: each strike runs
         // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
         // an applied strike knocks the player back.
-        self.apply_mob_attacks(attacks, events);
+        self.apply_mob_attacks(mob_events.attacks, events);
         self.end_stage(Stage::Mobs, events);
 
         self.begin_stage(Stage::ItemPhysics, events);
@@ -988,7 +989,7 @@ impl ServerGame {
     }
 
     /// Open a stage: run its `Before` systems, then apply any mod actions they
-    /// queued (`DamagePlayer`/`HurtMob`/... — see `apply_mod_actions`) BEFORE
+    /// queued (`DamagePlayer`/`DamageMob`/... — see `apply_mod_actions`) BEFORE
     /// the engine step runs, so mob indices captured by those systems cannot be
     /// shifted by the step in between.
     fn begin_stage(&mut self, stage: Stage, events: &mut TickEvents) {

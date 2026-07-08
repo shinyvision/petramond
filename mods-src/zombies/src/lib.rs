@@ -10,7 +10,7 @@
 //!   core day/night. Dark caves can spawn zombies during the day; torch/block
 //!   light blocks the spawn.
 //! - **Sunburn**: every second, each zombie in strong direct sky light has a
-//!   5% seeded chance to take lethal `hurt_mob` damage. That deliberately uses
+//!   5% seeded chance to take lethal `damage_mob` damage. That deliberately uses
 //!   the engine death path, so `mob_died`, loot, and the ragdoll all happen.
 //! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
 //!   The mod does not start audio directly; the engine presentation layer plays
@@ -18,7 +18,7 @@
 //! - **I-frames** (the API proof): a `player_damage_pre` handler cancels any
 //!   ZOMBIE-sourced damage landing within [`IFRAME_TICKS`] of the previous
 //!   zombie hit. A cancel suppresses both the damage AND the knockback
-//!   (Phase 3a engine contract). Only `DamageSource::Mob { key ==
+//!   (Phase 3a engine contract). Only `DamageSource::MobAttack { key ==
 //!   "zombies:zombie" }` is gated — fall damage, other species, and other
 //!   mods' `DamagePlayer` calls pass through untouched: the i-frame window
 //!   is a property of zombie melee, not of the player.
@@ -91,7 +91,7 @@ impl Mod for Zombies {
         // Gate ONLY zombie melee (see the module docs for why other damage
         // sources pass through untouched).
         let EventPayload::PlayerDamagePre {
-            source: DamageSource::Mob { key },
+            source: DamageSource::MobAttack { key },
             ..
         } = payload
         else {
@@ -126,7 +126,7 @@ fn tick_live_zombies(daylight: f32, near: &[MobSnapshot]) {
     for mob in near.iter().filter(|m| m.key == ZOMBIE_KEY) {
         if in_sunlight(mob.pos, daylight) && rng_u64("sunburn") % 100 < SUNBURN_CHANCE_PER_100 {
             let from = [mob.pos[0] + 0.35, mob.pos[1] + 0.4, mob.pos[2] + 0.2];
-            hurt_mob(mob.index, SUNBURN_DAMAGE, from);
+            damage_mob(mob.index, SUNBURN_DAMAGE, Some(from));
         }
     }
 }

@@ -164,7 +164,11 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     install_empty_chunk(&mut game);
     // Far from the player so no pickup interferes; above the floor so it moves
     // (falls) between ticks.
-    let mut drop = DroppedItem::new(Vec3::new(2.5, 70.0, 2.5), ItemStack::new(ItemType::Dirt, 3), 1);
+    let mut drop = DroppedItem::new(
+        Vec3::new(2.5, 70.0, 2.5),
+        ItemStack::new(ItemType::Dirt, 3),
+        1,
+    );
     drop.vel = Vec3::ZERO;
     game.server.world.spawn_item(drop);
     let id = game.server.world.item_entities()[0].id;
@@ -181,7 +185,11 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     game.apply_tick_update(batch1);
 
     let batch2 = pump_one_tick(&mut game);
-    let row2 = *batch2.items.iter().find(|i| i.id == id).expect("still replicating");
+    let row2 = *batch2
+        .items
+        .iter()
+        .find(|i| i.id == id)
+        .expect("still replicating");
     game.apply_tick_update(batch2);
 
     let mut scratch = GamePresentationScratch::new();
@@ -262,7 +270,11 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
         Some(ItemType::OakPlanks),
         "the craft result landed on the cursor"
     );
-    assert_ne!(rev(&game), before, "taking a craft result bumps the revision");
+    assert_ne!(
+        rev(&game),
+        before,
+        "taking a craft result bumps the revision"
+    );
 }
 
 /// The full inventory rides a `SelfState` only when the revision moved —
@@ -404,10 +416,15 @@ fn menu_sync_ships_on_change_only() {
         .insert_chest(pos, crate::block_model::DEFAULT_MODEL_FACING);
 
     let up1 = pump_one_tick(&mut game);
-    let sync = up1.menu_sync.expect("the first batch ships the initial view");
+    let sync = up1
+        .menu_sync
+        .expect("the first batch ships the initial view");
     assert_eq!(sync.target, MenuTargetWire::None);
     let up2 = pump_one_tick(&mut game);
-    assert!(up2.menu_sync.is_none(), "unchanged (closed) menu ships nothing");
+    assert!(
+        up2.menu_sync.is_none(),
+        "unchanged (closed) menu ships nothing"
+    );
 
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
@@ -439,8 +456,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     game.server.open_mod_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::ModGui { gui_state, .. } =
-        up.menu_sync.expect("the open ships").target
+    let MenuTargetWire::ModGui { gui_state, .. } = up.menu_sync.expect("the open ships").target
     else {
         panic!("expected a ModGui target");
     };
@@ -607,7 +623,7 @@ fn hud_health_matches_session_truth_after_a_damage_tick() {
     let mut events = TickEvents::default();
     assert!(game
         .server
-        .damage_player(0, 3, DamageSource::Fall, &mut events));
+        .damage_player(0, 3, DamageSource::Fall, None, &mut events));
     let update = pump_one_tick(&mut game);
     game.apply_tick_update(update);
 

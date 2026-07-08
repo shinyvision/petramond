@@ -124,8 +124,8 @@ fn zombie_sunburn_uses_ragdoll_death_path_via_wasm() {
 
 /// Runs ONLY in the child process spawned above (needs `LLAMACRAFT_MODS`
 /// pointing at the fixture packs before first registry touch). The assertion
-/// uses the real game tick so the mod's `hurt_mob` action must flow through
-/// the mob-hurt funnel, emit `mob_died`, and leave a dead/ragdolling corpse
+/// uses the real game tick so the mod's `damage_mob` action must flow through
+/// the mob-damage funnel, emit `mob_died`, and leave a dead/ragdolling corpse
 /// instead of removing the mob with `despawn_mob`.
 #[test]
 #[ignore = "spawned by zombie_sunburn_uses_ragdoll_death_path_via_wasm with a fixture pack env"]

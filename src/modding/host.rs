@@ -319,7 +319,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::SwapModelBlock { .. } => handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::MobsInRadius { .. }
-        | HostCall::HurtMob { .. }
+        | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
         | HostCall::SpawnItem { .. } => handle_entity_call(&data.mod_id, call),
         HostCall::PlayerState
@@ -679,7 +679,7 @@ fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             Ok(pos) => sim_query(|ctx| {
                 let Some(kind) = crate::mob::defs()
                     .iter()
-                    .position(|d| d.name == key)
+                    .position(|d| d.key == key)
                     .map(|i| crate::mob::Mob(i as u8))
                 else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
@@ -709,7 +709,7 @@ fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                         .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
                         .map(|(i, m)| MobSnapshot {
                             index: i as u32,
-                            key: crate::mob::def(m.kind).name.to_owned(),
+                            key: crate::mob::def(m.kind).key.to_owned(),
                             pos: [m.pos.x, m.pos.y, m.pos.z],
                             health: m.health(),
                             id: m.id(),
@@ -718,19 +718,23 @@ fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             }),
         },
-        HostCall::HurtMob {
+        HostCall::DamageMob {
             index,
             amount,
-            from,
-        } => match finite3(from, "HurtMob.from") {
+            origin,
+        } => match origin.map(|p| finite3(p, "DamageMob.origin")).transpose() {
             Err(e) => e,
-            Ok(from) => sim_call(|ctx| {
-                ctx.queue.push_action(ModAction::HurtMob {
-                    index: index as usize,
-                    amount,
-                    from,
+            Ok(origin) => {
+                let mod_id = intern_mod_id(mod_id);
+                sim_call(|ctx| {
+                    ctx.queue.push_action(ModAction::DamageMob {
+                        index: index as usize,
+                        amount,
+                        mod_id,
+                        origin,
+                    })
                 })
-            }),
+            }
         },
         HostCall::DespawnMob { index } => {
             sim_query(|ctx| HostRet::Bool(ctx.world.mobs_mut().remove(index as usize)))

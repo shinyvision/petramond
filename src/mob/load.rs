@@ -26,8 +26,10 @@ use crate::registry::NameTable;
 
 use super::brain::AiBehavior;
 use super::{
-    behavior, BrainNode, Habitat, Mob, MobCategory, MobDef, MobSize, MobSoundCategory,
-    MobSoundSpec, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning, ENGINE_MOB_NAMES,
+    behavior, BrainNode, Habitat, Mob, MobCategory, MobDamageFeedback, MobDamageFeedbackComponent,
+    MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec, ShearSpec, SpawnGroup,
+    SpawnRule, WanderCohesion, WanderTuning, DEFAULT_DAMAGE_FLASH_SECS,
+    DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
 
 /// Constructs one AI node from its row key + brain-row params + the owning
@@ -73,6 +75,8 @@ struct RawMobDef {
     avoid_water: bool,
     #[serde(default)]
     shear: Option<ShearSpec>,
+    #[serde(default)]
+    damage_feedback: Vec<RawMobDamageFeedback>,
     #[serde(default)]
     sounds: Vec<RawMobSound>,
     brain: Vec<RawBrainNode>,
@@ -125,6 +129,36 @@ struct RawMobSound {
     /// Symmetric variance around `tick_interval`; only meaningful for `idle`.
     #[serde(default)]
     tick_interval_variance: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "component", deny_unknown_fields)]
+enum RawMobDamageFeedback {
+    #[serde(rename = "llama:decrease_health")]
+    DecreaseHealth,
+    #[serde(rename = "llama:flash")]
+    Flash {
+        #[serde(default = "default_flash_duration")]
+        duration: f64,
+    },
+    #[serde(rename = "llama:knockback")]
+    Knockback {
+        #[serde(default = "default_knockback_scale")]
+        scale: f64,
+        #[serde(default = "default_knockback_duration")]
+        duration: f64,
+    },
+    #[serde(rename = "llama:sound")]
+    Sound { when: RawMobDamageSound },
+    #[serde(rename = "llama:ragdoll")]
+    Ragdoll,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawMobDamageSound {
+    Hurt,
+    Death,
 }
 
 #[derive(Deserialize)]
@@ -268,9 +302,68 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         },
         avoid_water: r.avoid_water,
         shear: r.shear,
+        damage_feedback: convert_damage_feedback(r.damage_feedback)?,
         sounds: convert_sounds(r.sounds)?,
         brain: convert_brain(r.brain)?,
     })
+}
+
+fn default_flash_duration() -> f64 {
+    DEFAULT_DAMAGE_FLASH_SECS as f64
+}
+
+fn default_knockback_scale() -> f64 {
+    1.0
+}
+
+fn default_knockback_duration() -> f64 {
+    DEFAULT_DAMAGE_KNOCKBACK_SECS as f64
+}
+
+fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageFeedback, String> {
+    if rows.is_empty() {
+        return Ok(MobDamageFeedback::default());
+    }
+    let mut components = Vec::with_capacity(rows.len());
+    for row in rows {
+        components.push(match row {
+            RawMobDamageFeedback::DecreaseHealth => MobDamageFeedbackComponent::DecreaseHealth,
+            RawMobDamageFeedback::Flash { duration } => {
+                if !duration.is_finite() || duration < 0.0 {
+                    return Err(format!(
+                        "damage_feedback llama:flash duration must be finite and non-negative, got {duration}"
+                    ));
+                }
+                MobDamageFeedbackComponent::Flash {
+                    duration: duration as f32,
+                }
+            }
+            RawMobDamageFeedback::Knockback { scale, duration } => {
+                if !scale.is_finite() || scale < 0.0 {
+                    return Err(format!(
+                        "damage_feedback llama:knockback scale must be finite and non-negative, got {scale}"
+                    ));
+                }
+                if !duration.is_finite() || duration < 0.0 {
+                    return Err(format!(
+                        "damage_feedback llama:knockback duration must be finite and non-negative, got {duration}"
+                    ));
+                }
+                MobDamageFeedbackComponent::Knockback {
+                    scale: scale as f32,
+                    duration: duration as f32,
+                }
+            }
+            RawMobDamageFeedback::Sound { when } => MobDamageFeedbackComponent::Sound {
+                category: match when {
+                    RawMobDamageSound::Hurt => MobDamageSound::Hurt,
+                    RawMobDamageSound::Death => MobDamageSound::Death,
+                },
+            },
+            RawMobDamageFeedback::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+        });
+    }
+    Ok(MobDamageFeedback { components })
 }
 
 fn resolve_biomes(names: Vec<String>) -> Result<&'static [Biome], String> {
@@ -512,6 +605,72 @@ mod tests {
                 .sound_for(super::super::MobSoundCategory::Death)
                 .is_some(),
             "death hook resolved"
+        );
+    }
+
+    #[test]
+    fn empty_damage_feedback_row_resolves_to_default_components() {
+        let layer = r#"{"mobs": [{
+            "mob": "mymod:dummy", "key": "mymod:dummy", "model": "models/owl.bbmodel",
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
+            "category": "passive", "cap": 8,
+            "spawn": {"biomes": [], "ground": []},
+            "spawn_group": {"min": 1, "max": 1},
+            "wander": {"chance_per_tick": 0.0125, "radius": 8},
+            "habitat": {"avoid": [], "prefer": []},
+            "avoid_water": false,
+            "damage_feedback": [],
+            "brain": []
+        }]}"#;
+        let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads");
+        let dummy = defs
+            .iter()
+            .find(|d| d.name == "mymod:dummy")
+            .expect("dynamic mob registered");
+        assert_eq!(dummy.damage_feedback, MobDamageFeedback::default());
+    }
+
+    #[test]
+    fn damage_feedback_components_parse_from_json_objects() {
+        let layer = r#"{"mobs": [{
+            "mob": "mymod:dummy", "key": "mymod:dummy", "model": "models/owl.bbmodel",
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
+            "category": "passive", "cap": 8,
+            "spawn": {"biomes": [], "ground": []},
+            "spawn_group": {"min": 1, "max": 1},
+            "wander": {"chance_per_tick": 0.0125, "radius": 8},
+            "habitat": {"avoid": [], "prefer": []},
+            "avoid_water": false,
+            "damage_feedback": [
+                {"component": "llama:decrease_health"},
+                {"component": "llama:flash", "duration": 0.5},
+                {"component": "llama:knockback", "scale": 1.5, "duration": 0.2},
+                {"component": "llama:sound", "when": "death"},
+                {"component": "llama:ragdoll"}
+            ],
+            "brain": []
+        }]}"#;
+        let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads");
+        let dummy = defs
+            .iter()
+            .find(|d| d.name == "mymod:dummy")
+            .expect("dynamic mob registered");
+        assert_eq!(
+            dummy.damage_feedback.components,
+            vec![
+                MobDamageFeedbackComponent::DecreaseHealth,
+                MobDamageFeedbackComponent::Flash { duration: 0.5 },
+                MobDamageFeedbackComponent::Knockback {
+                    scale: 1.5,
+                    duration: 0.2,
+                },
+                MobDamageFeedbackComponent::Sound {
+                    category: MobDamageSound::Death,
+                },
+                MobDamageFeedbackComponent::Ragdoll,
+            ]
         );
     }
 
