@@ -1047,8 +1047,8 @@ impl World {
         // dead weight post-gen, and a rare late tree-band job rebuilds them
         // locally (see worldgen::driver::FeatureWindows). This is also the
         // column-gen cache capture point.
-        for i in 0..ingested.len() {
-            self.slim_settled_column_gen(ingested[i].chunk_pos());
+        for sp in &ingested {
+            self.slim_settled_column_gen(sp.chunk_pos());
         }
         // Bound the column-cache buffer during long exploration flights between
         // autosaves/unloads (each flush is one batched region write).

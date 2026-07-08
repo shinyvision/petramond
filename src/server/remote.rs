@@ -171,6 +171,16 @@ impl RemoteHub {
         self.drain_clients(server, inbound, local_tx);
     }
 
+    /// Every joined client's outbound-queue headroom, snapshot before the
+    /// pump so the terrain streamer can pace each session's plan to what its
+    /// connection is actually draining (`ServerGame::pump_streaming`).
+    pub(crate) fn send_headroom(&self) -> Vec<(PlayerId, usize)> {
+        self.clients
+            .iter()
+            .map(|c| (c.id, c.conn.queue_headroom()))
+            .collect()
+    }
+
     /// Route each remote recipient's pump output through its connection
     /// queue. A refused send (dead reader/writer, or a slow client's FULL
     /// queue) marks the connection dead; the next pump runs its leave path.
@@ -516,7 +526,7 @@ mod tests {
         for (sp, (blocks, water)) in sections {
             let dry_air = |x: usize, y: usize, z: usize| {
                 let i = section_idx(x, y, z);
-                blocks[i] == Block::Air.0 && water.as_ref().map_or(true, |w| w[i] == 0)
+                blocks[i] == Block::Air.0 && water.as_ref().is_none_or(|w| w[i] == 0)
             };
             for y in 0..14 {
                 for z in 0..16 {

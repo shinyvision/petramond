@@ -25,7 +25,17 @@ fn frame_period(fps: u32) -> Duration {
 }
 
 pub fn run() {
-    env_logger::init();
+    // Default (no RUST_LOG): errors from everywhere plus petramond at info,
+    // so multiplayer lifecycle lines (joins, leaves, kicks) show up in a
+    // plain `make run` terminal. wgpu_hal's Vulkan backend warns on EVERY
+    // suboptimal present — a permanent condition on some Wayland/NVIDIA
+    // stacks even after a swapchain rebuild (see Renderer::render) — so that
+    // module is clamped to errors even when RUST_LOG opts into warns.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("error,petramond=info"),
+    )
+    .filter_module("wgpu_hal::vulkan", log::LevelFilter::Error)
+    .init();
     let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()
         .and_then(|s| s.parse().ok())

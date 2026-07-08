@@ -196,11 +196,10 @@ impl App {
             // Back to the connect screen, attempted address preserved.
             self.reopen_connect_server();
             true
-        } else if matches!(self.screen, AppScreen::ConnectionLost) {
-            self.screen = AppScreen::Title;
-            self.pointer.release_for_menu();
-            true
-        } else if matches!(self.screen, AppScreen::WorldSelect) {
+        } else if matches!(
+            self.screen,
+            AppScreen::ConnectionLost | AppScreen::WorldSelect
+        ) {
             self.screen = AppScreen::Title;
             self.pointer.release_for_menu();
             true

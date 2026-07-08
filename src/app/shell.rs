@@ -155,7 +155,7 @@ impl App {
 
     pub(super) fn save_and_quit_to_title(&mut self) {
         debug_assert!(
-            self.game.as_ref().map_or(true, |g| !g.is_remote()),
+            self.game.as_ref().is_none_or(|g| !g.is_remote()),
             "save-and-quit is a HOST action; remote sessions disconnect"
         );
         if let Some(game) = self.game.take() {

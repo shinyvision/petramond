@@ -9,7 +9,10 @@
 //!   inbound channel the server loop drains; the writer drains a BOUNDED
 //!   queue of `ServerToClient` — a full queue (a client slower than the
 //!   server produces) marks the connection dead instead of ever blocking the
-//!   server tick.
+//!   server tick. The server's terrain streamer paces itself against
+//!   [`TcpServerConn::queue_headroom`] so bulk terrain can never fill the
+//!   queue on its own — a full queue means the client stopped draining, not
+//!   that the writer's encode+compress lost a burst race.
 //! - [`TcpClientConn`] (the remote client's pipe, wrapped by
 //!   `ServerHandle::from_remote`): the writer applies `remap_to_server`
 //!   before encoding and sends a farewell `Disconnect` when its channel
@@ -25,7 +28,7 @@
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,8 +49,9 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Server→client writer queue depth (messages). TickUpdates + a terrain
 /// backlog fit comfortably; a client that lets 4096 messages pile up is not
-/// keeping up and gets disconnected.
-const SERVER_QUEUE_MSGS: usize = 4096;
+/// keeping up and gets disconnected. Terrain is paced against the live
+/// headroom (`queue_headroom`), so only non-terrain traffic can fill it.
+pub(crate) const SERVER_QUEUE_MSGS: usize = 4096;
 
 fn configure(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)?;
@@ -105,6 +109,10 @@ pub(crate) struct TcpServerConn {
     tx: SyncSender<ServerToClient>,
     rx: Receiver<ClientToServer>,
     dead: Arc<AtomicBool>,
+    /// Messages currently sitting in the outbound queue (incremented by
+    /// `send`, decremented by the writer as it dequeues) — the live depth
+    /// behind [`queue_headroom`](Self::queue_headroom).
+    queued: Arc<AtomicUsize>,
     stream: TcpStream,
     peer: String,
 }
@@ -118,6 +126,7 @@ impl TcpServerConn {
             .map(|a| a.to_string())
             .unwrap_or_else(|_| "?".to_string());
         let dead = Arc::new(AtomicBool::new(false));
+        let queued = Arc::new(AtomicUsize::new(0));
         let (tx, out_rx) = mpsc::sync_channel::<ServerToClient>(SERVER_QUEUE_MSGS);
         let (in_tx, rx) = mpsc::channel::<ClientToServer>();
 
@@ -138,6 +147,7 @@ impl TcpServerConn {
 
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&dead);
+        let depth = Arc::clone(&queued);
         std::thread::Builder::new()
             .name("petramond-conn-write".to_string())
             .spawn(move || {
@@ -146,7 +156,13 @@ impl TcpServerConn {
                 // the seeded cubes (and follow-up `LightData`) are the client's
                 // ONLY light source. Mostly-uniform bytes — the frame
                 // compressor crushes them.
-                write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {});
+                //
+                // The map hook runs once per DEQUEUED message (never for the
+                // internally-generated keepalives/farewell), so it is the
+                // exact counterpart of `send`'s increment.
+                write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {
+                    depth.fetch_sub(1, Ordering::Relaxed);
+                });
                 flag.store(true, Ordering::SeqCst);
             })
             .expect("spawn connection writer");
@@ -155,6 +171,7 @@ impl TcpServerConn {
             tx,
             rx,
             dead,
+            queued,
             stream,
             peer,
         })
@@ -165,7 +182,10 @@ impl TcpServerConn {
     /// never blocks on a socket.
     pub(crate) fn send(&self, msg: ServerToClient) -> bool {
         match self.tx.try_send(msg) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.queued.fetch_add(1, Ordering::Relaxed);
+                true
+            }
             Err(TrySendError::Full(_)) => {
                 log::warn!("client {} outran its send queue; disconnecting", self.peer);
                 self.dead.store(true, Ordering::SeqCst);
@@ -176,6 +196,15 @@ impl TcpServerConn {
                 false
             }
         }
+    }
+
+    /// Free slots in the outbound queue right now (approximate — the writer
+    /// drains concurrently, so the true value is only ever HIGHER). The
+    /// terrain streamer paces each pump's plan against this so a joining
+    /// client's world load throttles to what the writer (encode + zlib +
+    /// socket) actually sustains instead of overflowing the queue.
+    pub(crate) fn queue_headroom(&self) -> usize {
+        SERVER_QUEUE_MSGS.saturating_sub(self.queued.load(Ordering::Relaxed))
     }
 
     pub(crate) fn try_recv(&self) -> Option<ClientToServer> {
@@ -229,15 +258,10 @@ impl TcpClientConn {
             .name("petramond-conn-read".to_string())
             .spawn(move || {
                 let mut r = BufReader::new(reader);
-                loop {
-                    match read_msg::<ServerToClient, _>(&mut r) {
-                        Ok(mut msg) => {
-                            map.remap_to_client(&mut msg);
-                            if in_tx.send(msg).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
+                while let Ok(mut msg) = read_msg::<ServerToClient, _>(&mut r) {
+                    map.remap_to_client(&mut msg);
+                    if in_tx.send(msg).is_err() {
+                        break;
                     }
                 }
                 flag.store(true, Ordering::SeqCst);
@@ -292,5 +316,34 @@ impl Drop for TcpClientConn {
         // Mirror of `TcpServerConn`: unblock the reader only; the writer
         // flushes its farewell `Disconnect` before the socket fully closes.
         let _ = self.stream.shutdown(Shutdown::Read);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    /// Every `send` increment must be matched by a writer-drain decrement,
+    /// or headroom leaks downward until terrain pacing starves a healthy
+    /// client. Queue a burst, then watch headroom return to full.
+    #[test]
+    fn queue_headroom_recovers_after_the_writer_drains() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let _client = TcpStream::connect(addr).expect("connect");
+        let (accepted, _) = listener.accept().expect("accept");
+        let conn = TcpServerConn::spawn(accepted).expect("conn threads");
+
+        assert_eq!(conn.queue_headroom(), SERVER_QUEUE_MSGS, "fresh queue is empty");
+        for _ in 0..100 {
+            assert!(conn.send(ServerToClient::KeepAlive), "live connection accepts");
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while conn.queue_headroom() < SERVER_QUEUE_MSGS {
+            assert!(Instant::now() < deadline, "writer never drained the burst");
+            std::thread::yield_now();
+        }
     }
 }

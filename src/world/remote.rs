@@ -70,7 +70,7 @@ impl Section {
             .map(|(&cell, _)| cell)
             .collect();
         furnaces_lit.sort_unstable();
-        let mut cell_kv: Vec<(u16, Vec<(String, Vec<u8>)>)> = self
+        let mut cell_kv: Vec<crate::net::protocol::CellKvEntry> = self
             .cell_kv()
             .iter()
             .map(|(&cell, map)| {

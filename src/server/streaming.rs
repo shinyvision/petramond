@@ -26,6 +26,21 @@ use super::game::ServerGame;
 /// bumps, so this mostly bounds the replica's install burst per frame.
 const TERRAIN_SECTIONS_PER_PUMP: usize = 128;
 
+/// Outbound-queue slots terrain must always leave free for tick updates,
+/// light refreshes, and broadcasts. Below this headroom a remote session
+/// ships no terrain this pump and retries once the writer drains — a full
+/// queue disconnects the client (`TcpServerConn::send`), so terrain, which
+/// the SERVER rate-controls, must never be what fills it.
+const TERRAIN_QUEUE_RESERVE: usize = crate::net::connection::SERVER_QUEUE_MSGS / 4;
+
+/// This pump's section budget for a connection with `queue_room` free
+/// outbound slots: the flat cap, shrunk so the plan (each section plus its
+/// possible column refresh = up to two messages) fits in the room above the
+/// reserve. The local pipe passes `usize::MAX` (unbounded channel).
+fn terrain_budget(queue_room: usize) -> usize {
+    TERRAIN_SECTIONS_PER_PUMP.min(queue_room.saturating_sub(TERRAIN_QUEUE_RESERVE) / 2)
+}
+
 /// One connection's terrain replication state: what it currently holds.
 #[derive(Default)]
 pub(crate) struct TerrainSync {
@@ -69,10 +84,16 @@ impl ServerGame {
 
     /// One pump's streaming step: drive the server world's own streaming, then
     /// emit terrain messages for EVERY session — each connection diffs its own
-    /// wanted shape through its `TerrainSync`. `per_session` is indexed like
-    /// `sessions` (the pump built it that way).
-    pub(super) fn pump_streaming(&mut self, per_session: &mut [Vec<ServerToClient>]) {
+    /// wanted shape through its `TerrainSync`. `per_session` and `queue_room`
+    /// (free outbound-queue slots per connection; `usize::MAX` = unbounded)
+    /// are indexed like `sessions` (the pump built them that way).
+    pub(super) fn pump_streaming(
+        &mut self,
+        per_session: &mut [Vec<ServerToClient>],
+        queue_room: &[usize],
+    ) {
         debug_assert_eq!(per_session.len(), self.sessions.len());
+        debug_assert_eq!(queue_room.len(), self.sessions.len());
         let anchors = self.load_anchors();
         if anchors.is_empty() {
             return;
@@ -89,7 +110,7 @@ impl ServerGame {
             // right now isn't in the sent set yet and its payload already
             // carries the fresh cubes — no duplicate message.
             self.send_light_for(s, &relit, msgs);
-            self.send_terrain_for(s, anchors[s], msgs);
+            self.send_terrain_for(s, anchors[s], terrain_budget(queue_room[s]), msgs);
         }
     }
 
@@ -112,18 +133,28 @@ impl ServerGame {
     /// its (re-freshed) column payload — column-before-section is the install
     /// contract, and re-shipping the column keeps the replica's heightmap and
     /// summaries current as more of the column lands server-side.
-    fn send_terrain_for(&mut self, s: usize, anchor: LoadAnchor, msgs: &mut Vec<ServerToClient>) {
+    ///
+    /// A zero `budget` (the connection's queue needs to drain) skips the pump
+    /// WITHOUT touching `last_send_key`: a key is only ever marked done by a
+    /// plan that actually ran under it, so paused terrain always resumes.
+    fn send_terrain_for(
+        &mut self,
+        s: usize,
+        anchor: LoadAnchor,
+        budget: usize,
+        msgs: &mut Vec<ServerToClient>,
+    ) {
+        if budget == 0 {
+            return;
+        }
         let key = self.world.terrain_send_key(anchor);
         let sync = &mut self.sessions[s].terrain;
         if sync.last_send_key == Some(key) && !sync.backlog {
             return;
         }
-        let plan = self.world.plan_terrain_send(
-            anchor,
-            &sync.sent_columns,
-            &sync.sent_sections,
-            TERRAIN_SECTIONS_PER_PUMP,
-        );
+        let plan =
+            self.world
+                .plan_terrain_send(anchor, &sync.sent_columns, &sync.sent_sections, budget);
         sync.last_send_key = Some(key);
         sync.backlog = plan.saturated;
 
@@ -153,7 +184,84 @@ impl ServerGame {
                 continue;
             };
             sync.sent_sections.insert(sp);
-            msgs.push(ServerToClient::SectionData(section));
+            msgs.push(ServerToClient::SectionData(Box::new(section)));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::connection::SERVER_QUEUE_MSGS;
+    use std::time::{Duration, Instant};
+
+    fn count_terrain(msgs: &[ServerToClient]) -> usize {
+        msgs.iter()
+            .filter(|m| {
+                matches!(
+                    m,
+                    ServerToClient::ColumnData(_) | ServerToClient::SectionData(_)
+                )
+            })
+            .count()
+    }
+
+    /// The budget shuts off below the reserve and never exceeds the flat cap
+    /// (the local pipe's `usize::MAX` room included) — the two edges that
+    /// keep pacing from either starving a healthy client or overflowing a
+    /// slow one.
+    #[test]
+    fn terrain_budget_pauses_below_the_reserve_and_stays_capped() {
+        assert_eq!(terrain_budget(0), 0);
+        assert_eq!(terrain_budget(TERRAIN_QUEUE_RESERVE), 0);
+        assert!(terrain_budget(TERRAIN_QUEUE_RESERVE + 64) > 0);
+        assert_eq!(terrain_budget(SERVER_QUEUE_MSGS), TERRAIN_SECTIONS_PER_PUMP);
+        assert_eq!(terrain_budget(usize::MAX), TERRAIN_SECTIONS_PER_PUMP);
+    }
+
+    /// A remote session whose outbound queue reports no room gets NO terrain
+    /// while other recipients keep streaming, and the pause must not mark the
+    /// paused session's diff as done: once room returns, the withheld terrain
+    /// ships. This is the anti-kick contract — bulk terrain paces itself to
+    /// the connection instead of overflowing its bounded queue.
+    #[test]
+    fn starved_sessions_pause_terrain_and_resume_without_losing_any() {
+        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let player = crate::game::session::spawn_player(server.world.seed);
+        let s = server.add_session_for_test(player);
+        let remote_id = server.sessions[s].id;
+
+        // Starve the remote queue until the LOCAL session has received
+        // terrain — the world demonstrably had shippable sections, and the
+        // starved session got none of them.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut local_terrain = 0usize;
+        while local_terrain == 0 {
+            assert!(Instant::now() < deadline, "no terrain became shippable");
+            let out = server.pump_tagged(0.01, &mut Vec::new(), &[(remote_id, 0)]);
+            local_terrain += count_terrain(&out.msgs);
+            for (id, msgs) in &out.remote {
+                assert_eq!(*id, remote_id);
+                assert_eq!(
+                    count_terrain(msgs),
+                    0,
+                    "a zero-headroom session must receive no terrain"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        // Room returns: the withheld terrain ships to the remote session.
+        let mut remote_terrain = 0usize;
+        while remote_terrain == 0 {
+            assert!(Instant::now() < deadline, "paused terrain never resumed");
+            let out = server.pump_tagged(0.01, &mut Vec::new(), &[(remote_id, SERVER_QUEUE_MSGS)]);
+            remote_terrain += out
+                .remote
+                .iter()
+                .map(|(_, msgs)| count_terrain(msgs))
+                .sum::<usize>();
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 }

@@ -222,9 +222,7 @@ impl Inventory {
         self.cursor.take()
     }
     pub fn stash_cursor_in_inventory(&mut self) -> Option<ItemStack> {
-        if self.cursor.is_none() {
-            return None;
-        }
+        self.cursor?;
         self.bump_revision();
         let stack = self.cursor.take()?;
         if stack.is_empty() {

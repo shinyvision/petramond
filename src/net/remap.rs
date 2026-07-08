@@ -474,7 +474,7 @@ mod tests {
             "CellState::Slab layer ids rewrite through the block LUT"
         );
 
-        let mut msg = ServerToClient::SectionData(crate::net::protocol::SectionPayload {
+        let mut msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
             pos: crate::chunk::SectionPos {
                 cx: 0,
                 cy: 0,
@@ -488,7 +488,7 @@ mod tests {
                 slabs: vec![(9, [0b0111, 2, 3])],
                 ..Default::default()
             },
-        });
+        }));
         map.remap_to_client(&mut msg);
         let ServerToClient::SectionData(p) = &msg else {
             unreachable!()

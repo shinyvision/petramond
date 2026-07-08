@@ -138,6 +138,12 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// The swapchain was rebuilt in response to a suboptimal acquire and came
+    /// back STILL suboptimal — stop retrying (some drivers, e.g. NVIDIA on
+    /// Wayland, report suboptimal permanently; reconfiguring every frame would
+    /// recreate the swapchain at frame rate). Cleared by a good acquire or a
+    /// real resize, so genuine size/scale mismatches always get one rebuild.
+    suboptimal_retried: bool,
     sky_pipe: wgpu::RenderPipeline,
     sky_bind: wgpu::BindGroup,
     sky_texture_bind: wgpu::BindGroup,
@@ -504,7 +510,28 @@ impl Renderer {
 
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
-            Ok(t) => t,
+            // A suboptimal frame still presents (with a per-present driver
+            // warning), but the swapchain no longer matches the surface —
+            // rebuild it once and draw from the fresh one next frame. The
+            // frame must drop BEFORE the reconfigure (a live SurfaceTexture
+            // across a swapchain rebuild panics).
+            Ok(t) if t.suboptimal && !self.suboptimal_retried => {
+                self.suboptimal_retried = true;
+                drop(t);
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
+            Ok(t) => {
+                self.suboptimal_retried = t.suboptimal;
+                t
+            }
+            // Stale/lost swapchain (a resize or compositor change the events
+            // haven't delivered yet): reconfigure at the current size and let
+            // the next frame draw.
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
             Err(_) => return,
         };
         let view = frame

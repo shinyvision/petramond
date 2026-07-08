@@ -547,9 +547,7 @@ impl World {
         wz: i32,
     ) -> Option<crate::net::protocol::CellState> {
         use crate::net::protocol::CellState;
-        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
-            return None;
-        };
+        let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
         let s = self.sections.get(&pos)?;
         let cell = section_idx(lx, ly, lz) as u16;
         // A model cell may carry offset, facing, or both (the BASE cell of an

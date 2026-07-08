@@ -120,14 +120,14 @@ mod tests {
     #[test]
     fn large_section_payloads_ship_zlib_compressed_and_roundtrip() {
         let blocks: Vec<u8> = (0..4096u32).map(|i| (i / 512) as u8).collect();
-        let msg = ServerToClient::SectionData(crate::net::protocol::SectionPayload {
+        let msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
             pos: crate::chunk::SectionPos::new(1, 4, -2),
             blocks: SectionBytes(std::sync::Arc::from(blocks.into_boxed_slice())),
             water: None,
             skylight: None,
             blocklight: None,
             states: Default::default(),
-        });
+        }));
         let frame = frame_of(&msg);
         assert_eq!(frame[4] & FLAG_ZLIB, FLAG_ZLIB, "a 4 KiB body compresses");
         let len = u32::from_le_bytes(frame[0..4].try_into().unwrap()) as usize;

@@ -184,7 +184,7 @@ impl ServerGame {
         let local = self.sessions[0].id;
         let mut tagged: Vec<(PlayerId, ClientToServer)> =
             inbox.drain(..).map(|msg| (local, msg)).collect();
-        self.pump_tagged(dt, &mut tagged)
+        self.pump_tagged(dt, &mut tagged, &[])
     }
 
     /// Consume this frame's client→server messages (tagged by the sending
@@ -198,10 +198,16 @@ impl ServerGame {
     /// tick executed. Each client applies its list in order, so a delta for a
     /// section shipped this same pump lands after its install. In-process the
     /// payloads are `Arc` refcount bumps.
+    ///
+    /// `headroom` is each remote connection's free outbound-queue slots
+    /// (`RemoteHub::send_headroom`), keyed by `PlayerId`; the streamer paces
+    /// terrain against it. A session with no entry (the local pipe, tests) is
+    /// unbounded.
     pub(crate) fn pump_tagged(
         &mut self,
         dt: f32,
         inbox: &mut Vec<(PlayerId, ClientToServer)>,
+        headroom: &[(PlayerId, usize)],
     ) -> PumpOutput {
         for (id, msg) in inbox.drain(..) {
             if let Some(s) = self.sessions.iter().position(|x| x.id == id) {
@@ -237,9 +243,19 @@ impl ServerGame {
         }
         let mut per_session: Vec<Vec<ServerToClient>> =
             self.sessions.iter().map(|_| Vec::new()).collect();
+        let queue_room: Vec<usize> = self
+            .sessions
+            .iter()
+            .map(|sess| {
+                headroom
+                    .iter()
+                    .find(|(id, _)| *id == sess.id)
+                    .map_or(usize::MAX, |&(_, room)| room)
+            })
+            .collect();
         // AFTER the ticks, so this pump's payloads carry the tick's edits and
         // freshly-final sections ship the same frame they land.
-        self.pump_streaming(&mut per_session);
+        self.pump_streaming(&mut per_session, &queue_room);
         if ticks_ran > 0 {
             // Shared batch parts built ONCE per tick window: the drained
             // world-event queue (plus any leave-path events banked between

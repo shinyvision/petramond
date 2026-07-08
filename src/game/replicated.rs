@@ -335,7 +335,7 @@ impl Game {
             match msg {
                 ServerToClient::ColumnData(column) => self.replica.install_remote_column(column),
                 ServerToClient::SectionData(section) => {
-                    self.replica.install_remote_section(section)
+                    self.replica.install_remote_section(*section)
                 }
                 ServerToClient::LightData(light) => self.replica.install_remote_light(light),
                 ServerToClient::SectionUnload(sp) => self.replica.uninstall_remote_section(sp),

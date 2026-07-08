@@ -766,7 +766,10 @@ pub(crate) enum ServerToClient {
         reason: JoinRejectReason,
     },
     ColumnData(ColumnPayload),
-    SectionData(SectionPayload),
+    /// Boxed like [`Tick`](Self::Tick): the payload's sparse state vecs make
+    /// it by far the largest variant, and it dominates channel traffic during
+    /// a world load.
+    SectionData(Box<SectionPayload>),
     /// A server light bake landed for a section already sent to this
     /// recipient: the fresh cubes replace the seeded ones. The replica never
     /// bakes its own light — this is the ONLY post-install light writer.
@@ -871,8 +874,12 @@ pub(crate) struct SectionStatesPayload {
     pub furnaces_lit: Vec<u16>,
     /// Per-cell mod KV, preserved opaquely (entries sorted by key — the map
     /// is a `BTreeMap` section-side).
-    pub cell_kv: Vec<(u16, Vec<(String, Vec<u8>)>)>,
+    pub cell_kv: Vec<CellKvEntry>,
 }
+
+/// One cell's opaque mod KV: `(cell, sorted (key, value-bytes) entries)` —
+/// the wire mirror of the section's per-cell `BTreeMap`.
+pub(crate) type CellKvEntry = (u16, Vec<(String, Vec<u8>)>);
 
 #[cfg(test)]
 mod tests {
@@ -954,13 +961,13 @@ mod tests {
                 ..Default::default()
             },
         };
-        let bytes =
-            postcard::to_allocvec(&ServerToClient::SectionData(payload.clone())).expect("encode");
+        let bytes = postcard::to_allocvec(&ServerToClient::SectionData(Box::new(payload.clone())))
+            .expect("encode");
         let back: ServerToClient = postcard::from_bytes(&bytes).expect("decode");
         let ServerToClient::SectionData(got) = back else {
             panic!("variant preserved");
         };
-        assert_eq!(got, payload);
+        assert_eq!(*got, payload);
         // The local path never serializes: cloning the message bumps the Arc.
         let cloned = payload.clone();
         assert!(Arc::ptr_eq(&cloned.blocks.0, &payload.blocks.0));

@@ -187,8 +187,8 @@ impl Game {
             .set_replica_view_center(cam_cx, cam_cy, cam_cz, forward.x, forward.z);
     }
 
-    /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation
-    /// + `PlayerUpdate.target` source) against the REPLICA world, the mob
+    /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation +
+    /// `PlayerUpdate.target` source) against the REPLICA world, the mob
     /// under the crosshair from the REPLICATED rows, and the remote PLAYER
     /// under the crosshair from the remote-player rows (PvP). All three
     /// compete by distance — the nearest wins; a closer block occludes both
@@ -220,7 +220,7 @@ impl Game {
     }
 
     /// The closest replicated mob in front of the eye whose AABB (row position
-    /// + species size) the ray enters within `max_dist` (and within reach),
+    /// plus species size) the ray enters within `max_dist` (and within reach),
     /// with its ray distance; skips dead corpses. `max_dist` is the block hit
     /// distance, so a mob *behind* the block isn't targeted (the block
     /// occludes it).

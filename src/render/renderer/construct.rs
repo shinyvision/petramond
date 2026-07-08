@@ -476,6 +476,7 @@ async fn new_renderer_inner(
         device,
         queue,
         config,
+        suboptimal_retried: false,
         sky_pipe: pipelines.sky_pipe,
         sky_bind: pipelines.sky_bind,
         sky_texture_bind: pipelines.sky_texture_bind,
@@ -669,6 +670,8 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
         self.recreate_scene_targets();
         self.crosshair_drawn_size = (0, 0);
+        // A real size change earns a fresh suboptimal-retry (render()).
+        self.suboptimal_retried = false;
     }
 
     /// (Re)build the world-pass targets at the current `render_scale` (and the

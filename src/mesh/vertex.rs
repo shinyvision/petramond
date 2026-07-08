@@ -32,10 +32,11 @@ pub struct Vertex {
     pub packed2: u32,
 }
 
-/// Pack a linear RGB tint (each channel `0..=1` — warm/biome tints never exceed
-/// 1) into the `Vertex::tint` unorm8 word, little-endian `r | g<<8 | b<<16`,
-/// matching `VertexFormat::Unorm8x4`'s lane order. The SINGLE owner of the tint
-/// encoding; the alpha lane is unused and fixed at 255.
+/// Pack a linear RGB tint (each channel `0..=1` — warm/biome tints never
+/// exceed 1) into the `Vertex::tint` unorm8 word, little-endian
+/// `r | g<<8 | b<<16`, matching `VertexFormat::Unorm8x4`'s lane order. The
+/// SINGLE owner of the tint encoding; the alpha lane is unused and fixed at
+/// 255.
 #[inline]
 pub(crate) fn pack_tint(rgb: [f32; 3]) -> u32 {
     let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;

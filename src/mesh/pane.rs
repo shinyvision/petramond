@@ -117,7 +117,9 @@ pub(crate) fn shape_faces(
     // north/south arm caps map with plain cell UVs while west/east arm caps swap
     // u/v to lay the strip along the arm.
     let post = ([LO, 0.0, LO], [HI, 1.0, HI]);
-    let segments: [(bool, ([f32; 3], [f32; 3]), u8, bool); 5] = [
+    // (present, cap box min/max, arm segment bit, swap edge-strip u/v).
+    type CapSegment = (bool, ([f32; 3], [f32; 3]), u8, bool);
+    let segments: [CapSegment; 5] = [
         (true, post, 0, false),
         (n, ([LO, 0.0, 0.0], [HI, 1.0, LO]), NORTH, false),
         (s, ([LO, 0.0, HI], [HI, 1.0, 1.0]), SOUTH, false),

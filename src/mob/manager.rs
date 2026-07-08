@@ -95,7 +95,7 @@ pub struct MobTickEvents {
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
 /// exists.
-fn nearest_anchor<'a>(anchors: &'a [PlayerAnchor], pos: Vec3) -> &'a PlayerAnchor {
+fn nearest_anchor(anchors: &[PlayerAnchor], pos: Vec3) -> &PlayerAnchor {
     debug_assert!(!anchors.is_empty(), "at least the local session anchors");
     let mut best = &anchors[0];
     let mut best_d = (best.pos - pos).length_squared();

@@ -192,7 +192,7 @@ impl World {
     /// (`repack_forced`). Releasing never touches the GPU buffers, so a wrong
     /// "settled" verdict costs remesh work, never visible terrain.
     fn release_settled_column_meshes(&mut self) {
-        if self.mesh_pump_frame % MESH_RELEASE_SWEEP_INTERVAL != 0
+        if !self.mesh_pump_frame.is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
             || self.mesh_release_after.is_empty()
         {
             return;

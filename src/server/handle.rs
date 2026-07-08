@@ -344,7 +344,8 @@ fn server_main(
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;
-        let out = server.pump_tagged(dt, &mut msgs);
+        let headroom = hub.send_headroom();
+        let out = server.pump_tagged(dt, &mut msgs, &headroom);
         for msg in out.msgs {
             if outbox.send(msg).is_err() {
                 disconnected = true;
