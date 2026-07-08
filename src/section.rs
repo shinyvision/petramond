@@ -356,6 +356,21 @@ impl Section {
         self.light_revision = self.light_revision.wrapping_add(1);
     }
 
+    /// Mark light final as-is WITHOUT installing cubes. Replica-only: light is
+    /// server-owned there — a lightless install is a fully-opaque section
+    /// (final by definition), and an edited cell keeps sampling the old cubes
+    /// until the server's rebake arrives as `LightData`. Nothing on a replica
+    /// may ever request a local bake.
+    pub fn mark_light_clean(&mut self) {
+        self.light_dirty = false;
+    }
+
+    /// Drop the block-light cubes (a rebake that reaches no emitter ships no
+    /// buffer; absent reads as all-zero — see [`Self::set_blocklight`]).
+    pub fn clear_blocklight(&mut self) {
+        self.blocklight = None;
+    }
+
     // --- Random-tick gate -------------------------------------------------------
 
     /// Keep [`random_tick_count`](Self::random_tick_count) in step with one cell

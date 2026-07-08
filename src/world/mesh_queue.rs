@@ -438,8 +438,20 @@ impl World {
                 s.mesh_revision = s.mesh_revision.wrapping_add(1);
             }
             self.bump_lighting_revision();
-            // Headless: no meshes to relight (see `queue_dirty_mesh`).
-            if self.role != crate::world::store::WorldRole::ServerHeadless {
+            if self.save.is_some() {
+                // An already-persisted record must rewrite with the new cubes
+                // (see `relit_since_persist`); unknown-to-disk sections are
+                // filtered at the persist gate.
+                self.relit_since_persist.insert(res.pos);
+            }
+            if self.role == crate::world::store::WorldRole::ServerHeadless {
+                // A landed bake is new shippable content: LightData for
+                // recipients that already hold the section, and (via the
+                // revision) a replan for those still waiting on the light-final
+                // ship gate. No meshes to relight headless (`queue_dirty_mesh`).
+                self.light_ship_log.insert(res.pos);
+                self.bump_terrain_revision();
+            } else {
                 self.dirty_meshes.push(res.pos);
             }
         }

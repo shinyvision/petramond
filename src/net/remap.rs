@@ -208,6 +208,7 @@ impl IdRemap {
             | ServerToClient::ModList { .. }
             | ServerToClient::JoinReject { .. }
             | ServerToClient::ColumnData(_)
+            | ServerToClient::LightData(_)
             | ServerToClient::SectionUnload(_)
             | ServerToClient::ColumnUnload(_)
             | ServerToClient::PlayerJoined { .. }

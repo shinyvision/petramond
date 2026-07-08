@@ -751,6 +751,10 @@ pub(crate) enum ServerToClient {
     JoinReject { reason: JoinRejectReason },
     ColumnData(ColumnPayload),
     SectionData(SectionPayload),
+    /// A server light bake landed for a section already sent to this
+    /// recipient: the fresh cubes replace the seeded ones. The replica never
+    /// bakes its own light — this is the ONLY post-install light writer.
+    LightData(LightPayload),
     SectionUnload(SectionPos),
     ColumnUnload(ChunkPos),
     Tick(Box<TickUpdate>),
@@ -787,13 +791,29 @@ pub(crate) struct SectionPayload {
     pub blocks: SectionBytes,
     /// 4096 water meta bytes, present when any cell holds water.
     pub water: Option<SectionBytes>,
-    /// Baked light, shared ONLY over the local connection to seed the
-    /// replica's first bake for free; `None` on TCP (the client bakes).
+    /// Server-baked light. The ship gate (`plan_terrain_send`) holds a section
+    /// back until its light is final, so this is `None` ONLY for sections that
+    /// never bake (fully opaque) — the replica does no light work of its own.
+    /// Post-install rebakes arrive as [`LightData`](ServerToClient::LightData).
     pub skylight: Option<SectionBytes>,
     pub blocklight: Option<SectionBytes>,
     /// Sparse per-cell block states (doors, stairs, slabs, log axes, torches,
     /// saplings, model cells, facings, lit furnaces, cell KV).
     pub states: SectionStatesPayload,
+}
+
+/// One section's freshly baked light cubes — shipped whenever a server bake
+/// lands for a section in the recipient's sent set (rebakes after edits and
+/// after a neighbour's landing invalidated a seam). Arc-backed like
+/// [`SectionPayload`]: the local pipe ships refcount bumps.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LightPayload {
+    pub pos: SectionPos,
+    /// 4096 skylight bytes (x2 scale).
+    pub skylight: SectionBytes,
+    /// 4096 block-light bytes; `None` when no emitter reaches the section
+    /// (reads as all-zero, mirroring `Section::set_blocklight`'s compaction).
+    pub blocklight: Option<SectionBytes>,
 }
 
 /// The sparse per-cell state maps a section carries beyond raw block ids.

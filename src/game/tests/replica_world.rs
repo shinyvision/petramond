@@ -45,19 +45,27 @@ fn frame(game: &mut super::common::TestGame) {
 fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
 
-    // The first pumps stream the fixture into the replica: payloads land the
-    // same frame the plan runs (the local pipe is synchronous).
-    for _ in 0..3 {
+    // The first pumps stream the fixture into the replica. Sections ship only
+    // once the server's light bake lands (the light-final ship gate) and the
+    // bake runs on async workers — pump bounded until the floor arrives.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server floor replicated"
+        );
         frame(&mut game);
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(
         game.replica.loaded_section_count() > 0,
         "replica sections appear from the pipe"
     );
-    assert_eq!(
-        game.replica.chunk_block(8, 64, 8),
-        Block::Stone.id(),
-        "the server floor replicated"
+    assert!(
+        game.replica
+            .section_at_world_for_test(8, 64, 8)
+            .is_some_and(|s| s.has_baked_light() && !s.light_dirty),
+        "the install seeded the server's baked light — the replica never bakes"
     );
     assert!(
         game.replica.chunk_loaded(0, 0),
@@ -105,6 +113,56 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     assert!(
         game.replica.section_at_world_for_test(8, 64, 8).is_none(),
         "its sections dropped with it"
+    );
+}
+
+/// Light is server-owned end to end: a post-ship edit that changes light
+/// (a torch appearing) reaches the replica as a `LightData` rebake — the
+/// replica itself never marks light dirty or bakes.
+#[test]
+fn server_rebakes_replicate_as_light_data() {
+    let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
+    let torch = IVec3::new(6, 65, 6);
+
+    // Wait for the lit floor section to ship.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
+        assert!(std::time::Instant::now() < deadline, "the floor replicated");
+        frame(&mut game);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let block_at = |g: &super::common::TestGame| {
+        g.replica
+            .section_at_world_for_test(torch.x, torch.y, torch.z)
+            .map(|s| s.blocklight_at(6, 1, 6))
+            .unwrap_or(0)
+    };
+    assert_eq!(block_at(&game), 0, "no emitter yet — block light is dark");
+
+    // The server edit dirties light server-side only; the replica applies the
+    // delta immediately (block visible) and receives the light as LightData.
+    // (Emitters come from the torch placement map — mirror the place funnel.)
+    assert!(game
+        .server
+        .world
+        .set_block_world(torch.x, torch.y, torch.z, Block::Torch));
+    game.server
+        .world
+        .insert_torch(torch, crate::torch::TorchPlacement::Floor);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while block_at(&game) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server's rebake reached the replica as LightData"
+        );
+        frame(&mut game);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        game.replica
+            .section_at_world_for_test(torch.x, torch.y, torch.z)
+            .is_some_and(|s| !s.light_dirty),
+        "the replica never holds dirty light — it waits for the server"
     );
 }
 

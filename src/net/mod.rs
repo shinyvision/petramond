@@ -16,7 +16,7 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 7; // 7: PvP AttackClick player target, PlayerStateRow mining overlay, TickUpdate env params
+pub(crate) const PROTOCOL_VERSION: u16 = 8; // 8: LightData (server-baked light replication; light always rides SectionPayload)
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

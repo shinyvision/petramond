@@ -535,10 +535,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
     let handle = std::thread::Builder::new()
         .name("llamacraft-save".to_string())
-        .spawn(move || {
-            crate::worker::lower_current_thread_priority();
-            io_thread(dir, rx, load_tx, colgen_tx)
-        })
+        .spawn(move || io_thread(dir, rx, load_tx, colgen_tx))
         .expect("spawn save thread");
 
     let mut manifest_columns: HashMap<ChunkPos, Vec<i32>> = HashMap::new();

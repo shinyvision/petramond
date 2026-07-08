@@ -22,32 +22,6 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-/// Nice value for background worker threads. Streaming pools (jobs/save) must always
-/// lose the scheduler race against the normal-priority main/render thread, so
-/// saturating them during terrain streaming can never preempt a frame. Niceness —
-/// unlike SCHED_IDLE — still guarantees the work makes progress on an idle machine.
-const WORKER_NICE: i32 = 10;
-
-/// Lower the CALLING thread's OS scheduling priority. Call it first thing inside each
-/// background worker's thread closure.
-pub(crate) fn lower_current_thread_priority() {
-    #[cfg(target_os = "linux")]
-    {
-        // PRIO_PROCESS + a tid targets that single thread (not the whole process).
-        let tid = unsafe { libc::gettid() } as u32;
-        let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, tid, WORKER_NICE) };
-        if rc != 0 {
-            log::debug!("setpriority(nice={WORKER_NICE}) failed for worker thread");
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {}
-}
-
-// ---------------------------------------------------------------------------
-// The shared priority job pool.
-// ---------------------------------------------------------------------------
-
 struct QueuedJob {
     key: i64,
     seq: u64,
@@ -89,10 +63,6 @@ pub struct JobPool {
 }
 
 impl JobPool {
-    /// Worker count: everything but two threads reserved for the main/render thread
-    /// (which still polls, snapshots, and drives the GPU every frame). The floor keeps
-    /// small machines streaming. Workers also run at low OS priority (see
-    /// [`lower_current_thread_priority`]), so this is sizing, not frame protection.
     pub fn default_threads() -> usize {
         let n = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -113,7 +83,6 @@ impl JobPool {
             let h = thread::Builder::new()
                 .name("llamacraft-jobs".to_string())
                 .spawn(move || {
-                    lower_current_thread_priority();
                     loop {
                         let job = {
                             let mut q = shared.queue.lock().unwrap();
@@ -295,21 +264,6 @@ impl WorkerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn lowers_priority_on_the_calling_thread() {
-        thread::spawn(|| {
-            lower_current_thread_priority();
-            #[cfg(target_os = "linux")]
-            {
-                let tid = unsafe { libc::gettid() } as u32;
-                let prio = unsafe { libc::getpriority(libc::PRIO_PROCESS, tid) };
-                assert_eq!(prio, WORKER_NICE);
-            }
-        })
-        .join()
-        .unwrap();
-    }
 
     #[test]
     fn pool_runs_lowest_key_first_and_fifo_on_ties() {

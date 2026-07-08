@@ -142,16 +142,11 @@ impl TcpServerConn {
             .name("llamacraft-conn-write".to_string())
             .spawn(move || {
                 let mut w = BufWriter::new(writer);
-                // Baked light never crosses TCP — it is a same-process seeding
-                // shortcut only; the remote replica bakes its own (see
-                // `SectionPayload::skylight`). Stripped HERE so every send
-                // funnel is covered and the sim thread never pays for it.
-                write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |msg| {
-                    if let ServerToClient::SectionData(p) = msg {
-                        p.skylight = None;
-                        p.blocklight = None;
-                    }
-                });
+                // Light crosses TCP too: the replica never bakes its own, so
+                // the seeded cubes (and follow-up `LightData`) are the client's
+                // ONLY light source. Mostly-uniform bytes — the frame
+                // compressor crushes them.
+                write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {});
                 flag.store(true, Ordering::SeqCst);
             })
             .expect("spawn connection writer");

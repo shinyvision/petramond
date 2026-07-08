@@ -82,9 +82,28 @@ impl ServerGame {
         // Headless worlds drain (and request — see `headless_relight`) their
         // light bakes here; nothing else pumps them without a mesh queue.
         self.world.pump_light_bakes();
+        let relit = self.world.take_light_ship_log();
 
         for (s, msgs) in per_session.iter_mut().enumerate() {
+            // Light refreshes BEFORE this pump's terrain: a section shipping
+            // right now isn't in the sent set yet and its payload already
+            // carries the fresh cubes — no duplicate message.
+            self.send_light_for(s, &relit, msgs);
             self.send_terrain_for(s, anchors[s], msgs);
+        }
+    }
+
+    /// Ship `LightData` for every freshly-baked section this connection
+    /// already holds. Sections it never received are skipped — their eventual
+    /// `SectionData` carries current light.
+    fn send_light_for(&self, s: usize, relit: &[SectionPos], msgs: &mut Vec<ServerToClient>) {
+        for &sp in relit {
+            if !self.sessions[s].terrain.sent_sections.contains(&sp) {
+                continue;
+            }
+            if let Some(p) = self.world.light_payload(sp) {
+                msgs.push(ServerToClient::LightData(p));
+            }
         }
     }
 

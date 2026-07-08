@@ -4,8 +4,10 @@
 //! A section record stores only what generation can't reproduce for one 16³ cube —
 //! block ids and (when present) water-flow metadata — then zlib-compresses the lot
 //! (flate2 / miniz_oxide, pure Rust). Biome and surface heightmap are per-column,
-//! cheaply regenerated, and so are never written here; skylight is recomputed on
-//! load.
+//! cheaply regenerated, and so are never written here. Baked light IS persisted
+//! (when clean at snapshot time), so a reload samples the saved cubes instead of
+//! re-baking the whole explored area; the cubes are mostly uniform and deflate
+//! to almost nothing. See WIKI/lighting.md "Persistence".
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
@@ -53,6 +55,11 @@ const FLAG2_HAS_LOG_AXES: u8 = 0x10;
 const FLAG2_HAS_CONTAINERS: u8 = 0x20;
 /// Third flags byte (section-record v4+). `0` for older records.
 const FLAG3_HAS_SLABS: u8 = 0x01;
+/// Persisted baked light (skylight / block-light cubes, appended in that
+/// order). Written only when the section's light was CLEAN at snapshot time;
+/// an absent cube simply re-bakes on load, so no version bump is needed.
+const FLAG3_HAS_SKYLIGHT: u8 = 0x02;
+const FLAG3_HAS_BLOCKLIGHT: u8 = 0x04;
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -101,6 +108,14 @@ pub struct SectionSnapshot {
     pub slab_states: HashMap<u16, SlabState>,
     /// Non-default log axes, keyed by section-local index. Missing logs are vertical.
     pub log_axes: HashMap<u16, LogAxis>,
+    /// Baked skylight cube, captured only when the section's light was CLEAN
+    /// (baked and not since invalidated) so a reload can skip the bake
+    /// entirely. `None` re-bakes on load, exactly like the pre-persistence
+    /// behaviour.
+    pub skylight: Option<Box<[u8]>>,
+    /// Baked block-light cube; independent of `skylight` presence on the wire
+    /// but only ever written alongside it (absent = no emitter in range).
+    pub blocklight: Option<Box<[u8]>>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
@@ -134,6 +149,14 @@ impl SectionSnapshot {
             stair_states: s.stair_states().clone(),
             slab_states: s.slab_states().clone(),
             log_axes: s.log_axes().clone(),
+            skylight: (!s.light_dirty)
+                .then(|| s.skylight_arc())
+                .flatten()
+                .map(|a| Box::from(&a[..])),
+            blocklight: (!s.light_dirty)
+                .then(|| s.blocklight_arc())
+                .flatten()
+                .map(|a| Box::from(&a[..])),
             cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
         }
@@ -373,6 +396,12 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.slab_states.is_empty() {
         flags3 |= FLAG3_HAS_SLABS;
     }
+    if s.skylight.is_some() {
+        flags3 |= FLAG3_HAS_SKYLIGHT;
+    }
+    if s.blocklight.is_some() {
+        flags3 |= FLAG3_HAS_BLOCKLIGHT;
+    }
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
     put_u8(&mut payload, flags3);
@@ -451,6 +480,12 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
             put_u8(buf, pal.block_to_disk(state.layers[0].id()));
             put_u8(buf, pal.block_to_disk(state.layers[1].id()));
         });
+    }
+    if let Some(sky) = &s.skylight {
+        payload.extend_from_slice(sky);
+    }
+    if let Some(bl) = &s.blocklight {
+        payload.extend_from_slice(bl);
     }
     deflate(&payload)
 }
@@ -557,29 +592,44 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
-    Some((
-        Section::from_saved(
-            pos.cx,
-            pos.cy,
-            pos.cz,
-            blocks,
-            water,
-            furnaces,
-            containers,
-            entity_facings,
-            torches,
-            model_cells,
-            model_facings,
-            sapling_stages,
-            doors,
-            stair_states,
-            slab_states,
-            log_axes,
-            cell_kv,
-        ),
-        entities,
-        mobs,
-    ))
+    let skylight = if flags3 & FLAG3_HAS_SKYLIGHT != 0 {
+        Some(r.bytes(SECTION_VOLUME)?)
+    } else {
+        None
+    };
+    let blocklight = if flags3 & FLAG3_HAS_BLOCKLIGHT != 0 {
+        Some(r.bytes(SECTION_VOLUME)?)
+    } else {
+        None
+    };
+    let mut section = Section::from_saved(
+        pos.cx,
+        pos.cy,
+        pos.cz,
+        blocks,
+        water,
+        furnaces,
+        containers,
+        entity_facings,
+        torches,
+        model_cells,
+        model_facings,
+        sapling_stages,
+        doors,
+        stair_states,
+        slab_states,
+        log_axes,
+        cell_kv,
+    );
+    // Persisted clean light: seed the cache and clear `light_dirty`, so the
+    // streamer's settle flush skips the bake for this section entirely.
+    if let Some(sky) = skylight {
+        section.set_skylight(std::sync::Arc::from(sky));
+        if let Some(bl) = blocklight {
+            section.set_blocklight(std::sync::Arc::from(bl));
+        }
+    }
+    Some((section, entities, mobs))
 }
 
 #[cfg(test)]
@@ -591,6 +641,46 @@ mod tests {
 
     fn sec(cx: i32, cy: i32, cz: i32) -> Section {
         Section::new(cx, cy, cz)
+    }
+
+    /// Light persistence contract: clean baked light roundtrips byte-exact
+    /// and loads CLEAN (no re-bake); never-baked or stale (dirty) light is
+    /// withheld from the record so a reload re-bakes it.
+    #[test]
+    fn baked_light_persists_only_when_clean_and_roundtrips() {
+        use std::sync::Arc;
+
+        let mut s = sec(0, 4, 0);
+        s.set_block(1, 2, 3, Block::Stone);
+
+        // Never baked: no cubes in the record, loads dirty.
+        let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, ..) = decode_section(SectionPos::new(0, 4, 0), &rec).expect("decodes");
+        assert!(!back.has_baked_light(), "no light was persisted");
+        assert!(back.light_dirty, "absent persisted light means bake on load");
+
+        // Clean baked light: roundtrips byte-exact, loads clean.
+        let sky: Vec<u8> = (0..SECTION_VOLUME).map(|i| (i % 16) as u8).collect();
+        let mut bl = vec![0u8; SECTION_VOLUME];
+        bl[100] = 9;
+        s.set_skylight(Arc::from(sky.clone().into_boxed_slice()));
+        s.set_blocklight(Arc::from(bl.clone().into_boxed_slice()));
+        let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
+        let (back, ..) = decode_section(SectionPos::new(0, 4, 0), &rec).expect("decodes");
+        assert!(!back.light_dirty, "persisted light loads clean — no re-bake");
+        assert_eq!(&back.skylight_arc().expect("skylight persisted")[..], &sky[..]);
+        assert_eq!(
+            &back.blocklight_arc().expect("blocklight persisted")[..],
+            &bl[..]
+        );
+
+        // A post-bake edit re-dirties the light: stale cubes must NOT persist.
+        s.set_block(2, 2, 2, Block::Dirt);
+        let snap = SectionSnapshot::from_section(&s);
+        assert!(
+            snap.skylight.is_none() && snap.blocklight.is_none(),
+            "stale (dirty) light is withheld from the record"
+        );
     }
 
     #[test]

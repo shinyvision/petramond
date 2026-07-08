@@ -636,21 +636,23 @@ mod tests {
         .expect("host hears PlayerJoined");
         assert_eq!(joined, (PlayerId(1), "Visitor".to_string()));
 
-        // Terrain streams to the remote client; sections arrive light-less
-        // (TCP strips baked light — the replica bakes its own).
+        // Terrain streams to the remote client WITH the server's baked light
+        // (the ship gate holds a section until its light is final; the remote
+        // replica never bakes its own).
         let mut sections: HashMap<SectionPos, (Vec<u8>, Option<Vec<u8>>)> = HashMap::new();
+        let mut lit_sections = 0usize;
         drain_until(&mut remote, Duration::from_secs(60), |msg| {
             let ServerToClient::SectionData(p) = msg else {
                 return None;
             };
-            assert!(
-                p.skylight.is_none() && p.blocklight.is_none(),
-                "TCP ships no baked light"
-            );
+            if p.skylight.is_some() {
+                lit_sections += 1;
+            }
             sections.insert(p.pos, (p.blocks.0.to_vec(), p.water.map(|w| w.0.to_vec())));
             find_place_spot(&sections)
         })
         .expect("streamed terrain holds a buildable surface cell");
+        assert!(lit_sections > 0, "baked light rides TCP section payloads");
         let target = find_place_spot(&sections).expect("spot still known");
         let placed_at = IVec3::new(target.x, target.y + 1, target.z);
 

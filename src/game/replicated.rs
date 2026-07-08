@@ -336,6 +336,7 @@ impl Game {
                 ServerToClient::SectionData(section) => {
                     self.replica.install_remote_section(section)
                 }
+                ServerToClient::LightData(light) => self.replica.install_remote_light(light),
                 ServerToClient::SectionUnload(sp) => self.replica.uninstall_remote_section(sp),
                 ServerToClient::ColumnUnload(cp) => self.replica.uninstall_remote_column(cp),
                 ServerToClient::Tick(update) => self.apply_tick_update(update),

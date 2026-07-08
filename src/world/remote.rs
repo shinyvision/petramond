@@ -35,7 +35,8 @@ use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::furnace::Furnace;
 use crate::net::protocol::{
-    BlockDelta, CellState, ColumnPayload, SectionBytes, SectionPayload, SectionStatesPayload,
+    BlockDelta, CellState, ColumnPayload, LightPayload, SectionBytes, SectionPayload,
+    SectionStatesPayload,
 };
 use crate::section::{Section, SectionSummary};
 use crate::torch::TorchPlacement;
@@ -58,9 +59,9 @@ fn map_entries<T, U: Copy>(entries: &[(u16, U)], mut f: impl FnMut(U) -> T) -> H
 impl Section {
     /// Snapshot this section as its wire payload: `Arc` refcount bumps for the
     /// block/water/light buffers (no copies) plus the sparse state maps,
-    /// encoded losslessly. Baked light is included when present — the local
-    /// connection uses it to seed the replica's cache for free; the TCP
-    /// transport may strip it (the client bakes its own).
+    /// encoded losslessly. Baked light rides along on EVERY transport — the
+    /// ship gate (`section_light_final`) guarantees it is present unless the
+    /// section never bakes (fully opaque); the replica does no light work.
     pub(crate) fn to_payload(&self) -> SectionPayload {
         let mut furnaces_lit: Vec<u16> = self
             .furnaces()
@@ -236,6 +237,11 @@ impl World {
             if let Some(bl) = payload.blocklight.filter(|l| l.0.len() == SECTION_VOLUME) {
                 section.set_blocklight(bl.0);
             }
+        } else {
+            // The ship gate (`section_light_final`) only lets a lightless
+            // section through when it never bakes (fully opaque) — final
+            // as-is. The replica NEVER bakes: rebakes arrive as `LightData`.
+            section.mark_light_clean();
         }
 
         self.ensure_column(pos.chunk_pos());
@@ -244,15 +250,40 @@ impl World {
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.classify_deep_on_install(pos);
-        if !light_seeded {
-            // The replica bakes its own light: the install changes what the
-            // whole 3×3×3's floods can read, exactly like a streamed landing.
-            // Seeded light is the server's bake against its FULL neighbourhood
-            // — already cross-seam correct, so it skips this entirely.
-            self.mark_light_dirty_neighborhood(pos, true);
-        }
         self.mark_dirty_neighborhood(pos, true);
         self.vis_dirty = true;
+    }
+
+    /// Apply a server light rebake on a replica — the exact seam a local bake
+    /// result enters through (`pump_light_bakes`' drain), minus the dirty/
+    /// revision handshake: the server is authoritative, the cubes always land.
+    pub(crate) fn install_remote_light(&mut self, payload: LightPayload) {
+        debug_assert!(
+            self.role == WorldRole::ClientReplica,
+            "remote light is the replica's ingest path"
+        );
+        if payload.skylight.0.len() != SECTION_VOLUME
+            || payload
+                .blocklight
+                .as_ref()
+                .is_some_and(|b| b.0.len() != SECTION_VOLUME)
+        {
+            return;
+        }
+        let pos = payload.pos;
+        let Some(s) = self.section_mut(pos) else {
+            return; // unloaded while the message was in flight
+        };
+        s.set_skylight(payload.skylight.0);
+        match payload.blocklight {
+            Some(b) => s.set_blocklight(b.0),
+            None => s.clear_blocklight(),
+        }
+        s.dirty = true;
+        // An in-flight mesh snapshotted the old cubes: discard its result.
+        s.mesh_revision = s.mesh_revision.wrapping_add(1);
+        self.bump_lighting_revision();
+        self.dirty_meshes.push(pos);
     }
 
     /// Apply one authoritative server delta on a replica: write the cell
@@ -328,18 +359,22 @@ impl World {
                     section.set_model_facing(lx, ly, lz, Facing::from_u8(facing));
                 }
             }
+            // The raw write flagged light dirty; on a replica light is
+            // server-owned — keep sampling the old cubes until the server's
+            // rebake of this neighbourhood lands as `LightData` (a pump or
+            // two; the block itself appears immediately).
+            section.mark_light_clean();
         }
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
-        if self.update_column_height_after_set(
+        // Heightmap keeps replica physics/sky queries truthful; the light it
+        // would invalidate on a streaming world is server-owned here.
+        let _ = self.update_column_height_after_set(
             delta.pos.x,
             delta.pos.y,
             delta.pos.z,
             delta.block_id != Block::Air.id(),
-        ) {
-            self.mark_heightmap_light_dirty_around(pos.chunk_pos());
-        }
-        self.mark_light_dirty_neighborhood(pos, true);
+        );
         self.mark_dirty_neighborhood(pos, true);
         self.vis_dirty = true;
     }
@@ -394,6 +429,34 @@ impl World {
     /// One loaded section's wire payload, or `None` when it isn't loaded.
     pub(crate) fn section_payload(&self, pos: SectionPos) -> Option<SectionPayload> {
         self.sections.get(&pos).map(|s| s.to_payload())
+    }
+
+    /// Whether `sp`'s light is presentable: baked (possibly stale — a pending
+    /// rebake follows as `LightData`) or fully opaque (never bakes; neighbour
+    /// meshes cull against it and sample nothing). The terrain sender holds a
+    /// section back until this holds, so every install lands light-complete
+    /// and the replica performs NO light work of its own.
+    pub(crate) fn section_light_final(&self, sp: SectionPos) -> bool {
+        self.sections
+            .get(&sp)
+            .is_some_and(|s| s.has_baked_light() || s.all_opaque())
+    }
+
+    /// Drain the sections whose server bake landed since the last streaming
+    /// pump (ServerHeadless fills it in `pump_light_bakes`).
+    pub(crate) fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
+        self.light_ship_log.drain().collect()
+    }
+
+    /// One section's CURRENT light cubes as a wire payload; `None` when the
+    /// section is gone (an eviction race) or has never baked.
+    pub(crate) fn light_payload(&self, pos: SectionPos) -> Option<LightPayload> {
+        let s = self.sections.get(&pos)?;
+        Some(LightPayload {
+            pos,
+            skylight: SectionBytes(s.skylight_arc()?),
+            blocklight: s.blocklight_arc().map(SectionBytes),
+        })
     }
 
     /// Opaque key over everything the per-connection wanted-vs-sent diff
@@ -455,6 +518,7 @@ impl World {
             .filter(|sp| !sent_sections.contains(sp))
             .filter(|sp| Self::column_wanted(target, sp.chunk_pos()))
             .filter(|sp| self.stream_writable(**sp))
+            .filter(|sp| self.section_light_final(**sp))
             .map(|&sp| (target.section_priority_key(sp), sp))
             .collect();
         sections.sort_unstable_by_key(|(key, _)| *key);
@@ -470,9 +534,10 @@ impl World {
             .filter(|cp| !Self::column_kept(target, **cp) || !self.columns.contains_key(cp))
             .copied()
             .collect();
+        let dropped_cols: FxHashSet<ChunkPos> = drop_columns.iter().copied().collect();
         let drop_sections: Vec<SectionPos> = sent_sections
             .iter()
-            .filter(|sp| !drop_columns.contains(&sp.chunk_pos()))
+            .filter(|sp| !dropped_cols.contains(&sp.chunk_pos()))
             .filter(|sp| {
                 !Self::column_kept(target, sp.chunk_pos()) || !self.sections.contains_key(sp)
             })
@@ -704,12 +769,13 @@ mod tests {
         assert_eq!(replica.physics_block(2, -20, 2), Block::Stone);
         assert!(!replica.placement_cell_open(IVec3::new(2, -20, 2)));
 
-        // The replica queued its own light + mesh work for the installs
-        // (no light shipped: these sections were never baked server-side).
+        // Light is server-owned: installs queue MESH work only. A lightless
+        // payload installs light-CLEAN (the ship gate only lets one through
+        // when it never bakes) — the replica must never queue its own bake.
         assert!(replica.dirty_mesh_count() > 0, "installs queue mesh work");
         assert!(
-            replica.section_at_world_for_test(2, 65, 2).unwrap().light_dirty,
-            "unshipped light leaves the section queued for the replica's own bake"
+            !replica.section_at_world_for_test(2, 65, 2).unwrap().light_dirty,
+            "a replica install never queues a replica-side bake"
         );
     }
 
@@ -907,16 +973,19 @@ mod tests {
         assert!(w.take_block_deltas().is_empty(), "take drains the log");
     }
 
-    /// The per-connection send plan: wanted loaded+FINAL sections ship
-    /// (in-flight ones are gated), sent terrain leaving the keep shape (or the
-    /// server) plans an unload, and the send key is stable across pumps that
-    /// change nothing — the incrementality gate.
+    /// The per-connection send plan: wanted loaded+FINAL sections ship (both
+    /// finality gates: in-flight streaming AND light not yet baked), sent
+    /// terrain leaving the keep shape (or the server) plans an unload, and the
+    /// send key is stable across pumps that change nothing — the
+    /// incrementality gate.
     #[test]
     fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
+        use crate::chunk::SECTION_VOLUME;
         use crate::section::Section;
         use crate::world::store::LoadAnchor;
         use rustc_hash::FxHashSet;
 
+        let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
         let mut w = World::new(0, 2);
         let sp = SectionPos::new(0, 4, 0);
         let mut section = Section::new(0, 4, 0);
@@ -932,8 +1001,18 @@ mod tests {
 
         let mut sent_columns: FxHashSet<ChunkPos> = FxHashSet::default();
         let mut sent_sections: FxHashSet<SectionPos> = FxHashSet::default();
+        // Light gates shipping: a never-baked (non-opaque) section is not
+        // presentable — the replica can't bake it, so the server holds it.
         let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
-        assert!(plan.sections.contains(&sp), "the loaded wanted section ships");
+        assert!(
+            !plan.sections.contains(&sp),
+            "a lightless section is held back by the ship gate"
+        );
+        w.section_at_world_mut_for_test(0, 64, 0)
+            .unwrap()
+            .set_skylight(sky());
+        let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+        assert!(plan.sections.contains(&sp), "the loaded, lit, wanted section ships");
         assert!(!plan.saturated);
         sent_columns.insert(sp.chunk_pos());
         sent_sections.insert(sp);
@@ -945,6 +1024,7 @@ mod tests {
         assert_ne!(k, w.terrain_send_key(anchor(1)), "a chunk move re-keys");
         let mut other = Section::new(1, 4, 0);
         other.set_block(0, 0, 0, Block::Stone);
+        other.set_skylight(sky());
         w.insert_section_for_test(SectionPos::new(1, 4, 0), other);
         assert_ne!(k, w.terrain_send_key(anchor(0)), "new content re-keys");
 
@@ -1003,3 +1083,4 @@ mod tests {
         );
     }
 }
+

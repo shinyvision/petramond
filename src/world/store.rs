@@ -300,6 +300,18 @@ pub struct World {
     /// choke point feeds this set and the light pump requests from it —
     /// keeping the QUEUEING off the mesh path. Bounded by edits per tick.
     pub(super) headless_relight: FxHashSet<SectionPos>,
+    /// ServerHeadless only: sections whose bake LANDED since the last
+    /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
+    /// into per-connection `LightData` messages (filtered to each recipient's
+    /// sent set). A set, so several bakes in one window ship latest-wins.
+    pub(super) light_ship_log: FxHashSet<SectionPos>,
+    /// Sections whose bake landed since the last save flush. Light changes
+    /// don't set `modified` (they're derived, not player content), but a
+    /// section whose on-disk record already exists must re-persist after a
+    /// relight or its saved cubes go permanently stale (persisted light is
+    /// only load-skippable because disk content is mutually consistent).
+    /// Cleared wholesale by `flush_modified_chunks`. Empty without a save.
+    pub(super) relit_since_persist: FxHashSet<SectionPos>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
@@ -405,6 +417,8 @@ impl World {
             block_delta_log: FxHashMap::default(),
             terrain_revision: 0,
             headless_relight: FxHashSet::default(),
+            light_ship_log: FxHashSet::default(),
+            relit_since_persist: FxHashSet::default(),
             sim: TickState::new(seed),
             save: None,
             optimize_explored_terrain: false,
@@ -610,16 +624,34 @@ impl World {
         // Unmodified generated content is deterministic, so a section already
         // on disk never needs a rewrite (the manifest check keeps steady-state
         // flushes cheap); modified/entity records rewrite as always.
+        //
+        // The one-shot waits for FINAL LIGHT (baked-and-clean, or fully opaque
+        // — never bakes): a record written mid-bake would stay lightless on
+        // disk forever and re-bake on every future load, defeating light
+        // persistence. A section evicted before its light ever settles simply
+        // regenerates from the column-gen cache next visit.
+        let light_final = !section.light_dirty || section.all_opaque();
         let explored_first_persist = self.optimize_explored_terrain
+            && light_final
             && self
                 .save
                 .as_ref()
                 .is_some_and(|s| !s.manifest_contains(pos));
+        // A record already on disk whose light rebaked since it was written
+        // (a lightless neighbour landed at the explored boundary, or an edit's
+        // spill) rewrites, or its saved cubes diverge from its neighbours'.
+        let relit_persisted = light_final
+            && self.relit_since_persist.contains(&pos)
+            && self
+                .save
+                .as_ref()
+                .is_some_and(|s| s.manifest_contains(pos));
         if section.modified
             || !entities.is_empty()
             || !mobs.is_empty()
             || record_holds_entities
             || explored_first_persist
+            || relit_persisted
         {
             let mut snap = SectionSnapshot::from_section(section);
             snap.entities = entities;
@@ -659,12 +691,15 @@ impl World {
                 persisted.push(pos);
             }
         }
-        // Post-action: a persisted section is now in sync with disk.
+        // Post-action: a persisted section is now in sync with disk. The flush
+        // visited EVERY loaded section, so relit bookkeeping resets wholesale
+        // (evicted stragglers included — they can't re-persist anyway).
         for pos in persisted {
             if let Some(s) = self.section_mut(pos) {
                 s.modified = false;
             }
         }
+        self.relit_since_persist.clear();
         if let Some(save) = self.save.as_mut() {
             save.save_sections(snaps);
         }
@@ -1309,7 +1344,18 @@ impl World {
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.queue_dirty_mesh(pos);
+        self.request_fixture_bake(pos);
         self.bump_terrain_revision();
+    }
+
+    /// Fixture sections bypass the streamer's settle/defer path, so a headless
+    /// world would never bake them — and the light-final ship gate would hold
+    /// them back forever. Feed the relight queue like an edit does.
+    #[cfg(test)]
+    fn request_fixture_bake(&mut self, pos: SectionPos) {
+        if self.role == WorldRole::ServerHeadless {
+            self.headless_relight.insert(pos);
+        }
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
@@ -1331,6 +1377,7 @@ impl World {
             self.sections.insert(sp, Arc::new(section));
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
+            self.request_fixture_bake(sp);
         }
         self.bump_terrain_revision();
     }
@@ -1349,6 +1396,7 @@ impl World {
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
+            self.request_fixture_bake(sp);
         }
         self.bump_terrain_revision();
     }

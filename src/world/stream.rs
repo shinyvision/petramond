@@ -871,6 +871,9 @@ impl World {
         let mut new_columns = 0usize;
         let mut new_column_positions: Vec<ChunkPos> = Vec::new();
         let mut ingested: Vec<SectionPos> = Vec::new();
+        // The freshly GENERATED subset of `ingested` (disk loads are tracked
+        // separately) — these invalidate their neighbourhood's light in step 6.
+        let mut gen_ingested: Vec<SectionPos> = Vec::new();
 
         // 1. Drain worker outputs: column data, then the sections generated from it.
         //    Budgeted so a big burst (e.g. a vertical move that re-streams a whole disc
@@ -923,6 +926,7 @@ impl World {
                         self.stream_events.push(StreamEvent::Generated(sp));
                     }
                     ingested.push(sp);
+                    gen_ingested.push(sp);
                 }
             }
         }
@@ -1079,9 +1083,22 @@ impl World {
         //    those neighbourhoods overlap massively for a contiguous batch — so collect the
         //    UNIQUE affected set once and mark each section a single time, instead of
         //    O(54 × ingested) redundant marks.
+        //
+        //    LIGHT INVALIDATION is keyed on how each section landed, by SOURCE.
+        //    Fresh GENERATION invalidates its 3×3×3: no persisted bake ever saw
+        //    this content. A saved OVERLAY invalidates too: its generated base
+        //    was transiently visible, and an in-flight bake may have read the
+        //    base. DISK-PRIMARY loads invalidate NOTHING — lit or not (fully
+        //    opaque records persist lightless by design), their content is
+        //    byte-exactly what every neighbouring record's persisted bake read
+        //    (records only persist with settled light) — this is what makes
+        //    persisted light load bake-free (see WIKI/lighting.md).
+        let overlaid_set: FxHashSet<SectionPos> = overlaid.iter().copied().collect();
         let mut affected: Vec<SectionPos> = Vec::new();
         let mut seen: FxHashSet<SectionPos> = FxHashSet::default();
+        let mut light_stale: FxHashSet<SectionPos> = FxHashSet::default();
         for sp in &ingested {
+            let invalidates = overlaid_set.contains(sp) || gen_ingested.contains(sp);
             for dy in -1..=1 {
                 for dz in -1..=1 {
                     for dx in -1..=1 {
@@ -1089,32 +1106,47 @@ impl World {
                         if seen.insert(p) {
                             affected.push(p);
                         }
+                        if invalidates {
+                            light_stale.insert(p);
+                        }
                     }
                 }
             }
         }
         for &sp in &affected {
-            // An all-air section (the sky band) emits nothing, so settle it immediately
-            // instead of queuing mesh work for it.
-            if self.clear_mesh_if_section_produces_no_mesh(sp) {
-                continue;
-            }
-            // A section that already produced output (a baked light cube or an installed
-            // mesh) is genuinely stale — relight/remesh it now. One that has produced
-            // NOTHING yet is deferred until its generation neighbourhood settles, so its
-            // FIRST bake and mesh run exactly once instead of once per landing neighbour
-            // (the bulk of streaming's rebake/remesh churn came from this marking).
-            let built = self.meshes.contains_key(&sp)
-                || self.sections.get(&sp).is_some_and(|s| s.has_baked_light());
-            if built {
-                self.mark_light_dirty_pos(sp);
+            // An all-air section (the sky band) emits nothing — settle its MESH
+            // immediately. Its light still bakes below (cave pockets must read
+            // dark, and headless/replica worlds have no lazy mesh-gate bake).
+            let no_mesh_output = self.clear_mesh_if_section_produces_no_mesh(sp);
+            let stale = light_stale.contains(&sp);
+            if self.meshes.contains_key(&sp) {
+                // Already produced a mesh: remesh now (border culling moved).
+                // Relight only if a landing actually invalidated it — plus the
+                // in-flight-bake race: a bake requested before this landing
+                // read the pre-landing neighbourhood, so a still-dirty section
+                // re-marks (revision bump) to discard that result.
+                if stale || self.sections.get(&sp).is_some_and(|s| s.light_dirty) {
+                    self.mark_light_dirty_pos(sp);
+                }
                 self.queue_dirty_mesh(sp);
             } else if self.sections.contains_key(&sp) {
-                // Invalidate (and unqueue) any bake taken from the pre-landing
-                // neighbourhood so the settled re-request isn't dedup-dropped.
-                self.mark_light_dirty_pos(sp);
+                // No output yet: its FIRST bake (if its light is dirty at all)
+                // and FIRST mesh run once, when the neighbourhood settles —
+                // not once per landing neighbour (the bulk of streaming's
+                // rebake/remesh churn came from eager marking here).
+                if stale {
+                    self.mark_light_dirty_pos(sp);
+                }
+                // Unqueue any bake taken from the pre-landing neighbourhood so
+                // the settled re-request isn't dedup-dropped.
                 self.light_bakes.cancel(sp);
-                self.light_deferred.insert(sp);
+                let needs_bake = self
+                    .sections
+                    .get(&sp)
+                    .is_some_and(|s| s.light_dirty && !s.all_opaque());
+                if !no_mesh_output || needs_bake {
+                    self.light_deferred.insert(sp);
+                }
             }
         }
         self.flush_settled_deferred(target);
@@ -1158,10 +1190,11 @@ impl World {
         true
     }
 
-    /// Flush deferred first-time sections whose generation neighbourhood has settled:
-    /// request the single light bake and queue the single first mesh. Sections whose
-    /// saved overlay is still buffered stay parked so the bake reads the saved blocks,
-    /// not the generated base it is about to replace.
+    /// Flush deferred sections whose generation neighbourhood has settled:
+    /// request the single light bake (skipped when the section landed with
+    /// clean persisted light) and queue the single first mesh. Sections whose
+    /// saved overlay is still buffered stay parked so the bake reads the saved
+    /// blocks, not the generated base it is about to replace.
     fn flush_settled_deferred(&mut self, target: LoadTarget) {
         if self.light_deferred.is_empty() {
             return;
@@ -1180,9 +1213,10 @@ impl World {
             let Some(section) = self.sections.get(&sp) else {
                 continue;
             };
+            // Clean light (persisted, loaded from disk) stands as-is.
             // Fully-opaque sections skip baking on both sides of the mesh pump's
             // light gate (their faces cull against solid cells and never sample light).
-            if !section.all_opaque() {
+            if section.light_dirty && !section.all_opaque() {
                 let key = target.section_priority_key(sp);
                 self.light_bakes
                     .request(key, sp, &self.sections, &self.columns);
@@ -1966,6 +2000,24 @@ mod tests {
             }
         };
 
+        // Every section's light settled: baked-and-clean, or fully opaque
+        // (never bakes). The first-persist gate waits for exactly this.
+        let light_settled = |world: &mut World| {
+            for _ in 0..5000 {
+                world.poll();
+                world.pump_light_bakes();
+                let done = world
+                    .sections
+                    .values()
+                    .all(|s| !s.light_dirty || s.all_opaque());
+                if done {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            false
+        };
+
         // First visit: generate, then flush (autosave path) — the flag persists
         // every explored section and the column-gen cache.
         let opened = crate::save::open_at(dir.clone()).expect("open save");
@@ -1973,6 +2025,7 @@ mod tests {
         world.attach_save(opened.save);
         world.set_optimize_explored_terrain(true);
         stream_settled(&mut world);
+        assert!(light_settled(&mut world), "first-visit light bakes settle");
         let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
         assert!(!first_sections.is_empty());
         let first_blocks: std::collections::HashMap<SectionPos, Vec<u8>> = first_sections
@@ -2028,6 +2081,20 @@ mod tests {
                 "reloaded content diverged at {sp:?}"
             );
         }
+
+        // Light persistence: every reloaded section came back with its saved
+        // cubes ALREADY CLEAN — nothing above ever drained a bake for the
+        // reloaded world, so a single dirty section here would mean the load
+        // path re-queued a bake (the exact work persistence exists to skip).
+        let relit = world
+            .sections
+            .values()
+            .filter(|s| s.light_dirty && !s.all_opaque())
+            .count();
+        assert_eq!(
+            relit, 0,
+            "reloaded sections must keep their persisted light without re-baking"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
