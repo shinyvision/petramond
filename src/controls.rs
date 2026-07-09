@@ -14,6 +14,7 @@ pub enum Control {
     Sneak,
     Sprint,
     ToggleInventory,
+    OpenChat,
     TogglePlayerMode,
     CloseScreen,
     SelectHotbar(u8),
@@ -42,6 +43,8 @@ pub enum TextKey {
     ArrowRight,
     ArrowUp,
     ArrowDown,
+    Home,
+    End,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -76,6 +79,7 @@ pub fn control_from_key_code(code: winit::keyboard::KeyCode) -> Option<Control> 
         KeyCode::ShiftLeft | KeyCode::ShiftRight => Some(Control::Sneak),
         KeyCode::ControlLeft | KeyCode::ControlRight => Some(Control::Sprint),
         KeyCode::KeyE => Some(Control::ToggleInventory),
+        KeyCode::KeyT => Some(Control::OpenChat),
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
         KeyCode::KeyQ => Some(Control::DropItem),
         KeyCode::KeyR => Some(Control::RotateHeldBlock),
@@ -107,6 +111,8 @@ pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
         NamedKey::ArrowRight => Some(TextKey::ArrowRight),
         NamedKey::ArrowUp => Some(TextKey::ArrowUp),
         NamedKey::ArrowDown => Some(TextKey::ArrowDown),
+        NamedKey::Home => Some(TextKey::Home),
+        NamedKey::End => Some(TextKey::End),
         _ => None,
     }
 }

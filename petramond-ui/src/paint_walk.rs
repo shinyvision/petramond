@@ -309,29 +309,14 @@ impl PaintCtx<'_> {
                 match editor {
                     Some(editor) => {
                         let view = editor.render(visible, focused, self.fs.now);
-                        if let Some((s0, s1)) = view.selection {
-                            let sel = RectI {
-                                x: text_rect.x + s0 as i32 * crate::text::ADVANCE,
-                                y: ty - 1,
-                                w: (s1 - s0) as i32 * crate::text::ADVANCE - 1,
-                                h: crate::text::GLYPH_H + 2,
-                            };
-                            p.solid(sel, self.theme.color("selection"), clip);
-                        }
-                        p.text(&view.text, text_rect.x, ty, text_color("text"), clip);
-                        if view.show_cursor {
-                            let cx = text_rect.x + view.cursor as i32 * crate::text::ADVANCE - 1;
-                            p.solid(
-                                RectI {
-                                    x: cx,
-                                    y: ty - 1,
-                                    w: 1,
-                                    h: crate::text::GLYPH_H + 2,
-                                },
-                                text_color("text"),
-                                clip,
-                            );
-                        }
+                        p.text_input_view(
+                            &view,
+                            text_rect.x,
+                            ty,
+                            text_color("text"),
+                            self.theme.color("selection"),
+                            clip,
+                        );
                     }
                     None => {
                         let bound = inst.text.as_deref().unwrap_or("");

@@ -229,6 +229,7 @@ impl RemoteHub {
                 PendingVerdict::Joined { id, name } => {
                     let pending = self.pending.remove(i);
                     log::info!("player '{name}' joined as id {}", id.0);
+                    server.enqueue_join_chat(&name);
                     self.broadcast(ServerToClient::PlayerJoined { id, name }, local_tx);
                     self.clients.push(RemoteClient {
                         id,
@@ -274,6 +275,9 @@ impl RemoteHub {
                 name.as_deref().unwrap_or("?"),
                 client.id.0
             );
+            if let Some(name) = &name {
+                server.enqueue_leave_chat(name);
+            }
             // Their queued-but-unrouted messages in `inbound` die at the
             // pump's id→index resolution (the session is gone).
             self.broadcast(ServerToClient::PlayerLeft { id: client.id }, local_tx);

@@ -128,6 +128,13 @@ pub(crate) enum ModAction {
     OpenGui { kind: crate::gui::GuiKind },
     /// A mod's `GuiClose` HostCall: close the open mod GUI, if one is open.
     CloseGui,
+    /// A mod's `ChatSend` HostCall: deliver one authored chat line on the next
+    /// pump. `None` targets = all connected sessions; `Some(ids)` = those
+    /// player ids only (unknown / left ids ignored).
+    ChatSend {
+        text: String,
+        targets: Option<Vec<u8>>,
+    },
 }
 
 /// Which container GUI a session opened/closed on (mirrors the game's container

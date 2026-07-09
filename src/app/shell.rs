@@ -51,21 +51,30 @@ impl App {
     /// Forward a text-editing key to the document UI. Returns whether it was
     /// consumed (false when no document screen is active).
     pub fn handle_text_key(&mut self, key: TextKey) -> bool {
+        if self.screen == super::AppScreen::Chat {
+            let now = now_seconds();
+            match key {
+                TextKey::Enter => {
+                    if let Some(text) = self.chat.submit_or_close(now) {
+                        if let Some(game) = self.game.as_mut() {
+                            game.send_chat(text);
+                        }
+                    }
+                    self.screen = super::AppScreen::Game;
+                    self.pointer.grab_for_gameplay();
+                }
+                _ => {
+                    self.chat
+                        .edit_key(nav_key_from_text_key(key), self.modifiers.shift, None, now);
+                }
+            }
+            return true;
+        }
         if self.doc_ui_kind().is_none() {
             return false;
         }
-        let key = match key {
-            TextKey::Backspace => petramond_ui::NavKey::Backspace,
-            TextKey::Delete => petramond_ui::NavKey::Delete,
-            TextKey::Enter => petramond_ui::NavKey::Enter,
-            TextKey::Tab => petramond_ui::NavKey::Tab,
-            TextKey::ArrowLeft => petramond_ui::NavKey::Left,
-            TextKey::ArrowRight => petramond_ui::NavKey::Right,
-            TextKey::ArrowUp => petramond_ui::NavKey::Up,
-            TextKey::ArrowDown => petramond_ui::NavKey::Down,
-        };
         self.ui.push_input(petramond_ui::InputEvent::Key {
-            key,
+            key: nav_key_from_text_key(key),
             shift: self.modifiers.shift,
         });
         true
@@ -82,21 +91,28 @@ impl App {
     }
 
     pub fn handle_text_shortcut(&mut self, shortcut: TextShortcut) -> bool {
+        if self.screen == super::AppScreen::Chat {
+            let key = nav_key_from_shortcut(shortcut);
+            let now = now_seconds();
+            let clipboard = self.ui.clipboard_mut();
+            self.chat.edit_key(key, false, Some(clipboard), now);
+            return true;
+        }
         if self.doc_ui_kind().is_none() {
             return false;
         }
-        let key = match shortcut {
-            TextShortcut::SelectAll => petramond_ui::NavKey::SelectAll,
-            TextShortcut::Cut => petramond_ui::NavKey::Cut,
-            TextShortcut::Copy => petramond_ui::NavKey::Copy,
-            TextShortcut::Paste => petramond_ui::NavKey::Paste,
-        };
-        self.ui
-            .push_input(petramond_ui::InputEvent::Key { key, shift: false });
+        self.ui.push_input(petramond_ui::InputEvent::Key {
+            key: nav_key_from_shortcut(shortcut),
+            shift: false,
+        });
         true
     }
 
     pub fn handle_text_input(&mut self, text: &str) -> bool {
+        if self.screen == super::AppScreen::Chat {
+            self.chat.insert_text(text, now_seconds());
+            return true;
+        }
         if self.doc_ui_kind().is_none() {
             return false;
         }
@@ -365,5 +381,29 @@ impl App {
             self.screen = AppScreen::Dead;
             self.pointer.release_for_menu();
         }
+    }
+}
+
+fn nav_key_from_text_key(key: TextKey) -> petramond_ui::NavKey {
+    match key {
+        TextKey::Backspace => petramond_ui::NavKey::Backspace,
+        TextKey::Delete => petramond_ui::NavKey::Delete,
+        TextKey::Enter => petramond_ui::NavKey::Enter,
+        TextKey::Tab => petramond_ui::NavKey::Tab,
+        TextKey::ArrowLeft => petramond_ui::NavKey::Left,
+        TextKey::ArrowRight => petramond_ui::NavKey::Right,
+        TextKey::ArrowUp => petramond_ui::NavKey::Up,
+        TextKey::ArrowDown => petramond_ui::NavKey::Down,
+        TextKey::Home => petramond_ui::NavKey::Home,
+        TextKey::End => petramond_ui::NavKey::End,
+    }
+}
+
+fn nav_key_from_shortcut(shortcut: TextShortcut) -> petramond_ui::NavKey {
+    match shortcut {
+        TextShortcut::SelectAll => petramond_ui::NavKey::SelectAll,
+        TextShortcut::Cut => petramond_ui::NavKey::Cut,
+        TextShortcut::Copy => petramond_ui::NavKey::Copy,
+        TextShortcut::Paste => petramond_ui::NavKey::Paste,
     }
 }

@@ -4,6 +4,7 @@ use crate::game::MovementInput;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ControlEvent {
     ToggleInventory,
+    OpenChat,
     TogglePlayerMode,
     CloseScreen,
     SelectHotbar(u8),
@@ -27,6 +28,7 @@ pub struct InputController {
     toggle_mode_key: bool,
     toggle_mode_chord: bool,
     inventory_toggle_held: bool,
+    chat_open_held: bool,
     drop_item_held: bool,
     rotate_held_block_held: bool,
     toggle_perspective_held: bool,
@@ -71,6 +73,11 @@ impl InputController {
                 let edge = down && !self.inventory_toggle_held;
                 self.inventory_toggle_held = down;
                 edge.then_some(ControlEvent::ToggleInventory)
+            }
+            Control::OpenChat => {
+                let edge = down && !self.chat_open_held;
+                self.chat_open_held = down;
+                edge.then_some(ControlEvent::OpenChat)
             }
             Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
             Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),

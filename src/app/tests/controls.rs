@@ -3,8 +3,9 @@ use crate::app::{App, CursorIcon, CursorPolicy};
 #[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
 use crate::audio::Sound;
 use crate::camera::Camera;
-use crate::controls::{Control, Modifiers, PointerButton, TextKey};
+use crate::controls::{Control, Modifiers, PointerButton, TextKey, TextShortcut};
 use crate::mathh::Vec3;
+use crate::net::protocol::{ClientToServer, ServerToClient};
 use crate::player::PlayerMode;
 use crate::save::WorldInfo;
 
@@ -384,6 +385,89 @@ fn digit_controls_select_hotbar_slot() {
     assert_eq!(app.game().active_hotbar(), 0);
     app.handle_control(Control::SelectHotbar(8), true);
     assert_eq!(app.game().active_hotbar(), 8);
+}
+
+#[test]
+fn chat_opens_from_t_sends_entered_message_via_server_echo() {
+    let mut app = app();
+    assert_eq!(app.screen, crate::app::AppScreen::Game);
+
+    app.handle_control(Control::OpenChat, true);
+    assert_eq!(app.screen, crate::app::AppScreen::Chat);
+    assert_eq!(
+        app.cursor_policy(),
+        CursorPolicy {
+            grabbed: false,
+            visible: true,
+            icon: CursorIcon::Default,
+        }
+    );
+
+    assert!(app.handle_text_input("hello"));
+    assert!(app.handle_text_key(TextKey::Enter));
+    assert_eq!(app.screen, crate::app::AppScreen::Game);
+
+    let msgs = app
+        .game
+        .as_mut()
+        .expect("test app has a game")
+        .take_outbox_for_test();
+    assert!(msgs
+        .iter()
+        .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "hello")));
+
+    for msg in msgs {
+        app.server.apply_message(0, msg);
+    }
+    let mut inbox = Vec::new();
+    let out = app.server.pump(0.0, &mut inbox);
+    let chat = out.msgs.iter().find_map(|msg| match msg {
+        ServerToClient::ChatLine(line) => Some(line),
+        _ => None,
+    });
+    assert!(
+        chat.is_some_and(|line| line.spans.iter().any(|span| span.text.contains("> hello"))),
+        "server echoed the formatted chat line"
+    );
+}
+
+#[test]
+fn chat_input_uses_shared_text_editor_selection_and_clipboard() {
+    let mut app = app();
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));
+    app.ui
+        .set_clipboard(Box::new(SharedClipboard(shared.clone())));
+
+    app.handle_control(Control::OpenChat, true);
+    assert!(app.handle_text_input("abcdef"));
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.set_modifiers(Modifiers {
+        ctrl: false,
+        shift: true,
+    });
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.handle_text_key(TextKey::ArrowLeft);
+    app.set_modifiers(Modifiers::default());
+    assert!(app.handle_text_input("XY"));
+
+    app.handle_text_shortcut(TextShortcut::SelectAll);
+    app.handle_text_shortcut(TextShortcut::Copy);
+    assert_eq!(shared.borrow().as_deref(), Some("abXYef"));
+
+    app.handle_text_shortcut(TextShortcut::Cut);
+    *shared.borrow_mut() = Some("pasted".to_owned());
+    app.handle_text_shortcut(TextShortcut::Paste);
+    assert!(app.handle_text_key(TextKey::Enter));
+
+    let msgs = app
+        .game
+        .as_mut()
+        .expect("test app has a game")
+        .take_outbox_for_test();
+    assert!(msgs
+        .iter()
+        .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "pasted")));
 }
 
 #[test]

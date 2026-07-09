@@ -60,6 +60,17 @@ impl ServerGame {
                 ModAction::CloseGui => {
                     self.sessions[s].request_close_mod_gui = true;
                 }
+                ModAction::ChatSend { text, targets } => {
+                    let targets = match targets {
+                        None => crate::server::chat::ChatTargets::All,
+                        Some(ids) => crate::server::chat::ChatTargets::Players(
+                            ids.into_iter()
+                                .map(crate::server::player::PlayerId)
+                                .collect(),
+                        ),
+                    };
+                    self.enqueue_authored_chat(&text, targets);
+                }
             }
         }
     }

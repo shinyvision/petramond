@@ -109,6 +109,7 @@ impl Game {
             stream_batch_started: None,
             stream_rate_ema: None,
             incoming: Vec::new(),
+            pending_chat_lines: Vec::new(),
             replica: bootstrap.replica,
             replicated_mobs: Default::default(),
             replicated_items: Default::default(),
@@ -266,6 +267,8 @@ fn build_server(
         // honorable (the same permanent gate Open-to-LAN sets on a host).
         lan_ever_opened: !has_local_session,
         pending_wire_events: Vec::new(),
+        pending_chat: Vec::new(),
+        next_chat_seq: 0,
         autosave_t: 0.0,
         chest_viewers: HashMap::new(),
         last_shipped_env: None,

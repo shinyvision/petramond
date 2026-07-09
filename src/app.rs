@@ -5,6 +5,7 @@
 //! `game`, and first-person hand animation lives in the renderer presentation
 //! layer.
 
+mod chat;
 mod connect;
 mod gui_router;
 mod input;
@@ -74,6 +75,7 @@ pub struct App {
     gui_router: GuiRouter,
     /// GUI-document runtime driver (every screen is document-backed).
     ui: ui_runtime::AppUi,
+    chat: chat::ChatUi,
     screen: AppScreen,
     /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
     /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
@@ -169,6 +171,7 @@ impl App {
             pointer: PointerState::default(),
             gui_router: GuiRouter::default(),
             ui: ui_runtime::AppUi::new(),
+            chat: chat::ChatUi::default(),
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             last_render: now_seconds(),
@@ -225,6 +228,20 @@ impl App {
         };
 
         match event {
+            ControlEvent::OpenChat => {
+                if self.screen == AppScreen::Game && self.game.is_some() {
+                    self.screen = AppScreen::Chat;
+                    self.chat.clear_draft(now_seconds());
+                    self.pointer.release_for_menu();
+                }
+                true
+            }
+            // Chat owns the keyboard: swallow other gameplay controls so new
+            // bindings cannot silently fire while the draft is open.
+            _ if self.screen == AppScreen::Chat => match event {
+                ControlEvent::CloseScreen => self.close_screen(),
+                _ => true,
+            },
             ControlEvent::ToggleInventory => {
                 // Not from a shell screen, and not over the sleep/death
                 // overlays — an inventory opened over a running sleep would
@@ -342,7 +359,7 @@ impl App {
     /// Whether the hotbar HUD draws from its GUI document this frame
     /// (gameplay screen only; presentation-only, input stays with the game).
     pub(crate) fn doc_hud_active(&self) -> bool {
-        matches!(self.screen, AppScreen::Game)
+        matches!(self.screen, AppScreen::Game | AppScreen::Chat)
             && self.game.is_some()
             && ui_runtime::AppUi::doc_backed(crate::gui::GuiKind::Hotbar)
     }

@@ -96,6 +96,10 @@ impl AppUi {
         self.clipboard = clipboard;
     }
 
+    pub fn clipboard_mut(&mut self) -> &mut dyn petramond_ui::TextClipboard {
+        self.clipboard.as_mut()
+    }
+
     /// Whether `kind` is backed by a loaded GUI document.
     pub fn doc_backed(kind: GuiKind) -> bool {
         documents::doc_for(kind).is_some()
@@ -219,6 +223,10 @@ impl AppUi {
     /// The last frame's output (draw list + rects).
     pub fn out(&self) -> &FrameOutput {
         &self.out
+    }
+
+    pub fn draw_mut(&mut self) -> &mut petramond_ui::DrawList {
+        &mut self.out.draw
     }
 
     /// The last frame's slot cells as game-typed [`crate::gui::DocSlot`]s

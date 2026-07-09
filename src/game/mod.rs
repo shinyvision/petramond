@@ -50,7 +50,7 @@ use crate::block_state::HeldBlockState;
 use crate::camera::Camera;
 use crate::entity::ParticleSystem;
 use crate::mathh::IVec3;
-use crate::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, SelfTransform};
+use crate::net::protocol::{ChatLine, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform};
 #[cfg(test)]
 use crate::player::PlayerMode;
 use crate::player::{Player, RaycastHit};
@@ -145,6 +145,9 @@ pub struct Game {
     stream_rate_ema: Option<f32>,
     /// Per-frame scratch for drained server messages (capacity reused).
     incoming: Vec<crate::net::protocol::ServerToClient>,
+    /// Chat lines received from the server and not yet adopted by the app's
+    /// client-side chat history.
+    pending_chat_lines: Vec<ChatLine>,
     /// The client's REPLICA world (role `ClientReplica`): installed from the
     /// server's terrain payloads + deltas, it owns light + meshes for the
     /// renderer and answers every client-side world read — collision, raycast,
@@ -350,6 +353,14 @@ impl Game {
         if self.handle.send(ClientToServer::Pause(paused)).is_err() {
             self.note_connection_lost();
         }
+    }
+
+    pub fn send_chat(&mut self, text: String) {
+        self.outbox.push(ClientToServer::ChatSend { text });
+    }
+
+    pub(crate) fn take_chat_lines(&mut self) -> Vec<ChatLine> {
+        std::mem::take(&mut self.pending_chat_lines)
     }
 
     /// Whether this session fronts a REMOTE server (joined over TCP) rather

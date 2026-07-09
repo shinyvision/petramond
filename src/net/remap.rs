@@ -213,6 +213,7 @@ impl IdRemap {
             | ServerToClient::ColumnUnload(_)
             | ServerToClient::PlayerJoined { .. }
             | ServerToClient::PlayerLeft { .. }
+            | ServerToClient::ChatLine(_)
             | ServerToClient::StreamBatchStart
             | ServerToClient::StreamBatchEnd { .. }
             | ServerToClient::ServerClosing
@@ -323,6 +324,7 @@ impl IdRemap {
             | ClientToServer::PlayerUpdate(_)
             | ClientToServer::Action(_)
             | ClientToServer::MenuClick { .. }
+            | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }
             | ClientToServer::Pause(_)
             | ClientToServer::KeepAlive

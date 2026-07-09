@@ -781,6 +781,20 @@ pub fn gui_close() {
     __rt::expect_unit("GuiClose", __rt::host_call(&HostCall::GuiClose));
 }
 
+/// Deliver one server-authored chat line. `targets: None` broadcasts to every
+/// currently connected client; `Some(ids)` sends only to those player ids
+/// (unknown / left ids are ignored). Markup `$[fg=color]` is parsed by the
+/// server. Empty / whitespace-only text returns `false`.
+pub fn chat_send(text: &str, targets: Option<&[u8]>) -> bool {
+    match __rt::host_call(&HostCall::ChatSend {
+        text: text.into(),
+        targets: targets.map(|ids| ids.to_vec()),
+    }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("ChatSend returned {other:?}"),
+    }
+}
+
 /// One worldgen dispatch's inputs, with the accessors a well-behaved feature
 /// needs. See the seam/determinism contract below — the engine cannot check it
 /// for you; a violation shows up as features cut off at section borders.

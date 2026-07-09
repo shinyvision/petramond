@@ -352,6 +352,9 @@ impl Game {
                 ServerToClient::PlayerLeft { id } => {
                     self.player_roster.remove(&id);
                 }
+                ServerToClient::ChatLine(line) => {
+                    self.pending_chat_lines.push(line);
+                }
                 // Streaming flow control: Start opens the timing window, End
                 // closes it into a measured apply rate and an immediate ack
                 // (both markers apply in THIS same drain loop, so the elapsed

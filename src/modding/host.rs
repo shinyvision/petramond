@@ -331,7 +331,8 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::Teleport { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectRemove { .. }
-        | HostCall::EffectsActive => handle_player_call(&data.mod_id, call),
+        | HostCall::EffectsActive
+        | HostCall::ChatSend { .. } => handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
@@ -837,6 +838,16 @@ fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     })
                     .collect(),
             )
+        }),
+        HostCall::ChatSend { text, targets } => sim_query(|ctx| {
+            // Empty / whitespace-only text is rejected at delivery time too;
+            // report it here so the mod can tell a no-op from a queued send.
+            if text.trim().is_empty() {
+                return HostRet::Bool(false);
+            }
+            ctx.queue
+                .push_action(ModAction::ChatSend { text, targets });
+            HostRet::Bool(true)
         }),
         other => HostRet::Error(format!(
             "non-player call {other:?} mis-routed to handle_player_call (host bug)"

@@ -151,6 +151,10 @@ impl App {
 
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.pointer.set_cursor_position(x, y);
+        if self.screen == super::AppScreen::Chat {
+            self.chat.pointer_move(x, y, super::now_seconds());
+            return;
+        }
         if self.doc_ui_kind().is_some() {
             self.ui
                 .push_input(petramond_ui::InputEvent::PointerMove { x, y });
@@ -158,6 +162,17 @@ impl App {
     }
 
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
+        if self.screen == super::AppScreen::Chat {
+            if button == PointerButton::Primary {
+                let (x, y) = self.pointer.cursor();
+                if down {
+                    self.chat.pointer_down(x, y, super::now_seconds());
+                } else {
+                    self.chat.pointer_up();
+                }
+            }
+            return;
+        }
         self.pointer.set_button(button, down);
         if self.doc_ui_kind().is_some() {
             let (x, y) = self.pointer.cursor();
@@ -179,6 +194,10 @@ impl App {
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
+        if self.screen == super::AppScreen::Chat {
+            self.chat.scroll(delta);
+            return;
+        }
         if self.doc_ui_kind().is_some() {
             // One wheel notch scrolls ~20 logical px, natural direction.
             self.ui.push_input(petramond_ui::InputEvent::Scroll {
@@ -191,6 +210,7 @@ impl App {
 
     pub fn release_pointer_buttons(&mut self) {
         self.pointer.release_buttons();
+        self.chat.pointer_up();
         self.audio.set_loop(None, super::now_seconds());
     }
 

@@ -37,6 +37,18 @@ impl App {
             doc_kind = Some(kind);
         }
         if doc_kind.is_some() {
+            if matches!(
+                self.screen,
+                crate::app::AppScreen::Game | crate::app::AppScreen::Chat
+            ) && self.game.is_some()
+            {
+                self.chat.draw(
+                    self.ui.draw_mut(),
+                    screen_size,
+                    self.screen == crate::app::AppScreen::Chat,
+                    now,
+                );
+            }
             renderer.set_doc_ui(Some((&self.ui.out().draw, self.ui.image_paths())));
         } else {
             self.ui.deactivate();

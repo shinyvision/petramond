@@ -121,6 +121,11 @@ pub(crate) struct ServerGame {
     /// session's menu close, e.g. its chest 1→0 transition), shipped with the
     /// next executed tick's batch so no observer misses them.
     pub(crate) pending_wire_events: Vec<WorldEventMsg>,
+    /// Chat lines accepted since the last pump. Drained to currently connected
+    /// sessions only (per [`crate::server::chat::ChatTargets`]); this is
+    /// intentionally not history.
+    pub(crate) pending_chat: Vec<crate::server::chat::PendingChat>,
+    pub(crate) next_chat_seq: u64,
     /// Wall-clock seconds since the last background autosave.
     pub(crate) autosave_t: f32,
     /// How many players currently have each chest's screen open, keyed by
@@ -257,6 +262,15 @@ impl ServerGame {
         }
         let mut per_session: Vec<Vec<ServerToClient>> =
             self.sessions.iter().map(|_| Vec::new()).collect();
+        if !self.pending_chat.is_empty() {
+            for pending in self.pending_chat.drain(..) {
+                for (s, out) in per_session.iter_mut().enumerate() {
+                    if pending.targets.includes(self.sessions[s].id) {
+                        out.push(ServerToClient::ChatLine(pending.line.clone()));
+                    }
+                }
+            }
+        }
         let queue_room: Vec<usize> = self
             .sessions
             .iter()
@@ -624,6 +638,14 @@ impl ServerGame {
                     gather,
                 ));
             }
+            ClientToServer::ChatSend { text } => {
+                let name = self.sessions[s].name.clone();
+                if let Some(line) =
+                    crate::server::chat::player_line(self.alloc_chat_seq(), &name, &text)
+                {
+                    self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
+                }
+            }
             // Pause is honorable only while the sole connection has always
             // been the local one. Once the server has been open to LAN the
             // gate is permanent — see the `lan_ever_opened` field.
@@ -648,6 +670,57 @@ impl ServerGame {
                 log::warn!("ignoring handshake/lifecycle message on a joined session");
             }
         }
+    }
+
+    /// Queue one accepted chat line for the next pump. Console `say`, player
+    /// chat, and join/leave always use [`ChatTargets::All`](crate::server::chat::ChatTargets::All);
+    /// mods may target a player-id list.
+    pub(crate) fn enqueue_chat(
+        &mut self,
+        line: crate::net::protocol::ChatLine,
+        targets: crate::server::chat::ChatTargets,
+    ) {
+        self.pending_chat
+            .push(crate::server::chat::PendingChat { line, targets });
+    }
+
+    pub(crate) fn enqueue_server_chat(&mut self, text: &str) {
+        if let Some(line) = crate::server::chat::server_line(self.alloc_chat_seq(), text) {
+            self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
+        }
+    }
+
+    /// Mod-/engine-authored helper text (markup allowed; no `[Server]` prefix).
+    pub(crate) fn enqueue_authored_chat(
+        &mut self,
+        text: &str,
+        targets: crate::server::chat::ChatTargets,
+    ) {
+        if let Some(line) = crate::server::chat::authored_line(self.alloc_chat_seq(), text) {
+            self.enqueue_chat(line, targets);
+        }
+    }
+
+    pub(crate) fn enqueue_join_chat(&mut self, name: &str) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_chat(
+            crate::server::chat::joined_line(seq, name),
+            crate::server::chat::ChatTargets::All,
+        );
+    }
+
+    pub(crate) fn enqueue_leave_chat(&mut self, name: &str) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_chat(
+            crate::server::chat::left_line(seq, name),
+            crate::server::chat::ChatTargets::All,
+        );
+    }
+
+    fn alloc_chat_seq(&mut self) -> u64 {
+        let seq = self.next_chat_seq;
+        self.next_chat_seq = self.next_chat_seq.wrapping_add(1);
+        seq
     }
 
     /// Latch a `PlayerUpdate`: transform (trusted verbatim, finite-checked),
@@ -1258,4 +1331,62 @@ pub(crate) fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
         }));
     }
     out
+}
+
+#[cfg(test)]
+mod chat_delivery_tests {
+    use crate::net::protocol::ServerToClient;
+    use crate::server::chat::ChatTargets;
+
+    fn chat_texts(msgs: &[ServerToClient]) -> Vec<String> {
+        msgs.iter()
+            .filter_map(|m| match m {
+                ServerToClient::ChatLine(line) => Some(
+                    line.spans
+                        .iter()
+                        .map(|s| s.text.as_str())
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn targeted_chat_reaches_only_listed_sessions() {
+        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let player = crate::game::session::spawn_player(server.world.seed);
+        let remote_s = server.add_session_for_test(player);
+        let remote_id = server.sessions[remote_s].id;
+
+        server.enqueue_authored_chat("only-remote", ChatTargets::Players(vec![remote_id]));
+        server.enqueue_authored_chat("everyone", ChatTargets::All);
+
+        let out = server.pump(0.0, &mut Vec::new());
+        let local = chat_texts(&out.msgs);
+        assert!(
+            !local.iter().any(|t| t.contains("only-remote")),
+            "local must not receive a remote-only line"
+        );
+        assert!(
+            local.iter().any(|t| t.contains("everyone")),
+            "local must receive broadcast"
+        );
+
+        let remote_msgs = out
+            .remote
+            .iter()
+            .find(|(id, _)| *id == remote_id)
+            .map(|(_, msgs)| msgs.as_slice())
+            .unwrap_or(&[]);
+        let remote = chat_texts(remote_msgs);
+        assert!(
+            remote.iter().any(|t| t.contains("only-remote")),
+            "remote must receive its targeted line"
+        );
+        assert!(
+            remote.iter().any(|t| t.contains("everyone")),
+            "remote must receive broadcast"
+        );
+    }
 }

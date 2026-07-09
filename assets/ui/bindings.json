@@ -185,7 +185,7 @@
     }
    },
    "handles": {},
-   "notes": "HUD only: presentation-driven, receives no input. Hearts are drawn by the game beside the document."
+   "notes": "HUD only: presentation-driven. Hearts/status effects and chat overlays are host-drawn beside/over the document."
   },
   "petramond:inventory": {
    "state": {},

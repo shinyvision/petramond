@@ -19,6 +19,8 @@ use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::{IVec3, Vec3};
 use crate::server::player::PlayerId;
 
+pub(crate) const MAX_CHAT_CHARS: usize = 256;
+
 /// A shared byte buffer on the wire: refcount-bumped over the local
 /// connection, serialized as plain bytes over TCP (deserialization allocates a
 /// fresh `Arc`, which the remap then rewrites in place — no extra copies).
@@ -66,6 +68,34 @@ impl<'de> Deserialize<'de> for SectionBytes {
 pub(crate) struct ModEntry {
     pub id: String,
     pub version: String,
+}
+
+/// The small fixed chat palette understood by clients. Messages carry
+/// structured spans, not inline control text, so clients never parse player
+/// content as formatting.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ChatColor {
+    White,
+    Red,
+    Yellow,
+    Blue,
+    Cyan,
+}
+
+/// One styled text run in a chat line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChatSpan {
+    pub fg: ChatColor,
+    pub text: String,
+}
+
+/// One server-accepted chat line. Sequence numbers are session-local and only
+/// provide a stable ordering key for clients/tests; chat history is not
+/// retained server-side or replayed to later joiners.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChatLine {
+    pub seq: u64,
+    pub spans: Vec<ChatSpan>,
 }
 
 /// Why a `Join` was refused. Kept for protocol stability (clients still handle
@@ -743,6 +773,11 @@ pub(crate) enum ClientToServer {
         shift: bool,
         gather: bool,
     },
+    /// A player-submitted chat line. The server trims/sanitizes/formats it and
+    /// broadcasts the resulting [`ServerToClient::ChatLine`].
+    ChatSend {
+        text: String,
+    },
     /// Acknowledge one streaming batch (`StreamBatchStart`..`StreamBatchEnd`)
     /// and report the rate this client actually applied it at — the
     /// end-to-end flow-control signal the server sizes future batches from
@@ -801,6 +836,7 @@ pub(crate) enum ServerToClient {
     PlayerLeft {
         id: PlayerId,
     },
+    ChatLine(ChatLine),
     ServerClosing,
     KeepAlive,
     Disconnect {
@@ -944,12 +980,28 @@ mod tests {
             shift: false,
             gather: true,
         });
+        roundtrip(&ClientToServer::ChatSend {
+            text: "hello server".into(),
+        });
         roundtrip(&ServerToClient::ModList {
             mods: vec![ModEntry {
                 id: "kitchen".into(),
                 version: "0.1.0".into(),
             }],
         });
+        roundtrip(&ServerToClient::ChatLine(ChatLine {
+            seq: 9,
+            spans: vec![
+                ChatSpan {
+                    fg: ChatColor::Yellow,
+                    text: "Rachel".into(),
+                },
+                ChatSpan {
+                    fg: ChatColor::White,
+                    text: " joined".into(),
+                },
+            ],
+        }));
         roundtrip(&ServerToClient::JoinReject {
             reason: JoinRejectReason::NameTaken,
         });

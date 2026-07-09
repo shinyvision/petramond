@@ -163,7 +163,12 @@ impl App {
     }
 
     pub(super) fn close_screen(&mut self) -> bool {
-        if self.screen.ui_open() {
+        if matches!(self.screen, AppScreen::Chat) {
+            self.chat.clear_draft(super::now_seconds());
+            self.screen = AppScreen::Game;
+            self.pointer.grab_for_gameplay();
+            true
+        } else if self.screen.ui_open() {
             self.close_menu();
             true
         } else if matches!(self.screen, AppScreen::Sleeping) {

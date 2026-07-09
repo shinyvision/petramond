@@ -10,6 +10,7 @@
 
 pub(crate) mod bed;
 pub(crate) mod breaking;
+pub(crate) mod chat;
 pub(crate) mod daynight;
 pub(crate) mod drops;
 pub(crate) mod entities;

@@ -318,6 +318,43 @@ impl Painter<'_> {
         self.text_scaled(s, x, y, 1, color, clip);
     }
 
+    pub fn text_input_view(
+        &mut self,
+        view: &crate::text_edit::TextInputRender,
+        x: i32,
+        y: i32,
+        text_color: [f32; 4],
+        selection_color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
+        if let Some((s0, s1)) = view.selection {
+            self.solid(
+                RectI {
+                    x: x + s0 as i32 * crate::text::ADVANCE,
+                    y: y - 1,
+                    w: (s1 - s0) as i32 * crate::text::ADVANCE - 1,
+                    h: crate::text::GLYPH_H + 2,
+                },
+                selection_color,
+                clip,
+            );
+        }
+        self.text(&view.text, x, y, text_color, clip);
+        if view.show_cursor {
+            let cx = x + view.cursor as i32 * crate::text::ADVANCE - 1;
+            self.solid(
+                RectI {
+                    x: cx,
+                    y: y - 1,
+                    w: 1,
+                    h: crate::text::GLYPH_H + 2,
+                },
+                text_color,
+                clip,
+            );
+        }
+    }
+
     /// Single-line text with a glyph-size multiplier (headings).
     pub fn text_scaled(
         &mut self,

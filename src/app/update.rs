@@ -70,6 +70,7 @@ impl App {
             .as_mut()
             .expect("game exists after shell/no-game guard")
             .tick(dt, &game_input);
+        self.adopt_chat_lines(now);
         self.handle_open_screen_events(&events);
         let mining_block = (self.screen.gameplay_enabled() && game_input.break_held)
             .then(|| {
@@ -107,12 +108,24 @@ impl App {
     /// a live game — the pause menu), and still notice a lost connection:
     /// ticks surface it through `GameEvents`, but here nobody assembles them.
     fn pump_network_and_watch(&mut self) {
-        let lost = self.game.as_mut().and_then(|game| {
+        let lost = if let Some(game) = self.game.as_mut() {
             game.pump_network();
             game.take_connection_lost()
-        });
+        } else {
+            None
+        };
+        self.adopt_chat_lines(super::now_seconds());
         if let Some(reason) = lost {
             self.enter_connection_lost(reason);
+        }
+    }
+
+    fn adopt_chat_lines(&mut self, now: f64) {
+        let Some(game) = self.game.as_mut() else {
+            return;
+        };
+        for line in game.take_chat_lines() {
+            self.chat.push(line, now);
         }
     }
 }

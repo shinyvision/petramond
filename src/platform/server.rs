@@ -97,8 +97,17 @@ pub fn run() {
                 handle.save_all();
                 log::info!("save requested");
             }
+            Some(cmd) if cmd.strip_prefix("say ").is_some() => {
+                let text = cmd.strip_prefix("say ").unwrap().trim();
+                if !text.is_empty() {
+                    handle.say(text.to_owned());
+                    log::info!("say: {text}");
+                }
+            }
             Some("") | None => {}
-            Some(other) => log::warn!("unknown command '{other}' (commands: stop, save)"),
+            Some(other) => {
+                log::warn!("unknown command '{other}' (commands: stop, save, say <message>)")
+            }
         }
         // No local session ever produces gameplay messages, but join/leave
         // broadcasts still land on the local pipe — keep it from banking.

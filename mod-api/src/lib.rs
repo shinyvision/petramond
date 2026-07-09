@@ -600,6 +600,17 @@ pub enum HostCall {
     /// → [`HostRet::Unit`].
     GuiClose,
 
+    /// Deliver one server-authored chat line to connected clients. Chat is
+    /// not simulation state: the host sanitizes/`$[fg=…]` markup-parses
+    /// `text` and ships a structured line out-of-band (not on `TickUpdate`).
+    /// `targets: None` = every currently connected session; `Some(ids)` =
+    /// those player ids only (unknown / already-left ids are ignored). Empty
+    /// / whitespace-only text is a no-op (`Bool(false)`). → [`HostRet::Bool`].
+    ChatSend {
+        text: String,
+        targets: Option<Vec<u8>>,
+    },
+
     // --- Bugfix round 1 (audio): spatial mod sounds -----------------------
     /// Start a positional sound at a fixed world position. The host resolves
     /// `key` through `sounds.json`, queues a deterministic presentation
@@ -1163,6 +1174,14 @@ mod tests {
             kind_key: "wheel:wheel".into(),
         });
         roundtrip(HostCall::GuiClose);
+        roundtrip(HostCall::ChatSend {
+            text: "$[fg=yellow]Hello".into(),
+            targets: None,
+        });
+        roundtrip(HostCall::ChatSend {
+            text: "whisper".into(),
+            targets: Some(vec![0, 2]),
+        });
         roundtrip(HostCall::SoundPlayAt {
             key: "zombies:groan".into(),
             pos: [4.5, 64.0, -2.5],

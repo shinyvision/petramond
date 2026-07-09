@@ -17,6 +17,9 @@ pub(super) enum AppScreen {
     /// connection loss / server close; OK returns to the title.
     ConnectionLost,
     Game,
+    /// Chat input overlay: the world keeps ticking and the hotbar HUD stays
+    /// visible, but gameplay controls are disabled while text is entered.
+    Chat,
     Pause,
     Inventory,
     /// The 3×3 crafting-table screen, opened by right-clicking a placed table.
@@ -101,6 +104,7 @@ impl AppScreen {
         use crate::gui::GuiKind;
         match self {
             AppScreen::Game => GuiKind::Hotbar,
+            AppScreen::Chat => GuiKind::Hotbar,
             AppScreen::Inventory => GuiKind::Inventory,
             AppScreen::CraftingTable => GuiKind::CraftingTable,
             AppScreen::Furnace => GuiKind::Furnace,
