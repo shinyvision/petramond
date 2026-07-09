@@ -58,6 +58,15 @@ type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
 /// Random-tick draws per loaded 16³ section per tick.
 const RANDOM_TICK_SPEED: u32 = 3;
 
+/// Horizontal eligibility radius (chunks) of the random-tick disc around each
+/// player, clamped to `render_dist - 2`. Random ticks are ambience near
+/// players (grass creep, leaf decay, sapling growth), not world simulation —
+/// at the old `render_dist - 2` (30 chunks at the server default) the scan
+/// plus behaviour probes over ~2 800 columns per player burned half the
+/// server tick thread on an idle world. 8 chunks (128 blocks) matches the
+/// vanilla-Minecraft ambience range at ~1/14 the area.
+const RANDOM_TICK_CHUNK_RADIUS: i32 = 8;
+
 /// Per-world tick/update/schedule bookkeeping.
 #[derive(Default)]
 pub(super) struct TickState {
@@ -328,23 +337,34 @@ impl World {
         block.behavior().scheduled_tick(self, pos);
     }
 
-    /// Random block ticks: for each loaded 16³ section near the player that holds
+    /// Random block ticks: for each loaded 16³ section near a player that holds
     /// any random-tickable block, pick [`RANDOM_TICK_SPEED`] cells uniformly from
     /// that section and run each one's behaviour. Air — the vast bulk of many
     /// sections — is skipped on the spot, and a section with nothing tickable is
     /// skipped wholesale via its counter, so the cost is a few RNG draws and array
     /// reads per section.
     ///
-    /// Eligibility is a disc of `render_dist - 2` chunks around the player, so a
-    /// ticked section's horizontal neighbours are loaded (the leaf-decay flood
-    /// reaches a few blocks across borders). A cell that is *still* unloaded is
-    /// treated as support, so nothing decays on missing information.
+    /// Eligibility is a disc of [`RANDOM_TICK_CHUNK_RADIUS`] chunks around EVERY
+    /// streaming anchor (each connected player), never wider than
+    /// `render_dist - 2` so a ticked section's horizontal neighbours are loaded
+    /// (the leaf-decay flood reaches a few blocks across borders). A cell that is
+    /// *still* unloaded is treated as support, so nothing decays on missing
+    /// information. Anchors iterate in session order and a column covered by an
+    /// earlier anchor is skipped, so overlapping discs stay deterministic and
+    /// tick once.
     fn random_tick_sections(&mut self) {
-        let Some(target) = self.last_load_target else {
+        let Some(primary) = self.last_load_target else {
             return;
         };
-        let center = target.center;
-        let r = (target.render_dist - 2).max(0);
+        // (center, radius) per anchor; radii can differ only via render_dist.
+        let mut anchors: Vec<(crate::chunk::ChunkPos, i32)> =
+            Vec::with_capacity(1 + self.extra_load_targets.len());
+        for t in std::iter::once(&primary).chain(self.extra_load_targets.iter()) {
+            anchors.push((
+                t.center,
+                RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0)),
+            ));
+        }
 
         // Gather phase: choose the cells to tick WITHOUT holding a section-map
         // borrow across the dispatch (which mutates the world). `self.sim` and
@@ -352,36 +372,46 @@ impl World {
         // borrow side by side.
         let mut due = std::mem::take(&mut self.sim.batch_scratch);
         due.clear();
-        for dz in -r..=r {
-            for dx in -r..=r {
-                if dx * dx + dz * dz > r * r {
-                    continue;
-                }
-                let cx = center.cx + dx;
-                let cz = center.cz + dz;
-                for cy in Self::column_section_range() {
-                    let Some(section) = self.sections.get(&SectionPos::new(cx, cy, cz)) else {
-                        continue;
-                    };
-                    if !section.has_random_tickable() {
+        for (i, &(center, r)) in anchors.iter().enumerate() {
+            for dz in -r..=r {
+                for dx in -r..=r {
+                    if dx * dx + dz * dz > r * r {
                         continue;
                     }
-                    let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
-                    let blocks = section.blocks_slice();
-                    for _ in 0..RANDOM_TICK_SPEED {
-                        let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
-                        let id = blocks[i];
-                        if id == 0 {
-                            continue; // air — nothing ticks; the overwhelming majority
-                        }
-                        if !Block::from_id(id).has_random_tick() {
+                    let cx = center.cx + dx;
+                    let cz = center.cz + dz;
+                    // Covered by an earlier anchor: already ticked this pass.
+                    if anchors[..i].iter().any(|&(c, cr)| {
+                        let ddx = cx - c.cx;
+                        let ddz = cz - c.cz;
+                        ddx * ddx + ddz * ddz <= cr * cr
+                    }) {
+                        continue;
+                    }
+                    for cy in Self::column_section_range() {
+                        let Some(section) = self.sections.get(&SectionPos::new(cx, cy, cz)) else {
+                            continue;
+                        };
+                        if !section.has_random_tickable() {
                             continue;
                         }
-                        // Decode the flat section index back to world coords (only for a hit).
-                        let lx = i & (SECTION_SIZE - 1);
-                        let lz = (i >> 4) & (SECTION_SIZE - 1);
-                        let ly = i >> 8;
-                        due.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
+                        let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
+                        let blocks = section.blocks_slice();
+                        for _ in 0..RANDOM_TICK_SPEED {
+                            let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
+                            let id = blocks[i];
+                            if id == 0 {
+                                continue; // air — nothing ticks; the overwhelming majority
+                            }
+                            if !Block::from_id(id).has_random_tick() {
+                                continue;
+                            }
+                            // Decode the flat section index back to world coords (only for a hit).
+                            let lx = i & (SECTION_SIZE - 1);
+                            let lz = (i >> 4) & (SECTION_SIZE - 1);
+                            let ly = i >> 8;
+                            due.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
+                        }
                     }
                 }
             }
@@ -511,5 +541,34 @@ mod tests {
             }
         }
         assert!(decayed, "isolated leaf was never random-ticked into decay");
+    }
+
+    /// Random ticks must cover EVERY streaming anchor, not just the primary —
+    /// on a multi-player server the second player's surroundings used to get
+    /// no random ticks at all (no leaf decay, no grass spread) because the
+    /// disc was centred only on `last_load_target`.
+    #[test]
+    fn random_ticks_reach_a_second_anchors_surroundings() {
+        let mut world = World::new(1, 4);
+        // Primary anchor far away; the leaf lives near the EXTRA anchor only.
+        world.insert_empty_column_for_test(ChunkPos::new(40, 0));
+        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
+        world.extra_load_targets = vec![LoadTarget::new(40, 4, 0, 4)];
+        let p = IVec3::new(40 * 16 + 8, 70, 8);
+        world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
+
+        let recipes = Recipes::default();
+        let mut decayed = false;
+        for _ in 0..1_000_000 {
+            world.game_tick(&recipes);
+            if world.chunk_block(p.x, p.y, p.z) == Block::Air.id() {
+                decayed = true;
+                break;
+            }
+        }
+        assert!(
+            decayed,
+            "an isolated leaf near the second anchor never random-ticked into decay"
+        );
     }
 }

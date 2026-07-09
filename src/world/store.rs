@@ -274,6 +274,13 @@ pub struct World {
     /// single-anchor path is byte-identical to before. `last_load_target`
     /// stays the PRIMARY anchor (the priority/fallback target).
     pub(super) extra_load_targets: Vec<LoadTarget>,
+    /// The last missing-column scan found nothing left to request (everything
+    /// wanted is loaded or pending), so the per-pump rescan can be skipped —
+    /// with static anchors that scan is the entire steady-state streaming
+    /// cost. Cleared by anything that can make a wanted column missing again:
+    /// an anchor-set change, a column eviction, or a failed/discarded column
+    /// gen job (see `poll_inner`).
+    pub(super) missing_columns_settled: bool,
     /// Replica-only: each installed column's per-cy `SectionSummary`s from the
     /// server's `ColumnPayload`, indexed `cy - SECTION_MIN_CY`. Consulted by
     /// [`section_summary`](Self::section_summary) for ABSENT sections — the
@@ -412,6 +419,7 @@ impl World {
             light_deferred: FxHashSet::default(),
             last_load_target: None,
             extra_load_targets: Vec::new(),
+            missing_columns_settled: false,
             column_summaries: FxHashMap::default(),
             replication_capture: false,
             block_delta_log: FxHashMap::default(),
@@ -1291,6 +1299,9 @@ impl World {
     /// Evict an entire column: all its loaded sections, meshes, queues, per-column data,
     /// and any pending gen.
     pub(super) fn remove_column(&mut self, pos: ChunkPos) {
+        // An evicted column is missing again if an anchor still wants it —
+        // the settled short-circuit must not hide it from the next scan.
+        self.missing_columns_settled = false;
         for cy in Self::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections.remove(&sp);

@@ -104,11 +104,14 @@ impl World {
         // The single-anchor path: any multi-anchor residue is gone.
         self.extra_load_targets.clear();
         if self.last_load_target == Some(target) {
-            self.request_missing_columns(target);
+            if !self.missing_columns_settled {
+                self.request_missing_columns(target);
+            }
             return;
         }
         let prev = self.last_load_target;
         self.last_load_target = Some(target);
+        self.missing_columns_settled = false;
         // The player ring and disc edge moved; deep-visibility must re-evaluate.
         self.vis_dirty = true;
         let vertical_moved = prev.is_none_or(|p| p.center_cy != target.center_cy);
@@ -173,11 +176,14 @@ impl World {
         let unchanged =
             self.last_load_target == Some(targets[0]) && self.extra_load_targets == targets[1..];
         if unchanged {
-            self.request_missing_columns_multi(&targets);
+            if !self.missing_columns_settled {
+                self.request_missing_columns_multi(&targets);
+            }
             return;
         }
         self.last_load_target = Some(targets[0]);
         self.extra_load_targets = targets[1..].to_vec();
+        self.missing_columns_settled = false;
         self.vis_dirty = true;
         self.pending
             .retain(|pos, _| targets.iter().any(|t| Self::column_wanted(*t, *pos)));
@@ -243,6 +249,8 @@ impl World {
                 }
             }
         }
+        // Same settled short-circuit as the single-anchor scan.
+        self.missing_columns_settled = missing.len() <= submit_limit;
         missing.sort_by_key(|(priority, _)| *priority);
         for (priority, pos) in missing.into_iter().take(submit_limit) {
             self.submit_column_job(priority, pos);
@@ -433,6 +441,15 @@ impl World {
                 }
                 missing.push((target.column_priority_key(pos), pos));
             }
+        }
+        // Everything wanted is loaded or queued after this pass: the per-pump
+        // rescan is pure waste until an eviction / failure / anchor change
+        // un-settles it (see `missing_columns_settled`). Only valid while this
+        // single target IS the whole anchor set — under multi-anchor streaming
+        // this scan cannot see the extra anchors' columns, so it must not mark
+        // the wider wanted-set settled.
+        if self.extra_load_targets.is_empty() {
+            self.missing_columns_settled = missing.len() <= submit_limit;
         }
         missing.sort_by_key(|(priority, _)| *priority);
         for (priority, pos) in missing.into_iter().take(submit_limit) {
@@ -903,6 +920,9 @@ impl World {
                 // the sim guard around it.
                 GenOutput::ColumnFailed(pos) => {
                     self.pending.remove(&pos);
+                    // No longer pending and not installed: the column is
+                    // missing again — let the scan re-find it.
+                    self.missing_columns_settled = false;
                 }
                 GenOutput::SectionFailed(sp) => {
                     self.pending_sections.remove(&sp);
@@ -1060,7 +1080,12 @@ impl World {
             // Deferred first-time sections can become ready without a fresh ingest
             // (e.g. a target move re-shaped the wanted set), so always re-check.
             self.flush_settled_deferred(target);
-            self.request_missing_columns(target);
+            // Belt-and-suspenders single-anchor rescan; skipped once settled
+            // (the per-pump anchor update rescans whenever unsettled) and under
+            // multi-anchor streaming, where `update_load_multi` owns the scan.
+            if !self.missing_columns_settled && self.extra_load_targets.is_empty() {
+                self.request_missing_columns(target);
+            }
             return new_columns;
         }
 
@@ -1693,6 +1718,45 @@ mod tests {
         assert!(
             !world.chunk_loaded(20, 0),
             "a column no anchor keeps is evicted"
+        );
+    }
+
+    /// The settled short-circuit skips the per-pump missing-column rescan but
+    /// must never hide a column that became missing WITHOUT an anchor change
+    /// (eviction, failed gen job) — a stale flag here means terrain that never
+    /// loads again while the player stands still.
+    #[test]
+    fn settled_missing_scan_resumes_after_eviction() {
+        let mut world = World::new(0, 4);
+        // Repeated same-target updates submit the whole wanted disc (64 per
+        // call) and then settle.
+        for _ in 0..100 {
+            world.update_load_facing(0, 4, 0, 1.0, 0.0);
+            if world.missing_columns_settled {
+                break;
+            }
+        }
+        assert!(
+            world.missing_columns_settled,
+            "a fully requested disc settles the scan"
+        );
+        let victim = ChunkPos::new(0, 0);
+        assert!(
+            world.pending.contains_key(&victim) || world.column_gen.contains_key(&victim),
+            "the player's own column is requested or loaded"
+        );
+
+        // A column dropped without any anchor change must be re-found by the
+        // next same-target scan.
+        world.remove_column(victim);
+        assert!(
+            !world.missing_columns_settled,
+            "eviction un-settles the scan"
+        );
+        world.update_load_facing(0, 4, 0, 1.0, 0.0);
+        assert!(
+            world.pending.contains_key(&victim),
+            "the evicted column is re-requested by the next scan"
         );
     }
 
