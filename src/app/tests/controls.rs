@@ -1,5 +1,6 @@
 use super::{app, app_with_grass, cursor_over_slot};
 use crate::app::{App, CursorIcon, CursorPolicy};
+#[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
 use crate::audio::Sound;
 use crate::camera::Camera;
 use crate::controls::{Control, Modifiers, PointerButton, TextKey};
@@ -173,6 +174,9 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     assert_eq!(app.screen, crate::app::AppScreen::Title);
 }
 
+// Asserts the playback engine's play record; the featureless (headless-server)
+// build's silent stub records nothing by design.
+#[cfg(feature = "audio")]
 #[test]
 fn shell_button_and_toggle_activations_play_ui_click_sound() {
     use crate::gui::GuiKind;

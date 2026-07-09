@@ -124,6 +124,9 @@ pub enum SoundCategory {
 /// parameters. Clips are read through the asset roots (so a mod pack can
 /// override one by shipping the same relative path) and decoded once at
 /// startup (see [`crate::audio::Audio`]); this is just the static description.
+/// Playback fields are read only by the `audio`-feature engine; the featureless
+/// (headless-server) build keeps the table for names/net tables alone.
+#[cfg_attr(not(feature = "audio"), allow(dead_code))]
 pub(crate) struct SoundDef {
     pub sound: Sound,
     /// The row's registry name (`"petramond:wood_punch"`, `"mod_id:zap"`) — the key mod

@@ -20,6 +20,13 @@ resolver = "2"
 crate-type = ["rlib"]
 
 [features]
+default = ["audio"]
+# Client sound PLAYBACK (rodio → cpal → ALSA on Linux). Off, `crate::audio::Audio`
+# is a signature-identical silent stub and no audio system library is needed at
+# build or run time — how the headless server builds on machines without
+# libasound: `cargo build --release --no-default-features --bin petramond_server`.
+# The sound REGISTRY (names/defs the sim and net tables use) is always compiled.
+audio = ["dep:rodio"]
 # Worldgen tests are slow (heavy noise/terrain generation) and worldgen is stable,
 # so they are opt-in: run them with `cargo test --features worldgen-tests`. Plain
 # `cargo test` skips them — the worldgen test modules are gated
@@ -29,6 +36,9 @@ worldgen-tests = []
 [[bin]]
 name = "petramond_native"
 path = "src/bin/native.rs"
+# The playable client must never silently ship without sound: building it
+# featureless is an error, not a quiet degradation.
+required-features = ["audio"]
 
 # Headless dedicated server: the same ServerGame/loop the in-game
 # "Open to LAN" runs, with no local session and no renderer.
@@ -66,8 +76,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"
 # Audio playback (cpal output + symphonia ogg/vorbis decode only — no mp3/flac/wav/
-# recording), kept lean like `image`/`noise`. Used by `crate::audio`.
-rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"] }
+# recording), kept lean like `image`/`noise`. Used by `crate::audio`; optional
+# behind the default-on `audio` feature (headless server builds exclude it).
+rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"], optional = true }
 mimalloc = "0.1.52"
 # Fast fixed-seed hasher for the per-voxel hot maps (world sections, A* scratch,
 # tick/mesh sets) — std's SipHash is a keyed cryptographic hash and its cost

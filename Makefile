@@ -39,12 +39,13 @@ run-release: build-native
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
 		$(CARGO) run --release --bin petramond_native
 
-# Headless dedicated server (no GPU, no window). `make run-server WORLD=myworld`.
+# Headless dedicated server (no GPU, no window, no audio libs — built without
+# the default `audio` feature). `make run-server WORLD=myworld`.
 PORT ?= 7434
 run-server:
 	@test -n "$(WORLD)" || { echo "usage: make run-server WORLD=<world-name> [PORT=7434]"; exit 2; }
 	PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) PETRAMOND_PORT=$(PORT) \
-		$(CARGO) run --profile playtest --bin petramond_server -- $(WORLD)
+		$(CARGO) run --profile playtest --no-default-features --bin petramond_server -- $(WORLD)
 
 dev:
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
