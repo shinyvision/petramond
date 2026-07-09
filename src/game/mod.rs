@@ -198,10 +198,18 @@ pub struct Game {
     /// (`tick_player`) — reused verbatim by `build_player_update` so the wire
     /// intent can never drift from what the prediction simulated.
     predicted_input: crate::player::Input,
-    /// One-shot hand triggers latched this frame for P0 jab/swing (before
-    /// server confirmation). Consumed into `GameEvents` in `tick_receive`.
+    /// One-shot hand/presentation triggers latched this frame for P0
+    /// prediction — the ONLY source of the own hand animation (the server
+    /// never echoes self-initiated one-shots back; see
+    /// WIKI/client-prediction.md). Consumed into `GameEvents` in
+    /// `tick_receive`.
     local_hand_jab: bool,
     local_hand_swing: bool,
+    local_hand_threw: bool,
+    /// The block the LOCAL mining timer finished this frame (hand pop).
+    local_broke_block: Option<crate::block::Block>,
+    /// The block the place ghost predicted this frame (hand pop).
+    local_placed_block: Option<crate::block::Block>,
     /// Optimistic ghost place cell (cleared on accept/deny or replica delta).
     place_ghost: Option<(IVec3, u8)>,
     fallback_world: SurfaceDensitySystem,
@@ -301,9 +309,12 @@ impl Game {
 
     /// Select hotbar `slot` (number key). Client-owned: the index rides the
     /// next `PlayerUpdate.hotbar_slot`; any hotbar change resets the R-key
-    /// rotation cycle (clear-on-select).
+    /// rotation cycle (clear-on-select). The replicated view mirrors it
+    /// immediately — the server never echoes the index back (a lagged echo
+    /// would yank a fast scroll).
     pub fn set_active_hotbar(&mut self, slot: u8) {
         self.player.inventory.set_active(slot);
+        self.self_view.inventory.set_active(slot);
         self.held_rotation.clear();
     }
 
@@ -442,6 +453,14 @@ impl Game {
     /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
     /// single item (Q). No-op with an empty hand.
     pub fn drop_selected_item(&mut self, all: bool) {
+        // P0 throw animation is client-owned: trigger when the hand holds
+        // anything (the server never echoes the one-shot back).
+        let slot = self.self_view.inventory.active_slot() as usize;
+        self.local_hand_threw |= self
+            .self_view
+            .inventory
+            .slot(slot)
+            .is_some();
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             let slot = self.self_view.inventory.active_slot() as usize;
@@ -463,6 +482,7 @@ impl Game {
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
     /// then click outside the panel). No-op when the cursor is empty.
     pub fn throw_cursor_stack(&mut self) {
+        self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             *self.self_view.inventory.cursor_mut() = None;
@@ -476,6 +496,7 @@ impl Game {
     /// Throw a single item off the cursor-held stack (right-click outside the
     /// panel while dragging). No-op when the cursor is empty.
     pub fn throw_cursor_one(&mut self) {
+        self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             if let Some(cur) = self.self_view.inventory.cursor_mut().as_mut() {

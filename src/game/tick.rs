@@ -132,9 +132,13 @@ pub enum WorldEvent {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GameEvents {
-    /// The block placed this frame, if any.
+    // The hand one-shots below are CLIENT-PREDICTED (latched at click/finish
+    // time) — the server never echoes self-initiated actions back, so each
+    // fires exactly once. World-visible confirmation (sounds, bursts) comes
+    // from the replicated world events instead.
+    /// The place ghost predicted a block this frame, if any.
     pub placed_block: Option<Block>,
-    /// The block broken (player-mined) this frame, if any.
+    /// The local mining timer finished a block this frame, if any.
     pub broke_block: Option<Block>,
     /// The hand swung this frame for an attack.
     pub swung_hand: bool,
@@ -165,15 +169,11 @@ pub struct GameEvents {
     /// The player right-clicked a bed this frame. This fires even in daytime,
     /// when the click sets the spawn point but does not start sleep.
     pub bed_interacted: bool,
-    /// The player's right-click was CONSUMED by a block interaction this frame
-    /// (any `try_open_interactable` capability: container screens, mod GUIs,
-    /// doors, beds, a mod cancelling `block_interact`…). Set at the sim's one
-    /// decision point, so the interact hand jab is the DEFAULT for every
-    /// interaction — present and future — with no per-kind enumeration.
+    /// The player's use click PREDICTABLY does something this frame (an
+    /// interactable target, a usable/edible held item, a plausible placement)
+    /// — the P0 hand jab, latched at click time. Covers what the removed
+    /// `used_item` echo used to animate.
     pub interacted: bool,
-    /// The held item's own right-click use fired this frame (a bucket scooping
-    /// or pouring water) — plays the same hand jab as placing.
-    pub used_item: bool,
     /// The player took damage this frame (post `player_damage_pre`, amount
     /// > 0) — plays the hurt sound and kicks the screen/hand shake.
     pub player_damaged: bool,
@@ -488,10 +488,14 @@ impl Game {
             &self.replica,
             tool,
         );
-        // Prefer local crack over the lagged SelfView copy.
-        self.self_view.mining = self.local_mining.overlay().or(self.self_view.mining);
+        // The own crack overlay is CLIENT-OWNED: the local timer is its only
+        // source (the server never ships it back — SelfState carries no
+        // `mining` echo).
+        self.self_view.mining = self.local_mining.overlay();
 
         if let Some(ev) = event {
+            // P0 break hand pop, at the local finish (never echoed back).
+            self.local_broke_block = Some(ev.block);
             // No duration claim rides the wire: the server validates the
             // finish against ITS OWN observed mining window (breaking.rs).
             let request_id = self.prediction.begin_track_only();
@@ -514,19 +518,24 @@ impl Game {
     /// and `open_*` fields read exactly as they did pre-wire).
     fn assemble_game_events(&mut self, events: ClientEvents) -> GameEvents {
         let se = events.self_events;
+        // The hand one-shots are fed EXCLUSIVELY by the local prediction
+        // latches — the server never echoes self-initiated actions back
+        // (WIKI/client-prediction.md), so nothing plays twice.
         let local_jab = std::mem::take(&mut self.local_hand_jab);
         let local_swing = std::mem::take(&mut self.local_hand_swing);
+        let local_threw = std::mem::take(&mut self.local_hand_threw);
+        let local_broke = std::mem::take(&mut self.local_broke_block);
+        let local_placed = std::mem::take(&mut self.local_placed_block);
         let mut out = GameEvents {
-            placed_block: se.placed_block.map(Block::from_id),
-            broke_block: se.broke_block.map(Block::from_id),
-            swung_hand: se.swung_hand || local_swing,
+            placed_block: local_placed,
+            broke_block: local_broke,
+            swung_hand: local_swing,
             picked_up_item: se.picked_up_item,
-            threw_item: se.threw_item,
+            threw_item: local_threw,
             close_mod_gui: se.close_mod_gui,
             toggled_door: se.toggled_door,
             bed_interacted: se.bed_interacted,
-            interacted: se.interacted || local_jab,
-            used_item: se.used_item,
+            interacted: local_jab,
             player_damaged: se.player_damaged,
             player_died: se.player_died,
             sleep_ended: se.sleep_ended,
@@ -741,6 +750,8 @@ impl Game {
             .replica
             .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
         self.place_ghost = Some((place_pos, block.0));
+        // P0 place hand pop, at prediction time (never echoed back).
+        self.local_placed_block = Some(block);
         Some(id)
     }
 

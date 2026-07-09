@@ -157,12 +157,14 @@ impl SelfView {
             .iter()
             .map(|&(id, remaining)| (crate::effect::Effect(id), remaining))
             .collect();
+        // The active hotbar INDEX is client-owned (it rides `PlayerUpdate`):
+        // a full-body ship keeps the CURRENT local selection, never a server
+        // echo that would yank a fast scroll back. `mining` is likewise
+        // untouched — the own crack overlay is the local timer's.
         if let Some(slots) = &state.inventory {
-            self.inventory = inventory_from_wire(slots, state.active_slot);
-        } else {
-            self.inventory.set_active(state.active_slot);
+            let active = self.inventory.active_slot();
+            self.inventory = inventory_from_wire(slots, active);
         }
-        self.mining = state.mining;
         self.eating = state.eating.map(|p| p as f32 / 255.0);
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
@@ -424,10 +426,6 @@ impl Game {
         );
         if let Some(state) = &update.self_state {
             self.self_view.apply(state);
-            // Local mining crack wins over the lagged SelfState copy.
-            if let Some(overlay) = self.local_mining.overlay() {
-                self.self_view.mining = Some(overlay);
-            }
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {

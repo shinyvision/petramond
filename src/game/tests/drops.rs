@@ -607,16 +607,18 @@ fn a_noop_throw_does_not_arm_the_place_jab() {
 }
 
 #[test]
-fn tick_reports_throw_event_only_when_the_drop_is_applied() {
+fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
     let mut game = game();
     game.server.sessions[0].player.inventory = filled_inventory();
     game.server.sessions[0].player.inventory.set_active(0);
+    game.sync_self_view_for_test();
     game.drop_selected_item(false);
 
+    // The hand animation is CLIENT-OWNED: it fires on the click frame...
     let events = game.tick(1.0 / 60.0, &GameInput::default());
     assert!(
-        !events.threw_item,
-        "a frame with no fixed tick must not report a queued throw"
+        events.threw_item,
+        "the throw animates at the click frame (P0 prediction)"
     );
     assert!(
         game.server.sessions[0]
@@ -627,8 +629,10 @@ fn tick_reports_throw_event_only_when_the_drop_is_applied() {
         "a frame with no fixed tick must not mutate the inventory"
     );
 
+    // ...and the tick that APPLIES the drop server-side does not replay it
+    // (the server never echoes self-initiated one-shots).
     let applied = game.tick(TICK_DT, &GameInput::default());
-    assert!(applied.threw_item, "the applying tick reports the throw");
+    assert!(!applied.threw_item, "the server tick must not echo the throw");
     let next = game.tick(TICK_DT, &GameInput::default());
     assert!(!next.threw_item, "the throw event is one-shot");
 }

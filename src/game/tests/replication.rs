@@ -588,7 +588,6 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         "the placement broadcast its position, got {:?}",
         update.events
     );
-    assert_eq!(update.self_events.placed_block, Some(Block::Dirt.0));
 
     // Break: hold the primary button on the placed dirt until it gives.
     game.server.sessions[0].look = Some(super::common::hit(placed_at, IVec3::Y));
@@ -601,7 +600,6 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             WorldEventMsg::BlockBroken { pos, block_id, .. } => Some((*pos, *block_id)),
             _ => None,
         }) {
-            assert_eq!(update.self_events.broke_block, Some(Block::Dirt.0));
             broke = Some(ev);
             break;
         }
@@ -650,7 +648,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
         tick: 10,
         ..Default::default()
     };
-    first.self_events.swung_hand = true;
+    first.self_events.picked_up_item = true;
     first.events.push(WorldEventMsg::ChestOpened {
         pos: crate::mathh::IVec3::new(1, 65, 1),
     });
@@ -669,7 +667,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
 
     let ev = &game.game.pending_events;
     assert!(
-        ev.self_events.swung_hand && ev.self_events.player_damaged,
+        ev.self_events.picked_up_item && ev.self_events.player_damaged,
         "one-shots from BOTH batches survive (OR, not overwrite)"
     );
     assert_eq!(

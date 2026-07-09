@@ -429,6 +429,25 @@ fn transform_corrections_ship_only_on_real_divergence() {
 }
 
 #[test]
+fn hotbar_selection_is_client_owned_and_never_yanked_by_a_batch() {
+    let mut game = game();
+    game.server.sessions[0].player.inventory = filled_inventory();
+
+    // The client scrolls ahead of the server (which still thinks slot 0)...
+    game.game.set_active_hotbar(3);
+    assert_eq!(game.self_view.inventory.active_slot(), 3);
+
+    // ...and a full-inventory batch from the lagging server must keep the
+    // client's newer selection, not echo the stale one back.
+    game.sync_self_view_for_test();
+    assert_eq!(
+        game.self_view.inventory.active_slot(),
+        3,
+        "a server batch must never yank the client-owned hotbar selection"
+    );
+}
+
+#[test]
 fn menu_click_ships_request_id_and_server_accepts() {
     let mut game = game();
     game.server.sessions[0].player.inventory = filled_inventory();

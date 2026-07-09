@@ -879,16 +879,19 @@ mod tests {
         let mut remote = ServerHandle::from_remote(conn);
 
         // Connected: the world runs and terrain streams (drain_until acks
-        // the batches like a live client).
+        // the batches like a live client). Terrain FIRST — the whole
+        // render-dist-2 window can finish streaming before the first tick
+        // lands, and a drain that waited for a tick would silently discard
+        // every section payload it swept past.
+        drain_until(&mut remote, Duration::from_secs(60), |msg| {
+            matches!(msg, ServerToClient::SectionData(_)).then_some(())
+        })
+        .expect("terrain streams to the headless server's first player");
         let first = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
             ServerToClient::Tick(u) => Some(u.tick),
             _ => None,
         })
         .expect("ticks flow to the joined player");
-        drain_until(&mut remote, Duration::from_secs(60), |msg| {
-            matches!(msg, ServerToClient::SectionData(_)).then_some(())
-        })
-        .expect("terrain streams to the headless server's first player");
         let last_seen = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
             ServerToClient::Tick(u) if u.tick > first + 5 => Some(u.tick),
             _ => None,

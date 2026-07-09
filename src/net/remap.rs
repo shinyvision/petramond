@@ -179,13 +179,9 @@ impl IdRemap {
                 }
                 // World events: block ids map to air (a cell-shaped fact);
                 // unknown mob/sound events are DROPPED (skip semantics).
+                // `self_events` carries no registry ids (the hand one-shots
+                // are client-predicted, never echoed).
                 t.events.retain_mut(|ev| self.remap_world_event(ev));
-                if let Some(b) = &mut t.self_events.broke_block {
-                    *b = self.block(*b);
-                }
-                if let Some(b) = &mut t.self_events.placed_block {
-                    *b = self.block(*b);
-                }
                 if let Some(sync) = &mut t.menu_sync {
                     self.remap_menu_sync(sync);
                 }
@@ -580,8 +576,6 @@ mod tests {
                         count: 1,
                     }),
                 ]),
-                active_slot: 0,
-                mining: None,
                 eating: None,
                 sleeping: None,
                 sleep_bed: None,

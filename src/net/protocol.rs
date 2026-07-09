@@ -454,10 +454,10 @@ pub(crate) struct PlayerStateRow {
     pub visible: bool,
     /// Selected hotbar item (wire item id); `None` for an empty hand.
     pub held_item: Option<u8>,
-    /// The in-progress mining target + crack stage (0..=9) — the same overlay
-    /// state `SelfState::mining` ships for the recipient's own hand. Drives
-    /// the remote body's looping arm swing (`is_some()`) AND the remote break
-    /// (crack) overlay every observer renders.
+    /// The in-progress mining target + crack stage (0..=9). Drives the remote
+    /// body's looping arm swing (`is_some()`) AND the remote break (crack)
+    /// overlay every observer renders. The recipient's OWN crack overlay is
+    /// client-owned (its local mining timer) and never ships back to it.
     pub mining: Option<(IVec3, u8)>,
     /// Mid-eat — drives the remote chew pose (progress is approximated
     /// client-side; only the blend/nibble channels pose the body).
@@ -523,11 +523,12 @@ pub(crate) struct SelfState {
     /// All 36 slots in index order, then the cursor stack LAST (the
     /// `SelfRestore` layout). `None` while the revision hasn't moved since the
     /// last update the recipient saw.
+    ///
+    /// The active hotbar INDEX and the own mining overlay deliberately do NOT
+    /// ride here: both are client-owned (the index rides `PlayerUpdate`, the
+    /// crack overlay is the local timer) — echoing them back would replay or
+    /// stomp the client's own newer state.
     pub inventory: Option<Vec<Option<ItemSlotWire>>>,
-    /// The active hotbar slot (always sent — one byte).
-    pub active_slot: u8,
-    /// The in-progress mining target + crack stage (0..=9), or `None`.
-    pub mining: Option<(IVec3, u8)>,
     /// The in-progress eat's progress, 0-255 over the food's eat time.
     pub eating: Option<u8>,
     /// The in-progress sleep's fade progress, 0-255 (clamped at full).
@@ -643,14 +644,12 @@ pub(crate) enum OpenScreen {
 /// block ids (they pick the client's hand animation + sound mapping).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SelfEvents {
-    pub broke_block: Option<u8>,
-    pub placed_block: Option<u8>,
-    pub swung_hand: bool,
-    pub threw_item: bool,
+    // The hand-animation one-shots (broke/placed/swung/threw/used/interacted)
+    // deliberately do NOT ride here: the recipient initiated those actions and
+    // already animated them at click time — echoing them back replays the
+    // animation one RTT later. Observers get them via `player_actions`.
     pub picked_up_item: bool,
-    pub used_item: bool,
     pub bed_interacted: bool,
-    pub interacted: bool,
     pub player_damaged: bool,
     pub player_died: bool,
     pub sleep_ended: bool,
@@ -666,14 +665,8 @@ impl SelfEvents {
     /// Fold another batch's one-shots in (booleans OR, options latest-wins) —
     /// used client-side if more than one `TickUpdate` lands in a frame.
     pub(crate) fn merge_from(&mut self, other: SelfEvents) {
-        self.broke_block = other.broke_block.or(self.broke_block);
-        self.placed_block = other.placed_block.or(self.placed_block);
-        self.swung_hand |= other.swung_hand;
-        self.threw_item |= other.threw_item;
         self.picked_up_item |= other.picked_up_item;
-        self.used_item |= other.used_item;
         self.bed_interacted |= other.bed_interacted;
-        self.interacted |= other.interacted;
         self.player_damaged |= other.player_damaged;
         self.player_died |= other.player_died;
         self.sleep_ended |= other.sleep_ended;
@@ -1202,8 +1195,6 @@ mod tests {
                     }),
                     None,
                 ]),
-                active_slot: 3,
-                mining: Some((IVec3::new(1, 64, 2), 6)),
                 eating: Some(128),
                 sleeping: None,
                 sleep_bed: None,
@@ -1240,8 +1231,7 @@ mod tests {
                 }),
             ],
             self_events: SelfEvents {
-                placed_block: Some(12),
-                interacted: true,
+                picked_up_item: true,
                 open_screen: Some(OpenScreen::ModGui {
                     kind_key: "kitchen:oven".into(),
                     pos: Some(IVec3::new(4, 65, 4)),

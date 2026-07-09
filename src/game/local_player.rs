@@ -39,9 +39,13 @@ impl Game {
             // counter unambiguously means "R pressed on the current selection".
             let before = self.player.inventory.active_slot();
             self.player.inventory.scroll_active(input.hotbar_scroll);
-            if self.player.inventory.active_slot() != before {
+            let after = self.player.inventory.active_slot();
+            if after != before {
                 self.held_rotation.clear();
             }
+            // Mirror into the replicated view (selection is client-owned;
+            // the server never echoes it back).
+            self.self_view.inventory.set_active(after);
         }
     }
 

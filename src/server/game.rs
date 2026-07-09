@@ -556,15 +556,13 @@ impl ServerGame {
         } else {
             None
         };
+        // The hand one-shots (broke/placed/swung/threw/used/interacted) are
+        // deliberately absent: the recipient initiated them and animated at
+        // click time — see WIKI/client-prediction.md's echo rule. Observers
+        // get them via the shared `player_actions` rows.
         SelfEvents {
-            broke_block: p.broke_block.map(|b| b.0),
-            placed_block: p.placed_block.map(|b| b.0),
-            swung_hand: p.swung_hand,
-            threw_item: p.threw_item,
             picked_up_item: p.picked_up_item,
-            used_item: p.used_item,
             bed_interacted: p.bed_interacted,
-            interacted: p.interacted,
             player_damaged: p.player_damaged,
             player_died: p.player_died,
             sleep_ended: p.sleep_ended,
@@ -643,8 +641,6 @@ impl ServerGame {
                 .collect(),
             inventory_revision: revision,
             inventory,
-            active_slot: player.inventory.active_slot(),
-            mining: sess.mining.overlay(),
             eating: sess
                 .eating_progress()
                 .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),

@@ -82,12 +82,12 @@ impl App {
         }
 
         self.hand.broke |= events.broke_block.is_some();
-        // `interacted` is the sim's own "a block interaction consumed the
-        // click" verdict, so every interaction — engine screens, mod GUIs,
-        // doors, beds — jabs by default with no per-kind list here.
+        // `interacted` is the client's own "this click predictably does
+        // something" verdict (latched at click time — the server never echoes
+        // self one-shots back), so every effectful use click — screens, mod
+        // GUIs, doors, beds, item uses, placements — jabs exactly once.
         self.hand.placed |= events.placed_block.is_some()
             || events.threw_item
-            || events.used_item
             || events.interacted;
         self.hand.swung |= events.swung_hand;
     }
