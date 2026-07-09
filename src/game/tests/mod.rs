@@ -11,6 +11,7 @@ mod kitchen_mod;
 mod menu;
 mod net_pipe;
 mod placement;
+mod prediction;
 mod remote_join;
 mod replica_world;
 mod replication;

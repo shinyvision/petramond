@@ -4,14 +4,14 @@ use crate::mathh::Vec3;
 use crate::world::World;
 
 pub(super) const WALK: f32 = 4.3;
-pub(super) const SPRINT: f32 = 5.6;
+pub(crate) const SPRINT: f32 = 5.6;
 pub(super) const SPECTATOR_SPEED: f32 = 48.0;
-pub(super) const SPECTATOR_SPRINT: f32 = 96.0;
+pub(crate) const SPECTATOR_SPRINT: f32 = 96.0;
 pub(super) const GRAVITY: f32 = 28.0;
 /// Jump take-off speed. Apex height = v0² / (2·g) = 8.4²/56 ≈ 1.26 blocks, so a
 /// held jump clears a single full block with margin.
-const JUMP_V0: f32 = 8.4;
-const TERMINAL: f32 = 30.0;
+pub(crate) const JUMP_V0: f32 = 8.4;
+pub(crate) const TERMINAL: f32 = 30.0;
 /// Horizontal friction on the ground — purely a decay rate, applied only when
 /// there is no input: the fraction of the player's speed shed in one reference
 /// frame (see [`friction_retain`]). Modest, so a body that lands or stops with

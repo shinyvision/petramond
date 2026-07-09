@@ -11,6 +11,8 @@ use crate::net::protocol::{
 };
 use crate::server::player::PlayerId;
 
+use super::prediction;
+
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
 /// rate. World simulation (block updates, scheduled ticks, water flow) advances
 /// in whole steps of this size.
@@ -395,6 +397,7 @@ impl Game {
         self.tick_replica_view();
         self.refresh_target();
         self.update_third_person(dt);
+        self.tick_local_mining(dt, input);
 
         let update = self.build_player_update(input);
         self.build_outgoing_messages(input, update);
@@ -467,21 +470,62 @@ impl Game {
         self.incoming = msgs; // drained; capacity reused
     }
 
+    /// Advance the local mining timer for crack overlay and emit
+    /// `BreakFinished` when the client finishes a break.
+    fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
+        let tool = self
+            .self_view
+            .inventory
+            .selected()
+            .and_then(|st| st.item.tool());
+        let look = self.look.map(|h| h.block);
+        let inventory_open = !input.gameplay_enabled;
+        let event = self.local_mining.update(
+            dt,
+            look,
+            input.break_held && input.gameplay_enabled,
+            inventory_open,
+            &self.replica,
+            tool,
+        );
+        // Prefer local crack over the lagged SelfView copy.
+        self.self_view.mining = self.local_mining.overlay().or(self.self_view.mining);
+
+        if let Some(ev) = event {
+            // No duration claim rides the wire: the server validates the
+            // finish against ITS OWN observed mining window (breaking.rs).
+            let request_id = self.prediction.begin_track_only();
+            let tool_item_id = self
+                .self_view
+                .inventory
+                .selected()
+                .map(|st| st.item.0);
+            self.outbox
+                .push(ClientToServer::Action(PlayerAction::BreakFinished {
+                    request_id,
+                    pos: ev.pos,
+                    tool_item_id,
+                }));
+        }
+    }
+
     /// Map this frame's replicated event payloads onto the app-facing
     /// `GameEvents` shape (the app's consumption is unchanged: the one-shots
     /// and `open_*` fields read exactly as they did pre-wire).
     fn assemble_game_events(&mut self, events: ClientEvents) -> GameEvents {
         let se = events.self_events;
+        let local_jab = std::mem::take(&mut self.local_hand_jab);
+        let local_swing = std::mem::take(&mut self.local_hand_swing);
         let mut out = GameEvents {
             placed_block: se.placed_block.map(Block::from_id),
             broke_block: se.broke_block.map(Block::from_id),
-            swung_hand: se.swung_hand,
+            swung_hand: se.swung_hand || local_swing,
             picked_up_item: se.picked_up_item,
             threw_item: se.threw_item,
             close_mod_gui: se.close_mod_gui,
             toggled_door: se.toggled_door,
             bed_interacted: se.bed_interacted,
-            interacted: se.interacted,
+            interacted: se.interacted || local_jab,
             used_item: se.used_item,
             player_damaged: se.player_damaged,
             player_died: se.player_died,
@@ -528,6 +572,11 @@ impl Game {
     /// rule); the held-rotation counter rides raw and the session re-derives
     /// the armed item (see `HeldRotation::apply_wire`).
     fn build_player_update(&self, input: &GameInput) -> PlayerUpdate {
+        // The movement intent is EXACTLY what this frame's local physics
+        // consumed (`tick_player` stashes it) — re-deriving it here would read
+        // the camera after `sync_camera_to_player_eye` moved it and drift the
+        // wire intent from the prediction.
+        let intent = self.predicted_input;
         PlayerUpdate {
             pos: self.player.pos,
             vel: self.player.vel,
@@ -544,6 +593,9 @@ impl Game {
             }),
             hotbar_slot: self.player.inventory.active_slot(),
             held_rotation: self.held_rotation.rotation,
+            wishdir: intent.wishdir,
+            jump: intent.jump,
+            sprint: intent.sprint,
         }
     }
 
@@ -572,12 +624,17 @@ impl Game {
             .push(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
             if input.place_clicked {
+                // P0: jab immediately; optional place ghost (P1) when holding a block.
+                self.local_hand_jab = true;
+                let request_id = self.try_predict_place_ghost(input.movement.sneak);
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
+                        request_id,
                     }));
             }
             if input.attack_clicked {
+                self.local_hand_swing = true;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::AttackClick {
                         mob: attack_mob,
@@ -586,6 +643,44 @@ impl Game {
             }
         }
         self.frame_messages.append(&mut self.outbox);
+    }
+
+    /// Optimistic ghost place when the look target can accept the held block.
+    fn try_predict_place_ghost(
+        &mut self,
+        sneak: bool,
+    ) -> Option<crate::net::protocol::ClientRequestId> {
+        let look = self.look?;
+        let block = self.self_view.inventory.selected()?.item.as_block()?;
+        // A non-sneak click on an interactable block opens/uses it instead of
+        // placing (the server's interact ladder) — no ghost, or the client
+        // would render a phantom block the server never places.
+        let target = crate::block::Block::from_id(self.replica.chunk_block(
+            look.block.x,
+            look.block.y,
+            look.block.z,
+        ));
+        if !sneak && target.interaction() != crate::block::BlockInteraction::None {
+            return None;
+        }
+        let place_pos = look.block + look.normal;
+        let prev = self.replica.chunk_block(place_pos.x, place_pos.y, place_pos.z);
+        if prev != crate::block::Block::Air.0 {
+            return None;
+        }
+        if !self.prediction.can_predict() {
+            return Some(self.prediction.begin_track_only());
+        }
+        let snapshot = prediction::PredictionSnapshot::Cell {
+            pos: place_pos,
+            prev_block_id: prev,
+        };
+        let id = self.prediction.begin(snapshot);
+        let _ = self
+            .replica
+            .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+        self.place_ghost = Some((place_pos, block.0));
+        Some(id)
     }
 
     /// Adopt a `SelfState::transform` correction: the server's ticks moved

@@ -418,6 +418,9 @@ mod tests {
             target: None,
             hotbar_slot: 0,
             held_rotation: 0,
+            wishdir: Vec3::ZERO,
+            jump: false,
+            sprint: false,
         }
     }
 

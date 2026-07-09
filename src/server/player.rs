@@ -172,6 +172,18 @@ impl HeldRotation {
     }
 }
 
+/// One latched `BreakFinished` request, resolved by the mining stage against
+/// the server's own observed mining window. Only the fields the resolution
+/// needs — never the whole `PlayerAction` (the latch site would otherwise have
+/// to re-prove the variant).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct PendingBreakFinished {
+    pub request_id: crate::net::protocol::ClientRequestId,
+    pub pos: IVec3,
+    /// Wire item id of the tool the client claims it used (`None` = bare hand).
+    pub tool_item_id: Option<u8>,
+}
+
 /// Server-side fall measurement from the transforms a session reports —
 /// the replicated-transform mirror of `Player::track_fall` (the client physics
 /// still measures its own falls, but the server no longer reads that latch).
@@ -275,7 +287,31 @@ pub(crate) struct ConnectedPlayer {
     pub eating: Option<EatingState>,
     pub drop_queue: DropQueue,
     /// Container-menu clicks latched since the last tick, applied in order.
-    pub pending_menu_clicks: Vec<(MenuSlot, PointerButton, bool, bool)>,
+    /// Each carries the client's [`ClientRequestId`] for [`ActionOutcome`].
+    pub pending_menu_clicks: Vec<(
+        MenuSlot,
+        PointerButton,
+        bool,
+        bool,
+        crate::net::protocol::ClientRequestId,
+    )>,
+    /// Outcomes queued this tick window for the next `TickUpdate`.
+    pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
+    /// Latched `BreakFinished` request, applied by the mining stage.
+    pub pending_break_finished: Option<PendingBreakFinished>,
+    /// Optional request id on the pending use/place click (place ghost ack).
+    pub pending_place_request_id: Option<crate::net::protocol::ClientRequestId>,
+    /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
+    pub move_wishdir: crate::mathh::Vec3,
+    pub move_jump: bool,
+    pub move_sprint: bool,
+    /// Client-predicted transform from the latest `PlayerUpdate` (F1 soft accept).
+    pub claim_pos: crate::mathh::Vec3,
+    pub claim_vel: crate::mathh::Vec3,
+    pub claim_on_ground: bool,
+    /// Set by `PlayerUpdate`; cleared after `tick_movement` consumes the claim.
+    /// Stale claims must not yank the player back every tick.
+    pub claim_fresh: bool,
     /// The open container GUI's persistent edit target for THIS player.
     pub menu: ContainerMenu,
     /// The in-flight sleep session (`None` = awake).
@@ -357,6 +393,16 @@ impl ConnectedPlayer {
             eating: None,
             drop_queue: DropQueue::default(),
             pending_menu_clicks: Vec::new(),
+            pending_action_outcomes: Vec::new(),
+            pending_break_finished: None,
+            pending_place_request_id: None,
+            move_wishdir: crate::mathh::Vec3::ZERO,
+            move_jump: false,
+            move_sprint: false,
+            claim_pos: pos_before_ticks,
+            claim_vel: crate::mathh::Vec3::ZERO,
+            claim_on_ground: false,
+            claim_fresh: false,
             menu: ContainerMenu::new(),
             sleep: None,
             wake_requested: false,

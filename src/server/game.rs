@@ -252,9 +252,11 @@ impl ServerGame {
             self.run_fixed_ticks(dt)
         };
         for sess in &mut self.sessions {
-            // The drift doubles as the replicated `snap` flag: observers skip
-            // interpolating a remote body across a tick-side teleport.
-            sess.tick_teleported = sess.player.pos != sess.pos_before_ticks;
+            // Observers skip interpolating across a tick-side TELEPORT (bed,
+            // respawn, mod teleport, hard knockback). Ordinary F2 physics
+            // motion must still lerp — only large discontinuities snap.
+            let delta = (sess.player.pos - sess.pos_before_ticks).length();
+            sess.tick_teleported = delta > 2.0;
             if sess.tick_teleported {
                 sess.fall.reset(sess.player.pos.y);
                 sess.pending_fall = 0.0;
@@ -487,6 +489,7 @@ impl ServerGame {
             .filter(|d| self.sessions[s].terrain.covers(d.pos))
             .copied()
             .collect();
+        let action_outcomes = std::mem::take(&mut self.sessions[s].pending_action_outcomes);
         TickUpdate {
             tick: shared.tick,
             clock: shared.clock,
@@ -500,6 +503,7 @@ impl ServerGame {
             env: shared.env.clone(),
             events: world_events.to_vec(),
             self_events: self.build_self_events(s, events),
+            action_outcomes,
             menu_sync: self.build_menu_sync(s),
         }
     }
@@ -630,12 +634,14 @@ impl ServerGame {
                 button,
                 shift,
                 gather,
+                request_id,
             } => {
                 self.sessions[s].pending_menu_clicks.push((
                     slot.to_menu_slot(),
                     crate::net::protocol::button_from_wire(button),
                     shift,
                     gather,
+                    request_id,
                 ));
             }
             ClientToServer::ChatSend { text } => {
@@ -723,31 +729,32 @@ impl ServerGame {
         seq
     }
 
-    /// Latch a `PlayerUpdate`: transform (trusted verbatim, finite-checked),
+    /// Latch a `PlayerUpdate`: movement intent (F2), validated transform (F1),
     /// hotbar + held rotation, held intents (menu focus forces them off and
     /// drops queued edges, exactly as the old `capture_intent` did), the
     /// reach-validated look target, and the fall tracker.
     fn apply_player_update(&mut self, s: usize, u: &PlayerUpdate) {
-        if !(u.pos.is_finite() && u.vel.is_finite() && u.yaw.is_finite() && u.pitch.is_finite()) {
-            log::warn!("dropping PlayerUpdate with non-finite transform");
+        if !(u.pos.is_finite()
+            && u.vel.is_finite()
+            && u.yaw.is_finite()
+            && u.pitch.is_finite()
+            && u.wishdir.is_finite())
+        {
+            log::warn!("dropping PlayerUpdate with non-finite transform/intent");
             return;
         }
-        // Mirrors what `Player::track_fall` sees: the swim probe above the feet.
-        let in_water = self.world.water_cell_at(
-            u.pos.x.floor() as i32,
-            (u.pos.y + player::WATER_PROBE_Y).floor() as i32,
-            u.pos.z.floor() as i32,
-        );
 
         let sess = &mut self.sessions[s];
-        sess.player.pos = u.pos;
-        sess.player.vel = u.vel;
-        sess.player.yaw = u.yaw;
-        sess.player.pitch = u.pitch;
-        sess.player.on_ground = u.on_ground;
-        // What the client last claimed: after the ticks, a session transform
-        // that drifted from this means the tick moved the player — the next
-        // `SelfState` ships the correction (see `build_self_state`).
+        sess.move_wishdir = u.wishdir;
+        sess.move_jump = u.jump;
+        sess.move_sprint = u.sprint;
+        sess.claim_pos = u.pos;
+        sess.claim_vel = u.vel;
+        sess.claim_on_ground = u.on_ground;
+        sess.claim_fresh = true;
+        // What the client last claimed — after the ticks, a session transform
+        // that drifted from this means the server rejected the claim or a
+        // tick-side teleport/knockback moved the player.
         sess.last_reported_transform = Some(SelfTransform {
             pos: u.pos,
             vel: u.vel,
@@ -755,7 +762,8 @@ impl ServerGame {
             pitch: u.pitch,
             on_ground: u.on_ground,
         });
-
+        sess.player.yaw = u.yaw;
+        sess.player.pitch = u.pitch;
         sess.player.inventory.set_active(u.hotbar_slot);
         let selected = sess.selected_item();
         sess.held_rotation.apply_wire(u.held_rotation, selected);
@@ -774,70 +782,126 @@ impl ServerGame {
             sess.pending_attack_player = None;
             sess.pending_place = false;
             sess.pending_use_mob = None;
+            // The dropped click still owes its outcome: deny, so the client
+            // rolls its place ghost back instead of leaking the ledger entry.
+            if let Some(id) = sess.pending_place_request_id.take() {
+                sess.pending_action_outcomes
+                    .push(crate::net::protocol::ActionOutcome {
+                        id,
+                        accepted: false,
+                        reason: Some(crate::net::protocol::ActionDenyReason::Denied),
+                    });
+            }
         }
 
-        // Reach validation: a target cell farther than the interaction reach
-        // (plus slack for the client raycasting from its camera, which can lag
-        // the eye during a step-up glide) silently latches as no target.
-        // Measured to the CLOSEST point of the cell, mirroring what "the ray
-        // hit this cell within REACH" means.
-        let eye = sess.player.eye();
-        sess.look = u.target.filter(|t| {
-            let lo = Vec3::new(t.block.x as f32, t.block.y as f32, t.block.z as f32);
-            let closest = eye.clamp(lo, lo + Vec3::ONE);
-            (closest - eye).length() <= player::REACH + 1.0
-        });
-
-        // Server-side fall measurement from the reported transform. A
-        // spectator floats: keep the tracker anchored so a mode switch is
-        // never measured as a fall (mirrors `Player::set_mode`).
-        if sess.player.is_spectator() {
-            sess.fall.reset(u.pos.y);
-            sess.pending_fall = 0.0;
-        } else if let Some(dist) = sess.fall.observe(u.pos.y, u.on_ground, in_water) {
-            sess.pending_fall = sess.pending_fall.max(dist);
-        }
+        // Reach validation against the CLAIMED eye (where the client says it
+        // is aiming from this frame). Measured to the CLOSEST point of the cell.
+        let eye = sess.claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+        sess.look = u
+            .target
+            .filter(|t| player::block_within_reach(eye, t.block));
     }
 
     fn apply_action(&mut self, s: usize, action: PlayerAction) {
-        let sess = &mut self.sessions[s];
+        use crate::net::protocol::{ActionDenyReason, ActionOutcome};
+        // EVERY latched request id must eventually receive an ActionOutcome —
+        // an unanswered id leaks the client's prediction-ledger entry forever
+        // (see WIKI/client-prediction.md). Single-slot latches deny the
+        // superseded id; queue rejections deny immediately.
+        let deny = |id| ActionOutcome {
+            id,
+            accepted: false,
+            reason: Some(ActionDenyReason::Denied),
+        };
         match action {
-            PlayerAction::UseClick { mob } => {
+            PlayerAction::UseClick { mob, request_id } => {
+                let sess = &mut self.sessions[s];
+                if let Some(old) = sess.pending_place_request_id.take() {
+                    sess.pending_action_outcomes.push(deny(old));
+                }
                 sess.pending_place = true;
                 sess.pending_use_mob = mob;
+                sess.pending_place_request_id = request_id;
             }
             PlayerAction::AttackClick { mob, player } => {
+                let sess = &mut self.sessions[s];
                 sess.pending_attack = true;
                 sess.pending_attack_mob = mob;
                 sess.pending_attack_player = player;
             }
-            PlayerAction::Drop { all } => {
+            PlayerAction::Drop { all, request_id } => {
+                let sess = &mut self.sessions[s];
                 let slot = sess.player.inventory.active_slot();
-                sess.drop_queue.queue_selected(slot, all);
+                sess.drop_queue.queue_selected(slot, all, Some(request_id));
             }
-            PlayerAction::ThrowCursorStack => {
-                sess.drop_queue.queue_cursor_stack(&sess.player.inventory);
+            PlayerAction::ThrowCursorStack { request_id } => {
+                let sess = &mut self.sessions[s];
+                if !sess
+                    .drop_queue
+                    .queue_cursor_stack(&sess.player.inventory, Some(request_id))
+                {
+                    sess.pending_action_outcomes.push(deny(request_id));
+                }
             }
-            PlayerAction::ThrowCursorOne => {
-                sess.drop_queue.queue_cursor_one(&sess.player.inventory);
+            PlayerAction::ThrowCursorOne { request_id } => {
+                let sess = &mut self.sessions[s];
+                if !sess
+                    .drop_queue
+                    .queue_cursor_one(&sess.player.inventory, Some(request_id))
+                {
+                    sess.pending_action_outcomes.push(deny(request_id));
+                }
+            }
+            PlayerAction::BreakFinished {
+                request_id,
+                pos,
+                tool_item_id,
+            } => {
+                let sess = &mut self.sessions[s];
+                if let Some(old) = sess.pending_break_finished.replace(
+                    crate::server::player::PendingBreakFinished {
+                        request_id,
+                        pos,
+                        tool_item_id,
+                    },
+                ) {
+                    sess.pending_action_outcomes.push(deny(old.request_id));
+                }
             }
             // A mode switch is not tick input: applied at message time, like
             // the direct call it replaces. The floating spectator must never
             // be measured as falling — re-anchor the tracker (mirrors
             // `Player::set_mode`).
             PlayerAction::ToggleMode => {
+                let sess = &mut self.sessions[s];
                 sess.player.toggle_mode();
                 sess.fall.reset(sess.player.pos.y);
                 sess.pending_fall = 0.0;
             }
-            PlayerAction::Wake => sess.wake_requested = true,
-            PlayerAction::Respawn => sess.respawn_requested = true,
+            PlayerAction::Wake => self.sessions[s].wake_requested = true,
+            PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
             // Menu transitions run ON THE TICK (their chest-viewer transitions
             // must land in the tick's world events): latched here, consumed by
             // `game_tick_step` (close) / the Menu stage (inventory open).
-            PlayerAction::OpenInventory => sess.open_inventory_requested = true,
-            PlayerAction::CloseMenu => sess.close_menu_requested = true,
+            PlayerAction::OpenInventory => self.sessions[s].open_inventory_requested = true,
+            PlayerAction::CloseMenu => self.sessions[s].close_menu_requested = true,
         }
+    }
+
+    pub(crate) fn push_action_outcome(
+        &mut self,
+        s: usize,
+        id: crate::net::protocol::ClientRequestId,
+        accepted: bool,
+        reason: Option<crate::net::protocol::ActionDenyReason>,
+    ) {
+        self.sessions[s]
+            .pending_action_outcomes
+            .push(crate::net::protocol::ActionOutcome {
+                id,
+                accepted,
+                reason,
+            });
     }
 
     /// Run the fixed ticks `dt` banked. Returns the events plus how many ticks
@@ -886,6 +950,10 @@ impl ServerGame {
         // on the tick. Per-player stages loop the sessions in id order INSIDE
         // the stage, so the mod seams (`begin_stage`/`end_stage`) still run
         // once per stage per tick.
+        for s in 0..self.sessions.len() {
+            self.tick_movement(s);
+        }
+
         self.begin_stage(Stage::Mining, events);
         for s in 0..self.sessions.len() {
             self.tick_mining(s, events);

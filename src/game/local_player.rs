@@ -84,6 +84,9 @@ impl Game {
             jump: input.gameplay_enabled && input.movement.jump,
             sprint: input.gameplay_enabled && input.movement.sprint,
         };
+        // Stash for `build_player_update`: the wire intent must be the exact
+        // input the local physics consumed this frame.
+        self.predicted_input = player_input;
 
         // Physics gates on the REPLICA's loaded columns: until the spawn area's
         // payloads land, the player holds still (exactly the fresh-world

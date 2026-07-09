@@ -16,7 +16,7 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 10; // 10: structured server-authoritative chat lines
+pub(crate) const PROTOCOL_VERSION: u16 = 11; // 11: optimistic prediction (request ids, outcomes, break finish, move intent)
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

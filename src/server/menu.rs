@@ -75,7 +75,7 @@ impl ServerGame {
             self.open_crafting_for(s, 2);
             self.sessions[s].request_open_inventory = true;
         }
-        for (slot, button, shift, gather) in
+        for (slot, button, shift, gather, request_id) in
             std::mem::take(&mut self.sessions[s].pending_menu_clicks)
         {
             if let MenuSlot::Widget(id) = slot {
@@ -84,6 +84,7 @@ impl ServerGame {
                 if button == PointerButton::Primary {
                     self.dispatch_gui_click(s, id, events);
                 }
+                self.push_action_outcome(s, request_id, true, None);
                 continue;
             }
             let sess = &mut self.sessions[s];
@@ -96,6 +97,7 @@ impl ServerGame {
                 shift,
                 gather,
             );
+            self.push_action_outcome(s, request_id, true, None);
         }
     }
 

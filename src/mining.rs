@@ -172,6 +172,14 @@ impl MiningState {
         self.target
     }
 
+    /// The active target and its accrued mining time — the SERVER-OBSERVED
+    /// window `BreakFinished` validation measures against (the server never
+    /// trusts a client-reported duration).
+    #[inline]
+    pub fn progress(&self) -> Option<(IVec3, f32)> {
+        Some((self.target?, self.elapsed))
+    }
+
     #[inline]
     fn reset(&mut self) {
         self.target = None;

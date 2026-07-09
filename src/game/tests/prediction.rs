@@ -1,0 +1,320 @@
+//! Optimistic client prediction: ledger rollback, mining deny, movement snap.
+
+use super::common::*;
+use crate::block::Block;
+use crate::controls::PointerButton;
+use crate::game::prediction::{self, PredictionSnapshot};
+use crate::game::tick::{TickEvents, TICK_DT};
+use crate::gui::MenuSlot;
+use crate::mathh::{IVec3, Vec3};
+use crate::net::protocol::{
+    ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, TickUpdate,
+};
+
+#[test]
+fn menu_click_deny_restores_inventory_snapshot() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.sync_self_view_for_test();
+
+    let before_cursor = game.self_view.inventory.cursor().copied();
+    game.menu_click(MenuSlot::Inventory(0), PointerButton::Primary, false, false);
+    assert!(
+        game.self_view.inventory.cursor().is_some(),
+        "optimistic pick onto cursor"
+    );
+
+    let id = 0;
+    let rollbacks = game
+        .prediction
+        .reconcile(&[prediction::deny(id, ActionDenyReason::Denied)]);
+    assert_eq!(rollbacks.len(), 1);
+    match &rollbacks[0] {
+        PredictionSnapshot::Inventory(inv) => {
+            assert_eq!(inv.cursor().copied(), before_cursor);
+        }
+        other => panic!("expected inventory snapshot, got {other:?}"),
+    }
+}
+
+#[test]
+fn break_finished_without_observed_mining_is_denied() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(2, 64, 2);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+
+    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+
+    // The server never saw this session mine the cell, so the claimed finish
+    // fails the observed-window check no matter what the client asserts.
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 7,
+            pos,
+            tool_item_id: None,
+        }),
+    );
+    let mut ev = TickEvents::default();
+    game.server.tick_mining(0, &mut ev);
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Stone,
+        "too-fast break must not clear the cell"
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert_eq!(outcomes.len(), 1);
+    assert!(!outcomes[0].accepted);
+    assert_eq!(outcomes[0].reason, Some(ActionDenyReason::TooFast));
+}
+
+#[test]
+fn break_finished_after_the_observed_mining_window_is_accepted() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(8, 64, 8);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+
+    // Latch a held break on the target: the server's own mining timer is the
+    // observation the finish is validated against.
+    let mut u = player_update(&game, true);
+    u.break_held = true;
+    u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+
+    let expected_ticks =
+        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    // Hold just short of the server's own finish, then deliver the client's.
+    for _ in 0..expected_ticks - 2 {
+        game.server.tick_mining(0, &mut TickEvents::default());
+    }
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 6,
+            pos,
+            tool_item_id: None,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air,
+        "an observed full mining window accepts the client's finish"
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert!(outcomes.iter().any(|o| o.id == 6 && o.accepted));
+}
+
+#[test]
+fn impossible_speed_claim_is_rejected_for_integrated_pos() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let start = game.server.sessions[0].player.pos;
+    let mut u = player_update(&game, true);
+    u.pos = start + Vec3::new(50.0, 0.0, 0.0);
+    u.vel = Vec3::new(200.0, 0.0, 0.0);
+    u.wishdir = Vec3::ZERO;
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.tick_movement(0);
+    let after = game.server.sessions[0].player.pos;
+    assert!(
+        (after - start).length() < 5.0,
+        "server must not adopt an impossible speed claim (start={start:?} after={after:?})"
+    );
+}
+
+#[test]
+fn teleport_claim_with_plausible_velocity_is_rejected() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
+    let start = game.server.sessions[0].player.pos;
+    let mut u = player_update(&game, true);
+    u.pos = start + Vec3::new(50.0, 0.0, 0.0);
+    u.vel = Vec3::ZERO;
+    u.wishdir = Vec3::ZERO;
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.tick_movement(0);
+    let after = game.server.sessions[0].player.pos;
+    assert!(
+        (after - start).length() < 5.0,
+        "a position jump under an innocent velocity must not teleport (after={after:?})"
+    );
+}
+
+#[test]
+fn sprint_jump_claim_is_accepted() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
+    let start = game.server.sessions[0].player.pos;
+    let mut u = player_update(&game, true);
+    // Take-off frame of a sprint jump: horizontal sprint + full jump speed.
+    // The caps are per-axis, so the combined magnitude must still pass.
+    u.pos = start + Vec3::new(0.2, 0.0, 0.0);
+    u.vel = Vec3::new(5.6, 8.4, 0.0);
+    u.on_ground = false;
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u.clone()));
+    game.server.tick_movement(0);
+    let sess = &game.server.sessions[0];
+    assert_eq!(
+        sess.player.pos, u.pos,
+        "a legitimate sprint-jump claim must be soft-accepted"
+    );
+    assert_eq!(sess.player.vel, u.vel);
+}
+
+#[test]
+fn claim_inside_solid_geometry_is_rejected() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 66.0, 8.5);
+    let mut u = player_update(&game, true);
+    u.pos = Vec3::new(8.5, 64.3, 8.5); // feet well inside the stone cell
+    u.vel = Vec3::ZERO;
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.tick_movement(0);
+    let after = game.server.sessions[0].player.pos;
+    assert!(
+        after.y > 65.0,
+        "a claim inside solid geometry must not be adopted (after={after:?})"
+    );
+}
+
+#[test]
+fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::Drop {
+            all: false,
+            request_id: 11,
+        }),
+    );
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::Drop {
+            all: false,
+            request_id: 12,
+        }),
+    );
+    // Nothing on the cursor: the throw cannot even queue, denied immediately.
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::ThrowCursorOne { request_id: 13 }),
+    );
+    let mut ev = TickEvents::default();
+    game.server.tick_drops(0, &mut ev);
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert_eq!(
+        outcomes.len(),
+        3,
+        "every request id is answered, even coalesced or unqueueable ones"
+    );
+    assert!(outcomes.iter().any(|o| o.id == 11 && o.accepted));
+    assert!(outcomes.iter().any(|o| o.id == 12 && o.accepted));
+    assert!(outcomes.iter().any(|o| o.id == 13 && !o.accepted));
+}
+
+#[test]
+fn multi_deny_rollback_restores_the_oldest_snapshot() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.sync_self_view_for_test();
+    let before = game.self_view.inventory.clone();
+
+    // Two predicted drops back to back: the second snapshot already embeds
+    // the first prediction's effect.
+    game.game.drop_selected_item(false); // id 0
+    game.game.drop_selected_item(false); // id 1
+
+    // Both denied in one batch: the restore must end on the OLDEST snapshot.
+    let update = TickUpdate {
+        action_outcomes: vec![
+            prediction::deny(0, ActionDenyReason::Denied),
+            prediction::deny(1, ActionDenyReason::Denied),
+        ],
+        ..Default::default()
+    };
+    game.game.apply_tick_update(Box::new(update));
+    assert_eq!(
+        game.self_view.inventory.slot(game.self_view.inventory.active_slot() as usize),
+        before.slot(before.active_slot() as usize),
+        "both denied predictions must be rolled back, not just the newest"
+    );
+}
+
+#[test]
+fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
+    let mut game = game();
+    // A loaded replica cell the ghost writes into.
+    let pos = IVec3::new(3, 64, 3);
+    game.game
+        .replica
+        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+
+    // Predict a ghost placement (Cell snapshot, prev = air).
+    let id = game.game.prediction.begin(PredictionSnapshot::Cell {
+        pos,
+        prev_block_id: Block::Air.0,
+    });
+    assert!(game
+        .game
+        .replica
+        .set_block_world(pos.x, pos.y, pos.z, Block::Dirt));
+
+    // Same batch: the deny AND an authoritative delta at the cell (another
+    // player's block won it). The delta must survive the rollback.
+    let update = TickUpdate {
+        block_deltas: vec![crate::net::protocol::BlockDelta {
+            pos,
+            block_id: Block::Stone.0,
+            water: None,
+            state: None,
+        }],
+        action_outcomes: vec![prediction::deny(id, ActionDenyReason::Denied)],
+        ..Default::default()
+    };
+    game.game.apply_tick_update(Box::new(update));
+    assert_eq!(
+        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Stone,
+        "an authoritative same-batch delta wins over the deny rollback"
+    );
+}
+
+#[test]
+fn menu_click_ships_request_id_and_server_accepts() {
+    let mut game = game();
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.server.apply_message(
+        0,
+        ClientToServer::MenuClick {
+            slot: MenuSlotWire::from_menu_slot(&MenuSlot::Inventory(0)),
+            button: 0,
+            shift: false,
+            gather: false,
+            request_id: 42,
+        },
+    );
+    game.server.tick_menu(0, &mut TickEvents::default());
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].accepted);
+    assert_eq!(outcomes[0].id, 42);
+}

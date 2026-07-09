@@ -25,45 +25,54 @@ impl ServerGame {
 
     /// Resolve one consumed secondary-button press.
     fn place_click(&mut self, s: usize, use_mob: Option<u64>, events: &mut TickEvents) {
+        let request_id = self.sessions[s].pending_place_request_id.take();
+        let mut placed = false;
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
         // while a mob is targeted `look` is None, so the block paths below
         // would no-op anyway.
         if self.try_shear_mob(s, use_mob) {
             events.player(s).used_item = true;
-            return;
-        }
-        let interacted = !self.sessions[s].intent_sneak && self.try_open_interactable(s, events);
-        // The one place every consumed interaction passes through: the interact
-        // hand jab defaults ON for all of them (see `GameEvents::interacted`).
-        events.player(s).interacted |= interacted;
-        if !interacted {
-            // Food comes next: a click on a food item starts (or re-affirms) the
-            // eat and never falls through to use/placement.
-            if self.try_start_eating(s, events) {
-                return;
-            }
-            // The held item's own use (a bucket) comes before block placement; an
-            // item with a use has no block to place, so the two never compete.
-            if self.try_use_item(s, events) {
+        } else {
+            let interacted = !self.sessions[s].intent_sneak && self.try_open_interactable(s, events);
+            // The one place every consumed interaction passes through: the interact
+            // hand jab defaults ON for all of them (see `GameEvents::interacted`).
+            events.player(s).interacted |= interacted;
+            if interacted || self.try_start_eating(s, events) {
+                // Click consumed without placing — handled below.
+            } else if self.try_use_item(s, events) {
                 events.player(s).used_item = true;
-                return;
-            }
-            // Capture the held block before `try_place` consumes it: on success that is
-            // exactly the block placed, which the client maps to a place sound.
-            let held = self.sessions[s]
-                .player
-                .inventory
-                .selected()
-                .and_then(|st| st.item.as_block());
-            if let Some(pos) = self.try_place(s, events) {
-                events.player(s).placed_block = held;
-                if let Some(block) = held {
-                    // Every observer presents the placement (positional sound)
-                    // from the world-anchored event.
-                    events.world.block_placed.push((pos, block));
-                    self.bus.emit(PostEvent::BlockPlaced { pos, block });
+            } else {
+                // Capture the held block before `try_place` consumes it: on success that is
+                // exactly the block placed, which the client maps to a place sound.
+                let held = self.sessions[s]
+                    .player
+                    .inventory
+                    .selected()
+                    .and_then(|st| st.item.as_block());
+                if let Some(pos) = self.try_place(s, events) {
+                    events.player(s).placed_block = held;
+                    placed = true;
+                    if let Some(block) = held {
+                        // Every observer presents the placement (positional sound)
+                        // from the world-anchored event.
+                        events.world.block_placed.push((pos, block));
+                        self.bus.emit(PostEvent::BlockPlaced { pos, block });
+                    }
                 }
             }
+        }
+        // A request id rides the click only when the client predicted a place
+        // ghost (or track-only), so `accepted` means "a block was actually
+        // placed": a click consumed by an interaction/eat/use placed nothing
+        // and must DENY, or the client's ghost block would survive as a
+        // phantom (accept never rolls back).
+        if let Some(id) = request_id {
+            self.push_action_outcome(
+                s,
+                id,
+                placed,
+                (!placed).then_some(crate::net::protocol::ActionDenyReason::Denied),
+            );
         }
     }
 

@@ -702,12 +702,18 @@ mod tests {
             }),
             hotbar_slot: 0,
             held_rotation: 0,
+            wishdir: Vec3::ZERO,
+            jump: false,
+            sprint: false,
         };
         remote
             .send(ClientToServer::PlayerUpdate(update))
             .expect("live connection");
         remote
-            .send(ClientToServer::Action(PlayerAction::UseClick { mob: None }))
+            .send(ClientToServer::Action(PlayerAction::UseClick {
+                mob: None,
+                request_id: None,
+            }))
             .expect("live connection");
         drain_until(&mut remote, Duration::from_secs(10), |msg| {
             let ServerToClient::Tick(update) = msg else {

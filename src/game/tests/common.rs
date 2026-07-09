@@ -229,6 +229,9 @@ pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
         target: None,
         hotbar_slot: p.inventory.active_slot(),
         held_rotation: 0,
+        wishdir: crate::mathh::Vec3::ZERO,
+        jump: false,
+        sprint: false,
     }
 }
 

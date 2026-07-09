@@ -162,7 +162,35 @@ pub(crate) struct JoinData {
     pub players: Vec<(PlayerId, String)>,
 }
 
+/// Per-connection monotonic id for discrete mutating intents that need an
+/// [`ActionOutcome`]. Client allocates; server echoes.
+pub(crate) type ClientRequestId = u32;
+
+/// Coarse deny reasons for [`ActionOutcome`] — enough for rollback/UI.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ActionDenyReason {
+    OutOfReach,
+    InvalidSlot,
+    Busy,
+    Denied,
+    TooFast,
+    BadTool,
+}
+
+/// Server answer to one client request id (accept or deny).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ActionOutcome {
+    pub id: ClientRequestId,
+    pub accepted: bool,
+    pub reason: Option<ActionDenyReason>,
+}
+
 /// Per-frame (local) / throttled (TCP) client transform + held intents.
+///
+/// Movement F2: `wishdir` / `jump` / `sprint` are the authoritative input; the
+/// server integrates physics on the fixed tick. `pos`/`vel`/`on_ground` remain
+/// the client's prediction (used for soft comparison / fall bookkeeping until
+/// a hard correct ships via [`SelfTransform`]).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlayerUpdate {
     pub pos: Vec3,
@@ -181,6 +209,10 @@ pub(crate) struct PlayerUpdate {
     pub target: Option<TargetRef>,
     pub hotbar_slot: u8,
     pub held_rotation: u8,
+    /// Horizontal/3D wish direction (unit or zero) for server-side movement.
+    pub wishdir: Vec3,
+    pub jump: bool,
+    pub sprint: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,9 +226,11 @@ pub(crate) struct TargetRef {
 pub(crate) enum PlayerAction {
     /// Secondary press: the interact/eat/use/place ladder. `mob` is the mob
     /// under the crosshair at click time (stable id) — the shear target, like
-    /// `AttackClick`'s.
+    /// `AttackClick`'s. `request_id` is set when the client predicted a
+    /// mutating outcome (place ghost); presentation-only jabs may omit it.
     UseClick {
         mob: Option<u64>,
+        request_id: Option<ClientRequestId>,
     },
     /// Primary press: attack the mob under the crosshair (stable mob id), the
     /// remote PLAYER under the crosshair (`PlayerId` byte — PvP), or punch the
@@ -209,9 +243,23 @@ pub(crate) enum PlayerAction {
     },
     Drop {
         all: bool,
+        request_id: ClientRequestId,
     },
-    ThrowCursorStack,
-    ThrowCursorOne,
+    ThrowCursorStack {
+        request_id: ClientRequestId,
+    },
+    ThrowCursorOne {
+        request_id: ClientRequestId,
+    },
+    /// Client finished mining locally; server validates tool/reach and the
+    /// duration against ITS OWN observed mining window (never client-reported
+    /// time — see WIKI/client-prediction.md).
+    BreakFinished {
+        request_id: ClientRequestId,
+        pos: IVec3,
+        /// Wire item id of the tool used (`None` = bare hand).
+        tool_item_id: Option<u8>,
+    },
     Wake,
     Respawn,
     /// Toggle survival/spectator mode (the F4 debug toggle). Applied at
@@ -745,6 +793,9 @@ pub(crate) struct TickUpdate {
     pub events: Vec<WorldEventMsg>,
     /// The recipient's own per-tick one-shots.
     pub self_events: SelfEvents,
+    /// Answers to this recipient's [`ClientRequestId`]s (menu clicks, breaks,
+    /// drops, …), in emission order.
+    pub action_outcomes: Vec<ActionOutcome>,
     /// The recipient's menu-session view when it changed (`None` = unchanged).
     pub menu_sync: Option<MenuSyncMsg>,
 }
@@ -772,6 +823,7 @@ pub(crate) enum ClientToServer {
         button: u8,
         shift: bool,
         gather: bool,
+        request_id: ClientRequestId,
     },
     /// A player-submitted chat line. The server trims/sanitizes/formats it and
     /// broadcasts the resulting [`ServerToClient::ChatLine`].
@@ -966,9 +1018,13 @@ mod tests {
             }),
             hotbar_slot: 3,
             held_rotation: 1,
+            wishdir: Vec3::ZERO,
+            jump: false,
+            sprint: false,
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::UseClick {
             mob: Some(812),
+            request_id: Some(7),
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::AttackClick {
             mob: None,
@@ -979,9 +1035,20 @@ mod tests {
             button: 0,
             shift: false,
             gather: true,
+            request_id: 3,
         });
+        roundtrip(&ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 9,
+            pos: IVec3::new(1, 2, 3),
+            tool_item_id: None,
+        }));
         roundtrip(&ClientToServer::ChatSend {
             text: "hello server".into(),
+        });
+        roundtrip(&ActionOutcome {
+            id: 1,
+            accepted: false,
+            reason: Some(ActionDenyReason::TooFast),
         });
         roundtrip(&ServerToClient::ModList {
             mods: vec![ModEntry {
@@ -1172,6 +1239,11 @@ mod tests {
                 }),
                 ..Default::default()
             },
+            action_outcomes: vec![ActionOutcome {
+                id: 1,
+                accepted: true,
+                reason: None,
+            }],
             menu_sync: Some(MenuSyncMsg {
                 target: MenuTargetWire::ModGui {
                     kind_key: "kitchen:oven".into(),

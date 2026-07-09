@@ -20,6 +20,7 @@ pub(crate) mod health;
 pub(crate) mod item_use;
 pub(crate) mod menu;
 pub(crate) mod mod_actions;
+pub(crate) mod movement;
 pub(crate) mod placement;
 pub(crate) mod player;
 pub(crate) mod remote;

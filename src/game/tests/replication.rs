@@ -715,10 +715,20 @@ fn every_sessions_player_row_reaches_the_local_batch() {
         .iter()
         .find(|p| p.id == s1_id)
         .expect("the second session's row rides the first session's batch");
-    assert_eq!(row.pos, s1_pos, "players only move client-side: exact echo");
+    // Server integrates movement on the tick (F2); without a fresh claim the
+    // idle session may fall a little under gravity — still the same session.
+    assert!(
+        (row.pos - s1_pos).length() < 1.0,
+        "second session stays near its spawn (got {:?}, want near {:?})",
+        row.pos,
+        s1_pos
+    );
     assert!(row.alive && row.visible);
     assert!(!row.sleeping && row.sleep_yaw.is_none());
-    assert!(!row.snap, "no tick-side teleport happened");
+    assert!(
+        !row.snap,
+        "idle gravity is not a teleport snap for observers"
+    );
 }
 
 /// A sleeping session's row carries the server-computed lying head yaw (the

@@ -3,39 +3,114 @@ use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
 use crate::item::ItemStack;
 use crate::mathh::{IVec3, Vec3};
-use crate::mining::BreakEvent;
+use crate::mining::{BreakEvent, MiningState};
 use crate::world::World;
 
 use super::game::ServerGame;
 use crate::game::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
 impl ServerGame {
-    /// Mining, on the tick: advance the break timer against the block under the crosshair
-    /// (sampled per frame into `look`) by [`TICK_DT`], and when a block finishes breaking,
-    /// clear it, scatter any block-entity contents + harvested drops, and spawn the break
-    /// burst. Frame-rate independent. Gated off (progress reset) while a screen owns input
-    /// (`intent_gameplay` false) — that's `inventory_open` to the mining controller.
-    /// The mining-dust flecks are presentation, emitted CLIENT-side per frame from
-    /// this session's live mining state (`Game::tick_mining_dust`).
+    /// Mining, on the tick: advance the break timer against the block under the
+    /// crosshair while held, AND resolve client `BreakFinished` requests
+    /// (duration/tool/reach validated). See WIKI/client-prediction.md.
     pub(crate) fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
-        let sess = &mut self.sessions[s];
-        // The held tool (None = bare hand) gates mining speed + whether drops fall.
-        let tool = sess
+        if let Some(req) = self.sessions[s].pending_break_finished.take() {
+            self.resolve_break_finished(s, req, events);
+        }
+
+        let tool = self.sessions[s]
             .player
             .inventory
             .selected()
             .and_then(|st| st.item.tool());
-        let look = sess.look;
-        if let Some(event) = sess.mining.update(
+        let look = self.sessions[s].look;
+        let break_held = self.sessions[s].intent_break_held;
+        let inventory_open = !self.sessions[s].intent_gameplay;
+        if let Some(event) = self.sessions[s].mining.update(
             TICK_DT,
             look.map(|t| t.block),
-            sess.intent_break_held,
-            !sess.intent_gameplay,
+            break_held,
+            inventory_open,
             &self.world,
             tool,
         ) {
+            // Hold-path finish still works for clients that have not sent
+            // BreakFinished (or when the local timer and server agree).
             self.finish_player_break(s, event, events);
         }
+    }
+
+    fn resolve_break_finished(
+        &mut self,
+        s: usize,
+        req: crate::server::player::PendingBreakFinished,
+        events: &mut TickEvents,
+    ) {
+        use crate::net::protocol::ActionDenyReason;
+        let crate::server::player::PendingBreakFinished {
+            request_id,
+            pos,
+            tool_item_id,
+        } = req;
+
+        // Reach from the CLAIMED eye — the same reference the look latch was
+        // validated against (F1), so an accepted mining target can't be denied
+        // at the finish by server-integration drift.
+        let eye =
+            self.sessions[s].claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+        if !crate::player::block_within_reach(eye, pos) {
+            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::OutOfReach));
+            return;
+        }
+
+        let block = Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z));
+        if block.hardness() < 0.0 {
+            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::Denied));
+            return;
+        }
+
+        let auth_tool = self.sessions[s]
+            .player
+            .inventory
+            .selected()
+            .and_then(|st| st.item.tool());
+        let claimed_tool = tool_item_id
+            .map(crate::item::ItemType)
+            .and_then(|it| it.tool());
+        if claimed_tool != auth_tool {
+            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::BadTool));
+            return;
+        }
+
+        // Duration is validated against the SERVER'S OWN mining timer — the
+        // hold-path `sess.mining` that accrues from the latched look +
+        // break_held every tick. Client-reported time is never trusted: the
+        // uplink delays of the mining start and the finish request roughly
+        // cancel, so the observed window tracks the client's real elapsed
+        // time within a couple of ticks of jitter (the slack below). A
+        // spuriously denied finish costs nothing — the hold-path timer still
+        // breaks the block a tick or two later. Instant blocks (expected 0)
+        // need no observed window.
+        let expected = crate::mining::break_time(block, auth_tool);
+        if expected > 0.0 {
+            let observed = self.sessions[s]
+                .mining
+                .progress()
+                .and_then(|(target, elapsed)| (target == pos).then_some(elapsed));
+            if observed.is_none_or(|elapsed| elapsed + 3.0 * TICK_DT < expected) {
+                self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::TooFast));
+                return;
+            }
+        }
+
+        let event = BreakEvent {
+            pos,
+            block,
+            harvested: crate::mining::harvests(block, auth_tool),
+        };
+        self.sessions[s].mining = MiningState::new();
+        self.finish_player_break(s, event, events);
+        self.push_action_outcome(s, request_id, true, None);
     }
 
     /// Apply a finished player break: announce `block_break_pre` (cancel =

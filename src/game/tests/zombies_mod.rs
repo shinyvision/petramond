@@ -69,11 +69,13 @@ fn zombie_combat_inner() {
     let h0 = game.server.sessions[0].player.health();
     let mut health = h0;
     let mut hits: Vec<(i64, i32)> = Vec::new(); // (tick index, health drop)
+    let mut peak_knockback = 0.0_f32;
     for tick in 0..50i64 {
         game.server.game_tick_step(&mut ev);
         let h = game.server.sessions[0].player.health();
         if h < health {
             hits.push((tick, health - h));
+            peak_knockback = peak_knockback.max(game.server.sessions[0].player.vel.length());
         }
         health = h;
     }
@@ -95,12 +97,11 @@ fn zombie_combat_inner() {
             "no two damage applications within the 20-tick i-frame window: {hits:?}"
         );
     }
-    // An applied (non-cancelled) strike knocks the player back; the player
-    // integrates per frame, so on pure ticks the impulse shows in velocity.
+    // An applied (non-cancelled) strike knocks the player; server movement
+    // friction decays the impulse on later ticks, so sample at hit time.
     assert!(
-        game.server.sessions[0].player.vel.length() > 1.0,
-        "knockback reached the player's velocity: {:?}",
-        game.server.sessions[0].player.vel
+        peak_knockback > 1.0,
+        "knockback reached the player's velocity at hit time: {peak_knockback}"
     );
     // The documented inspection mirror: 8-byte LE u64 end-of-window tick.
     let bytes = game

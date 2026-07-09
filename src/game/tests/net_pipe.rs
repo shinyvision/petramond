@@ -59,7 +59,10 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         .count;
     game.server.apply_message(
         0,
-        ClientToServer::Action(PlayerAction::UseClick { mob: None }),
+        ClientToServer::Action(PlayerAction::UseClick {
+            mob: None,
+            request_id: None,
+        }),
     );
     let mut ev = TickEvents::default();
     game.server.tick_place(0, &mut ev);
@@ -84,6 +87,9 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
 fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     let mut game = game();
     install_empty_chunk(&mut game);
+    // Anchor the session at the drop point: claims must stay NEAR the server's
+    // integrated position to be accepted (the F1 anti-teleport bound).
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
     let h0 = game.server.sessions[0].player.health();
 
     // Grounded at y=80, airborne down to a landing at y=70: a 10-block fall.
@@ -95,12 +101,15 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     };
     let u = at(&game, 80.0, true);
     apply_update(&mut game, u);
+    game.server.tick_movement(0);
     for y in [78.0, 74.0, 71.0] {
         let u = at(&game, y, false);
         apply_update(&mut game, u);
+        game.server.tick_movement(0);
     }
     let u = at(&game, 70.0, true);
     apply_update(&mut game, u);
+    game.server.tick_movement(0);
 
     let mut ev = TickEvents::default();
     game.server.tick_fall_damage(0, &mut ev);
@@ -123,6 +132,8 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
     install_empty_chunk(&mut game);
     // A pool at the landing point: the swim probe (feet + 0.6) reads water.
     game.server.world.set_block_world(8, 70, 8, Block::Water);
+    // Anchor at the drop point so every claim passes the F1 closeness bound.
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
     let h0 = game.server.sessions[0].player.health();
 
     let at = |game: &super::common::TestGame, y: f32, on_ground: bool| {
@@ -133,13 +144,16 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
     };
     let u = at(&game, 80.0, true);
     apply_update(&mut game, u);
+    game.server.tick_movement(0);
     for y in [76.0, 73.0] {
         let u = at(&game, y, false);
         apply_update(&mut game, u);
+        game.server.tick_movement(0);
     }
     // Splashdown: grounded (or not — water cancels either way) inside the pool.
     let u = at(&game, 70.0, true);
     apply_update(&mut game, u);
+    game.server.tick_movement(0);
 
     let mut ev = TickEvents::default();
     game.server.tick_fall_damage(0, &mut ev);
@@ -214,6 +228,7 @@ fn menu_click_messages_latch_then_apply_on_the_tick() {
             button: 0, // primary
             shift: false,
             gather: false,
+            request_id: 1,
         },
     );
     assert_eq!(

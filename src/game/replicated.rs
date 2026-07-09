@@ -424,10 +424,62 @@ impl Game {
         );
         if let Some(state) = &update.self_state {
             self.self_view.apply(state);
+            // Local mining crack wins over the lagged SelfState copy.
+            if let Some(overlay) = self.local_mining.overlay() {
+                self.self_view.mining = Some(overlay);
+            }
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {
                 self.adopt_authoritative_transform(t);
+            }
+        }
+        // Authoritative inventory / block deltas win; then apply deny rollbacks
+        // for any predicted mutations the server rejected. Snapshots come back
+        // oldest-first, each capturing the state BEFORE its own prediction —
+        // so a newer snapshot still embeds an older denied mutation. Applied
+        // newest-first so the OLDEST snapshot wins.
+        let rollbacks = self.prediction.reconcile(&update.action_outcomes);
+        for snap in rollbacks.into_iter().rev() {
+            match snap {
+                crate::game::prediction::PredictionSnapshot::None => {}
+                crate::game::prediction::PredictionSnapshot::Inventory(inv) => {
+                    // Only restore if the server did not also ship a fresh body
+                    // this batch (unsolicited SelfState inventory wins).
+                    if update
+                        .self_state
+                        .as_ref()
+                        .and_then(|s| s.inventory.as_ref())
+                        .is_none()
+                    {
+                        self.self_view.inventory = inv;
+                    }
+                }
+                crate::game::prediction::PredictionSnapshot::Cell {
+                    pos,
+                    prev_block_id,
+                } => {
+                    // A same-batch authoritative delta at this cell wins over
+                    // the rollback (e.g. another player's placement took the
+                    // cell this client's place lost) — never restore the
+                    // stale pre-prediction block over it.
+                    if update.block_deltas.iter().all(|d| d.pos != pos) {
+                        let _ = self.replica.set_block_world(
+                            pos.x,
+                            pos.y,
+                            pos.z,
+                            crate::block::Block::from_id(prev_block_id),
+                        );
+                    }
+                    if self.place_ghost.is_some_and(|(p, _)| p == pos) {
+                        self.place_ghost = None;
+                    }
+                }
+            }
+        }
+        if let Some((pos, _)) = self.place_ghost {
+            if update.block_deltas.iter().any(|d| d.pos == pos) {
+                self.place_ghost = None;
             }
         }
         // Shader-param environment (day/night sky, mod visuals): applied into

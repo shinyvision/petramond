@@ -9,6 +9,16 @@ use crate::world::World;
 pub const REACH: f32 = 4.0;
 const EPS: f32 = 1.0e-5;
 
+/// Server-side reach validation for a claimed block interaction: the CLOSEST
+/// point of cell `block` within `REACH` (+1 slack for latency between the
+/// claimed eye and the resolving tick) of `eye`. The one rule every
+/// server-side block-reach check shares (look latch, `BreakFinished`).
+pub(crate) fn block_within_reach(eye: Vec3, block: IVec3) -> bool {
+    let lo = Vec3::new(block.x as f32, block.y as f32, block.z as f32);
+    let closest = eye.clamp(lo, lo + Vec3::ONE);
+    (closest - eye).length() <= REACH + 1.0
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct ShapeHit {
     t: f32,

@@ -6,9 +6,14 @@ use super::entities::light_at_pos;
 use super::game::ServerGame;
 use crate::game::tick::TickEvents;
 
+type RequestId = crate::net::protocol::ClientRequestId;
+
+/// Each queued intent carries ITS OWN optional request id, so every predicted
+/// drop is individually answered — a shared per-session latch would orphan all
+/// but the last id queued in a tick window (leaking the client's ledger).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DropQueue {
-    pending: Vec<PendingDropAction>,
+    pending: Vec<(PendingDropAction, Option<RequestId>)>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -20,24 +25,41 @@ enum PendingDropAction {
 
 impl DropQueue {
     pub(crate) fn queue_stack(&mut self, stack: ItemStack) {
-        self.pending.push(PendingDropAction::Stack(stack));
+        self.pending.push((PendingDropAction::Stack(stack), None));
     }
 
-    pub(crate) fn queue_selected(&mut self, slot: u8, all: bool) {
-        self.pending.push(PendingDropAction::Selected { slot, all });
+    pub(crate) fn queue_selected(&mut self, slot: u8, all: bool, id: Option<RequestId>) {
+        self.pending
+            .push((PendingDropAction::Selected { slot, all }, id));
     }
 
-    pub(crate) fn queue_cursor_stack(&mut self, inventory: &Inventory) {
-        if let Some(stack) = self.available_cursor_throw_stack(inventory) {
-            self.pending.push(PendingDropAction::Cursor(stack));
-        }
+    /// Queue a whole-cursor throw. `false` when there is nothing throwable —
+    /// the caller must answer the request id itself.
+    pub(crate) fn queue_cursor_stack(
+        &mut self,
+        inventory: &Inventory,
+        id: Option<RequestId>,
+    ) -> bool {
+        let Some(stack) = self.available_cursor_throw_stack(inventory) else {
+            return false;
+        };
+        self.pending.push((PendingDropAction::Cursor(stack), id));
+        true
     }
 
-    pub(crate) fn queue_cursor_one(&mut self, inventory: &Inventory) {
-        if let Some(stack) = self.available_cursor_throw_stack(inventory) {
-            self.pending
-                .push(PendingDropAction::Cursor(ItemStack::new(stack.item, 1)));
-        }
+    /// Queue a single-item cursor throw. `false` when there is nothing
+    /// throwable — the caller must answer the request id itself.
+    pub(crate) fn queue_cursor_one(
+        &mut self,
+        inventory: &Inventory,
+        id: Option<RequestId>,
+    ) -> bool {
+        let Some(stack) = self.available_cursor_throw_stack(inventory) else {
+            return false;
+        };
+        self.pending
+            .push((PendingDropAction::Cursor(ItemStack::new(stack.item, 1)), id));
+        true
     }
 
     pub(crate) fn close_cursor_stack(&mut self, inventory: &mut Inventory) {
@@ -60,7 +82,7 @@ impl DropQueue {
     fn pending_cursor_throw_count(&self, item: ItemType) -> u8 {
         self.pending
             .iter()
-            .filter_map(|action| match action {
+            .filter_map(|(action, _)| match action {
                 PendingDropAction::Cursor(stack) if stack.item == item => Some(stack.count),
                 _ => None,
             })
@@ -74,7 +96,7 @@ impl DropQueue {
         (count > 0).then_some(ItemStack::new(cursor.item, count))
     }
 
-    fn drain(&mut self) -> Vec<PendingDropAction> {
+    fn drain(&mut self) -> Vec<(PendingDropAction, Option<RequestId>)> {
         std::mem::take(&mut self.pending)
     }
 }
@@ -95,7 +117,7 @@ impl ServerGame {
     /// and spawn the matching dropped entity in the same fixed-tick phase, before item
     /// physics gives fresh drops their first step.
     pub(crate) fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
-        for action in self.sessions[s].drop_queue.drain() {
+        for (action, request_id) in self.sessions[s].drop_queue.drain() {
             let stack = match action {
                 PendingDropAction::Selected { slot, all } => {
                     self.take_hotbar_slot_for_drop(s, slot, all)
@@ -106,9 +128,18 @@ impl ServerGame {
                 }
                 PendingDropAction::Stack(stack) => Some(stack),
             };
+            let threw = stack.is_some();
             if let Some(stack) = stack {
                 self.spawn_thrown_item(s, stack);
                 events.player(s).threw_item = true;
+            }
+            if let Some(id) = request_id {
+                self.push_action_outcome(
+                    s,
+                    id,
+                    threw,
+                    (!threw).then_some(crate::net::protocol::ActionDenyReason::Denied),
+                );
             }
         }
     }

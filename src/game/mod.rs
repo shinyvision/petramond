@@ -36,6 +36,7 @@ pub(crate) mod container;
 mod environment;
 mod frame;
 mod local_player;
+pub(crate) mod prediction;
 pub(crate) mod presentation;
 pub(crate) mod remote_players;
 pub(crate) mod replicated;
@@ -189,6 +190,20 @@ pub struct Game {
     /// Chests with at least one open screen anywhere (replicated per batch —
     /// the server's `chest_viewers` key set). Drives the lid animation.
     open_chests: rustc_hash::FxHashSet<IVec3>,
+    /// Optimistic prediction ledger (request ids + undo snapshots).
+    pub(crate) prediction: prediction::PredictionLedger,
+    /// Local mining timer for crack overlay + `BreakFinished` (P2).
+    local_mining: crate::mining::MiningState,
+    /// The movement `Input` this frame's local physics consumed
+    /// (`tick_player`) — reused verbatim by `build_player_update` so the wire
+    /// intent can never drift from what the prediction simulated.
+    predicted_input: crate::player::Input,
+    /// One-shot hand triggers latched this frame for P0 jab/swing (before
+    /// server confirmation). Consumed into `GameEvents` in `tick_receive`.
+    local_hand_jab: bool,
+    local_hand_swing: bool,
+    /// Optimistic ghost place cell (cleared on accept/deny or replica delta).
+    place_ghost: Option<(IVec3, u8)>,
     fallback_world: SurfaceDensitySystem,
     particles: ParticleSystem,
     /// Wall-clock seconds banked toward the next mining-dust fleck while the
@@ -409,26 +424,160 @@ impl Game {
         }
     }
 
+    /// Snapshot the predicted inventory and open a ledger entry for one
+    /// predicted mutating action: `(can, id)`. When `can` is false the entry
+    /// is track-only (no snapshot) and the caller must skip its local
+    /// mutation — the ledger is at capacity until the server catches up.
+    fn begin_inventory_prediction(&mut self) -> (bool, crate::net::protocol::ClientRequestId) {
+        let can = self.prediction.can_predict();
+        let snapshot = if can {
+            prediction::PredictionSnapshot::Inventory(self.self_view.inventory.clone())
+        } else {
+            prediction::PredictionSnapshot::None
+        };
+        (can, self.prediction.begin(snapshot))
+    }
+
     /// Drop the player's held (active hotbar) item into the world via the in-game
     /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
     /// single item (Q). No-op with an empty hand.
     pub fn drop_selected_item(&mut self, all: bool) {
+        let (can, request_id) = self.begin_inventory_prediction();
+        if can {
+            let slot = self.self_view.inventory.active_slot() as usize;
+            if all {
+                let _ = self.self_view.inventory.slot_mut(slot).and_then(|c| c.take());
+            } else if let Some(cell) = self.self_view.inventory.slot_mut(slot) {
+                if let Some(stack) = cell.as_mut() {
+                    stack.count = stack.count.saturating_sub(1);
+                    if stack.count == 0 {
+                        *cell = None;
+                    }
+                }
+            }
+        }
         self.outbox
-            .push(ClientToServer::Action(PlayerAction::Drop { all }));
+            .push(ClientToServer::Action(PlayerAction::Drop { all, request_id }));
     }
 
     /// Throw the whole cursor-held stack out into the world (inventory drag-out
     /// then click outside the panel). No-op when the cursor is empty.
     pub fn throw_cursor_stack(&mut self) {
+        let (can, request_id) = self.begin_inventory_prediction();
+        if can {
+            *self.self_view.inventory.cursor_mut() = None;
+        }
         self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursorStack));
+            .push(ClientToServer::Action(PlayerAction::ThrowCursorStack {
+                request_id,
+            }));
     }
 
     /// Throw a single item off the cursor-held stack (right-click outside the
     /// panel while dragging). No-op when the cursor is empty.
     pub fn throw_cursor_one(&mut self) {
+        let (can, request_id) = self.begin_inventory_prediction();
+        if can {
+            if let Some(cur) = self.self_view.inventory.cursor_mut().as_mut() {
+                cur.count = cur.count.saturating_sub(1);
+                if cur.count == 0 {
+                    *self.self_view.inventory.cursor_mut() = None;
+                }
+            }
+        }
         self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursorOne));
+            .push(ClientToServer::Action(PlayerAction::ThrowCursorOne {
+                request_id,
+            }));
+    }
+
+    /// Latch a hit-tested container click for the next game tick: resolved by
+    /// the App to a [`MenuSlot`](crate::gui::MenuSlot), a button, Shift, and
+    /// its double-click `gather` verdict, shipped as a `MenuClick` message and
+    /// applied in arrival order by the tick's menu stage. Optimistically
+    /// mutates the predicted inventory when the ledger has room.
+    pub fn menu_click(
+        &mut self,
+        slot: crate::gui::MenuSlot,
+        button: crate::controls::PointerButton,
+        shift: bool,
+        gather: bool,
+    ) {
+        // Clicks the prediction cannot faithfully apply ride track-only: no
+        // inventory clone, no snapshot slot burned, nothing to roll back.
+        let (can, request_id) = if self.menu_click_is_predictable(slot, shift, gather) {
+            self.begin_inventory_prediction()
+        } else {
+            (false, self.prediction.begin_track_only())
+        };
+        if can {
+            self.predict_menu_click(slot, button, shift, gather);
+        }
+        self.outbox.push(ClientToServer::MenuClick {
+            slot: MenuSlotWire::from_menu_slot(&slot),
+            button: crate::net::protocol::button_to_wire(button),
+            shift,
+            gather,
+            request_id,
+        });
+    }
+
+    /// Whether a click's outcome is container-independent — the ONLY clicks
+    /// the client may predict without a local container mirror, because the
+    /// shared apply (`ContainerMenu::click`) reroutes the rest by the open
+    /// target: shift-clicks route into an open chest/furnace/mod/workbench,
+    /// and a gather sweeps an open block container. Predicting those with
+    /// inventory-only primitives would drift from the server (the
+    /// single-apply-path rule in WIKI/client-prediction.md).
+    fn menu_click_is_predictable(
+        &self,
+        slot: crate::gui::MenuSlot,
+        shift: bool,
+        gather: bool,
+    ) -> bool {
+        if !matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
+            return false;
+        }
+        let v = &self.menu_view;
+        let block_container_open =
+            v.chest.is_some() || v.furnace.is_some() || v.container.is_some();
+        if shift {
+            !block_container_open && v.workbench.is_none()
+        } else if gather {
+            !block_container_open
+        } else {
+            true
+        }
+    }
+
+    /// Apply inventory-only click prediction; callers gate on
+    /// [`menu_click_is_predictable`](Self::menu_click_is_predictable), so
+    /// every arm here matches what `ContainerMenu::click` will do server-side.
+    fn predict_menu_click(
+        &mut self,
+        slot: crate::gui::MenuSlot,
+        button: crate::controls::PointerButton,
+        shift: bool,
+        gather: bool,
+    ) {
+        use crate::controls::PointerButton;
+        use crate::gui::MenuSlot;
+        let inv = &mut self.self_view.inventory;
+        match slot {
+            MenuSlot::Inventory(i) => {
+                if shift {
+                    inv.shift_move_slot(i);
+                } else if gather {
+                    inv.collect_to_cursor();
+                } else {
+                    match button {
+                        PointerButton::Primary => inv.click_slot(i),
+                        PointerButton::Secondary => inv.right_click_slot(i),
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Whether the LOCAL cursor currently holds a stack, from the REPLICATED
@@ -455,25 +604,6 @@ impl Game {
             gui_state: view.gui_state.clone(),
             container: view.container.clone(),
         }
-    }
-
-    /// Latch a hit-tested container click for the next game tick: resolved by
-    /// the App to a [`MenuSlot`](crate::gui::MenuSlot), a button, Shift, and
-    /// its double-click `gather` verdict, shipped as a `MenuClick` message and
-    /// applied in arrival order by the tick's menu stage.
-    pub fn menu_click(
-        &mut self,
-        slot: crate::gui::MenuSlot,
-        button: crate::controls::PointerButton,
-        shift: bool,
-        gather: bool,
-    ) {
-        self.outbox.push(ClientToServer::MenuClick {
-            slot: MenuSlotWire::from_menu_slot(&slot),
-            button: crate::net::protocol::button_to_wire(button),
-            shift,
-            gather,
-        });
     }
 
     // Menu sessions open SERVER-SIDE on the tick (at the interaction / mod
