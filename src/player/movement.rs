@@ -7,7 +7,7 @@ pub(super) const WALK: f32 = 4.3;
 pub(crate) const SPRINT: f32 = 5.6;
 pub(super) const SPECTATOR_SPEED: f32 = 48.0;
 pub(crate) const SPECTATOR_SPRINT: f32 = 96.0;
-pub(super) const GRAVITY: f32 = 28.0;
+pub(crate) const GRAVITY: f32 = 28.0;
 /// Jump take-off speed. Apex height = v0² / (2·g) = 8.4²/56 ≈ 1.26 blocks, so a
 /// held jump clears a single full block with margin.
 pub(crate) const JUMP_V0: f32 = 8.4;

@@ -126,7 +126,7 @@ fn kitchen_oven_inner() {
     // `block_placed` anchor announcement — the cell the mod records).
     let floor = IVec3::new(10, 63, 8);
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let mut ev = TickEvents::default();
     game.server.game_tick_step(&mut ev);
     assert!(
@@ -446,7 +446,7 @@ fn kitchen_reuse_inner() {
     // Place + first session, routing the food and fuel in.
     let floor = IVec3::new(10, 63, 8);
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let mut ev = TickEvents::default();
     game.server.game_tick_step(&mut ev);
     let clicked = floor + IVec3::Y;
@@ -485,7 +485,7 @@ fn kitchen_reuse_inner() {
     // same open_gui interaction.
     let far_cell = *cells.iter().find(|c| **c != anchor).expect("non-anchor");
     game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     game.server.tick_place(0, &mut ev);
     assert_eq!(
         game.server.sessions[0].request_open_mod_gui.take(),
@@ -523,7 +523,7 @@ fn kitchen_reuse_inner() {
     // REUSE, exactly as a player would: right-click a footprint cell again…
     let far_cell = *cells.iter().find(|c| **c != anchor).expect("non-anchor");
     game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     game.server.tick_place(0, &mut ev);
     assert_eq!(
         game.server.sessions[0].request_open_mod_gui,
@@ -603,7 +603,7 @@ fn kitchen_reuse_inner() {
         .inventory
         .add(ItemStack::new(raw_mutton, 1));
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     game.server.game_tick_step(&mut ev);
     let (_, anchor2, _) = game
         .server
@@ -751,7 +751,7 @@ fn kitchen_mutton_inner() {
     let mut ev = TickEvents::default();
     game.server.sessions[0].look = None;
     game.server.sessions[0].intent_use_held = true;
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     // One tick short of the eat duration: still chewing, nothing consumed.
     for _ in 0..(food.eat_ticks - 1) {
         game.server.game_tick_step(&mut ev);
@@ -819,7 +819,7 @@ fn kitchen_mutton_inner() {
         .inventory
         .add(ItemStack::new(cooked_mutton, 1));
     game.server.sessions[0].intent_use_held = true;
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     for _ in 0..(food.eat_ticks / 2) {
         game.server.game_tick_step(&mut ev);
     }

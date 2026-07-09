@@ -31,7 +31,7 @@ fn set_player_eye(game: &mut super::common::TestGame, eye: Vec3) {
 }
 
 fn right_click(game: &mut super::common::TestGame) -> TickEvents {
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let mut events = TickEvents::default();
     game.server.tick_place(0, &mut events);
     events

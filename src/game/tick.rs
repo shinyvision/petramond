@@ -624,12 +624,25 @@ impl Game {
             .push(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
             if input.place_clicked {
-                // P0: jab immediately; optional place ghost (P1) when holding a block.
-                self.local_hand_jab = true;
+                // The click's block target rides the wire: the server resolves
+                // the interact/place against THIS cell, never a fresher look —
+                // a click racing the crosshair must land where the ghost is.
+                let target = self.look.map(|h| TargetRef {
+                    block: h.block,
+                    normal: h.normal,
+                });
                 let request_id = self.try_predict_place_ghost(input.movement.sneak);
+                // P0 jab only when the click predictably does something; a
+                // click the client knows is a no-op still ships (the server
+                // may know better — mods, state the replica can't see) but
+                // stays silent locally; a server-side surprise animates
+                // through the replicated `interacted`/`used_item` events.
+                self.local_hand_jab =
+                    request_id.is_some() || self.use_click_predicts_effect(input, use_mob);
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
+                        target,
                         request_id,
                     }));
             }
@@ -645,12 +658,42 @@ impl Game {
         self.frame_messages.append(&mut self.outbox);
     }
 
+    /// Whether the client can foresee this use click doing anything: a mob
+    /// use/shear target, an interactable block under the crosshair
+    /// (non-sneak), or a held item with its own use (food, bucket). Gates the
+    /// P0 jab only — the click ships regardless.
+    fn use_click_predicts_effect(&self, input: &GameInput, use_mob: Option<u64>) -> bool {
+        if use_mob.is_some() {
+            return true;
+        }
+        if let Some(stack) = self.self_view.inventory.selected() {
+            if stack.item.food().is_some() || stack.item.item_use().is_some() {
+                return true;
+            }
+        }
+        let Some(look) = self.look else {
+            return false;
+        };
+        let target = crate::block::Block::from_id(self.replica.chunk_block(
+            look.block.x,
+            look.block.y,
+            look.block.z,
+        ));
+        !input.movement.sneak
+            && target.interaction() != crate::block::BlockInteraction::None
+    }
+
     /// Optimistic ghost place when the look target can accept the held block.
+    /// Mirrors the placement checks the client CAN evaluate on its replica —
+    /// a ghost the server is known to refuse is never drawn.
     fn try_predict_place_ghost(
         &mut self,
         sneak: bool,
     ) -> Option<crate::net::protocol::ClientRequestId> {
         let look = self.look?;
+        if look.normal == IVec3::ZERO {
+            return None; // eye inside the cell — the server never places
+        }
         let block = self.self_view.inventory.selected()?.item.as_block()?;
         // A non-sneak click on an interactable block opens/uses it instead of
         // placing (the server's interact ladder) — no ghost, or the client
@@ -668,6 +711,24 @@ impl Game {
         if prev != crate::block::Block::Air.0 {
             return None;
         }
+        // The client KNOWS these placements fail server-side: unrooted
+        // substrate, unsupported torch, or a body in the cell (own body
+        // included — no ghost where the player stands).
+        let below = self
+            .replica
+            .physics_block(place_pos.x, place_pos.y - 1, place_pos.z);
+        if !block.can_root_on(below) {
+            return None;
+        }
+        if block == crate::block::Block::Torch {
+            match crate::torch::TorchPlacement::from_place_normal(look.normal) {
+                Some(tp) if self.replica.torch_supported_at(place_pos, tp) => {}
+                _ => return None,
+            }
+        }
+        if self.placement_blocked_by_body(place_pos, block.collision_boxes()) {
+            return None;
+        }
         if !self.prediction.can_predict() {
             return Some(self.prediction.begin_track_only());
         }
@@ -681,6 +742,39 @@ impl Game {
             .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
         self.place_ghost = Some((place_pos, block.0));
         Some(id)
+    }
+
+    /// Client mirror of the server's `placement_occupied_by_body`: the own
+    /// predicted body plus every replicated mob / remote-player row.
+    fn placement_blocked_by_body(&self, cell: IVec3, boxes: &[crate::block::Aabb]) -> bool {
+        if boxes.is_empty() {
+            return false; // collisionless blocks (torch, grass) trap nothing
+        }
+        if self.player.body().overlaps_block_boxes(cell, boxes) {
+            return true;
+        }
+        for entry in self.replicated_mobs.iter() {
+            if entry.curr.dead {
+                continue;
+            }
+            let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
+            let body = crate::body::Body::new(entry.curr.pos, size.half_width, size.height);
+            if body.overlaps_block_boxes(cell, boxes) {
+                return true;
+            }
+        }
+        for p in self.remote_players.iter() {
+            let row = &p.curr;
+            if !row.visible || !row.alive {
+                continue;
+            }
+            let body =
+                crate::body::Body::new(row.pos, crate::player::HALF_W, crate::player::HEIGHT);
+            if body.overlaps_block_boxes(cell, boxes) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Adopt a `SelfState::transform` correction: the server's ticks moved

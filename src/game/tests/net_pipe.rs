@@ -61,6 +61,10 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         0,
         ClientToServer::Action(PlayerAction::UseClick {
             mob: None,
+            target: Some(TargetRef {
+                block: IVec3::new(8, 63, 8),
+                normal: IVec3::Y,
+            }),
             request_id: None,
         }),
     );

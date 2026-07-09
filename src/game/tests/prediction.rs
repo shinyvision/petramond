@@ -8,7 +8,7 @@ use crate::game::tick::{TickEvents, TICK_DT};
 use crate::gui::MenuSlot;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{
-    ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, TickUpdate,
+    ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
 };
 
 #[test]
@@ -295,6 +295,136 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
         Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "an authoritative same-batch delta wins over the deny rollback"
+    );
+}
+
+#[test]
+fn place_resolves_at_the_click_target_not_the_freshest_look() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let a = IVec3::new(8, 63, 8);
+    let b = IVec3::new(11, 63, 11);
+    assert!(game.server.world.set_block_world(a.x, a.y, a.z, Block::Stone));
+    assert!(game.server.world.set_block_world(b.x, b.y, b.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(9.5, 63.0, 9.5);
+    game.server.sessions[0].player.inventory = filled_inventory(); // dirt
+
+    // Click aimed at A...
+    let mut u = player_update(&game, true);
+    u.target = Some(hit(a, IVec3::Y));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::UseClick {
+            mob: None,
+            target: Some(hit(a, IVec3::Y)),
+            request_id: Some(3),
+        }),
+    );
+    // ...then the crosshair moves to B before the tick resolves the click.
+    let mut u2 = player_update(&game, true);
+    u2.target = Some(hit(b, IVec3::Y));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u2));
+
+    game.server.tick_place(0, &mut TickEvents::default());
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(a.x, a.y + 1, a.z)),
+        Block::Dirt,
+        "the block lands where the CLICK aimed (the client's ghost)"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(b.x, b.y + 1, b.z)),
+        Block::Air,
+        "the fresher look must not hijack the click"
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert!(outcomes.iter().any(|o| o.id == 3 && o.accepted));
+}
+
+#[test]
+fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let t = IVec3::new(8, 64, 8);
+    assert!(game.server.world.set_block_world(t.x, t.y, t.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.5, 10.5);
+
+    // Empty hand, non-interactable stone: the server consumes nothing — the
+    // client may have clicked a cell that only exists in ITS replica, so the
+    // authoritative state of the disputed cells ships back.
+    let mut u = player_update(&game, true);
+    u.target = Some(hit(t, IVec3::Y));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::UseClick {
+            mob: None,
+            target: Some(hit(t, IVec3::Y)),
+            request_id: None,
+        }),
+    );
+    game.server.tick_place(0, &mut TickEvents::default());
+    let cells = &game.server.sessions[0].pending_corrective_cells;
+    assert!(cells.contains(&t), "the clicked cell reconciles");
+    assert!(
+        cells.contains(&(t + IVec3::Y)),
+        "the would-be place cell reconciles"
+    );
+}
+
+#[test]
+fn claim_after_a_slow_client_gap_is_accepted() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
+    let start = game.server.sessions[0].player.pos;
+    let mut u = player_update(&game, true);
+    u.pos = start;
+    u.vel = Vec3::ZERO;
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.tick_movement(0);
+    // A slow client: four ticks free-run with no fresh claim.
+    for _ in 0..4 {
+        game.server.tick_movement(0);
+    }
+    // Its next report legitimately drifted further than one frame's worth.
+    let mut u2 = player_update(&game, true);
+    u2.pos = start + Vec3::new(6.0, 0.0, 0.0);
+    u2.vel = Vec3::new(5.6, 0.0, 0.0);
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u2.clone()));
+    game.server.tick_movement(0);
+    assert_eq!(
+        game.server.sessions[0].player.pos, u2.pos,
+        "the closeness ring scales with the claim gap — no rubber-banding"
+    );
+}
+
+#[test]
+fn transform_corrections_ship_only_on_real_divergence() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.5, 70.0, 8.5);
+    sess.player.vel = Vec3::new(0.0, -1.4, 0.0);
+    // The server free-ran a little past the client's last claim: small pos
+    // phase drift, one tick of gravity — time-phase, not divergence.
+    sess.last_reported_transform = Some(SelfTransform {
+        pos: sess.player.pos + Vec3::new(0.4, 0.5, 0.0),
+        vel: Vec3::ZERO,
+        yaw: sess.player.yaw,
+        pitch: sess.player.pitch,
+        on_ground: sess.player.on_ground,
+    });
+    assert!(
+        game.server.build_self_state(0).transform.is_none(),
+        "extrapolation past the claim must not rubber-band the client"
+    );
+
+    // A genuine tick-side teleport still corrects.
+    game.server.sessions[0].player.pos += Vec3::new(50.0, 0.0, 0.0);
+    assert!(
+        game.server.build_self_state(0).transform.is_some(),
+        "a real teleport ships a SelfTransform"
     );
 }
 

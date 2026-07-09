@@ -40,8 +40,9 @@ pub use interaction::{RaycastHit, REACH};
 /// tracker samples to mirror `track_fall`'s water reset from reported positions.
 pub(crate) use movement::WATER_PROBE_Y;
 /// Speed caps used by server movement validation (F1): horizontal sprint
-/// speeds plus the vertical envelope (jump take-off up, terminal fall down).
-pub(crate) use movement::{JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
+/// speeds plus the vertical envelope (jump take-off up, terminal fall down)
+/// and gravity (correction deadband scaling).
+pub(crate) use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
 pub use state::{
     BedSpawn, Input, Player, PlayerMode, DT_MAX, EYE, HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,
 };

@@ -27,7 +27,7 @@ fn game_with_bed() -> (super::common::TestGame, IVec3) {
 
 fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEvents {
     game.server.sessions[0].look = Some(hit(base, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let mut events = TickEvents::default();
     game.server.tick_place(0, &mut events);
     events

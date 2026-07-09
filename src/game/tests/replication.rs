@@ -379,7 +379,7 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
     // Session 1 right-clicked the chest (latched edge + look, as its
     // PlayerUpdate/UseClick messages would leave them).
     game.server.sessions[s1].look = Some(super::common::hit(pos, IVec3::Y));
-    game.server.sessions[s1].pending_place = true;
+    game.server.queue_place_click_for_test(s1);
 
     let update = pump_one_tick(&mut game);
     assert!(
@@ -576,7 +576,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
 
     // Place: a latched use click against the floor's top face.
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let update = pump_one_tick(&mut game);
     let placed_at = floor + IVec3::Y;
     assert!(
@@ -753,7 +753,7 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
         .world
         .mod_kv_set("petramond:is_night".into(), vec![1]);
     game.server.sessions[0].look = Some(super::common::hit(base, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
 
     let update = pump_one_tick(&mut game);
     let row = update

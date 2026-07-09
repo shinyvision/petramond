@@ -116,7 +116,12 @@ impl ServerGame {
 
     /// Apply the held item's own right-click use, if it has one. Returns `true`
     /// when the click was consumed: the world and the held item changed together.
-    pub(crate) fn try_use_item(&mut self, s: usize, events: &mut TickEvents) -> bool {
+    pub(crate) fn try_use_item(
+        &mut self,
+        s: usize,
+        click_target: Option<crate::net::protocol::TargetRef>,
+        events: &mut TickEvents,
+    ) -> bool {
         let Some(item) = self.sessions[s]
             .player
             .inventory
@@ -127,7 +132,7 @@ impl ServerGame {
         };
         // A handler cancelling `item_use_pre` consumed the click: the engine's own
         // use is skipped, but the item still reports as used (hand jab + post event).
-        let target = self.sessions[s].look.map(|h| h.block);
+        let target = click_target.map(|h| h.block);
         let mut pre = ItemUsePre { item, target };
         let cancelled = {
             let Self {

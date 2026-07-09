@@ -484,11 +484,24 @@ impl ServerGame {
         shared: &SharedTickRows,
     ) -> TickUpdate {
         // Per-recipient delta filter: only sections this client holds.
-        let block_deltas = deltas
+        let mut block_deltas: Vec<BlockDelta> = deltas
             .iter()
             .filter(|d| self.sessions[s].terrain.covers(d.pos))
             .copied()
             .collect();
+        // Corrective cell sync: the CURRENT state of cells a use click
+        // disagreed about (no-op click, denied place) — how a client whose
+        // replica lied (ghost block, stale cell) reconciles. A shared delta
+        // for the same cell already carries the truth.
+        for pos in std::mem::take(&mut self.sessions[s].pending_corrective_cells) {
+            if !self.sessions[s].terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos)
+            {
+                continue;
+            }
+            if let Some(d) = self.world.block_delta_at(pos) {
+                block_deltas.push(d);
+            }
+        }
         let action_outcomes = std::mem::take(&mut self.sessions[s].pending_action_outcomes);
         TickUpdate {
             tick: shared.tick,
@@ -570,10 +583,13 @@ impl ServerGame {
         let sleep_bed = self.sleep_bed_base(s);
         let sess = &mut self.sessions[s];
         let player = &sess.player;
-        // Transform correction: ships whenever the session transform differs
-        // from the last CLIENT-REPORTED one (a tick-side teleport/knockback;
-        // also the very first update, where nothing was reported yet — the
-        // echo is a no-op there, the client seeded from the same player).
+        // Transform correction: ships only on REAL divergence from the last
+        // CLIENT-REPORTED transform — a rejected claim, a tick-side
+        // teleport/knockback, or the very first update (nothing reported yet;
+        // the echo is a no-op there, the client seeded from the same player).
+        // The server free-runs its integration past a slow client's last
+        // claim, so plain inequality is just time-phase drift — correcting it
+        // rubber-bands the client. The deadbands scale with the claim gap.
         let current = SelfTransform {
             pos: player.pos,
             vel: player.vel,
@@ -581,7 +597,22 @@ impl ServerGame {
             pitch: player.pitch,
             on_ground: player.on_ground,
         };
-        let transform = (sess.last_reported_transform != Some(current)).then_some(current);
+        let diverged = match &sess.last_reported_transform {
+            None => true,
+            Some(r) => {
+                let spectator = player.is_spectator();
+                let gap = sess.ticks_since_claim;
+                (player.pos - r.pos).length()
+                    > crate::server::movement::claim_drift_ring(spectator, gap)
+                    || (player.vel - r.vel).length()
+                        > crate::server::movement::vel_correction_eps(gap)
+                    // Yaw/pitch never extrapolate (ticks don't turn the
+                    // head), so any difference is a genuine server-side set.
+                    || player.yaw != r.yaw
+                    || player.pitch != r.pitch
+            }
+        };
+        let transform = diverged.then_some(current);
         let revision = player.inventory.revision();
         let inventory = (sess.last_sent_inventory_revision != Some(revision)).then(|| {
             player
@@ -782,6 +813,7 @@ impl ServerGame {
             sess.pending_attack_player = None;
             sess.pending_place = false;
             sess.pending_use_mob = None;
+            sess.pending_place_target = None;
             // The dropped click still owes its outcome: deny, so the client
             // rolls its place ghost back instead of leaking the ledger entry.
             if let Some(id) = sess.pending_place_request_id.take() {
@@ -814,13 +846,23 @@ impl ServerGame {
             reason: Some(ActionDenyReason::Denied),
         };
         match action {
-            PlayerAction::UseClick { mob, request_id } => {
+            PlayerAction::UseClick {
+                mob,
+                target,
+                request_id,
+            } => {
                 let sess = &mut self.sessions[s];
                 if let Some(old) = sess.pending_place_request_id.take() {
                     sess.pending_action_outcomes.push(deny(old));
                 }
                 sess.pending_place = true;
                 sess.pending_use_mob = mob;
+                // Reach-validate the CLICK's target against the claimed eye —
+                // the same rule as the look latch. The placement stage
+                // resolves against this cell, never a fresher look.
+                let eye = sess.claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+                sess.pending_place_target =
+                    target.filter(|t| player::block_within_reach(eye, t.block));
                 sess.pending_place_request_id = request_id;
             }
             PlayerAction::AttackClick { mob, player } => {

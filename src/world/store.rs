@@ -512,6 +512,28 @@ impl World {
         out
     }
 
+    /// Snapshot one cell's CURRENT content as a wire delta — the same shape
+    /// [`record_block_delta`](Self::record_block_delta) logs, but on demand:
+    /// the per-recipient corrective sync a use click that disagreed with the
+    /// client's replica ships. `None` when the section is not loaded.
+    pub(crate) fn block_delta_at(
+        &self,
+        pos: crate::mathh::IVec3,
+    ) -> Option<crate::net::protocol::BlockDelta> {
+        if !self.section_loaded_at(pos.x, pos.y, pos.z) {
+            return None;
+        }
+        let block_id = self.chunk_block(pos.x, pos.y, pos.z);
+        let water =
+            (block_id == Block::Water.id()).then(|| self.water_meta_world(pos.x, pos.y, pos.z));
+        Some(crate::net::protocol::BlockDelta {
+            pos,
+            block_id,
+            water,
+            state: self.cell_state_at(pos.x, pos.y, pos.z),
+        })
+    }
+
     /// Log the CURRENT content of one just-changed cell (called from the
     /// block-change announce choke point, after the write landed). `block_id`
     /// is the raw session id; `water` carries the meta byte iff the cell holds

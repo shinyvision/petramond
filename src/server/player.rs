@@ -265,6 +265,15 @@ pub(crate) struct ConnectedPlayer {
     /// The stable id of the mob under the crosshair when the use click fired —
     /// the shear target.
     pub pending_use_mob: Option<u64>,
+    /// The block target the use click carried (crosshair AT CLICK TIME,
+    /// reach-validated at the latch). The interact/place ladder resolves
+    /// against THIS cell, never the fresher look latch — a click racing the
+    /// crosshair must land where the client's ghost is.
+    pub pending_place_target: Option<TargetRef>,
+    /// Cells whose CURRENT authoritative state ships to this recipient in the
+    /// next batch (a use click that resolved to nothing, or a denied place):
+    /// the reconcile channel for a client whose replica disagreed.
+    pub pending_corrective_cells: Vec<IVec3>,
     /// The held block's placement rotation, fed from `PlayerUpdate`'s raw
     /// counter (see [`HeldRotation::apply_wire`]). The placement paths read
     /// THIS copy, never the client's.
@@ -312,6 +321,11 @@ pub(crate) struct ConnectedPlayer {
     /// Set by `PlayerUpdate`; cleared after `tick_movement` consumes the claim.
     /// Stale claims must not yank the player back every tick.
     pub claim_fresh: bool,
+    /// Ticks integrated since the last consumed claim — how stale the
+    /// client's report is. A slow client legitimately drifts further from the
+    /// server's free-running integration, so both the F1 closeness ring and
+    /// the `SelfTransform` correction deadband scale with this.
+    pub ticks_since_claim: u32,
     /// The open container GUI's persistent edit target for THIS player.
     pub menu: ContainerMenu,
     /// The in-flight sleep session (`None` = awake).
@@ -385,6 +399,8 @@ impl ConnectedPlayer {
             pending_attack_player: None,
             pending_place: false,
             pending_use_mob: None,
+            pending_place_target: None,
+            pending_corrective_cells: Vec::new(),
             held_rotation: HeldRotation::default(),
             fall,
             pending_fall: 0.0,
@@ -403,6 +419,7 @@ impl ConnectedPlayer {
             claim_vel: crate::mathh::Vec3::ZERO,
             claim_on_ground: false,
             claim_fresh: false,
+            ticks_since_claim: 0,
             menu: ContainerMenu::new(),
             sleep: None,
             wake_requested: false,

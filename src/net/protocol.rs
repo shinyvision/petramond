@@ -226,10 +226,15 @@ pub(crate) struct TargetRef {
 pub(crate) enum PlayerAction {
     /// Secondary press: the interact/eat/use/place ladder. `mob` is the mob
     /// under the crosshair at click time (stable id) — the shear target, like
-    /// `AttackClick`'s. `request_id` is set when the client predicted a
-    /// mutating outcome (place ghost); presentation-only jabs may omit it.
+    /// `AttackClick`'s. `target` is the block under the crosshair AT CLICK
+    /// TIME: the server resolves the interact/place against THIS cell, never
+    /// a fresher look latch — otherwise a click racing the crosshair places
+    /// somewhere the client's ghost isn't. `request_id` is set when the
+    /// client predicted a mutating outcome (place ghost);
+    /// presentation-only jabs may omit it.
     UseClick {
         mob: Option<u64>,
+        target: Option<TargetRef>,
         request_id: Option<ClientRequestId>,
     },
     /// Primary press: attack the mob under the crosshair (stable mob id), the
@@ -1024,6 +1029,10 @@ mod tests {
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::UseClick {
             mob: Some(812),
+            target: Some(TargetRef {
+                block: IVec3::new(4, 65, -2),
+                normal: IVec3::Y,
+            }),
             request_id: Some(7),
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::AttackClick {

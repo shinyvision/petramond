@@ -712,6 +712,10 @@ mod tests {
         remote
             .send(ClientToServer::Action(PlayerAction::UseClick {
                 mob: None,
+                target: Some(TargetRef {
+                    block: target,
+                    normal: IVec3::Y,
+                }),
                 request_id: None,
             }))
             .expect("live connection");

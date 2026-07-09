@@ -43,7 +43,7 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
             .world
             .set_block_world(pos.x, pos.y, pos.z, block);
         game.server.sessions[0].look = Some(hit(pos, IVec3::Y));
-        game.server.sessions[0].pending_place = true;
+        game.server.queue_place_click_for_test(0);
 
         let mut events = TickEvents::default();
         game.server.tick_place(0, &mut events);
@@ -110,7 +110,7 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
     );
 
     game.server.sessions[0].look = Some(hit(lower, IVec3::Y));
-    game.server.sessions[0].pending_place = true;
+    game.server.queue_place_click_for_test(0);
     let mut events = TickEvents::default();
     game.server.tick_place(0, &mut events);
 

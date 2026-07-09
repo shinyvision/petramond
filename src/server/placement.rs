@@ -5,6 +5,7 @@ use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::facing::Facing;
 use crate::game::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
+use crate::net::protocol::TargetRef;
 use crate::torch::TorchPlacement;
 
 impl ServerGame {
@@ -14,33 +15,47 @@ impl ServerGame {
     /// player can still build against it. An in-progress EAT (held button on a food
     /// item) advances every tick, click or not.
     pub(crate) fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
-        // The mob under the crosshair at click time rides the click; consume
-        // it with the press so a stale target can't leak into a later click.
+        // The mob and block target under the crosshair at click time ride the
+        // click; consume them with the press so a stale (or FRESHER — the
+        // crosshair keeps moving while the click is queued) target can't
+        // resolve the press somewhere the client's prediction isn't.
         let use_mob = std::mem::take(&mut self.sessions[s].pending_use_mob);
+        let target = std::mem::take(&mut self.sessions[s].pending_place_target);
         if std::mem::take(&mut self.sessions[s].pending_place) {
-            self.place_click(s, use_mob, events);
+            self.place_click(s, use_mob, target, events);
         }
         self.advance_eating(s, events);
     }
 
-    /// Resolve one consumed secondary-button press.
-    fn place_click(&mut self, s: usize, use_mob: Option<u64>, events: &mut TickEvents) {
+    /// Resolve one consumed secondary-button press against the CLICK's block
+    /// target (never the look latch, which may be newer than the click).
+    fn place_click(
+        &mut self,
+        s: usize,
+        use_mob: Option<u64>,
+        target: Option<TargetRef>,
+        events: &mut TickEvents,
+    ) {
         let request_id = self.sessions[s].pending_place_request_id.take();
-        let mut placed = false;
+        let mut consumed = false;
+        let mut placed_at = None;
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
         // while a mob is targeted `look` is None, so the block paths below
         // would no-op anyway.
         if self.try_shear_mob(s, use_mob) {
             events.player(s).used_item = true;
+            consumed = true;
         } else {
-            let interacted = !self.sessions[s].intent_sneak && self.try_open_interactable(s, events);
+            let interacted =
+                !self.sessions[s].intent_sneak && self.try_open_interactable(s, target, events);
             // The one place every consumed interaction passes through: the interact
             // hand jab defaults ON for all of them (see `GameEvents::interacted`).
             events.player(s).interacted |= interacted;
             if interacted || self.try_start_eating(s, events) {
-                // Click consumed without placing — handled below.
-            } else if self.try_use_item(s, events) {
+                consumed = true;
+            } else if self.try_use_item(s, target, events) {
                 events.player(s).used_item = true;
+                consumed = true;
             } else {
                 // Capture the held block before `try_place` consumes it: on success that is
                 // exactly the block placed, which the client maps to a place sound.
@@ -49,9 +64,10 @@ impl ServerGame {
                     .inventory
                     .selected()
                     .and_then(|st| st.item.as_block());
-                if let Some(pos) = self.try_place(s, events) {
+                if let Some(pos) = self.try_place(s, target, events) {
                     events.player(s).placed_block = held;
-                    placed = true;
+                    consumed = true;
+                    placed_at = Some(pos);
                     if let Some(block) = held {
                         // Every observer presents the placement (positional sound)
                         // from the world-anchored event.
@@ -61,25 +77,47 @@ impl ServerGame {
                 }
             }
         }
-        // A request id rides the click only when the client predicted a place
-        // ghost (or track-only), so `accepted` means "a block was actually
-        // placed": a click consumed by an interaction/eat/use placed nothing
-        // and must DENY, or the client's ghost block would survive as a
-        // phantom (accept never rolls back).
+        // The client's ghost convention is `target.block + normal` — accept
+        // ONLY a placement that landed exactly there (accept never rolls
+        // back, so anything else must DENY to clear the ghost: a click
+        // consumed by an interact/eat/use, a replace-in-place, a slab stack
+        // into the hit cell, nothing at all).
+        let predicted = target
+            .filter(|t| t.normal != IVec3::ZERO)
+            .map(|t| t.block + t.normal);
+        let accepted = placed_at.is_some() && placed_at == predicted;
         if let Some(id) = request_id {
             self.push_action_outcome(
                 s,
                 id,
-                placed,
-                (!placed).then_some(crate::net::protocol::ActionDenyReason::Denied),
+                accepted,
+                (!accepted).then_some(crate::net::protocol::ActionDenyReason::Denied),
             );
+        }
+        // Reconcile channel: when the click did nothing (the client may have
+        // clicked a block that only exists in ITS replica) or its prediction
+        // was denied, ship the authoritative state of the disputed cells.
+        if let Some(t) = target {
+            let disputed = !consumed || (request_id.is_some() && !accepted);
+            if disputed {
+                let sess = &mut self.sessions[s];
+                sess.pending_corrective_cells.push(t.block);
+                if t.normal != IVec3::ZERO {
+                    sess.pending_corrective_cells.push(t.block + t.normal);
+                }
+            }
         }
     }
 
-    /// If the look target has a secondary-use capability, apply it and return
-    /// `true` (consuming the right-click).
-    fn try_open_interactable(&mut self, s: usize, events: &mut TickEvents) -> bool {
-        let Some(h) = self.sessions[s].look else {
+    /// If the click's block target has a secondary-use capability, apply it
+    /// and return `true` (consuming the right-click).
+    fn try_open_interactable(
+        &mut self,
+        s: usize,
+        target: Option<TargetRef>,
+        events: &mut TickEvents,
+    ) -> bool {
+        let Some(h) = target else {
             return false;
         };
         let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
@@ -173,11 +211,17 @@ impl ServerGame {
         }
     }
 
-    /// Attempt to place the held block; returns the anchor cell it landed in
-    /// (the front-left-bottom cell for multi-cell models, the lower cell for
-    /// doors), or `None` if nothing was placed.
-    pub(crate) fn try_place(&mut self, s: usize, events: &mut TickEvents) -> Option<IVec3> {
-        let h = self.sessions[s].look?;
+    /// Attempt to place the held block against the click's target face;
+    /// returns the anchor cell it landed in (the front-left-bottom cell for
+    /// multi-cell models, the lower cell for doors), or `None` if nothing was
+    /// placed.
+    pub(crate) fn try_place(
+        &mut self,
+        s: usize,
+        target: Option<TargetRef>,
+        events: &mut TickEvents,
+    ) -> Option<IVec3> {
+        let h = target?;
         if h.normal == IVec3::ZERO {
             return None;
         }
@@ -456,10 +500,21 @@ impl ServerGame {
         }) || self.world.mobs().any_overlapping_boxes(cell, boxes)
     }
 
-    /// Test-only wrapper keeping the old bool-shaped call for placement tests.
+    /// Test-only wrapper keeping the old bool-shaped call for placement tests
+    /// (the latched look stands in for the click target they never build).
     #[cfg(test)]
     pub(crate) fn try_place_for_test(&mut self) -> bool {
-        self.try_place(0, &mut Default::default()).is_some()
+        let target = self.sessions[0].look;
+        self.try_place(0, target, &mut Default::default()).is_some()
+    }
+
+    /// Test-only: latch a use click on session `s` aimed at its current look —
+    /// what a real client click ships as its click-time target.
+    #[cfg(test)]
+    pub(crate) fn queue_place_click_for_test(&mut self, s: usize) {
+        let sess = &mut self.sessions[s];
+        sess.pending_place_target = sess.look;
+        sess.pending_place = true;
     }
 }
 
