@@ -7,7 +7,7 @@
 //! stay `Send` (asserted below). Presentation (camera, particles, lid/swing
 //! animation) stays on the client side in `src/game/`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::crafting::Recipes;
 use crate::events::{Attach, EventBus, PostEvent, PostEventKind, SimCtx, Stage, TickSystems};
@@ -80,6 +80,10 @@ pub(crate) struct ServerGame {
     /// windowed by the streaming ack loop, and the leave path may empty the
     /// list.
     pub(crate) has_local_session: bool,
+    /// Case-folded player names promoted through `op`. Persisted in the
+    /// world's engine KV map; the listen server's local session is always an
+    /// operator independently of this set.
+    pub(crate) operators: BTreeSet<String>,
     /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
     /// `ContainerMenu`'s craft preview (borrowed in per call) and by the furnace
     /// *smelting* tick (`World::game_tick`), which is why they live here rather
@@ -696,11 +700,23 @@ impl ServerGame {
                 ));
             }
             ClientToServer::ChatSend { text } => {
-                let name = self.sessions[s].name.clone();
-                if let Some(line) =
-                    crate::server::chat::player_line(self.alloc_chat_seq(), &name, &text)
-                {
-                    self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
+                // A slash is a command prefix only at byte zero. Leading
+                // whitespace deliberately turns it into ordinary player chat.
+                if text.starts_with('/') {
+                    let id = self.sessions[s].id;
+                    if let Some(clean) = crate::server::chat::clean_text(&text) {
+                        self.execute_player_command(id, clean.strip_prefix('/').unwrap_or(""));
+                    }
+                } else {
+                    let name = self.sessions[s].name.clone();
+                    if let Some(line) =
+                        crate::server::chat::player_line(self.alloc_chat_seq(), &name, &text)
+                    {
+                        if !self.has_local_session {
+                            log::info!("chat: {}", crate::server::chat::display_text(&line));
+                        }
+                        self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
+                    }
                 }
             }
             // Pause is honorable only while the sole connection has always
@@ -754,6 +770,17 @@ impl ServerGame {
         targets: crate::server::chat::ChatTargets,
     ) {
         if let Some(line) = crate::server::chat::authored_line(self.alloc_chat_seq(), text) {
+            self.enqueue_chat(line, targets);
+        }
+    }
+
+    pub(crate) fn enqueue_plain_chat(
+        &mut self,
+        text: &str,
+        color: crate::net::protocol::ChatColor,
+        targets: crate::server::chat::ChatTargets,
+    ) {
+        if let Some(line) = crate::server::chat::plain_line(self.alloc_chat_seq(), text, color) {
             self.enqueue_chat(line, targets);
         }
     }
@@ -953,10 +980,12 @@ impl ServerGame {
             // be measured as falling — re-anchor the tracker (mirrors
             // `Player::set_mode`).
             PlayerAction::ToggleMode => {
-                let sess = &mut self.sessions[s];
-                sess.player.toggle_mode();
-                sess.fall.reset(sess.player.pos.y);
-                sess.pending_fall = 0.0;
+                if self.is_operator(s) {
+                    let sess = &mut self.sessions[s];
+                    sess.player.toggle_mode();
+                    sess.fall.reset(sess.player.pos.y);
+                    sess.pending_fall = 0.0;
+                }
             }
             PlayerAction::Wake => self.sessions[s].wake_requested = true,
             PlayerAction::Respawn => self.sessions[s].respawn_requested = true,

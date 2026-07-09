@@ -432,6 +432,25 @@ fn chat_opens_from_t_sends_entered_message_via_server_echo() {
 }
 
 #[test]
+fn slash_opens_chat_with_a_command_prefix() {
+    let mut app = app();
+    app.handle_control(Control::OpenCommandChat, true);
+    assert_eq!(app.screen, crate::app::AppScreen::Chat);
+
+    assert!(app.handle_text_input("time set night"));
+    assert!(app.handle_text_key(TextKey::Enter));
+
+    let msgs = app
+        .game
+        .as_mut()
+        .expect("test app has a game")
+        .take_outbox_for_test();
+    assert!(msgs
+        .iter()
+        .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "/time set night")));
+}
+
+#[test]
 fn chat_input_uses_shared_text_editor_selection_and_clipboard() {
     let mut app = app();
     let shared = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));

@@ -2,7 +2,8 @@
 //! LAN" runs — `game/session.rs::build_headless_session` builds it with no
 //! local session, [`ServerHandle::spawn`] runs the identical self-clocked
 //! loop on its own thread, and this module's main thread just opens the
-//! listener and parks on a tiny console (`stop`, `save`).
+//! listener and parks on its console (`stop`, `save`, `say`, `op`, `deop`,
+//! and `time`).
 //!
 //! One server codebase, two hosts: everything gameplay-visible (tick ladder,
 //! streaming, flow control, joins/leaves, saves) is shared with the listen
@@ -97,17 +98,8 @@ pub fn run() {
                 handle.save_all();
                 log::info!("save requested");
             }
-            Some(cmd) if cmd.strip_prefix("say ").is_some() => {
-                let text = cmd.strip_prefix("say ").unwrap().trim();
-                if !text.is_empty() {
-                    handle.say(text.to_owned());
-                    log::info!("say: {text}");
-                }
-            }
             Some("") | None => {}
-            Some(other) => {
-                log::warn!("unknown command '{other}' (commands: stop, save, say <message>)")
-            }
+            Some(other) => handle.command(other.to_owned()),
         }
         // No local session ever produces gameplay messages, but join/leave
         // broadcasts still land on the local pipe — keep it from banking.

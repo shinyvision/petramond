@@ -432,6 +432,9 @@ impl Game {
         );
         if let Some(state) = &update.self_state {
             self.self_view.apply(state);
+            if self.player.mode() != self.self_view.mode {
+                self.player.set_mode(self.self_view.mode);
+            }
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {

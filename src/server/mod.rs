@@ -11,6 +11,7 @@
 pub(crate) mod bed;
 pub(crate) mod breaking;
 pub(crate) mod chat;
+pub(crate) mod commands;
 pub(crate) mod daynight;
 pub(crate) mod drops;
 pub(crate) mod entities;
@@ -21,6 +22,7 @@ pub(crate) mod item_use;
 pub(crate) mod menu;
 pub(crate) mod mod_actions;
 pub(crate) mod movement;
+pub(crate) mod permissions;
 pub(crate) mod placement;
 pub(crate) mod player;
 pub(crate) mod remote;

@@ -267,10 +267,10 @@ pub(crate) enum PlayerAction {
     },
     Wake,
     Respawn,
-    /// Toggle survival/spectator mode (the F4 debug toggle). Applied at
-    /// message time (a mode switch is not tick input); the session's fall
-    /// tracker re-anchors so the switch is never measured as a fall. The new
-    /// mode flows back via [`SelfState::mode`].
+    /// Request a survival/spectator toggle (Ctrl+Y). Applied at message time
+    /// only when the sending session is an operator; the session's fall
+    /// tracker re-anchors so the switch is never measured as a fall. The
+    /// authoritative mode flows back via [`SelfState::mode`].
     ToggleMode,
     /// The inventory key (E): the server opens the 2×2 crafting session on the
     /// next tick and answers with [`OpenScreen::Inventory`].

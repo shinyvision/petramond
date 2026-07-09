@@ -252,12 +252,14 @@ fn build_server(
         world.set_mod_kv(level.world_kv.clone());
         world.restore_tick(level.tick);
     }
+    let operators = crate::server::permissions::load(&world);
 
     let has_local_session = local.is_some();
     let mut server = ServerGame {
         world,
         sessions: local.into_iter().collect(),
         has_local_session,
+        operators,
         recipes: {
             // The mod host answers `SmeltResult` from the same loaded
             // catalog the engine cooks from — install a shared snapshot

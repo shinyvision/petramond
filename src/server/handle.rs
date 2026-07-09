@@ -42,8 +42,8 @@ pub(crate) enum ControlMsg {
     /// Save everything now (the app's suspend/exit hook); the thread keeps
     /// running.
     SaveAll,
-    /// Broadcast one server-authored chat line.
-    Say(String),
+    /// Execute one gameplay-visible dedicated-server console command.
+    Command(String),
     /// "Open to LAN": bind a TCP listener into the running server. Port 0 =
     /// ephemeral; the reply carries the actual bound port. A successful open
     /// force-unpauses and makes the pause gate permanent.
@@ -197,10 +197,10 @@ impl ServerHandle {
         }
     }
 
-    /// Ask a local/headless server to broadcast a server-authored chat line.
-    pub(crate) fn say(&self, text: String) {
+    /// Execute one unprefixed command on a local/headless server.
+    pub(crate) fn command(&self, text: String) {
         if self.remote.is_none() {
-            let _ = self.control.send(ControlMsg::Say(text));
+            let _ = self.control.send(ControlMsg::Command(text));
         }
     }
 
@@ -306,7 +306,7 @@ fn server_main(
                     return;
                 }
                 Ok(ControlMsg::SaveAll) => server.save_all(),
-                Ok(ControlMsg::Say(text)) => server.enqueue_server_chat(&text),
+                Ok(ControlMsg::Command(text)) => server.execute_console_command(&text),
                 Ok(ControlMsg::OpenToLan { port, reply }) => {
                     let result = hub.open_to_lan(port);
                     if result.is_ok() {

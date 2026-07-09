@@ -228,10 +228,14 @@ impl App {
         };
 
         match event {
-            ControlEvent::OpenChat => {
+            ControlEvent::OpenChat { command } => {
                 if self.screen == AppScreen::Game && self.game.is_some() {
                     self.screen = AppScreen::Chat;
-                    self.chat.clear_draft(now_seconds());
+                    let now = now_seconds();
+                    self.chat.clear_draft(now);
+                    if command {
+                        self.chat.insert_text("/", now);
+                    }
                     self.pointer.release_for_menu();
                 }
                 true

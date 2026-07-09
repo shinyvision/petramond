@@ -7,9 +7,10 @@
 //! (biome + the block it stands on). If everything passes it returns the [`Spawn`]s
 //! for the manager to apply; otherwise the tick simply spawns nothing.
 //!
-//! No attempt runs while `World::mob_census_settled` is false: mobs saved in
-//! still-streaming section records aren't in the live list yet, so the caps would
-//! read empty and be refilled on every world join.
+//! An attempt waits only for the mob census within nine chunks of the player it is
+//! spawning around. Mobs saved in still-streaming nearby section records aren't in
+//! the live list yet, so the cap would otherwise refill on every world join; unrelated
+//! far-edge streaming must not stop local spawning.
 //!
 //! The population caps live elsewhere as data: per-species on the [`MobDef`] row, and
 //! per-category on [`MobCategory`]. This module only enforces them, and only the
@@ -34,6 +35,9 @@ use super::{def, defs, Instance, Mob, MobCategory, MobRng};
 
 /// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
 const MIN_PLAYER_DIST: f32 = 50.0;
+/// Farthest any natural spawn may appear from its player anchor. The nine-chunk
+/// census margin encloses this range even when the player stands at a chunk edge.
+const MAX_PLAYER_DIST: f32 = 128.0;
 
 /// How many times to resample a column offset to land one inside the loaded disc
 /// before giving up for this tick (a near-degenerate disc could miss every time).
@@ -45,9 +49,12 @@ const GROUP_RADIUS: i32 = 4;
 const GROUP_MEMBER_TRIES: u32 = 24;
 pub(crate) const HOSTILE_SPAWN_ATTEMPTS: u32 = 32;
 const HOSTILE_SPAWN_CHUNK_RADIUS: i32 = 8;
+/// One chunk beyond the 128-block hostile spawn/despawn range. This margin makes the
+/// local live list trustworthy before applying population caps without waiting for
+/// the entire render-distance disc.
+const MOB_CENSUS_CHUNK_RADIUS: i32 = HOSTILE_SPAWN_CHUNK_RADIUS + 1;
 const HOSTILE_SPAWN_CHUNKS_PER_PLAYER: u32 = 289;
 const HOSTILE_MIN_SPAWN_DIST: f32 = 24.0;
-const HOSTILE_MAX_SPAWN_DIST: f32 = 128.0;
 const HOSTILE_SPAWN_SALT: u64 = 0xA11C_0DE5_5A55_0001;
 
 /// A spawn the manager should perform: a species at a feet position, facing `yaw`.
@@ -105,13 +112,13 @@ pub(super) fn attempt(
     // mobs are still streaming in with their section records. Spawning through
     // that window refills the caps on top of the mobs about to be restored —
     // a per-session population ratchet.
-    if !world.mob_census_settled() {
+    if !mob_census_ready(world, player_pos) {
         return None;
     }
     let (cx, cz, render_dist) = world.loaded_area()?;
     // Inset by a chunk so the column (and the neighbours a footing/biome read may
     // touch) are loaded — unloaded reads would just fail the attempt anyway.
-    let r = (render_dist - 1).max(0);
+    let r = (render_dist - 1).max(0).min(HOSTILE_SPAWN_CHUNK_RADIUS);
 
     // Pick a species that still has room; the site is then judged for *that* species.
     let kind = choose_kind(rng, &room_for, world.disabled_mods())?;
@@ -153,7 +160,9 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
 
     // --- Universal "definitely no" checks. ---
     // Too close to the player.
-    if too_close(player_pos, feet_pos, MIN_PLAYER_DIST) {
+    if too_close(player_pos, feet_pos, MIN_PLAYER_DIST)
+        || !too_close(player_pos, feet_pos, MAX_PLAYER_DIST)
+    {
         return None;
     }
     // The ground must have collision AND the body must fit (clearance above the
@@ -188,12 +197,10 @@ pub(crate) fn hostile_spawn_plan(
     world: &World,
     player_positions: &[Vec3],
 ) -> Option<HostileSpawnPlan> {
-    if !world.mob_census_settled() {
-        return None;
-    }
     let anchors: Vec<_> = player_positions
         .iter()
         .copied()
+        .filter(|&pos| mob_census_ready(world, pos))
         .map(HostileSpawnAnchor::new)
         .collect();
     if anchors.is_empty() {
@@ -231,6 +238,11 @@ pub(crate) fn hostile_spawn_plan(
         hostile_count,
         hostile_cap,
     })
+}
+
+fn mob_census_ready(world: &World, player_pos: Vec3) -> bool {
+    let center = chunk_pos_at(player_pos);
+    world.mob_census_loaded_around(center, MOB_CENSUS_CHUNK_RADIUS)
 }
 
 pub(crate) fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind: Mob) -> bool {
@@ -351,8 +363,7 @@ fn hostile_candidate_at(
 ) -> Option<HostileSpawnSite> {
     let pos = Vec3::new(wx as f32 + 0.5, y as f32, wz as f32 + 0.5);
     let nearest = nearest_anchor_pos(&plan.anchors, pos)?;
-    if too_close(nearest, pos, HOSTILE_MIN_SPAWN_DIST)
-        || !too_close(nearest, pos, HOSTILE_MAX_SPAWN_DIST)
+    if too_close(nearest, pos, HOSTILE_MIN_SPAWN_DIST) || !too_close(nearest, pos, MAX_PLAYER_DIST)
     {
         return None;
     }
@@ -602,8 +613,8 @@ mod tests {
         world
     }
 
-    fn far_player() -> Vec3 {
-        Vec3::new(1000.0, 1000.0, 1000.0)
+    fn valid_spawn_distance_player() -> Vec3 {
+        Vec3::new(-60.0, 65.0, 8.0)
     }
 
     fn hostile_test_plan(player_pos: Vec3, chunk: ChunkPos) -> HostileSpawnPlan {
@@ -646,7 +657,7 @@ mod tests {
         let world = flat_grass_spawn_world(|_| {});
 
         assert!(
-            spawn_site(&world, far_player(), Mob::Sheep, 8, 8).is_some(),
+            spawn_site(&world, valid_spawn_distance_player(), Mob::Sheep, 8, 8).is_some(),
             "a dry grass foothold in a valid biome is spawnable"
         );
     }
@@ -658,9 +669,15 @@ mod tests {
         });
 
         assert!(
-            spawn_site(&world, far_player(), Mob::Sheep, 8, 8).is_none(),
+            spawn_site(&world, valid_spawn_distance_player(), Mob::Sheep, 8, 8).is_none(),
             "the ground below the water is solid, but the mob body would spawn in water"
         );
+    }
+
+    #[test]
+    fn passive_spawn_sites_share_the_128_block_outer_limit() {
+        let world = flat_grass_spawn_world(|_| {});
+        assert!(spawn_site(&world, Vec3::new(-200.0, 65.0, 8.0), Mob::Sheep, 8, 8).is_none());
     }
 
     #[test]
@@ -695,6 +712,21 @@ mod tests {
                 "overlapping chunks count once toward the global cap"
             );
         }
+    }
+
+    #[test]
+    fn hostile_plan_ignores_only_players_whose_local_census_is_still_loading() {
+        let mut world = World::new(1, 1);
+        let ready = Vec3::new(0.5, 64.0, 0.5);
+        let loading = Vec3::new(160.5, 64.0, 0.5);
+        for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+            world.insert_empty_column_for_test(ChunkPos::new(dx, dz));
+        }
+
+        let plan = hostile_spawn_plan(&world, &[ready, loading])
+            .expect("the ready player's loaded neighborhood can spawn");
+        assert_eq!(plan.anchors.len(), 1);
+        assert_eq!(plan.anchors[0].chunk, ChunkPos::new(0, 0));
     }
 
     #[test]

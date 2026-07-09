@@ -55,6 +55,21 @@ pub(crate) fn authored_line(seq: u64, text: &str) -> Option<ChatLine> {
     Some(parse_markup(seq, &text))
 }
 
+/// Engine-authored plain text with an explicit color. Unlike mod-authored
+/// helper text, this never parses markup; command feedback may include a
+/// player name and player-controlled names must not become formatting.
+pub(crate) fn plain_line(seq: u64, text: &str, fg: ChatColor) -> Option<ChatLine> {
+    let text = clean_text(text)?;
+    Some(ChatLine {
+        seq,
+        spans: vec![ChatSpan { fg, text }],
+    })
+}
+
+pub(crate) fn display_text(line: &ChatLine) -> String {
+    line.spans.iter().map(|span| span.text.as_str()).collect()
+}
+
 pub(crate) fn joined_line(seq: u64, name: &str) -> ChatLine {
     parse_markup(seq, &format!("$[fg=yellow]{name} has joined the game"))
 }
@@ -63,7 +78,7 @@ pub(crate) fn left_line(seq: u64, name: &str) -> ChatLine {
     parse_markup(seq, &format!("$[fg=yellow]{name} has left the game"))
 }
 
-fn clean_text(text: &str) -> Option<String> {
+pub(crate) fn clean_text(text: &str) -> Option<String> {
     let mut out = String::new();
     for ch in text.chars() {
         let ch = if ch.is_control() { ' ' } else { ch };

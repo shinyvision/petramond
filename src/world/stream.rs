@@ -1333,24 +1333,38 @@ impl World {
         }
     }
 
-    /// Whether the live mob list is a complete census of the loaded area's mobs.
+    /// Whether the mob census is complete inside the spawn-relevant square around one
+    /// player. Natural spawning only needs the population near the player it is trying
+    /// to spawn around; unrelated far-edge streaming must not stop it.
     ///
-    /// Saved mobs ride in section records and only rejoin the live list when their
-    /// record is applied (`apply_pending_overlays`). Until then the list undercounts,
-    /// so anything comparing it against a population cap (natural spawning) must hold
-    /// off — otherwise every join refills the caps during the streaming window and the
-    /// saved mobs then land on top (a per-session population ratchet).
-    ///
-    /// The census is complete when nothing that can still carry an uncounted saved mob
-    /// is outstanding: no saved record awaited from disk or buffered unapplied, and no
-    /// column gen in flight (a column's manifest records are only requested once its
-    /// gen data installs — see `submit_section_job`). Wanted-but-unsubmitted columns
-    /// can't hide here: `request_missing_columns` runs every target update and poll,
-    /// so a missing wanted column always shows up in `pending` first.
-    pub fn mob_census_settled(&self) -> bool {
-        self.pending.is_empty()
-            && self.awaited_overlays.is_empty()
-            && self.pending_overlays.is_empty()
+    /// `radius` is Chebyshev chunk distance. The check intersects that square with the
+    /// player's streamable disc so render distances smaller than the census radius can
+    /// still become ready. Every column in that intersection must have landed, and no
+    /// saved section record in the square may still be awaiting or buffering its mobs.
+    pub fn mob_census_loaded_around(&self, center: ChunkPos, radius: i32) -> bool {
+        let radius = radius.max(0);
+        let stream_radius = self.render_dist.max(0);
+        for dz in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dz * dz > stream_radius * stream_radius {
+                    continue;
+                }
+                let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
+                if !self.columns.contains_key(&pos) {
+                    return false;
+                }
+            }
+        }
+        let in_neighborhood = |sp: &SectionPos| {
+            let pos = sp.chunk_pos();
+            let dx = pos.cx - center.cx;
+            let dz = pos.cz - center.cz;
+            dx.abs() <= radius
+                && dz.abs() <= radius
+                && dx * dx + dz * dz <= stream_radius * stream_radius
+        };
+        !self.awaited_overlays.iter().any(in_neighborhood)
+            && !self.pending_overlays.keys().any(in_neighborhood)
     }
 
     /// Overlay every buffered saved section whose generated section is present: replace
@@ -1647,37 +1661,42 @@ mod tests {
         assert_eq!(out.len(), 1, "the overlaid chest must be collected");
     }
 
-    /// Natural spawning must not run while saved mob records are still streaming
-    /// in: the caps compare against the live list, which undercounts until every
-    /// record is applied — spawning through that window duplicates the population
-    /// on every world join.
+    /// The spawn census waits only for the nearby streamable neighborhood: a saved
+    /// mob record there must block caps, while unrelated far streaming must not.
     #[test]
-    fn natural_spawning_waits_for_the_saved_mob_census() {
-        let mut world = World::new(0, 1);
-        let mut chunk = Chunk::new(0, 0);
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                chunk.set_block(x, 64, z, Block::Grass);
-                chunk.set_biome(x, z, crate::biome::Biome::Plains.id());
+    fn mob_census_waits_for_nearby_columns_and_overlays_only() {
+        let mut world = World::new(0, 2);
+        let center = ChunkPos::new(0, 0);
+        let census_radius = 9;
+
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                if dx * dx + dz * dz <= 4 {
+                    world.insert_empty_column_for_test(ChunkPos::new(dx, dz));
+                }
             }
         }
-        world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
-        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 1));
-        let player = crate::mathh::Vec3::new(1000.0, 1000.0, 1000.0);
-
-        world.awaited_overlays.insert(SectionPos::new(0, 4, 0));
-        for _ in 0..200 {
-            assert!(
-                world.spawn_mobs_tick(player).is_empty(),
-                "spawned while a saved mob record was still in flight"
-            );
-        }
-
-        world.awaited_overlays.clear();
-        let spawned: usize = (0..200).map(|_| world.spawn_mobs_tick(player).len()).sum();
         assert!(
-            spawned > 0,
-            "spawning never resumed after the census settled"
+            world.mob_census_loaded_around(center, census_radius),
+            "every streamable nearby column is loaded"
+        );
+
+        let near = SectionPos::new(1, 4, 0);
+        world.awaited_overlays.insert(near);
+        assert!(!world.mob_census_loaded_around(center, census_radius));
+        world.awaited_overlays.clear();
+
+        let far = SectionPos::new(20, 4, 0);
+        world.awaited_overlays.insert(far);
+        assert!(
+            world.mob_census_loaded_around(center, census_radius),
+            "far streaming does not block the local census"
+        );
+
+        world.remove_column(ChunkPos::new(0, 1));
+        assert!(
+            !world.mob_census_loaded_around(center, census_radius),
+            "a missing nearby column closes the gate"
         );
     }
 

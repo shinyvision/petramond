@@ -267,15 +267,15 @@ impl Game {
         &self.player_roster
     }
 
-    /// Toggle spectator mode. The LOCAL prediction flips immediately
-    /// (movement feel — the very next physics frame must float or fall); the
-    /// server applies `PlayerAction::ToggleMode` at message time and confirms
-    /// through `SelfState::mode`, which `SelfView` mirrors.
+    /// Request a survival/spectator toggle. The in-process listen player is
+    /// intrinsically an operator and predicts immediately; TCP clients wait
+    /// for the server-authoritative `SelfState::mode`, so an unprivileged
+    /// client cannot enter spectator even briefly.
     pub fn toggle_player_mode(&mut self) {
-        self.player.toggle_mode();
-        // Mirror into the replicated view immediately so the HUD (hearts
-        // hide/show) follows the prediction; the next batch carries the same.
-        self.self_view.mode = self.player.mode();
+        if !self.remote {
+            self.player.toggle_mode();
+            self.self_view.mode = self.player.mode();
+        }
         self.outbox
             .push(ClientToServer::Action(PlayerAction::ToggleMode));
     }
