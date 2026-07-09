@@ -14,6 +14,8 @@ const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 6;
 /// Soft render-thread budget for packing/writing terrain columns. One upload is always
 /// allowed so terrain keeps making progress; after that, leave time for the actual frame.
 const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);
+const MESH_UPLOAD_QUIET_FRAMES: u64 = 1;
+const MESH_UPLOAD_MAX_WAIT_FRAMES: u64 = 4;
 const RENDER_ORIGIN_GRID: f32 = 16.0;
 
 /// Tilt of the sun/moon arc out of the east–west vertical plane. Mirror of
@@ -105,6 +107,11 @@ impl Renderer {
             (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
         } else {
             (self.fog_start, self.fog_end)
+        };
+        self.terrain_view_key = TerrainViewKey {
+            view_proj: view_proj.to_cols_array().map(f32::to_bits),
+            cam: cam.pos.to_array().map(f32::to_bits),
+            fog: self.terrain_cull_dist().to_bits(),
         };
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -266,6 +273,10 @@ impl Renderer {
 
     pub fn clear_world_state(&mut self) {
         self.terrain_columns.clear();
+        self.terrain_upload_pending.clear();
+        self.terrain_upload_heap.clear();
+        self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+        self.terrain_planned_view_key = None;
         self.far_leaf_lod_state.clear();
         self.draw_order.clear();
         self.opaque_column_order.clear();
@@ -310,17 +321,21 @@ impl Renderer {
 
     /// Synchronize GPU meshes with the terrain CPU meshes.
     pub(crate) fn sync_meshes(&mut self, terrain: &mut TerrainRenderHandoff<'_>) {
+        self.terrain_upload_frame = self.terrain_upload_frame.wrapping_add(1);
+        let upload_frame = self.terrain_upload_frame;
         // Drop packed GPU columns whose CPU meshes are gone.
+        let before_columns = self.terrain_columns.len();
         self.terrain_columns
             .retain(|p, _| terrain.has_column_mesh(*p));
+        if self.terrain_columns.len() != before_columns {
+            self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+        }
 
         let cam = self.cam_pos;
         let frustum = self.frustum;
         let render_origin = self.render_origin;
         let fog = self.terrain_cull_dist();
-        let mut dirty_columns = std::mem::take(&mut self.terrain_upload_order);
-        dirty_columns.clear();
-        terrain.for_dirty_columns(&mut |column| {
+        let priority = |column: ChunkPos| {
             let min = glam::Vec3::new(
                 (column.cx * 16) as f32,
                 crate::chunk::WORLD_MIN_Y as f32,
@@ -338,9 +353,38 @@ impl Renderer {
                 cam.y,
                 column.cz as f32 * 16.0 + 8.0,
             );
-            dirty_columns.push((!visible_soon, (cam - center).length_squared(), column));
+            (
+                u8::from(!visible_soon),
+                (cam - center).length_squared().to_bits(),
+                column.cx,
+                column.cz,
+            )
+        };
+        terrain.for_dirty_columns(&mut |column, revision| {
+            let mut enqueue = false;
+            if let Some(pending) = self.terrain_upload_pending.get_mut(&column) {
+                if pending.revision != revision {
+                    pending.revision = revision;
+                    pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
+                    enqueue = true;
+                }
+            } else {
+                self.terrain_upload_pending.insert(
+                    column,
+                    PendingTerrainUpload {
+                        revision,
+                        quiet_after: upload_frame + MESH_UPLOAD_QUIET_FRAMES,
+                        deadline: upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES,
+                    },
+                );
+                enqueue = true;
+            }
+            if enqueue {
+                let (hidden, distance, cx, cz) = priority(column);
+                self.terrain_upload_heap
+                    .push(Reverse((hidden, distance, cx, cz, revision)));
+            }
         });
-        dirty_columns.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
 
         let device = &self.device;
         let queue = &self.queue;
@@ -348,20 +392,58 @@ impl Renderer {
         let upload_scratch = &mut self.terrain_upload_scratch;
         let start = std::time::Instant::now();
         let mut uploaded_columns = 0usize;
-        for &(_, _, column) in &dirty_columns {
-            if uploaded_columns >= MESH_COLUMN_UPLOADS_PER_FRAME {
+        let mut attempts = 0usize;
+        let mut heap_pops = 0usize;
+        let mut deferred = Vec::new();
+        while attempts < 64 && heap_pops < 128 && uploaded_columns < MESH_COLUMN_UPLOADS_PER_FRAME {
+            if uploaded_columns > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
                 break;
+            }
+            let Some(Reverse((_, _, cx, cz, revision))) = self.terrain_upload_heap.pop() else {
+                break;
+            };
+            heap_pops += 1;
+            let column = ChunkPos::new(cx, cz);
+            let Some(pending) = self.terrain_upload_pending.get(&column) else {
+                continue;
+            };
+            if pending.revision != revision {
+                continue;
+            }
+            attempts += 1;
+            if upload_frame < pending.quiet_after && upload_frame < pending.deadline {
+                deferred.push((column, revision));
+                continue;
+            }
+            let mut pending = self
+                .terrain_upload_pending
+                .remove(&column)
+                .expect("pending upload checked above");
+            if !terrain.has_column_mesh(column) {
+                let removed = columns.remove(&column).is_some();
+                terrain.mark_column_uploaded(column);
+                if removed {
+                    self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+                }
+                continue;
             }
             // Released CPU meshes: the repack must wait for their forced remesh.
             // The column stays upload-dirty and its current GPU buffers keep drawing.
             if terrain.needs_repack_remeshes(column) {
+                pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
+                pending.deadline = upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES;
+                self.terrain_upload_pending.insert(column, pending);
+                deferred.push((column, revision));
                 continue;
             }
             let uploaded = {
                 let meshes = terrain.column_meshes(column);
                 if meshes.is_empty() {
-                    columns.remove(&column);
+                    let removed = columns.remove(&column).is_some();
                     terrain.mark_column_uploaded(column);
+                    if removed {
+                        self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+                    }
                     false
                 } else {
                     let prev = columns.remove(&column);
@@ -373,13 +455,20 @@ impl Renderer {
             if uploaded {
                 terrain.mark_column_uploaded(column);
                 uploaded_columns += 1;
-                if uploaded_columns > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
-                    break;
-                }
+                self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
             }
         }
-        dirty_columns.clear();
-        self.terrain_upload_order = dirty_columns;
+        for (column, revision) in deferred {
+            if self
+                .terrain_upload_pending
+                .get(&column)
+                .is_some_and(|pending| pending.revision == revision)
+            {
+                let (hidden, distance, cx, cz) = priority(column);
+                self.terrain_upload_heap
+                    .push(Reverse((hidden, distance, cx, cz, revision)));
+            }
+        }
         let terrain_columns = &self.terrain_columns;
         self.far_leaf_lod_state.retain(|sp, _| {
             terrain_columns

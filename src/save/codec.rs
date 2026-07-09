@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{SectionPos, SECTION_VOLUME};
@@ -67,8 +68,11 @@ const FLAG3_HAS_BLOCKLIGHT: u8 = 0x04;
 /// regenerated, so they are not part of a section record.
 pub struct SectionSnapshot {
     pub pos: SectionPos,
-    pub blocks: Box<[u8]>,
-    pub water: Option<Box<[u8]>>,
+    /// Derived explored-terrain cache, not authoritative player/entity state.
+    /// Routing metadata only; it is not encoded inside the section record.
+    pub(crate) cache_only: bool,
+    pub blocks: Arc<[u8]>,
+    pub water: Option<Arc<[u8]>>,
     /// Item entities resting in this section, captured at save time so their
     /// lifetime timers persist with it. Empty for the common case.
     pub entities: Vec<DroppedItem>,
@@ -112,10 +116,10 @@ pub struct SectionSnapshot {
     /// (baked and not since invalidated) so a reload can skip the bake
     /// entirely. `None` re-bakes on load, exactly like the pre-persistence
     /// behaviour.
-    pub skylight: Option<Box<[u8]>>,
+    pub skylight: Option<Arc<[u8]>>,
     /// Baked block-light cube; independent of `skylight` presence on the wire
     /// but only ever written alongside it (absent = no emitter in range).
-    pub blocklight: Option<Box<[u8]>>,
+    pub blocklight: Option<Arc<[u8]>>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
@@ -135,8 +139,9 @@ impl SectionSnapshot {
     pub fn from_section(s: &Section) -> Self {
         Self {
             pos: SectionPos::new(s.cx, s.cy, s.cz),
-            blocks: Box::from(s.blocks_slice()),
-            water: s.water_slice().map(Box::from),
+            cache_only: false,
+            blocks: s.blocks_arc(),
+            water: s.water_arc(),
             entities: Vec::new(),
             furnaces: s.furnaces().clone(),
             containers: s.containers().clone(),
@@ -149,14 +154,8 @@ impl SectionSnapshot {
             stair_states: s.stair_states().clone(),
             slab_states: s.slab_states().clone(),
             log_axes: s.log_axes().clone(),
-            skylight: (!s.light_dirty)
-                .then(|| s.skylight_arc())
-                .flatten()
-                .map(|a| Box::from(&a[..])),
-            blocklight: (!s.light_dirty)
-                .then(|| s.blocklight_arc())
-                .flatten()
-                .map(|a| Box::from(&a[..])),
+            skylight: (!s.light_dirty).then(|| s.skylight_arc()).flatten(),
+            blocklight: (!s.light_dirty).then(|| s.blocklight_arc()).flatten(),
             cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
         }
@@ -328,7 +327,10 @@ pub(crate) fn get_kv_map(r: &mut Reader) -> Option<BTreeMap<String, Vec<u8>>> {
 
 /// zlib-compress a payload.
 pub fn deflate(payload: &[u8]) -> Vec<u8> {
-    let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    // Explored-terrain persistence writes thousands of small records while the
+    // player is moving. Level 1 preserves the zlib format while avoiding a full
+    // core of background compression for marginal size gains on palette-like data.
+    let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     let _ = e.write_all(payload);
     e.finish().unwrap_or_default()
 }

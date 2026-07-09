@@ -84,6 +84,7 @@ impl Section {
         SectionPayload {
             pos: SectionPos::new(self.cx, self.cy, self.cz),
             blocks: SectionBytes(self.blocks_arc()),
+            metrics: self.stream_metrics(),
             water: self.water_arc().map(SectionBytes),
             skylight: self.skylight_arc().map(SectionBytes),
             blocklight: self.blocklight_arc().map(SectionBytes),
@@ -124,11 +125,34 @@ impl World {
                     .to_u8()
             })
             .collect();
+        let (mesh_biomes, deep_band_lo) = self.column_gen.get(&pos).map_or_else(
+            || {
+                let mut halo = vec![0u8; 20 * 20];
+                for z in 0..20 {
+                    for x in 0..20 {
+                        halo[z * 20 + x] =
+                            col.biome_at(x.saturating_sub(2).min(15), z.saturating_sub(2).min(15));
+                    }
+                }
+                (
+                    Arc::from(halo.into_boxed_slice()),
+                    crate::chunk::SECTION_MIN_CY,
+                )
+            },
+            |gen| {
+                (
+                    gen.mesh_biome(),
+                    *Self::surface_window_for_column(gen, 0).start(),
+                )
+            },
+        );
         Some(ColumnPayload {
             pos,
             biomes: SectionBytes(Arc::from(biomes.into_boxed_slice())),
+            mesh_biomes: SectionBytes(mesh_biomes),
             heightmap: col.heightmap_slice().to_vec(),
             summaries,
+            deep_band_lo,
         })
     }
 
@@ -137,14 +161,24 @@ impl World {
     /// (the replica's absent-section answer — see `section_summary`). The
     /// wire heightmap is the server's authoritative surface and is NOT
     /// recomputed from installed sections, which may only partially cover the
-    /// column. Idempotent — the sender re-ships a column alongside each batch
-    /// of its sections precisely so the heightmap/summaries stay fresh.
+    /// column. Idempotent — the sender re-ships only when the column revision
+    /// changes, including immediately before a section unload changes an absent
+    /// summary.
     pub(crate) fn install_remote_column(&mut self, payload: ColumnPayload) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote installs are the replica's ingest path"
         );
-        let col = self.ensure_column(payload.pos);
+        let expected_sections = Self::column_section_range().count();
+        if payload.biomes.0.len() != SECTION_SIZE * SECTION_SIZE
+            || payload.mesh_biomes.0.len() != 20 * 20
+            || payload.heightmap.len() != SECTION_SIZE * SECTION_SIZE
+            || payload.summaries.len() != expected_sections
+        {
+            return;
+        }
+        let pos = payload.pos;
+        let col = self.ensure_column(pos);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
                 let i = z * SECTION_SIZE + x;
@@ -161,7 +195,9 @@ impl World {
             .iter()
             .map(|&b| SectionSummary::from_u8(b))
             .collect();
-        self.column_summaries.insert(payload.pos, summaries);
+        self.column_summaries.insert(pos, summaries);
+        self.column_biome_halos.insert(pos, payload.mesh_biomes.0);
+        self.column_deep_band_los.insert(pos, payload.deep_band_lo);
     }
 
     /// Install one replicated section on a replica, entering at the same
@@ -170,21 +206,33 @@ impl World {
     /// neighbourhood are marked for the replica's own bake. Malformed buffer
     /// lengths drop the payload (a byte-corrupting transport, never the local
     /// connection).
+    #[cfg(test)]
     pub(crate) fn install_remote_section(&mut self, payload: SectionPayload) {
+        if let Some(pos) = self.install_remote_section_deferred(payload) {
+            self.finish_remote_install_batch(&[pos]);
+        }
+    }
+
+    /// Install without invalidating meshes yet. The message pump batches the
+    /// overlapping neighbourhoods from all sections it received this frame.
+    pub(crate) fn install_remote_section_deferred(
+        &mut self,
+        payload: SectionPayload,
+    ) -> Option<SectionPos> {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote installs are the replica's ingest path"
         );
         let pos = payload.pos;
         if !SectionPos::cy_in_range(pos.cy) || payload.blocks.0.len() != SECTION_VOLUME {
-            return;
+            return None;
         }
         if payload
             .water
             .as_ref()
             .is_some_and(|w| w.0.len() != SECTION_VOLUME)
         {
-            return;
+            return None;
         }
         let s = &payload.states;
         // Lit furnaces install a minimal lit stand-in: the mesher keys the lit
@@ -209,12 +257,15 @@ impl World {
             .iter()
             .map(|(cell, entries)| (*cell, entries.iter().cloned().collect()))
             .collect();
-        let mut section = Section::from_saved(
+        if !payload.metrics.valid() {
+            return None;
+        }
+        let mut section = Section::from_replica(
             pos.cx,
             pos.cy,
             pos.cz,
-            Box::from(&payload.blocks.0[..]),
-            payload.water.as_ref().map(|w| Box::from(&w.0[..])),
+            payload.blocks.0,
+            payload.water.map(|w| w.0),
             furnaces,
             HashMap::new(), // container slots replicate via menu sync (Phase C)
             map_entries(&s.entity_facings, Facing::from_u8),
@@ -229,6 +280,7 @@ impl World {
             }),
             map_entries(&s.log_axes, LogAxis::from_u8),
             cell_kv,
+            payload.metrics,
         );
         let light_seeded = payload
             .skylight
@@ -252,7 +304,29 @@ impl World {
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.classify_deep_on_install(pos);
-        self.mark_dirty_neighborhood(pos, true);
+        Some(pos)
+    }
+
+    /// Invalidate every loaded section touched by a replica install batch once.
+    /// This prevents contiguous terrain bursts from repeatedly bumping revisions
+    /// and invalidating jobs for the same 3x3x3 overlap.
+    pub(crate) fn finish_remote_install_batch(&mut self, installed: &[SectionPos]) {
+        if installed.is_empty() {
+            return;
+        }
+        let mut affected = FxHashSet::default();
+        for pos in installed {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        affected.insert(SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz));
+                    }
+                }
+            }
+        }
+        for pos in affected {
+            self.queue_dirty_mesh(pos);
+        }
         self.vis_dirty = true;
     }
 
@@ -385,22 +459,14 @@ impl World {
 
     /// Replica-only: set the view centre that orders mesh/light work
     /// (nearest-first) and anchors the always-mesh near ring — the replica's
-    /// stand-in for the load target `update_load_facing` maintains on a
-    /// streaming world. Pure prioritisation: no gen, save, or streaming
-    /// bookkeeping is touched.
-    pub(crate) fn set_replica_view_center(
-        &mut self,
-        cx: i32,
-        cy: i32,
-        cz: i32,
-        forward_x: f32,
-        forward_z: f32,
-    ) {
+    /// stand-in for the load target a streaming world maintains. Pure
+    /// prioritisation: no gen, save, or streaming bookkeeping is touched.
+    pub(crate) fn set_replica_view_center(&mut self, cx: i32, cy: i32, cz: i32) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "streaming worlds derive their view centre from update_load*"
         );
-        let target = LoadTarget::new_facing(cx, cy, cz, self.render_dist, forward_x, forward_z);
+        let target = LoadTarget::new(cx, cy, cz, self.render_dist);
         if self.last_load_target != Some(target) {
             self.last_load_target = Some(target);
             self.vis_dirty = true;
@@ -452,7 +518,6 @@ impl World {
         self.light_ship_log.drain().collect()
     }
 
-
     /// One section's CURRENT light cubes as a wire payload; `None` when the
     /// section is gone (an eviction race) or has never baked.
     pub(crate) fn light_payload(&self, pos: SectionPos) -> Option<LightPayload> {
@@ -465,30 +530,25 @@ impl World {
     }
 
     /// Opaque key over everything the per-connection wanted-vs-sent diff
-    /// depends on: the anchor's QUANTIZED load target (chunk/section centre,
-    /// view sector, render distance) and the world's terrain-content revision.
+    /// depends on: the anchor's load target (chunk/section centre and render
+    /// distance) and the world's terrain-content revision.
     /// While the key is unchanged, a rescan cannot find new work — the sender
     /// skips it (mirroring how `update_load_target` gates its scans).
     pub(crate) fn terrain_send_key(&self, anchor: LoadAnchor) -> u64 {
-        let t = LoadTarget::new_facing(
-            anchor.cx,
-            anchor.cy,
-            anchor.cz,
-            self.render_dist,
-            anchor.fx,
-            anchor.fz,
-        );
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
-        (
-            t.center.cx,
-            t.center.cz,
-            t.center_cy,
-            t.render_dist,
-            t.view_sector,
-            self.terrain_revision,
-        )
-            .hash(&mut h);
+        (self.terrain_target_key(anchor), self.terrain_revision).hash(&mut h);
+        h.finish()
+    }
+
+    /// Anchor-only part of [`terrain_send_key`](Self::terrain_send_key). A
+    /// connection consumes its current plan across content revisions, but an
+    /// anchor move invalidates that plan immediately.
+    pub(crate) fn terrain_target_key(&self, anchor: LoadAnchor) -> u64 {
+        let t = LoadTarget::new(anchor.cx, anchor.cy, anchor.cz, self.render_dist);
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        (t.center.cx, t.center.cz, t.center_cy, t.render_dist).hash(&mut h);
         h.finish()
     }
 
@@ -499,7 +559,7 @@ impl World {
     /// the sent sets and the message emission (column before its sections).
     ///
     /// The wanted/keep shapes are exactly the streamer's own
-    /// (`column_wanted`/`column_kept` over the anchor's facing target), so a
+    /// (`column_wanted`/`column_kept` over the anchor's target), so a
     /// client is offered precisely what the server streams for its anchor.
     pub(crate) fn plan_terrain_send(
         &self,
@@ -508,14 +568,7 @@ impl World {
         sent_sections: &FxHashSet<SectionPos>,
         budget: usize,
     ) -> TerrainSendPlan {
-        let target = LoadTarget::new_facing(
-            anchor.cx,
-            anchor.cy,
-            anchor.cz,
-            self.render_dist,
-            anchor.fx,
-            anchor.fz,
-        );
+        let target = LoadTarget::new(anchor.cx, anchor.cy, anchor.cz, self.render_dist);
 
         let mut sections: Vec<(i64, SectionPos)> = self
             .sections
@@ -527,7 +580,6 @@ impl World {
             .map(|&sp| (target.section_priority_key(sp), sp))
             .collect();
         sections.sort_unstable_by_key(|(key, _)| *key);
-        let saturated = sections.len() > budget;
         sections.truncate(budget);
         let sections: Vec<SectionPos> = sections.into_iter().map(|(_, sp)| sp).collect();
 
@@ -553,7 +605,6 @@ impl World {
             sections,
             drop_sections,
             drop_columns,
-            saturated,
         }
     }
 }
@@ -566,8 +617,6 @@ pub(crate) struct TerrainSendPlan {
     pub(crate) drop_sections: Vec<SectionPos>,
     /// Sent columns that left the keep shape (their sections drop with them).
     pub(crate) drop_columns: Vec<ChunkPos>,
-    /// The budget was hit: rescan next pump even with an unchanged key.
-    pub(crate) saturated: bool,
 }
 
 #[cfg(test)]
@@ -580,10 +629,11 @@ mod tests {
     use crate::facing::Facing;
     use crate::mathh::IVec3;
     use crate::net::protocol::BlockDelta;
+    use crate::section::Section;
     use crate::slab::SlabSlot;
     use crate::torch::TorchPlacement;
     use crate::worker::JobPool;
-    use crate::world::store::{World, WorldRole};
+    use crate::world::store::{LoadTarget, World, WorldRole};
 
     /// A flat-floored source world (Combined runs the same content paths the
     /// headless server will) and a fresh replica, sharing ONE job pool — the
@@ -1041,13 +1091,7 @@ mod tests {
         let mut section = Section::new(0, 4, 0);
         section.set_block(0, 0, 0, Block::Stone);
         w.insert_section_for_test(sp, section);
-        let anchor = |cx: i32| LoadAnchor {
-            cx,
-            cy: 4,
-            cz: 0,
-            fx: 1.0,
-            fz: 0.0,
-        };
+        let anchor = |cx: i32| LoadAnchor { cx, cy: 4, cz: 0 };
 
         let mut sent_columns: FxHashSet<ChunkPos> = FxHashSet::default();
         let mut sent_sections: FxHashSet<SectionPos> = FxHashSet::default();
@@ -1066,12 +1110,11 @@ mod tests {
             plan.sections.contains(&sp),
             "the loaded, lit, wanted section ships"
         );
-        assert!(!plan.saturated);
         sent_columns.insert(sp.chunk_pos());
         sent_sections.insert(sp);
 
         // The send key: stable while nothing moved; re-keyed by new content
-        // and by an anchor chunk move — never by a sub-sector look wiggle.
+        // and by an anchor chunk move.
         let k = w.terrain_send_key(anchor(0));
         assert_eq!(k, w.terrain_send_key(anchor(0)));
         assert_ne!(k, w.terrain_send_key(anchor(1)), "a chunk move re-keys");
@@ -1107,6 +1150,38 @@ mod tests {
         let plan = w.plan_terrain_send(anchor(20), &sent_columns, &sent_sections, 128);
         assert!(plan.drop_columns.contains(&sp.chunk_pos()));
         assert!(!plan.drop_sections.contains(&sp));
+    }
+
+    #[test]
+    fn sealed_mixed_section_is_not_final_without_light() {
+        let mut world = World::new(0, 16);
+        let center = SectionPos::new(0, 0, 0);
+        let mut cavity = Section::new(0, 0, 0);
+        cavity.blocks_slice_mut().fill(Block::Stone.id());
+        cavity.recompute_opaque_count();
+        cavity.set_block(8, 8, 8, Block::Air);
+        world.insert_section_for_test(center, cavity);
+        for (dx, dy, dz) in [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ] {
+            let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
+            let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+            section.blocks_slice_mut().fill(Block::Stone.id());
+            section.recompute_opaque_count();
+            world.insert_section_for_test(pos, section);
+        }
+        world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
+
+        assert!(world.section_sealed_by_loaded_neighbors(center));
+        assert!(
+            !world.section_light_final(center),
+            "a mixed section needs real light before replication can call it final"
+        );
     }
 
     #[test]

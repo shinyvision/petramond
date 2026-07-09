@@ -870,8 +870,8 @@ pub(crate) enum ServerToClient {
     ColumnUnload(ChunkPos),
     /// Brackets the start of one streaming batch (terrain/light/unload
     /// messages) on a WINDOWED connection: the client times Start→End
-    /// application and answers `StreamBatchAck`. Never sent on the local
-    /// pipe (its client may be paused and ack nothing).
+    /// application and answers `StreamBatchAck`. Loopback uses the same
+    /// protocol with a one-batch window, bounding its unbounded channel.
     StreamBatchStart,
     /// Ends the batch `StreamBatchStart` opened; `count` is the number of
     /// streaming messages in between (the client's rate denominator).
@@ -902,11 +902,17 @@ pub(crate) struct ColumnPayload {
     pub pos: ChunkPos,
     /// 16×16 biome ids, row-major (z * 16 + x).
     pub biomes: SectionBytes,
+    /// 20x20 biome tint halo (two cells beyond each column edge), captured by
+    /// column generation and reused by every section mesh in this column.
+    pub mesh_biomes: SectionBytes,
     /// 16×16 surface heights, same order.
     pub heightmap: Vec<i32>,
     /// `SectionSummary` discriminants for every cy in world order — lets the
     /// replica treat absent `FullOpaque`/`FullWater` sections truthfully.
     pub summaries: Vec<u8>,
+    /// Lowest section in the surface retention band. Sections below it are
+    /// eligible for replica deep-visibility parking.
+    pub deep_band_lo: i32,
 }
 
 /// One 16³ section's full streamed content — the wire sibling of the save's
@@ -918,6 +924,9 @@ pub(crate) struct SectionPayload {
     pub pos: SectionPos,
     /// 4096 wire block ids.
     pub blocks: SectionBytes,
+    /// Block-derived counters and boundary planes. The replica adopts these
+    /// with the shared buffers instead of rescanning the section on its frame.
+    pub metrics: crate::section::SectionMetrics,
     /// 4096 water meta bytes, present when any cell holds water.
     pub water: Option<SectionBytes>,
     /// Server-baked light. The ship gate (`plan_terrain_send`) holds a section
@@ -1086,6 +1095,7 @@ mod tests {
                 cz: 17,
             },
             blocks: SectionBytes(Arc::from(blocks.into_boxed_slice())),
+            metrics: Default::default(),
             water: None,
             skylight: None,
             blocklight: None,

@@ -22,6 +22,27 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+#[derive(Clone)]
+pub struct JobCancel(Arc<AtomicBool>);
+
+impl JobCancel {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub fn same_job(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 struct QueuedJob {
     key: i64,
     seq: u64,
@@ -83,6 +104,7 @@ impl JobPool {
             let h = thread::Builder::new()
                 .name("petramond-jobs".to_string())
                 .spawn(move || {
+                    lower_current_thread_priority();
                     loop {
                         let job = {
                             let mut q = shared.queue.lock().unwrap();
@@ -125,6 +147,19 @@ impl JobPool {
         self.shared.available.notify_one();
     }
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn lower_current_thread_priority() {
+    // Background throughput should not preempt the render or simulation owner
+    // threads. Failure is harmless (for example under a restrictive sandbox).
+    unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        let _ = libc::setpriority(libc::PRIO_PROCESS, tid, 5);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn lower_current_thread_priority() {}
 
 impl Drop for JobPool {
     fn drop(&mut self) {
@@ -234,13 +269,18 @@ impl WorkerPool {
         }
     }
 
-    pub fn submit(&self, key: i64, job: GenJob) {
+    pub fn submit(&self, key: i64, job: GenJob) -> JobCancel {
+        let cancel = JobCancel::new();
+        let job_cancel = cancel.clone();
         let tx = self.tx_res.clone();
         let failed = match &job {
             GenJob::Column { pos, .. } => GenOutput::ColumnFailed(*pos),
             GenJob::Section { sp, .. } => GenOutput::SectionFailed(*sp),
         };
         self.pool.submit(key, move || {
+            if job_cancel.is_cancelled() {
+                return;
+            }
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_gen_job(job))) {
                 Ok(out) => {
                     let _ = tx.send(out);
@@ -254,6 +294,7 @@ impl WorkerPool {
                 }
             }
         });
+        cancel
     }
 
     pub fn try_recv(&self) -> Option<GenOutput> {

@@ -189,9 +189,7 @@ impl Game {
         let cam_cx = (self.cam.pos.x.floor() as i32).div_euclid(16);
         let cam_cy = (self.cam.pos.y.floor() as i32).div_euclid(16);
         let cam_cz = (self.cam.pos.z.floor() as i32).div_euclid(16);
-        let forward = self.cam.forward();
-        self.replica
-            .set_replica_view_center(cam_cx, cam_cy, cam_cz, forward.x, forward.z);
+        self.replica.set_replica_view_center(cam_cx, cam_cy, cam_cz);
     }
 
     /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation +

@@ -66,6 +66,33 @@ impl SectionSummary {
     }
 }
 
+/// Counter and boundary-plane metadata that can travel with an immutable block
+/// buffer. Loopback replicas adopt it directly instead of rescanning 4,096 cells;
+/// network remapping recomputes it on the transport thread when ids change.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SectionMetrics {
+    pub random_tick_count: u32,
+    pub opaque_count: u32,
+    pub plane_opaque: [u16; 6],
+    pub non_air_count: u32,
+    pub water_count: u32,
+    pub biome_tint_count: u32,
+    pub particle_emitter_count: u32,
+}
+
+impl SectionMetrics {
+    pub(crate) fn valid(self) -> bool {
+        let volume = SECTION_VOLUME as u32;
+        self.random_tick_count <= volume
+            && self.opaque_count <= volume
+            && self.non_air_count <= volume
+            && self.water_count <= volume
+            && self.biome_tint_count <= volume
+            && self.particle_emitter_count <= volume
+            && self.plane_opaque.iter().all(|&n| n <= 256)
+    }
+}
+
 /// One 16³ cube of voxels. Blocks stored as a flat `Arc<[u8; 4096]>` indexed by
 /// [`section_idx`].
 ///
@@ -464,55 +491,86 @@ impl Section {
         }
     }
 
+    /// Compute every block-derived counter in one pass, including boundary planes.
+    pub(crate) fn metrics_from_blocks(blocks: &[u8]) -> SectionMetrics {
+        if blocks.len() != SECTION_VOLUME {
+            return SectionMetrics::default();
+        }
+        let water_id = Block::Water.id();
+        let mut out = SectionMetrics::default();
+        let hi = SECTION_SIZE - 1;
+        for (idx, &id) in blocks.iter().enumerate() {
+            let block = Block::from_id(id);
+            if block.has_random_tick() {
+                out.random_tick_count += 1;
+            }
+            if block.is_opaque() {
+                out.opaque_count += 1;
+                let x = idx % SECTION_SIZE;
+                let y = idx / (SECTION_SIZE * SECTION_SIZE);
+                let z = (idx / SECTION_SIZE) % SECTION_SIZE;
+                if x == hi {
+                    out.plane_opaque[0] += 1;
+                }
+                if x == 0 {
+                    out.plane_opaque[1] += 1;
+                }
+                if y == hi {
+                    out.plane_opaque[2] += 1;
+                }
+                if y == 0 {
+                    out.plane_opaque[3] += 1;
+                }
+                if z == hi {
+                    out.plane_opaque[4] += 1;
+                }
+                if z == 0 {
+                    out.plane_opaque[5] += 1;
+                }
+            }
+            if id != 0 {
+                out.non_air_count += 1;
+            }
+            if id == water_id {
+                out.water_count += 1;
+            }
+            if Self::id_uses_biome_tint(id) {
+                out.biome_tint_count += 1;
+            }
+            if Self::id_has_particle_emitter(id) {
+                out.particle_emitter_count += 1;
+            }
+        }
+        out
+    }
+
+    fn install_metrics(&mut self, metrics: SectionMetrics) {
+        self.random_tick_count = metrics.random_tick_count;
+        self.opaque_count = metrics.opaque_count;
+        self.plane_opaque = metrics.plane_opaque;
+        self.non_air_count = metrics.non_air_count;
+        self.water_count = metrics.water_count;
+        self.biome_tint_count = metrics.biome_tint_count;
+        self.particle_emitter_count = metrics.particle_emitter_count;
+    }
+
+    pub(crate) fn stream_metrics(&self) -> SectionMetrics {
+        SectionMetrics {
+            random_tick_count: self.random_tick_count,
+            opaque_count: self.opaque_count,
+            plane_opaque: self.plane_opaque,
+            non_air_count: self.non_air_count,
+            water_count: self.water_count,
+            biome_tint_count: self.biome_tint_count,
+            particle_emitter_count: self.particle_emitter_count,
+        }
+    }
+
     /// Recount opaque + non-air + water + mesh/presentation hint cells — for a bulk
     /// load that fills `blocks` directly.
     pub fn recompute_opaque_count(&mut self) {
-        let water_id = Block::Water.id();
-        let mut opaque = 0u32;
-        let mut non_air = 0u32;
-        let mut water = 0u32;
-        let mut biome_tint = 0u32;
-        let mut particle_emitters = 0u32;
-        for &id in self.blocks.iter() {
-            if Block::from_id(id).is_opaque() {
-                opaque += 1;
-            }
-            if id != 0 {
-                non_air += 1;
-            }
-            if id == water_id {
-                water += 1;
-            }
-            if Self::id_uses_biome_tint(id) {
-                biome_tint += 1;
-            }
-            if Self::id_has_particle_emitter(id) {
-                particle_emitters += 1;
-            }
-        }
-        self.opaque_count = opaque;
-        self.non_air_count = non_air;
-        self.water_count = water;
-        self.biome_tint_count = biome_tint;
-        self.particle_emitter_count = particle_emitters;
+        self.install_metrics(Self::metrics_from_blocks(&self.blocks));
         self.compact_uniform_blocks();
-
-        let mut planes = [0u16; 6];
-        let hi = SECTION_SIZE - 1;
-        for a in 0..SECTION_SIZE {
-            for b in 0..SECTION_SIZE {
-                let op = |x: usize, y: usize, z: usize| {
-                    Block::from_id(self.blocks[section_idx(x, y, z)]).is_opaque() as u16
-                };
-                planes[0] += op(hi, a, b);
-                planes[1] += op(0, a, b);
-                planes[2] += op(a, hi, b);
-                planes[3] += op(a, 0, b);
-                planes[4] += op(a, b, hi);
-                planes[5] += op(a, b, 0);
-            }
-        }
-        self.plane_opaque = planes;
     }
 
     /// Swap the block buffer for the shared per-id uniform cube when every cell
@@ -1053,6 +1111,95 @@ impl Section {
         log_axes: HashMap<u16, LogAxis>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
+        Self::from_shared(
+            cx,
+            cy,
+            cz,
+            blocks.into(),
+            water.map(Arc::from),
+            furnaces,
+            containers,
+            entity_facings,
+            torches,
+            model_cells,
+            model_facings,
+            sapling_stages,
+            doors,
+            stairs,
+            slabs,
+            log_axes,
+            cell_kv,
+            None,
+        )
+    }
+
+    /// Rebuild a replica section from immutable wire buffers and server-derived
+    /// counters. No voxel buffer is copied or scanned on the render thread.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_replica(
+        cx: i32,
+        cy: i32,
+        cz: i32,
+        blocks: Arc<[u8]>,
+        water: Option<Arc<[u8]>>,
+        furnaces: HashMap<u16, Furnace>,
+        containers: HashMap<u16, Container>,
+        entity_facings: HashMap<u16, Facing>,
+        torches: HashMap<u16, TorchPlacement>,
+        model_cells: HashMap<u16, [u8; 3]>,
+        model_facings: HashMap<u16, Facing>,
+        sapling_stages: HashMap<u16, u8>,
+        doors: HashMap<u16, DoorState>,
+        stairs: HashMap<u16, StairState>,
+        slabs: HashMap<u16, SlabState>,
+        log_axes: HashMap<u16, LogAxis>,
+        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        metrics: SectionMetrics,
+    ) -> Self {
+        debug_assert!(metrics.valid());
+        Self::from_shared(
+            cx,
+            cy,
+            cz,
+            blocks,
+            water,
+            furnaces,
+            containers,
+            entity_facings,
+            torches,
+            model_cells,
+            model_facings,
+            sapling_stages,
+            doors,
+            stairs,
+            slabs,
+            log_axes,
+            cell_kv,
+            Some(metrics),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_shared(
+        cx: i32,
+        cy: i32,
+        cz: i32,
+        blocks: Arc<[u8]>,
+        water: Option<Arc<[u8]>>,
+        furnaces: HashMap<u16, Furnace>,
+        containers: HashMap<u16, Container>,
+        entity_facings: HashMap<u16, Facing>,
+        torches: HashMap<u16, TorchPlacement>,
+        model_cells: HashMap<u16, [u8; 3]>,
+        model_facings: HashMap<u16, Facing>,
+        sapling_stages: HashMap<u16, u8>,
+        doors: HashMap<u16, DoorState>,
+        stairs: HashMap<u16, StairState>,
+        slabs: HashMap<u16, SlabState>,
+        log_axes: HashMap<u16, LogAxis>,
+        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        metrics: Option<SectionMetrics>,
+    ) -> Self {
         let entities = BlockEntities {
             furnaces,
             containers,
@@ -1062,8 +1209,8 @@ impl Section {
             cx,
             cy,
             cz,
-            blocks: blocks.into(),
-            states: BlockStates::from_saved(
+            blocks,
+            states: BlockStates::from_shared(
                 water,
                 torches,
                 model_cells,
@@ -1091,8 +1238,16 @@ impl Section {
             biome_tint_count: 0,
             particle_emitter_count: 0,
         };
-        s.recompute_random_tick_count();
-        s.recompute_opaque_count();
+        if let Some(metrics) = metrics {
+            s.install_metrics(metrics);
+            if s.non_air_count == 0 {
+                s.blocks = uniform_cube(0);
+            } else if s.water_count as usize == SECTION_VOLUME {
+                s.blocks = uniform_cube(Block::Water.id());
+            }
+        } else {
+            s.recompute_opaque_count();
+        }
         s
     }
 }

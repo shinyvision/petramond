@@ -26,9 +26,11 @@ mod torch;
 pub use codec::SectionSnapshot;
 pub use level::LevelData;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 use crate::chunk::{ChunkPos, SectionPos};
@@ -38,14 +40,38 @@ use crate::section::Section;
 
 /// Messages from the game thread to the I/O thread.
 enum IoMsg {
-    SaveSections(Vec<SectionSnapshot>),
+    SaveSections {
+        store: SectionStore,
+        snaps: Vec<SectionSnapshot>,
+    },
     SaveColumnGens(Vec<colgen::ColumnGenRecord>),
     SaveLevel(Vec<u8>),
-    SavePlayer { name: String, bytes: Vec<u8> },
+    SavePlayer {
+        name: String,
+        bytes: Vec<u8>,
+    },
     SaveModsJson(Vec<u8>),
-    Load(SectionPos),
-    LoadColumnGen(ChunkPos, u32),
     Shutdown,
+}
+
+enum ReadMsg {
+    Section {
+        pos: SectionPos,
+        store: SectionStore,
+        barrier: u64,
+    },
+    ColumnGen {
+        pos: ChunkPos,
+        seed: u32,
+        barrier: u64,
+    },
+    Shutdown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SectionStore {
+    Authoritative,
+    ExploredCache,
 }
 
 /// A section read back from disk (`section` is `None` if absent / corrupt) plus any
@@ -53,6 +79,7 @@ enum IoMsg {
 /// saved).
 pub struct LoadedSection {
     pub pos: SectionPos,
+    pub(crate) store: SectionStore,
     pub section: Option<Section>,
     pub entities: Vec<DroppedItem>,
     pub mobs: Vec<SavedMob>,
@@ -67,10 +94,15 @@ pub struct LoadedColumnGen {
 
 /// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
-    tx: Sender<IoMsg>,
+    tx: Sender<(u64, IoMsg)>,
+    read_tx: Sender<ReadMsg>,
+    next_write_seq: AtomicU64,
+    section_write_barriers: HashMap<(SectionStore, i32, i32), u64>,
+    colgen_write_barriers: HashMap<(i32, i32), u64>,
     load_rx: Receiver<LoadedSection>,
     colgen_rx: Receiver<LoadedColumnGen>,
-    handle: Option<JoinHandle<()>>,
+    writer_handle: Option<JoinHandle<()>>,
+    reader_handle: Option<JoinHandle<()>>,
     /// Section coords present on disk: seeded at open from region headers, grown
     /// as we save. The load path consults it to choose overlay-from-disk vs
     /// regenerate.
@@ -79,6 +111,9 @@ pub struct WorldSave {
     /// scans don't walk the whole manifest for every column (that made vertical
     /// crossings O(columns × manifest) on a lived-in save).
     manifest_columns: HashMap<ChunkPos, Vec<i32>>,
+    /// Disposable full-section records created by Optimize explored terrain.
+    /// They accelerate normal wanted windows but never widen them vertically.
+    explored_manifest: HashSet<SectionPos>,
     /// Columns with a column-gen cache record on disk ("Optimize explored
     /// terrain"): seeded at open from `colgen/` headers, grown as we save.
     /// Presence only — a hit still validates seed/version at decode.
@@ -123,9 +158,37 @@ pub struct WorldInfo {
 }
 
 impl WorldSave {
-    /// `true` if `pos` has a saved record on disk (or saved this session).
+    fn queue_write(&self, msg: IoMsg) -> u64 {
+        let seq = self.next_write_seq.fetch_add(1, Ordering::AcqRel) + 1;
+        let _ = self.tx.send((seq, msg));
+        seq
+    }
+
+    fn queue_section_writes(&mut self, store: SectionStore, snaps: Vec<SectionSnapshot>) {
+        let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
+        for snap in snaps {
+            by_region
+                .entry(region::region_of(snap.pos))
+                .or_default()
+                .push(snap);
+        }
+        for ((rx, rz), snaps) in by_region {
+            let seq = self.queue_write(IoMsg::SaveSections { store, snaps });
+            self.section_write_barriers.insert((store, rx, rz), seq);
+        }
+    }
+
+    /// `true` if either authoritative state or an explored cache record exists.
     pub fn manifest_contains(&self, pos: SectionPos) -> bool {
+        self.manifest.contains(&pos) || self.explored_manifest.contains(&pos)
+    }
+
+    pub fn authoritative_manifest_contains(&self, pos: SectionPos) -> bool {
         self.manifest.contains(&pos)
+    }
+
+    pub fn explored_manifest_contains(&self, pos: SectionPos) -> bool {
+        self.explored_manifest.contains(&pos)
     }
 
     pub fn manifest_sections_in_column(
@@ -159,7 +222,14 @@ impl WorldSave {
         if snaps.is_empty() {
             return;
         }
-        for s in &snaps {
+        let mut authoritative = Vec::new();
+        let mut explored = Vec::new();
+        for s in snaps {
+            if s.cache_only && !self.manifest.contains(&s.pos) {
+                self.explored_manifest.insert(s.pos);
+                explored.push(s);
+                continue;
+            }
             if self.manifest.insert(s.pos) {
                 self.manifest_columns
                     .entry(s.pos.chunk_pos())
@@ -175,18 +245,24 @@ impl WorldSave {
             } else {
                 self.entities_on_disk.insert(s.pos);
             }
+            authoritative.push(s);
         }
-        let _ = self.tx.send(IoMsg::SaveSections(snaps));
+        if !authoritative.is_empty() {
+            self.queue_section_writes(SectionStore::Authoritative, authoritative);
+        }
+        if !explored.is_empty() {
+            self.queue_section_writes(SectionStore::ExploredCache, explored);
+        }
     }
 
     pub fn save_level(&self, bytes: Vec<u8>) {
-        let _ = self.tx.send(IoMsg::SaveLevel(bytes));
+        self.queue_write(IoMsg::SaveLevel(bytes));
     }
 
     /// Queue a player-file write (`players/<sanitized name>.dat`, atomic like
     /// `level.dat`). `bytes` come from [`player::encode`].
     pub fn save_player(&self, name: &str, bytes: Vec<u8>) {
-        let _ = self.tx.send(IoMsg::SavePlayer {
+        self.queue_write(IoMsg::SavePlayer {
             name: name.to_string(),
             bytes,
         });
@@ -202,18 +278,56 @@ impl WorldSave {
     /// Record the active mod set (`mods.json`) with the save — compared with a
     /// loud warning at the next open (`modding::modset`).
     pub fn save_mods_json(&self, bytes: Vec<u8>) {
-        let _ = self.tx.send(IoMsg::SaveModsJson(bytes));
+        self.queue_write(IoMsg::SaveModsJson(bytes));
     }
 
     /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
     ///
     /// [`poll_loaded`]: Self::poll_loaded
-    pub fn request_load(&self, pos: SectionPos) {
-        let _ = self.tx.send(IoMsg::Load(pos));
+    pub fn request_load(&self, pos: SectionPos, use_explored_cache: bool) {
+        let store = if self.manifest.contains(&pos) {
+            Some(SectionStore::Authoritative)
+        } else if use_explored_cache && self.explored_manifest.contains(&pos) {
+            Some(SectionStore::ExploredCache)
+        } else {
+            None
+        };
+        if let Some(store) = store {
+            let (rx, rz) = region::region_of(pos);
+            let barrier = self
+                .section_write_barriers
+                .get(&(store, rx, rz))
+                .copied()
+                .unwrap_or(0);
+            let _ = self.read_tx.send(ReadMsg::Section {
+                pos,
+                store,
+                barrier,
+            });
+        }
     }
 
     pub fn poll_loaded(&self) -> Option<LoadedSection> {
         self.load_rx.try_recv().ok()
+    }
+
+    /// A missing/corrupt record must not stay in the presence manifest or every
+    /// revisit repeats the failed read and suppresses cache replacement.
+    pub(crate) fn note_section_load_miss(&mut self, pos: SectionPos, store: SectionStore) {
+        match store {
+            SectionStore::Authoritative => {
+                self.manifest.remove(&pos);
+                if let Some(cys) = self.manifest_columns.get_mut(&pos.chunk_pos()) {
+                    cys.retain(|&cy| cy != pos.cy);
+                    if cys.is_empty() {
+                        self.manifest_columns.remove(&pos.chunk_pos());
+                    }
+                }
+            }
+            SectionStore::ExploredCache => {
+                self.explored_manifest.remove(&pos);
+            }
+        }
     }
 
     /// `true` if `pos` has a column-gen cache record on disk (or saved this
@@ -228,10 +342,18 @@ impl WorldSave {
         if recs.is_empty() {
             return;
         }
-        for rec in &recs {
+        let mut by_region: HashMap<(i32, i32), Vec<colgen::ColumnGenRecord>> = HashMap::new();
+        for rec in recs {
             self.colgen_manifest.insert(rec.pos);
+            by_region
+                .entry(colgen::region_of(rec.pos))
+                .or_default()
+                .push(rec);
         }
-        let _ = self.tx.send(IoMsg::SaveColumnGens(recs));
+        for ((rx, rz), recs) in by_region {
+            let seq = self.queue_write(IoMsg::SaveColumnGens(recs));
+            self.colgen_write_barriers.insert((rx, rz), seq);
+        }
     }
 
     /// Ask the I/O thread to read `pos`'s column-gen cache record (validated
@@ -239,19 +361,32 @@ impl WorldSave {
     ///
     /// [`poll_loaded_column_gen`]: Self::poll_loaded_column_gen
     pub fn request_column_gen(&self, pos: ChunkPos, seed: u32) {
-        let _ = self.tx.send(IoMsg::LoadColumnGen(pos, seed));
+        let barrier = self
+            .colgen_write_barriers
+            .get(&colgen::region_of(pos))
+            .copied()
+            .unwrap_or(0);
+        let _ = self.read_tx.send(ReadMsg::ColumnGen { pos, seed, barrier });
     }
 
     pub fn poll_loaded_column_gen(&self) -> Option<LoadedColumnGen> {
         self.colgen_rx.try_recv().ok()
     }
 
+    pub(crate) fn note_colgen_load_miss(&mut self, pos: ChunkPos) {
+        self.colgen_manifest.remove(&pos);
+    }
+
     /// Flush everything still queued and join the I/O thread. Call on quit after
     /// sending the final level / entities / chunks: the channel is ordered, so
     /// the join returns only once every prior write has hit disk.
     pub fn shutdown(&mut self) {
-        let _ = self.tx.send(IoMsg::Shutdown);
-        if let Some(h) = self.handle.take() {
+        self.queue_write(IoMsg::Shutdown);
+        if let Some(h) = self.writer_handle.take() {
+            let _ = h.join();
+        }
+        let _ = self.read_tx.send(ReadMsg::Shutdown);
+        if let Some(h) = self.reader_handle.take() {
             let _ = h.join();
         }
     }
@@ -478,7 +613,9 @@ pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
 /// it directly against a temp dir so they never touch the real data dir.
 pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let region_dir = dir.join("region");
+    let explored_dir = dir.join("explored");
     std::fs::create_dir_all(&region_dir)?;
+    std::fs::create_dir_all(&explored_dir)?;
 
     // Per-world settings (`settings.json`; absent = defaults). Mod enablement
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
@@ -514,6 +651,20 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         }
     }
 
+    let mut explored_manifest = HashSet::new();
+    if let Ok(rd) = std::fs::read_dir(&explored_dir) {
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if let Some((rx, rz)) = region::parse_region_name(&path) {
+                if let Ok(indices) = region::read_region_indices(&path) {
+                    for lidx in indices {
+                        explored_manifest.insert(region::section_pos(rx, rz, lidx));
+                    }
+                }
+            }
+        }
+    }
+
     // The column-gen cache manifest ("Optimize explored terrain"), same shape.
     let mut colgen_manifest = HashSet::new();
     if let Ok(rd) = std::fs::read_dir(dir.join("colgen")) {
@@ -530,13 +681,21 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     }
 
     let players_dir = dir.join("players");
-    let (tx, rx) = std::sync::mpsc::channel::<IoMsg>();
+    let (tx, rx) = std::sync::mpsc::channel::<(u64, IoMsg)>();
+    let (read_tx, read_rx) = std::sync::mpsc::channel::<ReadMsg>();
     let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
-    let handle = std::thread::Builder::new()
+    let completed = Arc::new((Mutex::new(0u64), Condvar::new()));
+    let writer_completed = completed.clone();
+    let writer_dir = dir.clone();
+    let writer_handle = std::thread::Builder::new()
         .name("petramond-save".to_string())
-        .spawn(move || io_thread(dir, rx, load_tx, colgen_tx))
-        .expect("spawn save thread");
+        .spawn(move || write_thread(writer_dir, rx, writer_completed))
+        .expect("spawn save writer");
+    let reader_handle = std::thread::Builder::new()
+        .name("petramond-load".to_string())
+        .spawn(move || read_thread(dir, read_rx, load_tx, colgen_tx, completed))
+        .expect("spawn save reader");
 
     let mut manifest_columns: HashMap<ChunkPos, Vec<i32>> = HashMap::new();
     for sp in &manifest {
@@ -549,11 +708,17 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     Ok(OpenedWorld {
         save: WorldSave {
             tx,
+            read_tx,
+            next_write_seq: AtomicU64::new(0),
+            section_write_barriers: HashMap::new(),
+            colgen_write_barriers: HashMap::new(),
             load_rx,
             colgen_rx,
-            handle: Some(handle),
+            writer_handle: Some(writer_handle),
+            reader_handle: Some(reader_handle),
             manifest,
             manifest_columns,
+            explored_manifest,
             colgen_manifest,
             entities_on_disk: HashSet::new(),
             players_dir,
@@ -566,58 +731,68 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
 /// The I/O thread loop: process requests in order, doing compression + file I/O
 /// off the game loop. Returns (and so the join completes) on `Shutdown`.
-/// One parsed region-container file, cached on the I/O thread. Load requests
-/// are spatially clustered (a streaming burst reads hundreds of records from
-/// the same file), so without this every per-section load re-read and re-parsed
-/// the whole region — O(file) work per record. One slot per file kind
-/// (region / colgen) is enough; writes refresh the slot through the same path.
-#[derive(Default)]
+/// Open region readers retained by recency. Distance-ordered streaming crosses
+/// region boundaries repeatedly, so a one-entry cache thrashes even though the
+/// request set is spatially compact.
 struct RegionFileCache {
-    path: Option<PathBuf>,
-    records: std::collections::HashMap<u16, Vec<u8>>,
+    entries: VecDeque<(PathBuf, region::RegionReader, u64)>,
+    capacity: usize,
 }
 
 impl RegionFileCache {
-    /// The parsed records of `path`, re-reading only when the slot holds a
-    /// different file. `refresh` forces the re-read (after a write).
-    fn read(&mut self, path: &Path, refresh: bool) -> &std::collections::HashMap<u16, Vec<u8>> {
-        if refresh || self.path.as_deref() != Some(path) {
-            self.records = region::read_region(path).unwrap_or_default();
-            self.path = Some(path.to_path_buf());
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: VecDeque::with_capacity(capacity),
+            capacity,
         }
-        &self.records
+    }
+
+    fn read_record(&mut self, path: &Path, lidx: u16, barrier: u64) -> Option<Vec<u8>> {
+        let entry = if let Some(i) = self
+            .entries
+            .iter()
+            .position(|(p, _, epoch)| p == path && *epoch >= barrier)
+        {
+            self.entries
+                .remove(i)
+                .expect("cache position came from this deque")
+        } else {
+            if let Some(i) = self.entries.iter().position(|(p, _, _)| p == path) {
+                self.entries.remove(i);
+            }
+            let reader = region::RegionReader::open(path).ok()?;
+            (path.to_path_buf(), reader, barrier)
+        };
+        self.entries.push_back(entry);
+        while self.entries.len() > self.capacity {
+            self.entries.pop_front();
+        }
+        self.entries
+            .back_mut()
+            .and_then(|(_, reader, _)| reader.read_record(lidx).ok().flatten())
     }
 }
 
-fn io_thread(
-    dir: PathBuf,
-    rx: Receiver<IoMsg>,
-    load_tx: Sender<LoadedSection>,
-    colgen_tx: Sender<LoadedColumnGen>,
-) {
+fn write_thread(dir: PathBuf, rx: Receiver<(u64, IoMsg)>, completed: Arc<(Mutex<u64>, Condvar)>) {
+    crate::worker::lower_current_thread_priority();
     let region_dir = dir.join("region");
+    let explored_dir = dir.join("explored");
     let colgen_dir = dir.join("colgen");
     let players_dir = dir.join("players");
-    let mut region_cache = RegionFileCache::default();
-    let mut colgen_cache = RegionFileCache::default();
-    while let Ok(msg) = rx.recv() {
+    while let Ok((seq, msg)) = rx.recv() {
+        let shutdown = matches!(msg, IoMsg::Shutdown);
         match msg {
-            IoMsg::SaveSections(snaps) => {
-                let touched = write_sections(&region_dir, snaps);
-                if let Some(path) = region_cache.path.clone() {
-                    if touched.contains(&path) {
-                        region_cache.read(&path, true);
-                    }
-                }
+            IoMsg::SaveSections { store, snaps } => {
+                let target_dir = match store {
+                    SectionStore::Authoritative => &region_dir,
+                    SectionStore::ExploredCache => &explored_dir,
+                };
+                let _ = std::fs::create_dir_all(target_dir);
+                write_sections(target_dir, snaps);
             }
             IoMsg::SaveColumnGens(recs) => {
                 let _ = std::fs::create_dir_all(&colgen_dir);
-                let touched = colgen::write_records(&colgen_dir, recs);
-                if let Some(path) = colgen_cache.path.clone() {
-                    if touched.contains(&path) {
-                        colgen_cache.read(&path, true);
-                    }
-                }
+                colgen::write_records(&colgen_dir, recs);
             }
             IoMsg::SaveLevel(bytes) => {
                 let _ = write_atomic(&dir.join("level.dat"), &bytes);
@@ -629,34 +804,96 @@ fn io_thread(
             IoMsg::SaveModsJson(bytes) => {
                 let _ = write_atomic(&dir.join("mods.json"), &bytes);
             }
-            IoMsg::Load(pos) => {
+            IoMsg::Shutdown => {}
+        }
+        let (lock, ready) = &*completed;
+        *lock.lock().unwrap() = seq;
+        ready.notify_all();
+        if shutdown {
+            break;
+        }
+    }
+}
+
+fn read_thread(
+    dir: PathBuf,
+    rx: Receiver<ReadMsg>,
+    load_tx: Sender<LoadedSection>,
+    colgen_tx: Sender<LoadedColumnGen>,
+    completed: Arc<(Mutex<u64>, Condvar)>,
+) {
+    let region_dir = dir.join("region");
+    let explored_dir = dir.join("explored");
+    let colgen_dir = dir.join("colgen");
+    let mut region_cache = RegionFileCache::new(32);
+    let mut colgen_cache = RegionFileCache::new(32);
+    let mut pending = VecDeque::new();
+    loop {
+        let completed_seq = *completed.0.lock().unwrap();
+        let ready = pending.iter().position(|msg| match msg {
+            ReadMsg::Section { barrier, .. } | ReadMsg::ColumnGen { barrier, .. } => {
+                *barrier <= completed_seq
+            }
+            ReadMsg::Shutdown => false,
+        });
+        let msg = if let Some(index) = ready {
+            pending
+                .remove(index)
+                .expect("ready read index came from this queue")
+        } else if matches!(pending.front(), Some(ReadMsg::Shutdown)) {
+            break;
+        } else {
+            let received = if pending.is_empty() {
+                rx.recv()
+                    .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+            } else {
+                rx.recv_timeout(std::time::Duration::from_millis(2))
+            };
+            match received {
+                Ok(msg) => {
+                    pending.push_back(msg);
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        };
+        match msg {
+            ReadMsg::Section {
+                pos,
+                store,
+                barrier,
+            } => {
                 let (rx_, rz_) = region::region_of(pos);
-                let path = region::region_path(&region_dir, rx_, rz_);
-                let records = region_cache.read(&path, false);
-                let decoded = records
-                    .get(&region::local_index(pos))
-                    .and_then(|blob| codec::decode_section(pos, blob));
+                let source_dir = match store {
+                    SectionStore::Authoritative => &region_dir,
+                    SectionStore::ExploredCache => &explored_dir,
+                };
+                let path = region::region_path(source_dir, rx_, rz_);
+                let decoded = region_cache
+                    .read_record(&path, region::local_index(pos), barrier)
+                    .and_then(|blob| codec::decode_section(pos, &blob));
                 let (section, entities, mobs) = match decoded {
                     Some((section, entities, mobs)) => (Some(section), entities, mobs),
                     None => (None, Vec::new(), Vec::new()),
                 };
                 let _ = load_tx.send(LoadedSection {
                     pos,
+                    store,
                     section,
                     entities,
                     mobs,
                 });
             }
-            IoMsg::LoadColumnGen(pos, seed) => {
+            ReadMsg::ColumnGen { pos, seed, barrier } => {
                 let (rx_, rz_) = colgen::region_of(pos);
                 let path = colgen::cache_path(&colgen_dir, rx_, rz_);
                 let record = colgen_cache
-                    .read(&path, false)
-                    .get(&colgen::local_index(pos))
-                    .and_then(|blob| colgen::decode_record(pos, seed, blob));
+                    .read_record(&path, colgen::local_index(pos), barrier)
+                    .and_then(|blob| colgen::decode_record(pos, seed, &blob));
                 let _ = colgen_tx.send(LoadedColumnGen { pos, record });
             }
-            IoMsg::Shutdown => break,
+            ReadMsg::Shutdown => unreachable!("shutdown is handled at the queue head"),
         }
     }
 }
@@ -675,13 +912,10 @@ fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) -> Vec<PathBuf
     let mut touched = Vec::with_capacity(by_region.len());
     for ((rx, rz), group) in by_region {
         let path = region::region_path(region_dir, rx, rz);
-        // On a corrupt region we start fresh rather than refuse to save; the new
-        // records still land, only the unreadable old ones are lost.
-        let mut records = region::read_region(&path).unwrap_or_default();
-        for s in &group {
-            records.insert(region::local_index(s.pos), codec::encode_snapshot(s));
-        }
-        let _ = region::write_region(&path, &records);
+        let records = group
+            .iter()
+            .map(|s| (region::local_index(s.pos), codec::encode_snapshot(s)));
+        let _ = region::merge_region(&path, records);
         touched.push(path);
     }
     touched
@@ -710,7 +944,7 @@ mod tests {
     }
 
     fn load_blocking(save: &WorldSave, pos: SectionPos) -> Option<LoadedSection> {
-        save.request_load(pos);
+        save.request_load(pos, true);
         for _ in 0..500 {
             if let Some(l) = save.poll_loaded() {
                 return Some(l);
@@ -796,6 +1030,56 @@ mod tests {
             assert_eq!(
                 loaded.entities[0].ticks_lived, 2500,
                 "remaining lifetime persisted"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explored_cache_does_not_expand_the_authoritative_manifest() {
+        let dir = temp_world_dir("explored-cache");
+        let cached_pos = SectionPos::new(5, -3, 9);
+        let edited_pos = SectionPos::new(5, 4, 9);
+
+        {
+            let mut opened = open_at(dir.clone()).expect("open fresh");
+            let mut cached = Section::new(cached_pos.cx, cached_pos.cy, cached_pos.cz);
+            cached.set_block(2, 3, 4, Block::Stone);
+            let mut cached_snap = SectionSnapshot::from_section(&cached);
+            cached_snap.cache_only = true;
+
+            let mut edited = Section::new(edited_pos.cx, edited_pos.cy, edited_pos.cz);
+            edited.set_block(6, 7, 8, Block::Dirt);
+            opened
+                .save
+                .save_sections(vec![cached_snap, SectionSnapshot::from_section(&edited)]);
+
+            assert!(opened.save.explored_manifest_contains(cached_pos));
+            assert!(!opened.save.authoritative_manifest_contains(cached_pos));
+            assert_eq!(
+                opened
+                    .save
+                    .manifest_sections_in_column(cached_pos.chunk_pos())
+                    .collect::<Vec<_>>(),
+                vec![edited_pos],
+                "disposable cache sections must not widen the wanted vertical range"
+            );
+            opened.save.shutdown();
+        }
+
+        {
+            let opened = open_at(dir.clone()).expect("reopen");
+            assert!(opened.save.explored_manifest_contains(cached_pos));
+            assert!(!opened.save.authoritative_manifest_contains(cached_pos));
+            assert!(opened.save.authoritative_manifest_contains(edited_pos));
+            let loaded = load_blocking(&opened.save, cached_pos).expect("cache section loads");
+            assert_eq!(
+                loaded
+                    .section
+                    .expect("cache record decodes")
+                    .block_raw(2, 3, 4),
+                Block::Stone.id()
             );
         }
 

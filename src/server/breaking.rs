@@ -101,8 +101,7 @@ impl ServerGame {
         // Reach from the CLAIMED eye — the same reference the look latch was
         // validated against (F1), so an accepted mining target can't be denied
         // at the finish by server-integration drift.
-        let eye =
-            self.sessions[s].claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+        let eye = self.sessions[s].claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
         if !crate::player::block_within_reach(eye, pos) {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::OutOfReach);
             return;
@@ -175,13 +174,12 @@ impl ServerGame {
                 if let Some(old) = self.sessions[s].deferred_break_finished.take() {
                     self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
                 }
-                self.sessions[s].deferred_break_finished = Some(
-                    crate::server::player::PendingBreakFinished {
+                self.sessions[s].deferred_break_finished =
+                    Some(crate::server::player::PendingBreakFinished {
                         request_id,
                         pos,
                         tool_item_id,
-                    },
-                );
+                    });
                 return;
             }
         }
@@ -200,12 +198,7 @@ impl ServerGame {
             } else {
                 // Same cell already deferred — answer the older id as denied
                 // (superseded by this accept path).
-                self.push_action_outcome(
-                    s,
-                    old.request_id,
-                    false,
-                    Some(ActionDenyReason::TooFast),
-                );
+                self.push_action_outcome(s, old.request_id, false, Some(ActionDenyReason::TooFast));
             }
         }
         if self.finish_player_break(s, event, events) {
@@ -232,9 +225,7 @@ impl ServerGame {
     /// Authoritative footprint of `pos` into the session's corrective sync.
     fn queue_break_corrective_cells(&mut self, s: usize, pos: IVec3) {
         let cells = self.world.break_footprint_cells(pos);
-        self.sessions[s]
-            .pending_corrective_cells
-            .extend(cells);
+        self.sessions[s].pending_corrective_cells.extend(cells);
     }
 
     /// Apply a finished player break: announce `block_break_pre` (cancel =

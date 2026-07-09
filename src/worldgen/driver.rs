@@ -54,6 +54,10 @@ pub struct ColumnGen {
     pub cz: i32,
     /// Biome id per `(x,z)` in the column's 16×16, indexed `z*16 + x`.
     biome: Box<[u8]>,
+    /// The 20x20 tint halo for this column (two cells beyond each X/Z edge).
+    /// Captured from the column-generation region so mesh submission never runs
+    /// analytical biome generation on the owning thread.
+    mesh_biome: Arc<[u8]>,
     /// Density top-solid surface (world Y, or `-1` for a floorless column) per
     /// `(x,z)`, indexed `z*16 + x`.
     surf: Box<[i32]>,
@@ -108,6 +112,10 @@ impl ColumnGen {
     pub fn biome_at(&self, x: usize, z: usize) -> u8 {
         self.biome[z * SECTION_SIZE + x]
     }
+    #[inline]
+    pub fn mesh_biome(&self) -> Arc<[u8]> {
+        self.mesh_biome.clone()
+    }
     /// Density top-solid surface (world Y, or `-1`) at column-local `(x,z)`.
     #[inline]
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
@@ -150,6 +158,7 @@ impl ColumnGen {
             cx: self.cx,
             cz: self.cz,
             biome: self.biome.clone(),
+            mesh_biome: self.mesh_biome.clone(),
             surf: self.surf.clone(),
             top_surf: self.top_surf.clone(),
             surf_min: self.surf_min,
@@ -167,9 +176,11 @@ impl ColumnGen {
     /// [`slimmed`](Self::slimmed) retains.
     pub fn cache_record(&self, seed: u32) -> crate::save::colgen::ColumnGenRecord {
         crate::save::colgen::ColumnGenRecord {
+            source_version: crate::save::colgen::VERSION,
             pos: crate::chunk::ChunkPos::new(self.cx, self.cz),
             seed,
             biome: self.biome.clone(),
+            mesh_biome: self.mesh_biome.clone(),
             surf: self.surf.clone(),
             top_surf: self.top_surf.clone(),
             surf_min: self.surf_min,
@@ -188,6 +199,7 @@ impl ColumnGen {
             cx: rec.pos.cx,
             cz: rec.pos.cz,
             biome: rec.biome,
+            mesh_biome: rec.mesh_biome,
             surf: rec.surf,
             top_surf: rec.top_surf,
             surf_min: rec.surf_min,
@@ -323,7 +335,10 @@ impl ChunkGenerator {
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
         let candidates = self.surface_density.region(cx0, cz0, cw, ch);
 
+        const MESH_BIOME_RADIUS: i32 = 2;
+        const MESH_BIOME_SIDE: usize = SECTION_SIZE + MESH_BIOME_RADIUS as usize * 2;
         let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
+        let mut mesh_biome = vec![0u8; MESH_BIOME_SIDE * MESH_BIOME_SIDE].into_boxed_slice();
         let mut surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let mut top_surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let (mut surf_min, mut surf_max) = (i32::MAX, i32::MIN);
@@ -335,6 +350,15 @@ impl ChunkGenerator {
                 surf[i] = s;
                 surf_min = surf_min.min(s);
                 surf_max = surf_max.max(s);
+            }
+        }
+        for z in 0..MESH_BIOME_SIDE {
+            for x in 0..MESH_BIOME_SIDE {
+                let (_, b) = candidates.at(
+                    ox - MESH_BIOME_RADIUS + x as i32,
+                    oz - MESH_BIOME_RADIUS + z as i32,
+                );
+                mesh_biome[z * MESH_BIOME_SIDE + x] = b.id();
             }
         }
 
@@ -372,6 +396,13 @@ impl ChunkGenerator {
                 };
                 if let Some(map) = hooks.replace_climate(&inputs) {
                     biome.copy_from_slice(&map);
+                    for z in 0..SECTION_SIZE {
+                        let dst = (z + MESH_BIOME_RADIUS as usize) * MESH_BIOME_SIDE
+                            + MESH_BIOME_RADIUS as usize;
+                        let src = z * SECTION_SIZE;
+                        mesh_biome[dst..dst + SECTION_SIZE]
+                            .copy_from_slice(&biome[src..src + SECTION_SIZE]);
+                    }
                 }
             }
         }
@@ -380,6 +411,7 @@ impl ChunkGenerator {
             cx,
             cz,
             biome,
+            mesh_biome: Arc::from(mesh_biome),
             surf,
             top_surf,
             surf_min,
@@ -475,7 +507,6 @@ impl ChunkGenerator {
                 self.caves.carve_section(&mut section, &col.surf);
             }
         }
-        section.recompute_random_tick_count();
         section.recompute_opaque_count();
         self.run_gen_features(WorldgenStage::Terrain, sp, &mut section, col);
 

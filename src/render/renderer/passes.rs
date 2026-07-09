@@ -77,6 +77,15 @@ impl Renderer {
         opaque_columns: &mut Vec<(f32, ChunkPos)>,
         model_columns: &mut Vec<(f32, ChunkPos)>,
     ) -> (RenderStats, bool, bool) {
+        if self.terrain_planned_gpu_revision == self.terrain_gpu_revision
+            && self.terrain_planned_view_key.as_ref() == Some(&self.terrain_view_key)
+        {
+            return (
+                RenderStats::default(),
+                self.terrain_plan_any_model,
+                self.terrain_plan_any_transparent,
+            );
+        }
         // Cull + depth-sort the visible sections once. The opaque pass draws nearest-first
         // so the GPU's early-Z rejects occluded fragments before the fragment shader runs;
         // the transparent pass draws farthest-first for correct back-to-front alpha.
@@ -154,6 +163,10 @@ impl Renderer {
         order.sort_by(|a, b| a.dist_sq.total_cmp(&b.dist_sq));
         opaque_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
         model_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+        self.terrain_planned_gpu_revision = self.terrain_gpu_revision;
+        self.terrain_planned_view_key = Some(self.terrain_view_key.clone());
+        self.terrain_plan_any_model = any_model_visible;
+        self.terrain_plan_any_transparent = any_transparent_visible;
         (
             RenderStats::default(),
             any_model_visible,

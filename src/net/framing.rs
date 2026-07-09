@@ -123,6 +123,7 @@ mod tests {
         let msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
             pos: crate::chunk::SectionPos::new(1, 4, -2),
             blocks: SectionBytes(std::sync::Arc::from(blocks.into_boxed_slice())),
+            metrics: Default::default(),
             water: None,
             skylight: None,
             blocklight: None,

@@ -391,9 +391,16 @@ mod tests {
         let (accepted, _) = listener.accept().expect("accept");
         let conn = TcpServerConn::spawn(accepted).expect("conn threads");
 
-        assert_eq!(conn.queue_headroom(), SERVER_QUEUE_MSGS, "fresh queue is empty");
+        assert_eq!(
+            conn.queue_headroom(),
+            SERVER_QUEUE_MSGS,
+            "fresh queue is empty"
+        );
         for _ in 0..100 {
-            assert!(conn.send(ServerToClient::KeepAlive), "live connection accepts");
+            assert!(
+                conn.send(ServerToClient::KeepAlive),
+                "live connection accepts"
+            );
         }
         let deadline = Instant::now() + Duration::from_secs(10);
         while conn.queue_headroom() < SERVER_QUEUE_MSGS {

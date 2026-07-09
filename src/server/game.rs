@@ -494,8 +494,7 @@ impl ServerGame {
         // replica lied (ghost block, stale cell) reconciles. A shared delta
         // for the same cell already carries the truth.
         for pos in std::mem::take(&mut self.sessions[s].pending_corrective_cells) {
-            if !self.sessions[s].terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos)
-            {
+            if !self.sessions[s].terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos) {
                 continue;
             }
             if let Some(d) = self.world.block_delta_at(pos) {
@@ -506,31 +505,28 @@ impl ServerGame {
         // Echo rule: the initiator already presented their own place/break
         // locally — strip matching world events from THEIR batch only.
         // Observers still receive the shared list unchanged.
-        let presented_places: rustc_hash::FxHashSet<_> = std::mem::take(
-            &mut self.sessions[s].presented_places,
-        )
-        .into_iter()
-        .collect();
-        let presented_breaks: rustc_hash::FxHashSet<_> = std::mem::take(
-            &mut self.sessions[s].presented_breaks,
-        )
-        .into_iter()
-        .collect();
-        let events_for_recipient: Vec<WorldEventMsg> = if presented_places.is_empty()
-            && presented_breaks.is_empty()
-        {
-            world_events.to_vec()
-        } else {
-            world_events
-                .iter()
-                .filter(|ev| match ev {
-                    WorldEventMsg::BlockPlaced { pos, .. } => !presented_places.contains(pos),
-                    WorldEventMsg::BlockBroken { pos, .. } => !presented_breaks.contains(pos),
-                    _ => true,
-                })
-                .cloned()
-                .collect()
-        };
+        let presented_places: rustc_hash::FxHashSet<_> =
+            std::mem::take(&mut self.sessions[s].presented_places)
+                .into_iter()
+                .collect();
+        let presented_breaks: rustc_hash::FxHashSet<_> =
+            std::mem::take(&mut self.sessions[s].presented_breaks)
+                .into_iter()
+                .collect();
+        let events_for_recipient: Vec<WorldEventMsg> =
+            if presented_places.is_empty() && presented_breaks.is_empty() {
+                world_events.to_vec()
+            } else {
+                world_events
+                    .iter()
+                    .filter(|ev| match ev {
+                        WorldEventMsg::BlockPlaced { pos, .. } => !presented_places.contains(pos),
+                        WorldEventMsg::BlockBroken { pos, .. } => !presented_breaks.contains(pos),
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect()
+            };
         TickUpdate {
             tick: shared.tick,
             clock: shared.clock,
@@ -943,9 +939,7 @@ impl ServerGame {
                         .push(deny(old.request_id));
                     // Old optimistic clear may still be on the client.
                     let cells = self.world.break_footprint_cells(old.pos);
-                    self.sessions[s]
-                        .pending_corrective_cells
-                        .extend(cells);
+                    self.sessions[s].pending_corrective_cells.extend(cells);
                 }
                 self.sessions[s].pending_break_finished =
                     Some(crate::server::player::PendingBreakFinished {

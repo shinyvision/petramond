@@ -637,17 +637,19 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             _ => None,
         });
         if let Some(u) = local {
-            if u.events.iter().any(|e| matches!(
-                e,
-                WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
-            )) {
+            if u.events.iter().any(|e| {
+                matches!(
+                    e,
+                    WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
+                )
+            }) {
                 initiator_heard = true;
             }
-            if Block::from_id(game.server.world.chunk_block(
-                placed_at.x,
-                placed_at.y,
-                placed_at.z,
-            )) == Block::Air
+            if Block::from_id(
+                game.server
+                    .world
+                    .chunk_block(placed_at.x, placed_at.y, placed_at.z),
+            ) == Block::Air
             {
                 let obs = out
                     .remote
@@ -660,11 +662,13 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
                         })
                     });
                 if let Some(u) = obs {
-                    observer_heard = u.events.iter().any(|e| matches!(
-                        e,
-                        WorldEventMsg::BlockBroken { pos, block_id, .. }
-                            if *pos == placed_at && *block_id == Block::Dirt.0
-                    ));
+                    observer_heard = u.events.iter().any(|e| {
+                        matches!(
+                            e,
+                            WorldEventMsg::BlockBroken { pos, block_id, .. }
+                                if *pos == placed_at && *block_id == Block::Dirt.0
+                        )
+                    });
                 }
                 break;
             }

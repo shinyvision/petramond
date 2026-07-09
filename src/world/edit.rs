@@ -154,7 +154,11 @@ impl World {
             let col = self.ensure_column(cpos);
             let old = col.surface_y(lx, lz);
             col.raise_surface(lx, lz, wy);
-            return wy > old;
+            let changed = wy > old;
+            if changed {
+                self.bump_column_payload_revision(cpos);
+            }
+            return changed;
         }
         let cur = match self.column_at(wx, wz) {
             Some(c) => c.surface_y(lx, lz),
@@ -173,6 +177,13 @@ impl World {
         if let Some(col) = self.column_at_mut(wx, wz) {
             col.set_surface_y(lx, lz, new_top);
         }
-        new_top != cur
+        let changed = new_top != cur;
+        if changed {
+            self.bump_column_payload_revision(ChunkPos::new(
+                wx.div_euclid(SECTION_SIZE as i32),
+                wz.div_euclid(SECTION_SIZE as i32),
+            ));
+        }
+        changed
     }
 }

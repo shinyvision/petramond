@@ -257,8 +257,8 @@ impl BlockStates {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_saved(
-        water: Option<Box<[u8]>>,
+    pub(crate) fn from_shared(
+        water: Option<Arc<[u8]>>,
         torches: HashMap<u16, TorchPlacement>,
         model_cells: HashMap<u16, [u8; 3]>,
         model_facings: HashMap<u16, Facing>,
@@ -281,7 +281,7 @@ impl BlockStates {
             cell_kv,
         };
         Self {
-            water: water.map(Arc::from),
+            water,
             sparse: (!sparse.is_empty()).then(|| Box::new(sparse)),
         }
     }

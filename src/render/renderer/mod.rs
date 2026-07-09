@@ -3,7 +3,8 @@ use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::SelectionShape;
 use crate::world::TerrainRenderHandoff;
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use wgpu::util::DeviceExt;
 
 mod construct;
@@ -51,6 +52,19 @@ use crate::bbmodel::Model;
 use crate::gui::UiSnapshot;
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
+
+#[derive(Clone, PartialEq, Eq)]
+struct TerrainViewKey {
+    view_proj: [u32; 16],
+    cam: [u32; 3],
+    fog: u32,
+}
+
+struct PendingTerrainUpload {
+    revision: u64,
+    quiet_after: u64,
+    deadline: u64,
+}
 
 #[inline]
 fn aabb_distance_sq(p: glam::Vec3, min: glam::Vec3, max: glam::Vec3) -> f32 {
@@ -306,9 +320,11 @@ pub struct Renderer {
     emitter_particle_draw: DynamicVertexDraw,
     depth: wgpu::TextureView,
     terrain_columns: HashMap<ChunkPos, GpuColumnMesh>,
-    /// Reusable sorted upload worklist for dirty terrain columns. Filled from the
-    /// world's dirty-column set each sync without allocating a fresh vector.
-    terrain_upload_order: Vec<(bool, f32, ChunkPos)>,
+    /// Persistent upload work. World dirtiness is level-triggered, so the set
+    /// deduplicates columns while the heap preserves their first useful priority.
+    terrain_upload_pending: HashMap<ChunkPos, PendingTerrainUpload>,
+    terrain_upload_heap: BinaryHeap<Reverse<(u8, u32, i32, i32, u64)>>,
+    terrain_upload_frame: u64,
     /// Reusable CPU staging for packing section meshes into a GPU column upload.
     terrain_upload_scratch: ColumnUploadScratch,
     /// Reusable per-frame section draw order, sorted near→far. Transparent terrain
@@ -321,6 +337,12 @@ pub struct Renderer {
     /// Reusable near→far list of packed columns that can draw their whole model index
     /// stream in one call this frame.
     model_column_order: Vec<(f32, ChunkPos)>,
+    terrain_gpu_revision: u64,
+    terrain_planned_gpu_revision: u64,
+    terrain_view_key: TerrainViewKey,
+    terrain_planned_view_key: Option<TerrainViewKey>,
+    terrain_plan_any_model: bool,
+    terrain_plan_any_transparent: bool,
     /// Camera frustum for viewspace culling, refreshed each frame in
     /// `update_uniforms`; chunk meshes outside it are skipped in `render`.
     frustum: Frustum,

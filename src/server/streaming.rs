@@ -18,23 +18,29 @@ use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::IVec3;
 use crate::net::protocol::ServerToClient;
 use crate::world::LoadAnchor;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 use super::game::ServerGame;
 
-/// Sections shipped per pump per connection. Local pipe: payloads are Arc
-/// bumps, so this mostly bounds the replica's install burst per frame.
+/// Sections considered per pump per connection. The message-batch allowance is
+/// normally the tighter bound.
+#[cfg(test)]
 const TERRAIN_SECTIONS_PER_PUMP: usize = 128;
 
-/// Most streaming messages one batch may carry (and the quota accumulation
-/// cap): 10 max-size batches in flight ≈ 2560 messages ≈ the outbound queue
-/// minus its reserve — the window and the queue bound each other.
-const MAX_BATCH_MSGS: usize = 256;
+/// Remote batches stay small enough to apply inside one client frame even when
+/// section reconstruction is expensive. Several may be in flight to cover RTT.
+const MAX_BATCH_MSGS: usize = 96;
+
+/// Loopback has no RTT to hide, so one smaller batch is enough. The single
+/// in-flight window is the hard bound on the unbounded process-local channel.
+const LOCAL_MAX_BATCH_MSGS: usize = 64;
 
 /// Unacknowledged batches allowed in flight after the FIRST ack proves the
 /// client speaks the ack loop; exactly one before it (vanilla-verified
 /// 1.20.2 values — see WIKI/multiplayer.md "prior art").
-const MAX_UNACKED_BATCHES: u32 = 10;
+const MAX_UNACKED_BATCHES: u32 = 4;
+const LOCAL_MAX_UNACKED_BATCHES: u32 = 1;
 
 /// The assumed client apply rate (streaming messages/second) before the
 /// first ack reports a measured one. Modest on purpose: it sizes only the
@@ -65,6 +71,7 @@ fn stream_allowance(queue_room: usize) -> usize {
 /// its possible column refresh = up to two) fit. Unload messages pay from
 /// the same allowance during emission, which clips the batch and re-plans —
 /// this is only the plan-size heuristic, not the pacing itself.
+#[cfg(test)]
 fn terrain_budget(allowance: usize) -> usize {
     TERRAIN_SECTIONS_PER_PUMP.min(allowance / 2)
 }
@@ -73,6 +80,7 @@ fn terrain_budget(allowance: usize) -> usize {
 /// the ack-windowed flow-control state for remote connections.
 pub(crate) struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
+    sent_column_revisions: FxHashMap<ChunkPos, u64>,
     sent_sections: FxHashSet<SectionPos>,
     /// Sent sections whose fresh server bake is still unshipped — the
     /// per-connection carryover when a pump's allowance ran out (the ship log
@@ -84,12 +92,19 @@ pub(crate) struct TerrainSync {
     last_send_key: Option<u64>,
     /// The last diff hit the section budget: keep scanning next pump.
     backlog: bool,
+    /// One full nearest-first diff, consumed incrementally across paced batches.
+    /// World revisions that arrive while this plan is non-empty are folded into
+    /// the next refill instead of rescanning every 5 ms.
+    planned_sections: VecDeque<SectionPos>,
+    planned_drop_sections: VecDeque<SectionPos>,
+    planned_drop_columns: VecDeque<ChunkPos>,
+    planned_target_key: Option<u64>,
     /// Batches sent but not yet `StreamBatchAck`ed. At `max_unacked` the
     /// streamer sends NOTHING further — a slow client means send slower,
     /// never kick.
     unacked_batches: u32,
-    /// The in-flight window: 1 until the first ack proves the ack loop, then
-    /// [`MAX_UNACKED_BATCHES`].
+    /// The in-flight window: 1 until the first ack proves the ack loop, then the
+    /// connection's configured cap (still 1 for loopback).
     max_unacked: u32,
     /// The client's last reported apply rate (messages/second), clamped to
     /// [`CLIENT_RATE_BOUNDS`]; [`INITIAL_CLIENT_RATE`] before the first ack.
@@ -97,20 +112,29 @@ pub(crate) struct TerrainSync {
     /// Fractional message budget banked from `client_rate × dt` each pump
     /// (capped at one max batch); a batch spends its message count from it.
     batch_quota: f32,
+    batch_limit: usize,
+    window_limit: u32,
 }
 
 impl Default for TerrainSync {
     fn default() -> Self {
         TerrainSync {
             sent_columns: FxHashSet::default(),
+            sent_column_revisions: FxHashMap::default(),
             sent_sections: FxHashSet::default(),
             pending_light: FxHashSet::default(),
             last_send_key: None,
             backlog: false,
+            planned_sections: VecDeque::new(),
+            planned_drop_sections: VecDeque::new(),
+            planned_drop_columns: VecDeque::new(),
+            planned_target_key: None,
             unacked_batches: 0,
             max_unacked: 1,
             client_rate: INITIAL_CLIENT_RATE,
             batch_quota: 0.0,
+            batch_limit: MAX_BATCH_MSGS,
+            window_limit: MAX_UNACKED_BATCHES,
         }
     }
 }
@@ -123,36 +147,43 @@ impl TerrainSync {
             .is_some_and(|sp| self.sent_sections.contains(&sp))
     }
 
-    /// Apply one `StreamBatchAck`: retire a batch from the window, widen the
-    /// window now that the ack loop is proven, and adopt the client's
+    /// Apply one `StreamBatchAck`: retire a batch from the window, widen it to
+    /// this connection's configured cap, and adopt the client's
     /// measured rate (clamped; non-finite reports are ignored entirely —
     /// a NaN must never poison the quota).
     pub(crate) fn apply_batch_ack(&mut self, messages_per_second: f32) {
         self.unacked_batches = self.unacked_batches.saturating_sub(1);
-        self.max_unacked = MAX_UNACKED_BATCHES;
+        self.max_unacked = self.window_limit;
         if messages_per_second.is_finite() {
             self.client_rate =
                 messages_per_second.clamp(CLIENT_RATE_BOUNDS.0, CLIENT_RATE_BOUNDS.1);
         }
     }
+
+    fn configure_loopback(&mut self, loopback: bool) {
+        let (batch_limit, window_limit) = if loopback {
+            (LOCAL_MAX_BATCH_MSGS, LOCAL_MAX_UNACKED_BATCHES)
+        } else {
+            (MAX_BATCH_MSGS, MAX_UNACKED_BATCHES)
+        };
+        self.batch_limit = batch_limit;
+        self.window_limit = window_limit;
+        self.max_unacked = self.max_unacked.min(window_limit).max(1);
+        self.batch_quota = self.batch_quota.min(batch_limit as f32);
+    }
 }
 
 impl ServerGame {
-    /// Every session's streaming anchor: the player's eye section + horizontal
-    /// view direction (what the client camera used to feed
-    /// `update_load_facing`).
+    /// Every session's streaming anchor: the player's eye section.
     fn load_anchors(&self) -> Vec<LoadAnchor> {
         self.sessions
             .iter()
             .map(|sess| {
                 let eye = sess.player.eye();
-                let f = sess.player.forward();
                 LoadAnchor {
                     cx: (eye.x.floor() as i32).div_euclid(16),
                     cy: (eye.y.floor() as i32).div_euclid(16),
                     cz: (eye.z.floor() as i32).div_euclid(16),
-                    fx: f.x,
-                    fz: f.z,
                 }
             })
             .collect()
@@ -197,18 +228,10 @@ impl ServerGame {
         let local_at_zero = self.has_local_session;
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
-            if s == 0 && local_at_zero {
-                // The LOCAL pipe is unwindowed: the channel is unbounded
-                // (payloads are Arc bumps) and its client may legitimately
-                // stop acking (the pause menu freezes a never-LAN'd
-                // singleplayer client while streaming must continue). A
-                // headless server has no local pipe — every session batches.
-                let mut allowance = stream_allowance(queue_room[s]);
-                self.send_terrain_for(s, anchors[s], &mut allowance, msgs);
-                self.send_light_for(s, &mut allowance, msgs);
-            } else {
-                self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
-            }
+            self.sessions[s]
+                .terrain
+                .configure_loopback(s == 0 && local_at_zero);
+            self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
         }
     }
 
@@ -230,13 +253,13 @@ impl ServerGame {
     ) {
         let sync = &mut self.sessions[s].terrain;
         sync.batch_quota =
-            (sync.batch_quota + sync.client_rate * dt.max(0.0)).min(MAX_BATCH_MSGS as f32);
+            (sync.batch_quota + sync.client_rate * dt.max(0.0)).min(sync.batch_limit as f32);
         if sync.unacked_batches >= sync.max_unacked {
             return;
         }
         let quota = sync.batch_quota as usize;
         let mut allowance = quota
-            .min(MAX_BATCH_MSGS)
+            .min(sync.batch_limit)
             .min(stream_allowance(queue_room));
         if allowance == 0 {
             return;
@@ -320,62 +343,88 @@ impl ServerGame {
             return;
         }
         let key = self.world.terrain_send_key(anchor);
+        let target_key = self.world.terrain_target_key(anchor);
         let sync = &mut self.sessions[s].terrain;
-        if sync.last_send_key == Some(key) && !sync.backlog {
+        let plan_empty = sync.planned_sections.is_empty()
+            && sync.planned_drop_sections.is_empty()
+            && sync.planned_drop_columns.is_empty();
+        let target_changed = sync.planned_target_key != Some(target_key);
+        if target_changed || (plan_empty && (sync.last_send_key != Some(key) || sync.backlog)) {
+            let plan = self.world.plan_terrain_send(
+                anchor,
+                &sync.sent_columns,
+                &sync.sent_sections,
+                usize::MAX,
+            );
+            sync.planned_sections = plan.sections.into();
+            sync.planned_drop_sections = plan.drop_sections.into();
+            sync.planned_drop_columns = plan.drop_columns.into();
+            sync.planned_target_key = Some(target_key);
+            sync.last_send_key = Some(key);
+        }
+        if sync.planned_sections.is_empty()
+            && sync.planned_drop_sections.is_empty()
+            && sync.planned_drop_columns.is_empty()
+        {
+            sync.backlog = false;
             return;
         }
-        let plan = self.world.plan_terrain_send(
-            anchor,
-            &sync.sent_columns,
-            &sync.sent_sections,
-            terrain_budget(*allowance),
-        );
-        sync.last_send_key = Some(key);
-        let mut clipped = false;
 
-        for cp in plan.drop_columns {
+        while let Some(cp) = sync.planned_drop_columns.front().copied() {
             if *allowance == 0 {
-                clipped = true;
                 break;
             }
+            sync.planned_drop_columns.pop_front();
             *allowance -= 1;
             sync.sent_columns.remove(&cp);
+            sync.sent_column_revisions.remove(&cp);
             sync.sent_sections.retain(|sp| sp.chunk_pos() != cp);
             sync.pending_light.retain(|sp| sp.chunk_pos() != cp);
             msgs.push(ServerToClient::ColumnUnload(cp));
         }
-        if !clipped {
-            for sp in plan.drop_sections {
-                if *allowance == 0 {
-                    clipped = true;
-                    break;
-                }
-                *allowance -= 1;
-                sync.sent_sections.remove(&sp);
-                sync.pending_light.remove(&sp);
-                msgs.push(ServerToClient::SectionUnload(sp));
+        while sync.planned_drop_columns.is_empty() {
+            let Some(sp) = sync.planned_drop_sections.front().copied() else {
+                break;
+            };
+            let cp = sp.chunk_pos();
+            let column_revision = self.world.column_payload_revision(cp);
+            let fresh_column =
+                sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
+            if *allowance < 1 + usize::from(fresh_column) {
+                break;
             }
+            if fresh_column {
+                if let Some(column) = self.world.column_payload(cp) {
+                    sync.sent_column_revisions.insert(cp, column_revision);
+                    *allowance -= 1;
+                    msgs.push(ServerToClient::ColumnData(column));
+                }
+            }
+            sync.planned_drop_sections.pop_front();
+            *allowance -= 1;
+            sync.sent_sections.remove(&sp);
+            sync.pending_light.remove(&sp);
+            msgs.push(ServerToClient::SectionUnload(sp));
         }
 
-        // One column payload per batch that ships sections of that column.
-        let mut refreshed: Vec<ChunkPos> = Vec::new();
-        for sp in plan.sections {
-            if clipped {
+        while sync.planned_drop_columns.is_empty() && sync.planned_drop_sections.is_empty() {
+            let Some(sp) = sync.planned_sections.front().copied() else {
                 break;
-            }
+            };
             let cp = sp.chunk_pos();
-            // A section plus its column refresh is the largest single step.
-            let fresh_column = !refreshed.contains(&cp);
+            let column_revision = self.world.column_payload_revision(cp);
+            let fresh_column =
+                sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
             if *allowance < 1 + usize::from(fresh_column) {
-                clipped = true;
                 break;
             }
+            sync.planned_sections.pop_front();
             if fresh_column {
                 let Some(column) = self.world.column_payload(cp) else {
                     continue; // column evicted mid-plan: skip its sections too
                 };
-                refreshed.push(cp);
                 sync.sent_columns.insert(cp);
+                sync.sent_column_revisions.insert(cp, column_revision);
                 *allowance -= 1;
                 msgs.push(ServerToClient::ColumnData(column));
             }
@@ -386,7 +435,9 @@ impl ServerGame {
             *allowance -= 1;
             msgs.push(ServerToClient::SectionData(Box::new(section)));
         }
-        sync.backlog = plan.saturated || clipped;
+        sync.backlog = !sync.planned_sections.is_empty()
+            || !sync.planned_drop_sections.is_empty()
+            || !sync.planned_drop_columns.is_empty();
     }
 }
 
@@ -661,9 +712,10 @@ mod tests {
             assert!(Instant::now() < deadline, "the rebake never landed");
             let out = server.pump_tagged(0.01, &mut Vec::new(), &[(remote_id, 0)]);
             assert!(
-                out.remote.iter().flat_map(|(_, msgs)| msgs).all(|m| {
-                    !matches!(m, ServerToClient::LightData(_))
-                }),
+                out.remote
+                    .iter()
+                    .flat_map(|(_, msgs)| msgs)
+                    .all(|m| { !matches!(m, ServerToClient::LightData(_)) }),
                 "a zero-headroom session receives no light refreshes"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -673,11 +725,16 @@ mod tests {
         let mut remote_relit = false;
         let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
         while !remote_relit {
-            assert!(Instant::now() < deadline, "the deferred refresh never shipped");
+            assert!(
+                Instant::now() < deadline,
+                "the deferred refresh never shipped"
+            );
             let out = server.pump_tagged(0.01, &mut inbox, &[(remote_id, SERVER_QUEUE_MSGS)]);
-            remote_relit = out.remote.iter().flat_map(|(_, msgs)| msgs).any(|m| {
-                matches!(m, ServerToClient::LightData(p) if p.pos == lit)
-            });
+            remote_relit = out
+                .remote
+                .iter()
+                .flat_map(|(_, msgs)| msgs)
+                .any(|m| matches!(m, ServerToClient::LightData(p) if p.pos == lit));
             inbox = acks(&out);
             std::thread::sleep(Duration::from_millis(2));
         }

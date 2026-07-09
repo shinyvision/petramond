@@ -13,7 +13,7 @@ use crate::mesh::ChunkMesh;
 use crate::mob::{Mobs, SavedMob};
 use crate::save::{SectionSnapshot, WorldSave};
 use crate::section::{Section, SectionSummary};
-use crate::worker::{JobPool, WorkerPool};
+use crate::worker::{JobCancel, JobPool, WorkerPool};
 use crate::worldgen::driver::ChunkGenerator;
 use crate::worldgen::driver::ColumnGen;
 
@@ -45,15 +45,12 @@ pub enum WorldRole {
 }
 
 /// One streaming anchor for [`World::update_load_multi`]: a player's section
-/// coords plus horizontal view direction (the `update_load_facing` argument
-/// tuple, one per connected player).
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// coordinates, one per connected player.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LoadAnchor {
     pub cx: i32,
     pub cy: i32,
     pub cz: i32,
-    pub fx: f32,
-    pub fz: f32,
 }
 
 /// Vertical load radius (in 16³ sections) around the player's section: the world
@@ -63,14 +60,6 @@ pub struct LoadAnchor {
 /// far column doesn't need is left ungenerated until the player approaches it (the
 /// per-section "generate closest to the player" payoff that makes room for caves).
 pub const VERTICAL_LOAD_RADIUS: i32 = 5;
-pub(super) const OMNI_LOAD_RADIUS: i32 = 5;
-pub(super) const FORWARD_LOAD_DOT_MIN: f32 = -0.15;
-
-const TERRAIN_PRIORITY_SCALE: i64 = 1024;
-const VIEW_PRIORITY_FRONT_DOT_MIN: f32 = 0.5;
-const VIEW_PRIORITY_SIDE_PENALTY: i64 = 192;
-const VIEW_PRIORITY_SOFT_CONE_PENALTY: i64 = 256;
-const VIEW_PRIORITY_BEHIND_PENALTY: i64 = 768;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct LoadTarget {
@@ -78,8 +67,6 @@ pub(super) struct LoadTarget {
     /// Player's section `cy` — the centre of the vertical load window.
     pub center_cy: i32,
     pub render_dist: i32,
-    /// Quantized horizontal camera direction. `None` means legacy/full-disc loading.
-    pub view_sector: Option<i8>,
 }
 
 impl LoadTarget {
@@ -88,78 +75,20 @@ impl LoadTarget {
             center: ChunkPos::new(cx, cz),
             center_cy: cy,
             render_dist,
-            view_sector: None,
         }
-    }
-
-    pub fn new_facing(
-        cx: i32,
-        cy: i32,
-        cz: i32,
-        render_dist: i32,
-        forward_x: f32,
-        forward_z: f32,
-    ) -> Self {
-        const SECTORS: i32 = 16;
-        let len2 = forward_x * forward_x + forward_z * forward_z;
-        let view_sector = if len2 > 0.0001 {
-            let angle = forward_x.atan2(forward_z).rem_euclid(std::f32::consts::TAU);
-            Some(
-                ((angle / std::f32::consts::TAU * SECTORS as f32).round() as i32)
-                    .rem_euclid(SECTORS) as i8,
-            )
-        } else {
-            None
-        };
-        Self {
-            center: ChunkPos::new(cx, cz),
-            center_cy: cy,
-            render_dist,
-            view_sector,
-        }
-    }
-
-    pub fn view_dir(self) -> Option<(f32, f32)> {
-        const SECTORS: f32 = 16.0;
-        let sector = self.view_sector? as f32;
-        let angle = sector / SECTORS * std::f32::consts::TAU;
-        Some((angle.sin(), angle.cos()))
-    }
-
-    fn view_priority_penalty(self, dx: i32, dz: i32) -> i64 {
-        let Some((fx, fz)) = self.view_dir() else {
-            return 0;
-        };
-        let d2 = dx * dx + dz * dz;
-        if d2 == 0 || d2 <= OMNI_LOAD_RADIUS * OMNI_LOAD_RADIUS {
-            return 0;
-        }
-        let dist = (d2 as f32).sqrt();
-        let forward_dot = (dx as f32 * fx + dz as f32 * fz) / dist;
-        let side = ((dx as f32 * fz - dz as f32 * fx).abs() / dist).clamp(0.0, 1.0);
-        let cone_penalty = if forward_dot >= VIEW_PRIORITY_FRONT_DOT_MIN {
-            0
-        } else if forward_dot >= FORWARD_LOAD_DOT_MIN {
-            VIEW_PRIORITY_SOFT_CONE_PENALTY
-        } else {
-            VIEW_PRIORITY_BEHIND_PENALTY
-        };
-        cone_penalty + (side * VIEW_PRIORITY_SIDE_PENALTY as f32) as i64
     }
 
     pub(super) fn column_priority_key(self, pos: ChunkPos) -> i64 {
         let dx = pos.cx - self.center.cx;
         let dz = pos.cz - self.center.cz;
-        let d2 = (dx as i64 * dx as i64) + (dz as i64 * dz as i64);
-        d2 * TERRAIN_PRIORITY_SCALE + self.view_priority_penalty(dx, dz)
+        (dx as i64 * dx as i64) + (dz as i64 * dz as i64)
     }
 
     pub(super) fn section_priority_key(self, pos: SectionPos) -> i64 {
         let dx = pos.cx - self.center.cx;
         let dy = pos.cy - self.center_cy;
         let dz = pos.cz - self.center.cz;
-        let d2 = (dx as i64 * dx as i64) + (dy as i64 * dy as i64) + (dz as i64 * dz as i64);
-        d2 * TERRAIN_PRIORITY_SCALE + self.view_priority_penalty(dx, dz)
+        (dx as i64 * dx as i64) + (dy as i64 * dy as i64) + (dz as i64 * dz as i64)
     }
 }
 
@@ -184,12 +113,18 @@ pub struct World {
     /// Per-column 2D data (biome, surface heightmap) shared by a vertical stack of
     /// sections. Cheap; ensured present whenever a section in the column loads.
     pub(super) columns: FxHashMap<ChunkPos, Column>,
+    /// Monotonic per-column presentation revision (biome/heightmap/summaries).
+    /// Terrain replication resends ColumnData only when this changes.
+    pub(super) column_payload_revisions: FxHashMap<ChunkPos, u64>,
     /// One GPU-ready mesh per section.
     pub(super) meshes: FxHashMap<SectionPos, ChunkMesh>,
     /// XZ columns that currently have at least one CPU section mesh.
     /// Mirrors `meshes` so renderer retention does not scan the vertical range
     /// of every GPU column each frame.
     pub(super) mesh_columns: FxHashSet<ChunkPos>,
+    /// Changes whenever a section mesh enters or leaves a packed GPU column.
+    /// The renderer uses it to coalesce consecutive sibling completions.
+    pub(super) mesh_upload_revisions: FxHashMap<ChunkPos, u64>,
     /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
     /// Kept explicitly so the renderer does not scan every section mesh each frame.
     pub(super) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
@@ -210,10 +145,13 @@ pub struct World {
     /// Present for every loaded column; dropped when the column unloads.
     pub(super) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
     /// Columns queued for the (heavy, once-per-column) `ColumnGen` job.
-    pub(super) pending: FxHashMap<ChunkPos, ()>,
+    pub(super) pending: FxHashMap<ChunkPos, Option<JobCancel>>,
     /// Sections with an in-flight per-section gen job, so the streamer never submits a
     /// section twice while it is being generated.
     pub(super) pending_sections: FxHashSet<SectionPos>,
+    /// Cancellation handles for pending worker-generated sections. Disk-primary
+    /// requests are in `pending_sections` without an entry here.
+    pub(super) pending_section_jobs: FxHashMap<SectionPos, JobCancel>,
     /// Saved (player-modified) sections read back from disk whose generated column has
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
@@ -234,6 +172,9 @@ pub struct World {
     /// finished meshes drained back, so the render thread never builds a mesh.
     pub(super) mesh_pool: super::mesh_pool::MeshPool,
     pub(super) mesh_jobs_in_flight: usize,
+    /// Latest mesh job per section. Re-dirtying cancels queued stale work;
+    /// completion tokens prevent an older result from clearing a newer handle.
+    pub(super) mesh_job_cancels: FxHashMap<SectionPos, JobCancel>,
     pub(super) dirty_meshes: DirtyMeshQueue,
     /// Loaded sections wholly below their column's surface retention band — only
     /// visible through cave openings (see `world::visibility`).
@@ -244,6 +185,10 @@ pub struct World {
     /// Dirty deep sections parked because nothing can see them. Re-queued by the
     /// visibility refresh when they become reachable (or the player ring arrives).
     pub(super) hidden_parked: FxHashSet<SectionPos>,
+    /// Dirty sections whose six exact loaded neighbour planes currently seal them
+    /// from outside sightlines. Kept separate from deep visibility so a load-target
+    /// move can wake them when a player may already be inside.
+    pub(super) sealed_parked: FxHashSet<SectionPos>,
     /// Sections currently holding at least one chest, door, or furnace, so the
     /// per-frame chest/door collection and the furnace tick visit only those
     /// sections instead of scanning every loaded one (mirrors `mesh_columns`).
@@ -268,6 +213,12 @@ pub struct World {
     /// this, contiguous streaming rebaked/remeshed each section many times (each
     /// ingest dirtied its whole 3×3×3).
     pub(super) light_deferred: FxHashSet<SectionPos>,
+    /// A topology change may have made deferred first meshes ready. This keeps
+    /// the O(deferred) settle scan off idle 200 Hz server pumps.
+    pub(super) deferred_recheck_needed: bool,
+    /// Deferred centres whose 3x3x3 dependency changed since their last check.
+    /// Ordinary ingest drains only these; a target reshape uses the full flag.
+    pub(super) deferred_rechecks: FxHashSet<SectionPos>,
     pub(super) last_load_target: Option<LoadTarget>,
     /// Anchors beyond the first under multi-anchor streaming
     /// ([`World::update_load_multi`]); empty in single-anchor mode, so every
@@ -287,6 +238,10 @@ pub struct World {
     /// replica's stand-in for `column_gen`, so physics/placement answer
     /// truthfully without running worldgen. Empty on Combined/server worlds.
     pub(super) column_summaries: FxHashMap<ChunkPos, Box<[SectionSummary]>>,
+    /// Replica-only tint halos and deep-band floors carried by ColumnPayload.
+    /// Combined/server worlds read the same facts from `column_gen`.
+    pub(super) column_biome_halos: FxHashMap<ChunkPos, Arc<[u8]>>,
+    pub(super) column_deep_band_los: FxHashMap<ChunkPos, i32>,
     /// Server-side replication log gate; ~zero cost while off (one branch at
     /// the block-change choke point). See [`set_replication_capture`].
     ///
@@ -390,8 +345,10 @@ impl World {
             role,
             sections: FxHashMap::default(),
             columns: FxHashMap::default(),
+            column_payload_revisions: FxHashMap::default(),
             meshes: FxHashMap::default(),
             mesh_columns: FxHashSet::default(),
+            mesh_upload_revisions: FxHashMap::default(),
             mesh_upload_dirty_columns: FxHashSet::default(),
             mesh_release_after: FxHashMap::default(),
             repack_forced: FxHashSet::default(),
@@ -400,6 +357,7 @@ impl World {
             column_gen: FxHashMap::default(),
             pending: FxHashMap::default(),
             pending_sections: FxHashSet::default(),
+            pending_section_jobs: FxHashMap::default(),
             pending_overlays: FxHashMap::default(),
             awaited_overlays: FxHashSet::default(),
             disk_primary_sections: FxHashSet::default(),
@@ -408,19 +366,25 @@ impl World {
             light_bakes: LightBakeQueue::new(jobs.clone()),
             mesh_pool: super::mesh_pool::MeshPool::new(jobs),
             mesh_jobs_in_flight: 0,
+            mesh_job_cancels: FxHashMap::default(),
             dirty_meshes: DirtyMeshQueue::default(),
             deep_sections: FxHashSet::default(),
             visible_deep: FxHashSet::default(),
             hidden_parked: FxHashSet::default(),
+            sealed_parked: FxHashSet::default(),
             block_entity_sections: FxHashSet::default(),
             particle_emitter_sections: FxHashSet::default(),
             vis_dirty: false,
             light_blocked_meshes: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
+            deferred_recheck_needed: false,
+            deferred_rechecks: FxHashSet::default(),
             last_load_target: None,
             extra_load_targets: Vec::new(),
             missing_columns_settled: false,
             column_summaries: FxHashMap::default(),
+            column_biome_halos: FxHashMap::default(),
+            column_deep_band_los: FxHashMap::default(),
             replication_capture: false,
             block_delta_log: FxHashMap::default(),
             terrain_revision: 0,
@@ -624,6 +588,15 @@ impl World {
         self.save.as_mut()
     }
 
+    /// Whether an authoritative record exists, or an explored cache record is
+    /// active under this world's optimization setting.
+    pub(super) fn saved_section_contains(&self, pos: SectionPos) -> bool {
+        self.save.as_ref().is_some_and(|save| {
+            save.authoritative_manifest_contains(pos)
+                || (self.optimize_explored_terrain && save.explored_manifest_contains(pos))
+        })
+    }
+
     /// The single snapshot-and-persist gate shared by [`flush_modified_chunks`]
     /// (autosave/quit) and `unload_far_columns` (eviction). Applies the three-way
     /// persist condition and, when it holds, builds the section's [`SectionSnapshot`]
@@ -647,39 +620,35 @@ impl World {
         record_holds_entities: bool,
     ) -> Option<SectionSnapshot> {
         let section = self.sections.get(&pos)?;
-        // "Optimize explored terrain": every explored section persists ONCE.
-        // Unmodified generated content is deterministic, so a section already
-        // on disk never needs a rewrite (the manifest check keeps steady-state
-        // flushes cheap); modified/entity records rewrite as always.
-        //
-        // The one-shot waits for FINAL LIGHT (baked-and-clean, or fully opaque
-        // — never bakes): a record written mid-bake would stay lightless on
-        // disk forever and re-bake on every future load, defeating light
-        // persistence. A section evicted before its light ever settles simply
-        // regenerates from the column-gen cache next visit.
+        // Derived explored terrain and authoritative edits/entities live in
+        // separate stores. First cache persistence waits for final light so the
+        // common path writes and compresses the record only once.
         let light_final = !section.light_dirty || section.all_opaque();
+        let authoritative_exists = self
+            .save
+            .as_ref()
+            .is_some_and(|s| s.authoritative_manifest_contains(pos));
+        let explored_exists = self
+            .save
+            .as_ref()
+            .is_some_and(|s| s.explored_manifest_contains(pos));
         let explored_first_persist = self.optimize_explored_terrain
             && light_final
-            && self
-                .save
-                .as_ref()
-                .is_some_and(|s| !s.manifest_contains(pos));
+            && !authoritative_exists
+            && !explored_exists;
         // A record already on disk whose light rebaked since it was written
         // (a lightless neighbour landed at the explored boundary, or an edit's
         // spill) rewrites, or its saved cubes diverge from its neighbours'.
         let relit_persisted = light_final
             && self.relit_since_persist.contains(&pos)
-            && self.save.as_ref().is_some_and(|s| s.manifest_contains(pos));
-        if section.modified
-            || !entities.is_empty()
-            || !mobs.is_empty()
-            || record_holds_entities
-            || explored_first_persist
-            || relit_persisted
-        {
+            && (authoritative_exists || explored_exists);
+        let authoritative =
+            section.modified || !entities.is_empty() || !mobs.is_empty() || record_holds_entities;
+        if authoritative || explored_first_persist || relit_persisted {
             let mut snap = SectionSnapshot::from_section(section);
             snap.entities = entities;
             snap.mobs = mobs;
+            snap.cache_only = !authoritative && !authoritative_exists;
             Some(snap)
         } else {
             None
@@ -722,8 +691,8 @@ impl World {
             if let Some(s) = self.section_mut(pos) {
                 s.modified = false;
             }
+            self.relit_since_persist.remove(&pos);
         }
-        self.relit_since_persist.clear();
         if let Some(save) = self.save.as_mut() {
             save.save_sections(snaps);
         }
@@ -806,15 +775,77 @@ impl World {
             }
         }
         let col = self.ensure_column(cpos);
+        let mut changed = false;
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
-                col.set_surface_y(lx, lz, surf[lz * SECTION_SIZE + lx]);
+                let height = surf[lz * SECTION_SIZE + lx];
+                if col.surface_y(lx, lz) != height {
+                    col.set_surface_y(lx, lz, height);
+                    changed = true;
+                }
             }
+        }
+        if changed {
+            self.bump_column_payload_revision(cpos);
         }
         // (No whole-column relight here: it queued all 20 sections — including deep,
         // enclosed ones — bypassing the mesh/light skip and flooding the streaming
         // backlog. Skylight after a surface shift is handled by the ingested section's own
         // 3×3×3 neighbourhood marking in `poll`, which covers the canopy/structure band.)
+    }
+
+    /// Merge one deterministic generated/cache section into the analytical bare
+    /// heightmap. It can only add feature blocks above that baseline; authoritative
+    /// saved terrain uses `recompute_column_heightmap` because it may also remove it.
+    pub(super) fn raise_column_heightmap_from_section(&mut self, pos: SectionPos) {
+        let cpos = pos.chunk_pos();
+        let oy = pos.cy * SECTION_SIZE as i32;
+        let mut raised = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
+        let Some(section) = self.sections.get(&pos) else {
+            return;
+        };
+        let Some(column) = self.columns.get(&cpos) else {
+            return;
+        };
+        let blocks = section.blocks_slice();
+        let mut any = false;
+        for lz in 0..SECTION_SIZE {
+            for lx in 0..SECTION_SIZE {
+                let i = lz * SECTION_SIZE + lx;
+                let current = column.surface_y(lx, lz);
+                if oy + SECTION_SIZE as i32 - 1 <= current {
+                    continue;
+                }
+                for ly in (0..SECTION_SIZE).rev() {
+                    let wy = oy + ly as i32;
+                    if wy <= current {
+                        break;
+                    }
+                    if blocks[section_idx(lx, ly, lz)] != 0 {
+                        raised[i] = wy;
+                        any = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !any {
+            return;
+        }
+        let column = self.columns.get_mut(&cpos).expect("column checked above");
+        let mut changed = false;
+        for lz in 0..SECTION_SIZE {
+            for lx in 0..SECTION_SIZE {
+                let height = raised[lz * SECTION_SIZE + lx];
+                if height > column.surface_y(lx, lz) {
+                    column.set_surface_y(lx, lz, height);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.bump_column_payload_revision(cpos);
+        }
     }
 
     /// Harvest a section into a save snapshot for UNLOAD: this DRAINS the section's
@@ -922,6 +953,9 @@ impl World {
                 self.headless_relight.insert(pos);
             }
         }
+        if self.light_deferred.contains(&pos) {
+            self.deferred_rechecks.insert(pos);
+        }
     }
 
     pub(super) fn queue_dirty_mesh(&mut self, pos: SectionPos) {
@@ -930,11 +964,15 @@ impl World {
         if self.role == WorldRole::ServerHeadless {
             return;
         }
+        if let Some(job) = self.mesh_job_cancels.get(&pos) {
+            job.cancel();
+        }
         if let Some(s) = self.section_mut(pos) {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
             self.light_blocked_meshes.remove(&pos);
             self.hidden_parked.remove(&pos);
+            self.sealed_parked.remove(&pos);
             self.dirty_meshes.push(pos);
         }
     }
@@ -981,7 +1019,7 @@ impl World {
             return false;
         }
         if !self.sections.contains_key(&pos) {
-            if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+            if self.saved_section_contains(pos) {
                 return false;
             }
             let section = self
@@ -1021,7 +1059,20 @@ impl World {
     /// Ensure the per-column data for `(cx,cz)` exists, building it cheaply if not.
     /// Worldgen fills biome + heightmap; an empty column is the pre-gen placeholder.
     pub(super) fn ensure_column(&mut self, pos: ChunkPos) -> &mut Column {
+        self.column_payload_revisions.entry(pos).or_insert(1);
         self.columns.entry(pos).or_insert_with(Column::new)
+    }
+
+    pub(super) fn bump_column_payload_revision(&mut self, pos: ChunkPos) {
+        let revision = self.column_payload_revisions.entry(pos).or_insert(1);
+        *revision = revision.wrapping_add(1).max(1);
+    }
+
+    pub(crate) fn column_payload_revision(&self, pos: ChunkPos) -> u64 {
+        self.column_payload_revisions
+            .get(&pos)
+            .copied()
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -1106,7 +1157,7 @@ impl World {
         if let Some(section) = self.sections.get(&pos) {
             return section.summary();
         }
-        if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+        if self.saved_section_contains(pos) {
             return SectionSummary::Unknown;
         }
         if let Some(col) = self.column_gen.get(&pos.chunk_pos()) {
@@ -1153,17 +1204,26 @@ impl World {
     pub(super) fn install_mesh(&mut self, pos: SectionPos, mesh: ChunkMesh) {
         self.meshes.insert(pos, mesh);
         self.repack_forced.remove(&pos);
-        self.mesh_columns.insert(pos.chunk_pos());
-        self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+        let column = pos.chunk_pos();
+        self.mesh_columns.insert(column);
+        self.bump_mesh_upload_revision(column);
+        self.mesh_upload_dirty_columns.insert(column);
     }
 
     pub(super) fn remove_mesh(&mut self, pos: SectionPos) -> bool {
         let removed = self.meshes.remove(&pos).is_some();
         self.repack_forced.remove(&pos);
         if removed {
-            self.refresh_mesh_column_presence(pos.chunk_pos());
+            let column = pos.chunk_pos();
+            self.refresh_mesh_column_presence(column);
+            self.bump_mesh_upload_revision(column);
         }
         removed
+    }
+
+    fn bump_mesh_upload_revision(&mut self, pos: ChunkPos) {
+        let revision = self.mesh_upload_revisions.entry(pos).or_insert(0);
+        *revision = revision.wrapping_add(1).max(1);
     }
 
     fn refresh_mesh_column_presence(&mut self, pos: ChunkPos) {
@@ -1277,7 +1337,17 @@ impl World {
     }
 
     pub(super) fn remove_section(&mut self, pos: SectionPos) {
-        self.sections.remove(&pos);
+        if let Some(job) = self.mesh_job_cancels.remove(&pos) {
+            job.cancel();
+        }
+        if let Some(job) = self.pending_section_jobs.remove(&pos) {
+            job.cancel();
+        }
+        self.pending_sections.remove(&pos);
+        let section_removed = self.sections.remove(&pos).is_some();
+        if section_removed {
+            self.bump_column_payload_revision(pos.chunk_pos());
+        }
         self.block_entity_sections.remove(&pos);
         self.particle_emitter_sections.remove(&pos);
         self.awaited_overlays.remove(&pos);
@@ -1288,9 +1358,11 @@ impl World {
         self.dirty_meshes.remove(pos);
         self.light_blocked_meshes.remove(&pos);
         self.light_deferred.remove(&pos);
+        self.deferred_rechecks.remove(&pos);
         self.deep_sections.remove(&pos);
         self.visible_deep.remove(&pos);
         self.hidden_parked.remove(&pos);
+        self.sealed_parked.remove(&pos);
         self.light_bakes.cancel(pos);
         self.mark_light_dirty_neighborhood(pos, false);
         self.mark_dirty_neighborhood(pos, false);
@@ -1308,22 +1380,44 @@ impl World {
             self.block_entity_sections.remove(&sp);
             self.particle_emitter_sections.remove(&sp);
             self.meshes.remove(&sp);
+            if let Some(job) = self.mesh_job_cancels.remove(&sp) {
+                job.cancel();
+            }
             self.repack_forced.remove(&sp);
             self.dirty_meshes.remove(sp);
             self.light_blocked_meshes.remove(&sp);
             self.light_deferred.remove(&sp);
+            self.deferred_rechecks.remove(&sp);
             self.deep_sections.remove(&sp);
             self.visible_deep.remove(&sp);
             self.hidden_parked.remove(&sp);
+            self.sealed_parked.remove(&sp);
             self.light_bakes.cancel(sp);
         }
         self.mesh_columns.remove(&pos);
+        self.mesh_upload_revisions.remove(&pos);
         self.mesh_upload_dirty_columns.remove(&pos);
         self.mesh_release_after.remove(&pos);
         self.columns.remove(&pos);
+        self.column_payload_revisions.remove(&pos);
         self.column_gen.remove(&pos);
         self.column_summaries.remove(&pos);
-        self.pending.remove(&pos);
+        self.column_biome_halos.remove(&pos);
+        self.column_deep_band_los.remove(&pos);
+        if let Some(Some(job)) = self.pending.remove(&pos) {
+            job.cancel();
+        }
+        let section_jobs: Vec<_> = self
+            .pending_section_jobs
+            .keys()
+            .filter(|sp| sp.chunk_pos() == pos)
+            .copied()
+            .collect();
+        for sp in section_jobs {
+            if let Some(job) = self.pending_section_jobs.remove(&sp) {
+                job.cancel();
+            }
+        }
         self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
         self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
         self.disk_primary_sections
@@ -1337,19 +1431,37 @@ impl World {
         self.deep_sections.clear();
         self.visible_deep.clear();
         self.hidden_parked.clear();
+        self.sealed_parked.clear();
         self.block_entity_sections.clear();
         self.particle_emitter_sections.clear();
         self.columns.clear();
+        self.column_payload_revisions.clear();
         self.column_gen.clear();
         self.column_summaries.clear();
+        self.column_biome_halos.clear();
+        self.column_deep_band_los.clear();
         self.meshes.clear();
+        for job in self.mesh_job_cancels.values() {
+            job.cancel();
+        }
+        self.mesh_job_cancels.clear();
         self.mesh_columns.clear();
+        self.mesh_upload_revisions.clear();
         self.mesh_upload_dirty_columns.clear();
         self.mesh_release_after.clear();
         self.repack_forced.clear();
         self.light_blocked_meshes.clear();
         self.light_deferred.clear();
+        self.deferred_recheck_needed = false;
+        self.deferred_rechecks.clear();
+        for job in self.pending.values().flatten() {
+            job.cancel();
+        }
         self.pending.clear();
+        for job in self.pending_section_jobs.values() {
+            job.cancel();
+        }
+        self.pending_section_jobs.clear();
         self.pending_sections.clear();
         self.pending_overlays.clear();
         self.awaited_overlays.clear();

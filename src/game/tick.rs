@@ -516,19 +516,19 @@ impl Game {
             match self.replica.clear_broken_block(pos) {
                 Some((block, cells)) => {
                     debug_assert_eq!(block, expected_block);
-                    let id = self.prediction.begin(prediction::PredictionSnapshot::World {
-                        inventory: None,
-                        cells: cells.clone(),
-                    });
+                    let id = self
+                        .prediction
+                        .begin(prediction::PredictionSnapshot::World {
+                            inventory: None,
+                            cells: cells.clone(),
+                        });
                     self.local_broke_block = Some(block);
                     for (c, _) in &cells {
                         self.predicted_presentation_cells.insert(*c);
                     }
-                    self.pending_events.world.push(WorldEvent::BlockBroken {
-                        pos,
-                        block,
-                        normal,
-                    });
+                    self.pending_events
+                        .world
+                        .push(WorldEvent::BlockBroken { pos, block, normal });
                     id
                 }
                 // Cell already gone / unbreakable on the replica — still ask
@@ -724,8 +724,7 @@ impl Game {
             look.block.y,
             look.block.z,
         ));
-        !input.movement.sneak
-            && target.interaction() != crate::block::BlockInteraction::None
+        !input.movement.sneak && target.interaction() != crate::block::BlockInteraction::None
     }
 
     /// Optimistic full place when the look target can accept the held block.
@@ -753,7 +752,9 @@ impl Game {
             return None;
         }
         let place_pos = look.block + look.normal;
-        let prev = self.replica.chunk_block(place_pos.x, place_pos.y, place_pos.z);
+        let prev = self
+            .replica
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z);
         if prev != crate::block::Block::Air.0 {
             return None;
         }
@@ -790,9 +791,10 @@ impl Game {
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);
         self.predicted_presentation_cells.insert(place_pos);
-        self.pending_events
-            .world
-            .push(WorldEvent::BlockPlaced { pos: place_pos, block });
+        self.pending_events.world.push(WorldEvent::BlockPlaced {
+            pos: place_pos,
+            block,
+        });
         Some(id)
     }
 

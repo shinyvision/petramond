@@ -117,7 +117,7 @@ impl World {
         }
         let cp = sp.chunk_pos();
         if let Some(col) = self.column_gen.get(&cp) {
-            if self.save.as_ref().is_some_and(|s| s.manifest_contains(sp)) {
+            if self.saved_section_contains(sp) {
                 // A saved record will overlay this section when it streams in.
                 return StreamState::InFlight;
             }

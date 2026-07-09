@@ -12,21 +12,28 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SECTION_SIZE};
 use crate::save::codec::{deflate, inflate, put_u32, put_u8, Reader};
 use crate::save::region::{REGION_SHIFT, REGION_SIZE};
 
-const VERSION: u8 = 1;
+pub(crate) const VERSION: u8 = 2;
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
+const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;
+const MESH_BIOME_CELLS: usize = MESH_BIOME_SIDE * MESH_BIOME_SIDE;
 
 /// One column's cached 2D gen data — exactly the resident (slimmed) `ColumnGen`
 /// payload. Built by `ColumnGen::cache_record` and consumed by
 /// `ColumnGen::from_cache_record` (worldgen::driver owns the field semantics).
 pub struct ColumnGenRecord {
+    /// Container payload version read from disk. New records use [`VERSION`];
+    /// v1 records are upgraded after their missing mesh halo is reconstructed.
+    pub(crate) source_version: u8,
     pub pos: ChunkPos,
     pub seed: u32,
     pub biome: Box<[u8]>,
+    pub mesh_biome: Arc<[u8]>,
     pub surf: Box<[i32]>,
     pub top_surf: Box<[i32]>,
     pub surf_min: i32,
@@ -34,6 +41,12 @@ pub struct ColumnGenRecord {
     pub cand_surf_min: i32,
     pub cand_surf_max: i32,
     pub content_top: i32,
+}
+
+impl ColumnGenRecord {
+    pub(crate) fn needs_upgrade(&self) -> bool {
+        self.source_version != VERSION
+    }
 }
 
 pub fn region_of(pos: ChunkPos) -> (i32, i32) {
@@ -68,12 +81,14 @@ pub fn parse_cache_name(path: &Path) -> Option<(i32, i32)> {
 /// Encode one record: `[version, seed, biome, surf, top_surf, scalars]`, deflated.
 pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
     debug_assert_eq!(rec.biome.len(), CELLS);
+    debug_assert_eq!(rec.mesh_biome.len(), MESH_BIOME_CELLS);
     debug_assert_eq!(rec.surf.len(), CELLS);
     debug_assert_eq!(rec.top_surf.len(), CELLS);
-    let mut payload = Vec::with_capacity(1 + 4 + CELLS * 9 + 20);
+    let mut payload = Vec::with_capacity(1 + 4 + CELLS * 9 + MESH_BIOME_CELLS + 20);
     put_u8(&mut payload, VERSION);
     put_u32(&mut payload, rec.seed);
     payload.extend_from_slice(&rec.biome);
+    payload.extend_from_slice(&rec.mesh_biome);
     for &v in rec.surf.iter().chain(rec.top_surf.iter()) {
         put_u32(&mut payload, v as u32);
     }
@@ -94,10 +109,16 @@ pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
 pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenRecord> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
-    if r.u8()? != VERSION || r.u32()? != seed {
+    let source_version = r.u8()?;
+    if !matches!(source_version, 1 | VERSION) || r.u32()? != seed {
         return None;
     }
     let biome: Box<[u8]> = r.bytes(CELLS)?.into();
+    let mesh_biome = if source_version >= 2 {
+        Some(r.bytes(MESH_BIOME_CELLS)?)
+    } else {
+        None
+    };
     let mut i32s = |n: usize| -> Option<Box<[i32]>> {
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
@@ -108,10 +129,15 @@ pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenR
     let surf = i32s(CELLS)?;
     let top_surf = i32s(CELLS)?;
     let mut scalar = || -> Option<i32> { Some(r.u32()? as i32) };
+    let mesh_biome = mesh_biome
+        .map(Arc::from)
+        .unwrap_or_else(|| legacy_mesh_biome(pos, seed, &biome));
     Some(ColumnGenRecord {
+        source_version,
         pos,
         seed,
         biome,
+        mesh_biome,
         surf,
         top_surf,
         surf_min: scalar()?,
@@ -122,11 +148,48 @@ pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenR
     })
 }
 
+thread_local! {
+    static LEGACY_HALO_GENERATOR: std::cell::RefCell<Option<(u32, crate::worldgen::driver::ChunkGenerator)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// v1 cached the column's central biome map but not the two-cell mesh halo.
+/// Reconstruct only the 144 missing edge cells on the load thread; the generator
+/// instance is reused across the whole cache burst, and the upgraded record is
+/// written back as v2 by the streamer.
+fn legacy_mesh_biome(pos: ChunkPos, seed: u32, biome: &[u8]) -> Arc<[u8]> {
+    LEGACY_HALO_GENERATOR.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot
+            .as_ref()
+            .is_none_or(|(cached_seed, _)| *cached_seed != seed)
+        {
+            *slot = Some((seed, crate::worldgen::driver::ChunkGenerator::new(seed)));
+        }
+        let generator = &slot.as_ref().expect("generator installed above").1;
+        let mut halo = vec![0u8; MESH_BIOME_CELLS];
+        let ox = pos.cx * SECTION_SIZE as i32;
+        let oz = pos.cz * SECTION_SIZE as i32;
+        for z in 0..MESH_BIOME_SIDE {
+            for x in 0..MESH_BIOME_SIDE {
+                let lx = x as i32 - 2;
+                let lz = z as i32 - 2;
+                halo[z * MESH_BIOME_SIDE + x] = if (0..SECTION_SIZE as i32).contains(&lx)
+                    && (0..SECTION_SIZE as i32).contains(&lz)
+                {
+                    biome[lz as usize * SECTION_SIZE + lx as usize]
+                } else {
+                    generator.biome_at(ox + lx, oz + lz).id()
+                };
+            }
+        }
+        Arc::from(halo.into_boxed_slice())
+    })
+}
+
 /// The present column positions in one cache file (for the open-time manifest).
 pub fn read_cache_indices(path: &Path) -> io::Result<Vec<u16>> {
-    Ok(crate::save::region::read_region(path)?
-        .into_keys()
-        .collect())
+    crate::save::region::read_region_indices(path)
 }
 
 /// Merge records into their cache files (read-modify-write per file), mirroring
@@ -140,12 +203,10 @@ pub fn write_records(colgen_dir: &Path, recs: Vec<ColumnGenRecord>) -> Vec<PathB
     let mut touched = Vec::with_capacity(by_region.len());
     for ((rx, rz), group) in by_region {
         let path = cache_path(colgen_dir, rx, rz);
-        // A corrupt cache file starts fresh — it is derived data.
-        let mut records = crate::save::region::read_region(&path).unwrap_or_default();
-        for rec in &group {
-            records.insert(local_index(rec.pos), encode_record(rec));
-        }
-        let _ = crate::save::region::write_region(&path, &records);
+        let records = group
+            .iter()
+            .map(|rec| (local_index(rec.pos), encode_record(rec)));
+        let _ = crate::save::region::merge_region(&path, records);
         touched.push(path);
     }
     touched
@@ -167,9 +228,11 @@ mod tests {
     #[test]
     fn record_roundtrips_and_rejects_seed_or_version_drift() {
         let rec = ColumnGenRecord {
+            source_version: VERSION,
             pos: ChunkPos::new(3, -7),
             seed: 0xDEAD_BEEF,
             biome: vec![7u8; CELLS].into(),
+            mesh_biome: Arc::from(vec![7u8; MESH_BIOME_CELLS].into_boxed_slice()),
             surf: (0..CELLS as i32).map(|i| i - 64).collect(),
             top_surf: (0..CELLS as i32).map(|i| i - 70).collect(),
             surf_min: -64,
@@ -204,5 +267,34 @@ mod tests {
             "a different world seed must reject the cached record"
         );
         assert!(decode_record(rec.pos, rec.seed, b"junk").is_none());
+
+        let mut v1 = Vec::new();
+        put_u8(&mut v1, 1);
+        put_u32(&mut v1, rec.seed);
+        v1.extend_from_slice(&rec.biome);
+        for &value in rec.surf.iter().chain(rec.top_surf.iter()) {
+            put_u32(&mut v1, value as u32);
+        }
+        for value in [
+            rec.surf_min,
+            rec.surf_max,
+            rec.cand_surf_min,
+            rec.cand_surf_max,
+            rec.content_top,
+        ] {
+            put_u32(&mut v1, value as u32);
+        }
+        let legacy = decode_record(rec.pos, rec.seed, &deflate(&v1)).expect("v1 upgrade");
+        assert!(legacy.needs_upgrade());
+        assert_eq!(legacy.mesh_biome.len(), MESH_BIOME_CELLS);
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                assert_eq!(
+                    legacy.mesh_biome[(z + 2) * MESH_BIOME_SIDE + x + 2],
+                    rec.biome[z * SECTION_SIZE + x],
+                    "the cached central biome map survives halo hydration"
+                );
+            }
+        }
     }
 }

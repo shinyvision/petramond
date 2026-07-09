@@ -1,4 +1,7 @@
 use rustc_hash::FxHashSet;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::sync::Arc;
 
 use crate::chunk::{self, ChunkPos, SectionPos};
 
@@ -25,7 +28,7 @@ const RESULT_DRAIN_MIN: usize = 24;
 /// way it did with the old FIFO channel — this cap only bounds snapshot memory held
 /// by queued jobs. The backlog beyond it stays in `dirty_meshes`, re-sorted
 /// NEAREST-FIRST every frame.
-const MAX_MESH_JOBS_IN_FLIGHT: usize = 32;
+const MAX_MESH_JOBS_IN_FLIGHT: usize = 16;
 /// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
 /// always allowed; after that, the pump yields to rendering once it burns this much CPU.
 const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_000);
@@ -41,17 +44,45 @@ const MESH_RELEASE_SWEEP_INTERVAL: u64 = 64;
 /// path that dirties a section pushes here and `remove_section` pulls it back out —
 /// so the set alone says what needs meshing. Drained NEAREST-FIRST to the load
 /// centre so the terrain around the player meshes before the edges.
-#[derive(Default)]
 pub(super) struct DirtyMeshQueue {
     pending: FxHashSet<SectionPos>,
-    /// Reused across frames so `pop_nearest_batch` doesn't allocate a fresh `Vec` the
-    /// size of the whole backlog every call.
-    scratch: Vec<SectionPos>,
+    /// Entries cache their priority once. Removal is lazy: `pending` remains the
+    /// source of truth and stale heap rows are skipped when popped.
+    heap: BinaryHeap<Reverse<(i64, i32, i32, i32)>>,
+    target: Option<LoadTarget>,
+}
+
+impl Default for DirtyMeshQueue {
+    fn default() -> Self {
+        Self {
+            pending: FxHashSet::default(),
+            heap: BinaryHeap::new(),
+            target: None,
+        }
+    }
 }
 
 impl DirtyMeshQueue {
+    fn entry(target: Option<LoadTarget>, pos: SectionPos) -> Reverse<(i64, i32, i32, i32)> {
+        Reverse((
+            target.map_or(0, |t| t.section_priority_key(pos)),
+            pos.cx,
+            pos.cy,
+            pos.cz,
+        ))
+    }
+
+    fn rebuild(&mut self, target: Option<LoadTarget>) {
+        self.target = target;
+        self.heap.clear();
+        self.heap
+            .extend(self.pending.iter().copied().map(|p| Self::entry(target, p)));
+    }
+
     pub fn push(&mut self, pos: SectionPos) {
-        self.pending.insert(pos);
+        if self.pending.insert(pos) {
+            self.heap.push(Self::entry(self.target, pos));
+        }
     }
 
     pub fn remove(&mut self, pos: SectionPos) {
@@ -73,27 +104,24 @@ impl DirtyMeshQueue {
     /// Pop up to `max` sections, those nearest the load centre column first.
     /// Meshing is idempotent, so the order is a priority, not a contract.
     ///
-    /// The backlog can be thousands while streaming, yet only `max` (≈128) come out, so
-    /// this avoids the old full `O(d log d)` sort: a partial select pulls the nearest
-    /// `max` in `O(d)`, then only those few are sorted for priority order.
+    /// The heap is rebuilt only when the quantized load target changes. Ordinary
+    /// frames pop `O(max log d)` work without copying or scanning the backlog.
     fn pop_nearest_batch(&mut self, max: usize, target: Option<LoadTarget>) -> Vec<SectionPos> {
         if max == 0 || self.pending.is_empty() {
             return Vec::new();
         }
-        self.scratch.clear();
-        self.scratch.extend(self.pending.iter().copied());
-        let n = self.scratch.len();
-        let take = max.min(n);
-        if let Some(t) = target {
-            let key = |p: &SectionPos| -> i64 { t.section_priority_key(*p) };
-            if take < n {
-                self.scratch.select_nth_unstable_by_key(take, key);
-            }
-            self.scratch[..take].sort_unstable_by_key(key);
+        if self.target != target || self.heap.len() > self.pending.len().saturating_mul(4) + 1024 {
+            self.rebuild(target);
         }
-        let result: Vec<SectionPos> = self.scratch[..take].to_vec();
-        for pos in &result {
-            self.pending.remove(pos);
+        let mut result = Vec::with_capacity(max.min(self.pending.len()));
+        while result.len() < max {
+            let Some(Reverse((_, cx, cy, cz))) = self.heap.pop() else {
+                break;
+            };
+            let pos = SectionPos::new(cx, cy, cz);
+            if self.pending.remove(&pos) {
+                result.push(pos);
+            }
         }
         result
     }
@@ -105,11 +133,12 @@ impl World {
     /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
+        let frame_start = std::time::Instant::now();
         self.mesh_pump_frame += 1;
         self.pump_light_bakes();
         self.drain_finished_meshes();
         self.release_settled_column_meshes();
-        if max_per_frame == 0 {
+        if max_per_frame == 0 || frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
             return;
         }
 
@@ -123,14 +152,25 @@ impl World {
             .max(MIN_MESH_JOBS_PER_PUMP)
             .min(in_flight_room);
         let candidate_cap = target_jobs.saturating_mul(CANDIDATE_SCAN_PER_MESH_JOB);
-        if self.vis_dirty {
+        // Ingest can raise this every frame while thousands of sections arrive.
+        // One refresh per eight frames keeps the O(deep) BFS bounded; parked
+        // sections re-enter automatically on the next refresh.
+        if self.vis_dirty && self.mesh_pump_frame.is_multiple_of(8) {
             self.refresh_deep_visibility();
+        }
+        if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+            return;
         }
         let target = self.last_load_target;
         let candidates = self.dirty_meshes.pop_nearest_batch(candidate_cap, target);
         let mut submitted = 0usize;
-        let start = std::time::Instant::now();
         for (i, &pos) in candidates.iter().enumerate() {
+            if submitted > 0 && frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                for &rest in &candidates[i..] {
+                    self.dirty_meshes.push(rest);
+                }
+                break;
+            }
             if !self.sections.contains_key(&pos) {
                 continue;
             }
@@ -147,7 +187,7 @@ impl World {
             // All-air sections emit nothing: settle them (dropping any ghost mesh)
             // instead of meshing.
             if self.clear_mesh_if_section_produces_no_mesh(pos) {
-                if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
                     }
@@ -155,11 +195,23 @@ impl World {
                 }
                 continue;
             }
+            if self.section_sealed_by_loaded_neighbors(pos) && !self.repack_forced.contains(&pos) {
+                self.sealed_parked.insert(pos);
+                self.dirty_meshes.remove(pos);
+                self.light_blocked_meshes.remove(&pos);
+                if let Some(s) = self.section_mut(pos) {
+                    s.dirty = false;
+                    // Invalidate a snapshot taken before the final sealing
+                    // neighbour landed. Keep any installed mesh as the fail-safe.
+                    s.mesh_revision = s.mesh_revision.wrapping_add(1);
+                }
+                continue;
+            }
             // Don't snapshot from stale light: a section whose 3×3×3 light isn't baked
             // yet parks outside the hot dirty queue, so the snapshot always carries final light.
             if self.request_light_dependencies(pos) {
                 self.light_blocked_meshes.insert(pos);
-                if start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
                     }
@@ -169,11 +221,12 @@ impl World {
             }
             if let Some(job) = self.build_mesh_job(pos) {
                 let key = target.map_or(0, |t| t.section_priority_key(pos));
-                self.mesh_pool.submit(key, job);
+                let cancel = self.mesh_pool.submit(key, job);
+                self.mesh_job_cancels.insert(pos, cancel);
                 self.mesh_jobs_in_flight += 1;
                 submitted += 1;
                 if submitted >= target_jobs
-                    || (submitted > 0 && start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
+                    || (submitted > 0 && frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
                 {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
@@ -192,7 +245,9 @@ impl World {
     /// (`repack_forced`). Releasing never touches the GPU buffers, so a wrong
     /// "settled" verdict costs remesh work, never visible terrain.
     fn release_settled_column_meshes(&mut self) {
-        if !self.mesh_pump_frame.is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
+        if !self
+            .mesh_pump_frame
+            .is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
             || self.mesh_release_after.is_empty()
         {
             return;
@@ -237,6 +292,31 @@ impl World {
         self.sections.get(&pos).is_some_and(|s| s.is_empty_air())
     }
 
+    /// Exact future-work skip: every adjoining plane is a loaded, fully opaque
+    /// wall, so no outside sightline or emitted boundary face can reach this
+    /// section. A nearby player overrides the proof because they may already be
+    /// inside an enclosed cave. Generated summaries are deliberately not trusted
+    /// for saved terrain.
+    pub(super) fn section_sealed_by_loaded_neighbors(&self, pos: SectionPos) -> bool {
+        if self.last_load_target.is_some() && self.near_load_center(pos) {
+            return false;
+        }
+        [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ]
+        .into_iter()
+        .all(|(dx, dy, dz)| {
+            self.sections
+                .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
+                .is_some_and(|s| s.face_plane_fully_opaque(-dx, -dy, -dz))
+        })
+    }
+
     /// Clear stale render output for a section that now intentionally emits no mesh.
     /// Returns true when the section is in that settled no-output state.
     pub(super) fn clear_mesh_if_section_produces_no_mesh(&mut self, pos: SectionPos) -> bool {
@@ -248,6 +328,8 @@ impl World {
         }
         self.dirty_meshes.remove(pos);
         self.light_blocked_meshes.remove(&pos);
+        self.hidden_parked.remove(&pos);
+        self.sealed_parked.remove(&pos);
         if let Some(s) = self.section_mut(pos) {
             s.dirty = false;
             // A mesh job may already have snapshotted this section while one of its
@@ -296,6 +378,16 @@ impl World {
             };
             drained += 1;
             self.mesh_jobs_in_flight = self.mesh_jobs_in_flight.saturating_sub(1);
+            if self
+                .mesh_job_cancels
+                .get(&done.pos)
+                .is_some_and(|current| current.same_job(&done.cancel))
+            {
+                self.mesh_job_cancels.remove(&done.pos);
+            }
+            let Some(mut mesh) = done.mesh else {
+                continue;
+            };
             let fresh = self
                 .sections
                 .get(&done.pos)
@@ -303,7 +395,6 @@ impl World {
             if !fresh {
                 continue;
             }
-            let mut mesh = done.mesh;
             mesh.mesh_dirty = true; // needs a GPU upload on the next sync
             self.install_mesh(done.pos, mesh);
             if let Some(s) = self.section_mut(done.pos) {
@@ -348,35 +439,34 @@ impl World {
             }
         }
 
-        // The biome strip is tiny (20²) and lives in the (non-Arc) columns, so build it
-        // here rather than carry column handles to the worker. Tint blending samples a
-        // 5×5 biome window, hence the wider 2-column XZ halo. Missing edge columns fall
-        // back to analytical biome generation so view-biased streaming does not leave the
-        // outer visible ring permanently dirty, but the mesh never bakes biome id 0.
-        let mut biome = empty_biome();
-        let mut fallback_gen = None;
-        let (ox, _, oz) = pos.origin_world();
-        for pz in 0..BIOME_PAD {
-            let wz = oz - BIOME_PAD_RADIUS + pz as i32;
-            for px in 0..BIOME_PAD {
-                let wx = ox - BIOME_PAD_RADIUS + px as i32;
-                let cp = ChunkPos::new(
-                    wx.div_euclid(chunk::SECTION_SIZE as i32),
-                    wz.div_euclid(chunk::SECTION_SIZE as i32),
-                );
-                biome[biome_pad_idx(px, pz)] = self.columns.get(&cp).map_or_else(
-                    || {
-                        fallback_gen
-                            .get_or_insert_with(|| {
-                                crate::worldgen::driver::ChunkGenerator::new(self.seed)
-                            })
-                            .biome_at(wx, wz)
-                            .id()
-                    },
-                    |c| c.biome_at(chunk::lx(wx), chunk::lz(wz)),
-                );
-            }
-        }
+        // Every live column carries the complete tint halo, captured by the
+        // column-generation worker or replicated by the server. Hand-built test
+        // worlds fall back to loaded column facts only; live submission never runs
+        // analytical worldgen on this thread.
+        let biome = self
+            .column_gen
+            .get(&pos.chunk_pos())
+            .map(|col| col.mesh_biome())
+            .or_else(|| self.column_biome_halos.get(&pos.chunk_pos()).cloned())
+            .unwrap_or_else(|| {
+                let mut halo = empty_biome();
+                let data = Arc::make_mut(&mut halo);
+                let (ox, _, oz) = pos.origin_world();
+                for pz in 0..BIOME_PAD {
+                    let wz = oz - BIOME_PAD_RADIUS + pz as i32;
+                    for px in 0..BIOME_PAD {
+                        let wx = ox - BIOME_PAD_RADIUS + px as i32;
+                        if let Some(col) = self.columns.get(&ChunkPos::new(
+                            wx.div_euclid(chunk::SECTION_SIZE as i32),
+                            wz.div_euclid(chunk::SECTION_SIZE as i32),
+                        )) {
+                            data[biome_pad_idx(px, pz)] =
+                                col.biome_at(chunk::lx(wx), chunk::lz(wz));
+                        }
+                    }
+                }
+                halo
+            });
 
         Some(MeshJob {
             pos,
@@ -475,6 +565,7 @@ impl World {
                         .sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
+                        && !self.section_sealed_by_loaded_neighbors(p)
                     {
                         // A deferred neighbour's first bake fires when its own
                         // neighbourhood settles (`flush_settled_deferred`); requesting
@@ -504,6 +595,7 @@ impl World {
                         .sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
+                        && !self.section_sealed_by_loaded_neighbors(p)
                     {
                         return true;
                     }
@@ -546,9 +638,8 @@ fn sparse_state_snapshot<T: Copy>(
 mod tests {
     use std::sync::Arc;
 
-    use crate::biome::Biome;
     use crate::block::Block;
-    use crate::chunk::SectionPos;
+    use crate::chunk::{SectionPos, SECTION_VOLUME};
     use crate::section::Section;
     use crate::world::store::LoadTarget;
 
@@ -557,7 +648,6 @@ mod tests {
     fn solid_section(pos: SectionPos) -> Section {
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
         section.blocks_slice_mut().fill(Block::Stone.id());
-        section.recompute_random_tick_count();
         section.recompute_opaque_count();
         section
     }
@@ -567,24 +657,37 @@ mod tests {
         world.sections.insert(pos, Arc::new(solid_section(pos)));
     }
 
+    fn insert_sealed_cavity(world: &mut World, center: SectionPos) {
+        let mut cavity = solid_section(center);
+        cavity.set_block(8, 8, 8, Block::Air);
+        world.insert_section_for_test(center, cavity);
+        for (dx, dy, dz) in [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ] {
+            insert_solid_section(
+                world,
+                SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz),
+            );
+        }
+    }
+
     #[test]
-    fn mesh_job_fills_missing_biome_tint_halo_from_generator() {
+    fn mesh_job_uses_column_generated_biome_tint_halo() {
         let mut world = World::new(0, 0);
         let pos = SectionPos::new(0, 0, 0);
         insert_solid_section(&mut world, pos);
-        for z in 0..crate::chunk::CHUNK_SZ {
-            for x in 0..crate::chunk::CHUNK_SX {
-                world.columns.get_mut(&pos.chunk_pos()).unwrap().set_biome(
-                    x,
-                    z,
-                    Biome::Plains.id(),
-                );
-            }
-        }
+        let gen =
+            crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
+        world.column_gen.insert(pos.chunk_pos(), Arc::new(gen));
 
         let job = world
             .build_mesh_job(pos)
-            .expect("missing edge columns should fall back to generated biome ids");
+            .expect("the center column carries its complete tint halo");
         assert!(
             job.biome.iter().all(|&id| id != 0),
             "mesh jobs must not bake chunk-edge tint from missing-biome id 0"
@@ -612,29 +715,18 @@ mod tests {
     }
 
     #[test]
-    fn dirty_mesh_priority_is_near_first_with_forward_tiebreak() {
-        let target = LoadTarget::new_facing(0, 0, 0, 16, 1.0, 0.0);
+    fn dirty_mesh_priority_is_near_first() {
+        let target = LoadTarget::new(0, 0, 0, 16);
         let near = SectionPos::new(0, 0, 2);
-        let far_ahead = SectionPos::new(16, 0, 0);
-        let front = SectionPos::new(6, 0, 0);
-        let side = SectionPos::new(0, 0, 6);
+        let far = SectionPos::new(16, 0, 0);
 
         let mut queue = DirtyMeshQueue::default();
-        queue.push(far_ahead);
+        queue.push(far);
         queue.push(near);
         assert_eq!(
             queue.pop_nearest_batch(1, Some(target)),
             vec![near],
-            "near dirty meshes must beat far-ahead dirty meshes"
-        );
-
-        let mut queue = DirtyMeshQueue::default();
-        queue.push(side);
-        queue.push(front);
-        assert_eq!(
-            queue.pop_nearest_batch(1, Some(target)),
-            vec![front],
-            "same-distance dirty meshes in the forward cone should win"
+            "near dirty meshes must beat far dirty meshes"
         );
     }
 
@@ -655,7 +747,6 @@ mod tests {
         let before_revision = {
             let s = world.section_mut(center).unwrap();
             s.blocks_slice_mut().fill(Block::Air.id());
-            s.recompute_random_tick_count();
             s.recompute_opaque_count();
             s.mesh_revision
         };
@@ -683,11 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn buried_mixed_sections_are_not_sealed_away() {
-        // Regression guard for the removed neighbour-plane "sealed section" skip: a
-        // buried section between solid neighbours must still schedule mesh+light work
-        // (its light is a seam-sampling dependency for meshed neighbours; skipping it
-        // rendered adjoining faces black).
+    fn loaded_opaque_neighbour_planes_seal_future_mesh_work() {
+        // Only exact loaded planes may seal; generated summaries can disagree
+        // with saved/player-carved terrain.
         let mut world = World::new(0, 0);
         let center = SectionPos::new(0, 0, 0);
         insert_solid_section(&mut world, center);
@@ -705,8 +794,84 @@ mod tests {
             );
         }
         assert!(
-            !world.section_produces_no_mesh(center),
-            "only all-air sections settle to no output; enclosure must not seal a section"
+            world.section_sealed_by_loaded_neighbors(center),
+            "six exact opaque neighbour planes make future mesh work invisible"
         );
+    }
+
+    #[test]
+    fn sealed_section_around_player_still_meshes_and_remeshes() {
+        let mut world = World::new(0, 4);
+        let center = SectionPos::new(0, 0, 0);
+        insert_sealed_cavity(&mut world, center);
+        world.last_load_target = Some(LoadTarget::new(0, 0, 0, 4));
+
+        assert!(
+            !world.section_sealed_by_loaded_neighbors(center),
+            "a player can already be inside an otherwise sealed underground section"
+        );
+        world.mesh_section_blocking_for_test(center);
+        assert!(
+            world
+                .meshes
+                .get(&center)
+                .is_some_and(|mesh| !mesh.is_empty()),
+            "the internal cavity walls must mesh around the player"
+        );
+
+        let before = world.mesh_upload_revisions[&center.chunk_pos()];
+        world
+            .section_mut(center)
+            .unwrap()
+            .set_block(9, 8, 8, Block::Air);
+        world.queue_dirty_mesh(center);
+        world.mesh_section_blocking_for_test(center);
+        assert!(
+            world.mesh_upload_revisions[&center.chunk_pos()] > before,
+            "an edit inside the sealed section must install a fresh mesh"
+        );
+    }
+
+    #[test]
+    fn far_sealed_section_requeues_when_player_approaches() {
+        let mut world = World::new(0, 16);
+        let center = SectionPos::new(0, 0, 0);
+        insert_sealed_cavity(&mut world, center);
+        world
+            .section_mut(center)
+            .unwrap()
+            .set_skylight(Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice()));
+        world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
+
+        world.tick_mesh_budget(1);
+        assert!(world.sealed_parked.contains(&center));
+        assert!(!world.meshes.contains_key(&center));
+
+        world.last_load_target = Some(LoadTarget::new(0, 0, 0, 16));
+        world.vis_dirty = true;
+        world.refresh_deep_visibility();
+        assert!(!world.sealed_parked.contains(&center));
+        assert!(world.dirty_meshes.contains(center));
+        world.mesh_section_blocking_for_test(center);
+        assert!(world.meshes.contains_key(&center));
+    }
+
+    #[test]
+    fn forced_repack_remesh_bypasses_sealed_parking() {
+        let mut world = World::new(0, 16);
+        let center = SectionPos::new(0, 0, 0);
+        insert_sealed_cavity(&mut world, center);
+        world
+            .section_mut(center)
+            .unwrap()
+            .set_skylight(Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice()));
+        world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
+        world.repack_forced.insert(center);
+        world.queue_dirty_mesh(center);
+
+        world.mesh_section_blocking_for_test(center);
+        assert!(world.meshes.contains_key(&center));
+        assert!(!world.repack_forced.contains(&center));
+        assert!(!world.sealed_parked.contains(&center));
     }
 }

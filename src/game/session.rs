@@ -109,6 +109,7 @@ impl Game {
             stream_batch_started: None,
             stream_rate_ema: None,
             incoming: Vec::new(),
+            remote_section_installs: Vec::new(),
             pending_chat_lines: Vec::new(),
             replica: bootstrap.replica,
             replicated_mobs: Default::default(),

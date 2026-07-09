@@ -146,6 +146,9 @@ pub struct Game {
     stream_rate_ema: Option<f32>,
     /// Per-frame scratch for drained server messages (capacity reused).
     incoming: Vec<crate::net::protocol::ServerToClient>,
+    /// Replica sections installed during the current message drain. Their
+    /// overlapping mesh invalidations are applied once after the batch.
+    remote_section_installs: Vec<crate::chunk::SectionPos>,
     /// Chat lines received from the server and not yet adopted by the app's
     /// client-side chat history.
     pending_chat_lines: Vec<ChatLine>,
@@ -461,16 +464,16 @@ impl Game {
         // P0 throw animation is client-owned: trigger when the hand holds
         // anything (the server never echoes the one-shot back).
         let slot = self.self_view.inventory.active_slot() as usize;
-        self.local_hand_threw |= self
-            .self_view
-            .inventory
-            .slot(slot)
-            .is_some();
+        self.local_hand_threw |= self.self_view.inventory.slot(slot).is_some();
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             let slot = self.self_view.inventory.active_slot() as usize;
             if all {
-                let _ = self.self_view.inventory.slot_mut(slot).and_then(|c| c.take());
+                let _ = self
+                    .self_view
+                    .inventory
+                    .slot_mut(slot)
+                    .and_then(|c| c.take());
             } else if let Some(cell) = self.self_view.inventory.slot_mut(slot) {
                 if let Some(stack) = cell.as_mut() {
                     stack.count = stack.count.saturating_sub(1);
@@ -480,8 +483,10 @@ impl Game {
                 }
             }
         }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::Drop { all, request_id }));
+        self.outbox.push(ClientToServer::Action(PlayerAction::Drop {
+            all,
+            request_id,
+        }));
     }
 
     /// Throw the whole cursor-held stack out into the world (inventory drag-out

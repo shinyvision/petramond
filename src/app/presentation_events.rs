@@ -86,9 +86,7 @@ impl App {
         // something" verdict (latched at click time — the server never echoes
         // self one-shots back), so every effectful use click — screens, mod
         // GUIs, doors, beds, item uses, placements — jabs exactly once.
-        self.hand.placed |= events.placed_block.is_some()
-            || events.threw_item
-            || events.interacted;
+        self.hand.placed |= events.placed_block.is_some() || events.threw_item || events.interacted;
         self.hand.swung |= events.swung_hand;
     }
 }

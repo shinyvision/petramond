@@ -632,7 +632,10 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
     // ...and the tick that APPLIES the drop server-side does not replay it
     // (the server never echoes self-initiated one-shots).
     let applied = game.tick(TICK_DT, &GameInput::default());
-    assert!(!applied.threw_item, "the server tick must not echo the throw");
+    assert!(
+        !applied.threw_item,
+        "the server tick must not echo the throw"
+    );
     let next = game.tick(TICK_DT, &GameInput::default());
     assert!(!next.threw_item, "the throw event is one-shot");
 }

@@ -16,9 +16,10 @@ pub(in crate::world) struct LightBakeQueue {
     next_id: u64,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone)]
 struct PendingLightBake {
     id: u64,
+    cancel: crate::worker::JobCancel,
 }
 
 struct LightBakeJob {
@@ -76,8 +77,7 @@ impl LightBakeQueue {
         let nbhd = (matches!(sky, SkyPlan::Flood { .. }) || !emitters.is_empty())
             .then(|| neighborhood::gather(pos, sections));
 
-        self.pending.insert(pos, PendingLightBake { id });
-        self.backend.submit(
+        let cancel = self.backend.submit(
             key,
             LightBakeJob {
                 id,
@@ -88,10 +88,13 @@ impl LightBakeQueue {
                 emitters,
             },
         );
+        self.pending.insert(pos, PendingLightBake { id, cancel });
     }
 
     pub fn cancel(&mut self, pos: SectionPos) {
-        self.pending.remove(&pos);
+        if let Some(pending) = self.pending.remove(&pos) {
+            pending.cancel.cancel();
+        }
     }
 
     pub fn has_pending(&self) -> bool {
@@ -207,11 +210,17 @@ impl Backend {
         }
     }
 
-    fn submit(&self, key: i64, job: LightBakeJob) {
+    fn submit(&self, key: i64, job: LightBakeJob) -> crate::worker::JobCancel {
+        let cancel = crate::worker::JobCancel::new();
+        let job_cancel = cancel.clone();
         let tx = self.tx_res.clone();
         self.pool.submit(key, move || {
+            if job_cancel.is_cancelled() {
+                return;
+            }
             let _ = tx.send(run_light_bake(job));
         });
+        cancel
     }
 
     fn try_recv(&mut self) -> Option<LightBakeResult> {

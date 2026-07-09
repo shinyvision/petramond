@@ -95,11 +95,11 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
 
     // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
-    let expected_ticks =
-        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -137,9 +137,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         "lagged finish after own hold-path must accept"
     );
     assert!(
-        game.server.sessions[0]
-            .pending_corrective_cells
-            .is_empty(),
+        game.server.sessions[0].pending_corrective_cells.is_empty(),
         "accept must not ship corrective cells"
     );
 }
@@ -160,7 +158,8 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
 
     // One tick of progress — far short of stone's break time.
     game.server.tick_mining(0, &mut TickEvents::default());
@@ -182,9 +181,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         "the finish waits for the hold-path"
     );
     assert!(
-        game.server.sessions[0]
-            .pending_corrective_cells
-            .is_empty(),
+        game.server.sessions[0].pending_corrective_cells.is_empty(),
         "deferred TooFast must not ship corrective cells"
     );
     assert_eq!(
@@ -194,8 +191,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     );
 
     // Hold until the server's timer breaks the block.
-    let expected_ticks =
-        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -213,9 +209,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         "deferred finish accepts when the hold-path breaks, got {outcomes:?}"
     );
     assert!(
-        game.server.sessions[0]
-            .presented_breaks
-            .contains(&pos),
+        game.server.sessions[0].presented_breaks.contains(&pos),
         "own breaks always strip BlockBroken from the initiator"
     );
 }
@@ -236,10 +230,10 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
 
-    let expected_ticks =
-        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     // Hold just short of the server's own finish, then deliver the client's.
     for _ in 0..expected_ticks - 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
@@ -271,7 +265,8 @@ fn impossible_speed_claim_is_rejected_for_integrated_pos() {
     u.pos = start + Vec3::new(50.0, 0.0, 0.0);
     u.vel = Vec3::new(200.0, 0.0, 0.0);
     u.wishdir = Vec3::ZERO;
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.tick_movement(0);
     let after = game.server.sessions[0].player.pos;
     assert!(
@@ -290,7 +285,8 @@ fn teleport_claim_with_plausible_velocity_is_rejected() {
     u.pos = start + Vec3::new(50.0, 0.0, 0.0);
     u.vel = Vec3::ZERO;
     u.wishdir = Vec3::ZERO;
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.tick_movement(0);
     let after = game.server.sessions[0].player.pos;
     assert!(
@@ -311,7 +307,8 @@ fn sprint_jump_claim_is_accepted() {
     u.pos = start + Vec3::new(0.2, 0.0, 0.0);
     u.vel = Vec3::new(5.6, 8.4, 0.0);
     u.on_ground = false;
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u.clone()));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u.clone()));
     game.server.tick_movement(0);
     let sess = &game.server.sessions[0];
     assert_eq!(
@@ -330,7 +327,8 @@ fn claim_inside_solid_geometry_is_rejected() {
     let mut u = player_update(&game, true);
     u.pos = Vec3::new(8.5, 64.3, 8.5); // feet well inside the stone cell
     u.vel = Vec3::ZERO;
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.tick_movement(0);
     let after = game.server.sessions[0].player.pos;
     assert!(
@@ -399,7 +397,9 @@ fn multi_deny_rollback_restores_the_oldest_snapshot() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        game.self_view.inventory.slot(game.self_view.inventory.active_slot() as usize),
+        game.self_view
+            .inventory
+            .slot(game.self_view.inventory.active_slot() as usize),
         before.slot(before.active_slot() as usize),
         "both denied predictions must be rolled back, not just the newest"
     );
@@ -410,9 +410,10 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     let mut game = game();
     // A loaded replica cell the ghost writes into.
     let pos = IVec3::new(3, 64, 3);
-    game.game
-        .replica
-        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
 
     // Predict a ghost placement (World snapshot, prev = air).
     let id = game.game.prediction.begin(PredictionSnapshot::World {
@@ -450,15 +451,22 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
     install_empty_chunk(&mut game);
     let a = IVec3::new(8, 63, 8);
     let b = IVec3::new(11, 63, 11);
-    assert!(game.server.world.set_block_world(a.x, a.y, a.z, Block::Stone));
-    assert!(game.server.world.set_block_world(b.x, b.y, b.z, Block::Stone));
+    assert!(game
+        .server
+        .world
+        .set_block_world(a.x, a.y, a.z, Block::Stone));
+    assert!(game
+        .server
+        .world
+        .set_block_world(b.x, b.y, b.z, Block::Stone));
     game.server.sessions[0].player.pos = Vec3::new(9.5, 63.0, 9.5);
     game.server.sessions[0].player.inventory = filled_inventory(); // dirt
 
     // Click aimed at A...
     let mut u = player_update(&game, true);
     u.target = Some(hit(a, IVec3::Y));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::UseClick {
@@ -470,7 +478,8 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
     // ...then the crosshair moves to B before the tick resolves the click.
     let mut u2 = player_update(&game, true);
     u2.target = Some(hit(b, IVec3::Y));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u2));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u2));
 
     game.server.tick_place(0, &mut TickEvents::default());
     assert_eq!(
@@ -492,7 +501,10 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
     let mut game = game();
     install_empty_chunk(&mut game);
     let t = IVec3::new(8, 64, 8);
-    assert!(game.server.world.set_block_world(t.x, t.y, t.z, Block::Stone));
+    assert!(game
+        .server
+        .world
+        .set_block_world(t.x, t.y, t.z, Block::Stone));
     game.server.sessions[0].player.pos = Vec3::new(8.5, 65.5, 10.5);
 
     // Empty hand, non-interactable stone: the server consumes nothing — the
@@ -500,7 +512,8 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
     // authoritative state of the disputed cells ships back.
     let mut u = player_update(&game, true);
     u.target = Some(hit(t, IVec3::Y));
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::UseClick {
@@ -527,7 +540,8 @@ fn claim_after_a_slow_client_gap_is_accepted() {
     let mut u = player_update(&game, true);
     u.pos = start;
     u.vel = Vec3::ZERO;
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.tick_movement(0);
     // A slow client: four ticks free-run with no fresh claim.
     for _ in 0..4 {
@@ -537,7 +551,8 @@ fn claim_after_a_slow_client_gap_is_accepted() {
     let mut u2 = player_update(&game, true);
     u2.pos = start + Vec3::new(6.0, 0.0, 0.0);
     u2.vel = Vec3::new(5.6, 0.0, 0.0);
-    game.server.apply_message(0, ClientToServer::PlayerUpdate(u2.clone()));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u2.clone()));
     game.server.tick_movement(0);
     assert_eq!(
         game.server.sessions[0].player.pos, u2.pos,
@@ -619,9 +634,10 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     let mut game = game();
     install_empty_chunk(&mut game);
     // Mirror the chunk onto the replica so the place ghost can write.
-    game.game
-        .replica
-        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
         .game
@@ -647,7 +663,11 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 
     let place_pos = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(place_pos.x, place_pos.y, place_pos.z)),
+        Block::from_id(
+            game.game
+                .replica
+                .chunk_block(place_pos.x, place_pos.y, place_pos.z)
+        ),
         Block::Dirt,
         "replica cell must change immediately"
     );
@@ -661,12 +681,10 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         "hotbar decrements with the ghost"
     );
     assert!(
-        game.game
-            .pending_events
-            .world
-            .iter()
-            .any(|e| matches!(e, crate::game::tick::WorldEvent::BlockPlaced { pos, block }
-                if *pos == place_pos && *block == Block::Dirt)),
+        game.game.pending_events.world.iter().any(
+            |e| matches!(e, crate::game::tick::WorldEvent::BlockPlaced { pos, block }
+                if *pos == place_pos && *block == Block::Dirt)
+        ),
         "local BlockPlaced must queue for sound this frame"
     );
     assert_eq!(game.game.local_placed_block, Some(Block::Dirt));
@@ -676,9 +694,10 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 fn optimistic_break_clears_replica_and_queues_world_event() {
     let mut game = game();
     install_empty_chunk(&mut game);
-    game.game
-        .replica
-        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .game
@@ -693,12 +712,10 @@ fn optimistic_break_clears_replica_and_queues_world_event() {
         "instant break must clear the replica immediately"
     );
     assert!(
-        game.game
-            .pending_events
-            .world
-            .iter()
-            .any(|e| matches!(e, crate::game::tick::WorldEvent::BlockBroken { pos: p, block, .. }
-                if *p == pos && *block == Block::Poppy)),
+        game.game.pending_events.world.iter().any(
+            |e| matches!(e, crate::game::tick::WorldEvent::BlockBroken { pos: p, block, .. }
+                if *p == pos && *block == Block::Poppy)
+        ),
         "local BlockBroken must queue for sound/burst this frame"
     );
     assert_eq!(game.game.local_broke_block, Some(Block::Poppy));
@@ -708,9 +725,10 @@ fn optimistic_break_clears_replica_and_queues_world_event() {
 fn denied_place_restores_cell_and_inventory_silently() {
     let mut game = game();
     let pos = IVec3::new(3, 64, 3);
-    game.game
-        .replica
-        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
     let before = game.self_view.inventory.clone();
@@ -772,10 +790,8 @@ fn break_finished_deny_queues_corrective_cells() {
         cells.contains(&pos),
         "a denied break finish must queue the claimed cell for corrective sync"
     );
-    assert!(
-        game.server.sessions[0]
-            .pending_action_outcomes
-            .iter()
-            .any(|o| o.id == 9 && !o.accepted)
-    );
+    assert!(game.server.sessions[0]
+        .pending_action_outcomes
+        .iter()
+        .any(|o| o.id == 9 && !o.accepted));
 }

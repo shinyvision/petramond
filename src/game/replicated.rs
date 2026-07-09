@@ -333,11 +333,14 @@ impl Game {
         msgs: &mut Vec<crate::net::protocol::ServerToClient>,
     ) {
         use crate::net::protocol::ServerToClient;
+        debug_assert!(self.remote_section_installs.is_empty());
         for msg in msgs.drain(..) {
             match msg {
                 ServerToClient::ColumnData(column) => self.replica.install_remote_column(column),
                 ServerToClient::SectionData(section) => {
-                    self.replica.install_remote_section(*section)
+                    if let Some(pos) = self.replica.install_remote_section_deferred(*section) {
+                        self.remote_section_installs.push(pos);
+                    }
                 }
                 ServerToClient::LightData(light) => self.replica.install_remote_light(light),
                 ServerToClient::SectionUnload(sp) => self.replica.uninstall_remote_section(sp),
@@ -378,6 +381,9 @@ impl Game {
                 }
             }
         }
+        self.replica
+            .finish_remote_install_batch(&self.remote_section_installs);
+        self.remote_section_installs.clear();
     }
 
     /// Close the open batch window into a rate sample and ack it RIGHT AWAY
@@ -528,11 +534,7 @@ impl Game {
     /// holds every cell this client already presented (or still has pending).
     /// Observers' / natural breaks still present. Server-side strip is the
     /// primary filter; this is the belt for races.
-    fn buffer_world_event(
-        &mut self,
-        msg: WorldEventMsg,
-        suppress: &rustc_hash::FxHashSet<IVec3>,
-    ) {
+    fn buffer_world_event(&mut self, msg: WorldEventMsg, suppress: &rustc_hash::FxHashSet<IVec3>) {
         use crate::game::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
         let ev = &mut self.pending_events;
         match msg {

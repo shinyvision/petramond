@@ -18,9 +18,16 @@ impl TerrainRenderHandoff<'_> {
         self.world.column_has_mesh(pos)
     }
 
-    pub(crate) fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos)) {
+    pub(crate) fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos, u64)) {
         for &column in &self.world.mesh_upload_dirty_columns {
-            f(column);
+            f(
+                column,
+                self.world
+                    .mesh_upload_revisions
+                    .get(&column)
+                    .copied()
+                    .unwrap_or(0),
+            );
         }
     }
 
@@ -95,7 +102,6 @@ mod tests {
         let column = pos.chunk_pos();
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
         section.blocks_slice_mut().fill(Block::Stone.id());
-        section.recompute_random_tick_count();
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
         world.mesh_section_blocking_for_test(pos);

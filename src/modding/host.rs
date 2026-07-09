@@ -845,8 +845,7 @@ fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             if text.trim().is_empty() {
                 return HostRet::Bool(false);
             }
-            ctx.queue
-                .push_action(ModAction::ChatSend { text, targets });
+            ctx.queue.push_action(ModAction::ChatSend { text, targets });
             HostRet::Bool(true)
         }),
         other => HostRet::Error(format!(

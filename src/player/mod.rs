@@ -33,8 +33,8 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use interaction::ray_vs_aabb;
 pub(crate) use interaction::block_within_reach;
+pub(crate) use interaction::ray_vs_aabb;
 pub use interaction::{RaycastHit, REACH};
 /// The swim probe height above the feet — also what the server-side fall
 /// tracker samples to mirror `track_fall`'s water reset from reported positions.

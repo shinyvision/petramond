@@ -123,6 +123,7 @@ impl IdRemap {
         match msg {
             ServerToClient::SectionData(p) => {
                 remap_bytes(&mut p.blocks, |id| self.block(id));
+                p.metrics = crate::section::Section::metrics_from_blocks(&p.blocks.0);
                 // Slab records carry raw layer BLOCK IDS (the save codec's
                 // 3-byte entry) — rewrite them like the block buffer.
                 for (_, [_, a, b]) in &mut p.states.slabs {
@@ -482,6 +483,7 @@ mod tests {
                 cz: 0,
             },
             blocks: SectionBytes(std::sync::Arc::from(vec![0u8, 1, 2].into_boxed_slice())),
+            metrics: Default::default(),
             water: None,
             skylight: None,
             blocklight: None,

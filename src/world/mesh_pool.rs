@@ -86,7 +86,7 @@ pub(super) struct MeshJob {
     pub revision: u64,
     pub center: Section,
     pub nbhd: [Option<NeighborSnap>; 27],
-    pub biome: Box<[u8]>,
+    pub biome: Arc<[u8]>,
 }
 
 /// Index into a 3×3×3 section neighbourhood by neighbour delta (−1/0/+1 each axis); centre
@@ -97,14 +97,15 @@ pub(super) fn nbhd_idx27(dx: i32, dy: i32, dz: i32) -> usize {
 }
 
 /// An empty per-column biome strip (`BIOME_PAD×BIOME_PAD` in XZ), filled by the caller.
-pub(super) fn empty_biome() -> Box<[u8]> {
-    vec![0u8; BIOME_PAD_AREA].into_boxed_slice()
+pub(super) fn empty_biome() -> Arc<[u8]> {
+    Arc::from(vec![0u8; BIOME_PAD_AREA].into_boxed_slice())
 }
 
 pub(super) struct MeshDone {
     pub pos: SectionPos,
     pub revision: u64,
-    pub mesh: ChunkMesh,
+    pub mesh: Option<ChunkMesh>,
+    pub cancel: crate::worker::JobCancel,
 }
 
 /// Mesh-stage adapter over the shared [`JobPool`]: `submit` queues a snapshot build
@@ -125,11 +126,26 @@ impl MeshPool {
         }
     }
 
-    pub fn submit(&self, key: i64, job: MeshJob) {
+    pub fn submit(&self, key: i64, job: MeshJob) -> crate::worker::JobCancel {
+        let cancel = crate::worker::JobCancel::new();
+        let job_cancel = cancel.clone();
+        let pos = job.pos;
+        let revision = job.revision;
         let tx = self.tx.clone();
         self.pool.submit(key, move || {
-            let _ = tx.send(build(job));
+            let done = if job_cancel.is_cancelled() {
+                MeshDone {
+                    pos,
+                    revision,
+                    mesh: None,
+                    cancel: job_cancel,
+                }
+            } else {
+                build(job, job_cancel)
+            };
+            let _ = tx.send(done);
         });
+        cancel
     }
 
     pub fn try_recv(&self) -> Option<MeshDone> {
@@ -327,7 +343,7 @@ fn pad_border(d: i32, c: usize) -> Option<usize> {
 }
 
 /// Build one section mesh from its owned snapshot.
-fn build(job: MeshJob) -> MeshDone {
+fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
     let t_stage = std::time::Instant::now();
     let MeshJob {
         pos,
@@ -340,8 +356,10 @@ fn build(job: MeshJob) -> MeshDone {
     let mesh = PAD_SCRATCH.with(|pad| {
         let mut pad = pad.borrow_mut();
         assemble_pad(pos, &nbhd, &mut pad);
-
-        build_section_mesh_from_pad(
+        if cancel.is_cancelled() {
+            return None;
+        }
+        Some(build_section_mesh_from_pad(
             &center,
             pos,
             SectionMeshPad {
@@ -354,16 +372,19 @@ fn build(job: MeshJob) -> MeshDone {
                 loaded: &pad.loaded,
                 biome: &biome,
             },
-        )
+        ))
     });
-    MESH_STAGE_NS.fetch_add(
-        t_stage.elapsed().as_nanos() as u64,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    MESH_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if mesh.is_some() {
+        MESH_STAGE_NS.fetch_add(
+            t_stage.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        MESH_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     MeshDone {
         pos,
         revision,
         mesh,
+        cancel,
     }
 }

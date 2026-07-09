@@ -11,13 +11,12 @@
 //! vertical range is `[SECTION_MIN_CY, SECTION_MAX_CY]` (20 sections), so the
 //! biased `cy` fits in 5 bits and the whole index in a `u16`.
 
-use std::collections::HashMap;
-use std::fs;
-use std::io;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, File};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::chunk::{SectionPos, SECTION_MIN_CY};
-use crate::save::codec::{put_u16, put_u32, Reader};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
 pub const REGION_SHIFT: i32 = 5;
@@ -59,60 +58,154 @@ pub fn parse_region_name(path: &Path) -> Option<(i32, i32)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
-/// Read a region into `local_index -> compressed record`. Missing file = empty.
-/// Corrupt file = `InvalidData` error (caller decides whether to ignore).
-pub fn read_region(path: &Path) -> io::Result<HashMap<u16, Vec<u8>>> {
-    let bytes = match fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(e) => return Err(e),
-    };
-    let mut r = Reader::new(&bytes);
-    let parsed = (|| {
-        if r.u32()? != MAGIC || r.u16()? != VERSION {
-            return None;
+#[derive(Copy, Clone)]
+struct RecordLocation {
+    offset: u64,
+    len: u32,
+}
+
+/// An open region plus its compact record index. Opening scans only the six-byte
+/// record headers and seeks over compressed bodies; it never reads or copies an
+/// unrelated record. The save thread keeps several of these readers in an LRU.
+pub(super) struct RegionReader {
+    file: Option<File>,
+    records: HashMap<u16, RecordLocation>,
+}
+
+impl RegionReader {
+    /// Missing files are valid empty regions. Every recorded body is bounds-checked
+    /// while indexing so a later targeted read cannot seek outside the container.
+    pub(super) fn open(path: &Path) -> io::Result<Self> {
+        let mut file = match File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    file: None,
+                    records: HashMap::new(),
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        let file_len = file.metadata()?.len();
+        let magic = read_u32(&mut file)?;
+        let version = read_u16(&mut file)?;
+        if magic != MAGIC || version != VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported region file",
+            ));
         }
-        let count = r.u16()? as usize;
-        let mut out = HashMap::with_capacity(count);
+        let count = read_u16(&mut file)? as usize;
+        let mut records = HashMap::with_capacity(count);
         for _ in 0..count {
-            let lidx = r.u16()?;
-            let len = r.u32()? as usize;
-            out.insert(lidx, r.bytes(len)?.to_vec());
+            let lidx = read_u16(&mut file)?;
+            let len = read_u32(&mut file)?;
+            let offset = file.stream_position()?;
+            let end = offset.checked_add(len as u64).ok_or_else(corrupt_region)?;
+            if end > file_len
+                || records
+                    .insert(lidx, RecordLocation { offset, len })
+                    .is_some()
+            {
+                return Err(corrupt_region());
+            }
+            file.seek(SeekFrom::Start(end))?;
         }
-        Some(out)
-    })();
-    parsed.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "corrupt region file"))
+        Ok(Self {
+            file: Some(file),
+            records,
+        })
+    }
+
+    pub(super) fn indices(&self) -> impl Iterator<Item = u16> + '_ {
+        self.records.keys().copied()
+    }
+
+    /// Read one compressed body. Other records remain in the kernel page cache and
+    /// are not copied into userspace.
+    pub(super) fn read_record(&mut self, lidx: u16) -> io::Result<Option<Vec<u8>>> {
+        let Some(loc) = self.records.get(&lidx).copied() else {
+            return Ok(None);
+        };
+        let file = self.file.as_mut().ok_or_else(corrupt_region)?;
+        file.seek(SeekFrom::Start(loc.offset))?;
+        let mut out = vec![0u8; loc.len as usize];
+        file.read_exact(&mut out)?;
+        Ok(Some(out))
+    }
+}
+
+fn corrupt_region() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "corrupt region file")
+}
+
+fn read_u16(r: &mut impl Read) -> io::Result<u16> {
+    let mut bytes = [0u8; 2];
+    r.read_exact(&mut bytes)?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+fn read_u32(r: &mut impl Read) -> io::Result<u32> {
+    let mut bytes = [0u8; 4];
+    r.read_exact(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
 /// The present local indices only (for building the load manifest cheaply).
 pub fn read_region_indices(path: &Path) -> io::Result<Vec<u16>> {
-    Ok(read_region(path)?.into_keys().collect())
+    let mut indices: Vec<_> = RegionReader::open(path)?.indices().collect();
+    indices.sort_unstable();
+    Ok(indices)
 }
 
-/// Atomically write a whole region (tmp + rename). An empty map removes the file.
-pub fn write_region(path: &Path, records: &HashMap<u16, Vec<u8>>) -> io::Result<()> {
-    if records.is_empty() {
-        return match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e),
-        };
+/// Merge replacement records into a region while copying every unchanged
+/// compressed body directly from the old file to the new one. This keeps a flush
+/// proportional to bytes written without allocating the old region as a map of
+/// blobs. A corrupt old region starts fresh, matching the previous save policy.
+pub(super) fn merge_region(
+    path: &Path,
+    replacements: impl IntoIterator<Item = (u16, Vec<u8>)>,
+) -> io::Result<()> {
+    let mut replacements: BTreeMap<u16, Vec<u8>> = replacements.into_iter().collect();
+    let mut old = RegionReader::open(path).unwrap_or_else(|_| RegionReader {
+        file: None,
+        records: HashMap::new(),
+    });
+    let mut keys: Vec<u16> = old.indices().collect();
+    keys.extend(replacements.keys().copied());
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "too many region records",
+        ));
     }
-    let mut buf = Vec::new();
-    put_u32(&mut buf, MAGIC);
-    put_u16(&mut buf, VERSION);
-    put_u16(&mut buf, records.len() as u16);
-    // Stable order → reproducible files (nicer for diffing and tests).
-    let mut entries: Vec<(&u16, &Vec<u8>)> = records.iter().collect();
-    entries.sort_by_key(|(k, _)| **k);
-    for (lidx, blob) in entries {
-        put_u16(&mut buf, *lidx);
-        put_u32(&mut buf, blob.len() as u32);
-        buf.extend_from_slice(blob);
-    }
+
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, &buf)?;
-    fs::rename(&tmp, path)
+    let mut out = BufWriter::new(File::create(&tmp)?);
+    out.write_all(&MAGIC.to_le_bytes())?;
+    out.write_all(&VERSION.to_le_bytes())?;
+    out.write_all(&(keys.len() as u16).to_le_bytes())?;
+    for lidx in keys {
+        out.write_all(&lidx.to_le_bytes())?;
+        if let Some(record) = replacements.remove(&lidx) {
+            out.write_all(&(record.len() as u32).to_le_bytes())?;
+            out.write_all(&record)?;
+            continue;
+        }
+        let loc = old.records.get(&lidx).copied().ok_or_else(corrupt_region)?;
+        out.write_all(&loc.len.to_le_bytes())?;
+        let file = old.file.as_mut().ok_or_else(corrupt_region)?;
+        file.seek(SeekFrom::Start(loc.offset))?;
+        let copied = io::copy(&mut file.take(loc.len as u64), &mut out)?;
+        if copied != loc.len as u64 {
+            return Err(corrupt_region());
+        }
+    }
+    out.flush()?;
+    drop(out);
+    fs::rename(tmp, path)
 }
 
 #[cfg(test)]
@@ -140,5 +233,30 @@ mod tests {
             let p = region_path(dir, rx, rz);
             assert_eq!(parse_region_name(&p), Some((rx, rz)));
         }
+    }
+
+    #[test]
+    fn indexed_merge_preserves_untouched_records() {
+        let path = std::env::temp_dir().join(format!(
+            "petramond-region-{}-{}.dat",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+
+        merge_region(&path, [(9, vec![1, 2, 3]), (2, vec![4, 5])]).expect("initial write");
+        assert_eq!(
+            read_region_indices(&path).expect("index"),
+            vec![2, 9],
+            "container order is stable"
+        );
+
+        merge_region(&path, [(9, vec![8, 7, 6, 5])]).expect("merge");
+        let mut reader = RegionReader::open(&path).expect("open merged region");
+        assert_eq!(reader.read_record(2).unwrap().unwrap(), vec![4, 5]);
+        assert_eq!(reader.read_record(9).unwrap().unwrap(), vec![8, 7, 6, 5]);
+        assert_eq!(reader.read_record(100).unwrap(), None);
+
+        let _ = fs::remove_file(path);
     }
 }

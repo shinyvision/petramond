@@ -17,6 +17,7 @@ impl World {
     /// tracked separately because headless profilers have no renderer to clear it.
     pub fn has_dirty_meshes(&self) -> bool {
         !self.dirty_meshes.is_empty()
+            || (self.role != super::store::WorldRole::ServerHeadless && self.vis_dirty)
             || !self.light_blocked_meshes.is_empty()
             || !self.light_deferred.is_empty()
             || self.light_bakes.has_pending()
@@ -173,7 +174,7 @@ impl World {
 
     #[inline]
     fn absent_cell_above_known_surface(&self, c: IVec3, pos: SectionPos) -> bool {
-        if self.save.as_ref().is_some_and(|s| s.manifest_contains(pos)) {
+        if self.saved_section_contains(pos) {
             return false;
         }
         self.columns
