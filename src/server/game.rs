@@ -255,7 +255,7 @@ impl ServerGame {
             .collect();
         // AFTER the ticks, so this pump's payloads carry the tick's edits and
         // freshly-final sections ship the same frame they land.
-        self.pump_streaming(&mut per_session, &queue_room);
+        self.pump_streaming(dt, &mut per_session, &queue_room);
         if ticks_ran > 0 {
             // Shared batch parts built ONCE per tick window: the drained
             // world-event queue (plus any leave-path events banked between
@@ -608,6 +608,9 @@ impl ServerGame {
                     self.paused = paused;
                 }
             }
+            ClientToServer::StreamBatchAck {
+                messages_per_second,
+            } => self.sessions[s].terrain.apply_batch_ack(messages_per_second),
             ClientToServer::KeepAlive => {}
             // Handshake/lifecycle messages are consumed by the transport
             // (the hub's pre-join state machine and its leave path); one

@@ -106,6 +106,8 @@ impl Game {
             connection_lost_reported: false,
             last_sent_transform: None,
             replica_clock: Default::default(),
+            stream_batch_started: None,
+            stream_rate_ema: None,
             incoming: Vec::new(),
             replica: bootstrap.replica,
             replicated_mobs: Default::default(),

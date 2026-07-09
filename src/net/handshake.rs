@@ -87,7 +87,17 @@ fn send<S: Write>(stream: &mut S, msg: &ClientToServer) -> Result<(), HandshakeE
 }
 
 fn reply<S: Read>(stream: &mut S) -> Result<ServerToClient, HandshakeError> {
-    read_msg(stream).map_err(map_io)
+    loop {
+        match read_msg(stream).map_err(map_io)? {
+            // The server's writer keepalives after 2 s of outbound silence —
+            // during the handshake too (admitting a join can take seconds on
+            // a busy host: the spawn find runs worldgen). Liveness only,
+            // never a reply; the server skips client keepalives the same way
+            // (`step_pending`).
+            ServerToClient::KeepAlive => continue,
+            msg => return Ok(msg),
+        }
+    }
 }
 
 /// Run the full client-side join handshake over `stream`. On `Ok` the stream
@@ -341,10 +351,32 @@ mod tests {
     #[test]
     fn an_out_of_sequence_reply_is_a_bad_frame() {
         // A server answering Hello with a gameplay message is broken.
-        let mut s = Scripted::new(&[ServerToClient::KeepAlive]);
+        let mut s = Scripted::new(&[ServerToClient::ServerClosing]);
         match client_handshake(&mut s, "Rachel", &installed(&[])) {
             Err(HandshakeError::BadFrame) => {}
             other => panic!("expected BadFrame, got {other:?}"),
         }
+    }
+
+    /// The connection writer keepalives after 2 s of outbound silence, and a
+    /// busy server can take longer than that to admit a join (the spawn find
+    /// runs worldgen) — keepalives landing between handshake replies are
+    /// liveness, not answers, and must be skipped, not treated as bad frames.
+    #[test]
+    fn keepalives_between_replies_are_skipped_not_bad_frames() {
+        let mut s = Scripted::new(&[
+            ServerToClient::KeepAlive,
+            ServerToClient::HelloAck {
+                protocol: PROTOCOL_VERSION,
+            },
+            ServerToClient::KeepAlive,
+            ServerToClient::KeepAlive,
+            ServerToClient::ModList { mods: Vec::new() },
+            ServerToClient::KeepAlive,
+            ServerToClient::JoinAccept(join_data()),
+        ]);
+        let data = client_handshake(&mut s, "Rachel", &installed(&[]))
+            .expect("keepalive-interleaved handshake succeeds");
+        assert_eq!(*data, *join_data());
     }
 }

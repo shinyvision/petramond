@@ -743,6 +743,13 @@ pub(crate) enum ClientToServer {
         shift: bool,
         gather: bool,
     },
+    /// Acknowledge one streaming batch (`StreamBatchStart`..`StreamBatchEnd`)
+    /// and report the rate this client actually applied it at — the
+    /// end-to-end flow-control signal the server sizes future batches from
+    /// (the 1.20.2 chunk-batching design; see WIKI/multiplayer.md).
+    StreamBatchAck {
+        messages_per_second: f32,
+    },
     Pause(bool),
     KeepAlive,
     Disconnect,
@@ -776,6 +783,16 @@ pub(crate) enum ServerToClient {
     LightData(LightPayload),
     SectionUnload(SectionPos),
     ColumnUnload(ChunkPos),
+    /// Brackets the start of one streaming batch (terrain/light/unload
+    /// messages) on a WINDOWED connection: the client times Start→End
+    /// application and answers `StreamBatchAck`. Never sent on the local
+    /// pipe (its client may be paused and ack nothing).
+    StreamBatchStart,
+    /// Ends the batch `StreamBatchStart` opened; `count` is the number of
+    /// streaming messages in between (the client's rate denominator).
+    StreamBatchEnd {
+        count: u32,
+    },
     Tick(Box<TickUpdate>),
     PlayerJoined {
         id: PlayerId,

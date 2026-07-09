@@ -28,7 +28,7 @@
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,6 +104,50 @@ fn write_loop<T: serde::Serialize>(
     }
 }
 
+/// Cumulative enqueued-message counts by kind. Every producer feeding a
+/// remote queue is supposed to pace itself against `queue_headroom`, so a
+/// queue-full kick means some producer broke that contract — these counts
+/// name it in the kick log instead of leaving a silent mystery.
+#[derive(Default)]
+struct SendStats {
+    ticks: AtomicU64,
+    sections: AtomicU64,
+    columns: AtomicU64,
+    light: AtomicU64,
+    unloads: AtomicU64,
+    other: AtomicU64,
+}
+
+impl SendStats {
+    fn count(&self, msg: &ServerToClient) {
+        let slot = match msg {
+            ServerToClient::Tick(_) => &self.ticks,
+            ServerToClient::SectionData(_) => &self.sections,
+            ServerToClient::ColumnData(_) => &self.columns,
+            ServerToClient::LightData(_) => &self.light,
+            ServerToClient::SectionUnload(_) | ServerToClient::ColumnUnload(_) => &self.unloads,
+            _ => &self.other,
+        };
+        slot.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl std::fmt::Display for SendStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let get = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        write!(
+            f,
+            "{} ticks, {} sections, {} columns, {} light, {} unloads, {} other",
+            get(&self.ticks),
+            get(&self.sections),
+            get(&self.columns),
+            get(&self.light),
+            get(&self.unloads),
+            get(&self.other)
+        )
+    }
+}
+
 /// The server side of one remote client's connection.
 pub(crate) struct TcpServerConn {
     tx: SyncSender<ServerToClient>,
@@ -113,6 +157,8 @@ pub(crate) struct TcpServerConn {
     /// `send`, decremented by the writer as it dequeues) — the live depth
     /// behind [`queue_headroom`](Self::queue_headroom).
     queued: Arc<AtomicUsize>,
+    /// What this connection was sent since it joined, for the kick log.
+    stats: SendStats,
     stream: TcpStream,
     peer: String,
 }
@@ -172,6 +218,7 @@ impl TcpServerConn {
             rx,
             dead,
             queued,
+            stats: SendStats::default(),
             stream,
             peer,
         })
@@ -181,17 +228,25 @@ impl TcpServerConn {
     /// FULL (a slow client): the caller runs the leave path — the server tick
     /// never blocks on a socket.
     pub(crate) fn send(&self, msg: ServerToClient) -> bool {
+        // Count up BEFORE the send: the writer may dequeue (and decrement)
+        // the instant try_send returns, and a post-send increment would then
+        // transiently wrap the depth so headroom reads as zero.
+        self.queued.fetch_add(1, Ordering::Relaxed);
+        self.stats.count(&msg);
         match self.tx.try_send(msg) {
-            Ok(()) => {
-                self.queued.fetch_add(1, Ordering::Relaxed);
-                true
-            }
+            Ok(()) => true,
             Err(TrySendError::Full(_)) => {
-                log::warn!("client {} outran its send queue; disconnecting", self.peer);
+                self.queued.fetch_sub(1, Ordering::Relaxed);
+                log::warn!(
+                    "client {} outran its send queue; disconnecting (sent since join: {})",
+                    self.peer,
+                    self.stats
+                );
                 self.dead.store(true, Ordering::SeqCst);
                 false
             }
             Err(TrySendError::Disconnected(_)) => {
+                self.queued.fetch_sub(1, Ordering::Relaxed);
                 self.dead.store(true, Ordering::SeqCst);
                 false
             }

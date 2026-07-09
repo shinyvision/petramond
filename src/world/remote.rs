@@ -452,6 +452,7 @@ impl World {
         self.light_ship_log.drain().collect()
     }
 
+
     /// One section's CURRENT light cubes as a wire payload; `None` when the
     /// section is gone (an eviction race) or has never baked.
     pub(crate) fn light_payload(&self, pos: SectionPos) -> Option<LightPayload> {

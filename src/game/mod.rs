@@ -136,6 +136,13 @@ pub struct Game {
     /// Client-side tick clock over RECEIVED `TickUpdate`s — the `tick_alpha`
     /// source now that the server accumulator lives on another thread.
     replica_clock: tick::ReplicaClock,
+    /// When the currently-open streaming batch's `StreamBatchStart` was
+    /// applied; `StreamBatchEnd` closes it into a rate sample and an ack.
+    stream_batch_started: Option<std::time::Instant>,
+    /// EMA over measured batch apply rates (streaming messages/second) — what
+    /// `StreamBatchAck` reports so the server sizes future batches to this
+    /// client's real throughput.
+    stream_rate_ema: Option<f32>,
     /// Per-frame scratch for drained server messages (capacity reused).
     incoming: Vec<crate::net::protocol::ServerToClient>,
     /// The client's REPLICA world (role `ClientReplica`): installed from the

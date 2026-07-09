@@ -495,7 +495,9 @@ mod tests {
         stream
     }
 
-    /// Drain `handle` until `f` yields, sleeping between polls; None = timeout.
+    /// Drain `handle` until `f` yields, sleeping between polls; None =
+    /// timeout. Acks every streaming batch like a live client so the
+    /// server's flow-control window keeps streaming.
     fn drain_until<T>(
         handle: &mut ServerHandle,
         timeout: Duration,
@@ -506,6 +508,11 @@ mod tests {
         while Instant::now() < deadline {
             handle.drain(&mut msgs);
             for msg in msgs.drain(..) {
+                if matches!(msg, ServerToClient::StreamBatchEnd { .. }) {
+                    let _ = handle.send(ClientToServer::StreamBatchAck {
+                        messages_per_second: 1e9, // server clamps
+                    });
+                }
                 if let Some(hit) = f(msg) {
                     return Some(hit);
                 }

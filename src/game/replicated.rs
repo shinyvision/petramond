@@ -352,6 +352,14 @@ impl Game {
                 ServerToClient::PlayerLeft { id } => {
                     self.player_roster.remove(&id);
                 }
+                // Streaming flow control: Start opens the timing window, End
+                // closes it into a measured apply rate and an immediate ack
+                // (both markers apply in THIS same drain loop, so the elapsed
+                // time is the real cost of installing the batch's messages).
+                ServerToClient::StreamBatchStart => {
+                    self.stream_batch_started = Some(std::time::Instant::now());
+                }
+                ServerToClient::StreamBatchEnd { count } => self.ack_stream_batch(count),
                 ServerToClient::KeepAlive => {}
                 ServerToClient::ServerClosing => {
                     self.note_connection_lost_because("the server closed");
@@ -364,6 +372,32 @@ impl Game {
                     debug_assert!(false, "unexpected post-join message: {other:?}");
                 }
             }
+        }
+    }
+
+    /// Close the open batch window into a rate sample and ack it RIGHT AWAY
+    /// through the handle (not the frame outbox: acks must flow even on
+    /// frames that never reach `tick_send`, or the server's window starves).
+    /// The EMA smooths per-batch noise; the server clamps whatever we report.
+    fn ack_stream_batch(&mut self, count: u32) {
+        let Some(started) = self.stream_batch_started.take() else {
+            return; // End without Start: tolerate, nothing to measure
+        };
+        let elapsed = started.elapsed().as_secs_f32().max(1e-4);
+        let sampled = count as f32 / elapsed;
+        let rate = match self.stream_rate_ema {
+            Some(ema) => ema * 0.75 + sampled * 0.25,
+            None => sampled,
+        };
+        self.stream_rate_ema = Some(rate);
+        if self
+            .handle
+            .send(crate::net::protocol::ClientToServer::StreamBatchAck {
+                messages_per_second: rate,
+            })
+            .is_err()
+        {
+            self.note_connection_lost();
         }
     }
 
