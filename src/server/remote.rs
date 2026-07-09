@@ -408,14 +408,15 @@ impl ServerGame {
     /// remove the session, and bank the close's world events for the next
     /// tick batch. Returns the leaver's name (`None` = no such session).
     ///
-    /// `swap_remove` keeps the local session at index 0 (only `s >= 1` is ever
-    /// removed) and every survivor's `PlayerId` rides with its element;
-    /// nothing stores session INDICES across loop iterations — the hub
-    /// re-resolves ids at every drain, and the pump resolves its tagged inbox
-    /// against the post-leave list.
+    /// `swap_remove` keeps a LISTEN server's local session at index 0 (only
+    /// `s >= 1` is ever removed there; a headless server may remove any
+    /// session, down to an empty list) and every survivor's `PlayerId` rides
+    /// with its element; nothing stores session INDICES across loop
+    /// iterations — the hub re-resolves ids at every drain, and the pump
+    /// resolves its tagged inbox against the post-leave list.
     pub(crate) fn remove_remote_session(&mut self, id: PlayerId) -> Option<String> {
         let s = self.sessions.iter().position(|x| x.id == id)?;
-        if s == 0 {
+        if s == 0 && self.has_local_session {
             debug_assert!(false, "the local session never leaves");
             return None;
         }
@@ -829,5 +830,81 @@ mod tests {
 
         host.shutdown_and_join();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The HEADLESS server shape end-to-end: built with NO local session,
+    /// the world freezes while empty (pause-when-empty), the first TCP join
+    /// claims PlayerId(0) and streams terrain through the ack-windowed
+    /// batches, and after the last leave the world freezes again — a rejoin
+    /// resumes from (nearly) the frozen tick instead of wall-clock time
+    /// having passed.
+    #[test]
+    fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
+        let mut server = crate::game::session::build_headless_session("", 11, 2);
+        assert!(!server.has_local_session);
+        assert!(server.sessions.is_empty());
+        assert!(server.lan_ever_opened, "the pause gate starts open");
+        // In-process smoke first: pumping an EMPTY headless server runs no
+        // ticks, produces no recipients, and panics nowhere.
+        let t0 = server.world.current_tick();
+        for _ in 0..5 {
+            let out = server.pump_tagged(0.05, &mut Vec::new(), &[]);
+            assert!(out.msgs.is_empty() && out.remote.is_empty());
+        }
+        assert_eq!(server.world.current_tick(), t0, "empty server: frozen");
+
+        let mut host = ServerHandle::spawn(server);
+        let port = host.open_to_lan(0).expect("bind an ephemeral port");
+
+        // First join claims id 0 — no local session holds it on headless.
+        let mut stream = connect(port);
+        let join = client_handshake(&mut stream, "Head", &installed_mod_ids()).expect("join");
+        assert_eq!(join.player_id, PlayerId(0));
+        let conn =
+            TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+        let mut remote = ServerHandle::from_remote(conn);
+
+        // Connected: the world runs and terrain streams (drain_until acks
+        // the batches like a live client).
+        let first = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+            ServerToClient::Tick(u) => Some(u.tick),
+            _ => None,
+        })
+        .expect("ticks flow to the joined player");
+        drain_until(&mut remote, Duration::from_secs(60), |msg| {
+            matches!(msg, ServerToClient::SectionData(_)).then_some(())
+        })
+        .expect("terrain streams to the headless server's first player");
+        let last_seen = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+            ServerToClient::Tick(u) if u.tick > first + 5 => Some(u.tick),
+            _ => None,
+        })
+        .expect("the world advances while a player is connected");
+
+        // Clean leave (farewell Disconnect through the handle drop path):
+        // the session list empties and the world freezes. Two seconds of
+        // wall time would be ~40 ticks if the sim kept running.
+        remote.shutdown_and_join();
+        std::thread::sleep(Duration::from_secs(2));
+
+        let mut stream = connect(port);
+        let join = client_handshake(&mut stream, "Head", &installed_mod_ids()).expect("rejoin");
+        assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
+        let conn =
+            TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+        let mut remote = ServerHandle::from_remote(conn);
+        let resumed = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+            ServerToClient::Tick(u) => Some(u.tick),
+            _ => None,
+        })
+        .expect("ticks resume on rejoin");
+        assert!(
+            resumed < last_seen + 20,
+            "the world froze while empty: tick {last_seen} -> {resumed} across \
+             2+ s of empty wall time (an unfrozen sim would be 40+ ahead)"
+        );
+
+        remote.shutdown_and_join();
+        host.shutdown_and_join();
     }
 }

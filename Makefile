@@ -2,6 +2,8 @@
 #
 #   make run             -- build (playtest: release-speed, fast rebuilds) & run
 #   make run-release     -- build (full release: thin LTO, 1 CGU) & run
+#   make run-server      -- build (playtest) & run the headless dedicated server
+#                           (WORLD=<name> required; PORT=7434 SEED= RD= optional)
 #   make dev             -- build (debug) & run the native desktop binary
 #   make build           -- build the release native binary
 #   make clean           -- cargo clean
@@ -23,7 +25,7 @@ RD    ?= 32
 # affects OpenGL/GLES. Override with `make run NV_OFFLOAD=` to use the Intel iGPU.
 NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-.PHONY: run run-native run-release dev build build-native clean gui-builder gui-builder-dev mods
+.PHONY: run run-native run-release run-server dev build build-native clean gui-builder gui-builder-dev mods
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -36,6 +38,13 @@ run-native:
 run-release: build-native
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
 		$(CARGO) run --release --bin petramond_native
+
+# Headless dedicated server (no GPU, no window). `make run-server WORLD=myworld`.
+PORT ?= 7434
+run-server:
+	@test -n "$(WORLD)" || { echo "usage: make run-server WORLD=<world-name> [PORT=7434]"; exit 2; }
+	PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) PETRAMOND_PORT=$(PORT) \
+		$(CARGO) run --profile playtest --bin petramond_server -- $(WORLD)
 
 dev:
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \

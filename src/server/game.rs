@@ -67,9 +67,19 @@ pub(crate) struct SharedTickRows {
 /// this to the wire.
 pub(crate) struct ServerGame {
     pub(crate) world: World,
-    /// The connected players' simulation sessions, in id order. The HOST
-    /// session (this process's player) is index 0 and always exists.
+    /// The connected players' simulation sessions. On a LISTEN server (the
+    /// in-game host) the LOCAL session is index 0 and always exists; on a
+    /// HEADLESS server every session is remote and the list may be EMPTY —
+    /// fixed ticks are skipped while it is (the world freezes between
+    /// players, like Minecraft's pause-when-empty), which is what keeps
+    /// every `sessions[0]` mod-ABI site sound: they all run inside the tick.
     pub(crate) sessions: Vec<ConnectedPlayer>,
+    /// Whether `sessions[0]` is THIS process's local player (listen server).
+    /// False on a headless server ([`crate::game::session::
+    /// build_headless_session`]): no local pipe recipient, every session
+    /// windowed by the streaming ack loop, and the leave path may empty the
+    /// list.
+    pub(crate) has_local_session: bool,
     /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
     /// `ContainerMenu`'s craft preview (borrowed in per call) and by the furnace
     /// *smelting* tick (`World::game_tick`), which is why they live here rather
@@ -221,8 +231,12 @@ impl ServerGame {
         for sess in &mut self.sessions {
             sess.pos_before_ticks = sess.player.pos;
         }
-        let (mut events, ticks_ran) = if self.paused {
-            // Paused: skip the fixed ticks ONLY, and bank no tick debt — the
+        // An EMPTY session list (a headless server between players) freezes
+        // the sim exactly like pause: the world clock stops, nothing spawns,
+        // and — load-bearing — no tick-side `sessions[0]` mod-ABI site can
+        // run against a missing session. Streaming/autosave keep pumping.
+        let (mut events, ticks_ran) = if self.paused || self.sessions.is_empty() {
+            // Skip the fixed ticks ONLY, and bank no tick debt — the
             // accumulator stays pinned so resume doesn't fast-forward.
             self.tick_accumulator = 0.0;
             (
@@ -279,15 +293,25 @@ impl ServerGame {
         self.maybe_autosave(dt);
 
         let mut per_session = per_session.into_iter();
-        let msgs = per_session.next().expect("session 0 always exists");
+        let msgs = if self.has_local_session {
+            per_session.next().expect("the local session is index 0")
+        } else {
+            Vec::new()
+        };
         let remote = self
             .sessions
             .iter()
-            .skip(1)
+            .skip(usize::from(self.has_local_session))
             .map(|sess| sess.id)
             .zip(per_session)
             .collect();
         PumpOutput { msgs, remote }
+    }
+
+    /// The local session's id (always index 0 on a listen server); `None` on
+    /// a headless server, whose sessions are all remote.
+    pub(crate) fn local_session_id(&self) -> Option<PlayerId> {
+        self.has_local_session.then(|| self.sessions[0].id)
     }
 
     /// The per-tick batch parts every recipient shares, built once per window

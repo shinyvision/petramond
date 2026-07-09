@@ -194,13 +194,15 @@ impl ServerGame {
         self.world.pump_light_bakes();
         let relit = self.world.take_light_ship_log();
 
+        let local_at_zero = self.has_local_session;
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
-            if s == 0 {
+            if s == 0 && local_at_zero {
                 // The LOCAL pipe is unwindowed: the channel is unbounded
                 // (payloads are Arc bumps) and its client may legitimately
                 // stop acking (the pause menu freezes a never-LAN'd
-                // singleplayer client while streaming must continue).
+                // singleplayer client while streaming must continue). A
+                // headless server has no local pipe — every session batches.
                 let mut allowance = stream_allowance(queue_room[s]);
                 self.send_terrain_for(s, anchors[s], &mut allowance, msgs);
                 self.send_light_for(s, &mut allowance, msgs);

@@ -322,11 +322,18 @@ fn server_main(
         }
 
         debug_assert!(msgs.is_empty(), "pump drains its inbox");
-        let local_id = server.sessions[0].id;
+        // Headless servers have no local session: the handle's gameplay pipe
+        // exists but nothing meaningful arrives on it — drain and drop (the
+        // Disconnected arm still means "the handle's owner is gone").
+        let local_id = server.local_session_id();
         let mut disconnected = false;
         loop {
             match inbox.try_recv() {
-                Ok(msg) => msgs.push((local_id, msg)),
+                Ok(msg) => {
+                    if let Some(id) = local_id {
+                        msgs.push((id, msg));
+                    }
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     disconnected = true;

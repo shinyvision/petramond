@@ -30,6 +30,12 @@ worldgen-tests = []
 name = "petramond_native"
 path = "src/bin/native.rs"
 
+# Headless dedicated server: the same ServerGame/loop the in-game
+# "Open to LAN" runs, with no local session and no renderer.
+[[bin]]
+name = "petramond_server"
+path = "src/bin/server.rs"
+
 # Headless top-down worldgen previewer (dev tool).
 [[bin]]
 name = "genmap"
