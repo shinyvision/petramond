@@ -45,8 +45,7 @@ pub(super) const MAX_BREAK_INDICES: u64 = MAX_BREAK_BOXES * 36;
 /// (depth is standard near=0/far=1, so negative = closer) so it reliably wins the
 /// `LessEqual` depth tie against the coincident block face despite the mesher's
 /// per-AO triangulation flip. The `constant` term covers head-on faces (depth slope
-/// ~0); the `slope_scale` term covers glancing angles. Mirrors Minecraft's
-/// crumbling/break layer offset (`polygonOffset(-1.0, -10.0)`): a few ULP — far too
+/// ~0); the `slope_scale` term covers glancing angles. A few ULP — far too
 /// small to overcome a genuinely closer surface or to read as parallax.
 const BREAK_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: -10,

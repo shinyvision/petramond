@@ -34,8 +34,8 @@ pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub(crate) use spawn::{
-    body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_cap_full,
-    HOSTILE_SPAWN_ATTEMPTS,
+    body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
+    hostile_spawn_plan, HOSTILE_SPAWN_ATTEMPTS,
 };
 
 use std::sync::LazyLock;

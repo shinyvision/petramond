@@ -4,7 +4,7 @@
 //! a textured FRONT and BACK face (the full tile, alpha-cutout in the shader)
 //! separated by a small depth, plus SIDE-WALL quads along every alpha BOUNDARY
 //! edge — an opaque texel adjacent to a transparent texel or the tile border —
-//! so the stepped silhouette gains thickness like a Minecraft item entity. Walls
+//! so the stepped silhouette gains thickness. Walls
 //! are textured with that boundary texel's own sub-UV sampled from the block
 //! atlas, which the [`model3d`](super::model3d) packed-vertex shader cannot do
 //! (it can only SELECT whole-tile UV corners), so this drives the dedicated

@@ -8,8 +8,7 @@ use crate::world::World;
 use super::BlockBehavior;
 
 /// Maximum number of face-steps from a leaf to a log — travelling only through
-/// leaves — for the leaf to count as supported. (Minecraft tracks a comparable
-/// distance-to-wood; here a leaf lives if a log is within 4 steps.)
+/// leaves — for the leaf to count as supported.
 const MAX_LOG_DISTANCE: i32 = 6;
 
 /// The six face-neighbour offsets, for the leaf-support flood. (The block-update

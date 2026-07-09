@@ -76,7 +76,7 @@ pub(super) fn build_hand_lit(
     let base_model = match view.item {
         None => {
             // Unit cube -> vanilla-ish arm dimensions. The first-person pose below
-            // applies Minecraft's renderPlayerArm transform sequence.
+            // applies renderPlayerArm transform sequence.
             push_cube_solid_lit(
                 verts,
                 indices,
@@ -265,7 +265,7 @@ fn radians(degrees: f32) -> f32 {
 
 /// Static rest orientation of the bare-arm cuboid (no swing): rises from the
 /// lower-right toward centre, tilted up, broad back-of-hand face to the camera.
-/// This is Minecraft's `renderPlayerArm` transform chain with the swing terms
+/// This is `renderPlayerArm` transform chain with the swing terms
 /// dropped — the punch is layered on separately in [`bare_arm_placement`] so the
 /// empty hand jabs forward like a held item instead of wiping sideways.
 fn arm_rest_pose() -> Mat4 {

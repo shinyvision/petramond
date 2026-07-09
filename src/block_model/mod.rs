@@ -61,7 +61,7 @@ pub use query::{
 
 use placement::{oriented_cell_instance, placement_transform_fp};
 
-/// Canonical bbmodel orientation: Blockbench/Minecraft model fronts face `-Z` (North).
+/// Canonical bbmodel orientation: Blockbench model fronts face `-Z` (North).
 /// Old model placements that predate per-cell facing read as this unrotated orientation.
 pub const DEFAULT_MODEL_FACING: Facing = Facing::North;
 

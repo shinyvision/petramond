@@ -22,7 +22,7 @@
 use crate::block::Aabb;
 use crate::facing::Facing;
 
-/// Slab thickness as a fraction of a cell — 3/16, like a Minecraft door.
+/// Slab thickness as a fraction of a cell — 3/16
 pub const THICKNESS: f32 = 3.0 / 16.0;
 /// The near edge of the slab's thin axis (`1 - THICKNESS`).
 const FAR: f32 = 1.0 - THICKNESS;

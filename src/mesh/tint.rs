@@ -2,7 +2,7 @@
 //!
 //! Grass tops, foliage (leaves), and water are tinted by the biome colour, blended
 //! over a 5x5 column window so the colour transitions smoothly across biome borders
-//! (the same window Minecraft uses). The blend is precomputed once per section in
+//! The blend is precomputed once per section in
 //! [`biome_window`]; the per-face loop then just looks the column up.
 
 use crate::atlas::TileTint;

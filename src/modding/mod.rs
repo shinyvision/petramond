@@ -451,9 +451,6 @@ fn hostile_kind_for_key(
     if crate::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
         return None;
     }
-    if world.mobs().spawn_room_for(kind) == 0 {
-        return None;
-    }
     let feet = IVec3::new(candidate.cell[0], candidate.cell[1], candidate.cell[2]);
     crate::mob::spawn_body_fits_at(world, kind, feet).then_some(kind)
 }

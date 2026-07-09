@@ -234,9 +234,7 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     }
 }
 
-/// Mining-speed multiplier of a tool tier over the bare hand (Minecraft's
-/// wooden ×2, stone ×4, iron ×6, diamond ×8). Only applied once the tool's kind
-/// matches the block and it can actually harvest it (see [`break_time`]).
+/// Mining-speed multiplier of a tool tier over the bare hand.
 #[inline]
 fn tool_speed(tier: u8) -> f32 {
     match tier {

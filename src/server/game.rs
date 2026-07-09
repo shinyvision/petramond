@@ -71,7 +71,7 @@ pub(crate) struct ServerGame {
     /// in-game host) the LOCAL session is index 0 and always exists; on a
     /// HEADLESS server every session is remote and the list may be EMPTY —
     /// fixed ticks are skipped while it is (the world freezes between
-    /// players, like Minecraft's pause-when-empty), which is what keeps
+    /// players), which is what keeps
     /// every `sessions[0]` mod-ABI site sound: they all run inside the tick.
     pub(crate) sessions: Vec<ConnectedPlayer>,
     /// Whether `sessions[0]` is THIS process's local player (listen server).
@@ -634,7 +634,9 @@ impl ServerGame {
             }
             ClientToServer::StreamBatchAck {
                 messages_per_second,
-            } => self.sessions[s].terrain.apply_batch_ack(messages_per_second),
+            } => self.sessions[s]
+                .terrain
+                .apply_batch_ack(messages_per_second),
             ClientToServer::KeepAlive => {}
             // Handshake/lifecycle messages are consumed by the transport
             // (the hub's pre-join state machine and its leave path); one
@@ -909,9 +911,9 @@ impl ServerGame {
                 body: (!sess.player.is_spectator()).then(|| sess.player.body()),
             })
             .collect();
-        // Natural + mod hostile spawning centre on ONE anchor per tick,
-        // round-robin, so the per-tick attempt budget stays constant
-        // regardless of player count.
+        // Passive natural spawning still centres on one anchor per tick, round-robin,
+        // so its per-tick attempt budget stays constant. Hostile spawning builds its
+        // own chunk/cap plan from every connected anchor below.
         let spawn_s = (self.world.current_tick() as usize) % self.sessions.len();
 
         self.begin_stage(Stage::Mobs, events);
@@ -935,7 +937,7 @@ impl ServerGame {
         for (kind, pos) in self.world.spawn_mobs_tick(anchors[spawn_s].pos) {
             self.bus.emit(PostEvent::MobSpawned { kind, pos });
         }
-        self.tick_mod_hostile_mob_spawns(spawn_s, events);
+        self.tick_mod_hostile_mob_spawns(&anchors, events);
         self.end_stage(Stage::Spawning, events);
     }
 
@@ -966,14 +968,22 @@ impl ServerGame {
         mods.dispatch_block_hooks(&mut ctx, &hooks);
     }
 
-    fn tick_mod_hostile_mob_spawns(&mut self, spawn_s: usize, events: &mut TickEvents) {
-        if !self.mods.has_hostile_spawners() || crate::mob::hostile_cap_full(&self.world) {
+    fn tick_mod_hostile_mob_spawns(
+        &mut self,
+        anchors: &[crate::mob::PlayerAnchor],
+        events: &mut TickEvents,
+    ) {
+        if !self.mods.has_hostile_spawners() {
             return;
         }
 
-        let player_pos = self.sessions[spawn_s].player.pos;
+        let player_positions: Vec<_> = anchors.iter().map(|a| a.pos).collect();
+        let Some(plan) = crate::mob::hostile_spawn_plan(&self.world, &player_positions) else {
+            return;
+        };
+
         'attempts: for attempt in 0..crate::mob::HOSTILE_SPAWN_ATTEMPTS {
-            let sites = crate::mob::hostile_attempt_sites(&self.world, player_pos, attempt);
+            let sites = crate::mob::hostile_attempt_sites(&self.world, &plan, attempt);
             for site in sites {
                 let kind = {
                     let Self {
@@ -996,6 +1006,9 @@ impl ServerGame {
                 let Some(kind) = kind else {
                     continue;
                 };
+                if !crate::mob::hostile_kind_has_room(&self.world, &plan, kind) {
+                    continue;
+                }
                 if self.world.spawn_mob(kind, site.pos, site.yaw) {
                     self.bus.emit(PostEvent::MobSpawned {
                         kind,

@@ -8,8 +8,8 @@ use super::{grass, BlockBehavior};
 
 /// How far, in blocks on every axis, a grass block may sit for it to spread onto
 /// this dirt — a `(2·R+1)³` neighbourhood. Spread is pure proximity: whatever sits
-/// *between* the two cells is irrelevant (unlike Minecraft, which also wants the
-/// dirt uncovered and lit). One knob; the world reads it through the behaviour.
+/// *between* the two cells is irrelevant.
+/// One knob; the world reads it through the behaviour.
 const SPREAD_RADIUS: i32 = 2;
 
 /// Dirt. On a random tick it greens into [`Block::Grass`] when its top is open and

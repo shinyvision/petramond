@@ -164,7 +164,6 @@ fn icon_mvp_for_rot(
     // block, so without depth a painter sort can't order its panels/drawers correctly.
     let sz = 0.4 / half_z;
     // NEGATIVE X scale: mirror horizontally to match Blockbench's GUI preview handedness
-    // (Minecraft's GUI base flips an axis; our render is otherwise the mirror image).
     Mat4::from_translation(Vec3::new(center[0], center[1], 0.5))
         * Mat4::from_scale(Vec3::new(-sx, sy, sz))
         * rot

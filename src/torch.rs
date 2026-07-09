@@ -11,8 +11,8 @@
 
 use crate::mathh::{IVec3, Mat4, Vec3};
 
-/// Half-width of the square pole, in cell units (the pole is `2/16` across, like a
-/// Minecraft torch). Shared by the model and the outline.
+/// Half-width of the square pole, in cell units (the pole is `2/16` across).
+/// Shared by the model and the outline.
 pub const POLE_HALF: f32 = 1.0 / 16.0;
 /// Height of the pole from its base, in cell units (`10/16`, the torch's textured
 /// length). The flame cap sits at the top.
