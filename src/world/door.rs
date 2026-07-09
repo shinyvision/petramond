@@ -202,7 +202,7 @@ impl World {
 
     /// The (lower, upper) cells of the door `pos` belongs to, found via the recorded
     /// `top` bit. `None` if `pos` isn't a door cell.
-    fn door_cells(&self, pos: IVec3) -> Option<(IVec3, IVec3)> {
+    pub(crate) fn door_cells(&self, pos: IVec3) -> Option<(IVec3, IVec3)> {
         let state = self.door_state_at(pos.x, pos.y, pos.z)?;
         Some(if state.top {
             (pos - UP, pos)

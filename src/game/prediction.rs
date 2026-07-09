@@ -19,13 +19,14 @@ pub(crate) enum PredictionSnapshot {
     None,
     /// Inventory (+ optional craft/chest/furnace/workbench/container views are
     /// restored by re-applying the last authoritative menu sync — inventory is
-    /// the primary rollback target for P1).
+    /// the primary rollback target for P1 menu clicks / drops).
     Inventory(Inventory),
-    /// A locally cleared (or ghost-placed) cell.
-    Cell {
-        pos: IVec3,
-        /// Previous block id at the cell (air = 0), for restore.
-        prev_block_id: u8,
+    /// A predicted world mutation: optional pre-mutation inventory (place
+    /// hotbar decrement) plus every replica cell written, with the previous
+    /// block id. Multi-cell clears (door, model) list the full footprint.
+    World {
+        inventory: Option<Inventory>,
+        cells: Vec<(IVec3, u8)>,
     },
 }
 
@@ -82,13 +83,32 @@ impl PredictionLedger {
         self.begin(PredictionSnapshot::None)
     }
 
-    /// Apply one batch of outcomes in order. Returns snapshots that must be
-    /// restored (denies only).
-    pub(crate) fn reconcile(&mut self, outcomes: &[ActionOutcome]) -> Vec<PredictionSnapshot> {
+    /// Cells covered by pending World snapshots (and optionally by snapshots
+    /// about to be reconciled). Used to suppress wire place/break presentation.
+    pub(crate) fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.pending.iter().flat_map(|p| match &p.snapshot {
+            PredictionSnapshot::World { cells, .. } => {
+                cells.iter().map(|(c, _)| *c).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+    }
+
+    /// Apply one batch of outcomes in order. Returns `(rollbacks, resolved_cells)`:
+    /// deny snapshots to restore, and every World cell whose pending entry
+    /// was answered (accept or deny) so presentation suppress can clear.
+    pub(crate) fn reconcile(
+        &mut self,
+        outcomes: &[ActionOutcome],
+    ) -> (Vec<PredictionSnapshot>, Vec<IVec3>) {
         let mut rollbacks = Vec::new();
+        let mut resolved_cells = Vec::new();
         for outcome in outcomes {
             if let Some(idx) = self.pending.iter().position(|p| p.id == outcome.id) {
                 let pending = self.pending.remove(idx);
+                if let PredictionSnapshot::World { cells, .. } = &pending.snapshot {
+                    resolved_cells.extend(cells.iter().map(|(c, _)| *c));
+                }
                 if !outcome.accepted {
                     rollbacks.push(pending.snapshot);
                 }
@@ -102,7 +122,7 @@ impl PredictionLedger {
         if predicted < LEDGER_CAP {
             self.frozen = false;
         }
-        rollbacks
+        (rollbacks, resolved_cells)
     }
 
     #[cfg(test)]
@@ -146,12 +166,12 @@ mod tests {
         let id = ledger.begin(PredictionSnapshot::Inventory(inv.clone()));
         assert_eq!(ledger.pending_len(), 1);
         let rollbacks = ledger.reconcile(&[accept(id)]);
-        assert!(rollbacks.is_empty());
+        assert!(rollbacks.0.is_empty());
         assert_eq!(ledger.pending_len(), 0);
 
         let id2 = ledger.begin(PredictionSnapshot::Inventory(inv));
         let rollbacks = ledger.reconcile(&[deny(id2, ActionDenyReason::Denied)]);
-        assert_eq!(rollbacks.len(), 1);
+        assert_eq!(rollbacks.0.len(), 1);
     }
 
     #[test]

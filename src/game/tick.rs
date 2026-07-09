@@ -471,7 +471,9 @@ impl Game {
     }
 
     /// Advance the local mining timer for crack overlay and emit
-    /// `BreakFinished` when the client finishes a break.
+    /// `BreakFinished` when the client finishes a break. On finish the client
+    /// fully applies the break it can see (cell clear, hand, local world
+    /// event) — see WIKI/client-prediction.md.
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
         let tool = self
             .self_view
@@ -494,23 +496,57 @@ impl Game {
         self.self_view.mining = self.local_mining.overlay();
 
         if let Some(ev) = event {
-            // P0 break hand pop, at the local finish (never echoed back).
-            self.local_broke_block = Some(ev.block);
-            // No duration claim rides the wire: the server validates the
-            // finish against ITS OWN observed mining window (breaking.rs).
-            let request_id = self.prediction.begin_track_only();
-            let tool_item_id = self
-                .self_view
-                .inventory
-                .selected()
-                .map(|st| st.item.0);
-            self.outbox
-                .push(ClientToServer::Action(PlayerAction::BreakFinished {
-                    request_id,
-                    pos: ev.pos,
-                    tool_item_id,
-                }));
+            let normal = self
+                .look
+                .filter(|h| h.block == ev.pos && h.normal != IVec3::ZERO)
+                .map(|h| h.normal);
+            self.apply_predicted_break(ev.pos, ev.block, normal);
         }
+    }
+
+    /// Full local break prediction at `pos`: clear the replica footprint, latch
+    /// hand + world event, open a ledger entry, and queue `BreakFinished`.
+    pub(super) fn apply_predicted_break(
+        &mut self,
+        pos: IVec3,
+        expected_block: crate::block::Block,
+        normal: Option<IVec3>,
+    ) {
+        let request_id = if self.prediction.can_predict() {
+            match self.replica.clear_broken_block(pos) {
+                Some((block, cells)) => {
+                    debug_assert_eq!(block, expected_block);
+                    let id = self.prediction.begin(prediction::PredictionSnapshot::World {
+                        inventory: None,
+                        cells: cells.clone(),
+                    });
+                    self.local_broke_block = Some(block);
+                    for (c, _) in &cells {
+                        self.predicted_presentation_cells.insert(*c);
+                    }
+                    self.pending_events.world.push(WorldEvent::BlockBroken {
+                        pos,
+                        block,
+                        normal,
+                    });
+                    id
+                }
+                // Cell already gone / unbreakable on the replica — still ask
+                // the server; track-only so we don't invent a restore.
+                None => self.prediction.begin_track_only(),
+            }
+        } else {
+            self.prediction.begin_track_only()
+        };
+        // No duration claim rides the wire: the server validates the finish
+        // against ITS OWN observed mining window (breaking.rs).
+        let tool_item_id = self.self_view.inventory.selected().map(|st| st.item.0);
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::BreakFinished {
+                request_id,
+                pos,
+                tool_item_id,
+            }));
     }
 
     /// Map this frame's replicated event payloads onto the app-facing
@@ -692,10 +728,11 @@ impl Game {
             && target.interaction() != crate::block::BlockInteraction::None
     }
 
-    /// Optimistic ghost place when the look target can accept the held block.
+    /// Optimistic full place when the look target can accept the held block.
     /// Mirrors the placement checks the client CAN evaluate on its replica —
-    /// a ghost the server is known to refuse is never drawn.
-    fn try_predict_place_ghost(
+    /// a ghost the server is known to refuse is never drawn. On predict: cell,
+    /// hotbar decrement, hand pop, and a local `WorldEvent::BlockPlaced`.
+    pub(super) fn try_predict_place_ghost(
         &mut self,
         sneak: bool,
     ) -> Option<crate::net::protocol::ClientRequestId> {
@@ -741,17 +778,21 @@ impl Game {
         if !self.prediction.can_predict() {
             return Some(self.prediction.begin_track_only());
         }
-        let snapshot = prediction::PredictionSnapshot::Cell {
-            pos: place_pos,
-            prev_block_id: prev,
+        let snapshot = prediction::PredictionSnapshot::World {
+            inventory: Some(self.self_view.inventory.clone()),
+            cells: vec![(place_pos, prev)],
         };
         let id = self.prediction.begin(snapshot);
         let _ = self
             .replica
             .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+        self.self_view.inventory.decrement_selected();
         self.place_ghost = Some((place_pos, block.0));
-        // P0 place hand pop, at prediction time (never echoed back).
         self.local_placed_block = Some(block);
+        self.predicted_presentation_cells.insert(place_pos);
+        self.pending_events
+            .world
+            .push(WorldEvent::BlockPlaced { pos: place_pos, block });
         Some(id)
     }
 

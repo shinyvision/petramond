@@ -210,8 +210,13 @@ pub struct Game {
     local_broke_block: Option<crate::block::Block>,
     /// The block the place ghost predicted this frame (hand pop).
     local_placed_block: Option<crate::block::Block>,
-    /// Optimistic ghost place cell (cleared on accept/deny or replica delta).
+    /// Optimistic place cell (cleared on accept/deny or replica delta).
     place_ghost: Option<(IVec3, u8)>,
+    /// Cells this client already presented place/break for (local WorldEvent).
+    /// Wire `BlockPlaced` / `BlockBroken` for these cells are dropped until the
+    /// matching outcome clears the entry — never re-play sound/particles for
+    /// an optimistic action. Observers' breaks never enter this set.
+    predicted_presentation_cells: rustc_hash::FxHashSet<IVec3>,
     fallback_world: SurfaceDensitySystem,
     particles: ParticleSystem,
     /// Wall-clock seconds banked toward the next mining-dust fleck while the
@@ -736,6 +741,29 @@ impl Game {
             return Vec::new();
         }
         self.self_view.effects.iter().map(|&(e, _)| e).collect()
+    }
+
+    /// Test injection: set the client's look target without a raycast, then
+    /// run place prediction (the production path after `refresh_target`).
+    #[cfg(test)]
+    pub(crate) fn predict_place_at_for_test(
+        &mut self,
+        block: IVec3,
+        normal: IVec3,
+        sneak: bool,
+    ) -> Option<crate::net::protocol::ClientRequestId> {
+        self.look = Some(RaycastHit {
+            block,
+            normal,
+            outline: crate::mathh::SelectionShape::full_block(block),
+        });
+        self.try_predict_place_ghost(sneak)
+    }
+
+    /// Test injection: run the full local break prediction at `pos`.
+    #[cfg(test)]
+    pub(crate) fn predict_break_at_for_test(&mut self, pos: IVec3, block: crate::block::Block) {
+        self.apply_predicted_break(pos, block, Some(IVec3::Y));
     }
 }
 

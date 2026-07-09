@@ -34,10 +34,55 @@ impl ServerGame {
             &self.world,
             tool,
         ) {
-            // Hold-path finish still works for clients that have not sent
-            // BreakFinished (or when the local timer and server agree).
-            self.finish_player_break(s, event, events);
+            // Hold-path finish: if a TooFast BreakFinished was deferred for
+            // this cell, accept it here. The initiator NEVER receives their
+            // own BlockBroken (finish_player_break always records
+            // presented_breaks) — they presented locally if they predicted,
+            // and must not hear a second burst if the hold-path raced ahead.
+            let broken_pos = event.pos;
+            let deferred = self.sessions[s]
+                .deferred_break_finished
+                .take_if(|d| d.pos == broken_pos);
+            if self.finish_player_break(s, event, events) {
+                if let Some(req) = deferred {
+                    self.sessions[s].pending_break_ack.remove(&broken_pos);
+                    self.push_action_outcome(s, req.request_id, true, None);
+                }
+            } else if let Some(req) = deferred {
+                // `block_break_pre` cancelled after a deferred wait.
+                self.deny_break_finished(
+                    s,
+                    req.request_id,
+                    req.pos,
+                    crate::net::protocol::ActionDenyReason::Denied,
+                );
+            }
+        } else {
+            // Mining abandoned / retargeted: any deferred finish for a cell
+            // that is no longer the active target must deny + correct.
+            self.abandon_deferred_break_if_stale(s);
         }
+    }
+
+    /// Drop a deferred TooFast finish whose cell is no longer being mined.
+    fn abandon_deferred_break_if_stale(&mut self, s: usize) {
+        let Some(req) = self.sessions[s].deferred_break_finished else {
+            return;
+        };
+        let still_mining = self.sessions[s]
+            .mining
+            .progress()
+            .is_some_and(|(target, _)| target == req.pos);
+        if still_mining {
+            return;
+        }
+        let req = self.sessions[s].deferred_break_finished.take().unwrap();
+        self.deny_break_finished(
+            s,
+            req.request_id,
+            req.pos,
+            crate::net::protocol::ActionDenyReason::TooFast,
+        );
     }
 
     fn resolve_break_finished(
@@ -59,13 +104,41 @@ impl ServerGame {
         let eye =
             self.sessions[s].claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
         if !crate::player::block_within_reach(eye, pos) {
-            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::OutOfReach));
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::OutOfReach);
             return;
         }
 
         let block = Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z));
+        // Hold-path may have already cleared the cell before a lagged
+        // BreakFinished arrives. If THIS session broke it, accept — never
+        // deny/restore (that re-spawns the block and invites a second break).
+        if block == Block::Air {
+            if self.sessions[s].pending_break_ack.remove(&pos) {
+                if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+                    if old.pos != pos {
+                        self.deny_break_finished(
+                            s,
+                            old.request_id,
+                            old.pos,
+                            ActionDenyReason::TooFast,
+                        );
+                    } else {
+                        self.push_action_outcome(
+                            s,
+                            old.request_id,
+                            false,
+                            Some(ActionDenyReason::TooFast),
+                        );
+                    }
+                }
+                self.push_action_outcome(s, request_id, true, None);
+                return;
+            }
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
+            return;
+        }
         if block.hardness() < 0.0 {
-            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::Denied));
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
             return;
         }
 
@@ -78,19 +151,19 @@ impl ServerGame {
             .map(crate::item::ItemType)
             .and_then(|it| it.tool());
         if claimed_tool != auth_tool {
-            self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::BadTool));
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::BadTool);
             return;
         }
 
         // Duration is validated against the SERVER'S OWN mining timer — the
         // hold-path `sess.mining` that accrues from the latched look +
-        // break_held every tick. Client-reported time is never trusted: the
-        // uplink delays of the mining start and the finish request roughly
-        // cancel, so the observed window tracks the client's real elapsed
-        // time within a couple of ticks of jitter (the slack below). A
-        // spuriously denied finish costs nothing — the hold-path timer still
-        // breaks the block a tick or two later. Instant blocks (expected 0)
-        // need no observed window.
+        // break_held every tick. Client-reported time is never trusted.
+        // Instant blocks (expected 0) need no observed window.
+        //
+        // TooFast is DEFERRED, not denied: the client's optimistic clear
+        // stays, and when the hold-path timer finishes the same cell we
+        // accept + strip presentation. Immediate deny would restore the
+        // block then re-break it (double sound/burst on slow links).
         let expected = crate::mining::break_time(block, auth_tool);
         if expected > 0.0 {
             let observed = self.sessions[s]
@@ -98,7 +171,17 @@ impl ServerGame {
                 .progress()
                 .and_then(|(target, elapsed)| (target == pos).then_some(elapsed));
             if observed.is_none_or(|elapsed| elapsed + 3.0 * TICK_DT < expected) {
-                self.push_action_outcome(s, request_id, false, Some(ActionDenyReason::TooFast));
+                // Supersede any prior deferred wait for another cell.
+                if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+                    self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
+                }
+                self.sessions[s].deferred_break_finished = Some(
+                    crate::server::player::PendingBreakFinished {
+                        request_id,
+                        pos,
+                        tool_item_id,
+                    },
+                );
                 return;
             }
         }
@@ -109,20 +192,61 @@ impl ServerGame {
             harvested: crate::mining::harvests(block, auth_tool),
         };
         self.sessions[s].mining = MiningState::new();
-        self.finish_player_break(s, event, events);
-        self.push_action_outcome(s, request_id, true, None);
+        // A successful BreakFinished clears any deferred wait for this cell
+        // (should be empty — we only defer when the window is short).
+        if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+            if old.pos != pos {
+                self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
+            } else {
+                // Same cell already deferred — answer the older id as denied
+                // (superseded by this accept path).
+                self.push_action_outcome(
+                    s,
+                    old.request_id,
+                    false,
+                    Some(ActionDenyReason::TooFast),
+                );
+            }
+        }
+        if self.finish_player_break(s, event, events) {
+            self.sessions[s].pending_break_ack.remove(&pos);
+            self.push_action_outcome(s, request_id, true, None);
+        } else {
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
+        }
+    }
+
+    /// Deny a `BreakFinished` and queue corrective cells for the claimed
+    /// footprint so an optimistic clear cannot linger as phantom air.
+    fn deny_break_finished(
+        &mut self,
+        s: usize,
+        request_id: crate::net::protocol::ClientRequestId,
+        pos: IVec3,
+        reason: crate::net::protocol::ActionDenyReason,
+    ) {
+        self.push_action_outcome(s, request_id, false, Some(reason));
+        self.queue_break_corrective_cells(s, pos);
+    }
+
+    /// Authoritative footprint of `pos` into the session's corrective sync.
+    fn queue_break_corrective_cells(&mut self, s: usize, pos: IVec3) {
+        let cells = self.world.break_footprint_cells(pos);
+        self.sessions[s]
+            .pending_corrective_cells
+            .extend(cells);
     }
 
     /// Apply a finished player break: announce `block_break_pre` (cancel =
     /// unbreakable — the block stays; the spent mining progress is the cost), then
     /// clear the block, scatter block-entity contents + harvested drops, spawn the
-    /// burst, and queue `block_broken`.
+    /// burst, and queue `block_broken`. Returns whether the block actually broke.
     pub(crate) fn finish_player_break(
         &mut self,
         s: usize,
         event: BreakEvent,
         events: &mut TickEvents,
-    ) {
+    ) -> bool {
         {
             let mut pre = BlockBreakPre {
                 pos: event.pos,
@@ -144,10 +268,17 @@ impl ServerGame {
                 &mut pre,
             ) == Outcome::Cancel
             {
-                return;
+                return false;
             }
         }
         events.player(s).broke_block = Some(event.block);
+        // The initiator NEVER re-hears their own BlockBroken — strip it from
+        // their TickUpdate whether they predicted locally or the hold-path
+        // raced ahead of BreakFinished. Observers still get the shared event.
+        self.sessions[s].presented_breaks.push(event.pos);
+        // A lagged BreakFinished for this already-cleared cell must accept,
+        // not deny/restore.
+        self.sessions[s].pending_break_ack.insert(event.pos);
         // Breaking a bed takes its spawn point with it — resolved BEFORE the
         // removal below clears the footprint metadata the group lookup needs.
         // Checked for EVERY session: any player can break another's spawn bed.
@@ -213,6 +344,7 @@ impl ServerGame {
             harvested: event.harvested,
             natural: false,
         });
+        true
     }
 
     /// Drain the blocks the world simulation destroyed this tick (fragile blocks that

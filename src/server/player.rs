@@ -271,9 +271,17 @@ pub(crate) struct ConnectedPlayer {
     /// crosshair must land where the client's ghost is.
     pub pending_place_target: Option<TargetRef>,
     /// Cells whose CURRENT authoritative state ships to this recipient in the
-    /// next batch (a use click that resolved to nothing, or a denied place):
-    /// the reconcile channel for a client whose replica disagreed.
+    /// next batch (a use click that resolved to nothing, a denied place, or a
+    /// denied break): the reconcile channel for a client whose replica disagreed.
     pub pending_corrective_cells: Vec<IVec3>,
+    /// Cells this session placed this tick window — stripped from the
+    /// initiator's `TickUpdate.events` so their local place prediction does
+    /// not hear a second `BlockPlaced` one RTT later. Taken in
+    /// `build_tick_update`.
+    pub presented_places: Vec<IVec3>,
+    /// Cells this session broke this tick window — same echo filter for
+    /// `BlockBroken`. Taken in `build_tick_update`.
+    pub presented_breaks: Vec<IVec3>,
     /// The held block's placement rotation, fed from `PlayerUpdate`'s raw
     /// counter (see [`HeldRotation::apply_wire`]). The placement paths read
     /// THIS copy, never the client's.
@@ -308,6 +316,18 @@ pub(crate) struct ConnectedPlayer {
     pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
     /// Latched `BreakFinished` request, applied by the mining stage.
     pub pending_break_finished: Option<PendingBreakFinished>,
+    /// A `BreakFinished` that arrived before the server's observed mining
+    /// window was full (`TooFast`). Kept until the hold-path timer finishes
+    /// the same cell (then accepted + presentation stripped) or mining
+    /// abandons the cell (then denied + corrective). Avoids deny→restore→
+    /// hold-path double presentation on slow links — see
+    /// WIKI/client-prediction.md.
+    pub deferred_break_finished: Option<PendingBreakFinished>,
+    /// Cells this session already broke (hold-path or BreakFinished) that
+    /// still owe a `BreakFinished` accept. A lagged finish for an already-air
+    /// cell in this set is accepted (no restore); air without an entry is a
+    /// real deny. Cleared when the matching finish is answered.
+    pub pending_break_ack: rustc_hash::FxHashSet<IVec3>,
     /// Optional request id on the pending use/place click (place ghost ack).
     pub pending_place_request_id: Option<crate::net::protocol::ClientRequestId>,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
@@ -401,6 +421,8 @@ impl ConnectedPlayer {
             pending_use_mob: None,
             pending_place_target: None,
             pending_corrective_cells: Vec::new(),
+            presented_places: Vec::new(),
+            presented_breaks: Vec::new(),
             held_rotation: HeldRotation::default(),
             fall,
             pending_fall: 0.0,
@@ -411,6 +433,8 @@ impl ConnectedPlayer {
             pending_menu_clicks: Vec::new(),
             pending_action_outcomes: Vec::new(),
             pending_break_finished: None,
+            deferred_break_finished: None,
+            pending_break_ack: Default::default(),
             pending_place_request_id: None,
             move_wishdir: crate::mathh::Vec3::ZERO,
             move_jump: false,

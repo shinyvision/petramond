@@ -1,4 +1,4 @@
-use crate::block::Block;
+use crate::block::{Block, RenderShape};
 use crate::block_state::LogAxis;
 use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use crate::column::NO_SURFACE;
@@ -8,6 +8,52 @@ use crate::section::SectionSummary;
 use super::store::World;
 
 impl World {
+    /// Cells a player break at `pos` clears: door both halves, model footprint,
+    /// or the single cell. Used by optimistic client clears and server
+    /// corrective-cell sync so deny restores the full footprint.
+    pub fn break_footprint_cells(&self, pos: IVec3) -> Vec<IVec3> {
+        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        match block.render_shape() {
+            RenderShape::Model(_) => self
+                .model_group(pos)
+                .map(|(_, _, cells)| cells)
+                .unwrap_or_else(|| vec![pos]),
+            RenderShape::Door => self
+                .door_cells(pos)
+                .map(|(lower, upper)| vec![lower, upper])
+                .unwrap_or_else(|| vec![pos]),
+            _ => vec![pos],
+        }
+    }
+
+    /// Snapshot previous block ids for [`break_footprint_cells`], then clear
+    /// the footprint the same way the server's break funnel does (door /
+    /// model / single air). No drops. Returns `(broken_block, cells_with_prev)`
+    /// or `None` when the cell is already air / unbreakable.
+    pub fn clear_broken_block(&mut self, pos: IVec3) -> Option<(Block, Vec<(IVec3, u8)>)> {
+        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        if block.hardness() < 0.0 {
+            return None;
+        }
+        let cells: Vec<(IVec3, u8)> = self
+            .break_footprint_cells(pos)
+            .into_iter()
+            .map(|c| (c, self.chunk_block(c.x, c.y, c.z)))
+            .collect();
+        match block.render_shape() {
+            RenderShape::Model(_) => {
+                let _ = self.remove_model_block(pos);
+            }
+            RenderShape::Door => {
+                let _ = self.remove_door(pos);
+            }
+            _ => {
+                let _ = self.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+            }
+        }
+        Some((block, cells))
+    }
+
     /// Set a block at world coords. Updates the column surface heightmap, marks the
     /// owning section's light plus its full 3×3×3 neighbourhood dirty so the next
     /// `tick_mesh_budget` refreshes cached light and rebuilds meshes. Returns false

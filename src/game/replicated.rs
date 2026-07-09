@@ -432,12 +432,23 @@ impl Game {
                 self.adopt_authoritative_transform(t);
             }
         }
+        // Snapshot predicted cells BEFORE reconcile so accept/deny this batch
+        // still suppress matching wire presentation events (the ledger entry
+        // is about to drop).
+        let suppress: rustc_hash::FxHashSet<IVec3> = self
+            .prediction
+            .predicted_cells()
+            .chain(self.predicted_presentation_cells.iter().copied())
+            .collect();
         // Authoritative inventory / block deltas win; then apply deny rollbacks
         // for any predicted mutations the server rejected. Snapshots come back
         // oldest-first, each capturing the state BEFORE its own prediction —
         // so a newer snapshot still embeds an older denied mutation. Applied
         // newest-first so the OLDEST snapshot wins.
-        let rollbacks = self.prediction.reconcile(&update.action_outcomes);
+        let (rollbacks, resolved_cells) = self.prediction.reconcile(&update.action_outcomes);
+        for pos in &resolved_cells {
+            self.predicted_presentation_cells.remove(pos);
+        }
         for snap in rollbacks.into_iter().rev() {
             match snap {
                 crate::game::prediction::PredictionSnapshot::None => {}
@@ -453,24 +464,32 @@ impl Game {
                         self.self_view.inventory = inv;
                     }
                 }
-                crate::game::prediction::PredictionSnapshot::Cell {
-                    pos,
-                    prev_block_id,
-                } => {
-                    // A same-batch authoritative delta at this cell wins over
-                    // the rollback (e.g. another player's placement took the
-                    // cell this client's place lost) — never restore the
-                    // stale pre-prediction block over it.
-                    if update.block_deltas.iter().all(|d| d.pos != pos) {
+                crate::game::prediction::PredictionSnapshot::World { inventory, cells } => {
+                    if let Some(inv) = inventory {
+                        if update
+                            .self_state
+                            .as_ref()
+                            .and_then(|s| s.inventory.as_ref())
+                            .is_none()
+                        {
+                            self.self_view.inventory = inv;
+                        }
+                    }
+                    // Silent restore: no world events. A same-batch
+                    // authoritative delta at a cell wins over the rollback.
+                    for (pos, prev_block_id) in cells {
+                        if update.block_deltas.iter().any(|d| d.pos == pos) {
+                            continue;
+                        }
                         let _ = self.replica.set_block_world(
                             pos.x,
                             pos.y,
                             pos.z,
                             crate::block::Block::from_id(prev_block_id),
                         );
-                    }
-                    if self.place_ghost.is_some_and(|(p, _)| p == pos) {
-                        self.place_ghost = None;
+                        if self.place_ghost.is_some_and(|(p, _)| p == pos) {
+                            self.place_ghost = None;
+                        }
                     }
                 }
             }
@@ -495,7 +514,7 @@ impl Game {
             self.menu_view.apply(sync);
         }
         for msg in update.events {
-            self.buffer_world_event(msg);
+            self.buffer_world_event(msg, &suppress);
         }
         self.pending_events
             .self_events
@@ -504,7 +523,16 @@ impl Game {
 
     /// Translate one wire world event to local types into the frame buffer.
     /// Ids arrived remapped (identity in-process), so constructors are direct.
-    fn buffer_world_event(&mut self, msg: WorldEventMsg) {
+    ///
+    /// Own predicted place/break presentation is NEVER replayed: `suppress`
+    /// holds every cell this client already presented (or still has pending).
+    /// Observers' / natural breaks still present. Server-side strip is the
+    /// primary filter; this is the belt for races.
+    fn buffer_world_event(
+        &mut self,
+        msg: WorldEventMsg,
+        suppress: &rustc_hash::FxHashSet<IVec3>,
+    ) {
         use crate::game::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
         let ev = &mut self.pending_events;
         match msg {
@@ -512,16 +540,24 @@ impl Game {
                 pos,
                 block_id,
                 normal,
-            } => ev.world.push(WorldEvent::BlockBroken {
-                pos,
-                block: crate::block::Block::from_id(block_id),
-                normal,
-            }),
+            } => {
+                if suppress.contains(&pos) {
+                    return;
+                }
+                ev.world.push(WorldEvent::BlockBroken {
+                    pos,
+                    block: crate::block::Block::from_id(block_id),
+                    normal,
+                });
+            }
             WorldEventMsg::BlockPlaced { pos, block_id } => {
+                if suppress.contains(&pos) {
+                    return;
+                }
                 ev.world.push(WorldEvent::BlockPlaced {
                     pos,
                     block: crate::block::Block::from_id(block_id),
-                })
+                });
             }
             WorldEventMsg::DoorToggled { lower, open } => {
                 ev.world.push(WorldEvent::DoorToggled { lower, open })

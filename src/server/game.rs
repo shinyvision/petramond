@@ -503,6 +503,34 @@ impl ServerGame {
             }
         }
         let action_outcomes = std::mem::take(&mut self.sessions[s].pending_action_outcomes);
+        // Echo rule: the initiator already presented their own place/break
+        // locally — strip matching world events from THEIR batch only.
+        // Observers still receive the shared list unchanged.
+        let presented_places: rustc_hash::FxHashSet<_> = std::mem::take(
+            &mut self.sessions[s].presented_places,
+        )
+        .into_iter()
+        .collect();
+        let presented_breaks: rustc_hash::FxHashSet<_> = std::mem::take(
+            &mut self.sessions[s].presented_breaks,
+        )
+        .into_iter()
+        .collect();
+        let events_for_recipient: Vec<WorldEventMsg> = if presented_places.is_empty()
+            && presented_breaks.is_empty()
+        {
+            world_events.to_vec()
+        } else {
+            world_events
+                .iter()
+                .filter(|ev| match ev {
+                    WorldEventMsg::BlockPlaced { pos, .. } => !presented_places.contains(pos),
+                    WorldEventMsg::BlockBroken { pos, .. } => !presented_breaks.contains(pos),
+                    _ => true,
+                })
+                .cloned()
+                .collect()
+        };
         TickUpdate {
             tick: shared.tick,
             clock: shared.clock,
@@ -514,7 +542,7 @@ impl ServerGame {
             self_state: Some(self.build_self_state(s)),
             open_chests: shared.open_chests.clone(),
             env: shared.env.clone(),
-            events: world_events.to_vec(),
+            events: events_for_recipient,
             self_events: self.build_self_events(s, events),
             action_outcomes,
             menu_sync: self.build_menu_sync(s),
@@ -895,16 +923,36 @@ impl ServerGame {
                 pos,
                 tool_item_id,
             } => {
-                let sess = &mut self.sessions[s];
-                if let Some(old) = sess.pending_break_finished.replace(
-                    crate::server::player::PendingBreakFinished {
+                // A newer finish supersedes any in-flight latch OR deferred
+                // TooFast wait — answer the old id so the ledger cannot leak.
+                let (old_pending, old_deferred) = {
+                    let sess = &mut self.sessions[s];
+                    (
+                        sess.pending_break_finished.take(),
+                        sess.deferred_break_finished.take(),
+                    )
+                };
+                if let Some(old) = old_pending {
+                    self.sessions[s]
+                        .pending_action_outcomes
+                        .push(deny(old.request_id));
+                }
+                if let Some(old) = old_deferred {
+                    self.sessions[s]
+                        .pending_action_outcomes
+                        .push(deny(old.request_id));
+                    // Old optimistic clear may still be on the client.
+                    let cells = self.world.break_footprint_cells(old.pos);
+                    self.sessions[s]
+                        .pending_corrective_cells
+                        .extend(cells);
+                }
+                self.sessions[s].pending_break_finished =
+                    Some(crate::server::player::PendingBreakFinished {
                         request_id,
                         pos,
                         tool_item_id,
-                    },
-                ) {
-                    sess.pending_action_outcomes.push(deny(old.request_id));
-                }
+                    });
             }
             // A mode switch is not tick input: applied at message time, like
             // the direct call it replaces. The floating spectator must never

@@ -558,7 +558,8 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
 }
 
 /// Player block placement and (mined) breaks broadcast position-carrying
-/// `WorldEventMsg`s alongside the recipient's own lossy one-shots.
+/// `WorldEventMsg`s. The initiator's own batch omits their predicted
+/// place/break presentation (echo rule); a second session still receives them.
 #[test]
 fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use crate::block::Block;
@@ -573,41 +574,109 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
     game.server.sessions[0].player.inventory = filled_inventory(); // Dirt in slot 0
+    let observer = game
+        .server
+        .add_session_for_test(crate::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
 
     // Place: a latched use click against the floor's top face.
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
-    let update = pump_one_tick(&mut game);
+    let mut inbox = Vec::new();
+    let out = game.server.pump(TICK_DT, &mut inbox);
     let placed_at = floor + IVec3::Y;
+    let initiator = out
+        .msgs
+        .iter()
+        .find_map(|msg| match msg {
+            crate::net::protocol::ServerToClient::Tick(u) => Some(u.as_ref()),
+            _ => None,
+        })
+        .expect("local session batch");
     assert!(
-        update.events.iter().any(|e| matches!(
+        initiator.events.iter().all(|e| !matches!(
+            e,
+            WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
+        )),
+        "initiator must not re-hear their own BlockPlaced, got {:?}",
+        initiator.events
+    );
+    let observer_id = game.server.sessions[observer].id;
+    let observer_batch = out
+        .remote
+        .iter()
+        .find(|(id, _)| *id == observer_id)
+        .and_then(|(_, msgs)| {
+            msgs.iter().find_map(|msg| match msg {
+                crate::net::protocol::ServerToClient::Tick(u) => Some(u.as_ref()),
+                _ => None,
+            })
+        })
+        .expect("observer batch");
+    assert!(
+        observer_batch.events.iter().any(|e| matches!(
             e,
             WorldEventMsg::BlockPlaced { pos, block_id }
                 if *pos == placed_at && *block_id == Block::Dirt.0
         )),
-        "the placement broadcast its position, got {:?}",
-        update.events
+        "observers still receive the placement, got {:?}",
+        observer_batch.events
     );
 
-    // Break: hold the primary button on the placed dirt until it gives.
+    // Break: hold-path finish — initiator NEVER receives BlockBroken (own
+    // breaks are stripped; observers still hear them).
     game.server.sessions[0].look = Some(super::common::hit(placed_at, IVec3::Y));
     game.server.sessions[0].intent_gameplay = true;
     game.server.sessions[0].intent_break_held = true;
-    let mut broke = None;
+    let mut initiator_heard = false;
+    let mut observer_heard = false;
     for _ in 0..200 {
-        let update = pump_one_tick(&mut game);
-        if let Some(ev) = update.events.iter().find_map(|e| match e {
-            WorldEventMsg::BlockBroken { pos, block_id, .. } => Some((*pos, *block_id)),
+        let mut inbox = Vec::new();
+        let out = game.server.pump(TICK_DT, &mut inbox);
+        let local = out.msgs.iter().find_map(|msg| match msg {
+            crate::net::protocol::ServerToClient::Tick(u) => Some(u.as_ref()),
             _ => None,
-        }) {
-            broke = Some(ev);
-            break;
+        });
+        if let Some(u) = local {
+            if u.events.iter().any(|e| matches!(
+                e,
+                WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
+            )) {
+                initiator_heard = true;
+            }
+            if Block::from_id(game.server.world.chunk_block(
+                placed_at.x,
+                placed_at.y,
+                placed_at.z,
+            )) == Block::Air
+            {
+                let obs = out
+                    .remote
+                    .iter()
+                    .find(|(id, _)| *id == observer_id)
+                    .and_then(|(_, msgs)| {
+                        msgs.iter().find_map(|msg| match msg {
+                            crate::net::protocol::ServerToClient::Tick(u) => Some(u.as_ref()),
+                            _ => None,
+                        })
+                    });
+                if let Some(u) = obs {
+                    observer_heard = u.events.iter().any(|e| matches!(
+                        e,
+                        WorldEventMsg::BlockBroken { pos, block_id, .. }
+                            if *pos == placed_at && *block_id == Block::Dirt.0
+                    ));
+                }
+                break;
+            }
         }
     }
-    assert_eq!(
-        broke,
-        Some((placed_at, Block::Dirt.0)),
-        "the mined break broadcast its position"
+    assert!(
+        !initiator_heard,
+        "initiator must never re-hear their own BlockBroken"
+    );
+    assert!(
+        observer_heard,
+        "observers still receive the hold-path break"
     );
 }
 

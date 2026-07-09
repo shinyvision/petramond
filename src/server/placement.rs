@@ -68,6 +68,9 @@ impl ServerGame {
                     events.player(s).placed_block = held;
                     consumed = true;
                     placed_at = Some(pos);
+                    // Strip this cell from the initiator's TickUpdate.events —
+                    // they already presented the place locally.
+                    self.sessions[s].presented_places.push(pos);
                     if let Some(block) = held {
                         // Every observer presents the placement (positional sound)
                         // from the world-anchored event.

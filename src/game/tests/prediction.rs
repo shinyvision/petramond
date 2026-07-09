@@ -26,7 +26,7 @@ fn menu_click_deny_restores_inventory_snapshot() {
     );
 
     let id = 0;
-    let rollbacks = game
+    let (rollbacks, _) = game
         .prediction
         .reconcile(&[prediction::deny(id, ActionDenyReason::Denied)]);
     assert_eq!(rollbacks.len(), 1);
@@ -51,8 +51,8 @@ fn break_finished_without_observed_mining_is_denied() {
     game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
-    // The server never saw this session mine the cell, so the claimed finish
-    // fails the observed-window check no matter what the client asserts.
+    // Never started mining: the finish is TooFast-deferred, then abandoned
+    // in the same tick (no active target) — deny + corrective, no clear.
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::BreakFinished {
@@ -72,6 +72,152 @@ fn break_finished_without_observed_mining_is_denied() {
     assert_eq!(outcomes.len(), 1);
     assert!(!outcomes[0].accepted);
     assert_eq!(outcomes[0].reason, Some(ActionDenyReason::TooFast));
+    assert!(
+        game.server.sessions[0]
+            .pending_corrective_cells
+            .contains(&pos),
+        "abandoned TooFast must correct the optimistic clear"
+    );
+}
+
+#[test]
+fn lagged_break_finished_after_hold_path_accepts_without_restore() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(8, 64, 8);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+
+    let mut u = player_update(&game, true);
+    u.break_held = true;
+    u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+
+    // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
+    let expected_ticks =
+        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    for _ in 0..expected_ticks + 2 {
+        game.server.tick_mining(0, &mut TickEvents::default());
+        if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+            break;
+        }
+    }
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air
+    );
+    assert!(
+        game.server.sessions[0].pending_break_ack.contains(&pos),
+        "hold-path owes a BreakFinished accept"
+    );
+
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 22,
+            pos,
+            tool_item_id: None,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air,
+        "lagged finish must NOT restore the block"
+    );
+    assert!(
+        game.server.sessions[0]
+            .pending_action_outcomes
+            .iter()
+            .any(|o| o.id == 22 && o.accepted),
+        "lagged finish after own hold-path must accept"
+    );
+    assert!(
+        game.server.sessions[0]
+            .pending_corrective_cells
+            .is_empty(),
+        "accept must not ship corrective cells"
+    );
+}
+
+#[test]
+fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(8, 64, 8);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+
+    // Start the server's observed mining window.
+    let mut u = player_update(&game, true);
+    u.break_held = true;
+    u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
+    game.server.apply_message(0, ClientToServer::PlayerUpdate(u));
+
+    // One tick of progress — far short of stone's break time.
+    game.server.tick_mining(0, &mut TickEvents::default());
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 11,
+            pos,
+            tool_item_id: None,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    assert!(
+        game.server.sessions[0].pending_action_outcomes.is_empty(),
+        "TooFast while mining must defer, not deny (no restore)"
+    );
+    assert!(
+        game.server.sessions[0].deferred_break_finished.is_some(),
+        "the finish waits for the hold-path"
+    );
+    assert!(
+        game.server.sessions[0]
+            .pending_corrective_cells
+            .is_empty(),
+        "deferred TooFast must not ship corrective cells"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Stone,
+        "server cell stays until the hold-path finishes"
+    );
+
+    // Hold until the server's timer breaks the block.
+    let expected_ticks =
+        (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    for _ in 0..expected_ticks + 2 {
+        game.server.tick_mining(0, &mut TickEvents::default());
+        if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+            break;
+        }
+    }
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air,
+        "hold-path clears the cell"
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert!(
+        outcomes.iter().any(|o| o.id == 11 && o.accepted),
+        "deferred finish accepts when the hold-path breaks, got {outcomes:?}"
+    );
+    assert!(
+        game.server.sessions[0]
+            .presented_breaks
+            .contains(&pos),
+        "own breaks always strip BlockBroken from the initiator"
+    );
 }
 
 #[test]
@@ -268,10 +414,10 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
         .replica
         .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
 
-    // Predict a ghost placement (Cell snapshot, prev = air).
-    let id = game.game.prediction.begin(PredictionSnapshot::Cell {
-        pos,
-        prev_block_id: Block::Air.0,
+    // Predict a ghost placement (World snapshot, prev = air).
+    let id = game.game.prediction.begin(PredictionSnapshot::World {
+        inventory: None,
+        cells: vec![(pos, Block::Air.0)],
     });
     assert!(game
         .game
@@ -466,4 +612,170 @@ fn menu_click_ships_request_id_and_server_accepts() {
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].accepted);
     assert_eq!(outcomes[0].id, 42);
+}
+
+#[test]
+fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    // Mirror the chunk onto the replica so the place ghost can write.
+    game.game
+        .replica
+        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    let floor = IVec3::new(8, 63, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
+    // Park the body clear of the place cell so placement_blocked_by_body
+    // does not refuse the ghost.
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.sync_self_view_for_test();
+    let before = game
+        .self_view
+        .inventory
+        .selected()
+        .expect("holding dirt")
+        .count;
+
+    let id = game
+        .game
+        .predict_place_at_for_test(floor, IVec3::Y, false)
+        .expect("place must predict");
+    let _ = id;
+
+    let place_pos = floor + IVec3::Y;
+    assert_eq!(
+        Block::from_id(game.game.replica.chunk_block(place_pos.x, place_pos.y, place_pos.z)),
+        Block::Dirt,
+        "replica cell must change immediately"
+    );
+    assert_eq!(
+        game.self_view
+            .inventory
+            .selected()
+            .expect("still holding")
+            .count,
+        before - 1,
+        "hotbar decrements with the ghost"
+    );
+    assert!(
+        game.game
+            .pending_events
+            .world
+            .iter()
+            .any(|e| matches!(e, crate::game::tick::WorldEvent::BlockPlaced { pos, block }
+                if *pos == place_pos && *block == Block::Dirt)),
+        "local BlockPlaced must queue for sound this frame"
+    );
+    assert_eq!(game.game.local_placed_block, Some(Block::Dirt));
+}
+
+#[test]
+fn optimistic_break_clears_replica_and_queues_world_event() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.game
+        .replica
+        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    let pos = IVec3::new(8, 64, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(pos.x, pos.y, pos.z, Block::Poppy));
+
+    game.game.predict_break_at_for_test(pos, Block::Poppy);
+
+    assert_eq!(
+        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air,
+        "instant break must clear the replica immediately"
+    );
+    assert!(
+        game.game
+            .pending_events
+            .world
+            .iter()
+            .any(|e| matches!(e, crate::game::tick::WorldEvent::BlockBroken { pos: p, block, .. }
+                if *p == pos && *block == Block::Poppy)),
+        "local BlockBroken must queue for sound/burst this frame"
+    );
+    assert_eq!(game.game.local_broke_block, Some(Block::Poppy));
+}
+
+#[test]
+fn denied_place_restores_cell_and_inventory_silently() {
+    let mut game = game();
+    let pos = IVec3::new(3, 64, 3);
+    game.game
+        .replica
+        .insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.sync_self_view_for_test();
+    let before = game.self_view.inventory.clone();
+
+    let id = game.game.prediction.begin(PredictionSnapshot::World {
+        inventory: Some(before.clone()),
+        cells: vec![(pos, Block::Air.0)],
+    });
+    assert!(game
+        .game
+        .replica
+        .set_block_world(pos.x, pos.y, pos.z, Block::Dirt));
+    game.self_view.inventory.decrement_selected();
+
+    let update = TickUpdate {
+        action_outcomes: vec![prediction::deny(id, ActionDenyReason::Denied)],
+        ..Default::default()
+    };
+    game.game.apply_tick_update(Box::new(update));
+    assert_eq!(
+        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::Air,
+        "deny silently restores the cell"
+    );
+    assert_eq!(
+        game.self_view.inventory.selected().map(|s| s.count),
+        before.selected().map(|s| s.count),
+        "deny restores the hotbar"
+    );
+    assert!(
+        game.game.pending_events.world.is_empty(),
+        "rollback must not emit presentation events"
+    );
+}
+
+#[test]
+fn break_finished_deny_queues_corrective_cells() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(2, 64, 2);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 9,
+            pos,
+            tool_item_id: None,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    let cells = &game.server.sessions[0].pending_corrective_cells;
+    assert!(
+        cells.contains(&pos),
+        "a denied break finish must queue the claimed cell for corrective sync"
+    );
+    assert!(
+        game.server.sessions[0]
+            .pending_action_outcomes
+            .iter()
+            .any(|o| o.id == 9 && !o.accepted)
+    );
 }

@@ -130,6 +130,7 @@ impl Game {
             local_broke_block: None,
             local_placed_block: None,
             place_ghost: None,
+            predicted_presentation_cells: Default::default(),
             fallback_world: bootstrap.fallback_world,
             particles: ParticleSystem::new(),
             mining_dust_t: 0.0,
