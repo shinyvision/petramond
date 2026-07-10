@@ -1096,6 +1096,90 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
 }
 
 #[test]
+fn sprint_descent_down_steps_is_not_one_tall_fall() {
+    use crate::block_state::{StairHalf, StairState};
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    // A staircase of real stair blocks descending +x (low half downhill), onto
+    // a floor at y = 59 — half-block steps every half block, like any player
+    // staircase.
+    for i in 0..12 {
+        assert!(game.server.world.place_stair(
+            IVec3::new(2 + i, 70 - i, 8),
+            Block::OakStairs,
+            StairState::new(crate::facing::Facing::East, StairHalf::Bottom),
+        ));
+    }
+    for x in 14..16 {
+        assert!(game.server.world.set_block_world(x, 58, 8, Block::Stone));
+    }
+
+    let start = Vec3::new(2.3, 71.0, 8.5);
+    game.server.sessions[0].player.pos = start;
+    game.server.sessions[0].claim_pos = start;
+    game.server.sessions[0].fall.reset(start.y);
+
+    // The client's own 60 fps physics sprints down the staircase. Each step
+    // contact lasts only a frame or two, so the once-per-tick report can
+    // legitimately be an airborne mid-hop transform for the entire descent —
+    // model that worst-case (but honest) send phase by reporting the window's
+    // freshest airborne frame. The whole staircase must still never measure
+    // as one tall fall: the server's own integration touched every step.
+    let mut client = crate::player::Player::new(start);
+    let input = crate::player::Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: true,
+    };
+    for _ in 0..400 {
+        let mut report = None;
+        for _ in 0..3 {
+            client.update(1.0 / 60.0, &game.server.world, input);
+            if !client.on_ground || report.is_none() {
+                report = Some((client.pos, client.vel, client.on_ground));
+            }
+        }
+        let (pos, vel, on_ground) = report.unwrap();
+        let mut u = player_update(&game, true);
+        u.pos = pos;
+        u.vel = vel;
+        u.on_ground = on_ground;
+        u.wishdir = input.wishdir;
+        u.sprint = true;
+        game.server
+            .apply_message(0, ClientToServer::PlayerUpdate(u));
+        game.server.tick_movement(0);
+        if client.on_ground && client.pos.x > 14.2 {
+            break;
+        }
+    }
+    assert!(
+        client.on_ground && client.pos.x > 14.2,
+        "the client sim must finish the descent (ended at {:?})",
+        client.pos
+    );
+    // Stand on the floor for a few ticks so the server observes the final
+    // grounded transform (the landing that would convert a mis-measured
+    // descent into damage).
+    for _ in 0..3 {
+        let mut u = player_update(&game, true);
+        u.pos = client.pos;
+        u.vel = client.vel;
+        u.on_ground = true;
+        game.server
+            .apply_message(0, ClientToServer::PlayerUpdate(u));
+        game.server.tick_movement(0);
+    }
+
+    let measured = game.server.sessions[0].pending_fall;
+    assert_eq!(
+        crate::server::health::fall_damage_health(measured),
+        0,
+        "sprinting down a staircase must not deal fall damage (measured a {measured}-block fall)"
+    );
+}
+
+#[test]
 fn unpredicted_break_finish_keeps_the_initiators_break_event() {
     let mut game = game();
     install_empty_chunk(&mut game);

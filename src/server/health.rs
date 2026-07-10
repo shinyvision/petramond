@@ -35,7 +35,7 @@ pub(crate) fn fall_damage_health(distance: f32) -> i32 {
 impl ServerGame {
     /// Consume the landing the SERVER-side fall tracker latched from the
     /// session's reported transforms (`ConnectedPlayer::fall`, fed in
-    /// `apply_player_update`) and apply its fall damage on the tick. The client
+    /// `tick_movement`) and apply its fall damage on the tick. The client
     /// physics still measures its own falls per frame, but nothing reads that
     /// latch anymore — the server trusts only what it measured itself.
     /// Spectators float, so their (absent) fall is drained without harm.

@@ -187,12 +187,15 @@ pub(crate) struct PendingBreakFinished {
     pub predicted: bool,
 }
 
-/// Server-side fall measurement from the transforms a session reports —
-/// the replicated-transform mirror of `Player::track_fall` (the client physics
-/// still measures its own falls, but the server no longer reads that latch).
-/// Water re-anchors the peak (water breaks a fall); an airborne→grounded
-/// transition measures the landing; while airborne the peak tracks the highest
-/// reported point.
+/// Server-side fall measurement from the per-tick transform samples of
+/// `tick_movement` — the replicated-transform mirror of `Player::track_fall`
+/// (the client physics still measures its own falls, but the server no longer
+/// reads that latch). Water re-anchors the peak (water breaks a fall); an
+/// airborne→grounded transition measures the landing; while airborne the peak
+/// tracks the highest reported point. Because it samples only once per tick,
+/// `tick_movement` also feeds it the server integration's own ground contacts:
+/// a sprint down stairs touches each step for less than a sample interval,
+/// and without those contacts the staircase would measure as one tall fall.
 #[derive(Clone, Debug)]
 pub(crate) struct FallTracker {
     peak_y: f32,

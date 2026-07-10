@@ -74,15 +74,21 @@ impl ServerGame {
             jump,
             sprint,
         };
-        {
+        // Where the server's OWN integration ended this tick, if grounded —
+        // trusted ground contact for the fall tracker below (claim adoption
+        // overwrites the transform before the tracker samples it).
+        let integrated_ground_y = {
             let Self {
                 world, sessions, ..
             } = self;
             let sess = &mut sessions[s];
             if spectator || sess.player.columns_loaded(world) {
                 sess.player.update(TICK_DT, world, input);
+                (!spectator && sess.player.on_ground).then(|| sess.player.pos.y)
+            } else {
+                None
             }
-        }
+        };
 
         // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
         // claims must not yank the player every tick (tests and idle sessions).
@@ -127,6 +133,23 @@ impl ServerGame {
             sess.pending_fall = 0.0;
             sess.pending_splash = 0.0;
         } else {
+            // Sprinting down stairs touches each step for only a frame or
+            // two, so the once-per-tick claim samples are legitimately
+            // airborne for the whole descent and the tracker would measure
+            // the staircase as one tall fall. The server's own integration
+            // (trusted physics, never a client flag) did land on those
+            // steps: when the claim sample is airborne and dry, re-anchor
+            // the tracker at the integration's contact first — which also
+            // latches any real landing that happened between claim samples.
+            if !grounded_for_fall && !in_water {
+                if let Some(y) = integrated_ground_y {
+                    if let Some(super::player::FallOutcome::Landed(dist)) =
+                        sess.fall.observe(y, true, false)
+                    {
+                        sess.pending_fall = sess.pending_fall.max(dist);
+                    }
+                }
+            }
             match sess.fall.observe(pos.y, grounded_for_fall, in_water) {
                 Some(super::player::FallOutcome::Landed(dist)) => {
                     sess.pending_fall = sess.pending_fall.max(dist);
