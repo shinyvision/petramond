@@ -524,7 +524,10 @@ impl Game {
         expected_block: crate::block::Block,
         normal: Option<IVec3>,
     ) {
-        let request_id = if self.prediction.can_predict() {
+        // `predicted` tells the server whether we presented (echo strip): a
+        // track-only finish never played sound/burst, so its BlockBroken must
+        // still come back over the wire.
+        let (request_id, predicted) = if self.prediction.can_predict() {
             match self.replica.clear_broken_block(pos) {
                 Some((block, cells)) => {
                     debug_assert_eq!(block, expected_block);
@@ -541,14 +544,14 @@ impl Game {
                     self.pending_events
                         .world
                         .push(WorldEvent::BlockBroken { pos, block, normal });
-                    id
+                    (id, true)
                 }
                 // Cell already gone / unbreakable on the replica — still ask
                 // the server; track-only so we don't invent a restore.
-                None => self.prediction.begin_track_only(),
+                None => (self.prediction.begin_track_only(), false),
             }
         } else {
-            self.prediction.begin_track_only()
+            (self.prediction.begin_track_only(), false)
         };
         // No duration claim rides the wire: the server validates the finish
         // against ITS OWN observed mining window (breaking.rs).
@@ -558,6 +561,7 @@ impl Game {
                 request_id,
                 pos,
                 tool_item_id,
+                predicted,
             }));
     }
 

@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use crate::crafting::Recipes;
 use crate::events::{Attach, EventBus, PostEvent, PostEventKind, SimCtx, Stage, TickSystems};
 use crate::game::tick::{TickEvents, WorldEvents, TICK_DT};
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::IVec3;
 use crate::mob::LootTables;
 use crate::modding::ModHost;
 use crate::net::protocol::{
@@ -629,8 +629,7 @@ impl ServerGame {
             Some(r) => {
                 let spectator = player.is_spectator();
                 let gap = sess.ticks_since_claim;
-                (player.pos - r.pos).length()
-                    > crate::server::movement::claim_drift_ring(spectator, gap)
+                !crate::server::movement::claim_within_drift(spectator, gap, player.pos - r.pos)
                     || (player.vel - r.vel).length()
                         > crate::server::movement::vel_correction_eps(gap)
                     // Yaw/pitch never extrapolate (ticks don't turn the
@@ -874,9 +873,10 @@ impl ServerGame {
             }
         }
 
-        // Reach validation against the CLAIMED eye (where the client says it
-        // is aiming from this frame). Measured to the CLOSEST point of the cell.
-        let eye = sess.claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+        // Reach validation against the claimed eye, BOUNDED by the F1 drift
+        // ring (`movement::reach_eye`) — an implausible claim must not grant
+        // remote reach. Measured to the CLOSEST point of the cell.
+        let eye = crate::server::movement::reach_eye(sess);
         sess.look = u
             .target
             .filter(|t| player::block_within_reach(eye, t.block));
@@ -905,10 +905,10 @@ impl ServerGame {
                 }
                 sess.pending_place = true;
                 sess.pending_use_mob = mob;
-                // Reach-validate the CLICK's target against the claimed eye —
-                // the same rule as the look latch. The placement stage
-                // resolves against this cell, never a fresher look.
-                let eye = sess.claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+                // Reach-validate the CLICK's target against the same bounded
+                // eye as the look latch. The placement stage resolves against
+                // this cell, never a fresher look.
+                let eye = crate::server::movement::reach_eye(sess);
                 sess.pending_place_target =
                     target.filter(|t| player::block_within_reach(eye, t.block));
                 sess.pending_place_request_id = request_id;
@@ -946,6 +946,7 @@ impl ServerGame {
                 request_id,
                 pos,
                 tool_item_id,
+                predicted,
             } => {
                 // A newer finish supersedes any in-flight latch OR deferred
                 // TooFast wait — answer the old id so the ledger cannot leak.
@@ -974,6 +975,7 @@ impl ServerGame {
                         request_id,
                         pos,
                         tool_item_id,
+                        predicted,
                     });
             }
             // A mode switch is not tick input: applied at message time, like

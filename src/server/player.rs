@@ -182,6 +182,9 @@ pub(crate) struct PendingBreakFinished {
     pub pos: IVec3,
     /// Wire item id of the tool the client claims it used (`None` = bare hand).
     pub tool_item_id: Option<u8>,
+    /// Whether the client presented the break optimistically — gates the
+    /// initiator echo strip on accept (see `finish_player_break`).
+    pub predicted: bool,
 }
 
 /// Server-side fall measurement from the transforms a session reports —
@@ -341,10 +344,13 @@ pub(crate) struct ConnectedPlayer {
     /// WIKI/client-prediction.md.
     pub deferred_break_finished: Option<PendingBreakFinished>,
     /// Cells this session already broke (hold-path or BreakFinished) that
-    /// still owe a `BreakFinished` accept. A lagged finish for an already-air
-    /// cell in this set is accepted (no restore); air without an entry is a
-    /// real deny. Cleared when the matching finish is answered.
-    pub pending_break_ack: rustc_hash::FxHashSet<IVec3>,
+    /// still owe a `BreakFinished` accept, with the world tick each was
+    /// broken on. A lagged finish for an already-air cell in this set is
+    /// accepted (no restore); air without an entry is a real deny. Cleared
+    /// when the matching finish is answered, or expired after
+    /// `BREAK_ACK_TTL_TICKS` (a hold-path break whose finish never arrives
+    /// must not grow the set forever).
+    pub pending_break_ack: rustc_hash::FxHashMap<IVec3, u64>,
     /// Optional request id on the pending use/place click (place ghost ack).
     pub pending_place_request_id: Option<crate::net::protocol::ClientRequestId>,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).

@@ -24,7 +24,10 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     game.server.world.set_block_world(8, 63, 8, Block::Stone);
     game.server.sessions[0].player.inventory = filled_inventory(); // Dirt in slot 0
 
-    // Player standing at (8, 64, 8); a target within reach latches.
+    // Player standing at (8, 64, 8); a target within reach latches. The
+    // session anchors at the claim — the reach eye is bounded by the F1
+    // drift ring of the server's own integration.
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     let mut u = common::player_update(&game, true);
     u.pos = Vec3::new(8.5, 64.0, 8.5);
     u.target = Some(TargetRef {
@@ -38,6 +41,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     );
 
     // The same target reported from far away is silently dropped...
+    game.server.sessions[0].player.pos = Vec3::new(20.0, 64.0, 20.0);
     let mut far = common::player_update(&game, true);
     far.pos = Vec3::new(20.0, 64.0, 20.0);
     far.target = Some(TargetRef {
@@ -92,26 +96,34 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     let mut game = game();
     install_empty_chunk(&mut game);
     // Anchor the session at the drop point: claims must stay NEAR the server's
-    // integrated position to be accepted (the F1 anti-teleport bound).
+    // integrated position to be accepted (the F1 anti-teleport bound). A
+    // cliff-edge topology — a ledge to stand on and a landing floor one
+    // column over — because a grounded claim only counts for the fall
+    // tracker when geometry actually holds the feet, and the falling body
+    // must not clip the ledge on the way down.
+    game.server.world.set_block_world(8, 79, 8, Block::Stone);
+    game.server.world.set_block_world(9, 69, 8, Block::Stone);
+    game.server.world.set_block_world(10, 69, 8, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
     let h0 = game.server.sessions[0].player.health();
 
-    // Grounded at y=80, airborne down to a landing at y=70: a 10-block fall.
-    let at = |game: &super::common::TestGame, y: f32, on_ground: bool| {
+    // Grounded on the ledge at y=80, a step off the edge, airborne down to a
+    // landing at y=70 one column over: a 10-block fall.
+    let at = |game: &super::common::TestGame, x: f32, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
-        u.pos = Vec3::new(8.5, y, 8.5);
+        u.pos = Vec3::new(x, y, 8.5);
         u.on_ground = on_ground;
         u
     };
-    let u = at(&game, 80.0, true);
+    let u = at(&game, 8.5, 80.0, true);
     apply_update(&mut game, u);
     game.server.tick_movement(0);
     for y in [78.0, 74.0, 71.0] {
-        let u = at(&game, y, false);
+        let u = at(&game, 10.0, y, false);
         apply_update(&mut game, u);
         game.server.tick_movement(0);
     }
-    let u = at(&game, 70.0, true);
+    let u = at(&game, 10.0, 70.0, true);
     apply_update(&mut game, u);
     game.server.tick_movement(0);
 

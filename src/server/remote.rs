@@ -531,9 +531,16 @@ mod tests {
     /// a bare ground block with two air (dry) cells above, near `(cx, cz)` =
     /// (8, 8) world-horizontal. Scanning what actually arrived keeps the test
     /// independent of the seed's exact terrain shape.
-    fn find_place_spot(
+    /// A ground cell (two dry-air cells above) the player standing at `pos`
+    /// can LEGITIMATELY build against: within reach of its eye — the server
+    /// bounds the reach eye by the F1 drift ring, so a hover claim far from
+    /// the session's own position no longer grants reach — and far enough
+    /// sideways that the placed block cannot overlap the placer's body.
+    fn find_place_spot_within_reach(
         sections: &HashMap<SectionPos, (Vec<u8>, Option<Vec<u8>>)>,
+        pos: Vec3,
     ) -> Option<IVec3> {
+        let eye = pos + Vec3::new(0.0, 1.62, 0.0);
         let ground = [Block::Grass.0, Block::Dirt.0, Block::Stone.0, Block::Sand.0];
         for (sp, (blocks, water)) in sections {
             let dry_air = |x: usize, y: usize, z: usize| {
@@ -543,16 +550,26 @@ mod tests {
             for y in 0..14 {
                 for z in 0..16 {
                     for x in 0..16 {
-                        let wx = sp.cx * 16 + x as i32;
-                        let wz = sp.cz * 16 + z as i32;
-                        if (wx - 8).abs() > 24 || (wz - 8).abs() > 24 {
-                            continue;
+                        let cell = IVec3::new(
+                            sp.cx * 16 + x as i32,
+                            sp.cy * 16 + y as i32,
+                            sp.cz * 16 + z as i32,
+                        );
+                        let dx = (cell.x as f32 + 0.5 - pos.x).abs();
+                        let dz = (cell.z as f32 + 0.5 - pos.z).abs();
+                        if dx.max(dz) < 1.2 {
+                            continue; // the placed cell would overlap the placer
+                        }
+                        let lo = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32);
+                        let closest = eye.clamp(lo, lo + Vec3::ONE);
+                        if (closest - eye).length() > 3.5 {
+                            continue; // out of legitimate reach
                         }
                         if ground.contains(&blocks[section_idx(x, y, z)])
                             && dry_air(x, y + 1, z)
                             && dry_air(x, y + 2, z)
                         {
-                            return Some(IVec3::new(wx, sp.cy * 16 + y as i32, wz));
+                            return Some(cell);
                         }
                     }
                 }
@@ -594,9 +611,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("petramond-lan-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
-        // Pre-seed the joining player's save: a known position + dirt to
-        // place (a fresh spawn would be random and empty-handed).
-        let mut visitor = crate::player::Player::new(Vec3::new(8.5, 80.0, 8.5));
+        // Pre-seed the joining player's save: standing on the seed's dry-land
+        // spawn pick (a placement within legitimate reach must exist around
+        // it — the reach eye is ring-bounded, so the visitor builds from
+        // where it actually stands) + dirt to place (a fresh spawn would be
+        // empty-handed).
+        let spawn = crate::worldgen::spawn::find_spawn(7);
+        let visitor_feet = Vec3::new(
+            spawn.x as f32 + 0.5,
+            (spawn.y + 1) as f32,
+            spawn.z as f32 + 0.5,
+        );
+        let mut visitor = crate::player::Player::new(visitor_feet);
         visitor.inventory.add(ItemStack::new(ItemType::Dirt, 64));
         std::fs::write(
             dir.join("players/Visitor.dat"),
@@ -635,7 +661,7 @@ mod tests {
             .expect("handshake succeeds");
         assert_eq!(join.player_id, PlayerId(1));
         assert_eq!(join.seed, 7);
-        assert_eq!(join.self_restore.pos, Vec3::new(8.5, 80.0, 8.5));
+        assert_eq!(join.self_restore.pos, visitor_feet);
         assert_eq!(
             join.self_restore.inventory[0],
             Some(crate::net::protocol::ItemSlotWire {
@@ -661,33 +687,45 @@ mod tests {
 
         // Terrain streams to the remote client WITH the server's baked light
         // (the ship gate holds a section until its light is final; the remote
-        // replica never bakes its own).
+        // replica never bakes its own). Meanwhile the visitor's server-side
+        // body free-falls from its restored y=80 to the surface — the reach
+        // eye is bounded by the F1 drift ring around the server's own
+        // integration, so the client reads its SETTLED position off its own
+        // replicated player row and builds within reach of it, exactly as a
+        // real client would.
         let mut sections: HashMap<SectionPos, (Vec<u8>, Option<Vec<u8>>)> = HashMap::new();
         let mut lit_sections = 0usize;
-        drain_until(&mut remote, Duration::from_secs(60), |msg| {
-            let ServerToClient::SectionData(p) = msg else {
-                return None;
-            };
-            if p.skylight.is_some() {
-                lit_sections += 1;
+        let mut self_row: Option<(Vec3, Vec3)> = None;
+        let (own_pos, target) = drain_until(&mut remote, Duration::from_secs(60), |msg| {
+            match msg {
+                ServerToClient::SectionData(p) => {
+                    if p.skylight.is_some() {
+                        lit_sections += 1;
+                    }
+                    sections.insert(p.pos, (p.blocks.0.to_vec(), p.water.map(|w| w.0.to_vec())));
+                }
+                ServerToClient::Tick(update) => {
+                    if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
+                        self_row = Some((row.pos, row.vel));
+                    }
+                }
+                _ => {}
             }
-            sections.insert(p.pos, (p.blocks.0.to_vec(), p.water.map(|w| w.0.to_vec())));
-            find_place_spot(&sections)
+            let (pos, vel) = self_row?;
+            if vel.length() > 0.5 {
+                return None; // still falling
+            }
+            find_place_spot_within_reach(&sections, pos).map(|spot| (pos, spot))
         })
-        .expect("streamed terrain holds a buildable surface cell");
+        .expect("streamed terrain holds a buildable cell within reach of the settled visitor");
         assert!(lit_sections > 0, "baked light rides TCP section payloads");
-        let target = find_place_spot(&sections).expect("spot still known");
         let placed_at = IVec3::new(target.x, target.y + 1, target.z);
 
-        // Place a dirt block from the remote client: hover two cells to the
-        // +x side (the server trusts transforms; placement must not overlap
-        // the placer), aim at the ground cell's top face, use-click.
+        // Place a dirt block from the remote client: standing where the
+        // server saw this body settle, aim at a nearby ground cell's top
+        // face, use-click.
         let update = PlayerUpdate {
-            pos: Vec3::new(
-                target.x as f32 + 2.5,
-                target.y as f32 + 1.0,
-                target.z as f32 + 0.5,
-            ),
+            pos: own_pos,
             vel: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,

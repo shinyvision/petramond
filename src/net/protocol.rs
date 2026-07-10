@@ -266,6 +266,12 @@ pub(crate) enum PlayerAction {
         pos: IVec3,
         /// Wire item id of the tool used (`None` = bare hand).
         tool_item_id: Option<u8>,
+        /// Whether the client applied the break optimistically (replica clear
+        /// + local sound/burst). Gates the initiator's echo strip: a
+        /// track-only finish (frozen ledger, replica disagreement) never
+        /// presented, so its `BlockBroken` world event must still be
+        /// delivered. Presentation-only — the validation path ignores it.
+        predicted: bool,
     },
     Wake,
     Respawn,
@@ -1066,6 +1072,7 @@ mod tests {
             request_id: 9,
             pos: IVec3::new(1, 2, 3),
             tool_item_id: None,
+            predicted: true,
         }));
         roundtrip(&ClientToServer::ChatSend {
             text: "hello server".into(),

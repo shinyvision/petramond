@@ -50,7 +50,17 @@ impl PredictionLedger {
     }
 
     pub(crate) fn can_predict(&self) -> bool {
-        !self.frozen && self.pending.len() < LEDGER_CAP
+        !self.frozen && self.predicted_len() < LEDGER_CAP
+    }
+
+    /// In-flight entries holding a rollback snapshot. Track-only (`None`)
+    /// entries never count against the cap — a burst of presentation-only
+    /// jabs must not freeze real prediction.
+    fn predicted_len(&self) -> usize {
+        self.pending
+            .iter()
+            .filter(|p| !matches!(p.snapshot, PredictionSnapshot::None))
+            .count()
     }
 
     /// Always allocate a request id. When `snapshot` is not [`None`] and the
@@ -66,13 +76,7 @@ impl PredictionLedger {
             PredictionSnapshot::None
         };
         self.pending.push(Pending { id, snapshot });
-        if self
-            .pending
-            .iter()
-            .filter(|p| !matches!(p.snapshot, PredictionSnapshot::None))
-            .count()
-            >= LEDGER_CAP
-        {
+        if self.predicted_len() >= LEDGER_CAP {
             self.frozen = true;
         }
         id
@@ -94,32 +98,36 @@ impl PredictionLedger {
         })
     }
 
-    /// Apply one batch of outcomes in order. Returns `(rollbacks, resolved_cells)`:
+    /// Apply one batch of outcomes. Returns `(rollbacks, resolved_cells)`:
     /// deny snapshots to restore, and every World cell whose pending entry
     /// was answered (accept or deny) so presentation suppress can clear.
+    ///
+    /// Rollbacks come back OLDEST-FIRST by construction — the pending list is
+    /// walked in allocation order, never the batch's emission order (the
+    /// server may emit an immediate deny for a newer id before a tick-time
+    /// deny for an older one). The caller applies them newest-first so the
+    /// oldest snapshot wins.
     pub(crate) fn reconcile(
         &mut self,
         outcomes: &[ActionOutcome],
     ) -> (Vec<PredictionSnapshot>, Vec<IVec3>) {
         let mut rollbacks = Vec::new();
         let mut resolved_cells = Vec::new();
-        for outcome in outcomes {
-            if let Some(idx) = self.pending.iter().position(|p| p.id == outcome.id) {
-                let pending = self.pending.remove(idx);
-                if let PredictionSnapshot::World { cells, .. } = &pending.snapshot {
-                    resolved_cells.extend(cells.iter().map(|(c, _)| *c));
-                }
-                if !outcome.accepted {
-                    rollbacks.push(pending.snapshot);
-                }
+        let mut i = 0;
+        while i < self.pending.len() {
+            let Some(outcome) = outcomes.iter().find(|o| o.id == self.pending[i].id) else {
+                i += 1;
+                continue;
+            };
+            let pending = self.pending.remove(i);
+            if let PredictionSnapshot::World { cells, .. } = &pending.snapshot {
+                resolved_cells.extend(cells.iter().map(|(c, _)| *c));
+            }
+            if !outcome.accepted {
+                rollbacks.push(pending.snapshot);
             }
         }
-        let predicted = self
-            .pending
-            .iter()
-            .filter(|p| !matches!(p.snapshot, PredictionSnapshot::None))
-            .count();
-        if predicted < LEDGER_CAP {
+        if self.predicted_len() < LEDGER_CAP {
             self.frozen = false;
         }
         (rollbacks, resolved_cells)
@@ -172,6 +180,18 @@ mod tests {
         let id2 = ledger.begin(PredictionSnapshot::Inventory(inv));
         let rollbacks = ledger.reconcile(&[deny(id2, ActionDenyReason::Denied)]);
         assert_eq!(rollbacks.0.len(), 1);
+    }
+
+    #[test]
+    fn track_only_entries_do_not_freeze_prediction() {
+        let mut ledger = PredictionLedger::new();
+        for _ in 0..LEDGER_CAP + 5 {
+            ledger.begin_track_only();
+        }
+        assert!(
+            ledger.can_predict(),
+            "presentation-only jabs must not consume prediction capacity"
+        );
     }
 
     #[test]

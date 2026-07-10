@@ -9,11 +9,23 @@ use crate::world::World;
 use super::game::ServerGame;
 use crate::game::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
+/// How long a broken cell stays in `pending_break_ack` waiting for its lagged
+/// `BreakFinished` (10 s — far beyond any real finish RTT). An expired entry
+/// only means such a finish is denied with corrective cells, which reconciles
+/// the client anyway; without the TTL an orphaned hold-path break (the client
+/// released on the exact tick the server's timer crossed) grows the set for
+/// the session's lifetime.
+const BREAK_ACK_TTL_TICKS: u64 = 200;
+
 impl ServerGame {
     /// Mining, on the tick: advance the break timer against the block under the
     /// crosshair while held, AND resolve client `BreakFinished` requests
     /// (duration/tool/reach validated). See WIKI/client-prediction.md.
     pub(crate) fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
+        let now = self.world.current_tick();
+        self.sessions[s]
+            .pending_break_ack
+            .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
         if let Some(req) = self.sessions[s].pending_break_finished.take() {
             self.resolve_break_finished(s, req, events);
         }
@@ -35,15 +47,17 @@ impl ServerGame {
             tool,
         ) {
             // Hold-path finish: if a TooFast BreakFinished was deferred for
-            // this cell, accept it here. The initiator NEVER receives their
-            // own BlockBroken (finish_player_break always records
-            // presented_breaks) — they presented locally if they predicted,
-            // and must not hear a second burst if the hold-path raced ahead.
+            // this cell, accept it here. The initiator's own BlockBroken is
+            // stripped when they presented locally (a deferred PREDICTED
+            // finish, or — with no request latched yet — the common race
+            // where their predicted finish is still in flight); a deferred
+            // track-only finish never presented, so its event must flow.
             let broken_pos = event.pos;
             let deferred = self.sessions[s]
                 .deferred_break_finished
                 .take_if(|d| d.pos == broken_pos);
-            if self.finish_player_break(s, event, events) {
+            let presented = deferred.is_none_or(|d| d.predicted);
+            if self.finish_player_break(s, event, events, presented) {
                 if let Some(req) = deferred {
                     self.sessions[s].pending_break_ack.remove(&broken_pos);
                     self.push_action_outcome(s, req.request_id, true, None);
@@ -96,12 +110,13 @@ impl ServerGame {
             request_id,
             pos,
             tool_item_id,
+            predicted,
         } = req;
 
-        // Reach from the CLAIMED eye — the same reference the look latch was
-        // validated against (F1), so an accepted mining target can't be denied
-        // at the finish by server-integration drift.
-        let eye = self.sessions[s].claim_pos + Vec3::new(0.0, crate::player::EYE, 0.0);
+        // Reach from the claimed eye, BOUNDED by the F1 drift ring — the same
+        // reference the look latch was validated against, so an accepted
+        // mining target can't be denied at the finish by integration drift.
+        let eye = crate::server::movement::reach_eye(&self.sessions[s]);
         if !crate::player::block_within_reach(eye, pos) {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::OutOfReach);
             return;
@@ -112,7 +127,7 @@ impl ServerGame {
         // BreakFinished arrives. If THIS session broke it, accept — never
         // deny/restore (that re-spawns the block and invites a second break).
         if block == Block::Air {
-            if self.sessions[s].pending_break_ack.remove(&pos) {
+            if self.sessions[s].pending_break_ack.remove(&pos).is_some() {
                 if let Some(old) = self.sessions[s].deferred_break_finished.take() {
                     if old.pos != pos {
                         self.deny_break_finished(
@@ -179,6 +194,7 @@ impl ServerGame {
                         request_id,
                         pos,
                         tool_item_id,
+                        predicted,
                     });
                 return;
             }
@@ -201,7 +217,7 @@ impl ServerGame {
                 self.push_action_outcome(s, old.request_id, false, Some(ActionDenyReason::TooFast));
             }
         }
-        if self.finish_player_break(s, event, events) {
+        if self.finish_player_break(s, event, events, predicted) {
             self.sessions[s].pending_break_ack.remove(&pos);
             self.push_action_outcome(s, request_id, true, None);
         } else {
@@ -232,11 +248,17 @@ impl ServerGame {
     /// unbreakable — the block stays; the spent mining progress is the cost), then
     /// clear the block, scatter block-entity contents + harvested drops, spawn the
     /// burst, and queue `block_broken`. Returns whether the block actually broke.
+    ///
+    /// `initiator_presented`: whether the breaking client already played the
+    /// break presentation locally (predicted finish, or a finish still in
+    /// flight) — gates the echo strip. A client that never presented (frozen
+    /// ledger, replica disagreement) must still receive its `BlockBroken`.
     pub(crate) fn finish_player_break(
         &mut self,
         s: usize,
         event: BreakEvent,
         events: &mut TickEvents,
+        initiator_presented: bool,
     ) -> bool {
         {
             let mut pre = BlockBreakPre {
@@ -263,13 +285,17 @@ impl ServerGame {
             }
         }
         events.player(s).broke_block = Some(event.block);
-        // The initiator NEVER re-hears their own BlockBroken — strip it from
-        // their TickUpdate whether they predicted locally or the hold-path
-        // raced ahead of BreakFinished. Observers still get the shared event.
-        self.sessions[s].presented_breaks.push(event.pos);
+        // Echo rule: strip the initiator's BlockBroken only when they already
+        // presented it locally — a double burst is worse than none, but a
+        // client that never presented still needs the event. Observers get
+        // the shared event either way.
+        if initiator_presented {
+            self.sessions[s].presented_breaks.push(event.pos);
+        }
         // A lagged BreakFinished for this already-cleared cell must accept,
-        // not deny/restore.
-        self.sessions[s].pending_break_ack.insert(event.pos);
+        // not deny/restore. Tick-stamped for the ack TTL.
+        let now = self.world.current_tick();
+        self.sessions[s].pending_break_ack.insert(event.pos, now);
         // Breaking a bed takes its spawn point with it — resolved BEFORE the
         // removal below clears the footprint metadata the group lookup needs.
         // Checked for EVERY session: any player can break another's spawn bed.

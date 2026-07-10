@@ -16,7 +16,7 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 11; // 11: optimistic prediction (request ids, outcomes, break finish, move intent)
+pub(crate) const PROTOCOL_VERSION: u16 = 12; // 12: BreakFinished carries `predicted` (echo strip only for presented breaks)
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

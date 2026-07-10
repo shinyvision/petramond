@@ -331,6 +331,7 @@ fn kitchen_oven_inner() {
             harvested: true,
         },
         &mut ev,
+        true,
     );
     assert!(
         game.server.world.container_at(anchor).is_none(),
@@ -581,6 +582,7 @@ fn kitchen_reuse_inner() {
             harvested: true,
         },
         &mut ev,
+        true,
     );
     assert!(
         game.server

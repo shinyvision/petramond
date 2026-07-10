@@ -59,6 +59,7 @@ fn break_finished_without_observed_mining_is_denied() {
             request_id: 7,
             pos,
             tool_item_id: None,
+            predicted: true,
         }),
     );
     let mut ev = TickEvents::default();
@@ -111,7 +112,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         Block::Air
     );
     assert!(
-        game.server.sessions[0].pending_break_ack.contains(&pos),
+        game.server.sessions[0].pending_break_ack.contains_key(&pos),
         "hold-path owes a BreakFinished accept"
     );
 
@@ -121,6 +122,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
             request_id: 22,
             pos,
             tool_item_id: None,
+            predicted: true,
         }),
     );
     game.server.tick_mining(0, &mut TickEvents::default());
@@ -169,6 +171,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
             request_id: 11,
             pos,
             tool_item_id: None,
+            predicted: true,
         }),
     );
     game.server.tick_mining(0, &mut TickEvents::default());
@@ -244,6 +247,7 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
             request_id: 6,
             pos,
             tool_item_id: None,
+            predicted: true,
         }),
     );
     game.server.tick_mining(0, &mut TickEvents::default());
@@ -549,7 +553,7 @@ fn claim_after_a_slow_client_gap_is_accepted() {
     }
     // Its next report legitimately drifted further than one frame's worth.
     let mut u2 = player_update(&game, true);
-    u2.pos = start + Vec3::new(6.0, 0.0, 0.0);
+    u2.pos = start + Vec3::new(3.5, 0.0, 0.0);
     u2.vel = Vec3::new(5.6, 0.0, 0.0);
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u2.clone()));
@@ -782,6 +786,7 @@ fn break_finished_deny_queues_corrective_cells() {
             request_id: 9,
             pos,
             tool_item_id: None,
+            predicted: true,
         }),
     );
     game.server.tick_mining(0, &mut TickEvents::default());
@@ -794,4 +799,178 @@ fn break_finished_deny_queues_corrective_cells() {
         .pending_action_outcomes
         .iter()
         .any(|o| o.id == 9 && !o.accepted));
+}
+
+#[test]
+fn far_claim_does_not_grant_reach() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let far = IVec3::new(14, 64, 14);
+    assert!(game
+        .server
+        .world
+        .set_block_world(far.x, far.y, far.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 2.5);
+
+    // A fabricated claim right next to the far block: outside the drift ring
+    // of the server's own integration, so it must not become the reach eye.
+    let mut u = player_update(&game, true);
+    u.pos = Vec3::new(13.5, 65.0, 13.5);
+    u.vel = Vec3::ZERO;
+    u.target = Some(hit(far, IVec3::Y));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    assert!(
+        game.server.sessions[0].look.is_none(),
+        "an implausible claim must not validate a far look target"
+    );
+
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 30,
+            pos: far,
+            tool_item_id: None,
+            predicted: true,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(far.x, far.y, far.z)),
+        Block::Stone,
+        "remote reach must not break the block"
+    );
+    assert!(
+        game.server.sessions[0]
+            .pending_action_outcomes
+            .iter()
+            .any(|o| o.id == 30 && !o.accepted && o.reason == Some(ActionDenyReason::OutOfReach)),
+        "the far finish denies OutOfReach"
+    );
+}
+
+#[test]
+fn horizontal_teleport_claim_is_rejected() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
+    let start = game.server.sessions[0].player.pos;
+
+    // A sideways hop far beyond any legitimate horizontal speed, under an
+    // innocent velocity — the old isotropic (terminal-speed) ring accepted
+    // this; the per-axis ring must not.
+    let mut u = player_update(&game, true);
+    u.pos = start + Vec3::new(3.5, 0.0, 0.0);
+    u.vel = Vec3::new(5.0, 0.0, 0.0);
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.server.tick_movement(0);
+    let after = game.server.sessions[0].player.pos;
+    assert!(
+        (after - start).length() < 2.0,
+        "a horizontal jump beyond the sprint envelope must not be adopted (after={after:?})"
+    );
+}
+
+#[test]
+fn fake_on_ground_claims_do_not_evade_fall_damage() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+    game.server.sessions[0].fall.reset(80.0);
+
+    // Descend claiming on_ground every tick — the mid-air flag is fabricated
+    // (no support under the feet), so the peak must survive to the landing.
+    for y in [80.0, 76.0, 72.0, 68.0, 65.0] {
+        let mut u = player_update(&game, true);
+        u.pos = Vec3::new(8.5, y, 8.5);
+        u.vel = Vec3::new(0.0, -20.0, 0.0);
+        u.on_ground = true;
+        game.server
+            .apply_message(0, ClientToServer::PlayerUpdate(u));
+        game.server.tick_movement(0);
+    }
+    assert!(
+        game.server.sessions[0].pending_fall >= 14.0,
+        "faked grounded claims must not reset the fall (measured {})",
+        game.server.sessions[0].pending_fall
+    );
+}
+
+#[test]
+fn unpredicted_break_finish_keeps_the_initiators_break_event() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    let pos = IVec3::new(8, 64, 8);
+    assert!(game
+        .server
+        .world
+        .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+
+    let mut u = player_update(&game, true);
+    u.break_held = true;
+    u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
+    game.server
+        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    let expected_ticks = (crate::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    for _ in 0..expected_ticks - 2 {
+        game.server.tick_mining(0, &mut TickEvents::default());
+    }
+    // A TRACK-ONLY finish (frozen ledger / replica disagreement): the client
+    // never presented, so the accept must not strip its BlockBroken.
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 31,
+            pos,
+            tool_item_id: None,
+            predicted: false,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+    assert!(
+        game.server.sessions[0]
+            .pending_action_outcomes
+            .iter()
+            .any(|o| o.id == 31 && o.accepted),
+        "the finish itself still accepts"
+    );
+    assert!(
+        !game.server.sessions[0].presented_breaks.contains(&pos),
+        "an unpresented break must not be stripped from the initiator's events"
+    );
+}
+
+#[test]
+fn multi_deny_rollback_is_emission_order_independent() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.sync_self_view_for_test();
+    let before = game.self_view.inventory.clone();
+
+    game.game.drop_selected_item(false); // id 0
+    game.game.drop_selected_item(false); // id 1
+
+    // The server may emit an immediate deny for the NEWER id before a
+    // tick-time deny for the older one — the restore must still end on the
+    // oldest snapshot.
+    let update = TickUpdate {
+        action_outcomes: vec![
+            prediction::deny(1, ActionDenyReason::Denied),
+            prediction::deny(0, ActionDenyReason::Denied),
+        ],
+        ..Default::default()
+    };
+    game.game.apply_tick_update(Box::new(update));
+    assert_eq!(
+        game.self_view
+            .inventory
+            .slot(game.self_view.inventory.active_slot() as usize),
+        before.slot(before.active_slot() as usize),
+        "rollback must be allocation-ordered, not emission-ordered"
+    );
 }
