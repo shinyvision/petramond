@@ -28,6 +28,18 @@ impl World {
         }
     }
 
+    /// Record just the front facing for a freshly placed directional block
+    /// (chest, furnace) — the replica-side mirror of the server's placement
+    /// state write, WITHOUT fabricating a local block-entity: containers and
+    /// furnace machine state are server-owned and arrive with the delta. The
+    /// index refresh makes the dynamic chest render collect the cell at once.
+    pub fn insert_entity_facing(&mut self, pos: IVec3, facing: Facing) {
+        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+            c.insert_entity_facing(lx, ly, lz, facing);
+            self.note_block_entity_change(pos);
+        }
+    }
+
     /// Append the render data — world position, facing, and sampled light — of
     /// every loaded chest to `out` (cleared first). The transient lid open angle is
     /// filled in by the caller (it's client-side animation, not world state). Visits

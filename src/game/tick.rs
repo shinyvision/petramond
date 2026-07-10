@@ -745,12 +745,33 @@ impl Game {
 
     /// Optimistic full place when the look target can accept the held block.
     /// Mirrors the placement checks the client CAN evaluate on its replica —
-    /// a ghost the server is known to refuse is never drawn. On predict: cell,
-    /// hotbar decrement, hand pop, and a local `WorldEvent::BlockPlaced`.
+    /// a ghost the server is known to refuse is never drawn — and the server's
+    /// per-shape STATE write (torch mount, stair state, log axis, slab layer,
+    /// door pair, chest/furnace front), so the mesh built this frame matches
+    /// what the authoritative delta will confirm instead of rendering a
+    /// default orientation for a frame (SP) or an RTT (MP). Placements the
+    /// accept convention denies by design (replace-in-place, slab stack into
+    /// the hit cell, an oriented model's shifted base) are never ghosted.
+    /// On predict: cell(s), hotbar decrement, hand pop, and a local
+    /// `WorldEvent::BlockPlaced`.
     pub(super) fn try_predict_place_ghost(
         &mut self,
         sneak: bool,
     ) -> Option<crate::net::protocol::ClientRequestId> {
+        use crate::block::RenderShape;
+
+        /// The server-mirrored world write a predicted place will commit.
+        enum PredictedPlace {
+            Bare,
+            Torch(crate::torch::TorchPlacement),
+            Facing(crate::facing::Facing),
+            Log(crate::block_state::LogAxis),
+            Stair(crate::block_state::StairState),
+            Slab(crate::slab::SlabSlot),
+            Door,
+            Model(crate::facing::Facing),
+        }
+
         let look = self.look?;
         if look.normal == IVec3::ZERO {
             return None; // eye inside the cell — the server never places
@@ -767,6 +788,12 @@ impl Game {
         if !sneak && target.interaction() != crate::block::BlockInteraction::None {
             return None;
         }
+        // Replace-in-place (clicking short grass, a fern…): the server
+        // overwrites the CLICKED cell, which can never match the ghost
+        // convention (`target + normal`), so the request denies by design.
+        if target.is_replaceable() && target != crate::block::Block::Air {
+            return None;
+        }
         let place_pos = look.block + look.normal;
         let prev = self
             .replica
@@ -774,35 +801,201 @@ impl Game {
         if prev != crate::block::Block::Air.0 {
             return None;
         }
-        // The client KNOWS these placements fail server-side: unrooted
-        // substrate, unsupported torch, or a body in the cell (own body
-        // included — no ghost where the player stands).
-        let below = self
-            .replica
-            .physics_block(place_pos.x, place_pos.y - 1, place_pos.z);
-        if !block.can_root_on(below) {
-            return None;
-        }
-        if block == crate::block::Block::Torch {
-            match crate::torch::TorchPlacement::from_place_normal(look.normal) {
-                Some(tp) if self.replica.torch_supported_at(place_pos, tp) => {}
-                _ => return None,
+        let held = self.self_view.inventory.selected().map(|s| s.item);
+        let player_facing =
+            crate::server::placement::facing_from_forward(self.player.forward());
+
+        // The shape ladder, mirroring the server's `try_place`: each arm runs
+        // the same validity checks against the replica and picks the same
+        // world write. `cells` lists every replica cell the write touches —
+        // the deny-rollback footprint.
+        let mut cells = vec![(place_pos, prev)];
+        let write = match block.render_shape() {
+            RenderShape::Slab => {
+                let rotation = self.held_rotation.slab_rotation(held);
+                // A stack lands in the CLICKED cell — off the ghost
+                // convention, denied by design. Ship the click unpredicted.
+                if crate::slab::is_slab(target) {
+                    if let Some(slot) =
+                        crate::slab::stack_slot(rotation, look.normal, player_facing)
+                    {
+                        if crate::slab::can_add_layer(
+                            self.replica.slab_state_at(
+                                look.block.x,
+                                look.block.y,
+                                look.block.z,
+                            ),
+                            slot,
+                        ) {
+                            return None;
+                        }
+                    }
+                }
+                let slot =
+                    crate::slab::slot_for_rotation(rotation, look.normal, player_facing);
+                let state = self
+                    .replica
+                    .slab_layer_target_state(place_pos, block, slot)?;
+                if self
+                    .placement_blocked_by_body(place_pos, crate::slab::boxes_for_state(state))
+                {
+                    return None;
+                }
+                PredictedPlace::Slab(slot)
             }
-        }
-        if self.placement_blocked_by_body(place_pos, block.collision_boxes()) {
-            return None;
-        }
+            RenderShape::Model(kind) => {
+                let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
+                if multi_cell || block.directional_view() {
+                    // The oriented base anchor usually shifts off the clicked
+                    // cell, which the accept convention denies — no ghost.
+                    return None;
+                }
+                let facing = crate::block_model::DEFAULT_MODEL_FACING;
+                if !self
+                    .replica
+                    .model_footprint_clear_facing(place_pos, kind, facing)
+                {
+                    return None;
+                }
+                let blocked = crate::block_model::oriented_footprint_cells(
+                    place_pos, kind, facing,
+                )
+                .into_iter()
+                .any(|(c, off)| {
+                    self.placement_blocked_by_body(
+                        c,
+                        crate::block_model::collision_boxes_oriented(kind, off, facing),
+                    )
+                });
+                if blocked {
+                    return None;
+                }
+                PredictedPlace::Model(facing)
+            }
+            RenderShape::Door => {
+                if !self.replica.door_footprint_clear(place_pos) {
+                    return None;
+                }
+                let upper = place_pos + IVec3::new(0, 1, 0);
+                let closed = |top: bool| {
+                    crate::door::collision_boxes(crate::door::DoorState {
+                        facing: player_facing,
+                        open: false,
+                        top,
+                    })
+                };
+                if self.placement_blocked_by_body(place_pos, closed(false))
+                    || self.placement_blocked_by_body(upper, closed(true))
+                {
+                    return None;
+                }
+                cells.push((
+                    upper,
+                    self.replica.chunk_block(upper.x, upper.y, upper.z),
+                ));
+                PredictedPlace::Door
+            }
+            RenderShape::Stair => {
+                let state = crate::block_state::StairState::new(
+                    player_facing,
+                    self.held_rotation.stair_half(held),
+                );
+                if self.placement_blocked_by_body(
+                    place_pos,
+                    self.replica.resolved_stair_boxes(place_pos, state),
+                ) {
+                    return None;
+                }
+                PredictedPlace::Stair(state)
+            }
+            RenderShape::Pane => {
+                if self.placement_blocked_by_body(place_pos, self.replica.pane_boxes_at(place_pos))
+                {
+                    return None;
+                }
+                PredictedPlace::Bare
+            }
+            _ => {
+                // The general path. The client KNOWS these placements fail
+                // server-side: unrooted substrate, unsupported torch, or a
+                // body in the cell (own body included — no ghost where the
+                // player stands).
+                let below = self
+                    .replica
+                    .physics_block(place_pos.x, place_pos.y - 1, place_pos.z);
+                if !block.can_root_on(below) {
+                    return None;
+                }
+                let write = if block == crate::block::Block::Torch {
+                    match crate::torch::TorchPlacement::from_place_normal(look.normal) {
+                        Some(tp) if self.replica.torch_supported_at(place_pos, tp) => {
+                            PredictedPlace::Torch(tp)
+                        }
+                        _ => return None,
+                    }
+                } else if block.is_log() {
+                    PredictedPlace::Log(
+                        self.held_rotation.log_axis_for_facing(held, player_facing),
+                    )
+                } else if block.directional_view() {
+                    PredictedPlace::Facing(player_facing)
+                } else {
+                    PredictedPlace::Bare
+                };
+                if self.placement_blocked_by_body(place_pos, block.collision_boxes()) {
+                    return None;
+                }
+                write
+            }
+        };
+
         if !self.prediction.can_predict() {
             return Some(self.prediction.begin_track_only());
         }
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
-            cells: vec![(place_pos, prev)],
+            cells,
         };
         let id = self.prediction.begin(snapshot);
-        let _ = self
-            .replica
-            .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+        // The same World write the server commits. Deny-rollback restores the
+        // previous block ids, which wipes each cell's sparse state, so a
+        // stale predicted state cannot leak.
+        match write {
+            PredictedPlace::Bare => {
+                let _ =
+                    self.replica
+                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+            }
+            PredictedPlace::Torch(tp) => {
+                let _ =
+                    self.replica
+                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+                self.replica.insert_torch(place_pos, tp);
+            }
+            PredictedPlace::Facing(facing) => {
+                let _ =
+                    self.replica
+                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+                self.replica.insert_entity_facing(place_pos, facing);
+            }
+            PredictedPlace::Log(axis) => {
+                let _ = self.replica.place_log(place_pos, block, axis);
+            }
+            PredictedPlace::Stair(state) => {
+                let _ = self.replica.place_stair(place_pos, block, state);
+            }
+            PredictedPlace::Slab(slot) => {
+                let _ = self.replica.place_slab_layer(place_pos, block, slot);
+            }
+            PredictedPlace::Door => {
+                let _ = self.replica.place_door(place_pos, block, player_facing);
+            }
+            PredictedPlace::Model(facing) => {
+                let _ = self
+                    .replica
+                    .place_model_block_facing(place_pos, block, facing);
+            }
+        }
         self.self_view.inventory.decrement_selected();
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);

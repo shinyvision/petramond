@@ -186,7 +186,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
+    use crate::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
     use crate::mathh::IVec3;
     use crate::world::testutil::flat_world;
 
@@ -351,6 +351,74 @@ mod tests {
             w.chunk_block(16, 65, 8),
             Block::Water.id(),
             "water-side kick missed cross-seam air"
+        );
+    }
+
+    #[test]
+    fn reload_kick_rearms_enclosed_mid_drain_water() {
+        // A walled basin mid-drain: sourceless flowing water whose only open
+        // face is UP. Pending flow checks die with the unload, and the old
+        // air-adjacency kick could not see this water (air above never starts
+        // flow) — the sheet froze at flowing levels forever. The kick must
+        // re-arm from the flow METADATA so draining resumes.
+        let mut w = World::new(0, 1);
+        let mut c = Chunk::new(0, 0);
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                c.set_block(x, 64, z, Block::Stone);
+            }
+        }
+        for z in 5..=10 {
+            for x in 5..=10 {
+                if x == 5 || x == 10 || z == 5 || z == 10 {
+                    c.set_block(x, 65, z, Block::Stone);
+                } else {
+                    c.set_water(x, 65, z, Block::Water, 3);
+                }
+            }
+        }
+        w.insert_chunk_for_test(ChunkPos::new(0, 0), c);
+
+        w.queue_loaded_section_water_updates(&[SectionPos::new(0, 4, 0)]);
+        run_ticks(&mut w, 200);
+        assert_eq!(
+            w.chunk_block(7, 65, 7),
+            Block::Air.id(),
+            "reloaded sourceless flow in a walled basin must drain, not freeze"
+        );
+    }
+
+    #[test]
+    fn ingest_kick_rearms_dropped_checks_deep_in_a_kept_neighbour() {
+        // The guard drops fired checks whose read box (±SIM_READ_REACH) touched
+        // an absent section — including checks 2..=5 cells inside a section
+        // that never unloaded. When the absent section lands, the kick must
+        // re-arm the kept side that deep; the 1-cell inflow plane cannot.
+        let mut w = World::new(0, 1);
+        let mut kept = crate::section::Section::new(0, 4, 0);
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                kept.set_block(x, 0, z, Block::Stone);
+            }
+        }
+        // Sourceless flowing cell 4 cells from the seam at x=16.
+        kept.set_water(12, 1, 8, Block::Water, 4);
+        w.insert_section_for_test(SectionPos::new(0, 4, 0), kept);
+        w.insert_section_for_test(
+            SectionPos::new(1, 4, 0),
+            crate::section::Section::new(1, 4, 0),
+        );
+
+        w.queue_loaded_section_water_updates(&[SectionPos::new(1, 4, 0)]);
+        assert!(
+            !w.queue_block_update(IVec3::new(12, 65, 8)),
+            "kick must reach the kept neighbour's mid-flow cell, not just the seam plane"
+        );
+        run_ticks(&mut w, 30);
+        assert_eq!(
+            w.chunk_block(12, 65, 8),
+            Block::Air.id(),
+            "re-armed sourceless flow dries"
         );
     }
 }

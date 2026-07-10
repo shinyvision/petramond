@@ -695,6 +695,197 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 }
 
 #[test]
+fn optimistic_torch_place_records_wall_mount_immediately() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    let wall = IVec3::new(8, 64, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let mut inv = crate::inventory::Inventory::new();
+    inv.add(crate::item::ItemStack::new(crate::item::ItemType::Torch, 1));
+    game.server.sessions[0].player.inventory = inv;
+    game.sync_self_view_for_test();
+
+    // Click the wall's west face: the predicted torch must carry its mount
+    // BEFORE the frame's remesh, or it renders the Floor default until the
+    // authoritative delta lands (the one-frame floor-torch flicker).
+    game.game
+        .predict_place_at_for_test(wall, -IVec3::X, false)
+        .expect("supported wall torch must predict");
+
+    let torch = wall - IVec3::X;
+    assert_eq!(
+        Block::from_id(
+            game.game
+                .replica
+                .chunk_block(torch.x, torch.y, torch.z)
+        ),
+        Block::Torch
+    );
+    assert_eq!(
+        game.game.replica.torch_placement(torch),
+        crate::torch::TorchPlacement::West,
+        "predicted place must record the wall mount for the same-frame mesh"
+    );
+}
+
+#[test]
+fn optimistic_stair_place_records_orientation_immediately() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    let floor = IVec3::new(8, 63, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let mut inv = crate::inventory::Inventory::new();
+    inv.add(crate::item::ItemStack::new(
+        crate::item::ItemType::OakStairs,
+        1,
+    ));
+    game.server.sessions[0].player.inventory = inv;
+    game.sync_self_view_for_test();
+
+    // The absent-state fallback the mesher would read pre-fix; make the
+    // player's facing produce something else, so the assert can tell a
+    // recorded orientation from the fallback.
+    let default_state = game
+        .game
+        .replica
+        .section_at_world_for_test(floor.x, floor.y, floor.z)
+        .expect("floor section")
+        .stair_state(0, 0, 0);
+    let expected_state = |g: &crate::game::Game| {
+        crate::block_state::StairState::new(
+            crate::server::placement::facing_from_forward(g.player.forward()),
+            crate::block_state::StairHalf::Bottom,
+        )
+    };
+    if expected_state(&game.game) == default_state {
+        game.game.player.yaw += std::f32::consts::PI;
+    }
+    let expected = expected_state(&game.game);
+    assert_ne!(expected, default_state, "fixture: non-default orientation");
+
+    game.game
+        .predict_place_at_for_test(floor, IVec3::Y, false)
+        .expect("stair place must predict");
+
+    let cell = floor + IVec3::Y;
+    assert_eq!(
+        Block::from_id(game.game.replica.chunk_block(cell.x, cell.y, cell.z)),
+        Block::OakStairs
+    );
+    assert_eq!(
+        game.game
+            .replica
+            .section_at_world_for_test(cell.x, cell.y, cell.z)
+            .expect("stair section")
+            .stair_state(8, 0, 8),
+        expected,
+        "predicted place must record the stair orientation for the same-frame mesh"
+    );
+}
+
+#[test]
+fn optimistic_chest_place_records_front_facing_immediately() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    let floor = IVec3::new(8, 63, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let mut inv = crate::inventory::Inventory::new();
+    inv.add(crate::item::ItemStack::new(crate::item::ItemType::Chest, 1));
+    game.server.sessions[0].player.inventory = inv;
+    game.sync_self_view_for_test();
+
+    let default_facing = game
+        .game
+        .replica
+        .section_at_world_for_test(floor.x, floor.y, floor.z)
+        .expect("floor section")
+        .entity_facing(0, 0, 0);
+    let facing_of = |g: &crate::game::Game| {
+        crate::server::placement::facing_from_forward(g.player.forward())
+    };
+    if facing_of(&game.game) == default_facing {
+        game.game.player.yaw += std::f32::consts::PI;
+    }
+    let expected = facing_of(&game.game);
+    assert_ne!(expected, default_facing, "fixture: non-default facing");
+
+    game.game
+        .predict_place_at_for_test(floor, IVec3::Y, false)
+        .expect("chest place must predict");
+
+    let cell = floor + IVec3::Y;
+    assert_eq!(
+        game.game
+            .replica
+            .section_at_world_for_test(cell.x, cell.y, cell.z)
+            .expect("chest section")
+            .entity_facing(8, 0, 8),
+        expected,
+        "predicted place must record the front facing (chest render + furnace mesh)"
+    );
+}
+
+#[test]
+fn slab_stack_click_is_not_predicted() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    // A bottom slab in the cell: clicking its top face stacks INTO that cell
+    // server-side, off the ghost convention (`target + normal`), so the
+    // request denies by design — the client must not ghost a slab above.
+    let cell = IVec3::new(8, 64, 8);
+    let facing =
+        crate::server::placement::facing_from_forward(game.game.player.forward());
+    let slot = crate::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
+    assert!(game.game.replica.place_slab_layer(cell, Block::OakSlab, slot));
+    let mut inv = crate::inventory::Inventory::new();
+    inv.add(crate::item::ItemStack::new(crate::item::ItemType::OakSlab, 1));
+    game.server.sessions[0].player.inventory = inv;
+    game.sync_self_view_for_test();
+
+    assert!(
+        game.game
+            .predict_place_at_for_test(cell, IVec3::Y, false)
+            .is_none(),
+        "a stack click must ship unpredicted (the server places in the CLICKED cell)"
+    );
+    let above = cell + IVec3::Y;
+    assert_eq!(
+        game.game.replica.chunk_block(above.x, above.y, above.z),
+        Block::Air.id(),
+        "no ghost slab in the cell above"
+    );
+}
+
+#[test]
 fn optimistic_break_clears_replica_and_queues_world_event() {
     let mut game = game();
     install_empty_chunk(&mut game);

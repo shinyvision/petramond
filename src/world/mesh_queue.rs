@@ -517,6 +517,24 @@ impl World {
                 .get(&res.pos)
                 .is_some_and(|s| s.light_dirty && s.light_revision == res.revision);
             if !fresh {
+                // A stale rejection is the moment the section has NO bake in
+                // flight anymore (`try_recv` cleared the pending slot) while
+                // every request made during the flight was dedup-dropped. If it
+                // is still dirty, re-request here or it wedges light-dirty and
+                // every mesh whose 3×3×3 reads it parks in
+                // `light_blocked_meshes` until an unrelated edit.
+                let rebake = self
+                    .sections
+                    .get(&res.pos)
+                    .is_some_and(|s| s.light_dirty && !s.all_opaque())
+                    && !self.light_deferred.contains(&res.pos);
+                if rebake {
+                    let key = self
+                        .last_load_target
+                        .map_or(0, |t| t.section_priority_key(res.pos));
+                    self.light_bakes
+                        .request(key, res.pos, &self.sections, &self.columns);
+                }
                 continue;
             }
             if let Some(s) = self.section_mut(res.pos) {
@@ -531,8 +549,10 @@ impl World {
             if self.save.is_some() {
                 // An already-persisted record must rewrite with the new cubes
                 // (see `relit_since_persist`); unknown-to-disk sections are
-                // filtered at the persist gate.
+                // filtered at the persist gate. The landed bake also resolves
+                // any pending edit-staleness — the fresh cubes supersede it.
                 self.relit_since_persist.insert(res.pos);
+                self.light_edited_since_persist.remove(&res.pos);
             }
             if self.role == crate::world::store::WorldRole::ServerHeadless {
                 // A landed bake is new shippable content: LightData for
@@ -692,6 +712,37 @@ mod tests {
             job.biome.iter().all(|&id| id != 0),
             "mesh jobs must not bake chunk-edge tint from missing-biome id 0"
         );
+    }
+
+    #[test]
+    fn stale_rejected_light_bake_requests_a_rebake() {
+        // A revision bump while a bake is in flight (an edit, a neighbour
+        // landing) makes the result stale. Its rejection is the only moment
+        // the pending slot is clear again — every request during the flight
+        // was dedup-dropped — so without an immediate re-request the section
+        // wedges light-dirty and every mesh sampling it parks forever.
+        let mut world = World::new(0, 1);
+        let pos = SectionPos::new(0, 0, 0);
+        let mut section = solid_section(pos);
+        section.set_block(8, 8, 8, Block::Air);
+        world.insert_section_for_test(pos, section);
+        assert!(world.sections[&pos].light_dirty, "fixture: bake wanted");
+
+        world
+            .light_bakes
+            .request(0, pos, &world.sections, &world.columns);
+        // Invalidate the in-flight bake exactly as an edit / landing does. The
+        // result is drained on this thread, so the bump always beats it.
+        world.mark_light_dirty_pos(pos);
+
+        for _ in 0..2500 {
+            world.pump_light_bakes();
+            if !world.sections[&pos].light_dirty {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("stale-rejected bake was never re-requested: section wedged light-dirty");
     }
 
     #[test]

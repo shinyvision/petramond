@@ -274,6 +274,14 @@ pub struct World {
     /// only load-skippable because disk content is mutually consistent).
     /// Cleared wholesale by `flush_modified_chunks`. Empty without a save.
     pub(super) relit_since_persist: FxHashSet<SectionPos>,
+    /// Sections whose baked light a CONTENT change dirtied while a save is
+    /// attached — their on-disk cubes are now pre-edit stale. Resolved by the
+    /// rebake landing (`pump_light_bakes` moves them to `relit_since_persist`)
+    /// or, if eviction/quit wins the race, by the persist gate rewriting the
+    /// record WITHOUT light so reload rebakes instead of loading a permanent
+    /// dark seam. Streaming-landing dirt is deliberately NOT tracked: those
+    /// records stay mutually consistent on disk.
+    pub(super) light_edited_since_persist: FxHashSet<SectionPos>,
     /// Fixed-timestep simulation state: block updates + scheduled block ticks.
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
@@ -391,6 +399,7 @@ impl World {
             headless_relight: FxHashSet::default(),
             light_ship_log: FxHashSet::default(),
             relit_since_persist: FxHashSet::default(),
+            light_edited_since_persist: FxHashSet::default(),
             sim: TickState::new(seed),
             save: None,
             optimize_explored_terrain: false,
@@ -642,9 +651,16 @@ impl World {
         let relit_persisted = light_final
             && self.relit_since_persist.contains(&pos)
             && (authoritative_exists || explored_exists);
+        // An edit dirtied this record's baked light and the rebake hasn't
+        // landed (eviction/quit racing the bake): rewrite the record NOW —
+        // the snapshot omits dirty light, so reload rebakes instead of
+        // loading the pre-edit cubes as clean (a permanent dark seam).
+        let light_stale_persisted = !light_final
+            && self.light_edited_since_persist.contains(&pos)
+            && (authoritative_exists || explored_exists);
         let authoritative =
             section.modified || !entities.is_empty() || !mobs.is_empty() || record_holds_entities;
-        if authoritative || explored_first_persist || relit_persisted {
+        if authoritative || explored_first_persist || relit_persisted || light_stale_persisted {
             let mut snap = SectionSnapshot::from_section(section);
             snap.entities = entities;
             snap.mobs = mobs;
@@ -692,6 +708,7 @@ impl World {
                 s.modified = false;
             }
             self.relit_since_persist.remove(&pos);
+            self.light_edited_since_persist.remove(&pos);
         }
         if let Some(save) = self.save.as_mut() {
             save.save_sections(snaps);
@@ -1265,6 +1282,23 @@ impl World {
         }
     }
 
+    /// Record that a content change dirtied the 3×3×3's baked light (see
+    /// [`light_edited_since_persist`](Self::light_edited_since_persist)).
+    /// Only loaded sections enter: an edit's reach is always inside the
+    /// streamed core, and `mark_light_dirty_pos` no-ops on absent ones too.
+    pub(super) fn note_light_edited_neighborhood(&mut self, center: SectionPos) {
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let p = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
+                    if self.sections.contains_key(&p) {
+                        self.light_edited_since_persist.insert(p);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn mark_light_dirty_neighborhood(
         &mut self,
         center: SectionPos,
@@ -1364,6 +1398,7 @@ impl World {
         self.hidden_parked.remove(&pos);
         self.sealed_parked.remove(&pos);
         self.light_bakes.cancel(pos);
+        self.light_edited_since_persist.remove(&pos);
         self.mark_light_dirty_neighborhood(pos, false);
         self.mark_dirty_neighborhood(pos, false);
     }
@@ -1393,6 +1428,7 @@ impl World {
             self.hidden_parked.remove(&sp);
             self.sealed_parked.remove(&sp);
             self.light_bakes.cancel(sp);
+            self.light_edited_since_persist.remove(&sp);
         }
         self.mesh_columns.remove(&pos);
         self.mesh_upload_revisions.remove(&pos);
@@ -1452,6 +1488,7 @@ impl World {
         self.repack_forced.clear();
         self.light_blocked_meshes.clear();
         self.light_deferred.clear();
+        self.light_edited_since_persist.clear();
         self.deferred_recheck_needed = false;
         self.deferred_rechecks.clear();
         for job in self.pending.values().flatten() {
@@ -1579,6 +1616,65 @@ mod tests {
         world
             .column_gen
             .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
+    }
+
+    #[test]
+    fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
+        // Two adjacent sections persist with clean baked light. An edit in A
+        // then dirties B's light (content change → B's on-disk cubes are
+        // pre-edit stale). If eviction/quit wins the race against B's rebake,
+        // the persist gate must rewrite B's record WITHOUT light so reload
+        // rebakes — the pre-fix gate skipped unmodified light-dirty sections
+        // entirely, stranding the stale cubes as a permanent dark seam.
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-stale-light-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let opened = crate::save::open_at(dir.clone()).expect("open save");
+        let mut world = World::new(0, 0);
+        world.attach_save(opened.save);
+
+        let a = SectionPos::new(0, 4, 0);
+        let b = SectionPos::new(1, 4, 0);
+        for &sp in &[a, b] {
+            let mut s = Section::new(sp.cx, sp.cy, sp.cz);
+            for z in 0..SECTION_SIZE {
+                for x in 0..SECTION_SIZE {
+                    s.set_block(x, 0, z, Block::Stone);
+                }
+            }
+            s.set_skylight(vec![0u8; SECTION_VOLUME].into());
+            s.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+            s.mark_light_clean();
+            world.insert_section_for_test(sp, s);
+            world.section_mut(sp).expect("loaded").modified = true;
+        }
+        world.flush_modified_chunks();
+        assert!(
+            world.save().expect("save").manifest_contains(b),
+            "fixture: B's record is on disk"
+        );
+        assert!(
+            !world.sections[&b].light_dirty,
+            "fixture: B persisted with clean light"
+        );
+
+        // The edit in A, one cell from the seam: B's cached AND persisted
+        // light are now stale.
+        world.set_block_world(15, 65, 8, Block::Stone);
+        assert!(world.sections[&b].light_dirty);
+
+        let snap = world
+            .snapshot_section_for_save(b, Vec::new(), Vec::new(), false)
+            .expect("an unmodified on-disk section with edit-dirtied light must rewrite");
+        assert!(
+            snap.skylight.is_none() && snap.blocklight.is_none(),
+            "the rewrite must omit the stale cubes so reload rebakes"
+        );
+
+        drop(world);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

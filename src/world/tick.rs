@@ -243,6 +243,9 @@ impl World {
         }
         if let Some(sp) = SectionPos::from_world(wx, wy, wz) {
             self.mark_light_dirty_neighborhood(sp, true);
+            if self.save.is_some() {
+                self.note_light_edited_neighborhood(sp);
+            }
         }
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);
