@@ -241,6 +241,7 @@ pub(crate) enum BlockMaterial {
     Stone,
     Ore,
     Wood,
+    Wool,
     Foliage,
     Plant,
     Other,

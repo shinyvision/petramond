@@ -166,6 +166,9 @@ impl Block {
     pub const DirtSlab: Block = Block(125);
     pub const Glass: Block = Block(126);
     pub const GlassPane: Block = Block(127);
+    pub const WoolBlock: Block = Block(128);
+    pub const WoolStairs: Block = Block(129);
+    pub const WoolSlab: Block = Block(130);
 }
 
 impl std::fmt::Debug for Block {
@@ -702,17 +705,19 @@ impl Block {
     /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
     /// for stone & ore, an [`Axe`](ToolKind::Axe) for wood (logs, planks, the
     /// crafting table, the chest), a [`Shovel`](ToolKind::Shovel) for dirt & sand
-    /// (grass, podzol, gravel, clay, snow…) — or `None` for blocks a bare hand mines
-    /// just as fast (plants, glass-likes). Holding the matching tool grants the
-    /// tier speed-up in [`crate::mining::break_time`], and for tool-gated blocks the
-    /// pickaxe also unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the
-    /// item half of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
+    /// (grass, podzol, gravel, clay, snow…), [`Shears`](ToolKind::Shears) for wool —
+    /// or `None` for blocks a bare hand mines just as fast (plants, glass-likes).
+    /// Holding the matching tool grants the tier speed-up in
+    /// [`crate::mining::break_time`], and for tool-gated blocks the pickaxe also
+    /// unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the item half
+    /// of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
     #[inline]
     pub fn preferred_tool(self) -> Option<ToolKind> {
         match self.material() {
             BlockMaterial::Stone | BlockMaterial::Ore => Some(ToolKind::Pickaxe),
             BlockMaterial::Wood => Some(ToolKind::Axe),
             BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
+            BlockMaterial::Wool => Some(ToolKind::Shears),
             _ => None,
         }
     }
@@ -862,6 +867,11 @@ mod tests {
                 "{b:?} should be dirt/sand"
             );
             assert_eq!(b.preferred_tool(), Some(ToolKind::Shovel), "{b:?}");
+        }
+        // Wool wants shears — the block and its stair/slab variants alike.
+        for b in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
+            assert_eq!(b.material(), BlockMaterial::Wool, "{b:?} should be wool");
+            assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
         }
         // Everything a hand mines just as well has no preferred tool (plants,
         // leaves, air).

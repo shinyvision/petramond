@@ -224,6 +224,9 @@ impl ItemType {
     pub const DirtSlab: ItemType = ItemType(150);
     pub const Glass: ItemType = ItemType(151);
     pub const GlassPane: ItemType = ItemType(152);
+    pub const WoolBlock: ItemType = ItemType(153);
+    pub const WoolStairs: ItemType = ItemType(154);
+    pub const WoolSlab: ItemType = ItemType(155);
 }
 
 impl std::fmt::Debug for ItemType {
@@ -337,8 +340,9 @@ impl ItemTag {
 /// What family of tool an item is, for mining. A tool speeds up the block class
 /// it is *for* — a [`Pickaxe`](ToolKind::Pickaxe) mines stone & ore, an
 /// [`Axe`](ToolKind::Axe) mines wood, a [`Shovel`](ToolKind::Shovel) mines dirt &
-/// sand — and a wrong-kind tool (an axe on stone, a shovel on a log) mines no
-/// faster than a bare hand and unlocks no drop. The block half of this pairing is
+/// sand, [`Shears`](ToolKind::Shears) mine wool — and a wrong-kind tool (an axe
+/// on stone, a shovel on a log) mines no faster than a bare hand and unlocks no
+/// drop. The block half of this pairing is
 /// [`Block::preferred_tool`](crate::block::Block::preferred_tool).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -346,6 +350,7 @@ pub enum ToolKind {
     Pickaxe,
     Axe,
     Shovel,
+    Shears,
 }
 
 impl ToolKind {
@@ -362,7 +367,7 @@ impl ToolKind {
     #[inline]
     pub fn mining_efficiency(self) -> f32 {
         match self {
-            ToolKind::Pickaxe | ToolKind::Axe => 1.0,
+            ToolKind::Pickaxe | ToolKind::Axe | ToolKind::Shears => 1.0,
             // 0.5625 = 9/16: scales the ×8 diamond tier down to ×4.5.
             ToolKind::Shovel => 0.5625,
         }
@@ -551,6 +556,9 @@ impl ItemType {
             Block::DirtSlab => ItemType::DirtSlab,
             Block::Glass => ItemType::Glass,
             Block::GlassPane => ItemType::GlassPane,
+            Block::WoolBlock => ItemType::WoolBlock,
+            Block::WoolStairs => ItemType::WoolStairs,
+            Block::WoolSlab => ItemType::WoolSlab,
             _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
             // A pack-registered block: its item declares the link via its
             // row's `block` field. No linked item -> Air (nothing to hold).
@@ -616,6 +624,9 @@ impl ItemType {
             ItemType::DirtSlab => Some(Block::DirtSlab),
             ItemType::Glass => Some(Block::Glass),
             ItemType::GlassPane => Some(Block::GlassPane),
+            ItemType::WoolBlock => Some(Block::WoolBlock),
+            ItemType::WoolStairs => Some(Block::WoolStairs),
+            ItemType::WoolSlab => Some(Block::WoolSlab),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             // Engine item-only items carry no link; a pack item's row may
             // (`"block": "mod:key"` in items.json).
@@ -689,11 +700,10 @@ impl ItemType {
     /// slot) — that limit is a CONSEQUENCE of durability, not of being a "tool".
     /// Durability isn't consumed yet, but the model is correct: a future durable
     /// non-tool item would also not stack, for the same reason. Every mining
-    /// [`tool`](Self::tool) (the pickaxes, axes + shovels) is durable, and so are
-    /// the shears (a durable tool that isn't a *mining* tool — it acts on a mob).
+    /// [`tool`](Self::tool) (the pickaxes, axes, shovels + shears) is durable.
     #[inline]
     pub fn is_durable(self) -> bool {
-        self.tool().is_some() || self == ItemType::Shears
+        self.tool().is_some()
     }
 
     /// Stable snake_case identity recipes reference (e.g. `oak_planks`), read from
@@ -949,7 +959,7 @@ mod tests {
     #[test]
     fn durable_items_do_not_stack() {
         // The stack limit of 1 follows from durability, not from being a "tool".
-        // Every mining tool — pickaxes, axes and shovels, all four tiers — is durable.
+        // Every mining tool — pickaxes, axes, shovels and shears — is durable.
         for durable in [
             ItemType::WoodenPickaxe,
             ItemType::StonePickaxe,
@@ -963,6 +973,7 @@ mod tests {
             ItemType::StoneShovel,
             ItemType::IronShovel,
             ItemType::DiamondShovel,
+            ItemType::Shears,
         ] {
             assert!(durable.is_durable(), "{durable:?}");
             assert_eq!(durable.max_stack_size(), 1, "{durable:?}");

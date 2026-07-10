@@ -1762,7 +1762,11 @@
       },
       "sprite": "shears",
       "tags": [],
-      "use": "shear"
+      "use": "shear",
+      "tool": {
+        "kind": "shears",
+        "tier": 1
+      }
     },
     {
       "item": "petramond:wool",
@@ -1968,6 +1972,42 @@
         "roll": 0
       },
       "sprite": "glass",
+      "tags": []
+    },
+    {
+      "item": "petramond:wool_block",
+      "key": "petramond:wool_block",
+      "name": "Wool Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:wool_stairs",
+      "key": "petramond:wool_stairs",
+      "name": "Wool Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:wool_slab",
+      "key": "petramond:wool_slab",
+      "name": "Wool Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
       "tags": []
     }
   ]

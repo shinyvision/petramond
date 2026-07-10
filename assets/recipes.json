@@ -556,6 +556,55 @@
     {
       "type": "shaped",
       "pattern": [
+        "WW",
+        "WW"
+      ],
+      "key": {
+        "W": "petramond:wool"
+      },
+      "result": "petramond:wool_block",
+      "count": 1
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "W  ",
+        "WW ",
+        "WWW"
+      ],
+      "key": {
+        "W": "petramond:wool_block"
+      },
+      "result": "petramond:wool_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  W",
+        " WW",
+        "WWW"
+      ],
+      "key": {
+        "W": "petramond:wool_block"
+      },
+      "result": "petramond:wool_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "WWW"
+      ],
+      "key": {
+        "W": "petramond:wool_block"
+      },
+      "result": "petramond:wool_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
         "PPP",
         " S ",
         " S "

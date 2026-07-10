@@ -185,6 +185,7 @@
     {"name": "water_still", "file": "water_still.png", "anim": true, "tint": "water"},
     {"name": "water_flow", "file": "water_flow.png", "anim": true, "tint": "water"},
     {"name": "glass", "file": "glass.png"},
-    {"name": "glass_pane_top", "file": "glass_pane_top.png"}
+    {"name": "glass_pane_top", "file": "glass_pane_top.png"},
+    {"name": "wool_block", "file": "wool_block.png"}
   ]
 }

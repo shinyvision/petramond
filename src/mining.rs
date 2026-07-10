@@ -9,7 +9,7 @@
 //!
 //! Tools: a held tool whose KIND matches the block's
 //! [`Block::preferred_tool`] (a pickaxe on stone/ore, an axe on wood, a shovel on
-//! dirt/sand) mines it faster by its tier (×2/×4/×6/×8 for wooden/stone/iron/
+//! dirt/sand, shears on wool) mines it faster by its tier (×2/×4/×6/×8 for wooden/stone/iron/
 //! diamond), scaled by the kind's efficiency — the shovel digs at 0.5625× so it
 //! is uniformly slower than a pickaxe/axe of equal tier. For a
 //! tool-gated block (stone/ore) a pickaxe must also meet the block's
@@ -292,6 +292,14 @@ mod tests {
         Some(Tool {
             kind: ToolKind::Shovel,
             tier,
+        })
+    }
+
+    /// Shears in hand (one tier only: tier 1, the ×2 rung of the shared ladder).
+    fn shears() -> Option<Tool> {
+        Some(Tool {
+            kind: ToolKind::Shears,
+            tier: 1,
         })
     }
 
@@ -641,6 +649,26 @@ mod tests {
             break_time(Block::OakLog, shovel(4)),
             break_time(Block::OakLog, None)
         );
+    }
+
+    #[test]
+    fn shears_cut_wool_at_double_speed_and_other_kinds_do_not() {
+        for wool in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
+            let hand = break_time(wool, None);
+            assert!(hand > 0.0, "{wool:?} should not break instantly");
+            // Shears are tier 1 at full efficiency: exactly twice the hand rate.
+            assert_eq!(break_time(wool, shears()), hand / 2.0, "{wool:?}");
+            // Wool is hand-harvestable: the drop needs no tool.
+            assert!(harvests(wool, None), "{wool:?}");
+            // Every other kind — even diamond — is wrong for wool: hand speed.
+            for tool in [pick(4), axe(4), shovel(4)] {
+                assert_eq!(break_time(wool, tool), hand, "{wool:?} with {tool:?}");
+            }
+        }
+        // And shears are the wrong kind everywhere else: no speed-up off wool.
+        for b in [Block::Stone, Block::OakLog, Block::Dirt] {
+            assert_eq!(break_time(b, shears()), break_time(b, None), "{b:?}");
+        }
     }
 
     #[test]
