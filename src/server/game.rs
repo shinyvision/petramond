@@ -861,6 +861,7 @@ impl ServerGame {
             sess.pending_place = false;
             sess.pending_use_mob = None;
             sess.pending_place_target = None;
+            sess.pending_place_predicted = false;
             // The dropped click still owes its outcome: deny, so the client
             // rolls its place ghost back instead of leaking the ledger entry.
             if let Some(id) = sess.pending_place_request_id.take() {
@@ -898,6 +899,7 @@ impl ServerGame {
                 mob,
                 target,
                 request_id,
+                predicted,
             } => {
                 let sess = &mut self.sessions[s];
                 if let Some(old) = sess.pending_place_request_id.take() {
@@ -912,6 +914,7 @@ impl ServerGame {
                 sess.pending_place_target =
                     target.filter(|t| player::block_within_reach(eye, t.block));
                 sess.pending_place_request_id = request_id;
+                sess.pending_place_predicted = predicted;
             }
             PlayerAction::AttackClick { mob, player } => {
                 let sess = &mut self.sessions[s];

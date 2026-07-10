@@ -37,6 +37,7 @@ impl ServerGame {
         events: &mut TickEvents,
     ) {
         let request_id = self.sessions[s].pending_place_request_id.take();
+        let predicted = std::mem::take(&mut self.sessions[s].pending_place_predicted);
         let mut consumed = false;
         let mut placed_at = None;
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
@@ -68,9 +69,14 @@ impl ServerGame {
                     events.player(s).placed_block = held;
                     consumed = true;
                     placed_at = Some(pos);
-                    // Strip this cell from the initiator's TickUpdate.events —
-                    // they already presented the place locally.
-                    self.sessions[s].presented_places.push(pos);
+                    // Strip this cell from the initiator's TickUpdate.events
+                    // only when they PRESENTED the place locally (full ghost).
+                    // An unpredicted placement — oriented model, replace-in-
+                    // place, slab stack, frozen ledger — keeps its event, or
+                    // the initiator never hears their own place.
+                    if predicted {
+                        self.sessions[s].presented_places.push(pos);
+                    }
                     if let Some(block) = held {
                         // Every observer presents the placement (positional sound)
                         // from the world-anchored event.
@@ -518,6 +524,9 @@ impl ServerGame {
         let sess = &mut self.sessions[s];
         sess.pending_place_target = sess.look;
         sess.pending_place = true;
+        // The hook models a client that ran its full place prediction (the
+        // common case), so the echo strip applies like production.
+        sess.pending_place_predicted = true;
     }
 }
 

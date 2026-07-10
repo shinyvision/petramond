@@ -419,13 +419,24 @@ impl World {
                     section.insert_torch(lx, ly, lz, TorchPlacement::from_u8(b))
                 }
                 Some(CellState::Facing(b)) => {
-                    section.insert_entity_facing(lx, ly, lz, Facing::from_u8(b));
-                    // A freshly placed furnace face renders unlit; the lit
-                    // stand-in only ships with full section payloads.
+                    section.insert_entity_facing(lx, ly, lz, Facing::from_u8(b & 0x7F));
+                    // The high bit carries the furnace lit state so the front
+                    // texture flips without a full section payload. The
+                    // stand-in never ticks on a replica (sim is server-owned),
+                    // so `burn_remaining: 1` simply means "render lit" until
+                    // the next delta or payload says otherwise.
                     if Block::from_id(delta.block_id).interaction()
                         == crate::block::BlockInteraction::OpenFurnace
                     {
-                        section.insert_furnace(lx, ly, lz, Furnace::default());
+                        section.insert_furnace(
+                            lx,
+                            ly,
+                            lz,
+                            Furnace {
+                                burn_remaining: u16::from(b & 0x80 != 0),
+                                ..Furnace::default()
+                            },
+                        );
                     }
                 }
                 Some(CellState::ModelCell { off, facing }) => {
@@ -657,6 +668,58 @@ mod tests {
     }
 
     /// The Phase B2 convergence contract: everything a client can SEE —
+    /// A furnace lighting (or going out) after join must flip the replica's
+    /// front texture: the lit state rides the facing delta's high bit — a
+    /// full section payload only ships at join/stream time.
+    #[test]
+    fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
+        let (mut server, mut replica) = server_and_replica();
+        let pos = IVec3::new(4, 65, 4);
+        assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Furnace));
+        server.insert_furnace(pos, Facing::South);
+
+        for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+            replica.install_remote_column(server.column_payload(cp).unwrap());
+        }
+        for s in server.sections.values() {
+            replica.install_remote_section(s.to_payload());
+        }
+        let replica_lit = |r: &World| {
+            r.section_at_world_for_test(4, 65, 4)
+                .expect("furnace section")
+                .is_furnace_lit(4, 1, 4)
+        };
+        assert!(!replica_lit(&replica), "fixture: joins unlit");
+
+        // The furnace lights; `tick_furnaces` announces flips through
+        // `notify_block_and_neighbors`, which records the delta.
+        server.set_replication_capture(true);
+        {
+            let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
+            furnace.burn_remaining = 50;
+            furnace.burn_max = 100;
+        }
+        server.notify_block_and_neighbors(pos.x, pos.y, pos.z);
+        for d in server.take_block_deltas() {
+            replica.apply_remote_delta(d);
+        }
+        assert!(
+            replica_lit(&replica),
+            "the lit flip must reach the replica's mesher"
+        );
+
+        // ...and the flame going out flips it back.
+        {
+            let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
+            furnace.burn_remaining = 0;
+        }
+        server.notify_block_and_neighbors(pos.x, pos.y, pos.z);
+        for d in server.take_block_deltas() {
+            replica.apply_remote_delta(d);
+        }
+        assert!(!replica_lit(&replica), "the extinguish must reach it too");
+    }
+
     /// block ids, water meta, and every sparse state map — reads back
     /// identically through the public query surface after installing the
     /// column payloads, the section payloads, and a tick's coalesced deltas.

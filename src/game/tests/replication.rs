@@ -558,6 +558,49 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     assert_eq!(events.open_chest, None, "one-shots don't repeat");
 }
 
+/// An UNPREDICTED placement (oriented model, replace-in-place, slab stack,
+/// frozen ledger) never presented client-side, so the initiator's own
+/// `BlockPlaced` must FLOW — stripping it (the pre-flag behavior) left the
+/// place with no hand jab and no sound for the placer.
+#[test]
+fn unpredicted_placement_keeps_the_initiators_world_event() {
+    use crate::block::Block;
+    use crate::mathh::IVec3;
+    use crate::net::protocol::WorldEventMsg;
+
+    let mut game = super::common::game();
+    super::common::install_empty_chunk(&mut game);
+    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    let floor = IVec3::new(3, 63, 3);
+    game.server
+        .world
+        .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
+    game.server.sessions[0].player.inventory = filled_inventory();
+    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.queue_place_click_for_test(0);
+    game.server.sessions[0].pending_place_predicted = false; // e.g. a model-block click
+
+    let mut inbox = Vec::new();
+    let out = game.server.pump(TICK_DT, &mut inbox);
+    let placed_at = floor + IVec3::Y;
+    let initiator = out
+        .msgs
+        .iter()
+        .find_map(|msg| match msg {
+            crate::net::protocol::ServerToClient::Tick(u) => Some(u.as_ref()),
+            _ => None,
+        })
+        .expect("local session batch");
+    assert!(
+        initiator.events.iter().any(|e| matches!(
+            e,
+            WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
+        )),
+        "an unpredicted place must keep the initiator's BlockPlaced, got {:?}",
+        initiator.events
+    );
+}
+
 /// Player block placement and (mined) breaks broadcast position-carrying
 /// `WorldEventMsg`s. The initiator's own batch omits their predicted
 /// place/break presentation (echo rule); a second session still receives them.

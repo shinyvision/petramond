@@ -584,7 +584,11 @@ impl World {
             return Some(CellState::Torch(t.to_u8()));
         }
         if let Some(f) = s.entity_facings().get(&cell) {
-            return Some(CellState::Facing(f.to_u8()));
+            // A furnace folds its lit state into the facing byte's high bit:
+            // the replica's mesher flips the front texture from it, and a
+            // lit-state delta otherwise carries nothing but this entry.
+            let lit = s.furnaces().get(&cell).is_some_and(|f| f.is_lit());
+            return Some(CellState::Facing(f.to_u8() | if lit { 0x80 } else { 0 }));
         }
         None
     }

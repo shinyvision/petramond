@@ -18,6 +18,25 @@ use super::prediction;
 /// in whole steps of this size.
 pub(crate) const TICK_DT: f32 = 0.05;
 
+/// What the place-prediction pass decided for a use click (see
+/// `Game::try_predict_place_ghost`). Distinguishing `Plausible` from `No`
+/// matters twice: the P0 hand jab fires for any click that will likely place,
+/// and the wire's `UseClick.predicted` flag (true only for `Predicted`) tells
+/// the server whether to strip the initiator's `BlockPlaced` echo.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum PlacePrediction {
+    /// Full P1: replica cells written, presentation played, ledger entry open.
+    Predicted(crate::net::protocol::ClientRequestId),
+    /// Ledger frozen: the id ships (and is answered) but nothing presented.
+    TrackOnly(crate::net::protocol::ClientRequestId),
+    /// The server will likely place, but off the ghost convention
+    /// (`target + normal`) — replace-in-place, a slab stack into the hit
+    /// cell, an oriented model's shifted base — so no ghost is drawn.
+    Plausible,
+    /// The click won't place anything.
+    No,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MovementInput {
     pub forward: bool,
@@ -692,19 +711,26 @@ impl Game {
                     block: h.block,
                     normal: h.normal,
                 });
-                let request_id = self.try_predict_place_ghost(input.movement.sneak);
-                // P0 jab only when the click predictably does something; a
-                // click the client knows is a no-op still ships (the server
+                let place = self.try_predict_place_ghost(input.movement.sneak);
+                let request_id = match place {
+                    PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
+                    _ => None,
+                };
+                // P0 jab only when the click predictably does something —
+                // including a PLAUSIBLE placement the ghost convention keeps
+                // unpredicted (oriented model, replace-in-place, slab stack).
+                // A click the client knows is a no-op still ships (the server
                 // may know better — mods, state the replica can't see) but
                 // stays silent locally; a server-side surprise animates
                 // through the replicated `interacted`/`used_item` events.
-                self.local_hand_jab =
-                    request_id.is_some() || self.use_click_predicts_effect(input, use_mob);
+                self.local_hand_jab = !matches!(place, PlacePrediction::No)
+                    || self.use_click_predicts_effect(input, use_mob);
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
                         target,
                         request_id,
+                        predicted: matches!(place, PlacePrediction::Predicted(_)),
                     }));
             }
             if input.attack_clicked {
@@ -751,13 +777,11 @@ impl Game {
     /// what the authoritative delta will confirm instead of rendering a
     /// default orientation for a frame (SP) or an RTT (MP). Placements the
     /// accept convention denies by design (replace-in-place, slab stack into
-    /// the hit cell, an oriented model's shifted base) are never ghosted.
+    /// the hit cell, an oriented model's shifted base) are never ghosted —
+    /// they classify [`PlacePrediction::Plausible`] so the click still jabs.
     /// On predict: cell(s), hotbar decrement, hand pop, and a local
     /// `WorldEvent::BlockPlaced`.
-    pub(super) fn try_predict_place_ghost(
-        &mut self,
-        sneak: bool,
-    ) -> Option<crate::net::protocol::ClientRequestId> {
+    pub(super) fn try_predict_place_ghost(&mut self, sneak: bool) -> PlacePrediction {
         use crate::block::RenderShape;
 
         /// The server-mirrored world write a predicted place will commit.
@@ -772,11 +796,20 @@ impl Game {
             Model(crate::facing::Facing),
         }
 
-        let look = self.look?;
+        let Some(look) = self.look else {
+            return PlacePrediction::No;
+        };
         if look.normal == IVec3::ZERO {
-            return None; // eye inside the cell — the server never places
+            return PlacePrediction::No; // eye inside the cell — the server never places
         }
-        let block = self.self_view.inventory.selected()?.item.as_block()?;
+        let Some(block) = self
+            .self_view
+            .inventory
+            .selected()
+            .and_then(|s| s.item.as_block())
+        else {
+            return PlacePrediction::No;
+        };
         // A non-sneak click on an interactable block opens/uses it instead of
         // placing (the server's interact ladder) — no ghost, or the client
         // would render a phantom block the server never places.
@@ -786,20 +819,21 @@ impl Game {
             look.block.z,
         ));
         if !sneak && target.interaction() != crate::block::BlockInteraction::None {
-            return None;
+            return PlacePrediction::No;
         }
         // Replace-in-place (clicking short grass, a fern…): the server
         // overwrites the CLICKED cell, which can never match the ghost
-        // convention (`target + normal`), so the request denies by design.
+        // convention (`target + normal`), so the request denies by design —
+        // plausible (jab), never ghosted.
         if target.is_replaceable() && target != crate::block::Block::Air {
-            return None;
+            return PlacePrediction::Plausible;
         }
         let place_pos = look.block + look.normal;
         let prev = self
             .replica
             .chunk_block(place_pos.x, place_pos.y, place_pos.z);
         if prev != crate::block::Block::Air.0 {
-            return None;
+            return PlacePrediction::No;
         }
         let held = self.self_view.inventory.selected().map(|s| s.item);
         let player_facing =
@@ -814,7 +848,7 @@ impl Game {
             RenderShape::Slab => {
                 let rotation = self.held_rotation.slab_rotation(held);
                 // A stack lands in the CLICKED cell — off the ghost
-                // convention, denied by design. Ship the click unpredicted.
+                // convention, denied by design. Plausible: jab, no ghost.
                 if crate::slab::is_slab(target) {
                     if let Some(slot) =
                         crate::slab::stack_slot(rotation, look.normal, player_facing)
@@ -827,19 +861,20 @@ impl Game {
                             ),
                             slot,
                         ) {
-                            return None;
+                            return PlacePrediction::Plausible;
                         }
                     }
                 }
                 let slot =
                     crate::slab::slot_for_rotation(rotation, look.normal, player_facing);
-                let state = self
-                    .replica
-                    .slab_layer_target_state(place_pos, block, slot)?;
+                let Some(state) = self.replica.slab_layer_target_state(place_pos, block, slot)
+                else {
+                    return PlacePrediction::No;
+                };
                 if self
                     .placement_blocked_by_body(place_pos, crate::slab::boxes_for_state(state))
                 {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 PredictedPlace::Slab(slot)
             }
@@ -848,14 +883,40 @@ impl Game {
                 if multi_cell || block.directional_view() {
                     // The oriented base anchor usually shifts off the clicked
                     // cell, which the accept convention denies — no ghost.
-                    return None;
+                    // Still mirror the placement checks so the jab fires only
+                    // when the model will actually land.
+                    let facing = crate::block_model::def(kind)
+                        .orientation
+                        .apply(player_facing);
+                    let base = crate::block_model::base_from_front_left_anchor(
+                        place_pos, kind, facing,
+                    );
+                    if !self.replica.model_footprint_clear_facing(base, kind, facing) {
+                        return PlacePrediction::No;
+                    }
+                    let blocked =
+                        crate::block_model::oriented_footprint_cells(base, kind, facing)
+                            .into_iter()
+                            .any(|(c, off)| {
+                                self.placement_blocked_by_body(
+                                    c,
+                                    crate::block_model::collision_boxes_oriented(
+                                        kind, off, facing,
+                                    ),
+                                )
+                            });
+                    return if blocked {
+                        PlacePrediction::No
+                    } else {
+                        PlacePrediction::Plausible
+                    };
                 }
                 let facing = crate::block_model::DEFAULT_MODEL_FACING;
                 if !self
                     .replica
                     .model_footprint_clear_facing(place_pos, kind, facing)
                 {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 let blocked = crate::block_model::oriented_footprint_cells(
                     place_pos, kind, facing,
@@ -868,13 +929,13 @@ impl Game {
                     )
                 });
                 if blocked {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 PredictedPlace::Model(facing)
             }
             RenderShape::Door => {
                 if !self.replica.door_footprint_clear(place_pos) {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 let upper = place_pos + IVec3::new(0, 1, 0);
                 let closed = |top: bool| {
@@ -887,7 +948,7 @@ impl Game {
                 if self.placement_blocked_by_body(place_pos, closed(false))
                     || self.placement_blocked_by_body(upper, closed(true))
                 {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 cells.push((
                     upper,
@@ -904,14 +965,14 @@ impl Game {
                     place_pos,
                     self.replica.resolved_stair_boxes(place_pos, state),
                 ) {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 PredictedPlace::Stair(state)
             }
             RenderShape::Pane => {
                 if self.placement_blocked_by_body(place_pos, self.replica.pane_boxes_at(place_pos))
                 {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 PredictedPlace::Bare
             }
@@ -924,14 +985,14 @@ impl Game {
                     .replica
                     .physics_block(place_pos.x, place_pos.y - 1, place_pos.z);
                 if !block.can_root_on(below) {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 let write = if block == crate::block::Block::Torch {
                     match crate::torch::TorchPlacement::from_place_normal(look.normal) {
                         Some(tp) if self.replica.torch_supported_at(place_pos, tp) => {
                             PredictedPlace::Torch(tp)
                         }
-                        _ => return None,
+                        _ => return PlacePrediction::No,
                     }
                 } else if block.is_log() {
                     PredictedPlace::Log(
@@ -943,14 +1004,14 @@ impl Game {
                     PredictedPlace::Bare
                 };
                 if self.placement_blocked_by_body(place_pos, block.collision_boxes()) {
-                    return None;
+                    return PlacePrediction::No;
                 }
                 write
             }
         };
 
         if !self.prediction.can_predict() {
-            return Some(self.prediction.begin_track_only());
+            return PlacePrediction::TrackOnly(self.prediction.begin_track_only());
         }
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
@@ -1004,7 +1065,7 @@ impl Game {
             pos: place_pos,
             block,
         });
-        Some(id)
+        PlacePrediction::Predicted(id)
     }
 
     /// Client mirror of the server's `placement_occupied_by_body`: the own

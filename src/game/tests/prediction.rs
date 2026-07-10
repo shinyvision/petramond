@@ -4,7 +4,7 @@ use super::common::*;
 use crate::block::Block;
 use crate::controls::PointerButton;
 use crate::game::prediction::{self, PredictionSnapshot};
-use crate::game::tick::{TickEvents, TICK_DT};
+use crate::game::tick::{PlacePrediction, TickEvents, TICK_DT};
 use crate::gui::MenuSlot;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{
@@ -477,6 +477,7 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
             mob: None,
             target: Some(hit(a, IVec3::Y)),
             request_id: Some(3),
+            predicted: true,
         }),
     );
     // ...then the crosshair moves to B before the tick resolves the click.
@@ -524,6 +525,7 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
             mob: None,
             target: Some(hit(t, IVec3::Y)),
             request_id: None,
+            predicted: false,
         }),
     );
     game.server.tick_place(0, &mut TickEvents::default());
@@ -659,11 +661,10 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         .expect("holding dirt")
         .count;
 
-    let id = game
-        .game
-        .predict_place_at_for_test(floor, IVec3::Y, false)
-        .expect("place must predict");
-    let _ = id;
+    assert!(matches!(
+        game.game.predict_place_at_for_test(floor, IVec3::Y, false),
+        PlacePrediction::Predicted(_)
+    ));
 
     let place_pos = floor + IVec3::Y;
     assert_eq!(
@@ -716,9 +717,10 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
     // Click the wall's west face: the predicted torch must carry its mount
     // BEFORE the frame's remesh, or it renders the Floor default until the
     // authoritative delta lands (the one-frame floor-torch flicker).
-    game.game
-        .predict_place_at_for_test(wall, -IVec3::X, false)
-        .expect("supported wall torch must predict");
+    assert!(matches!(
+        game.game.predict_place_at_for_test(wall, -IVec3::X, false),
+        PlacePrediction::Predicted(_)
+    ));
 
     let torch = wall - IVec3::X;
     assert_eq!(
@@ -779,9 +781,10 @@ fn optimistic_stair_place_records_orientation_immediately() {
     let expected = expected_state(&game.game);
     assert_ne!(expected, default_state, "fixture: non-default orientation");
 
-    game.game
-        .predict_place_at_for_test(floor, IVec3::Y, false)
-        .expect("stair place must predict");
+    assert!(matches!(
+        game.game.predict_place_at_for_test(floor, IVec3::Y, false),
+        PlacePrediction::Predicted(_)
+    ));
 
     let cell = floor + IVec3::Y;
     assert_eq!(
@@ -833,9 +836,10 @@ fn optimistic_chest_place_records_front_facing_immediately() {
     let expected = facing_of(&game.game);
     assert_ne!(expected, default_facing, "fixture: non-default facing");
 
-    game.game
-        .predict_place_at_for_test(floor, IVec3::Y, false)
-        .expect("chest place must predict");
+    assert!(matches!(
+        game.game.predict_place_at_for_test(floor, IVec3::Y, false),
+        PlacePrediction::Predicted(_)
+    ));
 
     let cell = floor + IVec3::Y;
     assert_eq!(
@@ -872,10 +876,11 @@ fn slab_stack_click_is_not_predicted() {
     game.sync_self_view_for_test();
 
     assert!(
-        game.game
-            .predict_place_at_for_test(cell, IVec3::Y, false)
-            .is_none(),
-        "a stack click must ship unpredicted (the server places in the CLICKED cell)"
+        matches!(
+            game.game.predict_place_at_for_test(cell, IVec3::Y, false),
+            PlacePrediction::Plausible
+        ),
+        "a stack click must classify Plausible: jab, no ghost (the server places in the CLICKED cell)"
     );
     let above = cell + IVec3::Y;
     assert_eq!(

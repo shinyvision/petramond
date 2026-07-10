@@ -755,6 +755,7 @@ mod tests {
                     normal: IVec3::Y,
                 }),
                 request_id: None,
+                predicted: false,
             }))
             .expect("live connection");
         drain_until(&mut remote, Duration::from_secs(10), |msg| {

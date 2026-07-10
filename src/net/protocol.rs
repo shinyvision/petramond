@@ -232,12 +232,18 @@ pub(crate) enum PlayerAction {
     /// TIME: the server resolves the interact/place against THIS cell, never
     /// a fresher look latch — otherwise a click racing the crosshair places
     /// somewhere the client's ghost isn't. `request_id` is set when the
-    /// client predicted a mutating outcome (place ghost);
-    /// presentation-only jabs may omit it.
+    /// client opened a ledger entry (place ghost or track-only);
+    /// presentation-only jabs may omit it. `predicted` says whether the
+    /// client actually PRESENTED a full place (ghost + sound) — it gates the
+    /// initiator's `BlockPlaced` echo strip only, exactly like
+    /// `BreakFinished.predicted`: an unpredicted placement (oriented model,
+    /// replace-in-place, slab stack, frozen ledger) must keep its event or
+    /// the initiator never hears their own place.
     UseClick {
         mob: Option<u64>,
         target: Option<TargetRef>,
         request_id: Option<ClientRequestId>,
+        predicted: bool,
     },
     /// Primary press: attack the mob under the crosshair (stable mob id), the
     /// remote PLAYER under the crosshair (`PlayerId` byte — PvP), or punch the
@@ -1056,6 +1062,7 @@ mod tests {
                 normal: IVec3::Y,
             }),
             request_id: Some(7),
+            predicted: true,
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::AttackClick {
             mob: None,

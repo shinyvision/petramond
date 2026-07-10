@@ -70,6 +70,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
                 normal: IVec3::Y,
             }),
             request_id: None,
+            predicted: false,
         }),
     );
     let mut ev = TickEvents::default();

@@ -353,6 +353,9 @@ pub(crate) struct ConnectedPlayer {
     pub pending_break_ack: rustc_hash::FxHashMap<IVec3, u64>,
     /// Optional request id on the pending use/place click (place ghost ack).
     pub pending_place_request_id: Option<crate::net::protocol::ClientRequestId>,
+    /// Whether the latched place click PRESENTED client-side (full ghost) —
+    /// gates the initiator's `BlockPlaced` echo strip, never validation.
+    pub pending_place_predicted: bool,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
     pub move_wishdir: crate::mathh::Vec3,
     pub move_jump: bool,
@@ -460,6 +463,7 @@ impl ConnectedPlayer {
             deferred_break_finished: None,
             pending_break_ack: Default::default(),
             pending_place_request_id: None,
+            pending_place_predicted: false,
             move_wishdir: crate::mathh::Vec3::ZERO,
             move_jump: false,
             move_sprint: false,

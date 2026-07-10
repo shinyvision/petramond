@@ -756,7 +756,7 @@ impl Game {
         block: IVec3,
         normal: IVec3,
         sneak: bool,
-    ) -> Option<crate::net::protocol::ClientRequestId> {
+    ) -> crate::game::tick::PlacePrediction {
         self.look = Some(RaycastHit {
             block,
             normal,
