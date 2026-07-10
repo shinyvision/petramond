@@ -3,6 +3,12 @@ use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
+
+/// Falls shorter than this into water make no splash — walking or a one-block
+/// step-down stays quiet; a real fall throws the burst.
+pub(crate) const WATER_SPLASH_MIN_FALL: f32 = 1.5;
+/// Falls at least this deep play the BIG splash sound instead of the small one.
+const WATER_SPLASH_BIG_FALL: f32 = 5.0;
 use crate::player;
 use crate::world::World;
 
@@ -266,6 +272,50 @@ impl ServerGame {
             };
             self.damage_mob_through_pipeline(0, idx, amount, DamageSource::Fall, None, events);
         }
+    }
+
+    /// Queue the core `petramond:water_splash` burst at the water surface above
+    /// `feet` — a one-shot every client presents. `fall` (blocks) is the burst
+    /// intensity: harder falls throw more droplets (the bundle's
+    /// `count_per_intensity` scales the count). Falls below
+    /// [`WATER_SPLASH_MIN_FALL`] stay quiet, so walking or stepping into water
+    /// never splashes.
+    pub(crate) fn push_water_splash(&mut self, feet: Vec3, fall: f32, events: &mut TickEvents) {
+        if fall < WATER_SPLASH_MIN_FALL {
+            return;
+        }
+        let Some(bundle) =
+            crate::particle_emitters::by_key(crate::particle_emitters::WATER_SPLASH_KEY)
+        else {
+            return;
+        };
+        let c = crate::mathh::voxel_at(feet);
+        // The entry cell (or the one below, when the feet sit at the boundary).
+        let mut top = if self.world.water_cell_at(c.x, c.y, c.z) {
+            c.y
+        } else if self.world.water_cell_at(c.x, c.y - 1, c.z) {
+            c.y - 1
+        } else {
+            return;
+        };
+        // The splash throws from the TOP of the water: climb to the surface
+        // cell (bounded — a plunge never starts more than a few cells deep).
+        while top - c.y < 8 && self.world.water_cell_at(c.x, top + 1, c.z) {
+            top += 1;
+        }
+        let pos = Vec3::new(feet.x, top as f32 + 1.02, feet.z);
+        events.world.emitter_bursts.push((bundle.id, pos, fall));
+        // The splash SOUND rides the ordinary one-shot sound channel (the
+        // emitter catalog is particles-only); the fall depth picks the clip.
+        let sound = if fall >= WATER_SPLASH_BIG_FALL {
+            crate::audio::Sound::WaterSplashBig
+        } else {
+            crate::audio::Sound::WaterSplashSmall
+        };
+        events.world.sounds.push(crate::game::ModSound {
+            sound,
+            pos: Some(pos),
+        });
     }
 
     /// Roll a dead mob's loot table and scatter the drops at its body. Called the

@@ -158,6 +158,18 @@
         "regrow_max": 6000
       },
       "damage_feedback": [],
+      "sounds": [
+        {
+          "category": "idle",
+          "sound": "petramond:sheep_idle",
+          "tick_interval": 400,
+          "tick_interval_variance": 200
+        },
+        {
+          "category": "hurt",
+          "sound": "petramond:sheep_hurt"
+        }
+      ],
       "brain": [
         {
           "node": "wander",

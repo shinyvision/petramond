@@ -5,7 +5,7 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
-use crate::block::{Block, BlockParticleEmitter, ParticleEmitterAnchor, RenderShape};
+use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, RenderShape};
 use crate::block_model::{self, BlockModelKind};
 use crate::chunk::{section_local, SectionPos};
 use crate::facing::Facing;
@@ -21,7 +21,7 @@ impl World {
     /// block ids.
     pub fn collect_particle_emitters(
         &self,
-        out: &mut Vec<(Vec3, BlockParticleEmitter, u64, u8, u8)>,
+        out: &mut Vec<(Vec3, ParticleEmitter, u64, u8, u8)>,
     ) {
         out.clear();
         for sp in &self.particle_emitter_sections {
@@ -34,35 +34,41 @@ impl World {
             let (ox, oy, oz) = section.origin_world();
             for (idx, &id) in section.blocks_slice().iter().enumerate() {
                 let block = Block::from_id(id);
-                let Some(emitter) = block.particle_emitter() else {
+                let Some(rows) = block.particle_emitter() else {
                     continue;
                 };
                 let (lx, ly, lz) = section_local(idx);
                 let cell = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
-                let origin = if let RenderShape::Model(kind) = block.render_shape() {
-                    // A multi-cell model emits ONCE per placed group (from its
-                    // authored-origin cell), at the FOOTPRINT-space anchor
-                    // rotated by the placed facing — never once per occupied
-                    // cell, which would wrap a 2×3×2 oven in twelve flames.
-                    if section.model_offset(lx, ly, lz) != [0, 0, 0] {
-                        continue;
-                    }
-                    let facing = section.model_facing(lx, ly, lz);
-                    model_emitter_origin(emitter, kind, cell, facing)
-                } else {
-                    let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
-                    Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local
-                };
-                let sample = voxel_at(origin);
-                let (sky, block_light, _) =
-                    self.dynamic_light_at_world(sample.x, sample.y, sample.z);
-                out.push((
-                    origin,
-                    emitter,
-                    emitter_seed(*sp, idx as u16, block),
-                    sky,
-                    block_light,
-                ));
+                // A referenced bundle may carry several rows (each with its own
+                // anchor/offset); every row reports separately with a distinct
+                // seed stream so sibling schedules don't pulse in lockstep.
+                for (row_idx, &emitter) in rows.iter().enumerate() {
+                    let origin = if let RenderShape::Model(kind) = block.render_shape() {
+                        // A multi-cell model emits ONCE per placed group (from its
+                        // authored-origin cell), at the FOOTPRINT-space anchor
+                        // rotated by the placed facing — never once per occupied
+                        // cell, which would wrap a 2×3×2 oven in twelve flames.
+                        if section.model_offset(lx, ly, lz) != [0, 0, 0] {
+                            continue;
+                        }
+                        let facing = section.model_facing(lx, ly, lz);
+                        model_emitter_origin(emitter, kind, cell, facing)
+                    } else {
+                        let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
+                        Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local
+                    };
+                    let sample = voxel_at(origin);
+                    let (sky, block_light, _) =
+                        self.dynamic_light_at_world(sample.x, sample.y, sample.z);
+                    out.push((
+                        origin,
+                        emitter,
+                        emitter_seed(*sp, idx as u16, block)
+                            ^ (row_idx as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+                        sky,
+                        block_light,
+                    ));
+                }
             }
         }
     }
@@ -74,7 +80,7 @@ impl World {
 /// footprint box), then rotate/translate through the same placement transform
 /// the mesher uses, so the flame sits on the model whichever way it faces.
 fn model_emitter_origin(
-    emitter: BlockParticleEmitter,
+    emitter: ParticleEmitter,
     kind: BlockModelKind,
     origin_cell: IVec3,
     facing: Facing,
@@ -95,7 +101,7 @@ fn model_emitter_origin(
 }
 
 fn emitter_anchor_local(
-    emitter: BlockParticleEmitter,
+    emitter: ParticleEmitter,
     block: Block,
     section: &crate::section::Section,
     lx: usize,

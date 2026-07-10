@@ -55,6 +55,23 @@ impl Game {
                         .entry(lower)
                         .or_insert(if open { 0.0 } else { 1.0 });
                 }
+                super::tick::WorldEvent::EmitterBurst {
+                    emitter,
+                    pos,
+                    intensity,
+                } => {
+                    // A one-shot burst bundle: spawn its physics particles into
+                    // the client-local system, world-lit at the burst point.
+                    let Some(spec) =
+                        crate::particle_emitters::def(emitter).and_then(|b| b.burst.as_ref())
+                    else {
+                        continue;
+                    };
+                    let c = voxel_at(pos);
+                    let (sky, blk, warm) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
+                    self.particles
+                        .spawn_emitter_burst(spec, pos, intensity, sky, blk, warm);
+                }
                 // Sounds only (played by the app); lids follow `open_chests`.
                 super::tick::WorldEvent::BlockPlaced { .. }
                 | super::tick::WorldEvent::ChestOpened { .. }

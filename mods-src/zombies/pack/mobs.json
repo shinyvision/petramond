@@ -5,7 +5,10 @@
       "key": "zombies:zombie",
       "model": "models/zombie.bbmodel",
       "scale": 0.059375,
-      "size": { "half_width": 0.3, "height": 1.8 },
+      "size": {
+        "half_width": 0.3,
+        "height": 1.8
+      },
       "max_health": 20.0,
       "walk_speed": 1.5,
       "jump_speed": 7.2,
@@ -14,21 +17,66 @@
       "category": "hostile",
       "cap": 70,
       "despawn_radius": 128.0,
-      "spawn": { "biomes": [], "ground": [] },
-      "spawn_group": { "min": 1, "max": 1 },
-      "wander": { "chance_per_tick": 0.005, "radius": 6 },
-      "habitat": { "avoid": [], "prefer": [] },
+      "spawn": {
+        "biomes": [],
+        "ground": []
+      },
+      "spawn_group": {
+        "min": 1,
+        "max": 1
+      },
+      "wander": {
+        "chance_per_tick": 0.005,
+        "radius": 6
+      },
+      "habitat": {
+        "avoid": [],
+        "prefer": []
+      },
       "avoid_water": false,
       "sounds": [
-        { "category": "idle", "sound": "zombies:groan", "tick_interval": 400, "tick_interval_variance": 200 },
-        { "category": "hurt", "sound": "zombies:hurt" },
-        { "category": "death", "sound": "zombies:death" }
+        {
+          "category": "idle",
+          "sound": "zombies:groan",
+          "tick_interval": 400,
+          "tick_interval_variance": 200
+        },
+        {
+          "category": "hurt",
+          "sound": "zombies:hurt"
+        },
+        {
+          "category": "death",
+          "sound": "zombies:death"
+        }
       ],
       "brain": [
-        { "node": "wander", "priority": 0 },
-        { "node": "head_look", "priority": 10 },
-        { "node": "chase_player", "priority": 20, "params": { "radius": 24.0, "give_up_radius": 32.0 } },
-        { "node": "melee_attack", "priority": 30, "params": { "reach": 1.6, "damage": 3.0, "knockback": 7.0, "cooldown_ticks": 20 } }
+        {
+          "node": "wander",
+          "priority": 0
+        },
+        {
+          "node": "head_look",
+          "priority": 10
+        },
+        {
+          "node": "chase_player",
+          "priority": 20,
+          "params": {
+            "radius": 24.0,
+            "give_up_radius": 32.0
+          }
+        },
+        {
+          "node": "melee_attack",
+          "priority": 30,
+          "params": {
+            "reach": 1.6,
+            "damage": 3.0,
+            "knockback": 7.0,
+            "cooldown_ticks": 20
+          }
+        }
       ]
     }
   ]

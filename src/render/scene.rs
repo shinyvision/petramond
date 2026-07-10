@@ -15,7 +15,7 @@ use glam::Vec3;
 
 use super::{
     ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance,
-    ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
+    ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer, SolidParticleInstance,
 };
 use crate::game::body_pose::lerp_angle;
 use crate::game::presentation::{
@@ -35,6 +35,9 @@ pub(crate) struct Scene {
     /// Baked model-atlas particle cubes (bbmodel-block flecks) for this frame — drawn in
     /// the same pass but bound to the model atlas.
     model_particles: Vec<ParticleInstance>,
+    /// Baked solid-color simulated particles (emitter-burst droplets) for this
+    /// frame — drawn alpha-blended with the looping-emitter cubes.
+    solid_particles: Vec<SolidParticleInstance>,
     /// Baked block-row particle emitters for this frame.
     particle_emitters: Vec<ParticleEmitterInstance>,
     /// Baked placed-chest instances for this frame.
@@ -66,6 +69,7 @@ impl Scene {
         self.item_entities.clear();
         self.particles.clear();
         self.model_particles.clear();
+        self.solid_particles.clear();
         self.particle_emitters.clear();
         self.chests.clear();
         self.doors.clear();
@@ -91,6 +95,7 @@ impl Scene {
             presentation.particles,
             &mut self.particles,
             &mut self.model_particles,
+            &mut self.solid_particles,
         );
         bake_particle_emitters(presentation.particle_emitters, &mut self.particle_emitters);
         self.bake_chests(presentation.chests);
@@ -176,6 +181,7 @@ impl Scene {
         renderer.set_remote_players(&self.remote_players);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
+        renderer.set_solid_particles(&self.solid_particles);
         renderer.set_particle_emitters(&self.particle_emitters);
     }
 }
@@ -199,6 +205,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         blocklight: m.blocklight,
         hurt: m.hurt_flash,
         shorn: m.shorn,
+        emitter_tint: m.emitter_tint,
         ragdoll: m.ragdoll_pose.clone(),
     }));
 }
@@ -231,10 +238,25 @@ fn bake_particles(
     particles: &[ParticlePresentation],
     block_out: &mut Vec<ParticleInstance>,
     model_out: &mut Vec<ParticleInstance>,
+    solid_out: &mut Vec<SolidParticleInstance>,
 ) {
     block_out.clear();
     model_out.clear();
+    solid_out.clear();
     for p in particles {
+        // A solid-color particle (emitter-burst droplet) has no atlas patch:
+        // it joins the alpha-blended cube pass instead of the cutout one.
+        if p.atlas == ParticleAtlas::Solid {
+            solid_out.push(SolidParticleInstance {
+                pos: p.pos,
+                color: p.tint,
+                alpha: p.alpha,
+                size: p.size,
+                skylight: p.skylight,
+                blocklight: p.blocklight,
+            });
+            continue;
+        }
         let inst = ParticleInstance {
             pos: p.pos,
             uv_min: p.uv_min,
@@ -248,6 +270,7 @@ fn bake_particles(
         match p.atlas {
             ParticleAtlas::Block => block_out.push(inst),
             ParticleAtlas::Model => model_out.push(inst),
+            ParticleAtlas::Solid => unreachable!("handled above"),
         }
     }
 }
@@ -357,11 +380,18 @@ mod tests {
             particle_row(ParticleAtlas::Block),
             particle_row(ParticleAtlas::Model),
             particle_row(ParticleAtlas::Block),
+            particle_row(ParticleAtlas::Solid),
         ];
         let mut block_out = Vec::new();
         let mut model_out = Vec::new();
-        bake_particles(&particles, &mut block_out, &mut model_out);
+        let mut solid_out = Vec::new();
+        bake_particles(&particles, &mut block_out, &mut model_out, &mut solid_out);
         assert_eq!(block_out.len(), 2, "block rows route to the block list");
         assert_eq!(model_out.len(), 1, "model rows route to the model list");
+        assert_eq!(solid_out.len(), 1, "solid rows route to the blended list");
+        assert_eq!(
+            solid_out[0].color, block_out[0].tint,
+            "a solid particle's tint IS its color"
+        );
     }
 }

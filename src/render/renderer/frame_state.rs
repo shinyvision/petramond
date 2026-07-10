@@ -266,6 +266,13 @@ impl Renderer {
         self.particle_emitters.extend_from_slice(v);
     }
 
+    /// Store the solid-color simulated particles (emitter-burst droplets) for
+    /// this frame; they join the emitter cubes' alpha-blended bake.
+    pub fn set_solid_particles(&mut self, v: &[SolidParticleInstance]) {
+        self.solid_particles.clear();
+        self.solid_particles.extend_from_slice(v);
+    }
+
     /// Store the already-owned UI state needed for this frame's UI pass.
     pub fn set_ui(&mut self, v: UiSnapshot) {
         self.ui = v;

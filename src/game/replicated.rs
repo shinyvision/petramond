@@ -588,6 +588,15 @@ impl Game {
                 sound: crate::audio::Sound(sound_id),
                 pos,
             }),
+            WorldEventMsg::EmitterBurst {
+                emitter_id,
+                pos,
+                intensity,
+            } => ev.world.push(WorldEvent::EmitterBurst {
+                emitter: emitter_id,
+                pos,
+                intensity,
+            }),
             WorldEventMsg::ModSpatialSound(cmd) => ev.mod_spatial_sounds.push(match cmd {
                 ModSpatialSoundMsg::PlayAt {
                     handle,

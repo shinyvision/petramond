@@ -1,0 +1,120 @@
+{
+  "emitters": [
+    {
+      "emitter": "petramond:torch_flame",
+      "particles": [
+        {
+          "anchor": "torch_top",
+          "offset": [0, 0.035, 0],
+          "rate": [0.5, 1.5],
+          "lifetime": [4.25, 6.25],
+          "size": [0.035, 0.085],
+          "spawn_box": [0.045, 0.012, 0.045],
+          "velocity": [0, 0.08, 0],
+          "velocity_jitter": [0.05, 0.05, 0.05],
+          "color": [[1, 0.34, 0.04], [1, 0.95, 0.22]],
+          "alpha": [0.2, 0.42],
+          "fullbright": true
+        }
+      ]
+    },
+    {
+      "emitter": "petramond:burn_light",
+      "particles": [
+        {
+          "offset": [0.0, 0.9, 0.0],
+          "rate": [12.0, 16.0],
+          "lifetime": [0.5, 0.9],
+          "size": [0.08, 0.16],
+          "spawn_box": [0.25, 0.85, 0.25],
+          "velocity": [0.0, 0.9, 0.0],
+          "velocity_jitter": [0.15, 0.3, 0.15],
+          "color_ramp": [[1.0, 0.98, 0.88], [1.0, 0.85, 0.25], [1.0, 0.5, 0.08], [0.9, 0.16, 0.05], [0.55, 0.08, 0.04], [0.14, 0.13, 0.12]],
+          "alpha": [0.8, 0.95],
+          "fade_power": 0.7,
+          "shrink_power": 0.45,
+          "fullbright": true,
+          "spiral": [0.12, 0.45]
+        },
+        {
+          "offset": [0.0, 1.6, 0.0],
+          "rate": [3.0, 5.0],
+          "lifetime": [0.7, 1.2],
+          "size": [0.07, 0.14],
+          "spawn_box": [0.2, 0.3, 0.2],
+          "velocity": [0.0, 1.6, 0.0],
+          "velocity_jitter": [0.1, 0.2, 0.1],
+          "color": [[0.05, 0.05, 0.05], [0.16, 0.16, 0.16]],
+          "alpha": [0.5, 0.7],
+          "fade_power": 1.0,
+          "shrink_power": 0.7,
+          "spiral": [0.1, 0.35]
+        }
+      ]
+    },
+    {
+      "emitter": "petramond:burn_great",
+      "tint": [1.0, 0.8, 0.55],
+      "particles": [
+        {
+          "offset": [0.0, 0.9, 0.0],
+          "rate": [32.0, 42.0],
+          "lifetime": [0.5, 0.9],
+          "size": [0.1, 0.2],
+          "spawn_box": [0.25, 0.85, 0.25],
+          "velocity": [0.0, 0.9, 0.0],
+          "velocity_jitter": [0.15, 0.3, 0.15],
+          "color_ramp": [[1.0, 0.98, 0.88], [1.0, 0.85, 0.25], [1.0, 0.5, 0.08], [0.9, 0.16, 0.05], [0.55, 0.08, 0.04], [0.14, 0.13, 0.12]],
+          "alpha": [0.8, 0.95],
+          "fade_power": 0.7,
+          "shrink_power": 0.45,
+          "fullbright": true,
+          "spiral": [0.12, 0.45]
+        },
+        {
+          "offset": [0.0, 0.9, 0.0],
+          "rate": [24.0, 32.0],
+          "lifetime": [0.5, 0.9],
+          "size": [0.07, 0.14],
+          "spawn_box": [0.38, 0.9, 0.38],
+          "velocity": [0.0, 1.15, 0.0],
+          "velocity_jitter": [0.15, 0.3, 0.15],
+          "color_ramp": [[1.0, 0.98, 0.88], [1.0, 0.85, 0.25], [1.0, 0.5, 0.08], [0.9, 0.16, 0.05], [0.55, 0.08, 0.04], [0.14, 0.13, 0.12]],
+          "alpha": [0.8, 0.95],
+          "fade_power": 0.7,
+          "shrink_power": 0.45,
+          "fullbright": true,
+          "spiral": [0.12, 0.45]
+        },
+        {
+          "offset": [0.0, 1.6, 0.0],
+          "rate": [10.0, 14.0],
+          "lifetime": [0.7, 1.2],
+          "size": [0.07, 0.14],
+          "spawn_box": [0.2, 0.3, 0.2],
+          "velocity": [0.0, 1.6, 0.0],
+          "velocity_jitter": [0.1, 0.2, 0.1],
+          "color": [[0.05, 0.05, 0.05], [0.16, 0.16, 0.16]],
+          "alpha": [0.5, 0.7],
+          "fade_power": 1.0,
+          "shrink_power": 0.7,
+          "spiral": [0.1, 0.35]
+        }
+      ]
+    },
+    {
+      "emitter": "petramond:water_splash",
+      "burst": {
+        "count_per_intensity": 4.0,
+        "max_count": 56,
+        "up_speed": [1.6, 3.8],
+        "radial_speed": [0.5, 2.0],
+        "lifetime": [0.5, 1.1],
+        "size": [0.05, 0.11],
+        "color": [[0.06, 0.14, 0.5], [0.35, 0.78, 0.95]],
+        "color_bias": 2.2,
+        "die_on_contact": true
+      }
+    }
+  ]
+}

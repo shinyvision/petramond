@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::{IVec3, Quat, Vec3};
 
 use crate::atlas::Tile;
-use crate::block::{Block, BlockParticleEmitter, RenderShape};
+use crate::block::{Block, ParticleEmitter, RenderShape};
 use crate::block_model::BlockModelKind;
 use crate::door::DoorState;
 use crate::facing::Facing;
@@ -81,6 +81,10 @@ pub(crate) struct DroppedItemPresentation {
 pub(crate) enum ParticleAtlas {
     Block,
     Model,
+    /// No atlas: a solid-color cube (an emitter-burst particle — water
+    /// splash). `tint` IS the color; drawn alpha-blended with the looping
+    /// emitter cubes instead of through the cutout fleck pipeline.
+    Solid,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -100,7 +104,7 @@ pub(crate) struct ParticlePresentation {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ParticleEmitterPresentation {
     pub(crate) origin: Vec3,
-    pub(crate) emitter: BlockParticleEmitter,
+    pub(crate) emitter: ParticleEmitter,
     pub(crate) seed: u64,
     pub(crate) skylight: u8,
     pub(crate) blocklight: u8,
@@ -127,6 +131,12 @@ pub(crate) struct MobPresentation {
     pub(crate) hurt_flash: f32,
     pub(crate) dead: bool,
     pub(crate) shorn: bool,
+    /// Replicated active particle-emitter bundle ids (client-local
+    /// `particle_emitters.json` catalog ids).
+    pub(crate) emitters: Vec<u8>,
+    /// Body tint composed from the active bundles' `tint` values (white when
+    /// none) — multiplied into the render tint like the hurt flash.
+    pub(crate) emitter_tint: [f32; 3],
     pub(crate) ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
 }
 
@@ -182,7 +192,7 @@ const MAX_BREAK_OVERLAYS: usize = 8;
 pub(crate) struct GamePresentationScratch {
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
-    particle_emitter_rows: Vec<(Vec3, BlockParticleEmitter, u64, u8, u8)>,
+    particle_emitter_rows: Vec<(Vec3, ParticleEmitter, u64, u8, u8)>,
     particle_emitters: Vec<ParticleEmitterPresentation>,
     chest_rows: Vec<(IVec3, Facing, u8, u8)>,
     door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>,
@@ -206,6 +216,7 @@ impl GamePresentationScratch {
         self.collect_chests(game);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
+        self.collect_mob_emitters(tick_alpha);
         self.collect_remote_players(game, tick_alpha);
         self.collect_break_overlays(game);
 
@@ -251,7 +262,9 @@ impl GamePresentationScratch {
             .extend(game.particles.particles().iter().map(|particle| {
                 let (uv_min, uv_size) = particle.atlas_uv();
                 ParticlePresentation {
-                    atlas: if particle.model.is_some() {
+                    atlas: if particle.solid {
+                        ParticleAtlas::Solid
+                    } else if particle.model.is_some() {
                         ParticleAtlas::Model
                     } else {
                         ParticleAtlas::Block
@@ -346,12 +359,49 @@ impl GamePresentationScratch {
                 hurt_flash: crate::mob::hurt_flash01(prev.hurt_timer, curr.hurt_timer, tick_alpha),
                 dead: curr.dead,
                 shorn: curr.shorn,
+                emitters: curr.emitters.clone(),
+                emitter_tint: emitter_tint(&curr.emitters),
                 ragdoll_pose: curr.ragdoll.as_ref().map(|pose| {
                     crate::game::replicated::lerp_ragdoll(prev.ragdoll.as_ref(), pose, tick_alpha)
                         .into()
                 }),
             }
         }));
+    }
+
+    /// Mobs emit particles exactly like emitter blocks: each ACTIVE bundle id
+    /// resolves to its `particle_emitters.json` rows and feeds the same
+    /// transient-particle pipeline, anchored to the mob's interpolated feet each
+    /// frame (the whole particle column rides along — the effect stays ON the
+    /// mob; a row's `offset` raises it into the body). Appends to the
+    /// block-emitter list collected earlier this frame, after `collect_mobs` so
+    /// it reads the replicated ids. A ragdolling corpse keeps its ids, so a mob
+    /// that burned to death keeps burning through its ragdoll.
+    fn collect_mob_emitters(&mut self, tick_alpha: f32) {
+        for m in &self.mobs {
+            if m.emitters.is_empty() {
+                continue;
+            }
+            let feet = m.prev_pos.lerp(m.pos, tick_alpha);
+            let mut stream = 0u64;
+            for &id in &m.emitters {
+                let Some(bundle) = crate::particle_emitters::def(id) else {
+                    continue;
+                };
+                for emitter in bundle.rows {
+                    stream += 1;
+                    self.particle_emitters.push(ParticleEmitterPresentation {
+                        origin: feet + Vec3::from_array(emitter.offset),
+                        emitter: *emitter,
+                        // Distinct deterministic stream per mob and per row, so
+                        // sibling rows' schedules don't pulse in lockstep.
+                        seed: m.id ^ stream.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                        skylight: m.skylight,
+                        blocklight: m.blocklight,
+                    });
+                }
+            }
+        }
     }
 
     /// One render row per VISIBLE remote player, mirroring `collect_mobs`:
@@ -441,6 +491,18 @@ impl GamePresentationScratch {
 /// The third-person body row, when the view is active. The body-yaw follow rule
 /// keeps `yaw - body_yaw` within the head limit, so the relative head yaw needs
 /// no re-wrapping here.
+/// The multiply body tint for a mob's active emitter-bundle ids: the product of
+/// every active bundle's declared `tint` (white when none declare one).
+fn emitter_tint(ids: &[u8]) -> [f32; 3] {
+    let mut tint = [1.0, 1.0, 1.0];
+    for &id in ids {
+        if let Some(t) = crate::particle_emitters::def(id).and_then(|b| b.tint) {
+            tint = [tint[0] * t[0], tint[1] * t[1], tint[2] * t[2]];
+        }
+    }
+    tint
+}
+
 fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     // The body draws only once the boom camera is actually placed — never on a
     // frame whose render camera is still the first-person eye (inside the head).

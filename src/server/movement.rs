@@ -102,8 +102,17 @@ impl ServerGame {
         if spectator {
             sess.fall.reset(pos.y);
             sess.pending_fall = 0.0;
-        } else if let Some(dist) = sess.fall.observe(pos.y, on_ground, in_water) {
-            sess.pending_fall = sess.pending_fall.max(dist);
+            sess.pending_splash = 0.0;
+        } else {
+            match sess.fall.observe(pos.y, on_ground, in_water) {
+                Some(super::player::FallOutcome::Landed(dist)) => {
+                    sess.pending_fall = sess.pending_fall.max(dist);
+                }
+                Some(super::player::FallOutcome::Splashed(dist)) => {
+                    sess.pending_splash = sess.pending_splash.max(dist);
+                }
+                None => {}
+            }
         }
         // Do NOT overwrite last_reported_transform here: it stays the client's
         // claim so a rejected claim (or tick teleport) ships SelfTransform.

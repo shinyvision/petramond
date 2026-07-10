@@ -241,11 +241,156 @@ fn zombie_sunburn_inner() {
         "a sunburned zombie remains as a dead/ragdolling mob instead of being despawned"
     );
     assert!(
+        sun_ids.iter().any(|id| mobs
+            .iter()
+            .any(|m| m.id() == *id && m.is_dead() && !m.active_emitters().is_empty())),
+        "a zombie that burned to death keeps its fire emitters through the ragdoll"
+    );
+    assert!(
         dark_ids
             .iter()
             .all(|id| mobs.iter().any(|m| m.id() == *id && !m.is_dead())),
         "torch-lit/dark-control zombies do not burn without direct sky light"
     );
+    assert!(
+        dark_ids
+            .iter()
+            .all(|id| mobs
+                .iter()
+                .any(|m| m.id() == *id && m.active_emitters().is_empty())),
+        "unburned zombies show no fire emitters"
+    );
     let (disabled, _, _) = game.mods_for_test().probe(0);
     assert!(!disabled, "zombies stayed healthy through sunburn");
+}
+
+#[test]
+fn zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_zombies_fixture("burncool") else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_burn_cool_inner");
+}
+
+/// Runs ONLY in the child process spawned above. Drives the full burn state
+/// machine through the real installed wasm and the core day/night clock:
+/// ignite in sunlight (`petramond:burn_light` attaches), escalate to
+/// `petramond:burn_great` after 200 sunlit light ticks, then — after the clock
+/// jumps to midnight — cool one stage per 60 consecutive dark ticks until the
+/// fire is out, leaving the zombie alive.
+#[test]
+#[ignore = "spawned by zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm with a fixture pack env"]
+fn zombie_burn_cool_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_VOLUME, SKY_FULL};
+
+    let zombie = crate::mob::defs()
+        .iter()
+        .position(|d| d.name == "zombies:zombie")
+        .map(|i| crate::mob::Mob(i as u8))
+        .expect("zombies:zombie registered from the fixture pack");
+    let light_id = crate::particle_emitters::by_key("petramond:burn_light")
+        .expect("core bundle registered")
+        .id;
+    let great_id = crate::particle_emitters::by_key("petramond:burn_great")
+        .expect("core bundle registered")
+        .id;
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(30.0, 66.0, 8.0), 16.0 / 9.0));
+    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
+    game.server.world.clear_world();
+    game.server.sessions[0].player.pos = Vec3::new(30.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+
+    // One full-skylight chunk; the zombie burns under the open sky until the
+    // CLOCK, not the terrain, takes the sun away.
+    let pos = ChunkPos::new(0, 0);
+    game.server.world.insert_empty_column_for_test(pos);
+    let mut chunk = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_block(x, 63, z, Block::Grass);
+        }
+    }
+    game.server.world.insert_chunk_for_test(pos, chunk);
+    let section = game
+        .server
+        .world
+        .section_at_world_mut_for_test(0, 64, 0)
+        .expect("feet section is loaded");
+    section.set_skylight(vec![SKY_FULL; SECTION_VOLUME].into());
+
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(zombie, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    let id = game.server.world.mobs().instances()[0].id();
+
+    let emitters = |game: &super::common::TestGame| -> Vec<u8> {
+        game.server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .find(|m| m.id() == id)
+            .map(|m| m.active_emitters().to_vec())
+            .unwrap_or_default()
+    };
+    let tick_until = |game: &mut super::common::TestGame,
+                      ev: &mut TickEvents,
+                      cap: usize,
+                      what: &str,
+                      done: &dyn Fn(&super::common::TestGame) -> bool| {
+        for _ in 0..cap {
+            if done(game) {
+                return;
+            }
+            game.server.game_tick_step(ev);
+        }
+        assert!(done(game), "{what} within {cap} ticks");
+    };
+
+    let mut ev = TickEvents::default();
+    // 5%/tick ignition: even one zombie ignites all but immediately.
+    tick_until(&mut game, &mut ev, 400, "light fire ignites", &|g| {
+        emitters(g).contains(&light_id)
+    });
+    // 200 sunlit light ticks escalate (plus scheduling slack).
+    tick_until(&mut game, &mut ev, 300, "great fire escalates", &|g| {
+        emitters(g).contains(&great_id)
+    });
+
+    // Midnight: the core clock is authoritative for daylight, so the mod's
+    // sunlight test goes dark everywhere from the next tick.
+    game.server
+        .world
+        .mod_kv_set("petramond:clock".to_owned(), 9_000u64.to_le_bytes().to_vec());
+    tick_until(
+        &mut game,
+        &mut ev,
+        80,
+        "great fire cools to light after 60 dark ticks",
+        &|g| {
+            let e = emitters(g);
+            e.contains(&light_id) && !e.contains(&great_id)
+        },
+    );
+    tick_until(
+        &mut game,
+        &mut ev,
+        80,
+        "light fire goes out after 60 more dark ticks",
+        &|g| emitters(g).is_empty(),
+    );
+
+    let mob = &game.server.world.mobs().instances()[0];
+    assert!(
+        !mob.is_dead(),
+        "the cooled zombie survived its shortened burn"
+    );
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "zombies stayed healthy through the cool-down");
 }

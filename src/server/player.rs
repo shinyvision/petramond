@@ -211,25 +211,39 @@ impl FallTracker {
         self.airborne = false;
     }
 
-    /// Feed one reported transform. Returns the fall distance (blocks) when
-    /// this update is a landing (airborne → grounded, dry), else `None`.
-    pub(crate) fn observe(&mut self, y: f32, on_ground: bool, in_water: bool) -> Option<f32> {
+    /// Feed one reported transform. Returns what the update concluded: a dry
+    /// landing (airborne → grounded) with its fall distance, or a water entry
+    /// (airborne → in water) with the distance fallen into the surface —
+    /// walking into water arrives grounded/level and reports nothing.
+    pub(crate) fn observe(&mut self, y: f32, on_ground: bool, in_water: bool) -> Option<FallOutcome> {
         if in_water {
+            let was_airborne = self.airborne;
+            let dist = self.peak_y - y;
             self.peak_y = y;
             self.airborne = !on_ground;
-            return None;
+            return (was_airborne && dist > 0.0).then_some(FallOutcome::Splashed(dist));
         }
         if on_ground {
             let landed = self.airborne;
             let dist = self.peak_y - y;
             self.peak_y = y;
             self.airborne = false;
-            return (landed && dist > 0.0).then_some(dist);
+            return (landed && dist > 0.0).then_some(FallOutcome::Landed(dist));
         }
         self.peak_y = self.peak_y.max(y);
         self.airborne = true;
         None
     }
+}
+
+/// What one [`FallTracker::observe`] concluded, with the fall distance in blocks.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum FallOutcome {
+    /// Airborne → grounded, dry: fall damage applies.
+    Landed(f32),
+    /// Airborne → in water: no damage (water breaks the fall), but a hard
+    /// enough entry throws the water-splash burst.
+    Splashed(f32),
 }
 
 /// One player's simulation session: authoritative player state plus every
@@ -291,6 +305,9 @@ pub(crate) struct ConnectedPlayer {
     /// Hardest landing (blocks) since the tick last consumed it, measured by
     /// [`fall`](Self::fall) — `tick_fall_damage` converts it into damage.
     pub pending_fall: f32,
+    /// Hardest fall INTO WATER (blocks) since the tick last consumed it —
+    /// `tick_water_splash` converts it into the `petramond:water_splash` burst.
+    pub pending_splash: f32,
     /// Player position when this frame's fixed ticks began — a tick-side
     /// position change is a teleport, which re-anchors [`fall`](Self::fall)
     /// (see `ServerGame::pump`).
@@ -426,6 +443,7 @@ impl ConnectedPlayer {
             held_rotation: HeldRotation::default(),
             fall,
             pending_fall: 0.0,
+            pending_splash: 0.0,
             pos_before_ticks,
             tick_teleported: false,
             eating: None,
@@ -505,5 +523,54 @@ fn rotation_count(block: crate::block::Block) -> u8 {
         3
     } else {
         2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tracker's water branch: a FALL into water reports a splash with the
+    /// airborne drop; walking in at ground level (or swimming around once wet)
+    /// reports nothing a threshold would keep.
+    #[test]
+    fn fall_tracker_reports_water_entries_only_for_real_falls() {
+        // Fall 4 blocks off a ledge into water.
+        let mut fall = FallTracker::new(68.0);
+        assert_eq!(fall.observe(68.0, false, false), None, "left the ledge");
+        assert_eq!(fall.observe(66.0, false, false), None, "mid-air");
+        assert_eq!(
+            fall.observe(64.0, false, true),
+            Some(FallOutcome::Splashed(4.0)),
+            "the water entry reports the whole drop"
+        );
+        // Swimming afterwards: per-observation drops are tiny bobs, never the
+        // fall again.
+        match fall.observe(63.8, false, true) {
+            None => {}
+            Some(FallOutcome::Splashed(d)) => {
+                assert!(d < 0.5, "swimming reports only bob-sized drops: {d}")
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        // Walking into water at ground level: grounded observations, never a
+        // splash.
+        let mut walk = FallTracker::new(64.0);
+        assert_eq!(walk.observe(64.0, true, false), None);
+        assert_eq!(
+            walk.observe(64.0, true, true),
+            None,
+            "a grounded (walked-in) water entry reports nothing"
+        );
+
+        // A dry landing still measures fall damage exactly as before.
+        let mut dry = FallTracker::new(70.0);
+        assert_eq!(dry.observe(70.0, false, false), None);
+        assert_eq!(
+            dry.observe(64.0, true, false),
+            Some(FallOutcome::Landed(6.0)),
+            "dry landings keep their distance"
+        );
     }
 }

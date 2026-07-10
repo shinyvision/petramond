@@ -246,6 +246,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
                 hurt_timer: 0.0,
                 dead: m.is_dead(),
                 shorn: false,
+                emitters: Vec::new(),
                 ragdoll: None,
             })
             .collect()
@@ -542,6 +543,7 @@ fn a_mob_pushes_the_player_per_frame() {
             hurt_timer: 0.0,
             dead: false,
             shorn: false,
+            emitters: Vec::new(),
             ragdoll: None,
         }]);
     let x0 = game.player.pos.x;
@@ -1006,6 +1008,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             hurt_timer: 0.0,
             dead: false,
             shorn: false,
+            emitters: Vec::new(),
             ragdoll: None,
         }]);
     game.refresh_target();

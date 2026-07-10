@@ -362,6 +362,38 @@ pub fn damage_mob(index: u32, amount: f32, origin: Option<[f32; 3]>) {
     );
 }
 
+/// Toggle one KEYED particle-emitter bundle (a `particle_emitters.json` catalog
+/// row: particle rows + optional body tint; engine `petramond:*` and pack keys
+/// alike) on a live mob. Presentation-only, replicated, survives death, not
+/// persisted — re-derive it from your own per-mob state. `false` = bad index,
+/// unregistered key, or the mob's active set (4) is full.
+pub fn mob_emitter_set(index: u32, key: &str, active: bool) -> bool {
+    match __rt::host_call(&HostCall::MobEmitterSet {
+        index,
+        key: key.into(),
+        active,
+    }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("MobEmitterSet returned {other:?}"),
+    }
+}
+
+/// Fire a ONE-SHOT particle burst at `pos`: `key` names a
+/// `particle_emitters.json` BURST bundle (the core `petramond:water_splash`
+/// included). `intensity` scales the particle count through the bundle's
+/// `count_per_intensity`. Fire-and-forget presentation for every client, like
+/// `emit_sound`. `false` = unknown key or not a burst bundle.
+pub fn emitter_burst(key: &str, pos: [f32; 3], intensity: f32) -> bool {
+    match __rt::host_call(&HostCall::EmitterBurst {
+        key: key.into(),
+        pos,
+        intensity,
+    }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("EmitterBurst returned {other:?}"),
+    }
+}
+
 /// Remove a mob from the live world immediately (no death, no loot, not
 /// saved). Renumbers later indices — re-query after use.
 pub fn despawn_mob(index: u32) -> bool {

@@ -25,7 +25,7 @@ use crate::atlas::Tile;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
 
-use super::definition::{BlockDef, BlockFlags, BlockMaterial, BlockParticleEmitter};
+use super::definition::{BlockDef, BlockFlags, BlockMaterial, ParticleEmitter};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
 
 #[derive(Serialize, Deserialize)]
@@ -56,12 +56,23 @@ pub(super) struct RawBlockDef {
     pub collision: Vec<Aabb>,
     pub emission: u8,
     #[serde(default)]
-    pub particle_emitter: Option<BlockParticleEmitter>,
+    pub particle_emitter: Option<RawEmitterRef>,
     pub tiles: [String; 3],
     pub material: BlockMaterial,
     pub harvest_tier: u8,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
+}
+
+/// A row's `particle_emitter` field: a `particle_emitters.json` bundle KEY
+/// (`"petramond:torch_flame"` — the reusable, mob-shareable form), or one inline
+/// anonymous row for a block-local one-off. A referenced bundle contributes all
+/// its particle rows; its `tint` is mob-body data and blocks ignore it.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RawEmitterRef {
+    Key(String),
+    Inline(ParticleEmitter),
 }
 
 /// A row's `interaction` field: a bare engine action name (`"none"`,
@@ -261,9 +272,24 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
-    if let Some(emitter) = &r.particle_emitter {
-        validate_particle_emitter(emitter)?;
-    }
+    let particle_emitter: Option<&'static [ParticleEmitter]> = match &r.particle_emitter {
+        None => None,
+        Some(RawEmitterRef::Key(key)) => {
+            let bundle = crate::particle_emitters::by_key(key)
+                .ok_or_else(|| format!("unknown particle_emitter bundle '{key}'"))?;
+            if bundle.burst.is_some() {
+                return Err(format!(
+                    "particle_emitter '{key}' is a one-shot burst bundle; blocks show looping \
+                     bundles only"
+                ));
+            }
+            Some(bundle.rows)
+        }
+        Some(RawEmitterRef::Inline(row)) => {
+            validate_particle_emitter(row)?;
+            Some(Box::leak(Box::new([*row])))
+        }
+    };
     Ok(BlockDef {
         block,
         flags,
@@ -273,7 +299,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         shape: r.shape,
         collision: leak(r.collision),
         emission: r.emission,
-        particle_emitter: r.particle_emitter,
+        particle_emitter,
         tiles,
         material: r.material,
         harvest_tier: r.harvest_tier,
@@ -282,7 +308,10 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     })
 }
 
-fn validate_particle_emitter(e: &BlockParticleEmitter) -> Result<(), String> {
+/// Shared strict validation for one particle-emitter row — used by block rows
+/// (`blocks.json` `particle_emitter`) and mob rows (`mobs.json`
+/// `particle_emitters` entries), which speak the same schema.
+pub(crate) fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), String> {
     let finite = |label: &str, value: f32| -> Result<(), String> {
         if value.is_finite() {
             Ok(())
@@ -311,6 +340,7 @@ fn validate_particle_emitter(e: &BlockParticleEmitter) -> Result<(), String> {
         ("spawn_box", e.spawn_box.as_slice()),
         ("velocity", e.velocity.as_slice()),
         ("velocity_jitter", e.velocity_jitter.as_slice()),
+        ("spiral", e.spiral.as_slice()),
     ] {
         for (i, &value) in values.iter().enumerate() {
             finite(&format!("{label}[{i}]"), value)?;
@@ -326,12 +356,30 @@ fn validate_particle_emitter(e: &BlockParticleEmitter) -> Result<(), String> {
             }
         }
     }
-    for (endpoint, color) in e.color.into_iter().enumerate() {
-        for (channel, value) in color.into_iter().enumerate() {
-            finite(&format!("color[{endpoint}][{channel}]"), value)?;
-            if !(0.0..=1.0).contains(&value) {
-                return Err("particle_emitter.color channels must be in 0..=1".into());
+    let color_stops: &[[f32; 3]] = match (&e.color, &e.color_ramp) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "particle_emitter declares both color and color_ramp — pick one".into(),
+            )
+        }
+        (None, None) => {
+            return Err("particle_emitter needs either color or color_ramp".into());
+        }
+        (Some(endpoints), None) => endpoints.as_slice(),
+        (None, Some(ramp)) => ramp.stops(),
+    };
+    for (stop, color) in color_stops.iter().enumerate() {
+        for (channel, value) in color.iter().enumerate() {
+            finite(&format!("color[{stop}][{channel}]"), *value)?;
+            if !(0.0..=1.0).contains(value) {
+                return Err("particle_emitter color channels must be in 0..=1".into());
             }
+        }
+    }
+    for (label, power) in [("fade_power", e.fade_power), ("shrink_power", e.shrink_power)] {
+        finite(label, power)?;
+        if !(0.25..=8.0).contains(&power) {
+            return Err(format!("particle_emitter.{label} must be in 0.25..=8"));
         }
     }
     for (i, value) in e.alpha.into_iter().enumerate() {
@@ -342,6 +390,9 @@ fn validate_particle_emitter(e: &BlockParticleEmitter) -> Result<(), String> {
     }
     if e.alpha[0] > e.alpha[1] {
         return Err("particle_emitter.alpha min must be <= max".into());
+    }
+    if e.spiral[0] < 0.0 {
+        return Err("particle_emitter.spiral radius must be >= 0".into());
     }
     Ok(())
 }
@@ -438,6 +489,42 @@ mod tests {
             .err()
             .expect("reversed lifetime is rejected");
         assert!(err.contains("particle_emitter.lifetime"), "{err}");
+    }
+
+    #[test]
+    fn particle_emitter_rows_take_exactly_one_color_form() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let row = |emitter: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "mymod:spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": {{ "rate": 2.0, "lifetime": [0.2, 0.5], "size": [0.02, 0.05], "alpha": [0.2, 0.6]{emitter} }}, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 0, "hardness": 1, "drops": [] }} ] }}"#
+            )
+        };
+
+        let ramp = row(r#", "color_ramp": [[1.0, 1.0, 0.9], [1.0, 0.5, 0.1], [0.1, 0.1, 0.1]], "fade_power": 1.0"#);
+        parse_test_layers(&[&base, ramp.as_str()]).expect("a ramp row loads");
+
+        for (emitter, why) in [
+            ("".to_owned(), "neither color form"),
+            (
+                row(r#", "color": [[1, 1, 1], [1, 1, 1]], "color_ramp": [[1, 1, 1], [0, 0, 0]]"#),
+                "both color forms",
+            ),
+            (
+                row(r#", "color_ramp": [[1, 1, 1]]"#),
+                "a one-stop ramp",
+            ),
+            (
+                row(r#", "color": [[1, 1, 1], [1, 1, 1]], "fade_power": 100.0"#),
+                "an out-of-range fade_power",
+            ),
+        ] {
+            let layer = if emitter.is_empty() { row("") } else { emitter };
+            assert!(
+                parse_test_layers(&[&base, layer.as_str()]).is_err(),
+                "{why} must fail the load"
+            );
+        }
     }
 
     #[test]

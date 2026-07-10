@@ -88,8 +88,17 @@ pub struct Particle {
     /// RGB tint multiplied into the fleck's atlas colour (foliage-green for a
     /// fleck cut from a grass/leaf tile, white otherwise). Classified per-fleck
     /// from [`tile`](Self::tile) so e.g. grass-top dust is green but the
-    /// grass-block side/dirt dust is not.
+    /// grass-block side/dirt dust is not. For a [`solid`](Self::solid) particle
+    /// this IS the color.
     pub tint: [f32; 3],
+    /// A SOLID-COLOR particle (an emitter burst — water splash): it samples no
+    /// atlas and presents [`tint`](Self::tint) as an alpha-blended cube through
+    /// the same pass as looping-emitter particles, instead of a cutout fleck.
+    pub solid: bool,
+    /// Destroyed the instant it touches a collision box OR water, instead of
+    /// settling on solids like terrain dust (burst rows opt in — a splash
+    /// droplet vanishes into the pool it fell out of).
+    pub die_on_contact: bool,
     pub age: f32,
     pub lifetime: f32,
     /// World-space quad edge length, metres.
@@ -193,7 +202,10 @@ impl ParticleSystem {
         // Model-aware: a fleck settles on a bbmodel block's actual leg/top and drifts
         // through the empty space around it — the same `collision_boxes_at` shape source the
         // player/mob/item bodies collide against (here the point case, `World::point_blocked`).
-        self.tick_with(dt, &|p| world.point_blocked(p));
+        self.tick_with(dt, &|p| world.point_blocked(p), &|p| {
+            let c = voxel_at(p);
+            world.water_cell_at(c.x, c.y, c.z)
+        });
         // Re-sample light each tick so a fleck dims/brightens as the lighting around
         // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
         // at its spawn light.
@@ -207,18 +219,27 @@ impl ParticleSystem {
     }
 
     /// Pure tick behind [`tick`](Self::tick); `blocked(p)` reports whether a world point is
-    /// inside a collision box (the model-aware shape), so tests can run without a `World`.
-    fn tick_with(&mut self, dt: f32, blocked: &impl Fn(Vec3) -> bool) {
+    /// inside a collision box (the model-aware shape) and `water(p)` whether it is inside
+    /// a water cell, so tests can run without a `World`.
+    fn tick_with(
+        &mut self,
+        dt: f32,
+        blocked: &impl Fn(Vec3) -> bool,
+        water: &impl Fn(Vec3) -> bool,
+    ) {
         let mut i = 0;
         while i < self.particles.len() {
             let p = &mut self.particles[i];
             p.age += dt;
             p.vel.y += PARTICLE_GRAVITY * dt;
             let next = p.pos + p.vel * dt;
-            // Stop on a solid surface: if the next position lands inside a collision box,
-            // kill velocity and pin in place so dust settles on the surface (not the cell)
-            // rather than tunnelling through.
-            if blocked(next) {
+            if p.die_on_contact && (blocked(next) || water(next)) {
+                // A splash droplet vanishes the instant it touches anything.
+                p.age = p.lifetime;
+            } else if blocked(next) {
+                // Stop on a solid surface: if the next position lands inside a collision
+                // box, kill velocity and pin in place so dust settles on the surface (not
+                // the cell) rather than tunnelling through.
                 p.vel = Vec3::ZERO;
             } else {
                 p.pos = next;
@@ -339,6 +360,8 @@ impl ParticleSystem {
                 uv_min,
                 uv_size: PATCH_FRAC,
                 tint,
+                solid: false,
+                die_on_contact: false,
                 age: 0.0,
                 lifetime,
                 size: PARTICLE_SIZE,
@@ -407,6 +430,8 @@ impl ParticleSystem {
                 uv_min,
                 uv_size: PATCH_FRAC,
                 tint,
+                solid: false,
+                die_on_contact: false,
                 age: 0.0,
                 lifetime,
                 size: PARTICLE_SIZE,
@@ -444,6 +469,68 @@ impl ParticleSystem {
             self.push(model_fleck(
                 kind, pos, vel, skylight, blocklight, warm, lifetime, patch_r,
             ));
+        }
+    }
+
+    /// One-shot emitter burst (a `particle_emitters.json` burst bundle — see
+    /// [`crate::particle_emitters::BurstSpec`]): `count_per_intensity ×
+    /// intensity` solid-color cubes (capped) launched upward and outward in a
+    /// rough circle from `pos`, falling under gravity like every other
+    /// particle here. With `die_on_contact` they are destroyed the instant
+    /// they touch a collision box or water.
+    pub fn spawn_emitter_burst(
+        &mut self,
+        spec: &crate::particle_emitters::BurstSpec,
+        pos: Vec3,
+        intensity: f32,
+        skylight: u8,
+        blocklight: u8,
+        warm: u8,
+    ) {
+        let count = ((spec.count_per_intensity * intensity.max(0.0)).round() as u32)
+            .clamp(1, spec.max_count);
+        for _ in 0..count {
+            let angle = self.rand() * std::f32::consts::TAU;
+            let radial =
+                spec.radial_speed[0] + self.rand() * (spec.radial_speed[1] - spec.radial_speed[0]);
+            let up = spec.up_speed[0] + self.rand() * (spec.up_speed[1] - spec.up_speed[0]);
+            let vel = Vec3::new(angle.cos() * radial, up, angle.sin() * radial);
+            // The bias skews the endpoint mix: >1 spends more draws near 0,
+            // making the FIRST endpoint the prominent one.
+            let mix = self.rand().powf(spec.color_bias);
+            let tint = [
+                spec.color[0][0] + (spec.color[1][0] - spec.color[0][0]) * mix,
+                spec.color[0][1] + (spec.color[1][1] - spec.color[0][1]) * mix,
+                spec.color[0][2] + (spec.color[1][2] - spec.color[0][2]) * mix,
+            ];
+            let lifetime =
+                spec.lifetime[0] + self.rand() * (spec.lifetime[1] - spec.lifetime[0]);
+            let size = spec.size[0] + self.rand() * (spec.size[1] - spec.size[0]);
+            // A whisker of spawn jitter so the burst doesn't emanate from one
+            // mathematical point.
+            let jitter = Vec3::new(
+                (self.rand() - 0.5) * 0.3,
+                self.rand() * 0.1,
+                (self.rand() - 0.5) * 0.3,
+            );
+            self.push(Particle {
+                pos: pos + jitter,
+                vel,
+                skylight: skylight.min(63),
+                blocklight: blocklight.min(63),
+                warm,
+                // Atlas fields are inert for a solid particle.
+                tile: Tile::from_name("grass_top").unwrap(),
+                model: None,
+                uv_min: [0.0, 0.0],
+                uv_size: PATCH_FRAC,
+                tint,
+                solid: true,
+                die_on_contact: spec.die_on_contact,
+                age: 0.0,
+                lifetime,
+                size,
+            });
         }
     }
 
@@ -517,6 +604,8 @@ fn model_fleck(
         uv_min,
         uv_size,
         tint: NO_TINT,
+        solid: false,
+        die_on_contact: false,
         age: 0.0,
         lifetime,
         size: PARTICLE_SIZE,
@@ -553,6 +642,8 @@ mod tests {
             uv_min: [0.25, 0.5],
             uv_size: 0.25,
             tint: NO_TINT,
+            solid: false,
+            die_on_contact: false,
             age: 0.0,
             lifetime: 1.0,
             size: 0.1,
@@ -581,6 +672,8 @@ mod tests {
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
             tint: NO_TINT,
+            solid: false,
+            die_on_contact: false,
             age: 0.0,
             lifetime: 1.0,
             size: 0.1,
@@ -611,6 +704,8 @@ mod tests {
             uv_min: [0.0, 0.0],
             uv_size: 0.25,
             tint: NO_TINT,
+            solid: false,
+            die_on_contact: false,
             age: 0.0,
             lifetime: 1.0,
             size: 0.1,
@@ -681,6 +776,8 @@ mod tests {
             uv_min: [0.0; 2],
             uv_size: 0.1,
             tint: NO_TINT,
+            solid: false,
+            die_on_contact: false,
             age: 0.0,
             lifetime: 100.0,
             size: 0.1,
@@ -689,7 +786,7 @@ mod tests {
         let mut sys = ParticleSystem::new();
         sys.push(fleck(Vec3::new(0.02, 0.5, 0.5), Vec3::new(0.0, -1.0, 0.0)));
         let y0 = sys.particles()[0].pos.y;
-        sys.tick_with(0.05, &blocked);
+        sys.tick_with(0.05, &blocked, &empty);
         assert!(
             sys.particles()[0].pos.y < y0,
             "a fleck in the side margin keeps falling"
@@ -700,7 +797,7 @@ mod tests {
             Vec3::new(0.5, chest_top + 0.02, 0.5),
             Vec3::new(0.0, -1.0, 0.0),
         ));
-        hit.tick_with(0.05, &blocked);
+        hit.tick_with(0.05, &blocked, &empty);
         assert_eq!(
             hit.particles()[0].vel,
             Vec3::ZERO,
@@ -746,6 +843,95 @@ mod tests {
         }
     }
 
+    fn splash_spec() -> crate::particle_emitters::BurstSpec {
+        crate::particle_emitters::BurstSpec {
+            count_per_intensity: 4.0,
+            max_count: 20,
+            up_speed: [1.5, 3.5],
+            radial_speed: [0.5, 2.0],
+            lifetime: [0.5, 1.0],
+            size: [0.05, 0.11],
+            color: [[0.05, 0.1, 0.5], [0.3, 0.7, 0.95]],
+            color_bias: 2.5,
+            die_on_contact: true,
+        }
+    }
+
+    #[test]
+    fn emitter_burst_count_scales_with_intensity_and_caps() {
+        let spec = splash_spec();
+        let mut small = ParticleSystem::new();
+        small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, 0, 0);
+        assert_eq!(small.len(), 8, "4 per intensity unit × 2");
+        let mut big = ParticleSystem::new();
+        big.spawn_emitter_burst(&spec, Vec3::ZERO, 100.0, 63, 0, 0);
+        assert_eq!(big.len(), 20, "hard-capped at max_count");
+        for p in big.particles() {
+            assert!(p.solid && p.die_on_contact);
+            assert!(p.vel.y >= 1.5 && p.vel.y <= 3.5, "launched upward");
+            let radial = Vec3::new(p.vel.x, 0.0, p.vel.z).length();
+            assert!(
+                (0.5..=2.0).contains(&radial),
+                "launched outward in the radial band: {radial}"
+            );
+        }
+    }
+
+    #[test]
+    fn burst_color_bias_favors_the_first_endpoint() {
+        let spec = splash_spec(); // bias 2.5 toward the deep first endpoint
+        let mut sys = ParticleSystem::new();
+        for _ in 0..10 {
+            sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, 0, 0);
+        }
+        // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
+        let mean_g: f32 =
+            sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
+        let mid_g = (spec.color[0][1] + spec.color[1][1]) * 0.5;
+        assert!(
+            mean_g < mid_g,
+            "biased mix leans toward the first endpoint: mean {mean_g} vs midpoint {mid_g}"
+        );
+    }
+
+    #[test]
+    fn die_on_contact_particles_vanish_on_blocks_and_water() {
+        let spec = splash_spec();
+        let floor = |p: Vec3| p.y < 0.0;
+        let pool = |p: Vec3| p.y < 0.0;
+        let none = |_: Vec3| false;
+
+        // Falling onto a solid: a contact-dying droplet is culled, while an
+        // ordinary fleck would have settled (velocity zeroed, still alive).
+        let mut sys = ParticleSystem::new();
+        sys.spawn_emitter_burst(&spec, Vec3::new(0.0, 0.05, 0.0), 1.0, 63, 0, 0);
+        for p in &mut sys.particles {
+            p.vel = Vec3::new(0.0, -2.0, 0.0); // force straight down
+        }
+        sys.tick_with(0.1, &floor, &none);
+        assert!(sys.is_empty(), "droplets die on solid contact");
+
+        // Falling into water: same instant destruction.
+        let mut wet = ParticleSystem::new();
+        wet.spawn_emitter_burst(&spec, Vec3::new(0.0, 0.05, 0.0), 1.0, 63, 0, 0);
+        for p in &mut wet.particles {
+            p.vel = Vec3::new(0.0, -2.0, 0.0);
+        }
+        wet.tick_with(0.1, &none, &pool);
+        assert!(wet.is_empty(), "droplets die on water contact");
+
+        // Ordinary dust on the same floor settles instead of dying.
+        let mut dust = ParticleSystem::new();
+        dust.spawn_break_burst(IVec3::new(0, 0, 0), Block::Stone);
+        for p in &mut dust.particles {
+            p.pos = Vec3::new(0.0, 0.05, 0.0);
+            p.vel = Vec3::new(0.0, -2.0, 0.0);
+        }
+        dust.tick_with(0.1, &floor, &pool);
+        assert!(!dust.is_empty(), "dust settles rather than dying");
+        assert!(dust.particles().iter().all(|p| p.vel == Vec3::ZERO));
+    }
+
     #[test]
     fn tick_ages_and_culls_dead() {
         let mut sys = ParticleSystem::new();
@@ -753,7 +939,7 @@ mod tests {
         assert!(!sys.is_empty());
         // Step past the maximum lifetime (3 s) so all are culled.
         for _ in 0..400 {
-            sys.tick_with(0.01, &empty);
+            sys.tick_with(0.01, &empty, &empty);
         }
         assert!(
             sys.is_empty(),
@@ -788,7 +974,7 @@ mod tests {
         sys.spawn_break_burst(IVec3::new(0, 100, 0), Block::Dirt);
         let y_before: f32 = sys.particles().iter().map(|p| p.pos.y).sum::<f32>() / sys.len() as f32;
         for _ in 0..30 {
-            sys.tick_with(1.0 / 60.0, &empty);
+            sys.tick_with(1.0 / 60.0, &empty, &empty);
         }
         let y_after: f32 = sys.particles().iter().map(|p| p.pos.y).sum::<f32>() / sys.len() as f32;
         assert!(

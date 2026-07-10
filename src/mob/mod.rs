@@ -537,6 +537,10 @@ impl MobDef {
     }
 }
 
+/// Most particle-emitter bundles active on one mob at a time — bounds the
+/// per-mob replicated id list.
+pub const MAX_ACTIVE_MOB_EMITTERS: usize = 4;
+
 /// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
 /// order). Loads exactly once, on first access; a missing or inconsistent
 /// `mobs.json` fails loudly at startup.

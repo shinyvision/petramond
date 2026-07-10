@@ -28,10 +28,11 @@ pub(super) struct BlockDef {
     /// Block-light radiated when active, on the x2 scale (`0` = non-emitter). See
     /// [`Block::light_emission`](super::Block::light_emission).
     pub emission: u8,
-    /// Optional visual-only cube particle emitter declared by this block row. This is
-    /// presentation data: it never changes simulation state and is intentionally
+    /// Optional visual-only cube particle emitter rows declared by this block row —
+    /// either a referenced `particle_emitters.json` bundle's rows or one inline row.
+    /// Presentation data: it never changes simulation state and is intentionally
     /// available to mod content through `blocks.json`.
-    pub particle_emitter: Option<BlockParticleEmitter>,
+    pub particle_emitter: Option<&'static [ParticleEmitter]>,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
     /// Mining material class (drives tool requirement + future tool tiers).
@@ -67,7 +68,7 @@ pub enum ParticleEmitterAnchor {
 /// block positions; no particle state is saved and no mod code needs to run.
 #[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BlockParticleEmitter {
+pub struct ParticleEmitter {
     /// Emitter anchor. Defaults to top center for ordinary block emitters.
     #[serde(default = "default_particle_anchor")]
     pub anchor: ParticleEmitterAnchor,
@@ -94,17 +95,113 @@ pub struct BlockParticleEmitter {
     /// Per-axis random velocity jitter, in blocks per second.
     #[serde(default)]
     pub velocity_jitter: [f32; 3],
-    /// RGB color endpoints; each particle chooses a deterministic mix between them.
-    pub color: [[f32; 3]; 2],
+    /// RGB color endpoints; each particle chooses a deterministic mix between
+    /// them AT BIRTH and keeps it. Exactly one of `color` / `color_ramp` must
+    /// be declared.
+    #[serde(default)]
+    pub color: Option<[[f32; 3]; 2]>,
+    /// Color OVER LIFE: 2..=6 RGB stops sampled by age fraction, so a rising
+    /// particle cools through the ramp (white-hot → yellow → orange → red →
+    /// charcoal reads as real fire, since age maps to height). Exactly one of
+    /// `color` / `color_ramp` must be declared.
+    #[serde(default)]
+    pub color_ramp: Option<ColorRamp>,
     /// Inclusive min/max starting alpha. Lifetime fade multiplies this to zero.
     pub alpha: [f32; 2],
+    /// Exponent of the alpha fade over life: `alpha *= (1 - t)^fade_power`.
+    /// The default `2` is the classic quick fade; `1` keeps late-life
+    /// particles visible longer (charcoal/smoke tips that linger, like the
+    /// dark cubes atop a fire).
+    #[serde(default = "default_fade_power")]
+    pub fade_power: f32,
+    /// Exponent of the size shrink over life: `size *= (1 - t)^shrink_power`.
+    /// The default `1` is the classic linear shrink; lower keeps late-life
+    /// cubes chunky until they pop away — without it, a `color_ramp`'s cool
+    /// (red/charcoal) end shrinks into invisibility before it reads.
+    #[serde(default = "default_shrink_power")]
+    pub shrink_power: f32,
     /// If true, particle colors are not dimmed by sampled world light.
     #[serde(default)]
     pub fullbright: bool,
+    /// `[radius, revolutions_per_second]` — each particle orbits the emitter's
+    /// vertical axis while it rises, so a column of particles twirls upward.
+    /// Both values are OUTER/NOMINAL: every particle deterministically draws its
+    /// own orbit radius (60-100% of `radius`) and angular speed (50-150% of the
+    /// nominal), so the column reads organic rather than as a rigid helix.
+    /// `radius == 0` (the default) disables it; negative revolutions spin the
+    /// other way.
+    #[serde(default)]
+    pub spiral: [f32; 2],
 }
 
 fn default_particle_anchor() -> ParticleEmitterAnchor {
     ParticleEmitterAnchor::BlockTop
+}
+
+fn default_fade_power() -> f32 {
+    2.0
+}
+
+fn default_shrink_power() -> f32 {
+    1.0
+}
+
+/// Most stops a `color_ramp` may declare.
+pub const MAX_RAMP_STOPS: usize = 6;
+
+/// A color-over-life ramp: evenly spaced RGB stops sampled by age fraction.
+/// Fixed-capacity so emitter rows stay `Copy`; serde speaks a plain JSON list
+/// of 2..=[`MAX_RAMP_STOPS`] stops.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ColorRamp {
+    stops: [[f32; 3]; MAX_RAMP_STOPS],
+    len: u8,
+}
+
+impl ColorRamp {
+    /// The declared stops, in order.
+    pub fn stops(&self) -> &[[f32; 3]] {
+        &self.stops[..self.len as usize]
+    }
+
+    /// The ramp color at age fraction `t` (clamped to `0..=1`), linearly
+    /// interpolated between the two surrounding stops.
+    pub fn sample(&self, t: f32) -> [f32; 3] {
+        let n = self.len as usize;
+        let x = t.clamp(0.0, 1.0) * (n - 1) as f32;
+        let i = (x as usize).min(n - 2);
+        let f = x - i as f32;
+        let (a, b) = (self.stops[i], self.stops[i + 1]);
+        [
+            a[0] + (b[0] - a[0]) * f,
+            a[1] + (b[1] - a[1]) * f,
+            a[2] + (b[2] - a[2]) * f,
+        ]
+    }
+}
+
+impl serde::Serialize for ColorRamp {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.stops().serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ColorRamp {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let listed = Vec::<[f32; 3]>::deserialize(d)?;
+        if !(2..=MAX_RAMP_STOPS).contains(&listed.len()) {
+            return Err(serde::de::Error::custom(format!(
+                "color_ramp needs 2..={MAX_RAMP_STOPS} stops, got {}",
+                listed.len()
+            )));
+        }
+        let mut stops = [[0.0; 3]; MAX_RAMP_STOPS];
+        stops[..listed.len()].copy_from_slice(&listed);
+        Ok(ColorRamp {
+            stops,
+            len: listed.len() as u8,
+        })
+    }
 }
 
 fn default_particle_origin() -> [f32; 3] {

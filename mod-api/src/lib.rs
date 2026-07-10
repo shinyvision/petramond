@@ -745,6 +745,35 @@ pub enum HostCall {
     /// `ContainerGet` per machine — the per-block-per-tick hot-loop rule. →
     /// [`HostRet::Containers`], parallel to the positions.
     ContainerGetMany { positions: Vec<[i32; 3]> },
+
+    // --- Mob particle emitters (landed 2026-07-10) ---------------------------
+    /// Toggle one KEYED particle-emitter bundle on the mob at `index` (a
+    /// [`MobSnapshot::index`], valid this tick only). `key` names a
+    /// `particle_emitters.json` catalog row (engine `petramond:*` rows —
+    /// `petramond:burn_light`, `petramond:burn_great` — and every pack's rows
+    /// alike, the same cross-namespace rule as effects): one or more particle
+    /// rows plus an optional body tint. The active set (≤ 4 per mob) is
+    /// presentation-only, replicates to every client, survives death (a corpse
+    /// keeps its effect through the ragdoll), and is NOT persisted: the owning
+    /// mod re-derives it, e.g. from its own per-mob state. →
+    /// [`HostRet::Bool`] (`false` = bad index, unregistered key, or the mob's
+    /// active set is full).
+    MobEmitterSet {
+        index: u32,
+        key: String,
+        active: bool,
+    },
+    /// Fire a ONE-SHOT particle burst: `key` names a `particle_emitters.json`
+    /// BURST bundle (e.g. the core `petramond:water_splash`), spawned at `pos`
+    /// for every client. `intensity` scales the particle count through the
+    /// bundle's `count_per_intensity` (the core water splash passes blocks
+    /// fallen). Fire-and-forget presentation, like `EmitSound`. →
+    /// [`HostRet::Bool`] (`false` = unknown key or not a burst bundle).
+    EmitterBurst {
+        key: String,
+        pos: [f32; 3],
+        intensity: f32,
+    },
 }
 
 /// One item stack crossing the ABI: the item's stable registry key + count.
@@ -1092,6 +1121,16 @@ mod tests {
             origin: Some([1.0, 64.0, 1.0]),
         });
         roundtrip(HostCall::DespawnMob { index: 7 });
+        roundtrip(HostCall::MobEmitterSet {
+            index: 5,
+            key: "petramond:burn_light".into(),
+            active: true,
+        });
+        roundtrip(HostCall::EmitterBurst {
+            key: "petramond:water_splash".into(),
+            pos: [0.5, 64.0, 0.5],
+            intensity: 4.5,
+        });
         roundtrip(HostCall::SpawnItem {
             item_key: "petramond:stick".into(),
             count: 4,

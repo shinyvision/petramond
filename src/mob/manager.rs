@@ -87,10 +87,20 @@ pub struct MobFall {
     pub distance: f32,
 }
 
+/// A mob fell into water this tick (its un-latched fall drop at the first wet
+/// tick). `ServerGame` throws the water-splash burst above the entry point.
+#[derive(Copy, Clone, Debug)]
+pub struct MobSplash {
+    pub pos: Vec3,
+    /// Blocks fallen into the surface — the burst intensity.
+    pub fall: f32,
+}
+
 #[derive(Default, Debug)]
 pub struct MobTickEvents {
     pub attacks: Vec<MobAttack>,
     pub falls: Vec<MobFall>,
+    pub splashes: Vec<MobSplash>,
 }
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
@@ -287,6 +297,9 @@ impl Mobs {
                     distance,
                 });
             }
+            if let Some(fall) = mob.take_splash_drop() {
+                out.splashes.push(MobSplash { pos: mob.pos, fall });
+            }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
@@ -389,6 +402,24 @@ impl Mobs {
         } else {
             None
         }
+    }
+
+    /// Toggle the particle-emitter bundle registered under `key` (a
+    /// `particle_emitters.json` row, any namespace) on the mob at `index`.
+    /// `false` for a bad index, an unregistered key, or an activation past the
+    /// per-mob cap. Keeps `list` private, like [`damage_mob`](Self::damage_mob).
+    pub fn set_mob_emitter(&mut self, index: usize, key: &str, active: bool) -> bool {
+        let Some(mob) = self.list.get_mut(index) else {
+            return false;
+        };
+        let Some(bundle) = crate::particle_emitters::by_key(key) else {
+            return false;
+        };
+        // A one-shot burst bundle is an event, not attachable state.
+        if bundle.burst.is_some() {
+            return false;
+        }
+        mob.set_emitter_active(bundle.id, active)
     }
 
     /// Shear the mob at `index`: `Some` drop when it is a coated shearable species

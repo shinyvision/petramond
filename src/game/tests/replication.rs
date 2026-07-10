@@ -44,6 +44,7 @@ fn mob_row(id: u64, pos: Vec3, hurt_timer: f32) -> MobStateRow {
         hurt_timer,
         dead: false,
         shorn: false,
+        emitters: Vec::new(),
         ragdoll: None,
     }
 }

@@ -321,6 +321,7 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
+        | HostCall::MobEmitterSet { .. }
         | HostCall::SpawnItem { .. } => handle_entity_call(&data.mod_id, call),
         HostCall::PlayerState
         | HostCall::DamagePlayer { .. }
@@ -336,7 +337,8 @@ fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
-        | HostCall::SoundStop { .. } => handle_sound_call(&data.mod_id, call),
+        | HostCall::SoundStop { .. }
+        | HostCall::EmitterBurst { .. } => handle_sound_call(&data.mod_id, call),
         HostCall::WorldKvGet { .. }
         | HostCall::WorldKvSet { .. }
         | HostCall::WorldKvDelete { .. }
@@ -740,6 +742,15 @@ fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::DespawnMob { index } => {
             sim_query(|ctx| HostRet::Bool(ctx.world.mobs_mut().remove(index as usize)))
         }
+        // Presentation-only mob state (no bus funnel), so unlike DamageMob it
+        // applies immediately instead of queueing a ModAction.
+        HostCall::MobEmitterSet { index, key, active } => sim_query(|ctx| {
+            HostRet::Bool(
+                ctx.world
+                    .mobs_mut()
+                    .set_mob_emitter(index as usize, &key, active),
+            )
+        }),
         HostCall::SpawnItem {
             item_key,
             count,
@@ -858,6 +869,30 @@ fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
 /// never touches audio — everything rides `TickEvents` to the app layer).
 fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
+        // Not a sound, but the same shape: a fire-and-forget world-anchored
+        // presentation one-shot riding the NON-lossy tick queue.
+        HostCall::EmitterBurst {
+            key,
+            pos,
+            intensity,
+        } => match finite3(pos, "EmitterBurst.pos") {
+            Err(e) => e,
+            Ok(pos) => sim_query(|ctx| {
+                if !intensity.is_finite() {
+                    return HostRet::Error("EmitterBurst: non-finite intensity".into());
+                }
+                let Some(bundle) = crate::particle_emitters::by_key(&key) else {
+                    log::warn!("[mod {mod_id}] EmitterBurst: unknown emitter '{key}'");
+                    return HostRet::Bool(false);
+                };
+                if bundle.burst.is_none() {
+                    log::warn!("[mod {mod_id}] EmitterBurst: '{key}' is not a burst bundle");
+                    return HostRet::Bool(false);
+                }
+                ctx.feed.world.emitter_bursts.push((bundle.id, pos, intensity));
+                HostRet::Bool(true)
+            }),
+        },
         HostCall::EmitSound { key, pos } => sim_query(|ctx| {
             let Some(sound) = crate::audio::sound_by_name(&key) else {
                 log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");

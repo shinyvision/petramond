@@ -46,7 +46,7 @@ use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
-    RemotePlayerRender,
+    RemotePlayerRender, SolidParticleInstance,
 };
 use crate::bbmodel::Model;
 use crate::gui::UiSnapshot;
@@ -384,6 +384,9 @@ pub struct Renderer {
     /// Model-atlas particle cubes (bbmodel-block flecks) to draw this frame — baked into
     /// the SAME particle vbuf after the block cubes, then drawn with the model atlas bound.
     model_particles: Vec<ParticleInstance>,
+    /// Solid-color simulated particles (emitter-burst droplets) joining the
+    /// emitter cubes' alpha-blended bake.
+    solid_particles: Vec<SolidParticleInstance>,
     /// Loaded block-row particle emitters to synthesize into translucent cube particles.
     particle_emitters: Vec<ParticleEmitterInstance>,
     /// Frustum/fog-visible subset of `particle_emitters`.

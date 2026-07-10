@@ -126,7 +126,12 @@ pub fn build_mob_instances(
             env,
         );
         let hurt = hurt_tint(inst.hurt);
-        let tint = [hurt[0] * rgb[0], hurt[1] * rgb[1], hurt[2] * rgb[2]];
+        let emitter = inst.emitter_tint;
+        let tint = [
+            hurt[0] * emitter[0] * rgb[0],
+            hurt[1] * emitter[1] * rgb[1],
+            hurt[2] * emitter[2] * rgb[2],
+        ];
 
         for cube in &model.cubes {
             if inst.shorn && cube.name == COAT_CUBE_NAME {
@@ -218,6 +223,7 @@ mod tests {
             blocklight: 0,
             hurt: 0.0,
             shorn: false,
+            emitter_tint: [1.0, 1.0, 1.0],
             ragdoll: None,
         }
     }

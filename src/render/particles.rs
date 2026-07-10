@@ -181,10 +181,12 @@ pub(in crate::render) struct TransparentParticleCube {
     dist_sq: f32,
 }
 
-/// Max active translucent particles one block emitter may contribute in a frame.
+/// Max active translucent particles one emitter row may contribute in a frame.
 /// The row's rate/lifetime control the normal count; this clamp prevents a malformed
-/// or intentionally huge mod row from consuming the whole fixed vertex buffer.
-const MAX_ACTIVE_PER_EMITTER: usize = 32;
+/// or intentionally huge mod row from consuming the whole fixed vertex buffer
+/// (48 = ~1% of [`MAX_PARTICLE_CUBES`]; dense fire columns need more than the
+/// original 32).
+const MAX_ACTIVE_PER_EMITTER: usize = 48;
 
 #[derive(Copy, Clone)]
 struct EmitterSchedule {
@@ -198,8 +200,13 @@ struct EmitterSchedule {
 /// generated particle rows are deterministic functions of `(emitter seed, time)`,
 /// so no persistent particle state is needed: a particle moves up, shrinks, fades,
 /// and disappears entirely on the render side.
+///
+/// `solids` are the SIMULATED solid-color particles (emitter-burst droplets,
+/// already positioned by the particle system's physics): they join the same
+/// sorted alpha-blended draw so splashes and flames composite correctly.
 pub fn build_transparent_emitter_particles(
     emitters: &[ParticleEmitterInstance],
+    solids: &[super::SolidParticleInstance],
     time: f32,
     cam_pos: Vec3,
     env: LightEnv,
@@ -208,6 +215,32 @@ pub fn build_transparent_emitter_particles(
 ) -> u32 {
     verts.clear();
     scratch.clear();
+    for s in solids {
+        if scratch.len() >= MAX_PARTICLE_CUBES {
+            break;
+        }
+        if s.alpha <= 0.001 || s.size <= 0.001 {
+            continue;
+        }
+        let light = lighting::light_rgb(
+            DynLight {
+                sky: s.skylight,
+                block: s.blocklight,
+            },
+            env,
+        );
+        scratch.push(TransparentParticleCube {
+            pos: s.pos,
+            color: [
+                s.color[0] * light[0],
+                s.color[1] * light[1],
+                s.color[2] * light[2],
+            ],
+            alpha: s.alpha,
+            size: s.size,
+            dist_sq: (cam_pos - s.pos).length_squared(),
+        });
+    }
     for inst in emitters {
         append_emitter_particles(inst, time, cam_pos, env, scratch);
         if scratch.len() >= MAX_PARTICLE_CUBES {
@@ -267,8 +300,11 @@ fn append_emitter_particles(
         }
         let t = (age / lifetime).clamp(0.0, 1.0);
         let fade = 1.0 - t;
-        let size = lerp_range(e.size, rand01(seed ^ 0x22)) * fade;
-        let alpha = lerp_range(e.alpha, rand01(seed ^ 0x33)) * fade * fade;
+        // The row's exponents shape the curves: fade_power 2 / shrink_power 1
+        // are the classic quick fade + linear shrink; lower keeps late-life
+        // (ember/smoke) cubes visible and chunky.
+        let size = lerp_range(e.size, rand01(seed ^ 0x22)) * fade.powf(e.shrink_power);
+        let alpha = lerp_range(e.alpha, rand01(seed ^ 0x33)) * fade.powf(e.fade_power);
         if size <= 0.001 || alpha <= 0.001 {
             continue;
         }
@@ -286,13 +322,42 @@ fn append_emitter_particles(
                 rand_signed(seed ^ 0x88) * velocity_jitter.y,
                 rand_signed(seed ^ 0x99) * velocity_jitter.z,
             );
-        let pos = inst.origin + jitter + velocity * age;
-        let mix = rand01(seed ^ 0xAA);
-        let base = [
-            lerp(e.color[0][0], e.color[1][0], mix),
-            lerp(e.color[0][1], e.color[1][1], mix),
-            lerp(e.color[0][2], e.color[1][2], mix),
-        ];
+        let mut pos = inst.origin + jitter + velocity * age;
+        // Spiral: each particle orbits the emitter's vertical axis while it
+        // rises. Phase, orbit radius, AND angular speed are all per-particle
+        // (seed-derived): a shared speed reads as a rigid rotating helix, while
+        // individual orbits twirl unpredictably, like flame licks. The row's
+        // values are the outer radius / nominal speed.
+        let [spiral_radius, spiral_hz] = e.spiral;
+        if spiral_radius > 0.0 {
+            let tau = std::f32::consts::TAU;
+            let phase = rand01(seed ^ 0xBB) * tau;
+            let radius = spiral_radius * lerp(0.6, 1.0, rand01(seed ^ 0xCC));
+            let speed = spiral_hz * lerp(0.5, 1.5, rand01(seed ^ 0xDD));
+            let angle = phase + speed * tau * age;
+            pos += Vec3::new(angle.cos(), 0.0, angle.sin()) * radius;
+        }
+        // Color: a ramp row COOLS over the particle's life (age maps to height
+        // in a rising column, so the base burns white-hot and the top chars),
+        // with a small per-particle brightness jitter for texture; an endpoint
+        // row keeps its classic random birth mix.
+        let base = match (e.color_ramp, e.color) {
+            (Some(ramp), _) => {
+                let c = ramp.sample(t);
+                let brightness = lerp(0.8, 1.0, rand01(seed ^ 0xEE));
+                [c[0] * brightness, c[1] * brightness, c[2] * brightness]
+            }
+            (None, Some(endpoints)) => {
+                let mix = rand01(seed ^ 0xAA);
+                [
+                    lerp(endpoints[0][0], endpoints[1][0], mix),
+                    lerp(endpoints[0][1], endpoints[1][1], mix),
+                    lerp(endpoints[0][2], endpoints[1][2], mix),
+                ]
+            }
+            // The loader guarantees one of the two; render defensively.
+            (None, None) => [1.0, 1.0, 1.0],
+        };
         let color = [base[0] * light[0], base[1] * light[1], base[2] * light[2]];
         out.push(TransparentParticleCube {
             pos,
@@ -453,7 +518,7 @@ mod tests {
     fn emitter_inst() -> ParticleEmitterInstance {
         ParticleEmitterInstance {
             origin: Vec3::new(1.0, 2.0, 3.0),
-            emitter: crate::block::BlockParticleEmitter {
+            emitter: crate::block::ParticleEmitter {
                 anchor: crate::block::ParticleEmitterAnchor::BlockTop,
                 origin: [0.5, 1.0, 0.5],
                 offset: [0.0, 0.0, 0.0],
@@ -463,9 +528,13 @@ mod tests {
                 spawn_box: [0.0, 0.0, 0.0],
                 velocity: [0.0, 1.0, 0.0],
                 velocity_jitter: [0.0, 0.0, 0.0],
-                color: [[1.0, 0.5, 0.0], [1.0, 1.0, 0.0]],
+                color: Some([[1.0, 0.5, 0.0], [1.0, 1.0, 0.0]]),
+                color_ramp: None,
                 alpha: [0.8, 0.8],
+                fade_power: 2.0,
+                shrink_power: 1.0,
                 fullbright: true,
+                spiral: [0.0, 0.0],
             },
             seed: 0x1234_5678_9ABC_DEF0,
             skylight: 0,
@@ -569,6 +638,7 @@ mod tests {
 
         let young_n = build_transparent_emitter_particles(
             std::slice::from_ref(&inst),
+            &[],
             one_live_emitter_time(&inst, 0.25),
             Vec3::ZERO,
             LightEnv::IDENTITY,
@@ -577,6 +647,7 @@ mod tests {
         );
         let old_n = build_transparent_emitter_particles(
             std::slice::from_ref(&inst),
+            &[],
             one_live_emitter_time(&inst, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
@@ -597,6 +668,180 @@ mod tests {
         assert!(
             max_alpha(&old) < max_alpha(&young),
             "emitter particles fade as they age"
+        );
+    }
+
+    #[test]
+    fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
+        let mut inst = emitter_inst();
+        inst.emitter.spiral = [0.5, 1.0]; // one revolution per second at 0.5 blocks
+        let mut early = Vec::new();
+        let mut late = Vec::new();
+        let mut scratch = Vec::new();
+
+        // A quarter revolution apart: the particle's horizontal offset from the
+        // emitter axis must keep its radius but rotate to a different angle.
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            &[],
+            one_live_emitter_time(&inst, 0.25),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut early,
+            &mut scratch,
+        );
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            &[],
+            one_live_emitter_time(&inst, 0.5),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut late,
+            &mut scratch,
+        );
+
+        let axis = inst.origin;
+        let horiz = |v: &[ParticleVertex]| {
+            let c = vertex_center(v);
+            Vec3::new(c.x - axis.x, 0.0, c.z - axis.z)
+        };
+        let (a, b) = (horiz(&early), horiz(&late));
+        // Orbit radius is per-particle (60-100% of the row's 0.5) but stable
+        // over one particle's life: both samples see the same particle.
+        assert!(
+            (a.length() - b.length()).abs() < 1e-4,
+            "one particle keeps its orbit radius: {} vs {}",
+            a.length(),
+            b.length()
+        );
+        assert!(
+            (0.3 - 1e-4..=0.5 + 1e-4).contains(&a.length()),
+            "orbit radius stays within the row's spiral radius: {}",
+            a.length()
+        );
+        assert!(
+            a.angle_between(b) > 0.3,
+            "a quarter nominal revolution rotates the offset (angle {})",
+            a.angle_between(b)
+        );
+    }
+
+    #[test]
+    fn ramp_emitter_particles_cool_through_the_ramp_as_they_age() {
+        let mut inst = emitter_inst();
+        let ramp: crate::block::ColorRamp =
+            serde_json::from_str(r#"[[1.0, 1.0, 0.9], [1.0, 0.5, 0.1], [0.1, 0.1, 0.1]]"#)
+                .expect("3-stop ramp parses");
+        inst.emitter.color = None;
+        inst.emitter.color_ramp = Some(ramp);
+        let mut young = Vec::new();
+        let mut old = Vec::new();
+        let mut scratch = Vec::new();
+
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            &[],
+            one_live_emitter_time(&inst, 0.1),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut young,
+            &mut scratch,
+        );
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            &[],
+            one_live_emitter_time(&inst, 0.9),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut old,
+            &mut scratch,
+        );
+
+        let luma = |v: &[ParticleVertex]| {
+            let t = v[0].tint;
+            t[0] + t[1] + t[2]
+        };
+        assert!(
+            luma(&young) > 2.0,
+            "a young particle sits near the hot end of the ramp: {}",
+            luma(&young)
+        );
+        assert!(
+            luma(&old) < 1.0,
+            "an old particle has cooled toward the dark end: {}",
+            luma(&old)
+        );
+    }
+
+    #[test]
+    fn lower_fade_power_keeps_late_life_particles_more_visible() {
+        let quick = emitter_inst();
+        let mut lingering = emitter_inst();
+        lingering.emitter.fade_power = 1.0;
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        let mut scratch = Vec::new();
+
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&quick),
+            &[],
+            one_live_emitter_time(&quick, 0.75),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut a,
+            &mut scratch,
+        );
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&lingering),
+            &[],
+            one_live_emitter_time(&lingering, 0.75),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut b,
+            &mut scratch,
+        );
+
+        assert!(
+            max_alpha(&b) > max_alpha(&a),
+            "fade_power 1 lingers longer than the default quadratic: {} vs {}",
+            max_alpha(&b),
+            max_alpha(&a)
+        );
+    }
+
+    #[test]
+    fn lower_shrink_power_keeps_late_life_particles_larger() {
+        let linear = emitter_inst();
+        let mut chunky = emitter_inst();
+        chunky.emitter.shrink_power = 0.4;
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        let mut scratch = Vec::new();
+
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&linear),
+            &[],
+            one_live_emitter_time(&linear, 0.75),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut a,
+            &mut scratch,
+        );
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&chunky),
+            &[],
+            one_live_emitter_time(&chunky, 0.75),
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            &mut b,
+            &mut scratch,
+        );
+
+        assert!(
+            x_extent(&b) > x_extent(&a),
+            "shrink_power 0.4 keeps an old cube chunkier than linear shrink: {} vs {}",
+            x_extent(&b),
+            x_extent(&a)
         );
     }
 

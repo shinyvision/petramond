@@ -149,6 +149,52 @@
       "gain": 1.0,
       "pitch_variation": 0.08,
       "category": "ui"
+    },
+    {
+      "sound": "petramond:sheep_idle",
+      "variants": [
+        "sounds/sheep_idle1.ogg",
+        "sounds/sheep_idle2.ogg",
+        "sounds/sheep_idle3.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 12.0,
+      "category": "mob"
+    },
+    {
+      "sound": "petramond:sheep_hurt",
+      "variants": [
+        "sounds/sheep_hurt.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 12.0,
+      "category": "mob"
+    },
+    {
+      "sound": "petramond:water_splash_small",
+      "variants": [
+        "sounds/water_splash_small1.ogg",
+        "sounds/water_splash_small2.ogg",
+        "sounds/water_splash_small3.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.1,
+      "attenuation_distance": 14.0,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:water_splash_big",
+      "variants": [
+        "sounds/water_splash_big1.ogg",
+        "sounds/water_splash_big2.ogg",
+        "sounds/water_splash_big3.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.1,
+      "attenuation_distance": 22.0,
+      "category": "block"
     }
   ]
 }

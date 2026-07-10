@@ -128,6 +128,14 @@ pub enum WorldEvent {
         pos: Vec3,
         by_self: bool,
     },
+    /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
+    /// client-local catalog id) — e.g. the water splash when something falls
+    /// in. Every client spawns the burst into its own particle system.
+    EmitterBurst {
+        emitter: u8,
+        pos: Vec3,
+        intensity: f32,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -266,6 +274,9 @@ pub(crate) struct WorldEvents {
     pub(crate) chest_changed: Vec<(IVec3, bool)>,
     /// A player collected at least one drop: (their body centre, player id).
     pub(crate) item_picked_up: Vec<(Vec3, PlayerId)>,
+    /// One-shot particle bursts (catalog id, world position, producer-defined
+    /// intensity — the water splash passes blocks fallen).
+    pub(crate) emitter_bursts: Vec<(u8, Vec3, f32)>,
     next_spatial_sound_handle: u64,
 }
 
@@ -280,6 +291,7 @@ impl WorldEvents {
             door_changed: Vec::new(),
             chest_changed: Vec::new(),
             item_picked_up: Vec::new(),
+            emitter_bursts: Vec::new(),
             next_spatial_sound_handle: next_spatial_sound_handle.max(1),
         }
     }

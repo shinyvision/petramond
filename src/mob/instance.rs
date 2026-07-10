@@ -122,6 +122,9 @@ pub struct Instance {
     /// Landing distance latched by [`track_fall`](Self::track_fall) and drained by the
     /// manager after the tick so `ServerGame` can route damage through `mob_damage_pre`.
     fall_distance: f32,
+    /// Fall-INTO-WATER distance latched by [`track_fall`](Self::track_fall) and drained
+    /// by the manager — `ServerGame` turns it into the water-splash burst.
+    splash_drop: f32,
     /// True once this mob is beyond its row-level despawn radius this tick. The manager
     /// culls it at the end of the tick. Never persisted.
     distance_despawned: bool,
@@ -143,6 +146,13 @@ pub struct Instance {
     /// shorn (its coat cubes are hidden and it can't be shorn again); it counts down on
     /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
     shear_regrow: u32,
+    /// ACTIVE particle-emitter bundles by catalog id (`crate::particle_emitters`),
+    /// sorted, at most [`super::MAX_ACTIVE_MOB_EMITTERS`]. Presentation-only
+    /// state toggled by mods through the `MobEmitterSet` HostCall, replicated
+    /// per tick, and deliberately not persisted (the owning mod re-derives it,
+    /// like its other transient decisions). It survives death so a corpse keeps
+    /// its effect through the ragdoll.
+    active_emitters: Vec<u8>,
     /// Per-mob mod KV (`mod_id:key` → bytes) — opaque to the engine, written
     /// by mod HostCalls on the tick, persisted with the mob's save record
     /// (see [`super::SavedMob`]). BTreeMap so the save encoding is deterministic.
@@ -219,12 +229,14 @@ impl Instance {
             health: d.max_health,
             fall_peak_y: pos.y,
             fall_distance: 0.0,
+            splash_drop: 0.0,
             distance_despawned: false,
             hurt_timer: 0.0,
             stagger_timer: 0.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             shear_regrow: 0,
+            active_emitters: Vec::new(),
             mod_kv: std::collections::BTreeMap::new(),
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
@@ -253,6 +265,38 @@ impl Instance {
     pub(super) fn take_fall_distance(&mut self) -> Option<f32> {
         let distance = std::mem::replace(&mut self.fall_distance, 0.0);
         (distance > 0.0).then_some(distance)
+    }
+
+    pub(super) fn take_splash_drop(&mut self) -> Option<f32> {
+        let drop = std::mem::replace(&mut self.splash_drop, 0.0);
+        (drop > 0.0).then_some(drop)
+    }
+
+    /// The active particle-emitter bundle ids, sorted (catalog session ids —
+    /// `crate::particle_emitters`).
+    #[inline]
+    pub fn active_emitters(&self) -> &[u8] {
+        &self.active_emitters
+    }
+
+    /// Toggle one emitter bundle by catalog id (the manager resolves keys —
+    /// see [`super::Mobs::set_mob_emitter`]). Returns `false` only when an
+    /// activation would exceed [`super::MAX_ACTIVE_MOB_EMITTERS`].
+    pub(super) fn set_emitter_active(&mut self, id: u8, active: bool) -> bool {
+        match (self.active_emitters.binary_search(&id), active) {
+            (Ok(_), true) | (Err(_), false) => true,
+            (Ok(at), false) => {
+                self.active_emitters.remove(at);
+                true
+            }
+            (Err(at), true) => {
+                if self.active_emitters.len() >= super::MAX_ACTIVE_MOB_EMITTERS {
+                    return false;
+                }
+                self.active_emitters.insert(at, id);
+                true
+            }
+        }
     }
 
     /// Apply a damage request with row/hook-composed feedback. Returns `true` if this
@@ -390,6 +434,13 @@ impl Instance {
     /// feet position. Water breaks falls by re-anchoring the peak while submerged.
     fn track_fall(&mut self, was_on_ground: bool, in_water: bool) {
         if in_water {
+            // The un-latched drop at the first wet tick is the fall INTO the
+            // water; while swimming the per-tick re-anchor keeps it near zero
+            // (the splash threshold filters the bobbing).
+            let drop = self.fall_peak_y - self.pos.y;
+            if drop > 0.0 {
+                self.splash_drop = self.splash_drop.max(drop);
+            }
             self.fall_peak_y = self.pos.y;
         } else if self.on_ground {
             if !was_on_ground {

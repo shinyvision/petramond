@@ -156,6 +156,10 @@ pub struct MobRenderInstance {
     /// Whether the mob is currently shorn: the bake skips the model's coat cubes
     /// (the ones named `wool`) so the fleece disappears until it regrows.
     pub shorn: bool,
+    /// Multiply body tint from the mob's active named emitters (white when
+    /// none) — e.g. the faint warm cast of a burning mob. Composed with the
+    /// hurt flash and sampled light.
+    pub emitter_tint: [f32; 3],
     /// When the mob is dying, its per-bone ragdoll pose — `(rest-pivot position,
     /// rotation delta)` per bone in model space, already interpolated for this frame —
     /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
@@ -275,12 +279,26 @@ pub struct ParticleInstance {
     pub blocklight: u8,
 }
 
+/// One SOLID-COLOR simulated particle this frame (an emitter-burst droplet —
+/// water splash): already positioned by the particle system's physics, drawn
+/// as an alpha-blended cube in the same pass as the looping-emitter cubes.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SolidParticleInstance {
+    pub pos: Vec3,
+    pub color: [f32; 3],
+    pub alpha: f32,
+    pub size: f32,
+    /// 6-bit light sampled at the particle, folded into the color.
+    pub skylight: u8,
+    pub blocklight: u8,
+}
+
 /// One loaded block-row particle emitter to draw this frame. The renderer turns this
 /// declarative row into transient translucent cube particles; no state is persisted.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ParticleEmitterInstance {
     pub origin: Vec3,
-    pub emitter: crate::block::BlockParticleEmitter,
+    pub emitter: crate::block::ParticleEmitter,
     pub seed: u64,
     pub skylight: u8,
     pub blocklight: u8,

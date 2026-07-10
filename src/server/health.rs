@@ -53,6 +53,18 @@ impl ServerGame {
         );
     }
 
+    /// Consume the water entry the fall tracker latched (a fall INTO water —
+    /// `FallOutcome::Splashed`) and throw the `petramond:water_splash` burst at
+    /// the surface. Presentation only, no damage: water broke the fall.
+    pub(crate) fn tick_water_splash(&mut self, s: usize, events: &mut TickEvents) {
+        let fall = std::mem::replace(&mut self.sessions[s].pending_splash, 0.0);
+        if self.sessions[s].player.is_spectator() {
+            return;
+        }
+        let feet = self.sessions[s].player.pos;
+        self.push_water_splash(feet, fall, events);
+    }
+
     /// The single player-damage funnel: dispatch `player_damage_pre` (mutable
     /// amount, cancellable — i-frames live here), apply what survives, queue
     /// `player_damaged`, and fire `player_died` exactly once per >0 → 0 health

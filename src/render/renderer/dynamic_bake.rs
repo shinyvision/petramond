@@ -557,6 +557,7 @@ impl Renderer {
             da.total_cmp(&db)
         });
         let emitters = &self.particle_emitter_visible;
+        let solids = &self.solid_particles;
         let time = self.visual_time;
         let cam_pos = self.cam_pos;
         self.emitter_particle_draw.bake(
@@ -566,6 +567,7 @@ impl Renderer {
             |verts| {
                 build_transparent_emitter_particles(
                     emitters,
+                    solids,
                     time,
                     cam_pos,
                     env,

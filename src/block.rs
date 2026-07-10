@@ -16,7 +16,12 @@ mod sounds;
 pub use behavior::BlockBehavior;
 pub(crate) use data::ENGINE_BLOCK_NAMES;
 pub(crate) use definition::BlockMaterial;
-pub use definition::{BlockParticleEmitter, ParticleEmitterAnchor};
+// ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
+// currently name the type, so the lib build sees the re-export as unused.
+#[allow(unused_imports)]
+pub use definition::ColorRamp;
+pub use definition::{ParticleEmitter, ParticleEmitterAnchor};
+pub(crate) use load::validate_particle_emitter;
 pub use sounds::BlockSoundAction;
 
 /// A registered block, identified by its opaque runtime id. Engine blocks own
@@ -593,11 +598,12 @@ impl Block {
         self.def().emission
     }
 
-    /// Optional visual-only particle emitter declared on this block's data row.
-    /// Content packs can add these through `blocks.json`; the client presentation
+    /// Optional visual-only particle emitter rows declared on this block's data
+    /// row (a `particle_emitters.json` bundle reference or one inline row).
+    /// Content packs add these through `blocks.json`; the client presentation
     /// layer turns loaded cells into transient render particles.
     #[inline]
-    pub fn particle_emitter(self) -> Option<BlockParticleEmitter> {
+    pub fn particle_emitter(self) -> Option<&'static [ParticleEmitter]> {
         self.def().particle_emitter
     }
 

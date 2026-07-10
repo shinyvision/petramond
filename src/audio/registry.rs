@@ -59,6 +59,14 @@ impl Sound {
     pub const PlayerHurt: Sound = Sound(14);
     /// A shell/UI button or toggle was activated.
     pub const UiClick: Sound = Sound(15);
+    /// A sheep's ambient baa (the sheep row's `idle` hook).
+    pub const SheepIdle: Sound = Sound(16);
+    /// A sheep took a hit (the sheep row's `hurt` hook).
+    pub const SheepHurt: Sound = Sound(17);
+    /// Something small fell into water (the water-splash burst's quiet tier).
+    pub const WaterSplashSmall: Sound = Sound(18);
+    /// Something plunged into water from height (the loud splash tier).
+    pub const WaterSplashBig: Sound = Sound(19);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -80,6 +88,10 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:dirt_place",
     "petramond:player_hurt",
     "petramond:ui_click",
+    "petramond:sheep_idle",
+    "petramond:sheep_hurt",
+    "petramond:water_splash_small",
+    "petramond:water_splash_big",
 ];
 
 impl std::fmt::Debug for Sound {

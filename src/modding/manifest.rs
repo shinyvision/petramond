@@ -179,13 +179,14 @@ pub(crate) fn resolve_load_order(
 /// disabled rather than panicking the registry bootstrap later).
 pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, String> {
     // (file, array field, key field) for every catalog whose row keys register.
-    const CATALOGS: [(&str, &str, &str); 7] = [
+    const CATALOGS: [(&str, &str, &str); 8] = [
         ("blocks.json", "blocks", "block"),
         ("items.json", "items", "item"),
         ("sounds.json", "sounds", "sound"),
         ("models.json", "models", "key"),
         ("mobs.json", "mobs", "mob"),
         ("effects.json", "effects", "effect"),
+        ("particle_emitters.json", "emitters", "emitter"),
         ("textures/atlas.json", "tiles", "name"),
     ];
     let mut keys = Vec::new();

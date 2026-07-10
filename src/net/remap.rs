@@ -29,6 +29,7 @@ pub(crate) struct IdRemap {
     mobs: Vec<u16>,
     sounds: Vec<u16>,
     effects: Vec<u16>,
+    emitters: Vec<u16>,
     /// True when every table is the identity — the fast path (a client whose
     /// registries happen to match the server's exactly).
     identity: bool,
@@ -64,9 +65,12 @@ impl IdRemap {
         let effects = build_u16(&tables.effects, "effect", |n| {
             crate::effect::by_name(n).map(|e| e.0)
         });
+        let emitters = build_u16(&tables.emitters, "emitter", |n| {
+            crate::particle_emitters::by_key(n).map(|b| b.id)
+        });
 
         let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
-            && [&items, &mobs, &sounds, &effects]
+            && [&items, &mobs, &sounds, &effects, &emitters]
                 .into_iter()
                 .all(|t| t.iter().enumerate().all(|(i, &v)| i == v as usize));
         IdRemap {
@@ -75,6 +79,7 @@ impl IdRemap {
             mobs,
             sounds,
             effects,
+            emitters,
             identity,
         }
     }
@@ -113,6 +118,11 @@ impl IdRemap {
         lut_u16(&self.effects, server_id)
     }
 
+    #[inline]
+    pub(crate) fn emitter(&self, server_id: u8) -> Option<u8> {
+        lut_u16(&self.emitters, server_id)
+    }
+
     /// Rewrite a freshly-decoded server message to client-local ids, in place.
     /// EXHAUSTIVE over the enum: a new variant fails compilation here until
     /// its id story is decided (a `=> {}` arm is that decision, made visibly).
@@ -145,6 +155,16 @@ impl IdRemap {
                 t.mobs.retain_mut(|m| match self.mob(m.kind_id) {
                     Some(id) => {
                         m.kind_id = id;
+                        // Emitter bundle ids remap per entry; an unknown one
+                        // (server-side disabled mod's residue) drops alone —
+                        // the mob itself still renders.
+                        m.emitters.retain_mut(|e| match self.emitter(*e) {
+                            Some(local) => {
+                                *e = local;
+                                true
+                            }
+                            None => false,
+                        });
                         true
                     }
                     None => false,
@@ -243,6 +263,13 @@ impl IdRemap {
             WorldEventMsg::ModSound { sound_id, .. } => match self.sound(*sound_id) {
                 Some(id) => {
                     *sound_id = id;
+                    true
+                }
+                None => false,
+            },
+            WorldEventMsg::EmitterBurst { emitter_id, .. } => match self.emitter(*emitter_id) {
+                Some(id) => {
+                    *emitter_id = id;
                     true
                 }
                 None => false,
@@ -351,6 +378,10 @@ pub(crate) fn local_name_tables() -> NameTables {
             .collect(),
         effects: crate::effect::Effect::all()
             .map(|e| e.def().name.to_string())
+            .collect(),
+        emitters: crate::particle_emitters::defs()
+            .iter()
+            .map(|b| b.key.to_string())
             .collect(),
     }
 }
@@ -532,6 +563,7 @@ mod tests {
             hurt_timer: 0.0,
             dead: false,
             shorn: false,
+            emitters: Vec::new(),
             ragdoll: None,
         };
         let item_row = |item_id: u8| ItemStateRow {

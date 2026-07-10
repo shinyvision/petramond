@@ -46,6 +46,7 @@ mod mob;
 mod modding;
 mod net;
 mod pane;
+mod particle_emitters;
 pub mod platform;
 mod player;
 mod registry;

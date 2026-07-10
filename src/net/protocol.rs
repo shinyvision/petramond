@@ -118,6 +118,8 @@ pub(crate) struct NameTables {
     pub mobs: Vec<String>,
     pub sounds: Vec<String>,
     pub effects: Vec<String>,
+    /// `particle_emitters.json` bundle keys, in server-id order.
+    pub emitters: Vec<String>,
 }
 
 /// One inventory slot on the wire. `item_id` is a wire item id.
@@ -411,6 +413,11 @@ pub(crate) struct MobStateRow {
     pub hurt_timer: f32,
     pub dead: bool,
     pub shorn: bool,
+    /// ACTIVE particle-emitter bundle ids (wire `particle_emitters.json`
+    /// catalog ids, `Instance::active_emitters`, ≤ 4). The client derives the
+    /// particle rows and any body tint from its own catalog after the remap,
+    /// so a few bytes replicate the whole effect.
+    pub emitters: Vec<u8>,
     /// Per-bone ragdoll pose (pivot position, orientation quaternion) as of
     /// this tick — present only while the death ragdoll plays (bounded), so
     /// live mobs pay nothing for it.
@@ -587,6 +594,13 @@ pub(crate) enum WorldEventMsg {
     ModSound {
         sound_id: u8,
         pos: Option<Vec3>,
+    },
+    /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
+    /// wire catalog id) at `pos` — e.g. the water splash.
+    EmitterBurst {
+        emitter_id: u8,
+        pos: Vec3,
+        intensity: f32,
     },
     /// A mod-owned spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
     ModSpatialSound(ModSpatialSoundMsg),
@@ -1162,6 +1176,7 @@ mod tests {
                 hurt_timer: 0.2,
                 dead: false,
                 shorn: true,
+                emitters: vec![1],
                 ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
             }],
             items: vec![ItemStateRow {

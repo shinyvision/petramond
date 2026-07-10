@@ -648,6 +648,7 @@ async fn new_renderer_inner(
         particle_verts: Vec::new(),
         emitter_particle_verts: Vec::new(),
         emitter_particle_scratch: Vec::new(),
+        solid_particles: Vec::new(),
         ui_pipe: pipelines.ui_pipe,
         ui_texture_bgl: pipelines.atlas_bgl.clone(),
         doc_ui: super::doc_ui::DocUi::default(),

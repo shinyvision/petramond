@@ -356,6 +356,7 @@ impl ServerGame {
                 hurt_timer: m.hurt_timer(),
                 dead: m.is_dead(),
                 shorn: m.is_shorn(),
+                emitters: m.active_emitters().to_vec(),
                 // Present only while the death ragdoll plays (bounded): the
                 // pose as of this tick (alpha 1.0); the client interpolates
                 // consecutive batches.
@@ -1096,6 +1097,7 @@ impl ServerGame {
         self.begin_stage(Stage::PlayerDamage, events);
         for s in 0..self.sessions.len() {
             self.tick_fall_damage(s, events);
+            self.tick_water_splash(s, events);
             // Status effects ride the same stage: they are pure player-state
             // steps (regen heals, durations count down) on the tick, after damage
             // so a same-tick hit lands before the heal.
@@ -1169,6 +1171,9 @@ impl ServerGame {
         self.begin_stage(Stage::Mobs, events);
         let mob_events = self.world.tick_mobs(TICK_DT, &anchors);
         self.apply_mob_fall_damage(mob_events.falls, events);
+        for splash in mob_events.splashes {
+            self.push_water_splash(splash.pos, splash.fall, events);
+        }
         // Mob→player combat resolves right after the mobs moved: each strike runs
         // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
         // an applied strike knocks the player back.
@@ -1465,6 +1470,13 @@ pub(crate) fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
             kind_id: s.kind.0,
             category: s.category.to_u8(),
             pos: s.pos,
+        });
+    }
+    for (emitter_id, pos, intensity) in world.emitter_bursts.drain(..) {
+        out.push(WorldEventMsg::EmitterBurst {
+            emitter_id,
+            pos,
+            intensity,
         });
     }
     for s in world.sounds.drain(..) {
