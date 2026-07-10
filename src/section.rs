@@ -398,6 +398,27 @@ impl Section {
         self.blocklight = None;
     }
 
+    /// Raise one cell's cached light to a provisional estimate (client
+    /// prediction): an inline remesh of a just-opened cell must not sample the
+    /// removed block's stale darkness. Raise-only, and neither `light_dirty`
+    /// nor `light_revision` moves — the pending authoritative bake replaces
+    /// the whole cube when it lands.
+    pub fn seed_light_estimate(&mut self, x: usize, y: usize, z: usize, sky: u8, block: u8) {
+        let i = section_idx(x, y, z);
+        // An absent skylight cube already reads as open sky (bright).
+        if let Some(cube) = &mut self.skylight {
+            if cube[i] < sky {
+                Arc::make_mut(cube)[i] = sky;
+            }
+        }
+        if block > 0 {
+            let cube = self.blocklight.get_or_insert_with(|| uniform_cube(0));
+            if cube[i] < block {
+                Arc::make_mut(cube)[i] = block;
+            }
+        }
+    }
+
     // --- Random-tick gate -------------------------------------------------------
 
     /// Keep [`random_tick_count`](Self::random_tick_count) in step with one cell

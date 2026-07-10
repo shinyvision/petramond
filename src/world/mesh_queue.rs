@@ -237,6 +237,112 @@ impl World {
         }
     }
 
+    /// Same-frame remesh of a LOCAL PREDICTED edit's footprint. The async
+    /// pipeline needs two pump round-trips (light bake, then mesh build)
+    /// before an edit reaches the GPU — a predicted break lingered on screen
+    /// for 2–3 frames after its sound/burst played. This builds the touched
+    /// sections NOW on the calling thread with the exact worker code
+    /// (`mesh_pool::build_inline`), bounded to the footprint's own sections
+    /// plus face-adjacent ones across any boundary plane a cell sits on
+    /// (their culled faces appear/vanish with the edit). Diagonal-only
+    /// neighbours change shading (AO / smooth light), never face existence —
+    /// the ordinary async remesh corrects them a couple of frames later.
+    ///
+    /// Light is sampled from the CURRENT cubes, raised by a one-step flood
+    /// estimate at each opened cell so newly exposed faces don't flash the
+    /// removed block's stale darkness. Nothing here touches `light_dirty`,
+    /// `dirty_meshes`, or the section `dirty` flag: the edit's async
+    /// bake → remesh still follows and supersedes this provisional mesh.
+    pub fn remesh_edited_cells_inline(&mut self, cells: &[crate::mathh::IVec3]) {
+        const EDGE: i32 = chunk::SECTION_SIZE as i32 - 1;
+        fn touch(touched: &mut Vec<SectionPos>, pos: SectionPos) {
+            if !touched.contains(&pos) {
+                touched.push(pos);
+            }
+        }
+        let mut touched: Vec<SectionPos> = Vec::with_capacity(4);
+        for &cell in cells {
+            self.seed_open_cell_light_estimate(cell);
+            let Some(center) = SectionPos::from_world(cell.x, cell.y, cell.z) else {
+                continue;
+            };
+            touch(&mut touched, center);
+            for (l, lo, hi) in [
+                (cell.x & 0x0F, (-1, 0, 0), (1, 0, 0)),
+                (cell.y & 0x0F, (0, -1, 0), (0, 1, 0)),
+                (cell.z & 0x0F, (0, 0, -1), (0, 0, 1)),
+            ] {
+                let d = match l {
+                    0 => lo,
+                    EDGE => hi,
+                    _ => continue,
+                };
+                touch(
+                    &mut touched,
+                    SectionPos::new(center.cx + d.0, center.cy + d.1, center.cz + d.2),
+                );
+            }
+        }
+        for pos in touched {
+            if !self.sections.contains_key(&pos) {
+                continue;
+            }
+            // Mined the section's last block: settle to no output (removes
+            // the ghost mesh) inline too. Hidden/sealed parking is skipped on
+            // purpose — a player edit is always inside the visible near ring.
+            if self.clear_mesh_if_section_produces_no_mesh(pos) {
+                continue;
+            }
+            let Some(job) = self.build_mesh_job(pos) else {
+                continue;
+            };
+            let Some(mut mesh) = super::mesh_pool::build_inline(job) else {
+                continue;
+            };
+            mesh.mesh_dirty = true; // GPU upload on this frame's sync
+            self.install_mesh(pos, mesh);
+        }
+    }
+
+    /// Raise a just-opened cell's cached light to its one-flood-step estimate
+    /// (max of the six orthogonal neighbours minus one step on the x2 scale;
+    /// a full-sky cell above seeds full sky — the column just opened to the
+    /// sky). Raise-only and revision-free via [`Section::seed_light_estimate`]:
+    /// the pending authoritative bake replaces the cubes wholesale.
+    fn seed_open_cell_light_estimate(&mut self, cell: crate::mathh::IVec3) {
+        use crate::chunk::SKY_FULL;
+        use crate::mathh::IVec3;
+        let block = crate::block::Block::from_id(self.chunk_block(cell.x, cell.y, cell.z));
+        if block.is_opaque() {
+            return;
+        }
+        let mut sky = 0u8;
+        let mut blk = 0u8;
+        for d in [
+            IVec3::new(1, 0, 0),
+            IVec3::new(-1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(0, -1, 0),
+            IVec3::new(0, 0, 1),
+            IVec3::new(0, 0, -1),
+        ] {
+            let n = cell + d;
+            let nsky = self.skylight_at_world(n.x, n.y, n.z);
+            sky = sky.max(if d.y == 1 && nsky == SKY_FULL {
+                SKY_FULL
+            } else {
+                nsky.saturating_sub(2)
+            });
+            blk = blk.max(self.blocklight_at_world(n.x, n.y, n.z).saturating_sub(2));
+        }
+        if sky == 0 && blk == 0 {
+            return;
+        }
+        if let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(cell.x, cell.y, cell.z) {
+            section.seed_light_estimate(lx, ly, lz, sky, blk);
+        }
+    }
+
     /// Release the CPU mesh buffers of columns that have been upload-quiet for
     /// [`MESH_RELEASE_DELAY_FRAMES`] (stamped by `mark_column_uploaded`). The CPU
     /// copy only exists so a column repack can re-pack sibling sections; once a
@@ -905,6 +1011,63 @@ mod tests {
         assert!(world.dirty_meshes.contains(center));
         world.mesh_section_blocking_for_test(center);
         assert!(world.meshes.contains_key(&center));
+    }
+
+    #[test]
+    fn local_edit_inline_remesh_lands_without_a_pump() {
+        // A predicted break must reach the GPU-upload set the same call, not
+        // after the async light-bake + mesh-pool round-trips — and it must
+        // NOT consume the pending async pipeline (the light-fresh remesh is
+        // still owed).
+        let mut world = World::new(0, 4);
+        let pos = SectionPos::new(0, 0, 0);
+        insert_solid_section(&mut world, pos);
+        world.last_load_target = Some(LoadTarget::new(0, 0, 0, 4));
+        world.queue_dirty_mesh(pos);
+        world.mesh_section_blocking_for_test(pos);
+        let before = world.mesh_upload_revisions[&pos.chunk_pos()];
+
+        assert!(world.set_block_world(8, 8, 8, Block::Air));
+        world.remesh_edited_cells_inline(&[crate::mathh::IVec3::new(8, 8, 8)]);
+
+        assert!(
+            world.mesh_upload_revisions[&pos.chunk_pos()] > before,
+            "the edit must be render-visible with zero budget pumps"
+        );
+        assert!(
+            world.dirty_meshes.contains(pos),
+            "the async light-fresh remesh must still be owed"
+        );
+        assert!(
+            world.sections[&pos].light_dirty,
+            "the inline path must not satisfy or cancel the pending rebake"
+        );
+    }
+
+    #[test]
+    fn boundary_edit_inline_remeshes_the_face_adjacent_neighbour() {
+        // Carving a cell on the A|B section plane exposes B's culled face;
+        // if only A remeshed inline, the hole would show hollow terrain for
+        // the async round-trip. Face-adjacent sections must land together.
+        let mut world = World::new(0, 4);
+        let a = SectionPos::new(0, 0, 0);
+        let b = SectionPos::new(1, 0, 0);
+        insert_solid_section(&mut world, a);
+        insert_solid_section(&mut world, b);
+        world.last_load_target = Some(LoadTarget::new(0, 0, 0, 4));
+        for &pos in &[a, b] {
+            world.queue_dirty_mesh(pos);
+            world.mesh_section_blocking_for_test(pos);
+        }
+        let before_b = world.mesh_upload_revisions[&b.chunk_pos()];
+
+        assert!(world.set_block_world(15, 8, 8, Block::Air));
+        world.remesh_edited_cells_inline(&[crate::mathh::IVec3::new(15, 8, 8)]);
+
+        assert!(
+            world.mesh_upload_revisions[&b.chunk_pos()] > before_b,
+            "the face-adjacent neighbour must remesh in the same call"
+        );
     }
 
     #[test]

@@ -153,6 +153,14 @@ impl MeshPool {
     }
 }
 
+/// Build one section mesh NOW on the calling thread — the exact [`build`] the
+/// pool workers run (same thread-local pad scratch type, byte-identical
+/// output). Local predicted edits use this to skip the pool's submit→drain
+/// frame hops; everything else stays on the pool.
+pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
+    build(job, crate::worker::JobCancel::new()).mesh
+}
+
 /// The assembled one-cell-padded neighbourhood buffers a section mesh reads (18³ each):
 /// block ids, water/light state, per-cell stair facing, and a loaded flag. Reads beyond
 /// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).

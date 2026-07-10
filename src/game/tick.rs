@@ -560,6 +560,10 @@ impl Game {
                     for (c, _) in &cells {
                         self.predicted_presentation_cells.insert(*c);
                     }
+                    // The break must leave the screen the same frame its
+                    // sound/burst plays, not two async mesh-pump hops later.
+                    let footprint: Vec<IVec3> = cells.iter().map(|(c, _)| *c).collect();
+                    self.replica.remesh_edited_cells_inline(&footprint);
                     self.pending_events
                         .world
                         .push(WorldEvent::BlockBroken { pos, block, normal });
@@ -1013,6 +1017,7 @@ impl Game {
         if !self.prediction.can_predict() {
             return PlacePrediction::TrackOnly(self.prediction.begin_track_only());
         }
+        let footprint: Vec<IVec3> = cells.iter().map(|(c, _)| *c).collect();
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
             cells,
@@ -1057,6 +1062,9 @@ impl Game {
                     .place_model_block_facing(place_pos, block, facing);
             }
         }
+        // The ghost must be on screen the same frame the hand pops — see
+        // `apply_predicted_break`; same-frame inline remesh of the footprint.
+        self.replica.remesh_edited_cells_inline(&footprint);
         self.self_view.inventory.decrement_selected();
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);
