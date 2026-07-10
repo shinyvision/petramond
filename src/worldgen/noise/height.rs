@@ -4,17 +4,24 @@
 //! original density surface, so caves are identical from every chunk/section that
 //! touches them: seamless tunnels and entrances with no inter-chunk state.
 //!
-//! The four interior fields (spaghetti A/B, roughness, cheese) are sampled on a
-//! world-anchored [`LATTICE_STEP`]-block lattice and trilinearly interpolated per
-//! voxel — the highest field frequency (roughness, 0.034 ≈ 29-block wavelength)
-//! is far below the lattice's Nyquist limit, and per-voxel OpenSimplex sampling
-//! was ~a quarter of all worldgen CPU. Anchoring lattice points to absolute
-//! multiples of `LATTICE_STEP` makes every path — per-section carve, whole-chunk
-//! carve, per-point surface walks — read identical values, so caves stay seamless
-//! and column heightmaps stay consistent with carved blocks. The entrance GATE
-//! fields stay exactly-sampled: they are evaluated once per column (hot in
-//! `ColumnGen`) where a lazy point lattice would cost more than the two samples
-//! they replace.
+//! Three interior carvers (spaghetti, noodle, cheese — see
+//! [`super::settings`]) plus surface entrances, and a very-low-frequency cave
+//! BIOME field. Every carver also computes a wall "shell": a solid voxel whose
+//! carve metric lands within [`CAVE_LINING_SHELL`] of the carve threshold hugs a
+//! cave wall, and a marble cave biome paints that shell marble. Because the shell
+//! is a pure function of the same fields as the carve, wall lining needs no
+//! neighbour queries and stays seam-free.
+//!
+//! The interior fields are sampled on a world-anchored [`LATTICE_STEP`]-block
+//! lattice and trilinearly interpolated per voxel — the highest field frequency
+//! (noodle Y, 0.039 ≈ 26-block wavelength) is far below the lattice's Nyquist
+//! limit, and per-voxel OpenSimplex sampling was ~a quarter of all worldgen CPU.
+//! Anchoring lattice points to absolute multiples of `LATTICE_STEP` makes every
+//! path — per-section carve, whole-chunk carve, per-point surface walks — read
+//! identical values, so caves stay seamless and column heightmaps stay consistent
+//! with carved blocks. The entrance GATE fields stay exactly-sampled: they are
+//! evaluated once per column (hot in `ColumnGen`) where a lazy point lattice
+//! would cost more than the two samples they replace.
 
 use super::settings::*;
 
@@ -28,16 +35,52 @@ use noise::{NoiseFn, OpenSimplex};
 const LATTICE_STEP: i32 = 4;
 const LATTICE_STEP_F: f64 = LATTICE_STEP as f64;
 
+/// What the carvers decide for one solid voxel: carve it open, leave it but line
+/// it (it hugs a cave wall), or leave it untouched.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum CaveCut {
+    Solid,
+    Shell,
+    Open,
+}
+
+/// The underground biome a voxel belongs to. Common caves are bare stone; marble
+/// caves line every carved surface with marble.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CaveBiome {
+    Stone,
+    Marble,
+}
+
+impl CaveBiome {
+    /// The block a cave of this biome lines its walls/floors/ceilings with, or
+    /// `None` for bare stone caves.
+    #[inline]
+    fn lining(self) -> Option<Block> {
+        match self {
+            CaveBiome::Stone => None,
+            CaveBiome::Marble => Some(Block::Marble),
+        }
+    }
+}
+
 /// Owns the cave noise samplers and decides whether a solid voxel is carved to
-/// air. Immutable after construction; `Send + Sync`.
+/// air (or lined by its cave biome). Immutable after construction; `Send + Sync`.
 ///
 /// Each sampler is salt-seeded (`OpenSimplex::new(seed.wrapping_add(SALT_CAVE_*))`)
 /// so construction order is irrelevant and output is a pure function of seed.
 pub struct CaveField {
-    cave_a: OpenSimplex, // spaghetti tunnel field A
-    cave_b: OpenSimplex, // spaghetti tunnel field B
+    cave_a: OpenSimplex, // spaghetti tunnel field A (shared by main + branch)
+    cave_b: OpenSimplex, // spaghetti tunnel field B (main system)
     cave_c: OpenSimplex, // cheese cavern field
+    /// Spaghetti BRANCH field: `max(|a|,|branch|)` forms a second tunnel family
+    /// on the same `a ≈ 0` sheet as the main system, so the two families cross
+    /// at isolated points — natural forks and junctions.
+    branch: OpenSimplex,
+    noodle_a: OpenSimplex,
+    noodle_b: OpenSimplex,
     roughness: OpenSimplex,
+    biome: OpenSimplex,
     entrance_a: OpenSimplex,
     entrance_b: OpenSimplex,
 }
@@ -54,8 +97,12 @@ struct CaveLattice {
     nz: usize,
     a: Vec<f64>,
     b: Vec<f64>,
+    branch: Vec<f64>,
+    na: Vec<f64>,
+    nb: Vec<f64>,
     rough: Vec<f64>,
     cheese: Vec<f64>,
+    biome: Vec<f64>,
 }
 
 impl CaveLattice {
@@ -92,12 +139,28 @@ impl CaveLattice {
         self.tri(&self.b, x, y, z)
     }
     #[inline]
+    fn branch(&self, x: i32, y: i32, z: i32) -> f64 {
+        self.tri(&self.branch, x, y, z)
+    }
+    #[inline]
+    fn na(&self, x: i32, y: i32, z: i32) -> f64 {
+        self.tri(&self.na, x, y, z)
+    }
+    #[inline]
+    fn nb(&self, x: i32, y: i32, z: i32) -> f64 {
+        self.tri(&self.nb, x, y, z)
+    }
+    #[inline]
     fn rough(&self, x: i32, y: i32, z: i32) -> f64 {
         self.tri(&self.rough, x, y, z)
     }
     #[inline]
     fn cheese(&self, x: i32, y: i32, z: i32) -> f64 {
         self.tri(&self.cheese, x, y, z)
+    }
+    #[inline]
+    fn biome(&self, x: i32, y: i32, z: i32) -> f64 {
+        self.tri(&self.biome, x, y, z)
     }
 }
 
@@ -108,7 +171,11 @@ impl CaveField {
             cave_a: OpenSimplex::new(s(SALT_CAVE_A)),
             cave_b: OpenSimplex::new(s(SALT_CAVE_B)),
             cave_c: OpenSimplex::new(s(SALT_CAVE_C)),
+            branch: OpenSimplex::new(s(SALT_CAVE_BRANCH)),
+            noodle_a: OpenSimplex::new(s(SALT_CAVE_NOODLE_A)),
+            noodle_b: OpenSimplex::new(s(SALT_CAVE_NOODLE_B)),
             roughness: OpenSimplex::new(s(SALT_CAVE_ROUGHNESS)),
+            biome: OpenSimplex::new(s(SALT_CAVE_BIOME)),
             entrance_a: OpenSimplex::new(s(SALT_CAVE_ENTRANCE_A)),
             entrance_b: OpenSimplex::new(s(SALT_CAVE_ENTRANCE_B)),
         }
@@ -127,6 +194,27 @@ impl CaveField {
             z * CAVE_FREQ_XZ - 7.3,
         ])
     }
+    fn sample_branch(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.branch.get([
+            x * CAVE_FREQ_XZ - 41.3,
+            y * CAVE_FREQ_Y + 27.7,
+            z * CAVE_FREQ_XZ + 9.1,
+        ])
+    }
+    fn sample_na(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.noodle_a.get([
+            x * CAVE_NOODLE_FREQ_XZ,
+            y * CAVE_NOODLE_FREQ_Y,
+            z * CAVE_NOODLE_FREQ_XZ,
+        ])
+    }
+    fn sample_nb(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.noodle_b.get([
+            x * CAVE_NOODLE_FREQ_XZ - 23.1,
+            y * CAVE_NOODLE_FREQ_Y + 17.9,
+            z * CAVE_NOODLE_FREQ_XZ + 31.7,
+        ])
+    }
     fn sample_rough(&self, x: f64, y: f64, z: f64) -> f64 {
         self.roughness.get([
             x * CAVE_ROUGHNESS_FREQ,
@@ -141,10 +229,39 @@ impl CaveField {
             z * CAVE_CHEESE_FREQ,
         ])
     }
+    fn sample_biome(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.biome.get([
+            x * CAVE_BIOME_FREQ,
+            y * CAVE_BIOME_FREQ_Y,
+            z * CAVE_BIOME_FREQ,
+        ])
+    }
 
     /// Sample the interior fields at every world lattice point covering the inclusive
-    /// voxel box `(x0..=x1, y0..=y1, z0..=z1)`.
+    /// voxel box `(x0..=x1, y0..=y1, z0..=z1)` — every field, for the batch carvers.
     fn build_lattice(&self, x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32) -> CaveLattice {
+        self.build_lattice_filtered(x0, y0, z0, x1, y1, z1, true, true)
+    }
+
+    /// [`build_lattice`] with per-field-group control, for the sparse point
+    /// queries: the spaghetti/roughness fields are always sampled; the other
+    /// interior carver fields (`interior`) and the cave-biome field (`biome`)
+    /// only when the caller's decision can actually read them. Skipped fields
+    /// stay EMPTY — reading one is a bug (bounds-checked panic), not a wrong
+    /// value — and sampled fields are bit-identical to a full lattice, so point
+    /// and batch decisions can never drift apart.
+    #[allow(clippy::too_many_arguments)]
+    fn build_lattice_filtered(
+        &self,
+        x0: i32,
+        y0: i32,
+        z0: i32,
+        x1: i32,
+        y1: i32,
+        z1: i32,
+        interior: bool,
+        biome: bool,
+    ) -> CaveLattice {
         let lx0 = x0.div_euclid(LATTICE_STEP);
         let ly0 = y0.div_euclid(LATTICE_STEP);
         let lz0 = z0.div_euclid(LATTICE_STEP);
@@ -161,8 +278,12 @@ impl CaveField {
             nz,
             a: Vec::with_capacity(n),
             b: Vec::with_capacity(n),
+            branch: Vec::with_capacity(n),
+            na: Vec::with_capacity(n),
+            nb: Vec::with_capacity(n),
             rough: Vec::with_capacity(n),
             cheese: Vec::with_capacity(n),
+            biome: Vec::with_capacity(n),
         };
         for ly in 0..ny {
             let fy = ((ly0 + ly as i32) * LATTICE_STEP) as f64;
@@ -173,7 +294,15 @@ impl CaveField {
                     lat.a.push(self.sample_a(fx, fy, fz));
                     lat.b.push(self.sample_b(fx, fy, fz));
                     lat.rough.push(self.sample_rough(fx, fy, fz));
-                    lat.cheese.push(self.sample_cheese(fx, fy, fz));
+                    if interior {
+                        lat.branch.push(self.sample_branch(fx, fy, fz));
+                        lat.na.push(self.sample_na(fx, fy, fz));
+                        lat.nb.push(self.sample_nb(fx, fy, fz));
+                        lat.cheese.push(self.sample_cheese(fx, fy, fz));
+                    }
+                    if biome {
+                        lat.biome.push(self.sample_biome(fx, fy, fz));
+                    }
                 }
             }
         }
@@ -196,61 +325,123 @@ impl CaveField {
         if gate.is_none() && !interior {
             return false;
         }
-        let lat = self.build_lattice(x, y, z, x, y, z);
-        self.carved_from_lattice(&lat, x, y, z, surf_y, gate, interior)
+        // Sample only the fields this decision can read: the non-interior
+        // (entrance-band) query is the hot one — the per-column surface probes —
+        // and it needs just the spaghetti + roughness fields.
+        let lat = self.build_lattice_filtered(x, y, z, x, y, z, interior, false);
+        self.cut_from_lattice(&lat, x, y, z, gate, interior) == CaveCut::Open
     }
 
     /// The one carve decision, given interpolated interior fields. `gate` and
     /// `interior` are precomputed by the caller (the point path uses them to skip
-    /// building a lattice at all for the common solid voxel).
+    /// building a lattice at all for the common solid voxel). Returns `Open` when
+    /// a carver cuts the voxel, `Shell` when the voxel survives but sits within a
+    /// carver's lining shell of a wall, `Solid` otherwise.
     #[inline]
-    fn carved_from_lattice(
+    fn cut_from_lattice(
         &self,
         lat: &CaveLattice,
         x: i32,
         y: i32,
         z: i32,
-        surf_y: i32,
         gate: Option<f64>,
         interior: bool,
-    ) -> bool {
-        debug_assert!(y <= surf_y);
+    ) -> CaveCut {
+        let rough = lat.rough(x, y, z);
+        let mut shell = false;
+
         if let Some(ease) = gate {
-            let rough = lat.rough(x, y, z);
             let metric = lat.a(x, y, z).abs().max(lat.b(x, y, z).abs());
             let base_r = lerp(CAVE_ENTRANCE_SURFACE_R, CAVE_ENTRANCE_DEEP_R, ease);
-            let radius = (base_r + rough * CAVE_TUNNEL_ROUGHNESS).max(0.030);
+            let radius = (base_r + rough * CAVE_TUNNEL_ROUGHNESS).max(0.016);
             if metric < radius {
-                return true;
+                return CaveCut::Open;
             }
+            shell |= metric < radius + CAVE_LINING_SHELL;
         }
         if !interior {
-            return false;
+            return if shell {
+                CaveCut::Shell
+            } else {
+                CaveCut::Solid
+            };
         }
 
-        // Spaghetti: both decorrelated fields near zero -> a winding tunnel.
-        let rough = lat.rough(x, y, z);
-        let metric = lat.a(x, y, z).abs().max(lat.b(x, y, z).abs());
-        let tunnel_r = (CAVE_TUNNEL_R + rough * CAVE_TUNNEL_ROUGHNESS).max(0.035);
+        // Spaghetti: both decorrelated fields near zero -> a long winding tunnel.
+        // The thickness modulation spans ~2×..6× of the noodle caliber around a
+        // 4× base (see settings.rs).
+        let a = lat.a(x, y, z).abs();
+        let metric = a.max(lat.b(x, y, z).abs());
+        let tunnel_r = (CAVE_TUNNEL_R + rough * CAVE_TUNNEL_ROUGHNESS).max(0.018);
         if metric < tunnel_r {
-            return true;
+            return CaveCut::Open;
+        }
+        shell |= metric < tunnel_r + CAVE_LINING_SHELL;
+
+        // Spaghetti branches: a second, slightly tighter tunnel family sharing
+        // field A with the main system. Both run along the same A≈0 sheet, so
+        // their curves cross at isolated points — junctions where a tunnel
+        // forks off the main run.
+        let branch_metric = a.max(lat.branch(x, y, z).abs());
+        let branch_r = tunnel_r * CAVE_BRANCH_R_SCALE;
+        if branch_metric < branch_r {
+            return CaveCut::Open;
+        }
+        shell |= branch_metric < branch_r + CAVE_LINING_SHELL;
+
+        // Noodle: the same intersection trick at higher frequency and a sliver of
+        // a radius — tight 1–2 block crawl spaces, in the LOW-roughness regions
+        // (where the spaghetti runs thin, complementing it).
+        if rough < CAVE_NOODLE_GATE_T {
+            let noodle = lat.na(x, y, z).abs().max(lat.nb(x, y, z).abs());
+            if noodle < CAVE_NOODLE_R {
+                return CaveCut::Open;
+            }
+            shell |= noodle < CAVE_NOODLE_R + CAVE_LINING_SHELL;
         }
 
-        // Cheese: a low-frequency field dipping low -> occasional large caverns.
-        lat.cheese(x, y, z) < CAVE_CHEESE_T + rough * CAVE_CHEESE_ROUGHNESS
+        // Cheese: a low-frequency field dipping below a depth-scaled threshold ->
+        // large caverns, rare near the surface, common near the world floor.
+        let cheese_t = cheese_threshold(y) + rough * CAVE_CHEESE_ROUGHNESS;
+        let cheese = lat.cheese(x, y, z);
+        if cheese < cheese_t {
+            return CaveCut::Open;
+        }
+        shell |= cheese < cheese_t + CAVE_CHEESE_LINING_SHELL;
+
+        if shell {
+            CaveCut::Shell
+        } else {
+            CaveCut::Solid
+        }
     }
 
     #[inline]
-    fn carved_lat(&self, lat: &CaveLattice, x: i32, y: i32, z: i32, surf_y: i32) -> bool {
+    fn cut_lat(&self, lat: &CaveLattice, x: i32, y: i32, z: i32, surf_y: i32) -> CaveCut {
         if y > surf_y {
-            return false;
+            return CaveCut::Solid;
         }
         let gate = self.entrance_gate_ease(x, y, z, surf_y);
         let interior = y >= CAVE_MIN_Y && y <= surf_y - CAVE_SURFACE_BUFFER;
         if gate.is_none() && !interior {
-            return false;
+            return CaveCut::Solid;
         }
-        self.carved_from_lattice(lat, x, y, z, surf_y, gate, interior)
+        self.cut_from_lattice(lat, x, y, z, gate, interior)
+    }
+
+    #[cfg(test)]
+    fn carved_lat(&self, lat: &CaveLattice, x: i32, y: i32, z: i32, surf_y: i32) -> bool {
+        self.cut_lat(lat, x, y, z, surf_y) == CaveCut::Open
+    }
+
+    /// The cave biome owning world `(x,y,z)` (interpolated from `lat`).
+    #[inline]
+    fn biome_lat(&self, lat: &CaveLattice, x: i32, y: i32, z: i32) -> CaveBiome {
+        if lat.biome(x, y, z) > CAVE_BIOME_MARBLE_T {
+            CaveBiome::Marble
+        } else {
+            CaveBiome::Stone
+        }
     }
 
     /// Post-cave top non-air surface for a land column, before vegetation/trees.
@@ -271,10 +462,11 @@ impl CaveField {
 
     /// Surface used only for tree/feature anchoring. Cave-mouth columns are
     /// deliberately treated as unsuitable roots so generated trunks do not plug
-    /// entrances.
+    /// entrances. A column is a mouth iff its surface voxel is carved, so this
+    /// never pays for the downward walk [`surface_after_caves`] does — it runs
+    /// per cell over the padded feature windows, the hottest cave point-query.
     pub fn feature_surface_after_caves(&self, x: i32, z: i32, surf_y: i32) -> i32 {
-        let top = self.surface_after_caves(x, z, surf_y);
-        if top < surf_y {
+        if self.cave_carved(x, surf_y, z, surf_y) {
             CAVE_ENTRANCE_MIN_SURFACE_Y
                 .min(surf_y)
                 .min(crate::chunk::SEA_LEVEL)
@@ -304,6 +496,7 @@ impl CaveField {
         let (ox, oz) = chunk.chunk_origin_world();
         let air = Block::Air.id();
         let water = Block::Water.id();
+        let stone = Block::Stone.id();
         let mut carved = false;
 
         let y0 = CAVE_MIN_Y.max(0);
@@ -341,9 +534,17 @@ impl CaveField {
                     if id == air || id == water {
                         continue;
                     }
-                    if self.carved_lat(&lat, wx, y, wz, surf_y) {
-                        blocks[i] = air;
-                        carved = true;
+                    match self.cut_lat(&lat, wx, y, wz, surf_y) {
+                        CaveCut::Open => {
+                            blocks[i] = air;
+                            carved = true;
+                        }
+                        CaveCut::Shell if id == stone => {
+                            if let Some(lining) = self.biome_lat(&lat, wx, y, wz).lining() {
+                                blocks[i] = lining.id();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -360,6 +561,7 @@ impl CaveField {
         let (ox, oy, oz) = section.origin_world();
         let air = Block::Air.id();
         let water = Block::Water.id();
+        let stone = Block::Stone.id();
 
         let y0 = oy.max(CAVE_MIN_Y);
         let y1 = (oy + SECTION_SIZE as i32 - 1).min(surf.iter().copied().max().unwrap_or(i32::MIN));
@@ -392,8 +594,14 @@ impl CaveField {
                     if id == air || id == water {
                         continue;
                     }
-                    if self.carved_lat(&lat, wx, wy, wz, surf_y) {
-                        blocks[i] = air;
+                    match self.cut_lat(&lat, wx, wy, wz, surf_y) {
+                        CaveCut::Open => blocks[i] = air,
+                        CaveCut::Shell if id == stone => {
+                            if let Some(lining) = self.biome_lat(&lat, wx, wy, wz).lining() {
+                                blocks[i] = lining.id();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -436,6 +644,16 @@ impl CaveField {
     }
 }
 
+/// Depth-scaled cheese carve threshold: `CAVE_CHEESE_T_SHALLOW` at/above
+/// `CAVE_CHEESE_DEPTH_TOP`, easing to `CAVE_CHEESE_T_DEEP` at/below
+/// `CAVE_CHEESE_DEPTH_BOTTOM` — caverns grow bigger and more common with depth.
+#[inline]
+fn cheese_threshold(y: i32) -> f64 {
+    let t = (CAVE_CHEESE_DEPTH_TOP - y) as f64
+        / (CAVE_CHEESE_DEPTH_TOP - CAVE_CHEESE_DEPTH_BOTTOM) as f64;
+    lerp(CAVE_CHEESE_T_SHALLOW, CAVE_CHEESE_T_DEEP, smoothstep(t))
+}
+
 #[inline]
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
@@ -457,10 +675,12 @@ mod tests {
     #[test]
     fn point_and_batch_carve_decisions_agree() {
         let field = CaveField::new(0x51EED);
-        let (x0, y0, z0) = (-8, 0, 24); // deliberately straddles lattice cells
-        let (x1, y1, z1) = (x0 + 15, y0 + 15, z0 + 15);
+        // Deliberately straddles lattice cells; deep enough (cheese-common band)
+        // and large enough that the sparser carvers still open some cave air.
+        let (x0, y0, z0) = (-8, -40, 24);
+        let (x1, y1, z1) = (x0 + 27, y0 + 27, z0 + 27);
         let lat = field.build_lattice(x0, y0, z0, x1, y1, z1);
-        for surf_y in [y1 - 2, y1 + 40] {
+        for surf_y in [y1 - 2, y1 + 80] {
             let mut carved = 0;
             for y in y0..=y1 {
                 for z in z0..=z1 {
@@ -486,8 +706,53 @@ mod tests {
         let b = field.build_lattice(-16, 4, 8, 15, 35, 23);
         for &(x, y, z) in &[(0, 4, 8), (7, 15, 15), (15, 12, 9), (3, 8, 15)] {
             assert_eq!(a.a(x, y, z).to_bits(), b.a(x, y, z).to_bits());
+            assert_eq!(a.branch(x, y, z).to_bits(), b.branch(x, y, z).to_bits());
+            assert_eq!(a.na(x, y, z).to_bits(), b.na(x, y, z).to_bits());
             assert_eq!(a.rough(x, y, z).to_bits(), b.rough(x, y, z).to_bits());
             assert_eq!(a.cheese(x, y, z).to_bits(), b.cheese(x, y, z).to_bits());
+            assert_eq!(a.biome(x, y, z).to_bits(), b.biome(x, y, z).to_bits());
         }
+    }
+
+    /// Wall lining is a shell AROUND carved air, never a replacement for it: a
+    /// voxel the carvers open can never simultaneously be lining, and lining only
+    /// appears in a bounded band next to carve decisions (guards against a shell
+    /// threshold inversion silently turning whole regions to marble).
+    #[test]
+    fn lining_shell_is_disjoint_from_carved_air() {
+        let field = CaveField::new(0xBEEF);
+        let (x0, y0, z0) = (32, -32, -16);
+        let (x1, y1, z1) = (x0 + 31, y0 + 31, z0 + 31);
+        let lat = field.build_lattice(x0, y0, z0, x1, y1, z1);
+        let surf_y = 90;
+        let (mut open, mut shell, mut solid) = (0usize, 0usize, 0usize);
+        for y in y0..=y1 {
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    match field.cut_lat(&lat, x, y, z, surf_y) {
+                        CaveCut::Open => open += 1,
+                        CaveCut::Shell => shell += 1,
+                        CaveCut::Solid => solid += 1,
+                    }
+                }
+            }
+        }
+        let total = (open + shell + solid) as f64;
+        assert!(open > 0, "test volume should contain cave air");
+        assert!(shell > 0, "test volume should contain wall shell");
+        assert!(
+            (shell as f64) < total * 0.5,
+            "shell must be a lining, not a region fill ({shell}/{total})"
+        );
+    }
+
+    /// Cheese caverns must be depth-scaled: the carve threshold at the world floor
+    /// is strictly more permissive than near the surface.
+    #[test]
+    fn cheese_threshold_grows_with_depth() {
+        assert!(cheese_threshold(-60) > cheese_threshold(0));
+        assert!(cheese_threshold(0) > cheese_threshold(64));
+        assert_eq!(cheese_threshold(100), CAVE_CHEESE_T_SHALLOW);
+        assert_eq!(cheese_threshold(-64), CAVE_CHEESE_T_DEEP);
     }
 }

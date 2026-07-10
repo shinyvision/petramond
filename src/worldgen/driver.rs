@@ -22,8 +22,8 @@ use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
     apply_gen_writes, feature_candidate_bounds, feature_region_bounds, place_features_section,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
-    vegetation, ColumnFeatureField, FeatureField, RuntimeFeatureField, SurfaceHeights,
-    MAX_TREE_REACH_ABOVE, TREELINE,
+    vegetation, ColumnFeatureField, RuntimeFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE,
+    TREELINE,
 };
 use super::noise::height::CaveField;
 use super::proto::ProtoChunk;
@@ -176,7 +176,6 @@ impl ColumnGen {
     /// [`slimmed`](Self::slimmed) retains.
     pub fn cache_record(&self, seed: u32) -> crate::save::colgen::ColumnGenRecord {
         crate::save::colgen::ColumnGenRecord {
-            source_version: crate::save::colgen::VERSION,
             pos: crate::chunk::ChunkPos::new(self.cx, self.cz),
             seed,
             biome: self.biome.clone(),
@@ -267,7 +266,7 @@ impl ChunkGenerator {
     /// Compute the region for one chunk PLUS the feature margin in a single pass.
     /// Shared by terrain fill and feature placement, so terrain height and biomes
     /// are generated exactly once.
-    pub fn region(&self, cx: i32, cz: i32) -> RegionCells {
+    pub(crate) fn region(&self, cx: i32, cz: i32) -> RegionCells {
         let (x0, z0, w, h) = super::feature::feature_region_bounds(cx * 16, cz * 16);
         self.surface_density.region(x0, z0, w, h)
     }
@@ -310,14 +309,11 @@ impl ChunkGenerator {
     }
 
     /// Hot-path feature placement. Builds only the feature candidate/support
-    /// windows needed by tree placement instead of a full surf+biome audit region.
+    /// windows needed by tree placement instead of a full surf+biome audit
+    /// region; the windows come out cave-adjusted (mouths are not tree roots).
     pub fn place_features_runtime(&self, chunk: &mut Chunk) {
         let (ox, oz) = chunk.chunk_origin_world();
-        let field = RuntimeFeatureField::new(&self.surface_density, ox, oz);
-        let mut field = CaveAdjustedFeatureField {
-            inner: field,
-            caves: &self.caves,
-        };
+        let mut field = RuntimeFeatureField::new(&self.surface_density, &self.caves, ox, oz);
         super::feature::place_features_with_field(chunk, &mut field, self.seed);
     }
 
@@ -677,23 +673,6 @@ impl ChunkGenerator {
         chunk.recompute_heightmap();
         chunk.recompute_random_tick_count();
         chunk
-    }
-}
-
-struct CaveAdjustedFeatureField<'a> {
-    inner: RuntimeFeatureField<'a>,
-    caves: &'a CaveField,
-}
-
-impl FeatureField for CaveAdjustedFeatureField<'_> {
-    fn column_at(&mut self, wx: i32, wz: i32) -> (i32, crate::biome::Biome) {
-        let (surf, biome) = self.inner.column_at(wx, wz);
-        (self.caves.feature_surface_after_caves(wx, wz, surf), biome)
-    }
-
-    fn surf_at(&mut self, wx: i32, wz: i32) -> i32 {
-        let surf = self.inner.surf_at(wx, wz);
-        self.caves.feature_surface_after_caves(wx, wz, surf)
     }
 }
 

@@ -954,12 +954,7 @@ impl World {
                     if !self.within_current_keep_radius(pos) {
                         continue;
                     }
-                    let upgrade_cache = rec.needs_upgrade();
                     let col = Arc::new(ColumnGen::from_cache_record(rec));
-                    if upgrade_cache {
-                        self.pending_colgen_records
-                            .push(col.cache_record(self.seed));
-                    }
                     self.install_column_gen(pos, col);
                     new_columns += 1;
                     new_column_positions.push(pos);

@@ -1938,7 +1938,7 @@
       ]
     },
     {
-      "block": "petramond:granite",
+      "block": "petramond:marble",
       "shape": "cube",
       "flags": [
         "solid",
@@ -1964,102 +1964,16 @@
       ],
       "emission": 0,
       "tiles": [
-        "granite",
-        "granite",
-        "granite"
+        "marble",
+        "marble",
+        "marble"
       ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 1.5,
       "drops": [
         {
-          "item": "petramond:granite",
-          "min": 1,
-          "max": 1,
-          "chance": 1
-        }
-      ]
-    },
-    {
-      "block": "petramond:diorite",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
-      "emission": 0,
-      "tiles": [
-        "diorite",
-        "diorite",
-        "diorite"
-      ],
-      "material": "stone",
-      "harvest_tier": 1,
-      "hardness": 1.5,
-      "drops": [
-        {
-          "item": "petramond:diorite",
-          "min": 1,
-          "max": 1,
-          "chance": 1
-        }
-      ]
-    },
-    {
-      "block": "petramond:andesite",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
-      "emission": 0,
-      "tiles": [
-        "andesite",
-        "andesite",
-        "andesite"
-      ],
-      "material": "stone",
-      "harvest_tier": 1,
-      "hardness": 1.5,
-      "drops": [
-        {
-          "item": "petramond:andesite",
+          "item": "petramond:marble",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -2282,85 +2196,6 @@
       ]
     },
     {
-      "block": "petramond:redstone_ore",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
-      "emission": 0,
-      "tiles": [
-        "redstone_ore",
-        "redstone_ore",
-        "redstone_ore"
-      ],
-      "material": "ore",
-      "harvest_tier": 3,
-      "hardness": 3,
-      "drops": []
-    },
-    {
-      "block": "petramond:lapis_ore",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
-      "emission": 0,
-      "tiles": [
-        "lapis_ore",
-        "lapis_ore",
-        "lapis_ore"
-      ],
-      "material": "ore",
-      "harvest_tier": 3,
-      "hardness": 3,
-      "drops": [
-        {
-          "item": "petramond:lapis_lazuli",
-          "min": 2,
-          "max": 4,
-          "chance": 1
-        }
-      ]
-    },
-    {
       "block": "petramond:diamond_ore",
       "shape": "cube",
       "flags": [
@@ -2397,49 +2232,6 @@
       "drops": [
         {
           "item": "petramond:diamond",
-          "min": 1,
-          "max": 1,
-          "chance": 1
-        }
-      ]
-    },
-    {
-      "block": "petramond:emerald_ore",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
-      "emission": 0,
-      "tiles": [
-        "emerald_ore",
-        "emerald_ore",
-        "emerald_ore"
-      ],
-      "material": "ore",
-      "harvest_tier": 3,
-      "hardness": 3,
-      "drops": [
-        {
-          "item": "petramond:emerald_ore",
           "min": 1,
           "max": 1,
           "chance": 1

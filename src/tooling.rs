@@ -50,6 +50,13 @@ pub mod worldgen {
         crate::worldgen::generate_chunk(seed, cx, cz)
     }
 
+    // Cubic per-section generation, re-exported so dev tools (genmap's deep
+    // cross-section / cave statistics) can inspect terrain below y = 0 — the
+    // whole-column `Chunk` preview only covers `[0, CHUNK_SY)`.
+    pub use crate::chunk::{SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y};
+    pub use crate::section::Section;
+    pub use crate::worldgen::driver::{ChunkGenerator, ColumnGen};
+
     /// A kilometre-scale surface overview sampled straight from the climate
     /// graph (no chunk generation): per grid point the classified biome id and
     /// the base surface height. `side` points per edge, `stride` blocks apart,

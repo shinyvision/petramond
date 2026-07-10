@@ -1,11 +1,15 @@
 //! Headless worldgen previewer (dev tool).
 //!
 //! Renders a chunk region so worldgen output can be eyeballed without the GPU
-//! app. Three modes:
+//! app. Main modes:
 //!   top   (default) — top-down, coloured by each column's top block.
 //!   biome           — top-down, coloured by per-column biome id.
 //!   side  <z>       — vertical cross-section at world Z = <z>, so overhangs,
-//!                     ocean depth and mountain strata are visible.
+//!                     ocean depth and mountain strata are visible (y 0..255).
+//!   deep  <z>       — full-depth cross-section (y -64..255) from the cubic
+//!                     per-section generator: deep caves, marble, ores.
+//!   cavestats       — cave/ore census: carved share per depth band, marble
+//!                     share, ore counts per chunk, entrance-mouth rate.
 //!
 //! Run:
 //!   cargo run --quiet --bin genmap -- [seed] [out.png] [mode] [arg]
@@ -57,9 +61,7 @@ fn block_color(block: u8) -> [u8; 3] {
         Block::Snow | Block::SnowBlock => [238, 242, 248],
         Block::PackedIce | Block::Ice => [160, 192, 232],
         Block::Stone => [128, 128, 132],
-        Block::Granite => [150, 106, 90],
-        Block::Diorite => [200, 200, 202],
-        Block::Andesite => [136, 138, 138],
+        Block::Marble => [200, 200, 202],
         Block::Tuff => [98, 102, 96],
         Block::Calcite => [224, 226, 222],
         Block::Water => [44, 96, 176],
@@ -81,10 +83,7 @@ fn block_color(block: u8) -> [u8; 3] {
         Block::IronOre => [190, 160, 132],
         Block::CopperOre => [166, 120, 92],
         Block::GoldOre => [206, 184, 90],
-        Block::RedstoneOre => [150, 60, 56],
-        Block::LapisOre => [50, 84, 160],
         Block::DiamondOre => [110, 200, 206],
-        Block::EmeraldOre => [70, 184, 110],
         Block::Cactus => [70, 120, 56],
         Block::Pumpkin => [200, 120, 40],
         Block::Melon => [90, 150, 60],
@@ -289,6 +288,239 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
     }
     save(out, &buf, w, h);
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, side z={slice_z} zoom={zoom} cx={center_x})");
+}
+
+/// Full-depth vertical cross-section at world Z = `slice_z`, built from the
+/// cubic per-section generator so caves below y = 0, cave-biome wall lining, and
+/// deep ores are visible (the whole-column `side` preview stops at y = 0).
+fn render_deep(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32) {
+    use petramond::tooling::worldgen::{
+        ChunkGenerator, Section, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
+        WORLD_MIN_Y,
+    };
+
+    let zoom = zoom.max(1);
+    let cells_x = 512usize;
+    let cells_y = (256 - WORLD_MIN_Y) as usize;
+    let x0 = center_x - cells_x as i32 / 2;
+    let w = cells_x * zoom;
+    let h = cells_y * zoom;
+    let mut buf = vec![0u8; w * h * 3];
+
+    let generator = ChunkGenerator::new(seed);
+    let cz = slice_z.div_euclid(CHUNK_SZ as i32);
+    let lz = slice_z.rem_euclid(CHUNK_SZ as i32) as usize;
+
+    let mut cur_cx = i32::MIN;
+    let mut sections: Vec<Section> = Vec::new();
+    let mut surf = [0i32; 16];
+
+    for gx in 0..cells_x {
+        let wx = x0 + gx as i32;
+        let cx = wx.div_euclid(CHUNK_SX as i32);
+        let lx = wx.rem_euclid(CHUNK_SX as i32) as usize;
+        if cx != cur_cx {
+            let col = generator.generate_column_gen(cx, cz);
+            for x in 0..16 {
+                surf[x] = col.surface_y(x, lz);
+            }
+            sections = (SECTION_MIN_CY..=SECTION_MAX_CY)
+                .map(|cy| generator.generate_section(SectionPos::new(cx, cy, cz), &col))
+                .collect();
+            cur_cx = cx;
+        }
+        for gy in 0..cells_y {
+            let wy = 255 - gy as i32; // row 0 = world top
+            let si = (wy.div_euclid(SECTION_SIZE as i32) - SECTION_MIN_CY) as usize;
+            let ly = wy.rem_euclid(SECTION_SIZE as i32) as usize;
+            let b = sections[si].block_raw(lx, ly, lz);
+            let col = if b == 0 {
+                if wy > surf[lx].max(63) {
+                    [150, 190, 232] // open sky
+                } else {
+                    [16, 16, 20] // underground cave air
+                }
+            } else {
+                block_color(b)
+            };
+            for dy in 0..zoom {
+                for dx in 0..zoom {
+                    let px = (gy * zoom + dy) * w + (gx * zoom + dx);
+                    buf[px * 3..px * 3 + 3].copy_from_slice(&col);
+                }
+            }
+        }
+    }
+    save(out, &buf, w, h);
+    println!("wrote {out} ({w}x{h}, seed {seed:#x}, deep z={slice_z} zoom={zoom} cx={center_x})");
+}
+
+/// Horizontal cave-network map for the SECTION containing world Y = `slice_y`:
+/// one pixel per column over a 512×512 window centred on the origin, marked
+/// cave-air (black) if ANY of the section's 16 layers is carved there, marble
+/// (light) if any layer is lined, else plain rock. The top-down projection that
+/// makes tunnel topology (branch junctions, caverns, crawl-maze patches)
+/// legible — a single-block slice only shows slivers of the mostly-horizontal
+/// tunnels.
+fn render_caveplan(seed: u32, out: &str, slice_y: i32, zoom: usize) {
+    use petramond::tooling::worldgen::{ChunkGenerator, SectionPos, SECTION_SIZE};
+
+    let zoom = zoom.max(1);
+    let cells = 512usize;
+    let half = cells as i32 / 2;
+    let w = cells * zoom;
+    let mut buf = vec![0u8; w * w * 3];
+
+    let generator = ChunkGenerator::new(seed);
+    let cy = slice_y.div_euclid(SECTION_SIZE as i32);
+    let marble = Block::Marble.id();
+    let n_chunks = (cells / 16) as i32;
+
+    for gcz in 0..n_chunks {
+        for gcx in 0..n_chunks {
+            let (ccx, ccz) = (gcx - n_chunks / 2, gcz - n_chunks / 2);
+            let col = generator.generate_column_gen(ccx, ccz);
+            let section = generator.generate_section(SectionPos::new(ccx, cy, ccz), &col);
+            for z in 0..16usize {
+                for x in 0..16usize {
+                    let wx = ccx * 16 + x as i32;
+                    let wz = ccz * 16 + z as i32;
+                    let (mut any_air, mut any_marble, mut top) = (false, false, 0u8);
+                    for ly in 0..SECTION_SIZE {
+                        let wy = cy * SECTION_SIZE as i32 + ly as i32;
+                        if wy > col.surface_y(x, z) {
+                            break;
+                        }
+                        let b = section.block_raw(x, ly, z);
+                        any_air |= b == 0;
+                        any_marble |= b == marble;
+                        if b != 0 {
+                            top = b;
+                        }
+                    }
+                    let color = if any_air {
+                        [10, 10, 12]
+                    } else if any_marble {
+                        [200, 200, 202]
+                    } else {
+                        block_color(top)
+                    };
+                    let (px, pz) = ((wx + half) as usize, (wz + half) as usize);
+                    for dy in 0..zoom {
+                        for dx in 0..zoom {
+                            let p = (pz * zoom + dy) * w + px * zoom + dx;
+                            buf[p * 3..p * 3 + 3].copy_from_slice(&color);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    save(out, &buf, w, w);
+    println!("wrote {out} ({w}x{w}, seed {seed:#x}, caveplan section of y={slice_y})");
+}
+
+/// Cave + ore census over a chunk region, from the cubic per-section generator:
+/// per-depth-band carved-air share, marble share, per-ore block counts, and the
+/// surface entrance-mouth rate. The tuning instrument for the cave update.
+fn cave_stats(seed: u32) {
+    use petramond::tooling::worldgen::{
+        ChunkGenerator, SectionPos, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y,
+    };
+    use std::collections::HashMap;
+
+    const R: i32 = 6; // 13x13 chunks
+    const BAND: i32 = 32;
+    let generator = ChunkGenerator::new(seed);
+
+    // Per 32-block band: (sub-surface cells, carved air, marble).
+    let bands = ((256 - WORLD_MIN_Y) / BAND) as usize;
+    let mut band_cells = vec![0u64; bands];
+    let mut band_air = vec![0u64; bands];
+    let mut band_marble = vec![0u64; bands];
+    let mut ore_counts: HashMap<u8, u64> = HashMap::new();
+    let (mut mouth_columns, mut total_columns) = (0u64, 0u64);
+    let mut chunks = 0u64;
+
+    for cz in -R..=R {
+        for cx in -R..=R {
+            chunks += 1;
+            let col = generator.generate_column_gen(cx, cz);
+            let mut surf = [[0i32; 16]; 16];
+            for z in 0..16 {
+                for x in 0..16 {
+                    surf[z][x] = col.surface_y(x, z);
+                    total_columns += 1;
+                    if col.heightmap_surface_y(x, z) < surf[z][x] {
+                        mouth_columns += 1;
+                    }
+                }
+            }
+            let (_, surf_max) = col.surf_range();
+            let top_cy = surf_max.div_euclid(SECTION_SIZE as i32);
+            for cy in SECTION_MIN_CY..=top_cy {
+                let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
+                let oy = cy * SECTION_SIZE as i32;
+                for ly in 0..SECTION_SIZE {
+                    let wy = oy + ly as i32;
+                    let band = ((wy - WORLD_MIN_Y) / BAND) as usize;
+                    for z in 0..SECTION_SIZE {
+                        for x in 0..SECTION_SIZE {
+                            if wy > surf[z][x] {
+                                continue;
+                            }
+                            let b = section.block_raw(x, ly, z);
+                            band_cells[band] += 1;
+                            if b == Block::Air.id() {
+                                band_air[band] += 1;
+                            } else if b == Block::Marble.id() {
+                                band_marble[band] += 1;
+                            } else if matches!(
+                                Block::from_id(b),
+                                Block::CoalOre
+                                    | Block::IronOre
+                                    | Block::CopperOre
+                                    | Block::GoldOre
+                                    | Block::DiamondOre
+                            ) {
+                                *ore_counts.entry(b).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("cave stats, seed {seed:#x}, {chunks} chunks:");
+    println!("  y band        cells      cave-air  marble");
+    for band in (0..bands).rev() {
+        if band_cells[band] == 0 {
+            continue;
+        }
+        let y0 = WORLD_MIN_Y + band as i32 * BAND;
+        println!(
+            "  [{:>4},{:>4})  {:>10}  {:>7.3}%  {:>6.3}%",
+            y0,
+            y0 + BAND,
+            band_cells[band],
+            band_air[band] as f64 / band_cells[band] as f64 * 100.0,
+            band_marble[band] as f64 / band_cells[band] as f64 * 100.0,
+        );
+    }
+    println!(
+        "  entrance-mouth columns: {mouth_columns}/{total_columns} ({:.2}%)",
+        mouth_columns as f64 / total_columns as f64 * 100.0
+    );
+    let mut ores: Vec<_> = ore_counts.into_iter().collect();
+    ores.sort();
+    for (b, n) in ores {
+        println!(
+            "  {:?}: {n} total, {:.2}/chunk",
+            Block::from_id(b),
+            n as f64 / chunks as f64
+        );
+    }
 }
 
 /// Audit overhangs + floating debris across a region (computed by
@@ -582,6 +814,15 @@ fn main() {
         // blocks ⇒ an 8192-block window. For world-structure verification.
         "macro" => render_macro(seed, &out, arg.unwrap_or(16)),
         "side" => render_side(seed, &out, arg.unwrap_or(0), zoom, center_x, proj),
+        // deep <z>: full-depth (-64..255) cross-section from the cubic
+        // per-section generator — caves below y=0, marble lining, deep ores.
+        "deep" => render_deep(seed, &out, arg.unwrap_or(0), zoom, center_x),
+        // caveplan <y>: horizontal cave-network slice at world Y (tunnel
+        // topology: branches, junctions, caverns).
+        "caveplan" => render_caveplan(seed, &out, arg.unwrap_or(-16), zoom),
+        // cavestats: cave/ore census (carved share per depth band, marble share,
+        // ore per chunk, entrance rate).
+        "cavestats" => cave_stats(seed),
         "shade" => render_shaded(
             seed,
             &out,

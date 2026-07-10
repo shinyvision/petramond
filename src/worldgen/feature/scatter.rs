@@ -1,10 +1,15 @@
-//! Underground scatter features — ore veins + stone / dirt / gravel blobs.
+//! Underground scatter features — ore veins + dirt / gravel / tuff blobs.
 //!
 //! This is the `DecoStep::RawGeneration` + `DecoStep::Ores` content: small
-//! ellipsoidal veins that overwrite Stone below the surface, turning the old
-//! solid-grey monolith into varied rock with ores. It is intentionally simpler
-//! than the tree placement path (no per-column spacing / biome roll): a fixed set
-//! of `ScatterConfig` rows, each producing `count` veins per chunk.
+//! veins that overwrite Stone below the surface, spanning the FULL cubic world
+//! depth (down to `WORLD_MIN_Y`). Two vein shapes:
+//!   - [`VeinShape::Blob`]: a roughly-spherical blob of `~size` cells (dirt,
+//!     gravel, tuff, and the bulk ores).
+//!   - [`VeinShape::Grid3`]: a single-layer 3×3 patch holding 1..=9 ore blocks —
+//!     the iron/diamond rule: a vein always fits a 3×3 area and never exceeds 9.
+//! A config may carry a [`DepthRamp`]: each rolled vein is then only accepted
+//! with a chance that grows quadratically toward the bottom of its Y band —
+//! diamonds get more likely the deeper you dig, yet stay rare even at the floor.
 //!
 //! Seam handling mirrors the tree pass without a margin buffer: every chunk
 //! regenerates its 3x3 neighbourhood's veins from a positional RNG keyed on the
@@ -14,25 +19,41 @@
 //! double-placement — because both chunks derive the exact same vein.
 
 use crate::block::Block;
-use crate::chunk::{Chunk, CHUNK_SY};
+use crate::chunk::{Chunk, WORLD_MAX_Y, WORLD_MIN_Y};
 use crate::mathh::IVec3;
 use crate::section::Section;
 
 use super::super::rng::FeatureRng;
 use super::{ChunkSink, FeatureCtx, SectionSink};
 
-/// One scatter species: a block that overwrites Stone in `count` veins per chunk,
-/// each ~`size` blocks, within a world-Y band.
+/// How a vein materialises its cells around the rolled origin.
+enum VeinShape {
+    /// Roughly-spherical blob of `~size` cells with per-vein radius jitter.
+    Blob { size: i32 },
+    /// One horizontal 3×3 layer centred on the origin holding exactly
+    /// `1..=max_ore` ore cells (uniformly chosen among the 9 slots).
+    Grid3 { max_ore: i32 },
+}
+
+/// Per-vein acceptance chance ramping toward the BOTTOM of the config's Y band:
+/// `chance(y) = max_chance · t²` with `t = (y_max − y) / (y_max − y_min)`.
+struct DepthRamp {
+    max_chance: f32,
+}
+
+/// One scatter species: a block that overwrites Stone in up to `count` veins per
+/// chunk within a world-Y band.
 struct ScatterConfig {
     block: Block,
     salt: u64,
     count: i32,
-    size: i32,
+    shape: VeinShape,
     y_min: i32,
     y_max: i32,
+    ramp: Option<DepthRamp>,
 }
 
-const fn c(
+const fn blob(
     block: Block,
     salt: u64,
     count: i32,
@@ -44,34 +65,63 @@ const fn c(
         block,
         salt,
         count,
-        size,
+        shape: VeinShape::Blob { size },
         y_min,
         y_max,
+        ramp: None,
     }
 }
 
-/// Vein table. Stone variants are broad and shallow-to-mid; ores follow rough
-/// typical rarity/altitude (rescaled to our y in [0,256], sea level 64). Order is
-/// fixed (deterministic placement); rarer/deeper ores sit later but every vein
-/// only overwrites Stone, so overlaps just leave the earlier block in place.
+const fn grid3(
+    block: Block,
+    salt: u64,
+    count: i32,
+    y_min: i32,
+    y_max: i32,
+    ramp: Option<DepthRamp>,
+) -> ScatterConfig {
+    ScatterConfig {
+        block,
+        salt,
+        count,
+        shape: VeinShape::Grid3 { max_ore: 9 },
+        y_min,
+        y_max,
+        ramp,
+    }
+}
+
+/// Vein table, spanning the full cubic depth. Order is fixed (deterministic
+/// placement); every vein only overwrites Stone, so overlaps just leave the
+/// earlier block in place.
+///
+/// Y bands (world Y, floor −64, sea level 63):
+///   - dirt/gravel pockets ride the whole underground;
+///   - tuff is the deep stratum flavour below y 0;
+///   - coal stays shallow-to-mid, copper mid, gold deep;
+///   - iron is a Grid3 vein (≤9 ore in a 3×3 layer) across the WHOLE depth, at
+///     the same veins-per-volume rate as before — as common, less plentiful;
+///   - diamond is a Grid3 vein on a depth ramp: absent above y 14, increasingly
+///     likely toward the floor, yet rare even there.
 static CONFIGS: &[ScatterConfig] = &[
-    // Stone variants — the bulk of the "not solid grey" win.
-    c(Block::Granite, 0xA1_0001, 7, 48, 4, 110),
-    c(Block::Diorite, 0xA1_0002, 7, 48, 4, 110),
-    c(Block::Andesite, 0xA1_0003, 7, 48, 4, 110),
-    c(Block::Tuff, 0xA1_0004, 3, 40, 4, 36),
-    // Underground dirt / gravel pockets.
-    c(Block::Dirt, 0xA1_0005, 6, 33, 4, 130),
-    c(Block::Gravel, 0xA1_0006, 7, 33, 4, 130),
+    // Underground dirt / gravel pockets, all the way down.
+    blob(Block::Dirt, 0xA1_0005, 9, 33, WORLD_MIN_Y, 130),
+    blob(Block::Gravel, 0xA1_0006, 10, 33, WORLD_MIN_Y, 130),
+    // Tuff: the deep-stratum stone flavour.
+    blob(Block::Tuff, 0xA1_0004, 6, 40, WORLD_MIN_Y, 0),
     // Ores.
-    c(Block::CoalOre, 0xA1_0010, 16, 17, 8, 150),
-    c(Block::IronOre, 0xA1_0011, 18, 9, 4, 120),
-    c(Block::CopperOre, 0xA1_0012, 12, 10, 30, 96),
-    c(Block::GoldOre, 0xA1_0013, 3, 9, 4, 36),
-    c(Block::RedstoneOre, 0xA1_0014, 6, 8, 4, 22),
-    c(Block::LapisOre, 0xA1_0015, 2, 7, 4, 40),
-    c(Block::DiamondOre, 0xA1_0016, 2, 8, 4, 16),
-    c(Block::EmeraldOre, 0xA1_0017, 5, 4, 92, 180),
+    blob(Block::CoalOre, 0xA1_0010, 14, 17, 16, 150),
+    blob(Block::CopperOre, 0xA1_0012, 11, 10, -16, 96),
+    grid3(Block::IronOre, 0xA1_0011, 34, WORLD_MIN_Y, 136, None),
+    blob(Block::GoldOre, 0xA1_0013, 3, 9, WORLD_MIN_Y, 30),
+    grid3(
+        Block::DiamondOre,
+        0xA1_0016,
+        7,
+        WORLD_MIN_Y,
+        16,
+        Some(DepthRamp { max_chance: 1.0 }),
+    ),
 ];
 
 /// Place all underground veins for `chunk`. Pure function of `(seed, cx, cz)`.
@@ -109,7 +159,21 @@ fn place_underground_into(ctx: &mut FeatureCtx, ccx: i32, ccz: i32, seed: u32) {
                     let ox = ncx * 16 + rng.next_i32(0, 15);
                     let oz = ncz * 16 + rng.next_i32(0, 15);
                     let oy = rng.next_i32(cfg.y_min, cfg.y_max);
-                    place_vein(ctx, ox, oy, oz, cfg.size, cfg.block, &mut rng);
+                    if let Some(ramp) = &cfg.ramp {
+                        // Deeper = likelier: quadratic ease toward the band floor.
+                        let t = (cfg.y_max - oy) as f32 / (cfg.y_max - cfg.y_min) as f32;
+                        if !rng.chance(ramp.max_chance * t * t) {
+                            continue;
+                        }
+                    }
+                    match cfg.shape {
+                        VeinShape::Blob { size } => {
+                            place_blob_vein(ctx, ox, oy, oz, size, cfg.block, &mut rng)
+                        }
+                        VeinShape::Grid3 { max_ore } => {
+                            place_grid3_vein(ctx, ox, oy, oz, max_ore, cfg.block, &mut rng)
+                        }
+                    }
                 }
             }
         }
@@ -119,14 +183,20 @@ fn place_underground_into(ctx: &mut FeatureCtx, ccx: i32, ccz: i32, seed: u32) {
 /// World-Y span the scatter veins can possibly touch (the union of every config's
 /// `[y_min,y_max]` widened by the largest vein radius), so the cubic generator can
 /// skip the deep / high sections a vein can never reach. The widest config is `size`
-/// 48 → radius ≈ 3, so a ±4 pad is safe.
-pub const SCATTER_MIN_Y: i32 = 0;
-pub const SCATTER_MAX_Y: i32 = 184;
+/// 40 → radius ≈ 3, so a ±4 pad is safe; the low end clamps at the world floor.
+pub const SCATTER_MIN_Y: i32 = WORLD_MIN_Y;
+pub const SCATTER_MAX_Y: i32 = 154;
+
+/// Keep the world-floor layer solid stone and never write above the world top.
+#[inline]
+fn vein_y_in_world(y: i32) -> bool {
+    y > WORLD_MIN_Y && y < WORLD_MAX_Y
+}
 
 /// A roughly-spherical blob of `~size` Stone cells turned into `block`, with a
 /// small per-vein radius jitter so veins read irregular rather than as clean
 /// spheres. Writes are Stone-only and chunk-clipped.
-fn place_vein(
+fn place_blob_vein(
     ctx: &mut FeatureCtx,
     ox: i32,
     oy: i32,
@@ -142,7 +212,7 @@ fn place_vein(
     let r2 = r * r;
     for dy in -ri..=ri {
         let y = oy + dy;
-        if y < 1 || y >= CHUNK_SY as i32 - 1 {
+        if !vein_y_in_world(y) {
             continue;
         }
         for dz in -ri..=ri {
@@ -152,6 +222,38 @@ fn place_vein(
                     ctx.replace_block(IVec3::new(ox + dx, y, oz + dz), Block::Stone, block);
                 }
             }
+        }
+    }
+}
+
+/// The iron/diamond vein shape: exactly `1..=max_ore` cells of `block` chosen
+/// uniformly among the 3×3 slots of one horizontal layer centred on the origin —
+/// a vein always fits a 3×3 area and never holds more than 9 ore blocks. Writes
+/// are Stone-only and chunk-clipped (a slot occupied by cave air, dirt, or an
+/// earlier vein simply stays as it is).
+fn place_grid3_vein(
+    ctx: &mut FeatureCtx,
+    ox: i32,
+    oy: i32,
+    oz: i32,
+    max_ore: i32,
+    block: Block,
+    rng: &mut FeatureRng,
+) {
+    if !vein_y_in_world(oy) {
+        return;
+    }
+    let mut remaining = rng.next_i32(1, max_ore);
+    let mut slots_left = 9;
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            // Reservoir pick: exactly `remaining` of the `slots_left` slots get
+            // ore, uniformly, in one fixed deterministic pass.
+            if rng.next_i32(0, slots_left - 1) < remaining {
+                ctx.replace_block(IVec3::new(ox + dx, oy, oz + dz), Block::Stone, block);
+                remaining -= 1;
+            }
+            slots_left -= 1;
         }
     }
 }

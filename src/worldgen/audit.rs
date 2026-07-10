@@ -155,8 +155,11 @@ pub struct DebrisAudit {
 /// solid anywhere below it in its column (true detached debris — should be ~0).
 /// Also reports the deepest ocean column and the tallest column's skin stack.
 pub fn audit(seed: u32) -> DebrisAudit {
+    use crate::chunk::{SectionPos, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y};
+
     let r: i32 = 12;
     let n = (r * 2) as usize;
+    let generator = ChunkGenerator::new(seed);
     let mut overhang = 0u64;
     let mut floating = 0u64;
     let mut deepest_floor = i32::MAX;
@@ -167,6 +170,26 @@ pub fn audit(seed: u32) -> DebrisAudit {
     for cz in 0..n {
         for cx in 0..n {
             let chunk = generate_chunk(seed, cx as i32 - r, cz as i32 - r);
+            // The deep sections below the chunk window: the cubic world's floor.
+            // Scanning them keeps the per-column floating metric honest — a deep
+            // cavern crossing y = 0 is a roofed cave over solid rock, not
+            // "floating" terrain (every column must ground out on the guaranteed
+            // solid bottom band; a floater here means the floor guarantee broke).
+            let col = generator.generate_column_gen(cx as i32 - r, cz as i32 - r);
+            let deep: Vec<_> = (SECTION_MIN_CY..0)
+                .map(|cy| {
+                    generator
+                        .generate_section(SectionPos::new(cx as i32 - r, cy, cz as i32 - r), &col)
+                })
+                .collect();
+            let block_at = |x: usize, wy: i32, z: usize| -> u8 {
+                if wy < 0 {
+                    let si = ((wy - WORLD_MIN_Y) / SECTION_SIZE as i32) as usize;
+                    deep[si].block_raw(x, wy.rem_euclid(SECTION_SIZE as i32) as usize, z)
+                } else {
+                    chunk.block_raw(x, wy as usize, z)
+                }
+            };
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {
                     let bid = chunk.biome_at(x, z) as usize;
@@ -190,18 +213,20 @@ pub fn audit(seed: u32) -> DebrisAudit {
                         tall_chunk = (cx as i32 - r, cz as i32 - r);
                         tall_xz = (x, z);
                     }
-                    // overhang + floating scan
+                    // overhang + floating scan, over the FULL cubic depth
                     let mut solid_below = false;
+                    let mut prev_solid = false;
                     let mut col_oh = 0u32;
-                    for y in 0..CHUNK_SY {
-                        let s = is_terrain(chunk.block_raw(x, y, z));
-                        if s && y > 0 && !is_terrain(chunk.block_raw(x, y - 1, z)) {
+                    for wy in WORLD_MIN_Y..CHUNK_SY as i32 {
+                        let s = is_terrain(block_at(x, wy, z));
+                        if s && wy > WORLD_MIN_Y && !prev_solid {
                             overhang += 1;
                             col_oh += 1;
                             if !solid_below {
                                 floating += 1;
                             }
                         }
+                        prev_solid = s;
                         if s {
                             solid_below = true;
                         }

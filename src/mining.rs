@@ -132,7 +132,7 @@ impl MiningState {
                 block,
                 // Harvested only when the held tool meets this block's harvest
                 // requirement; below that (wrong kind, too low a tier, or bare
-                // hand) it breaks but drops nothing (redstone/diamond by hand).
+                // hand) it breaks but drops nothing (diamond ore by hand).
                 harvested: harvests(block, tool),
             };
             self.reset();
@@ -646,15 +646,13 @@ mod tests {
     #[test]
     fn iron_pickaxe_harvests_every_ore() {
         // The iron pickaxe (tier 3) unlocks the drop on every ore — including the
-        // tier-3 gold/lapis/diamond ores a stone pickaxe can't crack.
+        // tier-3 gold/diamond ores a stone pickaxe can't crack.
         for ore in [
             Block::CoalOre,
             Block::IronOre,
             Block::CopperOre,
             Block::GoldOre,
-            Block::LapisOre,
             Block::DiamondOre,
-            Block::RedstoneOre,
         ] {
             assert!(
                 harvests(ore, pick(3)),

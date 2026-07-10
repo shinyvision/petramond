@@ -559,33 +559,9 @@
       "tags": []
     },
     {
-      "item": "petramond:granite",
-      "key": "petramond:granite",
-      "name": "Granite",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:diorite",
-      "key": "petramond:diorite",
-      "name": "Diorite",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:andesite",
-      "key": "petramond:andesite",
-      "name": "Andesite",
+      "item": "petramond:marble",
+      "key": "petramond:marble",
+      "name": "Marble",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -655,45 +631,9 @@
       "tags": []
     },
     {
-      "item": "petramond:redstone_ore",
-      "key": "petramond:redstone_ore",
-      "name": "Redstone Ore",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:lapis_ore",
-      "key": "petramond:lapis_ore",
-      "name": "Lapis Ore",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
       "item": "petramond:diamond_ore",
       "key": "petramond:diamond_ore",
       "name": "Diamond Ore",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:emerald_ore",
-      "key": "petramond:emerald_ore",
-      "name": "Emerald Ore",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -1187,19 +1127,6 @@
         "roll": 0
       },
       "sprite": "diamond",
-      "tags": []
-    },
-    {
-      "item": "petramond:lapis_lazuli",
-      "key": "petramond:lapis_lazuli",
-      "name": "Lapis Lazuli",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "sprite": "lapis_lazuli",
       "tags": []
     },
     {

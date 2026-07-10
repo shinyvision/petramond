@@ -274,17 +274,34 @@ impl FeatureField for &RegionCells {
 
 pub(crate) struct RuntimeFeatureField<'a> {
     surface: &'a SurfaceDensitySystem,
+    caves: &'a crate::worldgen::noise::height::CaveField,
     candidates: RegionCells,
     support_bounds: (i32, i32, usize, usize),
     support_surfaces: Option<SurfaceHeights>,
 }
 
 impl<'a> RuntimeFeatureField<'a> {
-    pub(crate) fn new(surface: &'a SurfaceDensitySystem, ox: i32, oz: i32) -> Self {
+    /// Candidate surfaces are cave-adjusted EAGERLY, once per cell — the spacing
+    /// scans re-query the same cells many times over, so a per-query adjustment
+    /// multiplies the (expensive) cave surface probe by the scan fan-out. This
+    /// mirrors the cubic path's `finish_feature_windows`, so both paths read
+    /// identical values.
+    pub(crate) fn new(
+        surface: &'a SurfaceDensitySystem,
+        caves: &'a crate::worldgen::noise::height::CaveField,
+        ox: i32,
+        oz: i32,
+    ) -> Self {
         let (x0, z0, w, h) = feature_candidate_bounds(ox, oz);
-        let candidates = surface.region(x0, z0, w, h);
+        let mut candidates = surface.region(x0, z0, w, h);
+        for (i, s) in candidates.surf.iter_mut().enumerate() {
+            let wx = candidates.x0 + (i % candidates.w) as i32;
+            let wz = candidates.z0 + (i / candidates.w) as i32;
+            *s = caves.feature_surface_after_caves(wx, wz, *s);
+        }
         Self {
             surface,
+            caves,
             candidates,
             support_bounds: feature_region_bounds(ox, oz),
             support_surfaces: None,
@@ -294,12 +311,13 @@ impl<'a> RuntimeFeatureField<'a> {
     fn support_surfaces(&mut self) -> &SurfaceHeights {
         if self.support_surfaces.is_none() {
             let (x0, z0, w, h) = self.support_bounds;
-            self.support_surfaces = Some(SurfaceHeights {
-                x0,
-                z0,
-                w,
-                surf: self.surface.surface_heights(x0, z0, w, h),
-            });
+            let mut surf = self.surface.surface_heights(x0, z0, w, h);
+            for (i, s) in surf.iter_mut().enumerate() {
+                let wx = x0 + (i % w) as i32;
+                let wz = z0 + (i / w) as i32;
+                *s = self.caves.feature_surface_after_caves(wx, wz, *s);
+            }
+            self.support_surfaces = Some(SurfaceHeights { x0, z0, w, surf });
         }
         self.support_surfaces.as_ref().unwrap()
     }
@@ -777,19 +795,28 @@ mod tests {
     fn runtime_feature_field_matches_full_region_features() {
         let seed = 0x1234_5678;
         let surface = SurfaceDensitySystem::new(seed);
+        let caves = crate::worldgen::noise::height::CaveField::new(seed);
 
         for (cx, cz) in [(0, 0), (-3, 5), (12, -7), (4, -3)] {
             let ox = cx * CHUNK_SX as i32;
             let oz = cz * CHUNK_SZ as i32;
             let (x0, z0, w, h) = feature_region_bounds(ox, oz);
-            let full_region = surface.region(x0, z0, w, h);
+            // The runtime field bakes the cave adjustment into its candidate
+            // window, so the reference full-region field gets the same per-cell
+            // adjustment before comparing.
+            let mut full_region = surface.region(x0, z0, w, h);
+            for (i, s) in full_region.surf.iter_mut().enumerate() {
+                let wx = full_region.x0 + (i % full_region.w) as i32;
+                let wz = full_region.z0 + (i / full_region.w) as i32;
+                *s = caves.feature_surface_after_caves(wx, wz, *s);
+            }
             let mut full_field = &full_region;
 
             let mut full_chunk = Chunk::new(cx, cz);
             place_features_with_field(&mut full_chunk, &mut full_field, seed);
 
             let mut runtime_chunk = Chunk::new(cx, cz);
-            let mut field = RuntimeFeatureField::new(&surface, ox, oz);
+            let mut field = RuntimeFeatureField::new(&surface, &caves, ox, oz);
             place_features_with_field(&mut runtime_chunk, &mut field, seed);
 
             assert_eq!(
