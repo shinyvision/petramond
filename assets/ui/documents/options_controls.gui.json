@@ -537,6 +537,40 @@
             }
            }
           ]
+         },
+         {
+          "type": "row",
+          "layout": {
+           "pad": [
+            2,
+            1,
+            2,
+            1
+           ],
+           "gap": 4,
+           "align": "center"
+          },
+          "children": [
+           {
+            "type": "label",
+            "text": "Rotate Block",
+            "layout": {
+             "w": {
+              "grow": 1
+             }
+            }
+           },
+           {
+            "type": "button",
+            "id": "bind:rotate_block",
+            "layout": {
+             "w": 92
+            },
+            "bind": {
+             "text": "bind:rotate_block"
+            }
+           }
+          ]
          }
         ]
        }

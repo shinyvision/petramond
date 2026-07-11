@@ -106,11 +106,12 @@ pub enum BindableAction {
     Chat,
     Sprint,
     Sneak,
+    RotateBlock,
 }
 
 impl BindableAction {
     /// Display order of the Options → Controls screen.
-    pub const ALL: [BindableAction; 13] = [
+    pub const ALL: [BindableAction; 14] = [
         BindableAction::WalkForward,
         BindableAction::StrafeRight,
         BindableAction::StrafeLeft,
@@ -124,6 +125,7 @@ impl BindableAction {
         BindableAction::Chat,
         BindableAction::Sprint,
         BindableAction::Sneak,
+        BindableAction::RotateBlock,
     ];
 
     /// Stable id string (the serde name): widget-id suffix + settings key.
@@ -142,6 +144,7 @@ impl BindableAction {
             BindableAction::Chat => "chat",
             BindableAction::Sprint => "sprint",
             BindableAction::Sneak => "sneak",
+            BindableAction::RotateBlock => "rotate_block",
         }
     }
 
@@ -165,6 +168,7 @@ impl BindableAction {
             BindableAction::Chat => Control::OpenChat,
             BindableAction::Sprint => Control::Sprint,
             BindableAction::Sneak => Control::Sneak,
+            BindableAction::RotateBlock => Control::RotateHeldBlock,
         }
     }
 
@@ -184,6 +188,7 @@ impl BindableAction {
             BindableAction::Chat => key(KeyCode::KeyT),
             BindableAction::Sprint => key(KeyCode::ControlLeft),
             BindableAction::Sneak => key(KeyCode::ShiftLeft),
+            BindableAction::RotateBlock => key(KeyCode::KeyR),
         }
     }
 }
@@ -471,7 +476,6 @@ pub fn fixed_control_from_key_code(code: KeyCode) -> Option<Control> {
         KeyCode::Slash => Some(Control::OpenCommandChat),
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
         KeyCode::KeyQ => Some(Control::DropItem),
-        KeyCode::KeyR => Some(Control::RotateHeldBlock),
         // Plain V only — Ctrl+V stays the text-input paste shortcut.
         KeyCode::KeyV => Some(Control::TogglePerspective),
         KeyCode::Escape => Some(Control::CloseScreen),

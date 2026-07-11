@@ -1182,6 +1182,82 @@
                           }
                         }
                       ]
+                    },
+                    {
+                      "type": "row",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          2,
+                          1,
+                          2,
+                          1
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 4,
+                        "dir": "column",
+                        "align": "center",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "type": "label",
+                          "text": "Rotate Block",
+                          "layout": {
+                            "w": {
+                              "grow": 1
+                            },
+                            "h": "auto",
+                            "pad": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 0,
+                            "dir": "column",
+                            "justify": "start"
+                          }
+                        },
+                        {
+                          "id": "bind:rotate_block",
+                          "type": "button",
+                          "layout": {
+                            "w": 92,
+                            "h": "auto",
+                            "pad": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 0,
+                            "dir": "column",
+                            "justify": "start"
+                          },
+                          "bind": {
+                            "text": "bind:rotate_block"
+                          }
+                        }
+                      ]
                     }
                   ]
                 }

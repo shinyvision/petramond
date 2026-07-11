@@ -384,7 +384,7 @@
     },
     "bind:<action>": {
      "type": "str",
-     "doc": "current binding label per action (walk_forward, strafe_right, strafe_left, walk_backward, jump, attack, interact, hotbar_next, hotbar_prev, open_inventory, chat, sprint, sneak); '> ??? <' while armed"
+     "doc": "current binding label per action (walk_forward, strafe_right, strafe_left, walk_backward, jump, attack, interact, hotbar_next, hotbar_prev, open_inventory, chat, sprint, sneak, rotate_block); '> ??? <' while armed"
     },
     "remap_hint": {
      "type": "str",
