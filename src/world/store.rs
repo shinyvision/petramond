@@ -45,12 +45,16 @@ pub enum WorldRole {
 }
 
 /// One streaming anchor for [`World::update_load_multi`]: a player's section
-/// coordinates, one per connected player.
+/// coordinates plus that connection's streaming radius (its requested view
+/// distance, already clamped by the server's own maximum), one per connected
+/// player.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LoadAnchor {
     pub cx: i32,
     pub cy: i32,
     pub cz: i32,
+    /// Horizontal streaming radius in chunks for this anchor's connection.
+    pub radius: i32,
 }
 
 /// Vertical load radius (in 16³ sections) around the player's section: the world
@@ -447,6 +451,19 @@ impl World {
     #[inline]
     pub fn role(&self) -> WorldRole {
         self.role
+    }
+
+    /// Change the view/streaming radius live (the Options view-distance
+    /// slider). On a streaming world the next `update_load*` re-shapes the
+    /// working set (anchor radii clamp to this budget); on a replica it
+    /// re-shapes mesh/light scheduling around the view center.
+    pub fn set_render_dist(&mut self, chunks: i32) {
+        let chunks = chunks.max(1);
+        if self.render_dist == chunks {
+            return;
+        }
+        self.render_dist = chunks;
+        self.vis_dirty = true;
     }
 
     /// Attach an on-disk save: enables section persistence (load-from-disk in the

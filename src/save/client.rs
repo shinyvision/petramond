@@ -42,6 +42,57 @@ pub struct ClientSettings {
     /// The address last joined via "Connect to server", as a convenience
     /// prefill for the connect screen. `None` until a first join.
     pub last_server: Option<String>,
+    /// Master linear volume over every sound (`0..=1`; Options → Sound).
+    pub master_volume: f32,
+    /// Linear volume for non-music sound (`0..=1`).
+    pub sound_volume: f32,
+    /// Linear volume for the `music` sound category (`0..=1`; music itself
+    /// ships later — the mixer group already exists).
+    pub music_volume: f32,
+    /// Decorative particle density (Options → Graphics).
+    pub particles: ParticlesMode,
+    /// Remapped controls (Options → Controls). Actions absent here use their
+    /// defaults, so files from before a binding existed stay valid.
+    pub bindings: crate::controls::BindingSet,
+}
+
+/// Decorative-particle density: emitter-derived particles (torch flames…) and
+/// terrain flecks (mining dust, break bursts, splashes). Presentation-only.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticlesMode {
+    Off,
+    Reduced,
+    #[default]
+    Full,
+}
+
+impl ParticlesMode {
+    /// The Options button cycles Full → Reduced → Off → Full.
+    pub fn next(self) -> ParticlesMode {
+        match self {
+            ParticlesMode::Full => ParticlesMode::Reduced,
+            ParticlesMode::Reduced => ParticlesMode::Off,
+            ParticlesMode::Off => ParticlesMode::Full,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ParticlesMode::Off => "Off",
+            ParticlesMode::Reduced => "Reduced",
+            ParticlesMode::Full => "Full",
+        }
+    }
+
+    /// Spawn-count / active-count multiplier presentation applies.
+    pub fn density(self) -> f32 {
+        match self {
+            ParticlesMode::Off => 0.0,
+            ParticlesMode::Reduced => 0.5,
+            ParticlesMode::Full => 1.0,
+        }
+    }
 }
 
 impl Default for ClientSettings {
@@ -54,6 +105,11 @@ impl Default for ClientSettings {
             grade: true,
             player_name: None,
             last_server: None,
+            master_volume: 1.0,
+            sound_volume: 1.0,
+            music_volume: 1.0,
+            particles: ParticlesMode::Full,
+            bindings: crate::controls::BindingSet::default(),
         }
     }
 }

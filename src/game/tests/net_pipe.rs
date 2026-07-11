@@ -264,3 +264,32 @@ fn menu_click_messages_latch_then_apply_on_the_tick() {
         "the tick applied the container edit (stack picked onto the cursor)"
     );
 }
+
+#[test]
+fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget() {
+    let mut game = game();
+    let server_rd = game.server.world.render_dist;
+
+    // A guest's request moves only its own streaming radius (clamped 4..=64);
+    // the server budget is the host's, not the guest's.
+    let s = game
+        .server
+        .add_session_for_test(crate::game::session::spawn_player(1));
+    game.server
+        .apply_message(s, ClientToServer::SetViewDistance { chunks: 8 });
+    assert_eq!(game.server.sessions[s].view_radius, 8);
+    assert_eq!(
+        game.server.world.render_dist, server_rd,
+        "a guest request never moves the server budget"
+    );
+    game.server
+        .apply_message(s, ClientToServer::SetViewDistance { chunks: 2 });
+    assert_eq!(game.server.sessions[s].view_radius, 4, "requests clamp low");
+
+    // The HOST's slider is the server setting: its request moves the budget
+    // with it, so raising the view distance live actually streams wider.
+    game.server
+        .apply_message(0, ClientToServer::SetViewDistance { chunks: 12 });
+    assert_eq!(game.server.sessions[0].view_radius, 12);
+    assert_eq!(game.server.world.render_dist, 12);
+}

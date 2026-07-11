@@ -210,6 +210,7 @@ pub fn build_transparent_emitter_particles(
     time: f32,
     cam_pos: Vec3,
     env: LightEnv,
+    density: f32,
     verts: &mut Vec<ParticleVertex>,
     scratch: &mut Vec<TransparentParticleCube>,
 ) -> u32 {
@@ -242,7 +243,7 @@ pub fn build_transparent_emitter_particles(
         });
     }
     for inst in emitters {
-        append_emitter_particles(inst, time, cam_pos, env, scratch);
+        append_emitter_particles(inst, time, cam_pos, env, density, scratch);
         if scratch.len() >= MAX_PARTICLE_CUBES {
             break;
         }
@@ -262,13 +263,18 @@ fn append_emitter_particles(
     time: f32,
     cam_pos: Vec3,
     env: LightEnv,
+    density: f32,
     out: &mut Vec<TransparentParticleCube>,
 ) {
     let e = inst.emitter;
     let max_lifetime = e.lifetime[1].max(e.lifetime[0]);
     let schedule = emitter_schedule(inst.seed, e.rate);
-    let active =
-        ((schedule.max_rate * max_lifetime).ceil() as usize + 6).min(MAX_ACTIVE_PER_EMITTER);
+    // The particles graphics option thins each emitter's active window
+    // (reduced = half density); zero is culled before this is reached.
+    let active = (((schedule.max_rate * max_lifetime).ceil() as usize + 6) as f32
+        * density.clamp(0.0, 1.0))
+    .round() as usize;
+    let active = active.min(MAX_ACTIVE_PER_EMITTER);
     let latest = ((time - schedule.phase) / schedule.base_gap).floor() as i64 + 2;
     let light = if e.fullbright {
         [1.0, 1.0, 1.0]
@@ -642,6 +648,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.25),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut young,
             &mut scratch,
         );
@@ -651,6 +658,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut old,
             &mut scratch,
         );
@@ -687,6 +695,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.25),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut early,
             &mut scratch,
         );
@@ -696,6 +705,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.5),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut late,
             &mut scratch,
         );
@@ -744,6 +754,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.1),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut young,
             &mut scratch,
         );
@@ -753,6 +764,7 @@ mod tests {
             one_live_emitter_time(&inst, 0.9),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut old,
             &mut scratch,
         );
@@ -788,6 +800,7 @@ mod tests {
             one_live_emitter_time(&quick, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut a,
             &mut scratch,
         );
@@ -797,6 +810,7 @@ mod tests {
             one_live_emitter_time(&lingering, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut b,
             &mut scratch,
         );
@@ -824,6 +838,7 @@ mod tests {
             one_live_emitter_time(&linear, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut a,
             &mut scratch,
         );
@@ -833,6 +848,7 @@ mod tests {
             one_live_emitter_time(&chunky, 0.75),
             Vec3::ZERO,
             LightEnv::IDENTITY,
+            1.0,
             &mut b,
             &mut scratch,
         );

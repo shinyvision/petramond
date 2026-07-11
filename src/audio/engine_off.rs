@@ -20,6 +20,8 @@ impl Audio {
         Vec::new()
     }
 
+    pub fn set_volumes(&mut self, _master: f32, _sound: f32, _music: f32) {}
+
     pub fn set_loop(&mut self, _sound: Option<Sound>, _now: f64) {}
 
     pub fn play(&mut self, _sound: Sound) {}

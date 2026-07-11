@@ -11,21 +11,83 @@
 //! `ServerGame::has_local_session` (no local pipe recipient, every session
 //! ack-windowed, fixed ticks skipped while nobody is connected).
 
+use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::server::handle::ServerHandle;
 
-/// `petramond_server <world-name>` — env overrides: `PETRAMOND_SEED` (new
-/// worlds only), `PETRAMOND_RD` (streaming radius), `PETRAMOND_PORT`
+/// Headless-server settings: `settings.json` NEXT TO THE SERVER BINARY (not
+/// in the data dir — one config per deployed binary). Materialized with
+/// defaults on first run so the knobs are discoverable; unknown fields are
+/// ignored so hand-edited files survive version drift. `PETRAMOND_*` env vars
+/// override the file for one-off runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerSettings {
+    /// The server's streaming radius CEILING in chunks (`4..=64`): what the
+    /// world keeps loaded around players. A client requesting less (its own
+    /// view-distance option) is streamed less; requesting more clamps here.
+    pub view_distance: i32,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self { view_distance: 32 }
+    }
+}
+
+fn settings_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("settings.json"))
+}
+
+fn load_settings() -> ServerSettings {
+    let Some(path) = settings_path() else {
+        return ServerSettings::default();
+    };
+    if !path.exists() {
+        let defaults = ServerSettings::default();
+        match serde_json::to_vec_pretty(&defaults) {
+            Ok(bytes) => {
+                if let Err(e) = std::fs::write(&path, bytes) {
+                    log::warn!("could not materialize {}: {e}", path.display());
+                }
+            }
+            Err(e) => log::warn!("could not encode default server settings: {e}"),
+        }
+        return defaults;
+    }
+    match std::fs::read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|b| serde_json::from_slice::<ServerSettings>(&b).map_err(|e| e.to_string()))
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!(
+                "server settings {} are unreadable ({e}); using defaults",
+                path.display()
+            );
+            ServerSettings::default()
+        }
+    }
+}
+
+/// `petramond_server <world-name>` — configured by `settings.json` beside the
+/// binary (`view_distance`); env overrides: `PETRAMOND_SEED` (new worlds
+/// only), `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
 /// (default 7434, 0 = ephemeral).
 pub fn run() {
     super::init_logging();
     let Some(world_name) = std::env::args().nth(1) else {
         eprintln!("usage: petramond_server <world-name>");
+        eprintln!("  settings.json (beside the binary): view_distance <4..64>");
         eprintln!("  env: PETRAMOND_SEED=<u32>  PETRAMOND_RD=<4..64>  PETRAMOND_PORT=<port>");
         std::process::exit(2);
     };
+    let settings = load_settings();
     let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -33,7 +95,7 @@ pub fn run() {
     let rd: i32 = std::env::var("PETRAMOND_RD")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(32)
+        .unwrap_or(settings.view_distance)
         .clamp(4, 64);
     let port: u16 = std::env::var("PETRAMOND_PORT")
         .ok()

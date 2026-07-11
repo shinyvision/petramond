@@ -17,6 +17,10 @@ mod create_world;
 mod death;
 mod delete_world;
 mod mods_missing;
+mod options;
+mod options_controls;
+mod options_graphics;
+mod options_sound;
 mod pause;
 mod sleep;
 mod title;
@@ -71,6 +75,10 @@ impl App {
             }
             GuiKind::ModsMissing => with_state(self, mods_missing::populate),
             GuiKind::ConnectionLost => with_state(self, connection_lost::populate),
+            GuiKind::Options => with_state(self, options::populate),
+            GuiKind::OptionsSound => with_state(self, options_sound::populate),
+            GuiKind::OptionsControls => with_state(self, options_controls::populate),
+            GuiKind::OptionsGraphics => with_state(self, options_graphics::populate),
             GuiKind::Pause => with_state(self, pause::populate),
             GuiKind::Sleep => with_state(self, sleep::populate),
             GuiKind::Death => with_state(self, death::populate),
@@ -81,6 +89,16 @@ impl App {
         // subtle red tint for death.
         let dim = match kind {
             GuiKind::Pause => Some([0.0, 0.0, 0.0, 0.6]),
+            // Options screens over a paused/running game dim like the pause
+            // menu; from the title flow the document's own backdrop shows.
+            GuiKind::Options
+            | GuiKind::OptionsSound
+            | GuiKind::OptionsControls
+            | GuiKind::OptionsGraphics
+                if self.game.is_some() =>
+            {
+                Some([0.0, 0.0, 0.0, 0.6])
+            }
             GuiKind::Sleep => {
                 let progress = self
                     .game
@@ -110,6 +128,10 @@ impl App {
                 GuiKind::ConnectServer => connect_server::handle(self, ev),
                 GuiKind::ModsMissing => mods_missing::handle(self, ev),
                 GuiKind::ConnectionLost => connection_lost::handle(self, ev),
+                GuiKind::Options => options::handle(self, ev),
+                GuiKind::OptionsSound => options_sound::handle(self, ev),
+                GuiKind::OptionsControls => options_controls::handle(self, ev),
+                GuiKind::OptionsGraphics => options_graphics::handle(self, ev),
                 GuiKind::Pause => pause::handle(self, ev),
                 GuiKind::Sleep => sleep::handle(self, ev),
                 GuiKind::Death => death::handle(self, ev),

@@ -130,6 +130,9 @@ pub enum SoundCategory {
     Mob,
     /// UI / interface & player feedback — menu clicks, item pickup, etc.
     Ui,
+    /// Music tracks — the `music_volume` mixer group (Options → Sound).
+    /// No engine rows yet; music ships later.
+    Music,
 }
 
 /// One row of the sound table: a sound's clip files + default playback

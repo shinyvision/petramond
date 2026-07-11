@@ -11,6 +11,7 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         UiEvent::Click { id, .. } => match id.as_str() {
             "start" => start(app),
             "connect" => app.open_connect_server(),
+            "options" => app.open_options(false),
             "quit" => app.quit_requested = true,
             _ => {}
         },

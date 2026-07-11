@@ -545,6 +545,18 @@ impl World {
     /// distance) and the world's terrain-content revision.
     /// While the key is unchanged, a rescan cannot find new work — the sender
     /// skips it (mirroring how `update_load_target` gates its scans).
+    /// The wanted-terrain shape for one connection: its anchor at the
+    /// anchor's own radius (the connection's view distance), clamped by this
+    /// world's `render_dist` budget.
+    fn send_target(&self, anchor: LoadAnchor) -> LoadTarget {
+        LoadTarget::new(
+            anchor.cx,
+            anchor.cy,
+            anchor.cz,
+            anchor.radius.clamp(1, self.render_dist),
+        )
+    }
+
     pub(crate) fn terrain_send_key(&self, anchor: LoadAnchor) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
@@ -556,7 +568,7 @@ impl World {
     /// connection consumes its current plan across content revisions, but an
     /// anchor move invalidates that plan immediately.
     pub(crate) fn terrain_target_key(&self, anchor: LoadAnchor) -> u64 {
-        let t = LoadTarget::new(anchor.cx, anchor.cy, anchor.cz, self.render_dist);
+        let t = self.send_target(anchor);
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
         (t.center.cx, t.center.cz, t.center_cy, t.render_dist).hash(&mut h);
@@ -579,7 +591,7 @@ impl World {
         sent_sections: &FxHashSet<SectionPos>,
         budget: usize,
     ) -> TerrainSendPlan {
-        let target = LoadTarget::new(anchor.cx, anchor.cy, anchor.cz, self.render_dist);
+        let target = self.send_target(anchor);
 
         let mut sections: Vec<(i64, SectionPos)> = self
             .sections
@@ -1154,7 +1166,12 @@ mod tests {
         let mut section = Section::new(0, 4, 0);
         section.set_block(0, 0, 0, Block::Stone);
         w.insert_section_for_test(sp, section);
-        let anchor = |cx: i32| LoadAnchor { cx, cy: 4, cz: 0 };
+        let anchor = |cx: i32| LoadAnchor {
+            cx,
+            cy: 4,
+            cz: 0,
+            radius: 64,
+        };
 
         let mut sent_columns: FxHashSet<ChunkPos> = FxHashSet::default();
         let mut sent_sections: FxHashSet<SectionPos> = FxHashSet::default();
@@ -1272,5 +1289,24 @@ mod tests {
             combined.dirty_mesh_count() > 0,
             "the combined world still queues meshes as before"
         );
+    }
+
+    /// Per-connection view distance: the send shape follows the anchor's own
+    /// radius, clamped by the server world's budget — a client may shrink its
+    /// stream but never widen it past the server setting.
+    #[test]
+    fn send_target_clamps_anchor_radius_to_the_world_budget() {
+        use crate::world::LoadAnchor;
+        let w = World::new_with_role(0, 4, WorldRole::ServerHeadless);
+        let key = |radius| {
+            w.terrain_target_key(LoadAnchor {
+                cx: 0,
+                cy: 4,
+                cz: 0,
+                radius,
+            })
+        };
+        assert_eq!(key(64), key(4), "requests above the budget clamp to it");
+        assert_ne!(key(2), key(4), "smaller requests shrink the send shape");
     }
 }

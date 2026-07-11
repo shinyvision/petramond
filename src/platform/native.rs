@@ -5,17 +5,13 @@ use std::time::{Duration, Instant};
 
 use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use crate::camera::Camera;
-use crate::controls::{
-    control_from_key_code, text_key_from_named, Control, Modifiers, PointerButton,
-};
+use crate::controls::{text_key_from_named, Modifiers};
 use crate::mathh::Vec3;
 use crate::render::{new_renderer_from_target, Renderer};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{
-    DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
-};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, CursorIcon as WinitCursorIcon, Window, WindowId};
@@ -137,6 +133,8 @@ fn modifiers_after_key_event(
     match code {
         KeyCode::ControlLeft | KeyCode::ControlRight => modifiers.ctrl = down,
         KeyCode::ShiftLeft | KeyCode::ShiftRight => modifiers.shift = down,
+        KeyCode::AltLeft | KeyCode::AltRight => modifiers.alt = down,
+        KeyCode::SuperLeft | KeyCode::SuperRight => modifiers.meta = down,
         _ => return None,
     }
     Some(modifiers)
@@ -242,6 +240,15 @@ impl ApplicationHandler for NativeHost {
                         self.modifiers = modifiers;
                         app.set_modifiers(modifiers);
                     }
+                    // Remap capture (Options → Controls) preempts everything:
+                    // the pressed key BECOMES the binding (ESC cancels), so it
+                    // must never double as text/navigation/control input.
+                    if app.remap_capture_key(code, down) {
+                        if app.take_quit_requested() {
+                            event_loop.exit();
+                        }
+                        return;
+                    }
                 }
                 if down {
                     let mut handled_shortcut = false;
@@ -270,14 +277,10 @@ impl ApplicationHandler for NativeHost {
                         }
                         return;
                     }
-                    let Some(control) = control_from_key_code(code) else {
-                        if app.take_quit_requested() {
-                            event_loop.exit();
-                        }
-                        return;
-                    };
-                    let consumed = app.handle_control(control, down);
-                    if matches!(control, Control::CloseScreen) && down && !consumed {
+                    // The app resolves raw keys through the player's binding
+                    // table (fixed fallback keys included). `false` = an
+                    // unconsumed CloseScreen press — quit, as always.
+                    if !app.handle_raw_key(code, down) {
                         event_loop.exit();
                     }
                 }
@@ -292,6 +295,8 @@ impl ApplicationHandler for NativeHost {
                 self.modifiers = Modifiers {
                     ctrl: state.control_key(),
                     shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
                 };
                 app.set_modifiers(self.modifiers);
             }
@@ -300,6 +305,7 @@ impl ApplicationHandler for NativeHost {
                 app.set_modifiers(self.modifiers);
                 app.release_client_mod_keys();
                 app.release_pointer_buttons();
+                app.release_input_bindings();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 app.add_scroll_delta(-wheel_notches(delta));
@@ -307,21 +313,11 @@ impl ApplicationHandler for NativeHost {
             WindowEvent::CursorMoved { position, .. } => {
                 app.set_cursor_position(position.x as f32, position.y as f32);
             }
-            WindowEvent::MouseInput { state, button, .. } => match (state, button) {
-                (ElementState::Pressed, MouseButton::Left) => {
-                    app.set_pointer_button(PointerButton::Primary, true);
-                }
-                (ElementState::Released, MouseButton::Left) => {
-                    app.set_pointer_button(PointerButton::Primary, false);
-                }
-                (ElementState::Pressed, MouseButton::Right) => {
-                    app.set_pointer_button(PointerButton::Secondary, true);
-                }
-                (ElementState::Released, MouseButton::Right) => {
-                    app.set_pointer_button(PointerButton::Secondary, false);
-                }
-                _ => {}
-            },
+            WindowEvent::MouseInput { state, button, .. } => {
+                // EVERY button forwards raw — side buttons are bindable; the
+                // app routes left/right to the UI on menu screens itself.
+                app.handle_raw_mouse(button, state == ElementState::Pressed);
+            }
             WindowEvent::RedrawRequested => {
                 apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
                 // The host requests this once per `App::update`; the simulation itself

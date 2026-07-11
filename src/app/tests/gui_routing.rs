@@ -209,6 +209,7 @@ fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
     app.set_modifiers(Modifiers {
         ctrl: false,
         shift: true,
+        ..Modifiers::default()
     });
     let screen = (1280, 720);
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);

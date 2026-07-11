@@ -631,6 +631,7 @@ async fn new_renderer_inner(
         model_particles: Vec::new(),
         particle_emitters: Vec::new(),
         particle_emitter_visible: Vec::new(),
+        particle_density: 1.0,
         particle_block_vertex_count: 0,
         viewport_generation: 1,
         prepared_ui_viewport: UiViewport::default(),

@@ -837,6 +837,9 @@ pub(crate) enum ClientToServer {
     ModQuery,
     Join {
         player_name: String,
+        /// The client's view distance in chunks. The server streams
+        /// `min(this, its own maximum)` for the session.
+        view_distance: u8,
     },
     PlayerUpdate(PlayerUpdate),
     Action(PlayerAction),
@@ -860,6 +863,12 @@ pub(crate) enum ClientToServer {
     /// (the 1.20.2 chunk-batching design; see WIKI/multiplayer.md).
     StreamBatchAck {
         messages_per_second: f32,
+    },
+    /// The client changed its view distance (Options → Graphics). The server
+    /// re-clamps to its own maximum and streams the new radius; terrain
+    /// outside it unloads client-side through the ordinary diff.
+    SetViewDistance {
+        chunks: u8,
     },
     Pause(bool),
     KeepAlive,
@@ -1034,7 +1043,9 @@ mod tests {
         roundtrip(&ClientToServer::Hello { protocol: 1 });
         roundtrip(&ClientToServer::Join {
             player_name: "Rachel".into(),
+            view_distance: 16,
         });
+        roundtrip(&ClientToServer::SetViewDistance { chunks: 24 });
         roundtrip(&ClientToServer::PlayerUpdate(PlayerUpdate {
             pos: Vec3::new(1.5, 80.0, -3.25),
             vel: Vec3::ZERO,

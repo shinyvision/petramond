@@ -1,5 +1,5 @@
-//! Pause screen controller: resume, host-only Open to LAN + Save and Quit,
-//! remote-only Disconnect. Enter resumes (ESC stays on the global
+//! Pause screen controller: resume, options, host-only Open to LAN + Save
+//! and Quit, remote-only Disconnect. Enter resumes (ESC stays on the global
 //! close-screen control path).
 
 use crate::app::App;
@@ -28,6 +28,7 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
     match ev {
         UiEvent::Click { id, .. } => match id.as_str() {
             "resume" => app.resume_game(),
+            "options" => app.open_options(true),
             "open_lan" => app.open_lan(),
             "disconnect" => app.disconnect_to_title(),
             "save_quit" => app.save_and_quit_to_title(),

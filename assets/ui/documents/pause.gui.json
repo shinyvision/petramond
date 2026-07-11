@@ -1,93 +1,101 @@
 {
-    "format": 1,
-    "kind": "petramond:pause",
-    "class": "screen",
-    "root": {
-        "type": "frame",
-        "style": "panel.large",
-        "layout": {
-            "pad": [
-                4,
-                2,
-                4,
-                4
-            ],
-            "gap": 8,
-            "align": "center"
-        },
-        "children": [
-            {
-                "type": "label",
-                "text": "Paused",
-                "scale": 2
-            },
-            {
-                "type": "spacer",
-                "layout": {
-                    "h": 2
-                }
-            },
-            {
-                "type": "button",
-                "id": "resume",
-                "text": "RESUME",
-                "layout": {
-                    "w": 110
-                }
-            },
-            {
-                "type": "button",
-                "id": "open_lan",
-                "text": "OPEN TO LAN",
-                "layout": {
-                    "w": 110
-                },
-                "bind": {
-                    "visible": "lan_closed"
-                }
-            },
-            {
-                "type": "label",
-                "style": "label.muted",
-                "bind": {
-                    "text": "lan_status",
-                    "visible": "lan_open"
-                }
-            },
-            {
-                "type": "label",
-                "style": "label.danger",
-                "wrap": true,
-                "layout": {
-                    "w": 140
-                },
-                "bind": {
-                    "text": "lan_error",
-                    "visible": "has_lan_error"
-                }
-            },
-            {
-                "type": "button",
-                "id": "disconnect",
-                "text": "DISCONNECT",
-                "layout": {
-                    "w": 110
-                },
-                "bind": {
-                    "visible": "is_remote"
-                }
-            },
-            {
-                "type": "button",
-                "id": "save_quit",
-                "text": "SAVE AND QUIT",
-                "layout": {
-                    "w": 110
-                },
-                "bind": {
-                    "visible": "is_host"
-                }
-            }
-        ]
+ "format": 1,
+ "kind": "petramond:pause",
+ "class": "screen",
+ "root": {
+  "type": "frame",
+  "style": "panel.large",
+  "layout": {
+   "pad": [
+    4,
+    2,
+    4,
+    4
+   ],
+   "gap": 8,
+   "align": "center"
+  },
+  "children": [
+   {
+    "type": "label",
+    "text": "Paused",
+    "scale": 2
+   },
+   {
+    "type": "spacer",
+    "layout": {
+     "h": 2
     }
+   },
+   {
+    "type": "button",
+    "id": "resume",
+    "text": "RESUME",
+    "layout": {
+     "w": 110
+    }
+   },
+   {
+    "type": "button",
+    "id": "options",
+    "text": "OPTIONS",
+    "layout": {
+     "w": 110
+    }
+   },
+   {
+    "type": "button",
+    "id": "open_lan",
+    "text": "OPEN TO LAN",
+    "layout": {
+     "w": 110
+    },
+    "bind": {
+     "visible": "lan_closed"
+    }
+   },
+   {
+    "type": "label",
+    "style": "label.muted",
+    "bind": {
+     "text": "lan_status",
+     "visible": "lan_open"
+    }
+   },
+   {
+    "type": "label",
+    "style": "label.danger",
+    "wrap": true,
+    "layout": {
+     "w": 140
+    },
+    "bind": {
+     "text": "lan_error",
+     "visible": "has_lan_error"
+    }
+   },
+   {
+    "type": "button",
+    "id": "disconnect",
+    "text": "DISCONNECT",
+    "layout": {
+     "w": 110
+    },
+    "bind": {
+     "visible": "is_remote"
+    }
+   },
+   {
+    "type": "button",
+    "id": "save_quit",
+    "text": "SAVE AND QUIT",
+    "layout": {
+     "w": 110
+    },
+    "bind": {
+     "visible": "is_host"
+    }
+   }
+  ]
+ }
 }

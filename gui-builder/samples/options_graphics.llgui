@@ -2,7 +2,7 @@
   "version": 2,
   "document": {
     "format": 1,
-    "kind": "petramond:title",
+    "kind": "petramond:options_graphics",
     "class": "screen",
     "root": {
       "type": "frame",
@@ -25,7 +25,7 @@
           0,
           0
         ],
-        "gap": 8,
+        "gap": 0,
         "dir": "column",
         "align": "center",
         "justify": "center"
@@ -61,18 +61,21 @@
               "x": 0,
               "y": 0
             }
+          },
+          "bind": {
+            "visible": "show_backdrop"
           }
         },
         {
           "type": "column",
           "layout": {
-            "w": "auto",
+            "w": 250,
             "h": "auto",
             "pad": [
-              0,
-              0,
-              0,
-              0
+              10,
+              8,
+              10,
+              10
             ],
             "margin": [
               0,
@@ -80,18 +83,47 @@
               0,
               0
             ],
-            "gap": 8,
+            "gap": 7,
             "dir": "column",
-            "align": "center",
+            "align": "stretch",
             "justify": "start"
           },
+          "style": "panel.large",
           "children": [
             {
-              "type": "image",
-              "image": "../../textures/gui/petramond-logo.png",
+              "type": "row",
               "layout": {
-                "w": 220,
-                "h": 61,
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "center"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "text": "Graphics",
+                  "scale": 2
+                }
+              ]
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
                 "pad": [
                   0,
                   0,
@@ -110,15 +142,15 @@
               }
             },
             {
-              "type": "frame",
+              "type": "row",
               "layout": {
                 "w": "auto",
                 "h": "auto",
                 "pad": [
-                  10,
-                  8,
-                  10,
-                  10
+                  0,
+                  0,
+                  0,
+                  0
                 ],
                 "margin": [
                   0,
@@ -126,19 +158,17 @@
                   0,
                   0
                 ],
-                "gap": 7,
+                "gap": 4,
                 "dir": "column",
                 "align": "center",
                 "justify": "start"
               },
-              "style": "panel.large",
               "children": [
                 {
-                  "id": "start",
-                  "type": "button",
-                  "text": "Start Game",
+                  "type": "label",
+                  "text": "View Distance",
                   "layout": {
-                    "w": 130,
+                    "w": 78,
                     "h": "auto",
                     "pad": [
                       0,
@@ -158,11 +188,41 @@
                   }
                 },
                 {
-                  "id": "connect",
-                  "type": "button",
-                  "text": "Connect to Server",
+                  "id": "view_distance",
+                  "type": "slider",
+                  "min": 4.0,
+                  "max": 48.0,
+                  "step": 1.0,
                   "layout": {
-                    "w": 130,
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_w": 80
+                  },
+                  "bind": {
+                    "value": "view_distance"
+                  }
+                },
+                {
+                  "type": "label",
+                  "layout": {
+                    "w": 54,
                     "h": "auto",
                     "pad": [
                       0,
@@ -179,14 +239,40 @@
                     "gap": 0,
                     "dir": "column",
                     "justify": "start"
+                  },
+                  "bind": {
+                    "text": "vd_label"
                   }
-                },
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "center"
+              },
+              "children": [
                 {
-                  "id": "options",
+                  "id": "particles",
                   "type": "button",
-                  "text": "Options",
                   "layout": {
-                    "w": 130,
+                    "w": 140,
                     "h": "auto",
                     "pad": [
                       0,
@@ -203,12 +289,61 @@
                     "gap": 0,
                     "dir": "column",
                     "justify": "start"
+                  },
+                  "bind": {
+                    "text": "particles_label"
                   }
-                },
+                }
+              ]
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "center"
+              },
+              "children": [
                 {
-                  "id": "quit",
+                  "id": "back",
                   "type": "button",
-                  "text": "Quit",
+                  "text": "Back",
                   "layout": {
                     "w": 130,
                     "h": "auto",
@@ -237,7 +372,20 @@
     }
   },
   "editor": {
-    "sample_state": {},
+    "sample_state": {
+      "particles_label": {
+        "str": "Sample text"
+      },
+      "show_backdrop": {
+        "bool": true
+      },
+      "vd_label": {
+        "str": "Sample text"
+      },
+      "view_distance": {
+        "f32": 0.5
+      }
+    },
     "zoom": 1.0,
     "preview_scale": 2,
     "screen": [

@@ -7,7 +7,8 @@
    "handles": {
     "start": "click: open world select",
     "connect": "click: open the connect-to-server screen",
-    "quit": "click: quit the game"
+    "quit": "click: quit the game",
+    "options": "click: open the Options screens"
    }
   },
   "petramond:world_select": {
@@ -174,7 +175,8 @@
     "open_lan": "click: open the running host to LAN on port 7434",
     "disconnect": "click: leave the remote server and return to title",
     "save_quit": "click: save and return to title (host only)",
-    "keys": "Enter resumes (ESC also resumes, via the global close control)"
+    "keys": "Enter resumes (ESC also resumes, via the global close control)",
+    "options": "click: open the Options screens (Back returns to pause)"
    }
   },
   "petramond:hotbar": {
@@ -320,6 +322,103 @@
    },
    "handles": {
     "ok": "click: back to title (ESC/Enter too)"
+   }
+  },
+  "petramond:options": {
+   "state": {
+    "show_backdrop": {
+     "type": "bool",
+     "doc": "title flow (no game) shows the screenshot backdrop"
+    }
+   },
+   "handles": {
+    "sound": "click: open the Sound options",
+    "controls": "click: open the Controls options",
+    "graphics": "click: open the Graphics options",
+    "back": "click: back to the title or the pause menu (wherever Options was opened from)"
+   }
+  },
+  "petramond:options_sound": {
+   "state": {
+    "show_backdrop": {
+     "type": "bool",
+     "doc": "title flow (no game) shows the screenshot backdrop"
+    },
+    "master_vol": {
+     "type": "f32",
+     "doc": "master volume slider value, 0..100"
+    },
+    "master_pct": {
+     "type": "str",
+     "doc": "master volume as a percent label"
+    },
+    "sound_vol": {
+     "type": "f32",
+     "doc": "sound (non-music) volume slider value, 0..100"
+    },
+    "sound_pct": {
+     "type": "str",
+     "doc": "sound volume as a percent label"
+    },
+    "music_vol": {
+     "type": "f32",
+     "doc": "music volume slider value, 0..100"
+    },
+    "music_pct": {
+     "type": "str",
+     "doc": "music volume as a percent label"
+    }
+   },
+   "handles": {
+    "master_vol": "slider: master volume (live; committed persists client.json)",
+    "sound_vol": "slider: sound volume (live; committed persists)",
+    "music_vol": "slider: music volume (live; committed persists)",
+    "back": "click: back to the Options root"
+   }
+  },
+  "petramond:options_controls": {
+   "state": {
+    "show_backdrop": {
+     "type": "bool",
+     "doc": "title flow (no game) shows the screenshot backdrop"
+    },
+    "bind:<action>": {
+     "type": "str",
+     "doc": "current binding label per action (walk_forward, strafe_right, strafe_left, walk_backward, jump, attack, interact, hotbar_next, hotbar_prev, open_inventory, chat, sprint, sneak); '> ??? <' while armed"
+    },
+    "remap_hint": {
+     "type": "str",
+     "doc": "the fixed hint line: how to rebind, or the capture instructions while a remap is armed"
+    }
+   },
+   "handles": {
+    "bind:<action>": "click: arm this action for remap (clicking another action switches; clicking the armed one cancels). The app then captures the next raw key/mouse/scroll; ESC cancels.",
+    "back": "click: cancel any remap and return to the Options root"
+   }
+  },
+  "petramond:options_graphics": {
+   "state": {
+    "show_backdrop": {
+     "type": "bool",
+     "doc": "title flow (no game) shows the screenshot backdrop"
+    },
+    "view_distance": {
+     "type": "f32",
+     "doc": "view distance slider value, 4..48 chunks"
+    },
+    "vd_label": {
+     "type": "str",
+     "doc": "view distance as an 'N chunks' label"
+    },
+    "particles_label": {
+     "type": "str",
+     "doc": "the particles cycle button text (Particles: Full/Reduced/Off)"
+    }
+   },
+   "handles": {
+    "view_distance": "slider: view distance in chunks; the release commit applies it live (replica, streaming, fog) and persists",
+    "particles": "click: cycle particles Full -> Reduced -> Off (applies live, persists)",
+    "back": "click: back to the Options root"
    }
   }
  }

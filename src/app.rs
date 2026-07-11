@@ -11,6 +11,7 @@ mod connect;
 mod gui_router;
 mod input;
 mod menu_lifecycle;
+mod options;
 mod pointer;
 mod presentation_events;
 mod render;
@@ -85,10 +86,30 @@ pub struct App {
     client_overlay_images: Vec<crate::render::ClientOverlayImage>,
     chat: chat::ChatUi,
     screen: AppScreen,
-    /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
-    /// from the rebindable Sprint/Sneak controls. Drives UI modifiers (Ctrl =
-    /// drop whole stack, Shift = inventory quick-move).
+    /// Physical Ctrl/Shift/Alt/Meta modifier state from the windowing system,
+    /// tracked apart from the rebindable controls. Drives UI modifiers (Ctrl =
+    /// drop whole stack, Shift = inventory quick-move) and binding chords.
     modifiers: Modifiers,
+    /// Persistent per-machine settings (`client.json`): volumes, particles,
+    /// key bindings. `render_dist` mirrors the App field (the env override may
+    /// differ from the file at launch); every committed Options change stores
+    /// the file.
+    settings: crate::save::client::ClientSettings,
+    /// Which bound actions are currently held (raw input → Control edges).
+    binding_engine: crate::controls::BindingEngine,
+    /// The action armed for remapping on the Options → Controls screen
+    /// (`None` = not remapping). While set, raw input is CAPTURED as the new
+    /// binding instead of dispatching; ESC cancels.
+    remap: Option<crate::controls::BindableAction>,
+    /// The modifier key held down while remapping (a chord starter). If it
+    /// releases with nothing else captured, the tap binds the modifier itself.
+    remap_armed_mod: Option<winit::keyboard::KeyCode>,
+    /// Whether the open Options flow was entered from the pause menu (Back
+    /// returns there) rather than the title screen.
+    options_from_pause: bool,
+    /// Renderer-owned option values (fog/render distance, particle density)
+    /// changed and must be pushed on the next render.
+    renderer_options_dirty: bool,
     /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
@@ -161,6 +182,23 @@ struct MobSoundState {
 
 impl App {
     pub fn new(cam: Camera, render_dist: i32) -> Self {
+        // The file is the persistence layer for options; the render_dist PARAM
+        // stays authoritative for this run (the host resolved env > file), so
+        // mirror it back — the Options slider shows and stores the live value.
+        // Tests run on defaults: the suite must never read (or later rewrite)
+        // the developer's real client.json — same rule as `persist_identity`.
+        let mut settings = if cfg!(test) {
+            crate::save::client::ClientSettings::default()
+        } else {
+            crate::save::client::load()
+        };
+        settings.render_dist = render_dist;
+        let mut audio = Audio::new();
+        audio.set_volumes(
+            settings.master_volume,
+            settings.sound_volume,
+            settings.music_volume,
+        );
         let mut app = Self {
             game: None,
             shell_camera: cam,
@@ -173,7 +211,7 @@ impl App {
             world_sound_cues: Vec::new(),
             mob_sound_state: HashMap::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
-            audio: Audio::new(),
+            audio,
             last: now_seconds(),
             input: InputController::default(),
             pointer: PointerState::default(),
@@ -186,6 +224,12 @@ impl App {
             chat: chat::ChatUi::default(),
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
+            settings,
+            binding_engine: crate::controls::BindingEngine::default(),
+            remap: None,
+            remap_armed_mod: None,
+            options_from_pause: false,
+            renderer_options_dirty: true,
             last_render: now_seconds(),
             hand: HandTriggers::default(),
             hurt_shake_t: 0.0,
@@ -277,6 +321,24 @@ impl App {
                 true
             }
             ControlEvent::CloseScreen => self.close_screen(),
+            // Attack / Interact are rebindable: whatever raw input fired them
+            // (mouse button by default, any key/scroll after a remap) lands in
+            // the same pointer break/use state gameplay consumes. Downs only
+            // count in gameplay; releases always land so nothing sticks held.
+            ControlEvent::Attack { down } => {
+                if self.screen.gameplay_enabled() || !down {
+                    self.pointer
+                        .set_gameplay_button(crate::controls::PointerButton::Primary, down);
+                }
+                true
+            }
+            ControlEvent::Interact { down } => {
+                if self.screen.gameplay_enabled() || !down {
+                    self.pointer
+                        .set_gameplay_button(crate::controls::PointerButton::Secondary, down);
+                }
+                true
+            }
             ControlEvent::SelectHotbar(slot) => {
                 if self.screen.gameplay_enabled() {
                     if let Some(game) = self.game.as_mut() {
@@ -314,11 +376,18 @@ impl App {
         }
     }
 
-    /// Update the tracked physical keyboard modifiers (Ctrl / Shift) from the
-    /// platform's modifier-changed event. Independent of the rebindable
-    /// Sprint/Sneak controls.
+    /// Update the tracked physical keyboard modifiers (Ctrl / Shift / Alt /
+    /// Meta) from the platform's modifier-changed event. Independent of the
+    /// rebindable controls — but a lifted modifier releases any held binding
+    /// CHORD that required it (Ctrl+B sprint stops when Ctrl lifts).
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
+        let mut out = Vec::new();
+        self.binding_engine
+            .on_modifiers_changed(modifiers, &mut out);
+        for (control, down) in out {
+            self.handle_control(control, down);
+        }
     }
 
     /// Which GUI document backs the current screen, if any. Document-backed
@@ -336,6 +405,10 @@ impl App {
             AppScreen::ConnectServer => GuiKind::ConnectServer,
             AppScreen::ModsMissing => GuiKind::ModsMissing,
             AppScreen::ConnectionLost => GuiKind::ConnectionLost,
+            AppScreen::Options => GuiKind::Options,
+            AppScreen::OptionsSound => GuiKind::OptionsSound,
+            AppScreen::OptionsControls => GuiKind::OptionsControls,
+            AppScreen::OptionsGraphics => GuiKind::OptionsGraphics,
             AppScreen::Pause => GuiKind::Pause,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,

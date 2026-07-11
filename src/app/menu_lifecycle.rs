@@ -192,6 +192,19 @@ impl App {
         } else if matches!(self.screen, AppScreen::Pause) {
             self.resume_game();
             true
+        } else if matches!(self.screen, AppScreen::Options) {
+            self.close_options_root();
+            true
+        } else if self.screen.options_open() {
+            // A category screen. ESC while a remap is armed only cancels the
+            // remap (the raw-input capture path normally eats ESC first; this
+            // covers direct control dispatch, e.g. tests).
+            if self.remap.is_some() {
+                self.cancel_remap();
+            } else {
+                self.close_options_category();
+            }
+            true
         } else if matches!(self.screen, AppScreen::CreateWorld | AppScreen::DeleteWorld) {
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();

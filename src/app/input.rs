@@ -10,6 +10,15 @@ pub enum ControlEvent {
     TogglePlayerMode,
     CloseScreen,
     SelectHotbar(u8),
+    /// Attack / mine state change (both edges — the App mirrors it into the
+    /// pointer's break-held/attack-click state, wherever it was bound).
+    Attack {
+        down: bool,
+    },
+    /// Interact / place state change (both edges), like [`Attack`](Self::Attack).
+    Interact {
+        down: bool,
+    },
     /// Drop the held item this press (edge-triggered). Whether it's one item or
     /// the whole stack is decided by the App from the physical Ctrl modifier, not
     /// here — keeping the drop key independent of the sprint binding.
@@ -29,6 +38,11 @@ pub struct InputController {
     sprint: bool,
     toggle_mode_key: bool,
     toggle_mode_chord: bool,
+    /// Whole hotbar steps accumulated by HotbarNext/HotbarPrev edges since the
+    /// last frame (positive = next), drained into `GameInput.hotbar_scroll`.
+    hotbar_steps: i32,
+    hotbar_next_held: bool,
+    hotbar_prev_held: bool,
     inventory_toggle_held: bool,
     chat_open_held: bool,
     command_chat_open_held: bool,
@@ -66,6 +80,24 @@ impl InputController {
             }
             Control::Sprint => {
                 self.sprint = down;
+                None
+            }
+            Control::Attack => Some(ControlEvent::Attack { down }),
+            Control::Interact => Some(ControlEvent::Interact { down }),
+            Control::HotbarNext => {
+                let edge = down && !self.hotbar_next_held;
+                self.hotbar_next_held = down;
+                if edge {
+                    self.hotbar_steps += 1;
+                }
+                None
+            }
+            Control::HotbarPrev => {
+                let edge = down && !self.hotbar_prev_held;
+                self.hotbar_prev_held = down;
+                if edge {
+                    self.hotbar_steps -= 1;
+                }
                 None
             }
             Control::TogglePlayerMode => {
@@ -109,6 +141,11 @@ impl InputController {
         };
 
         event.or_else(|| self.mode_chord_event())
+    }
+
+    /// Drain the accumulated hotbar steps (positive = next slot).
+    pub fn take_hotbar_steps(&mut self) -> i32 {
+        std::mem::take(&mut self.hotbar_steps)
     }
 
     pub fn movement(&self) -> MovementInput {

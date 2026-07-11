@@ -184,6 +184,9 @@ impl ServerGame {
                     cx: (eye.x.floor() as i32).div_euclid(16),
                     cy: (eye.y.floor() as i32).div_euclid(16),
                     cz: (eye.z.floor() as i32).div_euclid(16),
+                    // The session's requested view distance; world/streaming
+                    // clamp it to the server budget (`world.render_dist`).
+                    radius: sess.view_radius,
                 }
             })
             .collect()

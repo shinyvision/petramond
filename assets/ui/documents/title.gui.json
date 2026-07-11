@@ -1,95 +1,103 @@
 {
-    "format": 1,
-    "kind": "petramond:title",
-    "class": "screen",
-    "root": {
-        "type": "frame",
-        "layout": {
-            "w": {
-                "grow": 1
-            },
-            "h": {
-                "grow": 1
-            },
-            "gap": 8,
-            "align": "center",
-            "justify": "center"
-        },
-        "children": [
-            {
-                "type": "image",
-                "image": "../../textures/gui/screenshot.png",
-                "fit": "cover",
-                "layout": {
-                    "w": {
-                        "grow": 1
-                    },
-                    "h": {
-                        "grow": 1
-                    },
-                    "abs": {
-                        "x": 0,
-                        "y": 0
-                    }
-                }
-            },
-            {
-                "type": "column",
-                "layout": {
-                    "gap": 8,
-                    "align": "center"
-                },
-                "children": [
-                    {
-                        "type": "image",
-                        "image": "../../textures/gui/petramond-logo.png",
-                        "layout": {
-                            "w": 220,
-                            "h": 61
-                        }
-                    },
-                    {
-                        "type": "frame",
-                        "style": "panel.large",
-                        "layout": {
-                            "pad": [
-                                10,
-                                8,
-                                10,
-                                10
-                            ],
-                            "gap": 7,
-                            "align": "center"
-                        },
-                        "children": [
-                            {
-                                "type": "button",
-                                "id": "start",
-                                "text": "Start Game",
-                                "layout": {
-                                    "w": 130
-                                }
-                            },
-                            {
-                                "type": "button",
-                                "id": "connect",
-                                "text": "Connect to Server",
-                                "layout": {
-                                    "w": 130
-                                }
-                            },
-                            {
-                                "type": "button",
-                                "id": "quit",
-                                "text": "Quit",
-                                "layout": {
-                                    "w": 130
-                                }
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
+ "format": 1,
+ "kind": "petramond:title",
+ "class": "screen",
+ "root": {
+  "type": "frame",
+  "layout": {
+   "w": {
+    "grow": 1
+   },
+   "h": {
+    "grow": 1
+   },
+   "gap": 8,
+   "align": "center",
+   "justify": "center"
+  },
+  "children": [
+   {
+    "type": "image",
+    "image": "../../textures/gui/screenshot.png",
+    "fit": "cover",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
     }
+   },
+   {
+    "type": "column",
+    "layout": {
+     "gap": 8,
+     "align": "center"
+    },
+    "children": [
+     {
+      "type": "image",
+      "image": "../../textures/gui/petramond-logo.png",
+      "layout": {
+       "w": 220,
+       "h": 61
+      }
+     },
+     {
+      "type": "frame",
+      "style": "panel.large",
+      "layout": {
+       "pad": [
+        10,
+        8,
+        10,
+        10
+       ],
+       "gap": 7,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "button",
+        "id": "start",
+        "text": "Start Game",
+        "layout": {
+         "w": 130
+        }
+       },
+       {
+        "type": "button",
+        "id": "connect",
+        "text": "Connect to Server",
+        "layout": {
+         "w": 130
+        }
+       },
+       {
+        "type": "button",
+        "id": "options",
+        "text": "Options",
+        "layout": {
+         "w": 130
+        }
+       },
+       {
+        "type": "button",
+        "id": "quit",
+        "text": "Quit",
+        "layout": {
+         "w": 130
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
 }

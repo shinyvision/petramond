@@ -36,6 +36,12 @@ impl PointerState {
         self.cursor_y = y;
     }
 
+    /// Set the gameplay break/use state directly — the rebindable
+    /// Attack/Interact controls' landing point (bypasses screen routing).
+    pub(super) fn set_gameplay_button(&mut self, button: PointerButton, down: bool) {
+        self.set_button(button, down);
+    }
+
     fn set_button(&mut self, button: PointerButton, down: bool) {
         match (button, down) {
             (PointerButton::Primary, true) => {
@@ -102,15 +108,27 @@ impl PointerState {
         true
     }
 
-    /// Whole hotbar slots to move this frame, draining the accumulator by the
-    /// notches consumed and keeping the sub-slot remainder for next frame.
-    fn take_scroll_step(&mut self) -> i32 {
+    /// Whole wheel notches accumulated since the last call, draining the
+    /// accumulator by the notches consumed and keeping the sub-notch remainder
+    /// for next frame (hi-res wheels emit fractions that sum to a notch).
+    /// Positive = scroll down. Each notch fires the bindings bound to that
+    /// scroll direction (hotbar next/prev by default).
+    pub(super) fn take_scroll_notches(&mut self) -> i32 {
         let steps = (self.scroll_delta / SCROLL_NOTCHES_PER_SLOT).trunc();
         self.scroll_delta -= steps * SCROLL_NOTCHES_PER_SLOT;
         steps as i32
     }
 
-    fn take_game_input(&mut self, input: &InputController, gameplay_enabled: bool) -> GameInput {
+    #[cfg(test)]
+    fn take_scroll_step(&mut self) -> i32 {
+        self.take_scroll_notches()
+    }
+
+    fn take_game_input(
+        &mut self,
+        input: &mut InputController,
+        gameplay_enabled: bool,
+    ) -> GameInput {
         let look_delta = if gameplay_enabled && self.grabbing {
             (self.dx, self.dy)
         } else {
@@ -119,8 +137,12 @@ impl PointerState {
         self.dx = 0.0;
         self.dy = 0.0;
 
+        // Hotbar stepping is a bound control now (scroll by default, keys by
+        // remap): edges accumulated in the InputController, dropped outside
+        // gameplay like the raw scroll accumulator.
+        let steps = input.take_hotbar_steps();
         let hotbar_scroll = if gameplay_enabled {
-            self.take_scroll_step()
+            steps
         } else {
             self.scroll_delta = 0.0;
             0
@@ -219,6 +241,11 @@ impl App {
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
+        if self.remap.is_some() {
+            // Remap capture: any wheel movement binds its direction.
+            self.remap_capture_scroll(delta);
+            return;
+        }
         if self.screen == super::AppScreen::Chat {
             self.chat.scroll(delta);
             return;
@@ -231,6 +258,14 @@ impl App {
             return;
         }
         self.pointer.add_scroll_delta(delta);
+        // Whole notches fire whatever is bound to that scroll direction
+        // (hotbar next/prev by default) — gameplay only, like every binding.
+        if self.screen.gameplay_enabled() {
+            let notches = self.pointer.take_scroll_notches();
+            if notches != 0 {
+                self.pulse_scroll_bindings(notches);
+            }
+        }
     }
 
     pub fn release_pointer_buttons(&mut self) {
@@ -245,7 +280,7 @@ impl App {
 
     pub(super) fn take_game_input(&mut self) -> GameInput {
         self.pointer
-            .take_game_input(&self.input, self.screen.gameplay_enabled())
+            .take_game_input(&mut self.input, self.screen.gameplay_enabled())
     }
 }
 
@@ -309,7 +344,7 @@ mod tests {
             ..Default::default()
         };
 
-        let game_input = p.take_game_input(&input, false);
+        let game_input = p.take_game_input(&mut input, false);
 
         assert!(!game_input.gameplay_enabled);
         assert!(game_input.movement.forward);
@@ -320,18 +355,18 @@ mod tests {
         assert!(game_input.place_clicked);
         assert_eq!(p.scroll_delta, 0.0);
 
-        let game_input = p.take_game_input(&input, true);
+        let game_input = p.take_game_input(&mut input, true);
         assert_eq!(game_input.look_delta, (0.0, 0.0));
     }
 
     #[test]
     fn button_edges_and_held_state_feed_game_input() {
-        let input = InputController::default();
+        let mut input = InputController::default();
         let mut p = PointerState::default();
 
         p.set_button(PointerButton::Primary, true);
         p.set_button(PointerButton::Primary, false);
-        let game_input = p.take_game_input(&input, true);
+        let game_input = p.take_game_input(&mut input, true);
         assert!(p.is_grabbing());
         assert!(!game_input.break_held);
         assert!(game_input.attack_clicked);
@@ -340,7 +375,7 @@ mod tests {
         p.clear_edges();
         p.set_button(PointerButton::Secondary, true);
         p.set_button(PointerButton::Secondary, false);
-        let game_input = p.take_game_input(&input, true);
+        let game_input = p.take_game_input(&mut input, true);
         assert!(game_input.place_clicked);
         assert!(!game_input.attack_clicked);
     }

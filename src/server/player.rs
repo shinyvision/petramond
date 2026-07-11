@@ -431,10 +431,15 @@ pub(crate) struct ConnectedPlayer {
     ///
     /// [`SelfTransform`]: crate::net::protocol::SelfTransform
     pub last_reported_transform: Option<crate::net::protocol::SelfTransform>,
+    /// This client's REQUESTED view distance in chunks (`Join` /
+    /// `SetViewDistance`, clamped `4..=64`). Streaming uses
+    /// `min(this, world.render_dist)` — the server's own budget stays the
+    /// ceiling, per-connection requests only shrink it.
+    pub view_radius: i32,
 }
 
 impl ConnectedPlayer {
-    pub(crate) fn new(id: PlayerId, name: String, player: Player) -> Self {
+    pub(crate) fn new(id: PlayerId, name: String, player: Player, view_radius: i32) -> Self {
         let fall = FallTracker::new(player.pos.y);
         let pos_before_ticks = player.pos;
         Self {
@@ -500,6 +505,7 @@ impl ConnectedPlayer {
             last_sent_gui_state: None,
             terrain: Default::default(),
             last_reported_transform: None,
+            view_radius: view_radius.clamp(4, 64),
         }
     }
 

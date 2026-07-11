@@ -102,6 +102,7 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
     app.set_modifiers(Modifiers {
         ctrl: false,
         shift: true,
+        ..Modifiers::default()
     });
     app.handle_text_key(TextKey::ArrowLeft);
     app.handle_text_key(TextKey::ArrowLeft);
@@ -115,6 +116,7 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
     app.set_modifiers(Modifiers {
         ctrl: true,
         shift: false,
+        ..Modifiers::default()
     });
     assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyA));
     assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyC));
@@ -464,6 +466,7 @@ fn chat_input_uses_shared_text_editor_selection_and_clipboard() {
     app.set_modifiers(Modifiers {
         ctrl: false,
         shift: true,
+        ..Modifiers::default()
     });
     app.handle_text_key(TextKey::ArrowLeft);
     app.handle_text_key(TextKey::ArrowLeft);
@@ -520,4 +523,158 @@ pub(super) fn click_doc_id(app: &mut App, id: &str) {
     app.set_cursor_position((r.x + r.w / 2) as f32, (r.y + r.h / 2) as f32);
     app.set_pointer_button(PointerButton::Primary, true);
     app.set_pointer_button(PointerButton::Primary, false);
+}
+
+#[test]
+fn options_opens_from_title_and_esc_walks_back_out() {
+    use crate::gui::GuiKind;
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+
+    app.drive_doc_ui(GuiKind::Title, screen, 0.0);
+    click_doc_id(&mut app, "options");
+    app.drive_doc_ui(GuiKind::Title, screen, 0.1);
+    assert_eq!(app.screen, crate::app::AppScreen::Options);
+
+    app.drive_doc_ui(GuiKind::Options, screen, 0.2);
+    click_doc_id(&mut app, "graphics");
+    app.drive_doc_ui(GuiKind::Options, screen, 0.3);
+    assert_eq!(app.screen, crate::app::AppScreen::OptionsGraphics);
+
+    // ESC: category → root → title (the flow began there).
+    app.handle_control(Control::CloseScreen, true);
+    assert_eq!(app.screen, crate::app::AppScreen::Options);
+    app.handle_control(Control::CloseScreen, true);
+    assert_eq!(app.screen, crate::app::AppScreen::Title);
+}
+
+#[test]
+fn options_opened_from_pause_returns_to_pause() {
+    use crate::gui::GuiKind;
+    let mut app = app();
+    let screen = (1280, 720);
+    app.handle_control(Control::CloseScreen, true); // pause
+
+    app.drive_doc_ui(GuiKind::Pause, screen, 0.0);
+    click_doc_id(&mut app, "options");
+    app.drive_doc_ui(GuiKind::Pause, screen, 0.1);
+    assert_eq!(app.screen, crate::app::AppScreen::Options);
+
+    app.drive_doc_ui(GuiKind::Options, screen, 0.2);
+    click_doc_id(&mut app, "back");
+    app.drive_doc_ui(GuiKind::Options, screen, 0.3);
+    assert_eq!(
+        app.screen,
+        crate::app::AppScreen::Pause,
+        "Back returns to the pause menu the flow came from"
+    );
+}
+
+/// The remap loop: click a binding button to arm it, the next raw key becomes
+/// the binding, and the rebound key drives the control. ESC cancels an armed
+/// remap; clicking a different action's button switches the armed action.
+#[test]
+fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
+    use crate::controls::{BindableAction, Binding, BoundInput};
+    use crate::gui::GuiKind;
+    use winit::keyboard::KeyCode;
+
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+    app.screen = crate::app::AppScreen::OptionsControls;
+
+    // Arm Jump for remapping.
+    app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.0);
+    click_doc_id(&mut app, "bind:jump");
+    app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.1);
+    assert_eq!(app.remap, Some(BindableAction::Jump));
+
+    // ESC cancels without touching the binding.
+    assert!(app.remap_capture_key(KeyCode::Escape, true));
+    assert_eq!(app.remap, None);
+    assert_eq!(
+        app.settings.bindings.binding(BindableAction::Jump),
+        Binding::key(KeyCode::Space)
+    );
+
+    // Clicking one action then another switches the armed remap (rows near
+    // the top — the scroll viewport clips lower rows out of click reach).
+    app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.2);
+    click_doc_id(&mut app, "bind:jump");
+    app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.3);
+    click_doc_id(&mut app, "bind:strafe_left");
+    app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.4);
+    assert_eq!(app.remap, Some(BindableAction::StrafeLeft));
+
+    // Capture K (no chord): binding lands, remap disarms.
+    assert!(app.remap_capture_key(KeyCode::KeyK, true));
+    assert_eq!(app.remap, None);
+    assert_eq!(
+        app.settings.bindings.binding(BindableAction::StrafeLeft),
+        Binding::key(KeyCode::KeyK)
+    );
+
+    // The rebound key drives the control through the raw-key path...
+    assert!(app.handle_raw_key(KeyCode::KeyK, true));
+    assert!(app.take_game_input().movement.left);
+    assert!(app.handle_raw_key(KeyCode::KeyK, false));
+    assert!(!app.take_game_input().movement.left);
+    // ...and the old default no longer does (StrafeLeft moved off A).
+    assert!(app.handle_raw_key(KeyCode::KeyA, true));
+    assert!(!app.take_game_input().movement.left);
+    let _ = app.handle_raw_key(KeyCode::KeyA, false);
+
+    // A tapped modifier binds ITSELF (chord starters bind on release).
+    app.remap = Some(BindableAction::Sprint);
+    assert!(app.remap_capture_key(KeyCode::AltLeft, true));
+    assert_eq!(
+        app.remap,
+        Some(BindableAction::Sprint),
+        "hold = chord start"
+    );
+    assert!(app.remap_capture_key(KeyCode::AltLeft, false));
+    assert_eq!(
+        app.settings.bindings.binding(BindableAction::Sprint).input,
+        BoundInput::Key(KeyCode::AltLeft)
+    );
+}
+
+/// Attack/interact are rebindable: the default mouse buttons land in the
+/// pointer break/use state through the raw-mouse path, and a key rebind
+/// drives the same state.
+#[test]
+fn attack_rebinds_from_mouse_to_key() {
+    use crate::controls::{BindableAction, Binding};
+    use winit::keyboard::KeyCode;
+
+    let mut app = app();
+    assert!(app.screen.gameplay_enabled());
+
+    app.handle_raw_mouse(winit::event::MouseButton::Left, true);
+    let input = app.take_game_input();
+    assert!(input.break_held && input.attack_clicked);
+    app.handle_raw_mouse(winit::event::MouseButton::Left, false);
+    app.pointer.clear_edges();
+
+    app.settings
+        .bindings
+        .set(BindableAction::Attack, Binding::key(KeyCode::KeyF));
+    assert!(app.handle_raw_key(KeyCode::KeyF, true));
+    let input = app.take_game_input();
+    assert!(
+        input.break_held,
+        "the rebound key mines like the button did"
+    );
+    assert!(app.handle_raw_key(KeyCode::KeyF, false));
+    let input = app.take_game_input();
+    assert!(!input.break_held);
+    // The unbound left button no longer mines...
+    app.pointer.clear_edges();
+    app.handle_raw_mouse(winit::event::MouseButton::Left, true);
+    let input = app.take_game_input();
+    assert!(
+        !input.break_held,
+        "left click moved off Attack; it must not mine"
+    );
+    app.handle_raw_mouse(winit::event::MouseButton::Left, false);
 }

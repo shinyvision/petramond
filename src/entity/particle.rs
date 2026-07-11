@@ -165,6 +165,10 @@ pub struct ParticleSystem {
     head: usize,
     /// Monotonic counter feeding the deterministic hash for spawn variety.
     seed: u64,
+    /// Spawn-count multiplier from the particles graphics option (`0` = off,
+    /// `0.5` = reduced, `1` = full). Presentation-only; ticking existing
+    /// particles is unaffected.
+    count_scale: f32,
 }
 
 impl ParticleSystem {
@@ -173,7 +177,22 @@ impl ParticleSystem {
             particles: Vec::with_capacity(PARTICLE_CAPACITY),
             head: 0,
             seed: 0,
+            count_scale: 1.0,
         }
+    }
+
+    pub fn set_count_scale(&mut self, scale: f32) {
+        self.count_scale = scale.clamp(0.0, 1.0);
+    }
+
+    /// Apply the particles-option multiplier to a spawn count. Full keeps
+    /// `count`, reduced halves it (rounding up so small effects survive), off
+    /// silences the spawn entirely.
+    fn scaled_count(&self, count: usize) -> usize {
+        if self.count_scale <= 0.0 {
+            return 0;
+        }
+        ((count as f32 * self.count_scale).ceil() as usize).min(count)
     }
 
     /// Number of currently-alive particles.
@@ -330,7 +349,8 @@ impl ParticleSystem {
             face_normal.y as f32,
             face_normal.z as f32,
         );
-        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4
+        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
+        let count = self.scaled_count(count);
         let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
         for _ in 0..count {
             // Spawn just outside the mined face, jittered across it.
@@ -395,7 +415,8 @@ impl ParticleSystem {
         let tiles = block.tiles();
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
             + Vec3::splat(0.5);
-        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31
+        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
+        let count = self.scaled_count(count);
         for _ in 0..count {
             // Random point inside the block volume.
             let pos = center
@@ -453,7 +474,8 @@ impl ParticleSystem {
     ) {
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
             + Vec3::splat(0.5);
-        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31
+        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
+        let count = self.scaled_count(count);
         for _ in 0..count {
             let pos = center
                 + Vec3::new(
@@ -487,8 +509,10 @@ impl ParticleSystem {
         blocklight: u8,
         warm: u8,
     ) {
-        let count = ((spec.count_per_intensity * intensity.max(0.0)).round() as u32)
-            .clamp(1, spec.max_count);
+        let count = self.scaled_count(
+            ((spec.count_per_intensity * intensity.max(0.0)).round() as u32)
+                .clamp(1, spec.max_count) as usize,
+        );
         for _ in 0..count {
             let angle = self.rand() * std::f32::consts::TAU;
             let radial =
@@ -550,7 +574,8 @@ impl ParticleSystem {
             face_normal.y as f32,
             face_normal.z as f32,
         );
-        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4
+        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
+        let count = self.scaled_count(count);
         let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
         for _ in 0..count {
             let face_center = base + Vec3::splat(0.5) + n * 0.55;

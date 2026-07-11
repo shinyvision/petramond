@@ -541,7 +541,13 @@ impl Renderer {
         self.particle_emitter_visible.clear();
         let fog = self.terrain_cull_dist();
         let fog_sq = fog * fog;
+        // Particles option "off": no looping-emitter particles at all (burst
+        // solids are silenced at their game-side spawn, the same option).
+        let emitters_enabled = self.particle_density > 0.0;
         for inst in &self.particle_emitters {
+            if !emitters_enabled {
+                break;
+            }
             let (min, max) = emitter_world_bounds(inst);
             if !visible_world_aabb(min, max) {
                 continue;
@@ -560,6 +566,7 @@ impl Renderer {
         let solids = &self.solid_particles;
         let time = self.visual_time;
         let cam_pos = self.cam_pos;
+        let density = self.particle_density;
         self.emitter_particle_draw.bake(
             &self.device,
             &self.queue,
@@ -571,6 +578,7 @@ impl Renderer {
                     time,
                     cam_pos,
                     env,
+                    density,
                     verts,
                     &mut self.emitter_particle_scratch,
                 )

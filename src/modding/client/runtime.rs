@@ -317,14 +317,22 @@ fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, wh
     }
 }
 
-/// Whether a physical key is already bound by an engine gameplay control.
-/// Derived from [`crate::controls::control_from_key_code`] — the engine's
-/// single binding source — so a new engine binding is refused to client mods
-/// automatically, with no list to keep in sync.
+/// Whether a physical key is already bound by an engine gameplay control:
+/// the fixed (non-remappable) table plus every DEFAULT action binding. The
+/// player's live remaps deliberately don't move this set — a mod key that was
+/// valid at pack load must not turn invalid because the player rebound Sneak.
 fn reserved_key(key: &str) -> bool {
-    PHYSICAL_KEYS
-        .iter()
-        .any(|(code, name)| *name == key && crate::controls::control_from_key_code(*code).is_some())
+    let defaults = crate::controls::BindingSet::default();
+    let default_bound = |code: winit::keyboard::KeyCode| {
+        crate::controls::BindableAction::ALL
+            .iter()
+            .any(|a| defaults.binding(*a).input == crate::controls::BoundInput::Key(code))
+    };
+    PHYSICAL_KEYS.iter().any(|(code, name)| {
+        *name == key
+            && (crate::controls::fixed_control_from_key_code(*code).is_some()
+                || default_bound(*code))
+    })
 }
 
 fn client_storage_dir(session_key: &str, mod_id: &str) -> PathBuf {

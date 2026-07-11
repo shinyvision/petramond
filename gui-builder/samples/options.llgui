@@ -1,0 +1,257 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:options",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 0,
+        "dir": "column",
+        "align": "center",
+        "justify": "center"
+      },
+      "children": [
+        {
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          "bind": {
+            "visible": "show_backdrop"
+          }
+        },
+        {
+          "type": "column",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              10,
+              8,
+              10,
+              10
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 7,
+            "dir": "column",
+            "align": "center",
+            "justify": "start"
+          },
+          "style": "panel.large",
+          "children": [
+            {
+              "type": "label",
+              "text": "Options",
+              "scale": 2
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "id": "sound",
+              "type": "button",
+              "text": "Sound",
+              "layout": {
+                "w": 130,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "id": "controls",
+              "type": "button",
+              "text": "Controls",
+              "layout": {
+                "w": 130,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "id": "graphics",
+              "type": "button",
+              "text": "Graphics",
+              "layout": {
+                "w": 130,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "id": "back",
+              "type": "button",
+              "text": "Back",
+              "layout": {
+                "w": 130,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "show_backdrop": {
+        "bool": true
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

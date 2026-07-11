@@ -5,7 +5,8 @@
 //! `Hello{protocol}` → `HelloAck` (or `HelloReject` = protocol mismatch) →
 //! `ModQuery` → `ModList{mods}` → compare ids against the installed packs
 //! (missing = CLOSE the socket, no farewell frame — the caller drops the
-//! stream) → `Join{player_name}` → `JoinAccept(JoinData)` (or `JoinReject`).
+//! stream) → `Join{player_name, view_distance}` → `JoinAccept(JoinData)`
+//! (or `JoinReject`).
 //!
 //! The function is I/O-agnostic: the caller sets per-read deadlines on the
 //! raw `TcpStream` (`set_read_timeout`, ~5 s) before calling; timeouts
@@ -118,6 +119,7 @@ pub(crate) struct HandshakeJoin {
 pub(crate) fn client_handshake<S: Read + Write>(
     stream: &mut S,
     player_name: &str,
+    view_distance: i32,
     installed_mod_ids: &BTreeSet<String>,
 ) -> Result<HandshakeJoin, HandshakeError> {
     send(
@@ -155,6 +157,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
         stream,
         &ClientToServer::Join {
             player_name: player_name.to_string(),
+            view_distance: view_distance.clamp(4, 64) as u8,
         },
     )?;
     match reply(stream)? {
@@ -271,7 +274,7 @@ mod tests {
             },
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(&mut s, "Rachel", &installed(&["kitchen", "extra"]))
+        let data = client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen", "extra"]))
             .expect("handshake succeeds");
         assert_eq!(*data.join, *join_data());
         assert_eq!(
@@ -288,7 +291,8 @@ mod tests {
                 },
                 ClientToServer::ModQuery,
                 ClientToServer::Join {
-                    player_name: "Rachel".to_string()
+                    player_name: "Rachel".to_string(),
+                    view_distance: 16,
                 },
             ],
             "the exact WIKI frame sequence, nothing more"
@@ -298,7 +302,7 @@ mod tests {
     #[test]
     fn a_protocol_mismatch_stops_after_hello() {
         let mut s = Scripted::new(&[ServerToClient::HelloReject { server_protocol: 3 }]);
-        match client_handshake(&mut s, "Rachel", &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
             Err(HandshakeError::ProtocolMismatch { server: 3 }) => {}
             other => panic!("expected ProtocolMismatch, got {other:?}"),
         }
@@ -320,7 +324,7 @@ mod tests {
                 mods: mods(&["kitchen", "ghost_mod"]),
             },
         ]);
-        match client_handshake(&mut s, "Rachel", &installed(&["kitchen"])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen"])) {
             Err(HandshakeError::MissingMods(missing)) => {
                 assert_eq!(missing, mods(&["ghost_mod"]));
             }
@@ -349,7 +353,7 @@ mod tests {
                 reason: JoinRejectReason::NameTaken,
             },
         ]);
-        match client_handshake(&mut s, "Rachel", &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
             Err(HandshakeError::Rejected(JoinRejectReason::NameTaken)) => {}
             other => panic!("expected Rejected(NameTaken), got {other:?}"),
         }
@@ -360,7 +364,7 @@ mod tests {
         let mut s = Scripted::new(&[ServerToClient::HelloAck {
             protocol: PROTOCOL_VERSION,
         }]);
-        match client_handshake(&mut s, "Rachel", &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
             Err(HandshakeError::Closed) => {}
             other => panic!("expected Closed, got {other:?}"),
         }
@@ -370,7 +374,7 @@ mod tests {
     fn an_out_of_sequence_reply_is_a_bad_frame() {
         // A server answering Hello with a gameplay message is broken.
         let mut s = Scripted::new(&[ServerToClient::ServerClosing]);
-        match client_handshake(&mut s, "Rachel", &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
             Err(HandshakeError::BadFrame) => {}
             other => panic!("expected BadFrame, got {other:?}"),
         }
@@ -393,7 +397,7 @@ mod tests {
             ServerToClient::KeepAlive,
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(&mut s, "Rachel", &installed(&[]))
+        let data = client_handshake(&mut s, "Rachel", 16, &installed(&[]))
             .expect("keepalive-interleaved handshake succeeds");
         assert_eq!(*data.join, *join_data());
     }

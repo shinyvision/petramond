@@ -16,6 +16,14 @@ pub(super) enum AppScreen {
     /// The "Disconnected" screen: the session was torn down after a
     /// connection loss / server close; OK returns to the title.
     ConnectionLost,
+    /// The Options root (Sound / Controls / Graphics), entered from the title
+    /// or the pause menu (`App::options_from_pause` remembers which).
+    Options,
+    OptionsSound,
+    /// The controls remap screen; while a binding is armed the App captures
+    /// raw input (`App::remap`).
+    OptionsControls,
+    OptionsGraphics,
     Game,
     /// Chat input overlay: the world keeps ticking and the hotbar HUD stays
     /// visible, but gameplay controls are disabled while text is entered.
@@ -71,7 +79,23 @@ impl AppScreen {
                 | AppScreen::ConnectServer
                 | AppScreen::ModsMissing
                 | AppScreen::ConnectionLost
+                | AppScreen::Options
+                | AppScreen::OptionsSound
+                | AppScreen::OptionsControls
+                | AppScreen::OptionsGraphics
                 | AppScreen::Pause
+        )
+    }
+
+    /// One of the Options screens (root or a category) is open.
+    #[inline]
+    pub(super) fn options_open(self) -> bool {
+        matches!(
+            self,
+            AppScreen::Options
+                | AppScreen::OptionsSound
+                | AppScreen::OptionsControls
+                | AppScreen::OptionsGraphics
         )
     }
 
@@ -140,6 +164,10 @@ impl AppScreen {
             | AppScreen::ConnectServer
             | AppScreen::ModsMissing
             | AppScreen::ConnectionLost
+            | AppScreen::Options
+            | AppScreen::OptionsSound
+            | AppScreen::OptionsControls
+            | AppScreen::OptionsGraphics
             | AppScreen::ClientCanvas
             | AppScreen::Pause => GuiKind::Other,
         }

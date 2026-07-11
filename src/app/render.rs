@@ -15,6 +15,7 @@ impl App {
         // idle gap before the first active frame can't jump a swing mid-flight.
         let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
         self.last_render = now;
+        self.push_renderer_options(renderer);
         let viewport = renderer.ui_viewport();
         let screen_size = viewport.size;
         self.ui.set_viewport_generation(viewport.generation);

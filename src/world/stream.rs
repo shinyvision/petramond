@@ -128,13 +128,19 @@ impl World {
             self.role != WorldRole::ClientReplica,
             "a replica never generates: sections arrive from the connection"
         );
+        // Each anchor streams at ITS connection's radius (view distance),
+        // never wider than this world's own `render_dist` budget.
+        let radius = |a: &LoadAnchor| a.radius.clamp(1, self.render_dist);
         match anchors {
             [] => {}
-            [a] => self.update_load(a.cx, a.cy, a.cz),
+            [a] => {
+                let target = LoadTarget::new(a.cx, a.cy, a.cz, radius(a));
+                self.update_load_target(target);
+            }
             _ => {
                 let targets: Vec<LoadTarget> = anchors
                     .iter()
-                    .map(|a| LoadTarget::new(a.cx, a.cy, a.cz, self.render_dist))
+                    .map(|a| LoadTarget::new(a.cx, a.cy, a.cz, radius(a)))
                     .collect();
                 self.update_load_multi_targets(targets);
             }
@@ -1849,11 +1855,13 @@ mod tests {
             cx: 0,
             cy: 4,
             cz: 0,
+            radius: 64,
         };
         let b = LoadAnchor {
             cx: 40,
             cy: 4,
             cz: 0,
+            radius: 64,
         };
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.insert_empty_column_for_test(ChunkPos::new(40, 0));
@@ -1933,6 +1941,7 @@ mod tests {
             cx: 2,
             cy: 5,
             cz: -1,
+            radius: 64,
         }]);
 
         assert_eq!(single.last_load_target, multi.last_load_target);

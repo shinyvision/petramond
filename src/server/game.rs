@@ -157,8 +157,13 @@ impl ServerGame {
     #[cfg(test)]
     pub(crate) fn add_session_for_test(&mut self, player: crate::player::Player) -> usize {
         let id = crate::server::player::PlayerId(self.sessions.len() as u8);
-        self.sessions
-            .push(ConnectedPlayer::new(id, format!("Player{}", id.0), player));
+        let radius = self.world.render_dist;
+        self.sessions.push(ConnectedPlayer::new(
+            id,
+            format!("Player{}", id.0),
+            player,
+            radius,
+        ));
         self.sessions.len() - 1
     }
 
@@ -732,6 +737,16 @@ impl ServerGame {
             } => self.sessions[s]
                 .terrain
                 .apply_batch_ack(messages_per_second),
+            ClientToServer::SetViewDistance { chunks } => {
+                self.sessions[s].view_radius = (chunks as i32).clamp(4, 64);
+                // The HOST's own slider also moves the server budget — its
+                // machine runs the world, so its setting IS the server
+                // setting. Remote requests only shrink under the budget
+                // (streaming clamps per anchor).
+                if s == 0 && self.has_local_session {
+                    self.world.set_render_dist((chunks as i32).clamp(4, 64));
+                }
+            }
             ClientToServer::KeepAlive => {}
             // Handshake/lifecycle messages are consumed by the transport
             // (the hub's pre-join state machine and its leave path); one

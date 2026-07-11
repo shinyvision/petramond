@@ -59,7 +59,10 @@ struct ActiveSpatialSound {
     sink: SpatialPlayer,
     sound: Sound,
     source: SpatialSoundSource,
-    base_gain: f32,
+    /// The sound's own gain (row gain × caller volume) EXCLUDING the mixer
+    /// volumes, which are re-read live every [`Audio::update_spatial`] so a
+    /// slider move mid-play takes effect.
+    local_gain: f32,
     pitch: f32,
     last_position: crate::mathh::Vec3,
 }
@@ -75,8 +78,12 @@ pub struct Audio {
     /// the loaded sound table). Each sound holds a list of interchangeable clips; a play
     /// picks one at random. An empty list (all variants failed to decode) is silent.
     buffers: Vec<Vec<DecodedSound>>,
-    /// Master linear gain over every sound (a future global volume control).
+    /// Master linear gain over every sound (Options → Sound → Master volume).
     master_gain: f32,
+    /// Linear gain for every non-music category (Options → Sound → Sound volume).
+    sound_gain: f32,
+    /// Linear gain for the `music` category (Options → Sound → Music volume).
+    music_gain: f32,
     /// xorshift64 state for per-play pitch jitter. Presentation-only randomness,
     /// seeded from the wall clock so runs differ; only the sequence matters.
     rng: u64,
@@ -138,6 +145,8 @@ impl Audio {
             sink,
             buffers,
             master_gain: 1.0,
+            sound_gain: 1.0,
+            music_gain: 1.0,
             rng: seed_rng(),
             #[cfg(test)]
             played: Vec::new(),
@@ -150,6 +159,25 @@ impl Audio {
     #[cfg(test)]
     pub(crate) fn take_played_for_test(&mut self) -> Vec<Sound> {
         std::mem::take(&mut self.played)
+    }
+
+    /// Set the mixer volumes (each `0..=1`): master over everything, `sound`
+    /// over every non-music category, `music` over the `music` category.
+    /// One-shots pick the new gains up at their next play; active spatial
+    /// sounds re-read them on the next per-frame update.
+    pub fn set_volumes(&mut self, master: f32, sound: f32, music: f32) {
+        self.master_gain = master.clamp(0.0, 1.0);
+        self.sound_gain = sound.clamp(0.0, 1.0);
+        self.music_gain = music.clamp(0.0, 1.0);
+    }
+
+    /// The live mixer gain for `category`: master × its volume group.
+    fn mix_gain(&self, category: SoundCategory) -> f32 {
+        let group = match category {
+            SoundCategory::Music => self.music_gain,
+            _ => self.sound_gain,
+        };
+        self.master_gain * group
     }
 
     /// Drive a repeating sound (e.g. the mining "punch"). Call every frame with the
@@ -212,13 +240,15 @@ impl Audio {
             return;
         };
         let def = sound.def();
-        let base_gain = self.master_gain * category_gain(def.category) * def.gain * volume;
+        let local_gain = def.gain * volume;
         let buf = &self.buffers[sound.0 as usize][variant];
         let (emitter, left_ear, right_ear) =
             listener.audio_space(initial_position, def.attenuation_distance);
         let player = SpatialPlayer::connect_new(sink.mixer(), emitter, left_ear, right_ear);
         player.set_volume(
-            base_gain * sound.distance_gain((initial_position - listener.pos).length()),
+            self.mix_gain(def.category)
+                * local_gain
+                * sound.distance_gain((initial_position - listener.pos).length()),
         );
         player.set_speed(pitch);
         player.append(SamplesBuffer::new(
@@ -232,7 +262,7 @@ impl Audio {
                 sink: player,
                 sound,
                 source,
-                base_gain,
+                local_gain,
                 pitch,
                 last_position: initial_position,
             },
@@ -289,6 +319,16 @@ impl Audio {
             self.spatial.clear();
             return;
         }
+        // Copied out so the volumes stay readable across the mutable iteration:
+        // active sounds re-read the mixer volumes live, every frame.
+        let (master, sound_gain, music_gain) = (self.master_gain, self.sound_gain, self.music_gain);
+        let mix = |category: SoundCategory| {
+            master
+                * match category {
+                    SoundCategory::Music => music_gain,
+                    _ => sound_gain,
+                }
+        };
         for active in self.spatial.values_mut() {
             let pos = match active.source {
                 SpatialSoundSource::Fixed(pos) => pos,
@@ -305,7 +345,9 @@ impl Audio {
             active.sink.set_left_ear_position(left_ear);
             active.sink.set_right_ear_position(right_ear);
             active.sink.set_volume(
-                active.base_gain * active.sound.distance_gain((pos - listener.pos).length()),
+                mix(active.sound.def().category)
+                    * active.local_gain
+                    * active.sound.distance_gain((pos - listener.pos).length()),
             );
             active.sink.set_speed(active.pitch);
         }
@@ -328,7 +370,7 @@ impl Audio {
         // same clip) plus the per-play pitch jitter.
         let variant = self.next_index(count);
         let pitch = 1.0 + self.next_jitter() * def.pitch_variation;
-        let gain = self.master_gain * category_gain(def.category) * def.gain * extra_gain;
+        let gain = self.mix_gain(def.category) * def.gain * extra_gain;
 
         let buf = &self.buffers[sound.0 as usize][variant];
         if let Some(sink) = self.sink.as_ref() {
@@ -377,14 +419,6 @@ impl Default for Audio {
     }
 }
 
-/// Per-category gain multiplier. Full volume for every category today; the hook for
-/// a future per-category (block / UI) volume control.
-fn category_gain(category: SoundCategory) -> f32 {
-    match category {
-        SoundCategory::Block | SoundCategory::Mob | SoundCategory::Ui => 1.0,
-    }
-}
-
 fn vec3(v: crate::mathh::Vec3) -> [f32; 3] {
     [v.x, v.y, v.z]
 }
@@ -429,6 +463,8 @@ mod tests {
             sink: None,
             buffers: Vec::new(),
             master_gain: 1.0,
+            sound_gain: 1.0,
+            music_gain: 1.0,
             rng: seed,
             played: Vec::new(),
             loop_sound: None,

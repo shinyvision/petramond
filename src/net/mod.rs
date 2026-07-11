@@ -16,7 +16,7 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 12; // 12: BreakFinished carries `predicted` (echo strip only for presented breaks)
+pub(crate) const PROTOCOL_VERSION: u16 = 13; // 13: Join carries view_distance; SetViewDistance changes it live
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

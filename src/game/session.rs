@@ -252,7 +252,10 @@ fn build_server(
     let fallback_world = SurfaceDensitySystem::new(seed);
     let local = local_player_name.map(|name| {
         let player = player_for_session(opened.save.as_ref(), &name, seed);
-        ConnectedPlayer::new(PlayerId(0), name, player)
+        // The local session starts at the full server budget (the host's own
+        // view distance built this world); a live slider change follows
+        // through `SetViewDistance` like any connection.
+        ConnectedPlayer::new(PlayerId(0), name, player, render_dist)
     });
     let disabled_mods = opened.disabled_mods;
 

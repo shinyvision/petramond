@@ -324,11 +324,14 @@ fn step_pending(pending: &mut PendingConn, server: &mut ServerGame) -> PendingVe
                     .collect();
                 pending.conn.send(ServerToClient::ModList { mods });
             }
-            ClientToServer::Join { player_name } if pending.helloed => {
+            ClientToServer::Join {
+                player_name,
+                view_distance,
+            } if pending.helloed => {
                 // Never rejected: a taken name is auto-deduped with a numeric
                 // suffix (the returned name is the session's — it keys the
                 // broadcast and the per-name save file).
-                let (data, name) = server.admit_remote_player(&player_name);
+                let (data, name) = server.admit_remote_player(&player_name, view_distance as i32);
                 let id = data.player_id;
                 pending.conn.send(ServerToClient::JoinAccept(data));
                 return PendingVerdict::Joined { id, name };
@@ -353,7 +356,11 @@ impl ServerGame {
     /// while the original "Rachel" is still connected to claim the base
     /// name). Restore from `players/<name>.dat` when the world has a save,
     /// else a fresh surface spawn — exactly the local session's restore path.
-    pub(crate) fn admit_remote_player(&mut self, requested: &str) -> (Box<JoinData>, String) {
+    pub(crate) fn admit_remote_player(
+        &mut self,
+        requested: &str,
+        view_distance: i32,
+    ) -> (Box<JoinData>, String) {
         let name = self.dedupe_player_name(requested);
         let id = self.next_free_player_id();
         let player = self
@@ -375,8 +382,12 @@ impl ServerGame {
                 .map(|s| (s.id, s.name.clone()))
                 .collect(),
         });
-        self.sessions
-            .push(ConnectedPlayer::new(id, name.clone(), player));
+        self.sessions.push(ConnectedPlayer::new(
+            id,
+            name.clone(),
+            player,
+            view_distance,
+        ));
         (data, name)
     }
 
@@ -588,14 +599,14 @@ mod tests {
         // (client.json / $USER); pin it so an ambient "Rachel"-ish name
         // can't occupy a suffix the assertions below count on.
         server.sessions[0].name = "Host".to_string();
-        let (_, first) = server.admit_remote_player("Rachel");
+        let (_, first) = server.admit_remote_player("Rachel", 32);
         assert_eq!(first, "Rachel");
-        let (_, second) = server.admit_remote_player("rachel");
+        let (_, second) = server.admit_remote_player("rachel", 32);
         assert_eq!(
             second, "rachel2",
             "case-insensitive dedupe, suffix appended"
         );
-        let (_, third) = server.admit_remote_player("RACHEL");
+        let (_, third) = server.admit_remote_player("RACHEL", 32);
         assert_eq!(third, "RACHEL3", "the lowest FREE suffix (2 is taken)");
         let names: Vec<&str> = server.sessions.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"Rachel") && names.contains(&"rachel2"));
@@ -657,7 +668,7 @@ mod tests {
 
         // The real join.
         let mut stream = connect(port);
-        let join = client_handshake(&mut stream, "Visitor", &installed_mod_ids())
+        let join = client_handshake(&mut stream, "Visitor", 16, &installed_mod_ids())
             .expect("handshake succeeds")
             .join;
         assert_eq!(join.player_id, PlayerId(1));
@@ -795,7 +806,7 @@ mod tests {
         // under the lowest free numeric suffix, never refused.
         {
             let mut dup = connect(port);
-            let data = client_handshake(&mut dup, "vISITOR", &installed_mod_ids())
+            let data = client_handshake(&mut dup, "vISITOR", 16, &installed_mod_ids())
                 .expect("a duplicate name joins deduped, not rejected")
                 .join;
             let dup_id = data.player_id;
@@ -820,7 +831,7 @@ mod tests {
         // everyone else hears PlayerJoined then PlayerLeft.
         let guest_id = {
             let mut guest = connect(port);
-            let data = client_handshake(&mut guest, "Guest", &installed_mod_ids())
+            let data = client_handshake(&mut guest, "Guest", 16, &installed_mod_ids())
                 .expect("guest joins")
                 .join;
             assert_eq!(
@@ -914,7 +925,7 @@ mod tests {
 
         // First join claims id 0 — no local session holds it on headless.
         let mut stream = connect(port);
-        let join = client_handshake(&mut stream, "Head", &installed_mod_ids())
+        let join = client_handshake(&mut stream, "Head", 16, &installed_mod_ids())
             .expect("join")
             .join;
         assert_eq!(join.player_id, PlayerId(0));
@@ -949,7 +960,7 @@ mod tests {
         std::thread::sleep(Duration::from_secs(2));
 
         let mut stream = connect(port);
-        let join = client_handshake(&mut stream, "Head", &installed_mod_ids())
+        let join = client_handshake(&mut stream, "Head", 16, &installed_mod_ids())
             .expect("rejoin")
             .join;
         assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");

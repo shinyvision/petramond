@@ -80,6 +80,30 @@
           }
         },
         {
+          "id": "options",
+          "type": "button",
+          "text": "OPTIONS",
+          "layout": {
+            "w": 110,
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start"
+          }
+        },
+        {
           "id": "open_lan",
           "type": "button",
           "text": "OPEN TO LAN",

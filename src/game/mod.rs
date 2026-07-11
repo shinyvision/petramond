@@ -466,6 +466,29 @@ impl Game {
         self.outbox.push(ClientToServer::ChatSend { text });
     }
 
+    /// Apply the particles graphics option to the client-local fleck system
+    /// (mining dust, break/splash bursts). Presentation-only; looping-emitter
+    /// particles are the renderer's half of the same option.
+    pub fn set_particles_mode(&mut self, mode: crate::save::client::ParticlesMode) {
+        self.particles.set_count_scale(mode.density());
+    }
+
+    /// Change the client view distance live: the replica re-shapes its
+    /// mesh/light priority ring, and the server is asked to stream the new
+    /// radius (it clamps to its own maximum; see WIKI/options.md).
+    pub fn set_view_distance(&mut self, chunks: i32) {
+        let chunks = chunks.clamp(4, 64);
+        self.replica.set_render_dist(chunks);
+        let msg = ClientToServer::SetViewDistance {
+            chunks: chunks as u8,
+        };
+        if self.remote {
+            self.outbox.push(msg);
+        } else if self.handle.send(msg).is_err() {
+            self.note_connection_lost();
+        }
+    }
+
     pub(crate) fn take_chat_lines(&mut self) -> Vec<ChatLine> {
         std::mem::take(&mut self.pending_chat_lines)
     }

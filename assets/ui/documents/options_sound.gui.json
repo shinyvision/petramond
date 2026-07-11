@@ -1,0 +1,213 @@
+{
+ "format": 1,
+ "kind": "petramond:options_sound",
+ "class": "screen",
+ "root": {
+  "type": "frame",
+  "layout": {
+   "w": {
+    "grow": 1
+   },
+   "h": {
+    "grow": 1
+   },
+   "align": "center",
+   "justify": "center"
+  },
+  "children": [
+   {
+    "type": "image",
+    "image": "../../textures/gui/screenshot.png",
+    "fit": "cover",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "bind": {
+     "visible": "show_backdrop"
+    }
+   },
+   {
+    "type": "column",
+    "style": "panel.large",
+    "layout": {
+     "w": 240,
+     "pad": [
+      10,
+      8,
+      10,
+      10
+     ],
+     "gap": 7,
+     "align": "stretch"
+    },
+    "children": [
+     {
+      "type": "label",
+      "text": "Sound",
+      "scale": 2
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 2
+      }
+     },
+     {
+      "type": "row",
+      "layout": {
+       "gap": 4,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "label",
+        "text": "Master Volume",
+        "layout": {
+         "w": 78
+        }
+       },
+       {
+        "type": "slider",
+        "id": "master_vol",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "bind": {
+         "value": "master_vol"
+        },
+        "layout": {
+         "w": {
+          "grow": 1
+         },
+         "min_w": 80
+        }
+       },
+       {
+        "type": "label",
+        "layout": {
+         "w": 26
+        },
+        "bind": {
+         "text": "master_pct"
+        }
+       }
+      ]
+     },
+     {
+      "type": "row",
+      "layout": {
+       "gap": 4,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "label",
+        "text": "Sound Volume",
+        "layout": {
+         "w": 78
+        }
+       },
+       {
+        "type": "slider",
+        "id": "sound_vol",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "bind": {
+         "value": "sound_vol"
+        },
+        "layout": {
+         "w": {
+          "grow": 1
+         },
+         "min_w": 80
+        }
+       },
+       {
+        "type": "label",
+        "layout": {
+         "w": 26
+        },
+        "bind": {
+         "text": "sound_pct"
+        }
+       }
+      ]
+     },
+     {
+      "type": "row",
+      "layout": {
+       "gap": 4,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "label",
+        "text": "Music Volume",
+        "layout": {
+         "w": 78
+        }
+       },
+       {
+        "type": "slider",
+        "id": "music_vol",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "bind": {
+         "value": "music_vol"
+        },
+        "layout": {
+         "w": {
+          "grow": 1
+         },
+         "min_w": 80
+        }
+       },
+       {
+        "type": "label",
+        "layout": {
+         "w": 26
+        },
+        "bind": {
+         "text": "music_pct"
+        }
+       }
+      ]
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 2
+      }
+     },
+     {
+      "type": "row",
+      "layout": {
+       "justify": "center"
+      },
+      "children": [
+       {
+        "type": "button",
+        "id": "back",
+        "text": "Back",
+        "layout": {
+         "w": 130
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

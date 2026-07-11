@@ -150,6 +150,7 @@ impl App {
         self.connect.addr = addr_text.clone();
         self.connect.name = name.clone();
         persist_identity(&addr_text, &name);
+        let view_distance = self.render_dist;
 
         self.connect.gen += 1;
         let gen = self.connect.gen;
@@ -163,7 +164,7 @@ impl App {
         std::thread::Builder::new()
             .name("petramond-connect".to_owned())
             .spawn(move || {
-                let outcome = run_connect(&host, port, &name, &cancel, |label| {
+                let outcome = run_connect(&host, port, &name, view_distance, &cancel, |label| {
                     let _ = tx.send((gen, ConnectOutcome::Progress(label)));
                 });
                 let _ = tx.send((gen, outcome));
@@ -279,6 +280,7 @@ fn run_connect(
     host: &str,
     port: u16,
     name: &str,
+    view_distance: i32,
     cancel: &AtomicBool,
     progress: impl Fn(&'static str),
 ) -> ConnectOutcome {
@@ -325,7 +327,7 @@ fn run_connect(
     if let Err(e) = stream.set_read_timeout(Some(CONNECT_TIMEOUT)) {
         return ConnectOutcome::Failed(format!("Couldn't reach {host}: {e}"));
     }
-    let join = match client_handshake(&mut stream, name, &installed_mod_ids()) {
+    let join = match client_handshake(&mut stream, name, view_distance, &installed_mod_ids()) {
         Ok(join) => join,
         // No farewell frame after a mod refusal — just drop the socket.
         Err(HandshakeError::MissingMods(mods)) => return ConnectOutcome::Missing(mods),

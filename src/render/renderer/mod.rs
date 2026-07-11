@@ -392,6 +392,8 @@ pub struct Renderer {
     particle_emitters: Vec<ParticleEmitterInstance>,
     /// Frustum/fog-visible subset of `particle_emitters`.
     particle_emitter_visible: Vec<ParticleEmitterInstance>,
+    /// See [`Renderer::set_particle_density`].
+    particle_density: f32,
     /// Vertex count of the BLOCK-atlas portion of `particle_draw` this frame (the split
     /// point: `[0..this)` draws with the block atlas, the rest with the model atlas).
     particle_block_vertex_count: u32,
@@ -505,6 +507,13 @@ impl Renderer {
     /// Terrain draw-cull distance: nothing beyond this is fully un-fogged.
     pub(in crate::render) fn terrain_cull_dist(&self) -> f32 {
         self.fog_end + TERRAIN_FOG_CULL_PAD
+    }
+
+    /// Emitter-derived particle density from the particles graphics option
+    /// (`0` = off, `0.5` = reduced, `1` = full). Scales each looping emitter's
+    /// active-particle count; zero skips emitter baking entirely.
+    pub fn set_particle_density(&mut self, density: f32) {
+        self.particle_density = density.clamp(0.0, 1.0);
     }
 
     /// Set the internal world-resolution scale (clamped `0.5..=1.0`) and rebuild

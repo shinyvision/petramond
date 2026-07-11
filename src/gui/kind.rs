@@ -49,6 +49,11 @@ impl GuiKind {
     pub const ModsMissing: GuiKind = GuiKind(16);
     /// The "Disconnected" screen (connection lost / server closed).
     pub const ConnectionLost: GuiKind = GuiKind(17);
+    /// The Options root (Sound / Controls / Graphics categories).
+    pub const Options: GuiKind = GuiKind(18);
+    pub const OptionsSound: GuiKind = GuiKind(19);
+    pub const OptionsControls: GuiKind = GuiKind(20);
+    pub const OptionsGraphics: GuiKind = GuiKind(21);
     /// The not-a-container sentinel; compares equal to no registered kind.
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
@@ -62,7 +67,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 18] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 22] = [
     "petramond:chest",
     "petramond:inventory",
     "petramond:crafting_table",
@@ -81,6 +86,10 @@ const ENGINE_GUI_KIND_NAMES: [&str; 18] = [
     "petramond:connect_server",
     "petramond:mods_missing",
     "petramond:connection_lost",
+    "petramond:options",
+    "petramond:options_sound",
+    "petramond:options_controls",
+    "petramond:options_graphics",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

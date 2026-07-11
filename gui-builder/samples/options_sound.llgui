@@ -1,0 +1,542 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:options_sound",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 0,
+        "dir": "column",
+        "align": "center",
+        "justify": "center"
+      },
+      "children": [
+        {
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          "bind": {
+            "visible": "show_backdrop"
+          }
+        },
+        {
+          "type": "column",
+          "layout": {
+            "w": 240,
+            "h": "auto",
+            "pad": [
+              10,
+              8,
+              10,
+              10
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 7,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start"
+          },
+          "style": "panel.large",
+          "children": [
+            {
+              "type": "label",
+              "text": "Sound",
+              "scale": 2
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "center",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "text": "Master Volume",
+                  "layout": {
+                    "w": 78,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "master_vol",
+                  "type": "slider",
+                  "min": 0.0,
+                  "max": 100.0,
+                  "step": 1.0,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_w": 80
+                  },
+                  "bind": {
+                    "value": "master_vol"
+                  }
+                },
+                {
+                  "type": "label",
+                  "layout": {
+                    "w": 26,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "text": "master_pct"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "center",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "text": "Sound Volume",
+                  "layout": {
+                    "w": 78,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "sound_vol",
+                  "type": "slider",
+                  "min": 0.0,
+                  "max": 100.0,
+                  "step": 1.0,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_w": 80
+                  },
+                  "bind": {
+                    "value": "sound_vol"
+                  }
+                },
+                {
+                  "type": "label",
+                  "layout": {
+                    "w": 26,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "text": "sound_pct"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "center",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "text": "Music Volume",
+                  "layout": {
+                    "w": 78,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "music_vol",
+                  "type": "slider",
+                  "min": 0.0,
+                  "max": 100.0,
+                  "step": 1.0,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_w": 80
+                  },
+                  "bind": {
+                    "value": "music_vol"
+                  }
+                },
+                {
+                  "type": "label",
+                  "layout": {
+                    "w": 26,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "text": "music_pct"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "spacer",
+              "layout": {
+                "w": "auto",
+                "h": 2,
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "center"
+              },
+              "children": [
+                {
+                  "id": "back",
+                  "type": "button",
+                  "text": "Back",
+                  "layout": {
+                    "w": 130,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "master_pct": {
+        "str": "Sample text"
+      },
+      "master_vol": {
+        "f32": 0.5
+      },
+      "music_pct": {
+        "str": "Sample text"
+      },
+      "music_vol": {
+        "f32": 0.5
+      },
+      "show_backdrop": {
+        "bool": true
+      },
+      "sound_pct": {
+        "str": "Sample text"
+      },
+      "sound_vol": {
+        "f32": 0.5
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

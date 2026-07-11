@@ -363,6 +363,7 @@ impl App {
     /// thread) and the test fixtures (which build a loopback-piped session).
     pub(crate) fn adopt_game(&mut self, game: crate::game::Game) {
         self.game = Some(game);
+        self.apply_particles();
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();

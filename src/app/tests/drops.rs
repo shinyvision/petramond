@@ -23,6 +23,7 @@ fn ctrl_q_drops_whole_held_stack_while_playing() {
     app.set_modifiers(Modifiers {
         ctrl: true,
         shift: false,
+        ..Modifiers::default()
     });
     app.handle_control(Control::DropItem, true);
     assert!(

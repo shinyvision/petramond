@@ -1,0 +1,105 @@
+{
+ "format": 1,
+ "kind": "petramond:options",
+ "class": "screen",
+ "root": {
+  "type": "frame",
+  "layout": {
+   "w": {
+    "grow": 1
+   },
+   "h": {
+    "grow": 1
+   },
+   "align": "center",
+   "justify": "center"
+  },
+  "children": [
+   {
+    "type": "image",
+    "image": "../../textures/gui/screenshot.png",
+    "fit": "cover",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "bind": {
+     "visible": "show_backdrop"
+    }
+   },
+   {
+    "type": "column",
+    "style": "panel.large",
+    "layout": {
+     "pad": [
+      10,
+      8,
+      10,
+      10
+     ],
+     "gap": 7,
+     "align": "center"
+    },
+    "children": [
+     {
+      "type": "label",
+      "text": "Options",
+      "scale": 2
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 2
+      }
+     },
+     {
+      "type": "button",
+      "id": "sound",
+      "text": "Sound",
+      "layout": {
+       "w": 130
+      }
+     },
+     {
+      "type": "button",
+      "id": "controls",
+      "text": "Controls",
+      "layout": {
+       "w": 130
+      }
+     },
+     {
+      "type": "button",
+      "id": "graphics",
+      "text": "Graphics",
+      "layout": {
+       "w": 130
+      }
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 2
+      }
+     },
+     {
+      "type": "button",
+      "id": "back",
+      "text": "Back",
+      "layout": {
+       "w": 130
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

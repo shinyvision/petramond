@@ -111,7 +111,7 @@ impl App {
     /// jostled. Gameplay INPUT stays disabled on the Pause screen regardless
     /// (`take_game_input`).
     fn multiplayer_pause_runs_sim(&self) -> bool {
-        self.screen == super::AppScreen::Pause
+        (self.screen == super::AppScreen::Pause || self.screen.options_open())
             && self
                 .game
                 .as_ref()

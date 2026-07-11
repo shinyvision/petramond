@@ -345,6 +345,7 @@ impl IdRemap {
             ClientToServer::Hello { .. }
             | ClientToServer::ModQuery
             | ClientToServer::Join { .. }
+            | ClientToServer::SetViewDistance { .. }
             | ClientToServer::PlayerUpdate(_)
             | ClientToServer::Action(_)
             | ClientToServer::MenuClick { .. }
