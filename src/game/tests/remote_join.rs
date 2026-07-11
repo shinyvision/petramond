@@ -43,7 +43,14 @@ fn join_data() -> Box<JoinData> {
 fn new_remote_seeds_the_client_from_join_data() {
     let (handle, _pipe) = ServerHandle::loopback();
     let cam = crate::camera::Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0);
-    let mut game = Game::new_remote(cam, join_data(), handle, 1, "test-server");
+    let mut game = Game::new_remote(
+        cam,
+        join_data(),
+        handle,
+        1,
+        "test-server",
+        &std::collections::BTreeSet::new(),
+    );
 
     // The locally-predicted player mirrors the restore (the wire twin of
     // `PlayerData::restore`).

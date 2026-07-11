@@ -208,7 +208,14 @@ fn pause_menu_shows_lan_controls_for_host() {
 fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     let (handle, _pipe) = ServerHandle::loopback();
     let cam = Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0);
-    let game = Game::new_remote(cam, join_data(), handle, 1, "test-server");
+    let game = Game::new_remote(
+        cam,
+        join_data(),
+        handle,
+        1,
+        "test-server",
+        &std::collections::BTreeSet::new(),
+    );
     assert!(game.is_remote());
 
     let mut app = shell_app();

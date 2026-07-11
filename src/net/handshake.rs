@@ -100,6 +100,16 @@ fn reply<S: Read>(stream: &mut S) -> Result<ServerToClient, HandshakeError> {
     }
 }
 
+/// A successful join: the server's `JoinData` plus the mod ids its `ModList`
+/// reported. That set is the session's CLIENT-MOD ENABLEMENT authority
+/// (`modding/client`): client wasm loads only for packs the server runs, so
+/// a locally installed extra never activates against a server without it.
+#[derive(Debug)]
+pub(crate) struct HandshakeJoin {
+    pub join: Box<JoinData>,
+    pub server_mods: BTreeSet<String>,
+}
+
 /// Run the full client-side join handshake over `stream`. On `Ok` the stream
 /// is positioned exactly after `JoinAccept` — hand it to
 /// [`super::connection::TcpClientConn::spawn`] with
@@ -109,7 +119,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
     stream: &mut S,
     player_name: &str,
     installed_mod_ids: &BTreeSet<String>,
-) -> Result<Box<JoinData>, HandshakeError> {
+) -> Result<HandshakeJoin, HandshakeError> {
     send(
         stream,
         &ClientToServer::Hello {
@@ -132,12 +142,14 @@ pub(crate) fn client_handshake<S: Read + Write>(
         _ => return Err(HandshakeError::BadFrame),
     };
     let missing: Vec<ModEntry> = mods
-        .into_iter()
+        .iter()
         .filter(|m| !installed_mod_ids.contains(&m.id))
+        .cloned()
         .collect();
     if !missing.is_empty() {
         return Err(HandshakeError::MissingMods(missing));
     }
+    let server_mods: BTreeSet<String> = mods.into_iter().map(|m| m.id).collect();
 
     send(
         stream,
@@ -146,7 +158,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
         },
     )?;
     match reply(stream)? {
-        ServerToClient::JoinAccept(data) => Ok(data),
+        ServerToClient::JoinAccept(join) => Ok(HandshakeJoin { join, server_mods }),
         ServerToClient::JoinReject { reason } => Err(HandshakeError::Rejected(reason)),
         _ => Err(HandshakeError::BadFrame),
     }
@@ -261,7 +273,13 @@ mod tests {
         ]);
         let data = client_handshake(&mut s, "Rachel", &installed(&["kitchen", "extra"]))
             .expect("handshake succeeds");
-        assert_eq!(*data, *join_data());
+        assert_eq!(*data.join, *join_data());
+        assert_eq!(
+            data.server_mods,
+            installed(&["kitchen"]),
+            "the ModList rides out as the session's client-mod enablement set \
+             (the locally installed 'extra' is NOT in it)"
+        );
         assert_eq!(
             s.sent_msgs(),
             vec![
@@ -377,6 +395,6 @@ mod tests {
         ]);
         let data = client_handshake(&mut s, "Rachel", &installed(&[]))
             .expect("keepalive-interleaved handshake succeeds");
-        assert_eq!(*data, *join_data());
+        assert_eq!(*data.join, *join_data());
     }
 }

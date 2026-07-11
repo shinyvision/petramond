@@ -658,7 +658,8 @@ mod tests {
         // The real join.
         let mut stream = connect(port);
         let join = client_handshake(&mut stream, "Visitor", &installed_mod_ids())
-            .expect("handshake succeeds");
+            .expect("handshake succeeds")
+            .join;
         assert_eq!(join.player_id, PlayerId(1));
         assert_eq!(join.seed, 7);
         assert_eq!(join.self_restore.pos, visitor_feet);
@@ -795,7 +796,8 @@ mod tests {
         {
             let mut dup = connect(port);
             let data = client_handshake(&mut dup, "vISITOR", &installed_mod_ids())
-                .expect("a duplicate name joins deduped, not rejected");
+                .expect("a duplicate name joins deduped, not rejected")
+                .join;
             let dup_id = data.player_id;
             let name = drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
                 ServerToClient::PlayerJoined { id, name } if id == dup_id => Some(name),
@@ -818,8 +820,9 @@ mod tests {
         // everyone else hears PlayerJoined then PlayerLeft.
         let guest_id = {
             let mut guest = connect(port);
-            let data =
-                client_handshake(&mut guest, "Guest", &installed_mod_ids()).expect("guest joins");
+            let data = client_handshake(&mut guest, "Guest", &installed_mod_ids())
+                .expect("guest joins")
+                .join;
             assert_eq!(
                 data.players.len(),
                 2,
@@ -911,7 +914,9 @@ mod tests {
 
         // First join claims id 0 — no local session holds it on headless.
         let mut stream = connect(port);
-        let join = client_handshake(&mut stream, "Head", &installed_mod_ids()).expect("join");
+        let join = client_handshake(&mut stream, "Head", &installed_mod_ids())
+            .expect("join")
+            .join;
         assert_eq!(join.player_id, PlayerId(0));
         let conn =
             TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
@@ -944,7 +949,9 @@ mod tests {
         std::thread::sleep(Duration::from_secs(2));
 
         let mut stream = connect(port);
-        let join = client_handshake(&mut stream, "Head", &installed_mod_ids()).expect("rejoin");
+        let join = client_handshake(&mut stream, "Head", &installed_mod_ids())
+            .expect("rejoin")
+            .join;
         assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
         let conn =
             TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");

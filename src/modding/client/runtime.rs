@@ -45,25 +45,24 @@ pub(crate) struct ClientModRuntime {
 }
 
 impl ClientModRuntime {
-    pub(crate) fn load(world_seed: u32, session_key: &str, disabled: &BTreeSet<String>) -> Self {
+    /// Load the session's client mods. `enabled` is the session's
+    /// mod-enablement AUTHORITY: locally the installed packs minus the
+    /// world's disabled set; on a remote join the server's
+    /// handshake-reported mod set. A locally installed client mod the
+    /// server does not run therefore never activates.
+    pub(crate) fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
-        for pack in crate::assets::packs() {
-            let (Some(id), Some(path)) = (pack.id.as_deref(), pack.client_wasm.as_ref()) else {
-                continue;
-            };
-            if disabled.contains(id) {
-                continue;
-            }
-            let module = match crate::modding::host::module_for(path) {
+        for (id, path) in session_client_mods(crate::assets::packs(), enabled) {
+            let module = match crate::modding::host::module_for(&path) {
                 Ok(module) => module,
                 Err(e) => {
                     log::error!("client mod '{id}' disabled: {e}");
                     continue;
                 }
             };
-            let storage = client_storage_dir(session_key, id);
+            let storage = client_storage_dir(session_key, &id);
             let mut instance = match ModInstance::from_module_side(
-                id,
+                &id,
                 &module,
                 world_seed,
                 RuntimeSide::Client,
@@ -82,10 +81,7 @@ impl ClientModRuntime {
             // Client registrations live in ClientStoreData; simulation
             // registrations are irrelevant to this isolated instance.
             instance.take_registrations();
-            mods.push(ClientMod {
-                id: id.to_owned(),
-                instance,
-            });
+            mods.push(ClientMod { id, instance });
         }
 
         let mut bindings = Vec::new();
@@ -291,6 +287,29 @@ impl ClientModRuntime {
     }
 }
 
+/// The `(mod id, client wasm path)` pairs a session activates: every
+/// installed id-bearing pack that ships `client_wasm` AND is in the
+/// session's enabled set. Pure — the client-side enablement contract,
+/// unit-tested against synthetic pack lists (the client twin of
+/// `session_wasm_mods` in `modding/mod.rs`).
+fn session_client_mods(
+    packs: &[crate::assets::Pack],
+    enabled: &BTreeSet<String>,
+) -> Vec<(String, PathBuf)> {
+    packs
+        .iter()
+        .filter_map(|pack| {
+            let id = pack.id.clone()?;
+            let wasm = pack.client_wasm.clone()?;
+            if !enabled.contains(&id) {
+                log::info!("client mod '{id}' is not enabled for this session; not loading");
+                return None;
+            }
+            Some((id, wasm))
+        })
+        .collect()
+}
+
 fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, what: &str) {
     match instance.call_guest_client(world, call) {
         None | Some(GuestRet::Unit) => {}
@@ -373,6 +392,48 @@ pub(crate) fn physical_key_name(code: winit::keyboard::KeyCode) -> Option<&'stat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Client mods activate ONLY for packs in the session's enabled set —
+    /// on a remote join that is the server's handshake-reported mod list,
+    /// so a locally installed client mod the server does not run (e.g. the
+    /// minimap against a server without it) stays inactive.
+    #[test]
+    fn unlisted_packs_contribute_no_client_instance() {
+        let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| crate::assets::Pack {
+            dir: PathBuf::from(format!("/fixture/{name}")),
+            name: name.to_owned(),
+            id: id.map(str::to_owned),
+            version: None,
+            description: String::new(),
+            summary: None,
+            icon: None,
+            wasm: None,
+            client_wasm: client_wasm.map(PathBuf::from),
+        };
+        let packs = [
+            pack(
+                "minimap",
+                Some("minimap"),
+                Some("/fixture/minimap/client.wasm"),
+            ),
+            pack("radar", Some("radar"), Some("/fixture/radar/client.wasm")),
+            pack("content_only", None, None),
+        ];
+
+        let server_reported: BTreeSet<String> = ["radar".to_owned()].into();
+        let ids: Vec<String> = session_client_mods(&packs, &server_reported)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, ["radar"], "only enabled packs activate");
+
+        assert!(
+            session_client_mods(&packs, &BTreeSet::new()).is_empty(),
+            "a server reporting no mods enables no client mods"
+        );
+        let all: BTreeSet<String> = ["minimap".to_owned(), "radar".to_owned()].into();
+        assert_eq!(session_client_mods(&packs, &all).len(), 2);
+    }
 
     /// The reservation rule is DERIVED from the engine's binding table:
     /// engine-bound keys are refused to client mods, unbound keys are free.

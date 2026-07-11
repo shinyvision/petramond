@@ -61,6 +61,7 @@ impl Game {
         handle: ServerHandle,
         render_dist: i32,
         server_identity: &str,
+        server_mods: &BTreeSet<String>,
     ) -> Self {
         let join = *join;
         // The replica gets its OWN pool: unlike the in-process split there is
@@ -75,10 +76,14 @@ impl Game {
             self_id: join.player_id,
             replicated_tick: 0,
             fallback_world: SurfaceDensitySystem::new(join.seed),
+            // Client mods are gated by the SERVER's mod set (the handshake's
+            // ModList): a locally installed client mod the server does not
+            // run — e.g. the minimap against a server without it — must not
+            // activate for this session.
             client_mods: crate::modding::client::ClientModRuntime::load(
                 join.seed,
                 &format!("remote:{server_identity}"),
-                &BTreeSet::new(),
+                server_mods,
             ),
         };
         let mut game = Self::assemble(cam, handle, bootstrap);
@@ -187,10 +192,17 @@ pub(crate) fn build_session(
     // HUD is right before the first tick's batch arrives.
     let self_view = crate::game::replicated::SelfView::seed_from(&server.sessions[0].player);
     let self_id = server.sessions[0].id;
+    // Client mods activate for the session's ENABLED packs (installed minus
+    // this world's disabled set) — the same authority the server host uses.
+    let enabled_mods: BTreeSet<String> =
+        crate::modding::modset::active(server.world.disabled_mods())
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
     let client_mods = crate::modding::client::ClientModRuntime::load(
         server.world.seed,
         &format!("local:{world_name}"),
-        server.world.disabled_mods(),
+        &enabled_mods,
     );
 
     (

@@ -18,8 +18,8 @@ use super::{App, AppScreen};
 use crate::camera::Camera;
 use crate::game::Game;
 use crate::mathh::Vec3;
-use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError};
-use crate::net::protocol::{JoinData, ModEntry};
+use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin};
+use crate::net::protocol::ModEntry;
 use crate::server::handle::ServerHandle;
 
 /// Per-step network deadline: the TCP connect and each handshake read.
@@ -42,7 +42,7 @@ enum ConnectOutcome {
     /// Progress label change ("Joining world…" once the socket is up).
     Progress(&'static str),
     /// Handshake succeeded; the connection threads are already running.
-    Joined(Box<JoinData>, ServerHandle),
+    Joined(HandshakeJoin, ServerHandle),
     /// The server runs mods this client lacks (the join was refused).
     Missing(Vec<ModEntry>),
     Failed(String),
@@ -238,17 +238,18 @@ impl App {
     /// Enter the joined REMOTE session — `start_game`'s tail for a handshaked
     /// connection. The camera position is irrelevant: the constructor snaps
     /// it to the restored player.
-    fn start_remote_game(&mut self, join: Box<JoinData>, handle: ServerHandle) {
+    fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
         let cam = Camera::new(
             Vec3::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
         self.adopt_game(Game::new_remote(
             cam,
-            join,
+            join.join,
             handle,
             self.render_dist,
             &self.connect.addr,
+            &join.server_mods,
         ));
     }
 }
@@ -337,7 +338,7 @@ fn run_connect(
     // Canonical order (WIKI/multiplayer.md): the id remap from the join
     // tables, connection threads over the post-handshake stream, then the
     // handle that fronts them.
-    let remap = crate::net::remap::IdRemap::build(&join.tables);
+    let remap = crate::net::remap::IdRemap::build(&join.join.tables);
     let conn = match crate::net::connection::TcpClientConn::spawn(stream, remap) {
         Ok(conn) => conn,
         Err(e) => return ConnectOutcome::Failed(format!("Connection error: {e}")),
