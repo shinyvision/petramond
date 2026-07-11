@@ -840,6 +840,11 @@ pub(crate) enum ClientToServer {
         /// The client's view distance in chunks. The server streams
         /// `min(this, its own maximum)` for the session.
         view_distance: u8,
+        /// The sections this client still holds in its section cache from an
+        /// earlier session, by server-domain content hash — seeds the server's
+        /// per-connection cache belief so a reconnect can re-promote instead
+        /// of re-streaming. Empty on a fresh client.
+        cached_sections: Vec<SectionCacheClaim>,
     },
     PlayerUpdate(PlayerUpdate),
     Action(PlayerAction),
@@ -863,6 +868,13 @@ pub(crate) enum ClientToServer {
     /// (the 1.20.2 chunk-batching design; see WIKI/multiplayer.md).
     StreamBatchAck {
         messages_per_second: f32,
+    },
+    /// The server sent [`ServerToClient::SectionCached`] for a section this
+    /// client no longer holds (cap eviction, declined cache, hash drift). The
+    /// server forgets its belief and re-streams the full payload — the
+    /// self-healing path for ANY cache-bookkeeping divergence.
+    SectionCacheMiss {
+        pos: SectionPos,
     },
     /// The client changed its view distance (Options → Graphics). The server
     /// re-clamps to its own maximum and streams the new radius; terrain
@@ -901,8 +913,34 @@ pub(crate) enum ServerToClient {
     /// recipient: the fresh cubes replace the seeded ones. The replica never
     /// bakes its own light — this is the ONLY post-install light writer.
     LightData(LightPayload),
-    SectionUnload(SectionPos),
-    ColumnUnload(ChunkPos),
+    /// Drop one section that left the keep shape while its column stays. When
+    /// `cache_hash` is present the server still held the section and vouches
+    /// that the recipient's replica copy equals content-hash `cache_hash` (the
+    /// connection is ordered, so every delta/light write landed before this) —
+    /// the client may park that copy in its section cache for a later
+    /// [`SectionCached`](Self::SectionCached) re-promotion. `None` = drop only.
+    SectionUnload {
+        pos: SectionPos,
+        cache_hash: Option<u64>,
+    },
+    /// Drop a whole column and, implicitly, every live section in it (no
+    /// per-section [`SectionUnload`](Self::SectionUnload) precedes this).
+    /// `cache_hashes` carries `(cy, content hash)` for each dropped section
+    /// the server can vouch for, same contract as `SectionUnload::cache_hash`.
+    ColumnUnload {
+        pos: ChunkPos,
+        cache_hashes: Vec<(i32, u64)>,
+    },
+    /// In place of a [`SectionData`](Self::SectionData) whose content the
+    /// recipient already holds cached (matching claim in the server's
+    /// per-connection belief): re-promote the cached copy keyed by `hash`.
+    /// A client that no longer holds it answers
+    /// [`SectionCacheMiss`](ClientToServer::SectionCacheMiss). Counts as a
+    /// streaming message inside batch brackets, exactly like `SectionData`.
+    SectionCached {
+        pos: SectionPos,
+        hash: u64,
+    },
     /// Brackets the start of one streaming batch (terrain/light/unload
     /// messages) on a WINDOWED connection: the client times Start→End
     /// application and answers `StreamBatchAck`. Loopback uses the same
@@ -952,6 +990,22 @@ pub(crate) struct ColumnPayload {
 
 /// One 16³ section's full streamed content — the wire sibling of the save's
 /// `SectionSnapshot`, Arc-backed so the local connection ships refcount bumps.
+/// One cached section a joining client claims to still hold, by the
+/// server-domain content hash the server vouched at unload time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SectionCacheClaim {
+    pub pos: SectionPos,
+    pub hash: u64,
+}
+
+/// Entry cap for the client section cache AND the server's per-connection
+/// belief map. Both sides insert in the same order (unloads ride the ordered
+/// stream) and evict oldest-first, so the two stay aligned without eviction
+/// chatter; any residual drift heals through `SectionCacheMiss`. ~4k sections
+/// ≈ a generous re-explorable ring at RD32 while bounding worst-case replica
+/// memory to a few hundred MB.
+pub(crate) const SECTION_CACHE_CAP: usize = 4096;
+
 /// Container SLOT contents, mobs, and dropped items are deliberately absent:
 /// they replicate through menu sync and entity batches.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -973,6 +1027,23 @@ pub(crate) struct SectionPayload {
     /// Sparse per-cell block states (doors, stairs, slabs, log axes, torches,
     /// saplings, model cells, facings, lit furnaces, cell KV).
     pub states: SectionStatesPayload,
+}
+
+impl SectionPayload {
+    /// The SERVER-DOMAIN content fingerprint behind the section cache: a hash
+    /// of the payload's postcard encoding, so every current and future field
+    /// is covered without a parallel hash implementation to keep in sync.
+    /// `to_payload` emits every sparse list cell-sorted, so identical content
+    /// hashes identically. Raw session ids make this meaningless outside the
+    /// process runs that share this server's registries — the in-memory
+    /// session cache is its only valid consumer; NEVER persist these hashes.
+    pub(crate) fn content_hash(&self) -> u64 {
+        use std::hash::Hasher;
+        let bytes = postcard::to_allocvec(self).expect("section payload postcard-encodes");
+        let mut h = rustc_hash::FxHasher::default();
+        h.write(&bytes);
+        h.finish()
+    }
 }
 
 /// One section's freshly baked light cubes — shipped whenever a server bake
@@ -1044,6 +1115,25 @@ mod tests {
         roundtrip(&ClientToServer::Join {
             player_name: "Rachel".into(),
             view_distance: 16,
+            cached_sections: vec![SectionCacheClaim {
+                pos: SectionPos::new(-3, 2, 40),
+                hash: 0xDEAD_BEEF_u64,
+            }],
+        });
+        roundtrip(&ClientToServer::SectionCacheMiss {
+            pos: SectionPos::new(7, -1, 2),
+        });
+        roundtrip(&ServerToClient::SectionCached {
+            pos: SectionPos::new(7, -1, 2),
+            hash: 42,
+        });
+        roundtrip(&ServerToClient::SectionUnload {
+            pos: SectionPos::new(1, 2, 3),
+            cache_hash: Some(9),
+        });
+        roundtrip(&ServerToClient::ColumnUnload {
+            pos: ChunkPos::new(5, -6),
+            cache_hashes: vec![(0, 1), (3, u64::MAX)],
         });
         roundtrip(&ClientToServer::SetViewDistance { chunks: 24 });
         roundtrip(&ClientToServer::PlayerUpdate(PlayerUpdate {

@@ -40,6 +40,7 @@ pub(crate) mod prediction;
 pub(crate) mod presentation;
 pub(crate) mod remote_players;
 pub(crate) mod replicated;
+pub(crate) mod section_cache;
 pub(crate) mod session;
 mod terrain_render;
 mod third_person;
@@ -224,6 +225,10 @@ pub struct Game {
     /// matching outcome clears the entry — never re-play sound/particles for
     /// an optimistic action. Observers' breaks never enter this set.
     predicted_presentation_cells: rustc_hash::FxHashSet<IVec3>,
+    /// Evicted replica sections parked for `SectionCached` re-promotion —
+    /// harvested by the app shell on disconnect so a reconnect's Join
+    /// manifest can claim them (see WIKI/section-cache.md).
+    pub(crate) section_cache: section_cache::SectionCache,
     fallback_world: SurfaceDensitySystem,
     particles: ParticleSystem,
     /// Wall-clock seconds banked toward the next mining-dust fleck while the

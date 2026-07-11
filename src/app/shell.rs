@@ -174,7 +174,8 @@ impl App {
             self.game.as_ref().is_none_or(|g| !g.is_remote()),
             "save-and-quit is a HOST action; remote sessions disconnect"
         );
-        if let Some(game) = self.game.take() {
+        if let Some(mut game) = self.game.take() {
+            self.retained_section_cache = Some(game.take_section_cache());
             // Joins the server thread; it saves everything before exiting.
             game.shutdown();
         }
@@ -191,7 +192,8 @@ impl App {
             self.game.as_ref().is_some_and(|g| g.is_remote()),
             "Disconnect is a remote-session action"
         );
-        if let Some(game) = self.game.take() {
+        if let Some(mut game) = self.game.take() {
+            self.retained_section_cache = Some(game.take_section_cache());
             game.shutdown();
         }
         self.screen = AppScreen::Title;
@@ -203,7 +205,10 @@ impl App {
     /// host has no server thread left to ask, and a remote server saves
     /// autonomously. Lands on the Disconnected screen with the reason.
     pub(super) fn enter_connection_lost(&mut self, reason: String) {
-        if let Some(game) = self.game.take() {
+        if let Some(mut game) = self.game.take() {
+            // The cache survives the session precisely for this path: a
+            // reconnect's Join manifest claims it, skipping the re-stream.
+            self.retained_section_cache = Some(game.take_section_cache());
             // For a crashed host thread this is a no-op join; for a remote
             // loss it drops the dead connection. Neither path saves.
             game.shutdown();

@@ -122,10 +122,12 @@ impl SendStats {
     fn count(&self, msg: &ServerToClient) {
         let slot = match msg {
             ServerToClient::Tick(_) => &self.ticks,
-            ServerToClient::SectionData(_) => &self.sections,
+            ServerToClient::SectionData(_) | ServerToClient::SectionCached { .. } => &self.sections,
             ServerToClient::ColumnData(_) => &self.columns,
             ServerToClient::LightData(_) => &self.light,
-            ServerToClient::SectionUnload(_) | ServerToClient::ColumnUnload(_) => &self.unloads,
+            ServerToClient::SectionUnload { .. } | ServerToClient::ColumnUnload { .. } => {
+                &self.unloads
+            }
             _ => &self.other,
         };
         slot.fetch_add(1, Ordering::Relaxed);

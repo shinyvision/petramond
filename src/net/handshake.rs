@@ -5,8 +5,8 @@
 //! `Hello{protocol}` → `HelloAck` (or `HelloReject` = protocol mismatch) →
 //! `ModQuery` → `ModList{mods}` → compare ids against the installed packs
 //! (missing = CLOSE the socket, no farewell frame — the caller drops the
-//! stream) → `Join{player_name, view_distance}` → `JoinAccept(JoinData)`
-//! (or `JoinReject`).
+//! stream) → `Join{player_name, view_distance, cached_sections}` →
+//! `JoinAccept(JoinData)` (or `JoinReject`).
 //!
 //! The function is I/O-agnostic: the caller sets per-read deadlines on the
 //! raw `TcpStream` (`set_read_timeout`, ~5 s) before calling; timeouts
@@ -17,7 +17,9 @@ use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 
 use super::framing::{read_msg, write_msg};
-use super::protocol::{ClientToServer, JoinData, JoinRejectReason, ModEntry, ServerToClient};
+use super::protocol::{
+    ClientToServer, JoinData, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
+};
 use super::PROTOCOL_VERSION;
 
 #[derive(Debug)]
@@ -121,6 +123,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
     player_name: &str,
     view_distance: i32,
     installed_mod_ids: &BTreeSet<String>,
+    cached_sections: Vec<SectionCacheClaim>,
 ) -> Result<HandshakeJoin, HandshakeError> {
     send(
         stream,
@@ -158,6 +161,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
         &ClientToServer::Join {
             player_name: player_name.to_string(),
             view_distance: view_distance.clamp(4, 64) as u8,
+            cached_sections,
         },
     )?;
     match reply(stream)? {
@@ -274,7 +278,7 @@ mod tests {
             },
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen", "extra"]))
+        let data = client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen", "extra"]), Vec::new())
             .expect("handshake succeeds");
         assert_eq!(*data.join, *join_data());
         assert_eq!(
@@ -293,6 +297,7 @@ mod tests {
                 ClientToServer::Join {
                     player_name: "Rachel".to_string(),
                     view_distance: 16,
+                    cached_sections: Vec::new(),
                 },
             ],
             "the exact WIKI frame sequence, nothing more"
@@ -302,7 +307,7 @@ mod tests {
     #[test]
     fn a_protocol_mismatch_stops_after_hello() {
         let mut s = Scripted::new(&[ServerToClient::HelloReject { server_protocol: 3 }]);
-        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[]), Vec::new()) {
             Err(HandshakeError::ProtocolMismatch { server: 3 }) => {}
             other => panic!("expected ProtocolMismatch, got {other:?}"),
         }
@@ -324,7 +329,7 @@ mod tests {
                 mods: mods(&["kitchen", "ghost_mod"]),
             },
         ]);
-        match client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen"])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen"]), Vec::new()) {
             Err(HandshakeError::MissingMods(missing)) => {
                 assert_eq!(missing, mods(&["ghost_mod"]));
             }
@@ -353,7 +358,7 @@ mod tests {
                 reason: JoinRejectReason::NameTaken,
             },
         ]);
-        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[]), Vec::new()) {
             Err(HandshakeError::Rejected(JoinRejectReason::NameTaken)) => {}
             other => panic!("expected Rejected(NameTaken), got {other:?}"),
         }
@@ -364,7 +369,7 @@ mod tests {
         let mut s = Scripted::new(&[ServerToClient::HelloAck {
             protocol: PROTOCOL_VERSION,
         }]);
-        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[]), Vec::new()) {
             Err(HandshakeError::Closed) => {}
             other => panic!("expected Closed, got {other:?}"),
         }
@@ -374,7 +379,7 @@ mod tests {
     fn an_out_of_sequence_reply_is_a_bad_frame() {
         // A server answering Hello with a gameplay message is broken.
         let mut s = Scripted::new(&[ServerToClient::ServerClosing]);
-        match client_handshake(&mut s, "Rachel", 16, &installed(&[])) {
+        match client_handshake(&mut s, "Rachel", 16, &installed(&[]), Vec::new()) {
             Err(HandshakeError::BadFrame) => {}
             other => panic!("expected BadFrame, got {other:?}"),
         }
@@ -397,7 +402,7 @@ mod tests {
             ServerToClient::KeepAlive,
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(&mut s, "Rachel", 16, &installed(&[]))
+        let data = client_handshake(&mut s, "Rachel", 16, &installed(&[]), Vec::new())
             .expect("keepalive-interleaved handshake succeeds");
         assert_eq!(*data.join, *join_data());
     }

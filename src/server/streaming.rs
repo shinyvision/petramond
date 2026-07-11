@@ -16,7 +16,7 @@
 
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::IVec3;
-use crate::net::protocol::ServerToClient;
+use crate::net::protocol::{SectionCacheClaim, ServerToClient, SECTION_CACHE_CAP};
 use crate::world::LoadAnchor;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -99,6 +99,16 @@ pub(crate) struct TerrainSync {
     planned_drop_sections: VecDeque<SectionPos>,
     planned_drop_columns: VecDeque<ChunkPos>,
     planned_target_key: Option<u64>,
+    /// What this connection's client holds in its SECTION CACHE, by the
+    /// server-domain content hash vouched at unload (value: hash + insertion
+    /// stamp). Seeded from the Join manifest, grown by unload emission,
+    /// consumed by the `SectionCached`-vs-`SectionData` decision. Capped at
+    /// [`SECTION_CACHE_CAP`] with oldest-first eviction — the client runs the
+    /// same policy over the same ordered unload stream, so the two maps stay
+    /// aligned without eviction chatter; residual drift (a client that
+    /// declined to park, a divergent claim) heals through `SectionCacheMiss`.
+    client_cache: FxHashMap<SectionPos, (u64, u64)>,
+    client_cache_stamp: u64,
     /// Batches sent but not yet `StreamBatchAck`ed. At `max_unacked` the
     /// streamer sends NOTHING further — a slow client means send slower,
     /// never kick.
@@ -129,6 +139,8 @@ impl Default for TerrainSync {
             planned_drop_sections: VecDeque::new(),
             planned_drop_columns: VecDeque::new(),
             planned_target_key: None,
+            client_cache: FxHashMap::default(),
+            client_cache_stamp: 0,
             unacked_batches: 0,
             max_unacked: 1,
             client_rate: INITIAL_CLIENT_RATE,
@@ -157,6 +169,48 @@ impl TerrainSync {
         if messages_per_second.is_finite() {
             self.client_rate =
                 messages_per_second.clamp(CLIENT_RATE_BOUNDS.0, CLIENT_RATE_BOUNDS.1);
+        }
+    }
+
+    /// Believe the client parks `sp` under `hash` (it was just vouched in an
+    /// unload, or claimed in the Join manifest).
+    fn note_client_cached(&mut self, sp: SectionPos, hash: u64) {
+        let stamp = self.client_cache_stamp;
+        self.client_cache_stamp += 1;
+        self.client_cache.insert(sp, (hash, stamp));
+        if self.client_cache.len() > SECTION_CACHE_CAP {
+            // O(cap) u64 scan per over-cap insert, mirroring the client.
+            if let Some(oldest) = self
+                .client_cache
+                .iter()
+                .min_by_key(|(_, (_, stamp))| *stamp)
+                .map(|(p, _)| *p)
+            {
+                self.client_cache.remove(&oldest);
+            }
+        }
+    }
+
+    /// Seed the belief map from a Join manifest, in claim order (the client
+    /// emits claims oldest-first, keeping the shared eviction order intact).
+    /// Claims cost nothing to believe: a stale or fabricated one either
+    /// hash-mismatches into an ordinary full send or heals through
+    /// `SectionCacheMiss`.
+    pub(crate) fn seed_client_cache(&mut self, claims: &[SectionCacheClaim]) {
+        for claim in claims.iter().take(SECTION_CACHE_CAP) {
+            self.note_client_cached(claim.pos, claim.hash);
+        }
+    }
+
+    /// Apply one `SectionCacheMiss`: the client could not honor a
+    /// `SectionCached` re-promotion, so the pos never landed. Forget the
+    /// belief and, if we had marked it sent, queue it for an ordinary full
+    /// send on the next pump.
+    pub(crate) fn handle_cache_miss(&mut self, pos: SectionPos) {
+        self.client_cache.remove(&pos);
+        if self.sent_sections.remove(&pos) {
+            self.pending_light.remove(&pos);
+            self.planned_sections.push_back(pos);
         }
     }
 
@@ -221,13 +275,14 @@ impl ServerGame {
         if anchors.is_empty() {
             return;
         }
-        self.world.update_load_multi(&anchors);
-        let _ = self.world.poll();
-        // Headless worlds drain (and request — see `headless_relight`) their
-        // light bakes here; nothing else pumps them without a mesh queue.
-        self.world.pump_light_bakes();
+        // Emission runs BEFORE the world's own streaming step: a moved
+        // anchor's plan already drops terrain against the NEW target, and the
+        // world — whose `unload_far` runs the same kept shape — has not
+        // evicted it yet, so unload vouching (`section_payload` at the drop)
+        // still has content to hash. The step's own products just ship one
+        // pump (~5 ms) later: sections it ingests via the next plan, light it
+        // bakes via the ship log drained here next pump.
         let relit = self.world.take_light_ship_log();
-
         let local_at_zero = self.has_local_session;
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
@@ -236,6 +291,12 @@ impl ServerGame {
                 .configure_loopback(s == 0 && local_at_zero);
             self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
         }
+
+        self.world.update_load_multi(&anchors);
+        let _ = self.world.poll();
+        // Headless worlds drain (and request — see `headless_relight`) their
+        // light bakes here; nothing else pumps them without a mesh queue.
+        self.world.pump_light_bakes();
     }
 
     /// Emit at most one ack-windowed streaming batch for remote session `s`:
@@ -381,9 +442,36 @@ impl ServerGame {
             *allowance -= 1;
             sync.sent_columns.remove(&cp);
             sync.sent_column_revisions.remove(&cp);
+            // Vouch the implicitly dropped live sections for the client's
+            // cache, cy-ascending — the order the client parks them in, so
+            // both caps keep evicting the same entries. No vouching for a
+            // section the server world already evicted (nothing to hash) or
+            // with an unshipped rebake in `pending_light` (the client's
+            // light is stale; a re-promotion would resurrect it as current).
+            let mut dropped: Vec<SectionPos> = sync
+                .sent_sections
+                .iter()
+                .filter(|sp| sp.chunk_pos() == cp)
+                .copied()
+                .collect();
+            dropped.sort_unstable_by_key(|sp| sp.cy);
+            let mut cache_hashes = Vec::new();
+            for sp in dropped {
+                if sync.pending_light.contains(&sp) {
+                    continue;
+                }
+                if let Some(payload) = self.world.section_payload(sp) {
+                    let hash = payload.content_hash();
+                    sync.note_client_cached(sp, hash);
+                    cache_hashes.push((sp.cy, hash));
+                }
+            }
             sync.sent_sections.retain(|sp| sp.chunk_pos() != cp);
             sync.pending_light.retain(|sp| sp.chunk_pos() != cp);
-            msgs.push(ServerToClient::ColumnUnload(cp));
+            msgs.push(ServerToClient::ColumnUnload {
+                pos: cp,
+                cache_hashes,
+            });
         }
         while sync.planned_drop_columns.is_empty() {
             let Some(sp) = sync.planned_drop_sections.front().copied() else {
@@ -406,8 +494,17 @@ impl ServerGame {
             sync.planned_drop_sections.pop_front();
             *allowance -= 1;
             sync.sent_sections.remove(&sp);
-            sync.pending_light.remove(&sp);
-            msgs.push(ServerToClient::SectionUnload(sp));
+            // Same vouching rules as the column-drop loop above.
+            let cache_hash = (!sync.pending_light.remove(&sp))
+                .then(|| self.world.section_payload(sp).map(|p| p.content_hash()))
+                .flatten();
+            if let Some(hash) = cache_hash {
+                sync.note_client_cached(sp, hash);
+            }
+            msgs.push(ServerToClient::SectionUnload {
+                pos: sp,
+                cache_hash,
+            });
         }
 
         while sync.planned_drop_columns.is_empty() && sync.planned_drop_sections.is_empty() {
@@ -436,6 +533,17 @@ impl ServerGame {
             };
             sync.sent_sections.insert(sp);
             *allowance -= 1;
+            // A section the client holds cached with unmoved content ships
+            // as a tiny re-promotion instead of the full payload. Either
+            // branch consumes the belief: after this message the section is
+            // live client-side (or a full send superseded the parked copy).
+            if let Some(&(hash, _)) = sync.client_cache.get(&sp) {
+                sync.client_cache.remove(&sp);
+                if section.content_hash() == hash {
+                    msgs.push(ServerToClient::SectionCached { pos: sp, hash });
+                    continue;
+                }
+            }
             msgs.push(ServerToClient::SectionData(Box::new(section)));
         }
         sync.backlog = !sync.planned_sections.is_empty()
@@ -660,8 +768,8 @@ mod tests {
                      slots of allowance"
                 );
                 for m in msgs {
-                    if let ServerToClient::SectionUnload(sp) = m {
-                        awaiting.remove(sp);
+                    if let ServerToClient::SectionUnload { pos, .. } = m {
+                        awaiting.remove(pos);
                     }
                 }
             }

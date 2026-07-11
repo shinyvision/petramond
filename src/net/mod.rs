@@ -16,7 +16,7 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 13; // 13: Join carries view_distance; SetViewDistance changes it live
+pub(crate) const PROTOCOL_VERSION: u16 = 14; // 14: section cache — Join manifest, unload keep-hashes, SectionCached/SectionCacheMiss
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

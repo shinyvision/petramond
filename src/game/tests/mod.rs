@@ -15,5 +15,6 @@ mod prediction;
 mod remote_join;
 mod replica_world;
 mod replication;
+mod section_cache;
 mod wheel_mod;
 mod zombies_mod;

@@ -486,25 +486,64 @@ impl World {
 
     /// Drop one section from a replica on the server's `SectionUnload` — the
     /// keep-shape eviction mirror. Absent sections then answer physics from
-    /// the column summaries again.
-    pub(crate) fn uninstall_remote_section(&mut self, pos: SectionPos) {
+    /// the column summaries again. Returns the evicted section so the game's
+    /// section cache can park it; the store no longer holds the `Arc`, so
+    /// later deltas/light for the pos can never mutate the parked copy.
+    pub(crate) fn uninstall_remote_section(&mut self, pos: SectionPos) -> Option<Arc<Section>> {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
         );
+        let evicted = self.sections.get(&pos).cloned();
         self.remove_section(pos);
         self.vis_dirty = true;
+        evicted
     }
 
     /// Drop a whole column (all sections + column data + summaries) on the
-    /// server's `ColumnUnload`.
-    pub(crate) fn uninstall_remote_column(&mut self, pos: ChunkPos) {
+    /// server's `ColumnUnload`. Returns the evicted live sections — a
+    /// `ColumnUnload` implicitly drops them with no per-section message, so
+    /// this is the section cache's only sight of them.
+    pub(crate) fn uninstall_remote_column(
+        &mut self,
+        pos: ChunkPos,
+    ) -> Vec<(SectionPos, Arc<Section>)> {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
         );
+        let evicted = Self::column_section_range()
+            .filter_map(|cy| {
+                let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                self.sections.get(&sp).map(|s| (sp, Arc::clone(s)))
+            })
+            .collect();
         self.remove_column(pos);
         self.vis_dirty = true;
+        evicted
+    }
+
+    /// Re-promote a cached evicted section on the server's `SectionCached` —
+    /// the install seam of `install_remote_section_deferred` without the
+    /// payload decode/reconstruction: the `Arc<Section>` still carries the
+    /// exact counters, sparse maps, and final light it was evicted with. The
+    /// caller batches the returned pos into `finish_remote_install_batch`
+    /// like any other install.
+    pub(crate) fn install_cached_section(
+        &mut self,
+        pos: SectionPos,
+        section: Arc<Section>,
+    ) -> SectionPos {
+        debug_assert!(
+            self.role == WorldRole::ClientReplica,
+            "remote installs are the replica's ingest path"
+        );
+        self.ensure_column(pos.chunk_pos());
+        self.sections.insert(pos, section);
+        self.refresh_block_entity_index(pos);
+        self.refresh_particle_emitter_index(pos);
+        self.classify_deep_on_install(pos);
+        pos
     }
 
     /// One loaded section's wire payload, or `None` when it isn't loaded.

@@ -152,6 +152,10 @@ pub struct App {
     lan_error: Option<String>,
     /// Why the last session ended, shown by the Disconnected screen.
     disconnect_message: String,
+    /// The last session's section cache, harvested at teardown: the next
+    /// remote join claims it in its Join manifest so a reconnect re-promotes
+    /// cached terrain instead of re-streaming it (WIKI/section-cache.md).
+    retained_section_cache: Option<crate::game::section_cache::SectionCache>,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
 }
@@ -249,6 +253,7 @@ impl App {
             lan_port: None,
             lan_error: None,
             disconnect_message: String::new(),
+            retained_section_cache: None,
             quit_requested: false,
             renderer_world_clear_pending: true,
         };

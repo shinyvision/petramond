@@ -72,6 +72,28 @@ impl TestGame {
         }
     }
 
+    /// [`Self::tick`], but returning a copy of every server→client message
+    /// the pump forwarded — the streaming-path observability the section
+    /// cache tests assert on (payload copies are `Arc` bumps).
+    pub(super) fn tick_recorded(
+        &mut self,
+        dt: f32,
+        input: &GameInput,
+    ) -> Vec<crate::net::protocol::ServerToClient> {
+        self.game.tick_send(dt, input);
+        let mut inbox: Vec<ClientToServer> = Vec::new();
+        while let Ok(msg) = self.pipe.inbox.try_recv() {
+            inbox.push(msg);
+        }
+        let out = self.server.pump(dt, &mut inbox);
+        let recorded = out.msgs.clone();
+        for msg in out.msgs {
+            let _ = self.pipe.outbox.send(msg);
+        }
+        self.game.tick_receive(dt);
+        recorded
+    }
+
     // --- Wrapped Game action methods. In production these queue messages the
     // next frame sends; stage-driving tests expect them latched on the server
     // immediately (the old `#[cfg(test)]` inline flushes), so the wrappers

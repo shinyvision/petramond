@@ -215,6 +215,7 @@ fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
         1,
         "test-server",
         &std::collections::BTreeSet::new(),
+        None,
     );
     assert!(game.is_remote());
 

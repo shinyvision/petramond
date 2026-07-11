@@ -737,6 +737,9 @@ impl ServerGame {
             } => self.sessions[s]
                 .terrain
                 .apply_batch_ack(messages_per_second),
+            ClientToServer::SectionCacheMiss { pos } => {
+                self.sessions[s].terrain.handle_cache_miss(pos)
+            }
             ClientToServer::SetViewDistance { chunks } => {
                 self.sessions[s].view_radius = (chunks as i32).clamp(4, 64);
                 // The HOST's own slider also moves the server budget — its

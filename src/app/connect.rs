@@ -161,12 +161,28 @@ impl App {
         self.connect.phase = ConnectPhase::Connecting {
             label: "Connecting…",
         };
+        // Claim the retained section cache in the Join manifest. Stale or
+        // wrong-server claims are free: they hash-mismatch into ordinary
+        // full sends (or heal through SectionCacheMiss).
+        let cache_claims = self
+            .retained_section_cache
+            .as_ref()
+            .map(|cache| cache.claims())
+            .unwrap_or_default();
         std::thread::Builder::new()
             .name("petramond-connect".to_owned())
             .spawn(move || {
-                let outcome = run_connect(&host, port, &name, view_distance, &cancel, |label| {
-                    let _ = tx.send((gen, ConnectOutcome::Progress(label)));
-                });
+                let outcome = run_connect(
+                    &host,
+                    port,
+                    &name,
+                    view_distance,
+                    cache_claims,
+                    &cancel,
+                    |label| {
+                        let _ = tx.send((gen, ConnectOutcome::Progress(label)));
+                    },
+                );
                 let _ = tx.send((gen, outcome));
             })
             .expect("spawn connect thread");
@@ -244,6 +260,7 @@ impl App {
             Vec3::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
+        let retained_cache = self.retained_section_cache.take();
         self.adopt_game(Game::new_remote(
             cam,
             join.join,
@@ -251,6 +268,7 @@ impl App {
             self.render_dist,
             &self.connect.addr,
             &join.server_mods,
+            retained_cache,
         ));
     }
 }
@@ -281,6 +299,7 @@ fn run_connect(
     port: u16,
     name: &str,
     view_distance: i32,
+    cache_claims: Vec<crate::net::protocol::SectionCacheClaim>,
     cancel: &AtomicBool,
     progress: impl Fn(&'static str),
 ) -> ConnectOutcome {
@@ -327,7 +346,13 @@ fn run_connect(
     if let Err(e) = stream.set_read_timeout(Some(CONNECT_TIMEOUT)) {
         return ConnectOutcome::Failed(format!("Couldn't reach {host}: {e}"));
     }
-    let join = match client_handshake(&mut stream, name, view_distance, &installed_mod_ids()) {
+    let join = match client_handshake(
+        &mut stream,
+        name,
+        view_distance,
+        &installed_mod_ids(),
+        cache_claims,
+    ) {
         Ok(join) => join,
         // No farewell frame after a mod refusal — just drop the socket.
         Err(HandshakeError::MissingMods(mods)) => return ConnectOutcome::Missing(mods),

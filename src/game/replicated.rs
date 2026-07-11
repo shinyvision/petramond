@@ -338,13 +338,53 @@ impl Game {
             match msg {
                 ServerToClient::ColumnData(column) => self.replica.install_remote_column(column),
                 ServerToClient::SectionData(section) => {
+                    // A full payload supersedes any parked copy: the server
+                    // only re-streams a claimed section when its content
+                    // moved (or after a SectionCacheMiss dropped the belief).
+                    self.section_cache.discard(section.pos);
                     if let Some(pos) = self.replica.install_remote_section_deferred(*section) {
                         self.remote_section_installs.push(pos);
                     }
                 }
                 ServerToClient::LightData(light) => self.replica.install_remote_light(light),
-                ServerToClient::SectionUnload(sp) => self.replica.uninstall_remote_section(sp),
-                ServerToClient::ColumnUnload(cp) => self.replica.uninstall_remote_column(cp),
+                ServerToClient::SectionUnload { pos, cache_hash } => {
+                    let evicted = self.replica.uninstall_remote_section(pos);
+                    if let (Some(section), Some(hash)) = (evicted, cache_hash) {
+                        self.park_evicted_section(pos, section, hash);
+                    }
+                }
+                ServerToClient::ColumnUnload { pos, cache_hashes } => {
+                    for (sp, section) in self.replica.uninstall_remote_column(pos) {
+                        if let Some(&(_, hash)) =
+                            cache_hashes.iter().find(|(cy, _)| *cy == sp.cy)
+                        {
+                            self.park_evicted_section(sp, section, hash);
+                        }
+                    }
+                }
+                ServerToClient::SectionCached { pos, hash } => {
+                    match self.section_cache.promote(pos, hash) {
+                        Some(section) => {
+                            let pos = self.replica.install_cached_section(pos, section);
+                            self.remote_section_installs.push(pos);
+                        }
+                        // Like the batch ack, a miss reports through the
+                        // handle right away (never the frame outbox): until
+                        // the server re-streams the full payload this pos is
+                        // a hole in the world.
+                        None => {
+                            if self
+                                .handle
+                                .send(crate::net::protocol::ClientToServer::SectionCacheMiss {
+                                    pos,
+                                })
+                                .is_err()
+                            {
+                                self.note_connection_lost();
+                            }
+                        }
+                    }
+                }
                 ServerToClient::Tick(update) => self.apply_tick_update(update),
                 // Roster changes (broadcast to every connection, local
                 // included). The remote-player STORE keys off the per-tick
@@ -384,6 +424,29 @@ impl Game {
         self.replica
             .finish_remote_install_batch(&self.remote_section_installs);
         self.remote_section_installs.clear();
+    }
+
+    /// Park one server-vouched evicted section in the section cache — unless
+    /// a pending predicted edit touches it. The vouched hash covers the
+    /// server's content at unload issue, which the ordered stream makes equal
+    /// to the replica's copy at unload APPLY only when nothing local mutated
+    /// it; an unconfirmed prediction breaks that, and a wrongly parked copy
+    /// would re-promote as silent desync. Dropping instead costs one
+    /// SectionCacheMiss round-trip if the section ever comes back.
+    fn park_evicted_section(
+        &mut self,
+        pos: crate::chunk::SectionPos,
+        section: std::sync::Arc<crate::section::Section>,
+        hash: u64,
+    ) {
+        let predicted = self
+            .prediction
+            .predicted_cells()
+            .chain(self.predicted_presentation_cells.iter().copied())
+            .any(|c| crate::chunk::SectionPos::from_world(c.x, c.y, c.z) == Some(pos));
+        if !predicted {
+            self.section_cache.park(pos, section, hash);
+        }
     }
 
     /// Close the open batch window into a rate sample and ack it RIGHT AWAY

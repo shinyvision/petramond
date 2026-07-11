@@ -226,8 +226,9 @@ impl IdRemap {
             | ServerToClient::JoinReject { .. }
             | ServerToClient::ColumnData(_)
             | ServerToClient::LightData(_)
-            | ServerToClient::SectionUnload(_)
-            | ServerToClient::ColumnUnload(_)
+            | ServerToClient::SectionUnload { .. }
+            | ServerToClient::ColumnUnload { .. }
+            | ServerToClient::SectionCached { .. }
             | ServerToClient::PlayerJoined { .. }
             | ServerToClient::PlayerLeft { .. }
             | ServerToClient::ChatLine(_)
@@ -351,6 +352,7 @@ impl IdRemap {
             | ClientToServer::MenuClick { .. }
             | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }
+            | ClientToServer::SectionCacheMiss { .. }
             | ClientToServer::Pause(_)
             | ClientToServer::KeepAlive
             | ClientToServer::Disconnect => {}

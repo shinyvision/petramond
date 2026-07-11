@@ -14,6 +14,7 @@ use crate::worker::JobPool;
 use crate::world::{World, WorldRole};
 use crate::worldgen::density::surface::SurfaceDensitySystem;
 
+use super::section_cache::section_cache_registry_key;
 use super::Game;
 
 struct OpenedSession {
@@ -45,7 +46,15 @@ impl Game {
         // The sim moves to its own self-clocked thread (multiplayer Phase D);
         // from here the client owns only the message handle.
         let handle = ServerHandle::spawn(server);
-        Self::assemble(cam, handle, bootstrap)
+        let mut game = Self::assemble(cam, handle, bootstrap);
+        // Loopback skips the remap, so the local vocabulary IS the session's
+        // — binding it keys this cache for a later harvest (a remote join to
+        // a server with identical tables may legitimately claim it).
+        game.section_cache
+            .adopt_session(section_cache_registry_key(
+                &crate::net::remap::local_name_tables(),
+            ));
+        game
     }
 
     /// The REMOTE client session (multiplayer Phase E): no save, no
@@ -62,8 +71,10 @@ impl Game {
         render_dist: i32,
         server_identity: &str,
         server_mods: &BTreeSet<String>,
+        retained_section_cache: Option<crate::game::section_cache::SectionCache>,
     ) -> Self {
         let join = *join;
+        let registry_key = section_cache_registry_key(&join.tables);
         // The replica gets its OWN pool: unlike the in-process split there is
         // no server world in this process to share one with.
         let pool = Arc::new(JobPool::new(JobPool::default_threads()));
@@ -89,7 +100,22 @@ impl Game {
         let mut game = Self::assemble(cam, handle, bootstrap);
         game.remote = true;
         game.player_roster = join.players.into_iter().collect();
+        // A cache retained from an earlier session re-promotes only under
+        // the same id vocabulary — its blocks are client-local ids whose
+        // meaning this session's remap tables define. adopt_session clears
+        // on drift (a fresh cache just binds the key); any Join claims
+        // already made for cleared entries heal through the
+        // SectionCacheMiss fallback.
+        let mut cache = retained_section_cache.unwrap_or_default();
+        cache.adopt_session(registry_key);
+        game.section_cache = cache;
         game
+    }
+
+    /// Hand the section cache to the app shell at session teardown — the next
+    /// remote join's manifest claims it (WIKI/section-cache.md).
+    pub(crate) fn take_section_cache(&mut self) -> crate::game::section_cache::SectionCache {
+        std::mem::take(&mut self.section_cache)
     }
 
     /// Assemble the client half around an already-connected server handle.
@@ -145,6 +171,7 @@ impl Game {
             local_placed_block: None,
             place_ghost: None,
             predicted_presentation_cells: Default::default(),
+            section_cache: Default::default(),
             fallback_world: bootstrap.fallback_world,
             particles: ParticleSystem::new(),
             mining_dust_t: 0.0,

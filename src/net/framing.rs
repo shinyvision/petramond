@@ -100,6 +100,7 @@ mod tests {
         let msg = ClientToServer::Join {
             player_name: "Rachel".into(),
             view_distance: 16,
+            cached_sections: Vec::new(),
         };
         let frame = frame_of(&msg);
         assert_eq!(frame[4], 0, "a tiny body ships raw (no zlib flag)");

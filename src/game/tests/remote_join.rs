@@ -50,6 +50,7 @@ fn new_remote_seeds_the_client_from_join_data() {
         1,
         "test-server",
         &std::collections::BTreeSet::new(),
+        None,
     );
 
     // The locally-predicted player mirrors the restore (the wire twin of
