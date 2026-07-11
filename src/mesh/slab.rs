@@ -102,8 +102,6 @@ fn emit_layer_face<B, S, L, K, T>(
     };
     let tint = tint_for(tile);
 
-    let slab_full_at =
-        |x: i32, y: i32, z: i32| -> bool { slab_at(x, y, z).is_some_and(|s| s.is_full()) };
     for &(min, max) in quads.iter().take(n) {
         let (fx, fy, fz) = front_voxel(wx, wy, wz, face, min, max);
         let (ao, sky, block_light, warm) = cube_face_lighting(
@@ -115,7 +113,7 @@ fn emit_layer_face<B, S, L, K, T>(
             neighbour_blocklight(fx, fy, fz) as u32,
             face != Face::NegY,
             block_at,
-            &slab_full_at,
+            slab_at,
             neighbour_light,
             neighbour_blocklight,
         );

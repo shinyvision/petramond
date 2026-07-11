@@ -5,6 +5,7 @@
 use crate::atlas::Tile;
 #[cfg(test)]
 use crate::block::Block;
+use crate::block_state::SlabState;
 use crate::chunk::SKY_FULL;
 use crate::torch::{warm_amount, warm_tint};
 
@@ -132,7 +133,7 @@ where
         f_bl,
         smooth_light,
         block_at,
-        &|_, _, _| false,
+        &|_, _, _| None,
         neighbour_light,
         neighbour_blocklight,
     );
@@ -153,6 +154,49 @@ where
     )
 }
 
+/// Whether ring cell `(a, b)` (tangent offsets from the front voxel) lends its
+/// light to face corner `(su, sv)`. A partial slab's single light value
+/// describes its OPEN half, so it only feeds a corner whose touching half-cell
+/// octant is open: a wall base resting on a top-slab floor must not blend in
+/// the under-floor darkness sealed away behind the slab's solid top half.
+/// `SlabState::EMPTY` means "not a partial slab" — always open.
+#[inline]
+pub(super) fn slab_corner_open(
+    state: SlabState,
+    face: Face,
+    a: i32,
+    b: i32,
+    su: i32,
+    sv: i32,
+) -> bool {
+    if state == SlabState::EMPTY {
+        return true;
+    }
+    // The touching octant: along the normal, the half against the face plane;
+    // along a tangent axis, the half toward the front voxel when the cell is
+    // offset there (a/b != 0), else the half on the corner's side.
+    let hu = ((su > 0) != (a != 0)) as usize;
+    let hv = ((sv > 0) != (b != 0)) as usize;
+    let (dx, dy, dz) = face.dir();
+    let (ux, uy, uz) = face.ao_u();
+    let (vx, vy, vz) = face.ao_v();
+    let pick = |d: i32, uc: i32, vc: i32| -> usize {
+        if uc != 0 {
+            hu
+        } else if vc != 0 {
+            hv
+        } else {
+            (d < 0) as usize
+        }
+    };
+    !crate::slab::half_cell_occupied(
+        state,
+        pick(dx, ux, vx),
+        pick(dy, uy, vy),
+        pick(dz, uz, vz),
+    )
+}
+
 pub(super) fn cube_face_lighting_pad(
     pad: &SectionMeshPad<'_>,
     face: Face,
@@ -170,6 +214,7 @@ pub(super) fn cube_face_lighting_pad(
     let mut opq = [[false; 3]; 3];
     let mut sky = [[0u32; 3]; 3];
     let mut blk = [[0u32; 3]; 3];
+    let mut slab = [[SlabState::EMPTY; 3]; 3];
     for a in -1i32..=1 {
         for b in -1i32..=1 {
             if a == 0 && b == 0 {
@@ -183,15 +228,22 @@ pub(super) fn cube_face_lighting_pad(
             let cell = pad.block_at_pad(cx, cy, cz);
             let i = mesh_pad_idx(cx, cy, cz);
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            // Full slab stacks occlude AO/light like opaque cubes — mirrors the
+            // Full slab stacks occlude AO/light like opaque cubes; partial slab
+            // states are kept for the per-corner octant gate below — mirrors the
             // closure-path gather in `cube_face_lighting` (byte parity).
-            let full_stack = pad.full_slab_stack_at_pad(cell, cx, cy, cz);
+            let slab_state = cell
+                .is_slab()
+                .then(|| crate::slab::normalize_state(cell, pad.slab_states[i]));
+            let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
                     sky[ia][ib] = pad.skylight[i] as u32;
                     blk[ia][ib] = pad.blocklight[i] as u32;
+                    if let Some(state) = slab_state {
+                        slab[ia][ib] = state;
+                    }
                 }
             }
         }
@@ -214,19 +266,12 @@ pub(super) fn cube_face_lighting_pad(
         let mut sum = f_l;
         let mut sum_block = f_bl;
         let mut cnt = 1u32;
-        if !opq[iu][1] {
-            sum += sky[iu][1];
-            sum_block += blk[iu][1];
-            cnt += 1;
-        }
-        if !opq[1][iv] {
-            sum += sky[1][iv];
-            sum_block += blk[1][iv];
-            cnt += 1;
-        }
-        if !opq[iu][iv] {
-            sum += sky[iu][iv];
-            sum_block += blk[iu][iv];
+        for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
+            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv) {
+                continue;
+            }
+            sum += sky[ia][ib];
+            sum_block += blk[ia][ib];
             cnt += 1;
         }
         (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);

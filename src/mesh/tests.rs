@@ -1034,6 +1034,95 @@ fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
     }
 }
 
+/// The screenshot regression: a wall face rising from a top-slab floor must not
+/// blend the slabs' under-floor darkness into its bottom corners. A slab cell's
+/// light value describes its OPEN half; the wall corners rest on the slabs'
+/// SOLID top half, which seals that darkness away, so the wall must shade
+/// exactly like one standing on full blocks.
+#[test]
+fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
+    let mut section = crate::section::Section::new(0, 0, 0);
+    // A stone wall along z=7 rising one block above a top-slab floor that
+    // fills z=8..=10, with a solid base under the wall.
+    for x in 6..=10 {
+        for y in 7..=9 {
+            section.set_block(x, y, 7, Block::Stone);
+        }
+        for z in 8..=10 {
+            section.set_block(x, 8, z, Block::StoneSlab);
+            section.set_slab_state(
+                x,
+                8,
+                z,
+                SlabState::single(SlabSplit::Y, 1, Block::StoneSlab),
+            );
+        }
+    }
+
+    let in_bounds = |wx: i32, wy: i32, wz: i32| {
+        (0..SECTION_SIZE as i32).contains(&wx)
+            && (0..SECTION_SIZE as i32).contains(&wy)
+            && (0..SECTION_SIZE as i32).contains(&wz)
+    };
+    let mesh = super::build_section_mesh(
+        &section,
+        crate::chunk::SectionPos::new(0, 0, 0),
+        |wx, wy, wz| {
+            if in_bounds(wx, wy, wz) {
+                section.block_raw(wx as usize, wy as usize, wz as usize)
+            } else {
+                Block::Air.id()
+            }
+        },
+        |_, _, _| StairState::default(),
+        |wx, wy, wz| {
+            if in_bounds(wx, wy, wz) {
+                section.slab_state(wx as usize, wy as usize, wz as usize)
+            } else {
+                SlabState::EMPTY
+            }
+        },
+        |_, _, _| 0,
+        |_, _| 0,
+        // Baked-light shape: the slab cells and the space below them carry the
+        // dark under-floor light; everything above and beside is fully sky-lit.
+        |wx, wy, wz| {
+            if wy <= 8 && (6..=10).contains(&wx) && (8..=10).contains(&wz) {
+                0
+            } else {
+                SKY_FULL
+            }
+        },
+        |_, _, _| 0,
+        |_, _, _| true,
+    );
+
+    // The wall's face over the floor: quads on the z=8 plane wholly above the
+    // slab tops (the buried faces below the floor surface keep their darkness).
+    let mut checked = 0;
+    for quad in mesh.opaque.chunks(4) {
+        if !quad
+            .iter()
+            .all(|v| (v.pos[2] - 8.0).abs() < 1e-3 && v.pos[1] >= 9.0 - 1e-3)
+        {
+            continue;
+        }
+        for v in quad {
+            assert_eq!(
+                light6(v),
+                63,
+                "wall corner at {:?} must not sample the darkness sealed under the slab floor",
+                v.pos
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 4,
+        "expected the wall face above the floor to be emitted"
+    );
+}
+
 /// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
 /// UV_MODE_CELL_LOCAL vertices.
 fn cell_uv16(v: &Vertex) -> (u32, u32) {

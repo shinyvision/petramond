@@ -24,6 +24,7 @@ use super::water::{self, SideVsWater, WaterSurface};
 use super::face_emit::emit_cube_face;
 use super::face_emit::{
     cube_face_lighting_pad, fold_light, fold_light_smooth, push_cube_face_with_cell_uvs,
+    slab_corner_open,
 };
 use super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 
@@ -779,7 +780,7 @@ fn section_geometry(
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
-                        &slab_full_at,
+                        &slab_at,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
@@ -1096,7 +1097,7 @@ fn section_geometry(
                         f_bl,
                         true,
                         &block_at,
-                        &slab_full_at,
+                        &slab_at,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
@@ -1437,7 +1438,7 @@ fn chunk_geometry(
                         [tile_top, tile_bot, tile_side],
                         &tint_for,
                         &block_at,
-                        &|_, _, _| false,
+                        &|_, _, _| None,
                         &neighbour_light,
                         &neighbour_blocklight,
                     );
@@ -1809,13 +1810,13 @@ pub(super) fn cube_face_lighting<B, S, L, K>(
     f_bl: u32,
     smooth_light: bool,
     block_at: &B,
-    slab_full_at: &S,
+    slab_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
 ) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
 where
     B: Fn(i32, i32, i32) -> Block,
-    S: Fn(i32, i32, i32) -> bool,
+    S: Fn(i32, i32, i32) -> Option<SlabState>,
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
 {
@@ -1826,6 +1827,7 @@ where
     let mut opq = [[false; 3]; 3];
     let mut sky = [[0u32; 3]; 3];
     let mut blk = [[0u32; 3]; 3];
+    let mut slab = [[SlabState::EMPTY; 3]; 3];
     for a in -1i32..=1 {
         for b in -1i32..=1 {
             if a == 0 && b == 0 {
@@ -1841,14 +1843,23 @@ where
             // A full slab stack occludes AO and carries no light, exactly like an
             // opaque cube — without this it darkens corners twice (it blocks the
             // light flood, then still enters the smooth-light mean as a dark open
-            // cell). The dense `is_slab` flag gates the state lookup.
-            let full_stack = cell.is_slab() && slab_full_at(cx, cy, cz);
+            // cell). Partial slab states are kept for the per-corner octant gate
+            // below. The dense `is_slab` flag gates the state lookup.
+            let slab_state = if cell.is_slab() {
+                slab_at(cx, cy, cz)
+            } else {
+                None
+            };
+            let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
                     sky[ia][ib] = neighbour_light(cx, cy, cz) as u32;
                     blk[ia][ib] = neighbour_blocklight(cx, cy, cz) as u32;
+                    if let Some(state) = slab_state {
+                        slab[ia][ib] = state;
+                    }
                 }
             }
         }
@@ -1873,19 +1884,12 @@ where
         let mut sum = f_l;
         let mut sum_block = f_bl;
         let mut cnt = 1u32;
-        if !opq[iu][1] {
-            sum += sky[iu][1];
-            sum_block += blk[iu][1];
-            cnt += 1;
-        }
-        if !opq[1][iv] {
-            sum += sky[1][iv];
-            sum_block += blk[1][iv];
-            cnt += 1;
-        }
-        if !opq[iu][iv] {
-            sum += sky[iu][iv];
-            sum_block += blk[iu][iv];
+        for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
+            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv) {
+                continue;
+            }
+            sum += sky[ia][ib];
+            sum_block += blk[ia][ib];
             cnt += 1;
         }
         (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
