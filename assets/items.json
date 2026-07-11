@@ -2009,6 +2009,66 @@
         "roll": 0
       },
       "tags": []
+    },
+    {
+      "item": "petramond:polished_marble",
+      "key": "petramond:polished_marble",
+      "name": "Polished Marble",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:marble_stairs",
+      "key": "petramond:marble_stairs",
+      "name": "Marble Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:marble_slab",
+      "key": "petramond:marble_slab",
+      "name": "Marble Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:polished_marble_stairs",
+      "key": "petramond:polished_marble_stairs",
+      "name": "Polished Marble Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "petramond:polished_marble_slab",
+      "key": "petramond:polished_marble_slab",
+      "name": "Polished Marble Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": []
     }
   ]
 }

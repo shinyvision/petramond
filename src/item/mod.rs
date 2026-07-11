@@ -227,6 +227,11 @@ impl ItemType {
     pub const WoolBlock: ItemType = ItemType(153);
     pub const WoolStairs: ItemType = ItemType(154);
     pub const WoolSlab: ItemType = ItemType(155);
+    pub const PolishedMarble: ItemType = ItemType(156);
+    pub const MarbleStairs: ItemType = ItemType(157);
+    pub const MarbleSlab: ItemType = ItemType(158);
+    pub const PolishedMarbleStairs: ItemType = ItemType(159);
+    pub const PolishedMarbleSlab: ItemType = ItemType(160);
 }
 
 impl std::fmt::Debug for ItemType {
@@ -559,6 +564,11 @@ impl ItemType {
             Block::WoolBlock => ItemType::WoolBlock,
             Block::WoolStairs => ItemType::WoolStairs,
             Block::WoolSlab => ItemType::WoolSlab,
+            Block::PolishedMarble => ItemType::PolishedMarble,
+            Block::MarbleStairs => ItemType::MarbleStairs,
+            Block::MarbleSlab => ItemType::MarbleSlab,
+            Block::PolishedMarbleStairs => ItemType::PolishedMarbleStairs,
+            Block::PolishedMarbleSlab => ItemType::PolishedMarbleSlab,
             _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
             // A pack-registered block: its item declares the link via its
             // row's `block` field. No linked item -> Air (nothing to hold).
@@ -627,6 +637,11 @@ impl ItemType {
             ItemType::WoolBlock => Some(Block::WoolBlock),
             ItemType::WoolStairs => Some(Block::WoolStairs),
             ItemType::WoolSlab => Some(Block::WoolSlab),
+            ItemType::PolishedMarble => Some(Block::PolishedMarble),
+            ItemType::MarbleStairs => Some(Block::MarbleStairs),
+            ItemType::MarbleSlab => Some(Block::MarbleSlab),
+            ItemType::PolishedMarbleStairs => Some(Block::PolishedMarbleStairs),
+            ItemType::PolishedMarbleSlab => Some(Block::PolishedMarbleSlab),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             // Engine item-only items carry no link; a pack item's row may
             // (`"block": "mod:key"` in items.json).

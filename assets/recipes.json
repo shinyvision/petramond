@@ -605,6 +605,92 @@
     {
       "type": "shaped",
       "pattern": [
+        "MM",
+        "MM"
+      ],
+      "key": {
+        "M": "petramond:marble"
+      },
+      "result": "petramond:polished_marble",
+      "count": 4
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "M  ",
+        "MM ",
+        "MMM"
+      ],
+      "key": {
+        "M": "petramond:marble"
+      },
+      "result": "petramond:marble_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  M",
+        " MM",
+        "MMM"
+      ],
+      "key": {
+        "M": "petramond:marble"
+      },
+      "result": "petramond:marble_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "MMM"
+      ],
+      "key": {
+        "M": "petramond:marble"
+      },
+      "result": "petramond:marble_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "P  ",
+        "PP ",
+        "PPP"
+      ],
+      "key": {
+        "P": "petramond:polished_marble"
+      },
+      "result": "petramond:polished_marble_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "  P",
+        " PP",
+        "PPP"
+      ],
+      "key": {
+        "P": "petramond:polished_marble"
+      },
+      "result": "petramond:polished_marble_stairs",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "PPP"
+      ],
+      "key": {
+        "P": "petramond:polished_marble"
+      },
+      "result": "petramond:polished_marble_slab",
+      "count": 6
+    },
+    {
+      "type": "shaped",
+      "pattern": [
         "PPP",
         " S ",
         " S "

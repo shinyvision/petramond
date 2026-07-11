@@ -4996,6 +4996,169 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "block": "petramond:polished_marble",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "polished_marble",
+        "polished_marble",
+        "polished_marble"
+      ],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:polished_marble",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:marble_stairs",
+      "shape": "stair",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "marble",
+        "marble",
+        "marble"
+      ],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:marble_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:marble_slab",
+      "shape": "slab",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "marble",
+        "marble",
+        "marble"
+      ],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:marble_slab",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:polished_marble_stairs",
+      "shape": "stair",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "polished_marble",
+        "polished_marble",
+        "polished_marble"
+      ],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:polished_marble_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:polished_marble_slab",
+      "shape": "slab",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "polished_marble",
+        "polished_marble",
+        "polished_marble"
+      ],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:polished_marble_slab",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     }
   ]
 }

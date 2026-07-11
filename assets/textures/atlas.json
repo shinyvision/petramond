@@ -68,6 +68,7 @@
     {"name": "ice", "file": "ice.png"},
     {"name": "calcite", "file": "calcite.png"},
     {"name": "marble", "file": "marble.png"},
+    {"name": "polished_marble", "file": "polished_marble.png"},
     {"name": "tuff", "file": "tuff.png"},
     {"name": "coal_ore", "file": "coal_ore.png"},
     {"name": "iron_ore", "file": "iron_ore.png"},

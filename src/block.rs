@@ -169,6 +169,11 @@ impl Block {
     pub const WoolBlock: Block = Block(128);
     pub const WoolStairs: Block = Block(129);
     pub const WoolSlab: Block = Block(130);
+    pub const PolishedMarble: Block = Block(131);
+    pub const MarbleStairs: Block = Block(132);
+    pub const MarbleSlab: Block = Block(133);
+    pub const PolishedMarbleStairs: Block = Block(134);
+    pub const PolishedMarbleSlab: Block = Block(135);
 }
 
 impl std::fmt::Debug for Block {
