@@ -36,6 +36,7 @@ pub(crate) struct ClientBootstrap {
     self_id: PlayerId,
     replicated_tick: u64,
     fallback_world: SurfaceDensitySystem,
+    client_mods: crate::modding::client::ClientModRuntime,
 }
 
 impl Game {
@@ -59,6 +60,7 @@ impl Game {
         join: Box<crate::net::protocol::JoinData>,
         handle: ServerHandle,
         render_dist: i32,
+        server_identity: &str,
     ) -> Self {
         let join = *join;
         // The replica gets its OWN pool: unlike the in-process split there is
@@ -73,6 +75,11 @@ impl Game {
             self_id: join.player_id,
             replicated_tick: 0,
             fallback_world: SurfaceDensitySystem::new(join.seed),
+            client_mods: crate::modding::client::ClientModRuntime::load(
+                join.seed,
+                &format!("remote:{server_identity}"),
+                &BTreeSet::new(),
+            ),
         };
         let mut game = Self::assemble(cam, handle, bootstrap);
         game.remote = true;
@@ -112,6 +119,7 @@ impl Game {
             remote_section_installs: Vec::new(),
             pending_chat_lines: Vec::new(),
             replica: bootstrap.replica,
+            client_mods: bootstrap.client_mods,
             replicated_mobs: Default::default(),
             replicated_items: Default::default(),
             self_view: bootstrap.self_view,
@@ -179,6 +187,11 @@ pub(crate) fn build_session(
     // HUD is right before the first tick's batch arrives.
     let self_view = crate::game::replicated::SelfView::seed_from(&server.sessions[0].player);
     let self_id = server.sessions[0].id;
+    let client_mods = crate::modding::client::ClientModRuntime::load(
+        server.world.seed,
+        &format!("local:{world_name}"),
+        server.world.disabled_mods(),
+    );
 
     (
         server,
@@ -189,6 +202,7 @@ pub(crate) fn build_session(
             self_id,
             replicated_tick,
             fallback_world,
+            client_mods,
         },
     )
 }

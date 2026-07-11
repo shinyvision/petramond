@@ -6,7 +6,7 @@
 //! [`build_ui`] emits only what the game owns on top of that: item icons +
 //! stack counts in the document's solved slot cells, greyed workbench results,
 //! the HUD hearts, and the cursor-held drag stack. When no document backs the
-//! frame (`doc_slots` is `None`) nothing draws.
+//! frame has no solved document slots, nothing draws.
 //!
 //! All layout math is in **physical pixels** (origin top-left, y down) and
 //! converted to NDC only when emitting vertices.
@@ -15,7 +15,7 @@
 // the `pub(crate)` MVP projection fns; the per-slot helpers stay `pub(super)`.
 pub(crate) mod icon;
 
-use crate::gui::{gui_scale, GuiKind, Role, SlotRect, UiSnapshot};
+use crate::gui::{GuiKind, Role, SlotRect, UiSnapshot};
 use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;
 
@@ -147,9 +147,9 @@ fn push_doc_game_content(
     ui: &UiSnapshot,
     build: &mut UiBuild,
     slots: &[crate::gui::DocSlot],
+    screen: (u32, u32),
     scale: f32,
 ) {
-    let screen = ui.screen;
     for slot in slots {
         let inset = scale;
         let r = SlotRect {
@@ -345,21 +345,25 @@ fn push_effects(
 }
 
 /// Build the game-owned UI content for `ui` this frame. The buffers are the
-/// caller-owned reusable [`UiBuild`] (cleared, capacity kept). Draws nothing
-/// unless a GUI document solved this frame's slot cells (`doc_slots`).
-pub fn build_ui(ui: &UiSnapshot, build: &mut UiBuild) {
+/// caller-owned reusable [`UiBuild`] (cleared, capacity kept). `screen`,
+/// `scale`, and `doc_slots` belong to the same stamped frame transaction.
+pub fn build_ui(
+    ui: &UiSnapshot,
+    screen: (u32, u32),
+    scale: f32,
+    doc_slots: Option<&[crate::gui::DocSlot]>,
+    build: &mut UiBuild,
+) {
     build.clear();
 
-    let screen = ui.screen;
     if screen.0 == 0 || screen.1 == 0 {
         return;
     }
     if ui.hurt_flash > 0.0 {
         push_hurt_vignette(&mut build.vignette, screen, ui.hurt_flash);
     }
-    let scale = gui_scale(screen);
-    if let Some(doc_slots) = ui.doc_slots.clone() {
-        push_doc_game_content(ui, build, &doc_slots, scale);
+    if let Some(doc_slots) = doc_slots {
+        push_doc_game_content(ui, build, doc_slots, screen, scale);
     }
 }
 
@@ -396,7 +400,8 @@ fn push_hurt_vignette(out: &mut Vec<UiVertex>, screen: (u32, u32), strength: f32
 mod tests {
     use super::*;
     use crate::gui::DocSlot;
-    use std::sync::Arc;
+
+    const SCREEN: (u32, u32) = (1280, 720);
 
     fn cell(role: Role, index: u32) -> DocSlot {
         DocSlot::new(
@@ -411,56 +416,52 @@ mod tests {
         )
     }
 
-    fn snap(kind: GuiKind, open: bool, slots: Vec<DocSlot>) -> UiSnapshot {
+    fn snap(kind: GuiKind, open: bool) -> UiSnapshot {
         let mut s = UiSnapshot {
             kind,
             open,
-            screen: (1280, 720),
             cursor_px: (640.0, 360.0),
             active: 2,
-            doc_slots: Some(Arc::new(slots)),
             ..Default::default()
         };
         s.slots[0] = Some((ItemType::Stone, 64));
         s
     }
 
+    fn build(ui: &UiSnapshot, slots: Option<&[DocSlot]>, out: &mut UiBuild) {
+        build_ui(ui, SCREEN, crate::gui::gui_scale(SCREEN), slots, out);
+    }
+
     #[test]
     fn gui_scale_is_clamped_and_increases_with_height() {
-        assert_eq!(gui_scale((320, 240)), 1.0);
-        assert!(gui_scale((1920, 1080)) >= 2.0);
-        assert_eq!(gui_scale((10, 10)), 1.0);
-        assert_eq!(gui_scale((10000, 10000)), 4.0);
+        assert_eq!(crate::gui::gui_scale((320, 240)), 1.0);
+        assert!(crate::gui::gui_scale((1920, 1080)) >= 2.0);
+        assert_eq!(crate::gui::gui_scale((10, 10)), 1.0);
+        assert_eq!(crate::gui::gui_scale((10000, 10000)), 4.0);
     }
 
     #[test]
     fn zero_screen_and_missing_document_build_nothing() {
         let mut b = UiBuild::default();
-        let s = UiSnapshot {
-            screen: (0, 0),
-            ..snap(GuiKind::Hotbar, false, vec![cell(Role::Hotbar, 0)])
-        };
-        build_ui(&s, &mut b);
+        let s = snap(GuiKind::Hotbar, false);
+        let slots = [cell(Role::Hotbar, 0)];
+        build_ui(&s, (0, 0), 1.0, Some(&slots), &mut b);
         assert!(b.icon_quads.is_empty() && b.hearts.is_empty());
 
-        // No doc_slots (no document drew the frame): the game draws nothing.
-        let mut s = snap(GuiKind::Inventory, true, Vec::new());
-        s.doc_slots = None;
+        // No solved document (and therefore no slots): game content draws nothing.
+        let mut s = snap(GuiKind::Inventory, true);
         s.cursor = Some((ItemType::Dirt, 12));
-        build_ui(&s, &mut b);
+        build(&s, None, &mut b);
         assert!(b.icon_quads.is_empty() && b.drag_icon_quads.is_empty() && b.counts.is_empty());
     }
 
     #[test]
     fn doc_slots_emit_icons_counts_and_the_drag_stack() {
         let mut b = UiBuild::default();
-        let mut s = snap(
-            GuiKind::Inventory,
-            true,
-            vec![cell(Role::Hotbar, 0), cell(Role::Hotbar, 1)],
-        );
+        let mut s = snap(GuiKind::Inventory, true);
+        let slots = [cell(Role::Hotbar, 0), cell(Role::Hotbar, 1)];
         s.cursor = Some((ItemType::Dirt, 12));
-        build_ui(&s, &mut b);
+        build(&s, Some(&slots), &mut b);
         assert_eq!(b.icon_quads.len(), 1, "only the filled cell draws an icon");
         let (item, r) = b.icon_quads[0];
         assert_eq!(item, ItemType::Stone);
@@ -482,22 +483,20 @@ mod tests {
         });
         // HUD (kind Hotbar, no open menu) with health: hearts drawn.
         let mut b = UiBuild::default();
-        let mut s = snap(GuiKind::Hotbar, false, vec![cell(Role::Hotbar, 0)]);
+        let slots = [cell(Role::Hotbar, 0)];
+        let mut s = snap(GuiKind::Hotbar, false);
         s.health = health;
-        build_ui(&s, &mut b);
+        build(&s, Some(&slots), &mut b);
         assert!(!b.hearts.is_empty(), "the HUD draws the heart bar");
 
         // Behind an open menu (kind != Hotbar): hidden even with health.
-        let mut s = snap(GuiKind::Inventory, true, vec![cell(Role::Hotbar, 0)]);
+        let mut s = snap(GuiKind::Inventory, true);
         s.health = health;
-        build_ui(&s, &mut b);
+        build(&s, Some(&slots), &mut b);
         assert!(b.hearts.is_empty(), "no hearts behind an open menu");
 
         // On the HUD but with no health (a spectator): still nothing.
-        build_ui(
-            &snap(GuiKind::Hotbar, false, vec![cell(Role::Hotbar, 0)]),
-            &mut b,
-        );
+        build(&snap(GuiKind::Hotbar, false), Some(&slots), &mut b);
         assert!(b.hearts.is_empty(), "no hearts without survival health");
     }
 
@@ -505,10 +504,10 @@ mod tests {
     fn build_reuses_buffers_without_growth() {
         let mut b = UiBuild::default();
         let slots = vec![cell(Role::Hotbar, 0)];
-        build_ui(&snap(GuiKind::Inventory, true, slots.clone()), &mut b);
+        build(&snap(GuiKind::Inventory, true), Some(&slots), &mut b);
         let cap = b.icon_quads.capacity();
         assert!(cap > 0);
-        build_ui(&snap(GuiKind::Hotbar, false, slots), &mut b);
+        build(&snap(GuiKind::Hotbar, false), Some(&slots), &mut b);
         assert_eq!(b.icon_quads.capacity(), cap, "icon-quad buffer reused");
     }
 }

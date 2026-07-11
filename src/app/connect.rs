@@ -243,7 +243,13 @@ impl App {
             Vec3::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
-        self.adopt_game(Game::new_remote(cam, join, handle, self.render_dist));
+        self.adopt_game(Game::new_remote(
+            cam,
+            join,
+            handle,
+            self.render_dist,
+            &self.connect.addr,
+        ));
     }
 }
 

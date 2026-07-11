@@ -23,11 +23,12 @@ pub(super) struct DocUi {
     vbuf: Option<wgpu::Buffer>,
     verts: Vec<UiVertex>,
     theme_binds: Option<ThemeBinds>,
-    /// This frame's `TexId::DocImage` index → image path order.
-    frame_paths: Vec<std::path::PathBuf>,
+    /// This frame's `TexId::DocImage` index → source order.
+    frame_images: Vec<crate::gui::DocImageSource>,
     /// Uploaded image textures by path (session-lived; image file changes
     /// need a restart).
     image_binds: HashMap<std::path::PathBuf, wgpu::BindGroup>,
+    dynamic_binds: HashMap<String, DynamicBind>,
 }
 
 struct ThemeBinds {
@@ -35,21 +36,32 @@ struct ThemeBinds {
     font: wgpu::BindGroup,
 }
 
+struct DynamicBind {
+    revision: u64,
+    size: (u32, u32),
+    texture: wgpu::Texture,
+    bind: wgpu::BindGroup,
+}
+
 impl Renderer {
     /// Upload this frame's GUI-document draw list (`None` = no document UI).
-    /// `images` is the frame's `TexId::DocImage` index → path order.
-    pub fn set_doc_ui(&mut self, draw: Option<(&petramond_ui::DrawList, &[std::path::PathBuf])>) {
+    /// `images` is the frame's `TexId::DocImage` index → source order.
+    pub(super) fn prepare_doc_ui(
+        &mut self,
+        document: Option<&super::super::DocumentUiFrame<'_>>,
+        screen: (u32, u32),
+    ) {
         self.doc_ui.batches.clear();
-        self.doc_ui.frame_paths.clear();
-        let Some((draw, images)) = draw else {
+        self.doc_ui.frame_images.clear();
+        let Some(document) = document else {
             return;
         };
-        self.doc_ui.frame_paths.extend_from_slice(images);
+        let draw = document.draw;
+        self.doc_ui.frame_images.extend_from_slice(document.images);
         self.ensure_doc_image_binds();
         if draw.vertices.is_empty() {
             return;
         }
-        let screen = self.ui.screen;
         if screen.0 == 0 || screen.1 == 0 {
             return;
         }
@@ -57,12 +69,11 @@ impl Renderer {
 
         // px (y down) → NDC (y up); uv/color pass through, including the
         // solid sentinel.
-        let (w, h) = (screen.0 as f32, screen.1 as f32);
         self.doc_ui.verts.clear();
         self.doc_ui
             .verts
             .extend(draw.vertices.iter().map(|v| UiVertex {
-                pos: [v.pos[0] / w * 2.0 - 1.0, 1.0 - v.pos[1] / h * 2.0],
+                pos: crate::render::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
                 uv: v.uv,
                 color: v.color,
             }));
@@ -102,10 +113,16 @@ impl Renderer {
     fn ensure_doc_image_binds(&mut self) {
         let missing: Vec<std::path::PathBuf> = self
             .doc_ui
-            .frame_paths
+            .frame_images
             .iter()
-            .filter(|p| !self.doc_ui.image_binds.contains_key(*p))
-            .cloned()
+            .filter_map(|source| match source {
+                crate::gui::DocImageSource::Path(path)
+                    if !self.doc_ui.image_binds.contains_key(path) =>
+                {
+                    Some(path.clone())
+                }
+                _ => None,
+            })
             .collect();
         for path in missing {
             let Ok(img) = image::open(&path) else {
@@ -120,10 +137,59 @@ impl Renderer {
             let bind = self.doc_texture_bind(&data, "doc ui image");
             self.doc_ui.image_binds.insert(path, bind);
         }
+        let updates: Vec<_> = self
+            .doc_ui
+            .frame_images
+            .iter()
+            .filter_map(|source| match source {
+                crate::gui::DocImageSource::Dynamic {
+                    key,
+                    size,
+                    revision,
+                    rgba,
+                } if self
+                    .doc_ui
+                    .dynamic_binds
+                    .get(key)
+                    .is_none_or(|loaded| loaded.revision != *revision) =>
+                {
+                    Some((key.clone(), *size, *revision, rgba.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (key, size, revision, rgba) in updates {
+            if let Some(existing) = self.doc_ui.dynamic_binds.get_mut(&key) {
+                if existing.size == size {
+                    write_doc_texture(&self.queue, &existing.texture, size, &rgba);
+                    existing.revision = revision;
+                    continue;
+                }
+            }
+            let (texture, bind) = self.doc_texture_resources(size, &rgba, "dynamic doc ui image");
+            self.doc_ui.dynamic_binds.insert(
+                key,
+                DynamicBind {
+                    revision,
+                    size,
+                    texture,
+                    bind,
+                },
+            );
+        }
     }
 
     fn doc_texture_bind(&self, image: &petramond_ui::ImageData, label: &str) -> wgpu::BindGroup {
-        let (w, h) = image.size;
+        self.doc_texture_resources(image.size, &image.rgba, label).1
+    }
+
+    fn doc_texture_resources(
+        &self,
+        size: (u32, u32),
+        rgba: &[u8],
+        label: &str,
+    ) -> (wgpu::Texture, wgpu::BindGroup) {
+        let (w, h) = size;
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -138,25 +204,7 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &image.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * w.max(1)),
-                rows_per_image: Some(h.max(1)),
-            },
-            wgpu::Extent3d {
-                width: w.max(1),
-                height: h.max(1),
-                depth_or_array_layers: 1,
-            },
-        );
+        write_doc_texture(&self.queue, &texture, size, rgba);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some(label),
@@ -164,7 +212,7 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout: &self.ui_texture_bgl,
             entries: &[
@@ -177,7 +225,8 @@ impl Renderer {
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
-        })
+        });
+        (texture, bind)
     }
 
     /// Draw the uploaded document UI inside the UI pass. The pipeline is
@@ -186,25 +235,30 @@ impl Renderer {
         let (Some(vbuf), Some(binds)) = (&self.doc_ui.vbuf, &self.doc_ui.theme_binds) else {
             return;
         };
-        let screen = self.ui.screen;
+        let screen = self.prepared_ui_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in &self.doc_ui.batches {
-            let bind = match batch.tex {
-                petramond_ui::TexId::Solid => &self.icon_atlas.bind,
-                petramond_ui::TexId::ThemeAtlas => &binds.atlas,
-                petramond_ui::TexId::Font => &binds.font,
-                petramond_ui::TexId::DocImage(i) => {
-                    match self
-                        .doc_ui
-                        .frame_paths
-                        .get(i as usize)
-                        .and_then(|p| self.doc_ui.image_binds.get(p))
-                    {
-                        Some(bind) => bind,
-                        None => continue,
+            let bind =
+                match batch.tex {
+                    petramond_ui::TexId::Solid => &self.icon_atlas.bind,
+                    petramond_ui::TexId::ThemeAtlas => &binds.atlas,
+                    petramond_ui::TexId::Font => &binds.font,
+                    petramond_ui::TexId::DocImage(i) => {
+                        match self.doc_ui.frame_images.get(i as usize).and_then(|source| {
+                            match source {
+                                crate::gui::DocImageSource::Path(path) => {
+                                    self.doc_ui.image_binds.get(path)
+                                }
+                                crate::gui::DocImageSource::Dynamic { key, .. } => {
+                                    self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
+                                }
+                            }
+                        }) {
+                            Some(bind) => bind,
+                            None => continue,
+                        }
                     }
-                }
-            };
+                };
             match batch.clip {
                 Some([x, y, w, h]) => {
                     let x0 = x.clamp(0, screen.0 as i32) as u32;
@@ -223,4 +277,27 @@ impl Renderer {
         }
         pass.set_scissor_rect(0, 0, screen.0, screen.1);
     }
+}
+
+fn write_doc_texture(queue: &wgpu::Queue, texture: &wgpu::Texture, size: (u32, u32), rgba: &[u8]) {
+    let (w, h) = size;
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * w.max(1)),
+            rows_per_image: Some(h.max(1)),
+        },
+        wgpu::Extent3d {
+            width: w.max(1),
+            height: h.max(1),
+            depth_or_array_layers: 1,
+        },
+    );
 }

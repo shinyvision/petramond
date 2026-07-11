@@ -358,9 +358,7 @@ pub(crate) fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), Strin
     }
     let color_stops: &[[f32; 3]] = match (&e.color, &e.color_ramp) {
         (Some(_), Some(_)) => {
-            return Err(
-                "particle_emitter declares both color and color_ramp — pick one".into(),
-            )
+            return Err("particle_emitter declares both color and color_ramp — pick one".into())
         }
         (None, None) => {
             return Err("particle_emitter needs either color or color_ramp".into());
@@ -376,7 +374,10 @@ pub(crate) fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), Strin
             }
         }
     }
-    for (label, power) in [("fade_power", e.fade_power), ("shrink_power", e.shrink_power)] {
+    for (label, power) in [
+        ("fade_power", e.fade_power),
+        ("shrink_power", e.shrink_power),
+    ] {
         finite(label, power)?;
         if !(0.25..=8.0).contains(&power) {
             return Err(format!("particle_emitter.{label} must be in 0.25..=8"));
@@ -501,7 +502,9 @@ mod tests {
             )
         };
 
-        let ramp = row(r#", "color_ramp": [[1.0, 1.0, 0.9], [1.0, 0.5, 0.1], [0.1, 0.1, 0.1]], "fade_power": 1.0"#);
+        let ramp = row(
+            r#", "color_ramp": [[1.0, 1.0, 0.9], [1.0, 0.5, 0.1], [0.1, 0.1, 0.1]], "fade_power": 1.0"#,
+        );
         parse_test_layers(&[&base, ramp.as_str()]).expect("a ramp row loads");
 
         for (emitter, why) in [
@@ -510,10 +513,7 @@ mod tests {
                 row(r#", "color": [[1, 1, 1], [1, 1, 1]], "color_ramp": [[1, 1, 1], [0, 0, 0]]"#),
                 "both color forms",
             ),
-            (
-                row(r#", "color_ramp": [[1, 1, 1]]"#),
-                "a one-stop ramp",
-            ),
+            (row(r#", "color_ramp": [[1, 1, 1]]"#), "a one-stop ramp"),
             (
                 row(r#", "color": [[1, 1, 1], [1, 1, 1]], "fade_power": 100.0"#),
                 "an out-of-range fade_power",

@@ -2275,6 +2275,7 @@ dependencies = [
  "mimalloc",
  "mod-api",
  "noise",
+ "petramond-text",
  "petramond-ui",
  "pollster",
  "postcard",
@@ -2289,11 +2290,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "petramond-text"
+version = "0.1.0"
+
+[[package]]
 name = "petramond-ui"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "image",
+ "petramond-text",
  "serde",
  "serde_json",
 ]

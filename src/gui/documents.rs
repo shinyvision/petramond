@@ -425,6 +425,18 @@ mod tests {
     }
 
     #[test]
+    fn minimap_client_documents_ship_and_validate() {
+        for (key, class) in [
+            ("minimap:create_waypoint", petramond_ui::DocClass::Screen),
+            ("minimap:edit_waypoint", petramond_ui::DocClass::Screen),
+        ] {
+            let kind = crate::gui::intern_kind(key).expect("namespaced kind interns");
+            let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
+            assert_eq!(doc.doc.class, class, "{key}");
+        }
+    }
+
+    #[test]
     fn foreign_namespace_documents_are_rejected_per_pack() {
         let kind = crate::gui::intern_kind("doctest:owned").unwrap();
         assert!(kind_permitted(kind, Some("doctest")).is_ok());

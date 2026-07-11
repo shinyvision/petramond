@@ -2,18 +2,22 @@ use super::{now_seconds, ui_snapshot, App};
 use crate::audio::{SpatialListener, SpatialSoundSource};
 use crate::game::presentation::MobPresentation;
 use crate::mob::MobSoundCategory;
-use crate::render::{HeldItemFrame, Renderer};
+use crate::render::{DocumentUiFrame, HeldItemFrame, Renderer, UiFrame};
 
 impl App {
     /// Draw the current frame. The host calls this once per [`update`](Self::update);
-    /// the simulation tick itself runs inside `update`, not here.
-    pub fn render(&mut self, renderer: &mut Renderer) {
+    /// the simulation tick itself runs inside `update`, not here. Returns `false`
+    /// only when a resize or screen transition made the solved UI stamp stale;
+    /// the host then schedules an immediate update instead of presenting it.
+    pub fn render(&mut self, renderer: &mut Renderer) -> bool {
         let now = now_seconds();
         // The hand animation advances by render time (not sim time); clamp so a long
         // idle gap before the first active frame can't jump a swing mid-flight.
         let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
         self.last_render = now;
-        let screen_size = renderer.screen_size();
+        let viewport = renderer.ui_viewport();
+        let screen_size = viewport.size;
+        self.ui.set_viewport_generation(viewport.generation);
 
         if self.renderer_world_clear_pending {
             renderer.clear_world_state();
@@ -36,6 +40,12 @@ impl App {
             self.ui.frame(kind, screen_size, now, None);
             doc_kind = Some(kind);
         }
+        if let Some(kind) = doc_kind {
+            if self.ui.frame_stamp() != Some((kind, viewport)) {
+                return false;
+            }
+        }
+        let document_viewport = self.ui.frame_stamp().map(|(_, viewport)| viewport);
         if doc_kind.is_some() {
             if matches!(
                 self.screen,
@@ -49,11 +59,12 @@ impl App {
                     now,
                 );
             }
-            renderer.set_doc_ui(Some((&self.ui.out().draw, self.ui.image_paths())));
         } else {
             self.ui.deactivate();
-            renderer.set_doc_ui(None);
         }
+        self.compose_document_ui(doc_kind.is_some());
+        self.compose_client_overlays(screen_size);
+        let doc_slots = doc_kind.map(|_| self.ui.doc_slots());
 
         let Some(game) = self.game.as_mut() else {
             // No session, no health bar: a fresh world must never wiggle off a
@@ -75,14 +86,28 @@ impl App {
                 false,
                 None,
             );
-            renderer.set_ui(ui_snapshot::build(
-                None,
-                self.screen,
-                screen_size,
-                self.pointer.cursor(),
-            ));
+            let mut ui = ui_snapshot::build(None, self.screen, self.pointer.cursor());
+            if let Some(kind) = doc_kind {
+                ui.kind = kind;
+            }
+            let document = doc_kind.map(|kind| DocumentUiFrame {
+                viewport: document_viewport.expect("document frame was validated above"),
+                kind,
+                draw: &self.composed_doc,
+                images: &self.composed_doc_images,
+                slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+            });
+            if !renderer.prepare_ui_frame(UiFrame {
+                viewport,
+                document,
+                content: &ui,
+                client_overlays: &self.client_overlay_images,
+                client_overlay_dim: self.screen.client_canvas_open(),
+            }) {
+                return false;
+            }
             renderer.render();
-            return;
+            return true;
         };
 
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
@@ -233,8 +258,10 @@ impl App {
             self.scene.bake(&presentation, shake.flash);
         }
         self.scene.upload(renderer);
-        let mut ui =
-            ui_snapshot::build(Some(game), self.screen, screen_size, self.pointer.cursor());
+        let mut ui = ui_snapshot::build(Some(game), self.screen, self.pointer.cursor());
+        if let Some(kind) = doc_kind {
+            ui.kind = kind;
+        }
         ui.hurt_flash = shake.flash;
         ui.heart_wiggle = heart_wiggle_frame(
             &mut self.prev_heart_health,
@@ -242,19 +269,29 @@ impl App {
             ui.health,
             now,
         );
-        if doc_kind.is_some() {
-            // A document draws this screen's chrome: hand build_ui the
-            // document's slot cells so it emits ONLY the game content (icons,
-            // counts, hearts, drag stack) and skips every legacy group.
-            ui.doc_slots = Some(self.ui.doc_slots());
+        let document = doc_kind.map(|kind| DocumentUiFrame {
+            viewport: document_viewport.expect("document frame was validated above"),
+            kind,
+            draw: &self.composed_doc,
+            images: &self.composed_doc_images,
+            slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+        });
+        if !renderer.prepare_ui_frame(UiFrame {
+            viewport,
+            document,
+            content: &ui,
+            client_overlays: &self.client_overlay_images,
+            client_overlay_dim: self.screen.client_canvas_open(),
+        }) {
+            return false;
         }
-        renderer.set_ui(ui);
 
         {
             let mut terrain = game.terrain_render_handoff();
             renderer.sync_meshes(&mut terrain);
         }
         renderer.render();
+        true
     }
 }
 

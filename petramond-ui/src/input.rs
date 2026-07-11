@@ -100,6 +100,16 @@ pub enum UiEvent {
         id: String,
         text: String,
     },
+    /// Pointer interaction over an `image` with `interactive: true`.
+    /// Coordinates are local to the solved image rect in logical pixels and
+    /// remain available while a drag continues outside the rect.
+    ImagePointer {
+        id: String,
+        phase: PointerPhase,
+        x: f32,
+        y: f32,
+        button: PointerButton,
+    },
     ListSelect {
         id: String,
         index: u32,
@@ -144,6 +154,17 @@ pub(crate) enum Drag {
         key: InstKey,
         anchor: usize,
     },
+    Image {
+        key: InstKey,
+        button: PointerButton,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PointerPhase {
+    Down,
+    Move,
+    Up,
 }
 
 /// Per-open-GUI ephemeral state. Never serialized, never tick-visible.

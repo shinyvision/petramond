@@ -7,7 +7,7 @@ description = "A noise-based voxel world biomes + features."
 license = "MIT"
 
 [workspace]
-members = [".", "mod-api", "petramond-ui"]
+members = [".", "mod-api", "petramond-text", "petramond-ui"]
 # The GUI builder (./gui-builder) is a standalone tool crate with its own deps;
 # keep it out of the game's workspace so it doesn't affect the game build.
 # mod-sdk is guest-side only (linked into mods, never the engine) and mods-src
@@ -60,6 +60,7 @@ path = "src/bin/genfeature.rs"
 # Renderer-agnostic GUI runtime (documents, layout, theme, widgets, paint) —
 # shared with the gui-builder so its preview is pixel-exactly the game's UI.
 petramond-ui = { path = "petramond-ui" }
+petramond-text = { path = "petramond-text" }
 wgpu = "27"
 winit = { version = "0.30", features = ["rwh_06"] }
 pollster = "0.4"

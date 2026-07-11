@@ -220,11 +220,13 @@ impl ApplicationHandler for NativeHost {
             WindowEvent::Resized(size) => {
                 renderer.resize(size.width, size.height);
                 app.resize(size.width, size.height);
+                self.next_update = Instant::now();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let size = window.inner_size();
                 renderer.resize(size.width, size.height);
                 app.resize(size.width, size.height);
+                self.next_update = Instant::now();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let KeyEvent {
@@ -262,6 +264,12 @@ impl ApplicationHandler for NativeHost {
                     }
                 }
                 if let PhysicalKey::Code(code) = physical_key {
+                    if app.handle_client_key_code(code, down) {
+                        if app.take_quit_requested() {
+                            event_loop.exit();
+                        }
+                        return;
+                    }
                     let Some(control) = control_from_key_code(code) else {
                         if app.take_quit_requested() {
                             event_loop.exit();
@@ -290,6 +298,7 @@ impl ApplicationHandler for NativeHost {
             WindowEvent::Focused(false) => {
                 self.modifiers = Modifiers::default();
                 app.set_modifiers(self.modifiers);
+                app.release_client_mod_keys();
                 app.release_pointer_buttons();
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -318,7 +327,9 @@ impl ApplicationHandler for NativeHost {
                 // The host requests this once per `App::update`; the simulation itself
                 // advances in `about_to_wait`.
                 let render_start = Instant::now();
-                app.render(renderer);
+                if !app.render(renderer) {
+                    self.next_update = Instant::now();
+                }
                 if self.perf_log {
                     let dt = render_start.elapsed();
                     self.perf_render_total += dt;

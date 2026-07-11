@@ -14,6 +14,7 @@ use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
 use crate::item::{ItemStack, ItemType};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use kind::GuiKind;
@@ -32,6 +33,20 @@ pub enum GuiValue {
 /// The open GUI session's state map. `BTreeMap` for deterministic iteration;
 /// snapshotted behind an `Arc` per frame (copy-on-write on the tick side).
 pub type GuiStateMap = BTreeMap<String, GuiValue>;
+
+/// One document image source for the renderer. Static pack art is cached by
+/// path; client-WASM rasters are replaced by `(key, revision)` without ever
+/// granting the module filesystem or GPU access.
+#[derive(Clone)]
+pub(crate) enum DocImageSource {
+    Path(PathBuf),
+    Dynamic {
+        key: String,
+        size: (u32, u32),
+        revision: u64,
+        rgba: Arc<[u8]>,
+    },
+}
 
 /// A widget's stable id within its GUI manifest (interned — see
 /// [`kind::intern_str`]) so [`MenuSlot`] stays `Copy`.
@@ -191,6 +206,31 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     by_h.min(by_w).clamp(1, 4) as f32
 }
 
+/// The one physical viewport authority for a complete UI frame. `generation`
+/// changes whenever the renderer reconfigures its surface, so layout produced
+/// before a resize can never be combined with geometry produced after it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct UiViewport {
+    pub(crate) size: (u32, u32),
+    pub(crate) scale: i32,
+    pub(crate) generation: u64,
+}
+
+impl UiViewport {
+    pub(crate) fn new(size: (u32, u32), generation: u64) -> UiViewport {
+        UiViewport {
+            size,
+            scale: gui_scale(size) as i32,
+            generation,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unversioned(size: (u32, u32)) -> UiViewport {
+        UiViewport::new(size, 0)
+    }
+}
+
 /// A furnace's view for the open furnace screen: its three slots plus the two
 /// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so render can
 /// snapshot it by value with no borrow.
@@ -249,7 +289,6 @@ pub struct UiSnapshot {
     /// Which GUI this frame draws — the open menu's kind, or `Hotbar` for the
     /// HUD.
     pub kind: GuiKind,
-    pub screen: (u32, u32),
     pub cursor_px: (f32, f32),
     pub active: u8,
     /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid):
@@ -284,12 +323,6 @@ pub struct UiSnapshot {
     /// fractions), or `None` when no mod GUI session is up. A cheap `Arc`
     /// clone of the tick-owned map.
     pub gui_state: Option<Arc<GuiStateMap>>,
-    /// `Some` when a GUI DOCUMENT draws this frame's screen: the document's
-    /// solved slot cells (possibly empty). `build_ui` then emits ONLY the
-    /// game-owned content (item icons, counts, hearts, the drag stack) into
-    /// these rects and skips every legacy panel/shell group — the document
-    /// draw list owns all chrome.
-    pub doc_slots: Option<Arc<Vec<DocSlot>>>,
     /// Hurt-flash strength in `[0, 1]`: `build_ui` draws a subtle red edge
     /// vignette scaled by it. `0.0` = none (the common frame).
     pub hurt_flash: f32,
@@ -319,7 +352,6 @@ impl Default for UiSnapshot {
         UiSnapshot {
             open: false,
             kind: GuiKind::Hotbar,
-            screen: (0, 0),
             cursor_px: (0.0, 0.0),
             active: 0,
             slots: [None; TOTAL_SLOTS],
@@ -333,7 +365,6 @@ impl Default for UiSnapshot {
             health: None,
             effects: Vec::new(),
             gui_state: None,
-            doc_slots: None,
             hurt_flash: 0.0,
             heart_wiggle: None,
         }

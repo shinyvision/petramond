@@ -12,10 +12,10 @@
 
 use glam::{Mat4, Vec3};
 
-use super::super::ui_text;
 use super::{pixel_to_ndc, push_solid, UiBuild, UiVertex};
 use crate::gui::SlotRect;
 use crate::item::ItemType;
+use petramond_text::tiny as ui_text;
 
 /// Record that `item` occupies slot pixel rect `r` this frame. The renderer
 /// resolves it to the item's pre-baked icon-atlas cell and emits a textured quad

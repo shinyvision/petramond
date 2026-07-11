@@ -137,7 +137,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "column" => NodeKind::Column,
         "spacer" => NodeKind::Spacer,
         "label" => NodeKind::Label { text: Some("Label".into()), wrap: false, scale: 1 },
-        "image" => NodeKind::Image { image: "image.png".into(), fit: Default::default() },
+        "image" => NodeKind::Image { image: "image.png".into(), fit: Default::default(), interactive: false },
         "rotimage" => NodeKind::Rotimage { image: "image.png".into(), pivot: None },
         "button" => NodeKind::Button { text: Some("BUTTON".into()), icon: None },
         "checkbox" => NodeKind::Checkbox,

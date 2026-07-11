@@ -157,6 +157,10 @@ pub struct Game {
     /// renderer and answers every client-side world read — collision, raycast,
     /// particles, door/chest presentation, environment sampling.
     replica: World,
+    /// Optional presentation-only client WASM modules. They read the replica
+    /// and publish document state/images; they never share the server mod
+    /// instances or simulation mutation seams.
+    client_mods: crate::modding::client::ClientModRuntime,
     /// REPLICATED mob store: presentation reads these, fed by the per-tick
     /// `TickUpdate` batches — never `server.world.mobs()` (see
     /// `game/replicated.rs`).
@@ -259,6 +263,75 @@ impl Game {
     #[inline]
     pub fn current_tick(&self) -> u64 {
         self.replicated_tick
+    }
+
+    pub(crate) fn drive_client_mods(
+        &mut self,
+        dt: f32,
+        screen: (u32, u32),
+        open_gui: Option<&str>,
+        open_canvas: Option<&str>,
+    ) {
+        let frame = mod_api::ClientFrameData {
+            dt: dt.max(0.0),
+            player_pos: [self.player.pos.x, self.player.pos.y, self.player.pos.z],
+            yaw: self.player.yaw,
+            pitch: self.player.pitch,
+            screen: [screen.0, screen.1],
+            open_gui: open_gui.map(str::to_owned),
+            open_canvas: open_canvas.map(str::to_owned),
+        };
+        self.client_mods.frame(&self.replica, frame);
+    }
+
+    pub(crate) fn client_mod_key(&mut self, key: &str, pressed: bool) -> bool {
+        self.client_mods.key(&self.replica, key, pressed)
+    }
+
+    pub(crate) fn release_client_mod_keys(&mut self) {
+        self.client_mods.release_all_keys(&self.replica);
+    }
+
+    pub(crate) fn client_mod_ui_event(&mut self, kind_key: &str, event: mod_api::ClientUiEvent) {
+        self.client_mods.ui_event(&self.replica, kind_key, event);
+    }
+
+    pub(crate) fn client_mod_canvas_event(
+        &mut self,
+        canvas_key: &str,
+        event: mod_api::ClientCanvasEvent,
+    ) {
+        self.client_mods
+            .canvas_event(&self.replica, canvas_key, event);
+    }
+
+    pub(crate) fn client_mod_overlays(&self) -> &[crate::modding::ClientOverlayRegistration] {
+        self.client_mods.overlays()
+    }
+
+    pub(crate) fn client_mod_image(
+        &self,
+        image_key: &str,
+    ) -> Option<crate::modding::ClientImageData> {
+        self.client_mods.image(image_key)
+    }
+
+    pub(crate) fn client_mod_canvas_view(
+        &self,
+        canvas_key: &str,
+    ) -> Option<crate::modding::client::ClientCanvasView> {
+        self.client_mods.canvas_view(canvas_key)
+    }
+
+    pub(crate) fn client_mod_view(
+        &self,
+        kind_key: &str,
+    ) -> Option<crate::modding::client::ClientUiView> {
+        self.client_mods.view_for(kind_key)
+    }
+
+    pub(crate) fn take_client_mod_commands(&mut self) -> Vec<crate::modding::ClientCommand> {
+        self.client_mods.take_commands()
     }
 
     /// The OTHER connected players (id → name). Empty in singleplayer.

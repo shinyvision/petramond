@@ -155,6 +155,10 @@ impl App {
             self.chat.pointer_move(x, y, super::now_seconds());
             return;
         }
+        if self.screen.client_canvas_open() {
+            self.queue_client_canvas_move(x, y);
+            return;
+        }
         if self.doc_ui_kind().is_some() {
             self.ui
                 .push_input(petramond_ui::InputEvent::PointerMove { x, y });
@@ -174,6 +178,27 @@ impl App {
             return;
         }
         self.pointer.set_button(button, down);
+        if self.screen.client_canvas_open() {
+            if !down {
+                self.flush_client_canvas_move();
+            }
+            let (x, y) = self.pointer.cursor();
+            let button = match button {
+                PointerButton::Primary => mod_api::ClientPointerButton::Primary,
+                PointerButton::Secondary => mod_api::ClientPointerButton::Secondary,
+            };
+            self.dispatch_client_canvas_pointer(
+                if down {
+                    mod_api::ClientPointerPhase::Down
+                } else {
+                    mod_api::ClientPointerPhase::Up
+                },
+                button,
+                x,
+                y,
+            );
+            return;
+        }
         if self.doc_ui_kind().is_some() {
             let (x, y) = self.pointer.cursor();
             let button = match button {

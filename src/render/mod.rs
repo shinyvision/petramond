@@ -22,7 +22,6 @@ mod scene;
 mod selection;
 mod shader_pack;
 mod ui;
-mod ui_text;
 mod uniforms;
 
 pub use crate::game::presentation::BreakOverlayView;
@@ -39,6 +38,105 @@ use crate::block_state::HeldBlockState;
 use crate::item::ItemType;
 use glam::{Quat, Vec3};
 use std::sync::Arc;
+
+/// One client-WASM image placed in an explicit physical screen rect. This is
+/// presentation canvas data, not a GUI document, so GUI scale never applies.
+#[derive(Clone)]
+pub(crate) struct ClientOverlayImage {
+    pub key: String,
+    pub size: (u16, u16),
+    pub rgba: Arc<[u8]>,
+    pub revision: u64,
+    pub rect: [f32; 4],
+    pub uv: [f32; 4],
+}
+
+/// One solved GUI document. Its chrome, slot geometry, and image table are a
+/// single stamped unit so none can be paired with another layout generation.
+pub(crate) struct DocumentUiFrame<'a> {
+    pub viewport: crate::gui::UiViewport,
+    pub kind: crate::gui::GuiKind,
+    pub draw: &'a petramond_ui::DrawList,
+    pub images: &'a [crate::gui::DocImageSource],
+    pub slots: &'a [crate::gui::DocSlot],
+}
+
+/// The complete UI handoff for one render frame. Every physical-pixel layer
+/// consumes `viewport`; the renderer accepts or rejects this packet as a whole.
+pub(crate) struct UiFrame<'a> {
+    pub viewport: crate::gui::UiViewport,
+    pub document: Option<DocumentUiFrame<'a>>,
+    pub content: &'a crate::gui::UiSnapshot,
+    pub client_overlays: &'a [ClientOverlayImage],
+    pub client_overlay_dim: bool,
+}
+
+impl UiFrame<'_> {
+    pub(crate) fn matches_viewport(&self, current: crate::gui::UiViewport) -> bool {
+        self.viewport == current
+            && self.document.as_ref().is_none_or(|document| {
+                document.viewport == self.viewport && document.kind == self.content.kind
+            })
+    }
+}
+
+#[cfg(test)]
+mod ui_frame_coherence_tests {
+    use super::*;
+
+    #[test]
+    fn a_ui_packet_accepts_only_its_complete_viewport_generation_and_kind() {
+        let viewport = crate::gui::UiViewport::new((1280, 720), 7);
+        let draw = petramond_ui::DrawList::default();
+        let images: Vec<crate::gui::DocImageSource> = Vec::new();
+        let slots = Vec::new();
+        let content = crate::gui::UiSnapshot {
+            kind: crate::gui::GuiKind::Hotbar,
+            ..Default::default()
+        };
+        let frame = UiFrame {
+            viewport,
+            document: Some(DocumentUiFrame {
+                viewport,
+                kind: crate::gui::GuiKind::Hotbar,
+                draw: &draw,
+                images: &images,
+                slots: &slots,
+            }),
+            content: &content,
+            client_overlays: &[],
+            client_overlay_dim: false,
+        };
+
+        assert!(frame.matches_viewport(viewport));
+        assert!(!frame.matches_viewport(crate::gui::UiViewport::new((1280, 720), 8)));
+
+        let stale_document = UiFrame {
+            viewport,
+            document: Some(DocumentUiFrame {
+                viewport: crate::gui::UiViewport::new((1280, 720), 6),
+                kind: crate::gui::GuiKind::Hotbar,
+                draw: &draw,
+                images: &images,
+                slots: &slots,
+            }),
+            content: &content,
+            client_overlays: &[],
+            client_overlay_dim: false,
+        };
+        assert!(!stale_document.matches_viewport(viewport));
+
+        let wrong_kind = crate::gui::UiSnapshot {
+            kind: crate::gui::GuiKind::Inventory,
+            ..Default::default()
+        };
+        let frame = UiFrame {
+            content: &wrong_kind,
+            ..frame
+        };
+        assert!(!frame.matches_viewport(viewport));
+    }
+}
 
 /// The first-person held item to draw this frame. `item == None` draws the bare
 /// skin hand. `swing` (0..1) drives the punch animation (mining and placing

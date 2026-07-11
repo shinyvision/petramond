@@ -632,7 +632,8 @@ async fn new_renderer_inner(
         particle_emitters: Vec::new(),
         particle_emitter_visible: Vec::new(),
         particle_block_vertex_count: 0,
-        ui: UiSnapshot::default(),
+        viewport_generation: 1,
+        prepared_ui_viewport: UiViewport::default(),
         billboard_basis: BillboardBasis {
             right: glam::Vec3::X,
             up: glam::Vec3::Y,
@@ -652,6 +653,7 @@ async fn new_renderer_inner(
         ui_pipe: pipelines.ui_pipe,
         ui_texture_bgl: pipelines.atlas_bgl.clone(),
         doc_ui: super::doc_ui::DocUi::default(),
+        client_overlays: super::client_overlay::ClientOverlays::default(),
         ui_solid_vbuf: pipelines.ui_vbuf,
         ui_count_vertex_count: 0,
         ui_drag_count_vertex_count: 0,
@@ -674,12 +676,17 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    pub(crate) fn ui_viewport(&self) -> UiViewport {
+        UiViewport::new(self.screen_size(), self.viewport_generation)
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
         self.config.width = width;
         self.config.height = height;
+        self.viewport_generation = self.viewport_generation.wrapping_add(1).max(1);
         self.surface.configure(&self.device, &self.config);
         self.recreate_scene_targets();
         self.crosshair_drawn_size = (0, 0);

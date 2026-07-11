@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "kind": "minimap:edit_waypoint",
+  "class": "screen",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+      "w": 240,
+      "pad": [10, 8, 10, 10],
+      "gap": 8,
+      "align": "stretch",
+      "anchor": { "h": "center", "v": "center" }
+    },
+    "children": [
+      { "type": "label", "text": "Edit Waypoint", "scale": 2 },
+      {
+        "type": "text_input",
+        "id": "name",
+        "placeholder": "Waypoint name",
+        "max_chars": 48,
+        "bind": { "text": "minimap:waypoint_name" }
+      },
+      {
+        "type": "row",
+        "layout": { "gap": 6, "justify": "space_between" },
+        "children": [
+          { "type": "button", "id": "delete", "text": "Delete", "style": "button.danger" },
+          { "type": "spacer", "layout": { "w": { "grow": 1 } } },
+          { "type": "button", "id": "cancel", "text": "Cancel" },
+          { "type": "button", "id": "save", "text": "Save", "style": "button.success" }
+        ]
+      }
+    ]
+  }
+}

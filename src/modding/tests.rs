@@ -77,6 +77,7 @@ fn disabled_packs_contribute_no_wasm_instance() {
         summary: None,
         icon: None,
         wasm: wasm.map(PathBuf::from),
+        client_wasm: None,
     };
     let packs = [
         pack("alpha", Some("alpha"), Some("/fixture/alpha/mod.wasm")),

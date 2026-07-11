@@ -220,6 +220,8 @@ impl App {
         self.pointer.release_for_menu();
         self.audio.set_loop(None, now_seconds());
         self.scene.clear();
+        self.client_canvas = None;
+        self.client_overlay_images.clear();
         self.hand = HandTriggers::default();
         self.sleep_interact_hand_t = 0.0;
         self.lan_port = None;

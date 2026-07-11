@@ -168,6 +168,15 @@ impl App {
             self.screen = AppScreen::Game;
             self.pointer.grab_for_gameplay();
             true
+        } else if self.screen.client_ui_open() {
+            self.screen = AppScreen::Game;
+            self.pointer.grab_for_gameplay();
+            true
+        } else if self.screen.client_canvas_open() {
+            self.client_canvas = None;
+            self.screen = AppScreen::Game;
+            self.pointer.grab_for_gameplay();
+            true
         } else if self.screen.ui_open() {
             self.close_menu();
             true

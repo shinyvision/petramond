@@ -35,6 +35,14 @@ pub(super) enum AppScreen {
     /// `open_gui` interaction or a mod's `GuiOpen` call. Carries which
     /// registered kind it draws.
     ModGui(crate::gui::GuiKind),
+    /// A presentation-only client mod document. It releases the cursor and
+    /// receives client-WASM UI events while the replicated world keeps
+    /// running; no server menu session exists.
+    ClientModGui(crate::gui::GuiKind),
+    /// A presentation-only client mod's centered physical-pixel canvas. The
+    /// concrete owner/image lives in `App::client_canvas`; this screen gates
+    /// gameplay and releases the cursor without selecting a GUI document.
+    ClientCanvas,
     /// The sleep overlay (bed interaction): the simulation KEEPS TICKING under
     /// it — the tick-owned sleep timer drives the fade and the wake — unlike
     /// `Pause`, which freezes the world.
@@ -96,6 +104,16 @@ impl AppScreen {
         )
     }
 
+    #[inline]
+    pub(super) fn client_ui_open(self) -> bool {
+        matches!(self, AppScreen::ClientModGui(_))
+    }
+
+    #[inline]
+    pub(super) fn client_canvas_open(self) -> bool {
+        matches!(self, AppScreen::ClientCanvas)
+    }
+
     /// Which GUI this screen draws: the open menu's kind, or `Hotbar` for the
     /// HUD (gameplay). The single source of "which screen" for the data-driven
     /// GUI — it selects the document the runtime draws and hit-tests.
@@ -111,6 +129,7 @@ impl AppScreen {
             AppScreen::Chest => GuiKind::Chest,
             AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
             AppScreen::ModGui(kind) => kind,
+            AppScreen::ClientModGui(kind) => kind,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,
             AppScreen::Title
@@ -121,6 +140,7 @@ impl AppScreen {
             | AppScreen::ConnectServer
             | AppScreen::ModsMissing
             | AppScreen::ConnectionLost
+            | AppScreen::ClientCanvas
             | AppScreen::Pause => GuiKind::Other,
         }
     }

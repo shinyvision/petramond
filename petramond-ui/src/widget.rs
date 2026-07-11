@@ -19,6 +19,10 @@ pub(crate) fn pointer_target(inst: &Inst<'_>) -> bool {
             | NodeKind::Toggle
             | NodeKind::Slider { .. }
             | NodeKind::TextInput { .. }
+            | NodeKind::Image {
+                interactive: true,
+                ..
+            }
             | NodeKind::Slot { .. }
             | NodeKind::SlotGrid { .. }
     )

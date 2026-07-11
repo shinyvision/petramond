@@ -113,6 +113,12 @@ impl Tile {
     pub fn all() -> impl Iterator<Item = Tile> {
         (0..Tile::count() as u16).map(Tile)
     }
+
+    /// Representative untinted top-down cartography colour, derived once from
+    /// the composed tile pixels. Callers apply the same biome tint as terrain.
+    pub fn map_rgb(self) -> [u8; 3] {
+        data().map_rgb[self.index()]
+    }
 }
 
 /// Tiles the ENGINE itself references (shader uniforms, the custom chest model,
@@ -188,6 +194,7 @@ struct AtlasData {
     world_tint: Vec<Option<TileTint>>,
     icon_tint: Vec<Option<TileTint>>,
     fill_cutout_mips: Vec<bool>,
+    map_rgb: Vec<[u8; 3]>,
     /// Composed base atlas, `cols*TILE × rows*TILE` RGBA.
     rgba: Vec<u8>,
     engine: EngineTiles,
@@ -333,6 +340,7 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     let mut world_tint = Vec::with_capacity(count);
     let mut icon_tint = Vec::with_capacity(count);
     let mut fill_cutout_mips = Vec::with_capacity(count);
+    let mut map_rgb = Vec::with_capacity(count);
     for (i, cell) in cells.iter().enumerate() {
         let base_x = (i as u32 % cols) * TILE;
         let base_y = (i as u32 / cols) * TILE;
@@ -352,6 +360,7 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
         world_tint.push(cell.tint);
         icon_tint.push(cell.icon_tint);
         fill_cutout_mips.push(cell.fill_cutout_mips);
+        map_rgb.push(tile_map_rgb(&cell.pixels));
     }
 
     let need = |name: &str| -> Result<Tile, String> {
@@ -393,9 +402,29 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
         world_tint,
         icon_tint,
         fill_cutout_mips,
+        map_rgb,
         rgba,
         engine,
     })
+}
+
+fn tile_map_rgb(pixels: &image::RgbaImage) -> [u8; 3] {
+    let mut sum = [0u64; 3];
+    let mut weight = 0u64;
+    for pixel in pixels.pixels() {
+        let a = pixel[3] as u64;
+        if a < 16 {
+            continue;
+        }
+        for channel in 0..3 {
+            sum[channel] += pixel[channel] as u64 * a;
+        }
+        weight += a;
+    }
+    match sum.map(|channel| channel.checked_div(weight)) {
+        [Some(r), Some(g), Some(b)] => [r as u8, g as u8, b as u8],
+        _ => [32, 32, 32],
+    }
 }
 
 // ---------------------------------------------------------------------------------

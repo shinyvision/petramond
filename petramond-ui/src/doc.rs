@@ -91,6 +91,11 @@ pub enum NodeKind {
         image: String,
         #[serde(default, skip_serializing_if = "ImageFit::is_stretch")]
         fit: ImageFit,
+        /// Emit local pointer down/move/up events for this image. This is the
+        /// renderer-neutral canvas seam used by host-fed maps and other
+        /// interactive raster surfaces.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        interactive: bool,
     },
     /// A textured quad rotated at draw time by the radians bound at
     /// `bind.value`. `pivot` is logical px from the rect's top-left;
@@ -192,6 +197,10 @@ impl NodeKind {
                 | NodeKind::Toggle
                 | NodeKind::Slider { .. }
                 | NodeKind::TextInput { .. }
+                | NodeKind::Image {
+                    interactive: true,
+                    ..
+                }
                 | NodeKind::List
                 | NodeKind::Hook
         )

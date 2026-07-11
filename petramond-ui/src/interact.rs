@@ -10,7 +10,7 @@
 //!   controllers (list nav, ESC-back, Delete jumps).
 
 use crate::doc::{NodeKind, ScrollAxis};
-use crate::input::{Drag, FrameState, InputEvent, NavKey, PointerButton, UiEvent};
+use crate::input::{Drag, FrameState, InputEvent, NavKey, PointerButton, PointerPhase, UiEvent};
 use crate::layout::{grid_cell, SlotMetrics, Solved};
 use crate::text_edit::TextClipboard;
 use crate::theme::Theme;
@@ -278,6 +278,21 @@ impl Interact<'_> {
                         }
                     }
                 }
+                NodeKind::Image {
+                    interactive: true, ..
+                } if inst.enabled => {
+                    if let Some(key) = self.key_of(i) {
+                        events.push(UiEvent::ImagePointer {
+                            id: key.id.clone(),
+                            phase: PointerPhase::Down,
+                            x: x - rect.x as f32,
+                            y: y - rect.y as f32,
+                            button,
+                        });
+                        fs.drag = Some(Drag::Image { key, button });
+                    }
+                    self.blur_editor(fs);
+                }
                 _ => {}
             }
             return;
@@ -353,11 +368,42 @@ impl Interact<'_> {
                     }
                 }
             }
+            Some(Drag::Image { key, button }) => {
+                if let Some(i) = self.tree.find(&key.id, key.item) {
+                    let rect = self.solved.rects[i as usize];
+                    events.push(UiEvent::ImagePointer {
+                        id: key.id,
+                        phase: PointerPhase::Move,
+                        x: x - rect.x as f32,
+                        y: y - rect.y as f32,
+                        button,
+                    });
+                }
+            }
             None => {}
         }
     }
 
     fn pointer_up(&self, fs: &mut FrameState, button: PointerButton, events: &mut Vec<UiEvent>) {
+        if let Some(Drag::Image {
+            key,
+            button: drag_button,
+        }) = fs.drag.clone()
+        {
+            if drag_button == button {
+                if let Some(i) = self.tree.find(&key.id, key.item) {
+                    let rect = self.solved.rects[i as usize];
+                    let (x, y) = self.cur(fs);
+                    events.push(UiEvent::ImagePointer {
+                        id: key.id,
+                        phase: PointerPhase::Up,
+                        x: x - rect.x as f32,
+                        y: y - rect.y as f32,
+                        button,
+                    });
+                }
+            }
+        }
         if let Some(Drag::Slider { key }) = fs.drag.clone() {
             let (x, _) = self.cur(fs);
             if let Some(i) = self.tree.find(&key.id, key.item) {

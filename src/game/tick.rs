@@ -840,8 +840,7 @@ impl Game {
             return PlacePrediction::No;
         }
         let held = self.self_view.inventory.selected().map(|s| s.item);
-        let player_facing =
-            crate::server::placement::facing_from_forward(self.player.forward());
+        let player_facing = crate::server::placement::facing_from_forward(self.player.forward());
 
         // The shape ladder, mirroring the server's `try_place`: each arm runs
         // the same validity checks against the replica and picks the same
@@ -858,26 +857,20 @@ impl Game {
                         crate::slab::stack_slot(rotation, look.normal, player_facing)
                     {
                         if crate::slab::can_add_layer(
-                            self.replica.slab_state_at(
-                                look.block.x,
-                                look.block.y,
-                                look.block.z,
-                            ),
+                            self.replica
+                                .slab_state_at(look.block.x, look.block.y, look.block.z),
                             slot,
                         ) {
                             return PlacePrediction::Plausible;
                         }
                     }
                 }
-                let slot =
-                    crate::slab::slot_for_rotation(rotation, look.normal, player_facing);
+                let slot = crate::slab::slot_for_rotation(rotation, look.normal, player_facing);
                 let Some(state) = self.replica.slab_layer_target_state(place_pos, block, slot)
                 else {
                     return PlacePrediction::No;
                 };
-                if self
-                    .placement_blocked_by_body(place_pos, crate::slab::boxes_for_state(state))
-                {
+                if self.placement_blocked_by_body(place_pos, crate::slab::boxes_for_state(state)) {
                     return PlacePrediction::No;
                 }
                 PredictedPlace::Slab(slot)
@@ -892,23 +885,22 @@ impl Game {
                     let facing = crate::block_model::def(kind)
                         .orientation
                         .apply(player_facing);
-                    let base = crate::block_model::base_from_front_left_anchor(
-                        place_pos, kind, facing,
-                    );
-                    if !self.replica.model_footprint_clear_facing(base, kind, facing) {
+                    let base =
+                        crate::block_model::base_from_front_left_anchor(place_pos, kind, facing);
+                    if !self
+                        .replica
+                        .model_footprint_clear_facing(base, kind, facing)
+                    {
                         return PlacePrediction::No;
                     }
-                    let blocked =
-                        crate::block_model::oriented_footprint_cells(base, kind, facing)
-                            .into_iter()
-                            .any(|(c, off)| {
-                                self.placement_blocked_by_body(
-                                    c,
-                                    crate::block_model::collision_boxes_oriented(
-                                        kind, off, facing,
-                                    ),
-                                )
-                            });
+                    let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
+                        .into_iter()
+                        .any(|(c, off)| {
+                            self.placement_blocked_by_body(
+                                c,
+                                crate::block_model::collision_boxes_oriented(kind, off, facing),
+                            )
+                        });
                     return if blocked {
                         PlacePrediction::No
                     } else {
@@ -922,16 +914,14 @@ impl Game {
                 {
                     return PlacePrediction::No;
                 }
-                let blocked = crate::block_model::oriented_footprint_cells(
-                    place_pos, kind, facing,
-                )
-                .into_iter()
-                .any(|(c, off)| {
-                    self.placement_blocked_by_body(
-                        c,
-                        crate::block_model::collision_boxes_oriented(kind, off, facing),
-                    )
-                });
+                let blocked = crate::block_model::oriented_footprint_cells(place_pos, kind, facing)
+                    .into_iter()
+                    .any(|(c, off)| {
+                        self.placement_blocked_by_body(
+                            c,
+                            crate::block_model::collision_boxes_oriented(kind, off, facing),
+                        )
+                    });
                 if blocked {
                     return PlacePrediction::No;
                 }
@@ -954,10 +944,7 @@ impl Game {
                 {
                     return PlacePrediction::No;
                 }
-                cells.push((
-                    upper,
-                    self.replica.chunk_block(upper.x, upper.y, upper.z),
-                ));
+                cells.push((upper, self.replica.chunk_block(upper.x, upper.y, upper.z)));
                 PredictedPlace::Door
             }
             RenderShape::Stair => {
@@ -999,9 +986,7 @@ impl Game {
                         _ => return PlacePrediction::No,
                     }
                 } else if block.is_log() {
-                    PredictedPlace::Log(
-                        self.held_rotation.log_axis_for_facing(held, player_facing),
-                    )
+                    PredictedPlace::Log(self.held_rotation.log_axis_for_facing(held, player_facing))
                 } else if block.directional_view() {
                     PredictedPlace::Facing(player_facing)
                 } else {
@@ -1028,20 +1013,20 @@ impl Game {
         // stale predicted state cannot leak.
         match write {
             PredictedPlace::Bare => {
-                let _ =
-                    self.replica
-                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+                let _ = self
+                    .replica
+                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
             }
             PredictedPlace::Torch(tp) => {
-                let _ =
-                    self.replica
-                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+                let _ = self
+                    .replica
+                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
                 self.replica.insert_torch(place_pos, tp);
             }
             PredictedPlace::Facing(facing) => {
-                let _ =
-                    self.replica
-                        .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
+                let _ = self
+                    .replica
+                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
                 self.replica.insert_entity_facing(place_pos, facing);
             }
             PredictedPlace::Log(axis) => {

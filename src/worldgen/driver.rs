@@ -116,6 +116,10 @@ impl ColumnGen {
     pub fn mesh_biome(&self) -> Arc<[u8]> {
         self.mesh_biome.clone()
     }
+    #[inline]
+    pub(crate) fn mesh_biome_slice(&self) -> &[u8] {
+        &self.mesh_biome
+    }
     /// Density top-solid surface (world Y, or `-1`) at column-local `(x,z)`.
     #[inline]
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {

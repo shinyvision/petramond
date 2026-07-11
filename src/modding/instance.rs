@@ -32,7 +32,20 @@ pub(super) struct ModInstance {
 
 impl ModInstance {
     pub(super) fn from_module(id: &str, module: &Module, world_seed: u32) -> Result<Self, String> {
-        let mut store = Store::new(host::engine(), ModStoreData::new(id, world_seed));
+        Self::from_module_side(id, module, world_seed, mod_api::RuntimeSide::Server, None)
+    }
+
+    pub(super) fn from_module_side(
+        id: &str,
+        module: &Module,
+        world_seed: u32,
+        side: mod_api::RuntimeSide,
+        client_storage_dir: Option<std::path::PathBuf>,
+    ) -> Result<Self, String> {
+        let mut store = Store::new(
+            host::engine(),
+            ModStoreData::new_for_side(id, world_seed, side, client_storage_dir),
+        );
         store.limiter(|data| &mut data.limits);
         // Instantiation runs guest code too (data/start sections): same leash.
         store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
@@ -150,6 +163,22 @@ impl ModInstance {
                 None
             }
         }
+    }
+
+    pub(super) fn call_guest_client(
+        &mut self,
+        world: &crate::world::World,
+        call: &GuestCall,
+    ) -> Option<GuestRet> {
+        super::client::scope::enter(world, || self.call_guest_detached(call))
+    }
+
+    pub(super) fn client_data(&self) -> Option<&super::client::ClientStoreData> {
+        self.store.data().client.as_ref()
+    }
+
+    pub(super) fn client_data_mut(&mut self) -> Option<&mut super::client::ClientStoreData> {
+        self.store.data_mut().client.as_mut()
     }
 
     /// The raw request/reply protocol of one dispatch (see the module docs).

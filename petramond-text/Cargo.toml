@@ -1,0 +1,8 @@
+[package]
+name = "petramond-text"
+version = "0.1.0"
+edition = "2021"
+description = "Renderer-neutral Petramond font metrics, layout, atlases, and rasterization."
+license = "MIT"
+
+[dependencies]

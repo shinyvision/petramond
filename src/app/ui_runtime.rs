@@ -8,7 +8,7 @@
 //! leak into the deterministic tick. The only tick-bound artifact is a
 //! [`UiEvent`] the caller explicitly latches.
 
-use crate::gui::{doc_theme, documents, gui_scale, GuiKind};
+use crate::gui::{doc_theme, documents, GuiKind};
 use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
 
 /// A document's image registry: document-local images first, then the
@@ -17,6 +17,7 @@ use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, Ui
 struct DocImageSet<'a> {
     doc: std::sync::Arc<Vec<documents::DocImageRef>>,
     extra: &'a [documents::DocImageRef],
+    dynamic: &'a [crate::modding::ClientImageData],
 }
 
 impl DocImages for DocImageSet<'_> {
@@ -24,10 +25,18 @@ impl DocImages for DocImageSet<'_> {
         if let Some(idx) = self.doc.iter().position(|i| i.name == name) {
             return Some((idx as u16, self.doc[idx].size));
         }
-        self.extra
-            .iter()
-            .position(|i| i.name == name)
-            .map(|idx| ((self.doc.len() + idx) as u16, self.extra[idx].size))
+        if let Some(idx) = self.extra.iter().position(|i| i.name == name) {
+            return Some(((self.doc.len() + idx) as u16, self.extra[idx].size));
+        }
+        self.dynamic.iter().position(|i| i.key == name).map(|idx| {
+            (
+                (self.doc.len() + self.extra.len() + idx) as u16,
+                (
+                    self.dynamic[idx].width as u32,
+                    self.dynamic[idx].height as u32,
+                ),
+            )
+        })
     }
 }
 
@@ -40,8 +49,11 @@ pub(super) struct AppUi {
     /// Host-registered images beyond the document's own (per-row icons the
     /// controller names via `bind.image`), appended to the `DocImage` space.
     extra_images: Vec<documents::DocImageRef>,
-    /// This frame's `DocImage` index → path order (renderer upload).
-    image_paths: Vec<std::path::PathBuf>,
+    dynamic_images: Vec<crate::modding::ClientImageData>,
+    /// This frame's `DocImage` index → source order (renderer upload).
+    image_sources: Vec<crate::gui::DocImageSource>,
+    viewport_generation: u64,
+    frame_stamp: Option<(GuiKind, crate::gui::UiViewport)>,
     /// Native clipboard by default; tests inject an in-memory one so text
     /// tests never touch the OS.
     clipboard: Box<dyn petramond_ui::TextClipboard>,
@@ -86,7 +98,10 @@ impl AppUi {
             input: Vec::new(),
             active: None,
             extra_images: Vec::new(),
-            image_paths: Vec::new(),
+            dynamic_images: Vec::new(),
+            image_sources: Vec::new(),
+            viewport_generation: 0,
+            frame_stamp: None,
             clipboard: Box::new(DocClipboard::default()),
         }
     }
@@ -140,9 +155,39 @@ impl AppUi {
             .collect();
     }
 
-    /// This frame's `TexId::DocImage` index → image path order.
-    pub fn image_paths(&self) -> &[std::path::PathBuf] {
-        &self.image_paths
+    pub fn set_dynamic_images(&mut self, images: Vec<crate::modding::ClientImageData>) {
+        self.dynamic_images = images;
+    }
+
+    pub fn replace_client_state(
+        &mut self,
+        state: &std::collections::BTreeMap<String, mod_api::GuiValue>,
+    ) {
+        self.state.clear();
+        for (key, value) in state {
+            let value = match value {
+                mod_api::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
+                mod_api::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
+                mod_api::GuiValue::Str(v) => petramond_ui::UiValue::Str(v.clone()),
+            };
+            self.state.set(key.clone(), value);
+        }
+    }
+
+    pub fn image_sources(&self) -> &[crate::gui::DocImageSource] {
+        &self.image_sources
+    }
+
+    pub fn text_input_focused(&self) -> bool {
+        self.fs.focused().is_some()
+    }
+
+    pub fn set_viewport_generation(&mut self, generation: u64) {
+        self.viewport_generation = generation;
+    }
+
+    pub fn frame_stamp(&self) -> Option<(GuiKind, crate::gui::UiViewport)> {
+        self.frame_stamp
     }
 
     /// Programmatically focus a text input (pre-loaded with `text`), as if
@@ -165,6 +210,8 @@ impl AppUi {
             self.fs.reset();
             self.state.clear();
             self.extra_images.clear();
+            self.dynamic_images.clear();
+            self.frame_stamp = None;
             self.active = Some(kind);
         }
     }
@@ -183,24 +230,44 @@ impl AppUi {
     ) -> bool {
         let Some(doc) = documents::doc_for(kind) else {
             self.input.clear();
+            self.frame_stamp = None;
             return false;
         };
         self.ensure_active(kind);
+        let viewport = crate::gui::UiViewport::new(screen, self.viewport_generation);
         let rt = UiRuntime::new(doc.doc, doc_theme::theme());
-        self.image_paths.clear();
-        self.image_paths
-            .extend(doc.images.iter().map(|i| i.path.clone()));
-        self.image_paths
-            .extend(self.extra_images.iter().map(|i| i.path.clone()));
+        self.image_sources.clear();
+        self.image_sources.extend(
+            doc.images
+                .iter()
+                .map(|i| crate::gui::DocImageSource::Path(i.path.clone())),
+        );
+        self.image_sources.extend(
+            self.extra_images
+                .iter()
+                .map(|i| crate::gui::DocImageSource::Path(i.path.clone())),
+        );
+        self.image_sources
+            .extend(
+                self.dynamic_images
+                    .iter()
+                    .map(|i| crate::gui::DocImageSource::Dynamic {
+                        key: i.key.clone(),
+                        size: (i.width as u32, i.height as u32),
+                        revision: i.revision,
+                        rgba: i.rgba.clone(),
+                    }),
+            );
         let images = DocImageSet {
             doc: doc.images,
             extra: &self.extra_images,
+            dynamic: &self.dynamic_images,
         };
         let input = std::mem::take(&mut self.input);
         rt.frame(
             FrameArgs {
-                screen,
-                scale: gui_scale(screen) as i32,
+                screen: viewport.size,
+                scale: viewport.scale,
                 now,
                 state: &self.state,
                 input: &input,
@@ -212,6 +279,7 @@ impl AppUi {
             &mut self.fs,
             &mut self.out,
         );
+        self.frame_stamp = Some((kind, viewport));
         true
     }
 
@@ -259,8 +327,34 @@ impl AppUi {
             self.fs.reset();
             self.state.clear();
             self.extra_images.clear();
+            self.dynamic_images.clear();
+            self.frame_stamp = None;
         }
         self.input.clear();
+    }
+}
+
+#[cfg(test)]
+mod frame_stamp_tests {
+    use super::*;
+
+    #[test]
+    fn a_solved_document_keeps_its_generation_until_it_is_resolved_again() {
+        let mut ui = AppUi::new();
+        let screen = (1280, 720);
+        ui.set_viewport_generation(11);
+        assert!(ui.frame(GuiKind::Hotbar, screen, 0.0, None));
+        let first = (GuiKind::Hotbar, crate::gui::UiViewport::new(screen, 11));
+        assert_eq!(ui.frame_stamp(), Some(first));
+
+        ui.set_viewport_generation(12);
+        assert_eq!(ui.frame_stamp(), Some(first));
+
+        assert!(ui.frame(GuiKind::Hotbar, screen, 0.1, None));
+        assert_eq!(
+            ui.frame_stamp(),
+            Some((GuiKind::Hotbar, crate::gui::UiViewport::new(screen, 12)))
+        );
     }
 }
 

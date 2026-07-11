@@ -408,7 +408,7 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
-        NodeKind::Image { image, fit } => {
+        NodeKind::Image { image, fit, interactive } => {
             string_prop(ui, "image", image, t);
             ui.horizontal(|ui| {
                 if ui
@@ -448,6 +448,7 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
             if let ImageFit::Slice(insets) = fit {
                 quad_edit(ui, "insets", insets, t);
             }
+            t.hit(ui.checkbox(interactive, "interactive canvas"));
         }
         NodeKind::Rotimage { image, pivot } => {
             string_prop(ui, "image", image, t);

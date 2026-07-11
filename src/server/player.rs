@@ -221,7 +221,12 @@ impl FallTracker {
     /// landing (airborne → grounded) with its fall distance, or a water entry
     /// (airborne → in water) with the distance fallen into the surface —
     /// walking into water arrives grounded/level and reports nothing.
-    pub(crate) fn observe(&mut self, y: f32, on_ground: bool, in_water: bool) -> Option<FallOutcome> {
+    pub(crate) fn observe(
+        &mut self,
+        y: f32,
+        on_ground: bool,
+        in_water: bool,
+    ) -> Option<FallOutcome> {
         if in_water {
             let was_airborne = self.airborne;
             let dist = self.peak_y - y;

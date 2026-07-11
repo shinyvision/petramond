@@ -503,8 +503,7 @@ impl ParticleSystem {
                 spec.color[0][1] + (spec.color[1][1] - spec.color[0][1]) * mix,
                 spec.color[0][2] + (spec.color[1][2] - spec.color[0][2]) * mix,
             ];
-            let lifetime =
-                spec.lifetime[0] + self.rand() * (spec.lifetime[1] - spec.lifetime[0]);
+            let lifetime = spec.lifetime[0] + self.rand() * (spec.lifetime[1] - spec.lifetime[0]);
             let size = spec.size[0] + self.rand() * (spec.size[1] - spec.size[0]);
             // A whisker of spawn jitter so the burst doesn't emanate from one
             // mathematical point.
@@ -885,8 +884,7 @@ mod tests {
             sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, 0, 0);
         }
         // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
-        let mean_g: f32 =
-            sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
+        let mean_g: f32 = sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
         let mid_g = (spec.color[0][1] + spec.color[1][1]) * 0.5;
         assert!(
             mean_g < mid_g,

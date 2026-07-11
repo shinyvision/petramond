@@ -18,6 +18,7 @@
 //! disabled for the session with a visible error and the tick continues.
 
 pub(crate) mod ai;
+pub(crate) mod client;
 mod convert;
 pub(crate) mod gen;
 mod host;
@@ -57,6 +58,7 @@ use crate::mob::{Mob, MobCategory};
 use crate::player::Player;
 use crate::world::World;
 
+pub(crate) use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
 use host::Registration;
 use instance::ModInstance;
 

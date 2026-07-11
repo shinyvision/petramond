@@ -1,11 +1,13 @@
-//! The built-in 5×7 pixel font: glyph bitmaps, measurement, greedy word wrap,
-//! and a generated font-atlas image.
+//! Renderer-neutral Petramond text: glyph bitmaps, measurement, wrapping,
+//! atlas generation, and CPU rasterization.
 //!
-//! The glyph tables are the game's classic UI font, moved here so the game and
-//! the builder measure and rasterize text identically. The atlas generator
+//! Text is shared presentation infrastructure, not GUI infrastructure. GUI
+//! documents, canvas overlays, HUDs, and tools all consume this crate. The atlas generator
 //! turns the tables into a plain RGBA grid (ASCII 32..=126 plus a fallback
 //! cell), so paint samples a texture like any other — and a future theme can
 //! swap in a hand-drawn `font.png` of the same geometry.
+
+pub mod tiny;
 
 /// Glyph width in font-pixels.
 pub const GLYPH_W: i32 = 5;
@@ -156,6 +158,70 @@ pub fn build_atlas() -> (Vec<u8>, (u32, u32)) {
     }
     blit(ATLAS_LAST - ATLAS_FIRST + 1, '\u{FFFD}'); // fallback cell ('?'-boxed glyph)
     (rgba, (w, h))
+}
+
+/// Pixel size of one single-line text run at integer glyph scale.
+pub fn measure_scaled(s: &str, scale: u8) -> [u32; 2] {
+    let scale = scale.max(1) as u32;
+    [width(s).max(0) as u32 * scale, GLYPH_H as u32 * scale]
+}
+
+/// Blend one single-line run into a straight-alpha RGBA8 image.
+///
+/// `position` is the run's top-left in image pixels. Drawing is clipped to the
+/// destination, so callers can place labels at image edges without pre-clipping.
+pub fn draw_rgba(
+    rgba: &mut [u8],
+    width: u32,
+    text: &str,
+    position: [i32; 2],
+    scale: u8,
+    color: [u8; 4],
+) {
+    if width == 0 || rgba.len() % (width as usize * 4) != 0 {
+        return;
+    }
+    let height = rgba.len() / (width as usize * 4);
+    let scale = scale.max(1) as i32;
+    let mut glyph_x = position[0];
+    for ch in text.chars() {
+        for row in 0..GLYPH_H {
+            for col in 0..GLYPH_W {
+                if !glyph_cell(ch, col, row) {
+                    continue;
+                }
+                let left = glyph_x + col * scale;
+                let top = position[1] + row * scale;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        blend_rgba_pixel(rgba, width as usize, height, left + dx, top + dy, color);
+                    }
+                }
+            }
+        }
+        glyph_x += ADVANCE * scale;
+    }
+}
+
+fn blend_rgba_pixel(rgba: &mut [u8], width: usize, height: usize, x: i32, y: i32, color: [u8; 4]) {
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 || color[3] == 0 {
+        return;
+    }
+    let i = (y as usize * width + x as usize) * 4;
+    let src_a = color[3] as f32 / 255.0;
+    let dst_a = rgba[i + 3] as f32 / 255.0;
+    let out_a = src_a + dst_a * (1.0 - src_a);
+    if out_a <= 0.0 {
+        return;
+    }
+    for channel in 0..3 {
+        rgba[i + channel] = ((color[channel] as f32 * src_a
+            + rgba[i + channel] as f32 * dst_a * (1.0 - src_a))
+            / out_a)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+    }
+    rgba[i + 3] = (out_a * 255.0).round() as u8;
 }
 
 fn glyph(ch: char) -> [u8; GLYPH_H as usize] {
@@ -324,5 +390,18 @@ mod tests {
         // Unknown chars share the one fallback cell.
         assert_eq!(atlas_rect('🙂'), atlas_rect('\u{80}'));
         assert_ne!(atlas_rect('🙂'), atlas_rect('?'));
+    }
+
+    #[test]
+    fn cpu_raster_uses_shared_metrics_and_clips() {
+        let size = measure_scaled("A", 2);
+        assert_eq!(size, [10, 14]);
+        let mut rgba = vec![0; 10 * 14 * 4];
+        draw_rgba(&mut rgba, 10, "A", [0, 0], 2, [12, 34, 56, 255]);
+        assert!(rgba.chunks_exact(4).any(|pixel| pixel == [12, 34, 56, 255]));
+
+        let mut clipped = vec![0; 4 * 4 * 4];
+        draw_rgba(&mut clipped, 4, "A", [-3, -3], 2, [255; 4]);
+        assert!(clipped.chunks_exact(4).any(|pixel| pixel[3] != 0));
     }
 }

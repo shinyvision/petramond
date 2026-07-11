@@ -94,11 +94,7 @@ impl ServerGame {
         // claims must not yank the player every tick (tests and idle sessions).
         let accept_claim = fresh
             && claim_velocity_plausible(claimed_vel, spectator)
-            && claim_within_drift(
-                spectator,
-                gap,
-                claimed_pos - self.sessions[s].player.pos,
-            )
+            && claim_within_drift(spectator, gap, claimed_pos - self.sessions[s].player.pos)
             && claim_not_deeply_penetrating(claimed_pos, &self.world, spectator);
 
         let sess = &mut self.sessions[s];
@@ -200,8 +196,7 @@ fn drift_ring(rate: f32, gap_ticks: u32) -> f32 {
 /// legitimately fly fast in any direction and keep one isotropic ring.
 pub(crate) fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool {
     if spectator {
-        return delta.length()
-            <= drift_ring(player::SPECTATOR_SPRINT * CLAIM_VEL_SLACK, gap_ticks);
+        return delta.length() <= drift_ring(player::SPECTATOR_SPRINT * CLAIM_VEL_SLACK, gap_ticks);
     }
     let horizontal = Vec3::new(delta.x, 0.0, delta.z).length();
     horizontal <= drift_ring(CLAIM_H_SPEED * CLAIM_VEL_SLACK, gap_ticks)

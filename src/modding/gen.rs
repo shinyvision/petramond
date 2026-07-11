@@ -302,7 +302,13 @@ impl GenHooks {
     /// Build this thread's instance of `mod_idx` and run its detached init.
     fn instantiate(&self, mod_idx: usize) -> Option<ModInstance> {
         let m = &self.mods[mod_idx];
-        let mut inst = match ModInstance::from_module(&m.id, &m.module, self.seed) {
+        let mut inst = match ModInstance::from_module_side(
+            &m.id,
+            &m.module,
+            self.seed,
+            mod_api::RuntimeSide::Worldgen,
+            None,
+        ) {
             Ok(inst) => inst,
             Err(e) => {
                 log::error!(

@@ -6,18 +6,27 @@ impl App {
     /// frame wake and then draws; [`Game::tick`](crate::game::Game::tick)'s fixed-step
     /// accumulator holds the world at 20 TPS regardless of frame rate.
     pub fn update(&mut self, renderer: &Renderer) {
-        self.update_frame(renderer.screen_size());
+        self.update_in_viewport(renderer.ui_viewport());
     }
 
     /// [`update`](Self::update) behind the renderer handoff — the whole frame
     /// advance against a bare screen size, so tests can drive real frames
     /// headlessly.
+    #[cfg(test)]
     pub(crate) fn update_frame(&mut self, screen_size: (u32, u32)) {
+        self.update_in_viewport(crate::gui::UiViewport::unversioned(screen_size));
+    }
+
+    fn update_in_viewport(&mut self, viewport: crate::gui::UiViewport) {
+        let screen_size = viewport.size;
+        self.ui.set_viewport_generation(viewport.generation);
         let now = now_seconds();
         let dt = (now - self.last) as f32;
         self.last = now;
 
         self.recenter_pointer_if_pending(screen_size);
+
+        self.drive_client_mod_frame(dt, screen_size);
 
         // Document-backed SHELL screens run their whole UI frame here (input
         // → events → controller) and skip the simulation entirely; render
@@ -51,7 +60,12 @@ impl App {
         // document runtime (there is no other click route) — and the
         // simulation continues below. Clearing the pointer edges keeps a
         // menu-consumed click from also firing block break/placement.
-        else if let Some(kind) = self.doc_ui_kind() {
+        else if self.screen.client_ui_open() {
+            if let Some(kind) = self.doc_ui_kind() {
+                self.drive_client_doc_ui(kind, screen_size, now);
+            }
+            self.pointer.clear_edges();
+        } else if let Some(kind) = self.doc_ui_kind() {
             self.drive_doc_menu(kind, screen_size, now);
             self.pointer.clear_edges();
         }

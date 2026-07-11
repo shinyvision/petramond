@@ -1101,6 +1101,74 @@ impl World {
         self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))
     }
 
+    /// Final top-down surface sample for presentation-only client modules.
+    /// Missing column data or a surface section still in flight is unknown,
+    /// never guessed from generation; callers retain prior explored samples.
+    pub(crate) fn client_surface_cell(&self, wx: i32, wz: i32) -> Option<(i16, [u8; 3])> {
+        let column = self.column_at(wx, wz)?;
+        let lx = wx.rem_euclid(16) as usize;
+        let lz = wz.rem_euclid(16) as usize;
+        let height = column.surface_y(lx, lz);
+        if height == NO_SURFACE {
+            return None;
+        }
+        let block = self.block_if_stream_final(wx, height, wz)?;
+        let tile = block.tiles()[0];
+        let tint = self.client_surface_tint(wx, wz, tile.world_tint());
+        let base = tile.map_rgb();
+        let rgb = std::array::from_fn(|channel| {
+            (base[channel] as f32 * tint[channel])
+                .round()
+                .clamp(0.0, 255.0) as u8
+        });
+        Some((height as i16, rgb))
+    }
+
+    fn client_surface_tint(
+        &self,
+        wx: i32,
+        wz: i32,
+        kind: Option<crate::atlas::TileTint>,
+    ) -> [f32; 3] {
+        let Some(kind) = kind else {
+            return [1.0; 3];
+        };
+        let pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+        let halo = self
+            .column_gen
+            .get(&pos)
+            .map(|column| column.mesh_biome_slice())
+            .or_else(|| self.column_biome_halos.get(&pos).map(|halo| halo.as_ref()));
+        let Some(halo) = halo.filter(|halo| halo.len() == 20 * 20) else {
+            let biome = crate::biome::Biome::from_id(self.column_biome(wx, wz).unwrap_or_default());
+            return match kind {
+                crate::atlas::TileTint::Grass => biome.grass_color(),
+                crate::atlas::TileTint::Foliage => biome.foliage_color(),
+                crate::atlas::TileTint::Water => biome.water_color(),
+            };
+        };
+
+        // The halo starts two cells before the column, so the 5x5 blend window
+        // for local (x,z) occupies [x..x+5, z..z+5] directly.
+        let lx = wx.rem_euclid(16) as usize;
+        let lz = wz.rem_euclid(16) as usize;
+        let mut sum = [0.0; 3];
+        for z in lz..lz + 5 {
+            for x in lx..lx + 5 {
+                let biome = crate::biome::Biome::from_id(halo[z * 20 + x]);
+                let color = match kind {
+                    crate::atlas::TileTint::Grass => biome.grass_color(),
+                    crate::atlas::TileTint::Foliage => biome.foliage_color(),
+                    crate::atlas::TileTint::Water => biome.water_color(),
+                };
+                for channel in 0..3 {
+                    sum[channel] += color[channel];
+                }
+            }
+        }
+        sum.map(|channel| channel / 25.0)
+    }
+
     #[inline]
     pub(super) fn column_at_mut(&mut self, wx: i32, wz: i32) -> Option<&mut Column> {
         self.columns.get_mut(&ChunkPos::new(wx >> 4, wz >> 4))
@@ -1630,10 +1698,8 @@ mod tests {
         // the persist gate must rewrite B's record WITHOUT light so reload
         // rebakes — the pre-fix gate skipped unmodified light-dirty sections
         // entirely, stranding the stale cubes as a permanent dark seam.
-        let dir = std::env::temp_dir().join(format!(
-            "petramond-stale-light-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("petramond-stale-light-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let opened = crate::save::open_at(dir.clone()).expect("open save");
         let mut world = World::new(0, 0);

@@ -19,10 +19,7 @@ impl World {
     /// loaded block cell whose row declares a particle emitter. Visits only the
     /// maintained `particle_emitter_sections` index, then scans that section's dense
     /// block ids.
-    pub fn collect_particle_emitters(
-        &self,
-        out: &mut Vec<(Vec3, ParticleEmitter, u64, u8, u8)>,
-    ) {
+    pub fn collect_particle_emitters(&self, out: &mut Vec<(Vec3, ParticleEmitter, u64, u8, u8)>) {
         out.clear();
         for sp in &self.particle_emitter_sections {
             let Some(section) = self.sections.get(sp) else {

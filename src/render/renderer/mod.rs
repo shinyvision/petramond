@@ -7,6 +7,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use wgpu::util::DeviceExt;
 
+mod client_overlay;
 mod construct;
 mod doc_ui;
 mod dynamic_bake;
@@ -46,10 +47,10 @@ use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
     MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
-    RemotePlayerRender, SolidParticleInstance,
+    RemotePlayerRender, SolidParticleInstance, UiFrame,
 };
 use crate::bbmodel::Model;
-use crate::gui::UiSnapshot;
+use crate::gui::{UiSnapshot, UiViewport};
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 
@@ -363,7 +364,7 @@ pub struct Renderer {
     /// fog the terrain fades into.
     clear_color: [f32; 3],
     last_stats: RenderStats,
-    // --- Per-frame view state set by the App via setters, drawn in `render`. ---
+    // --- Per-frame view state handed off by the App, drawn in `render`. ---
     /// Block-break overlays to draw this frame (own + capped remotes; empty =
     /// none).
     break_overlays: Vec<BreakOverlayView>,
@@ -394,8 +395,10 @@ pub struct Renderer {
     /// Vertex count of the BLOCK-atlas portion of `particle_draw` this frame (the split
     /// point: `[0..this)` draws with the block atlas, the rest with the model atlas).
     particle_block_vertex_count: u32,
-    /// Snapshot of the UI/inventory to draw (owned, no borrow held).
-    ui: UiSnapshot,
+    /// Surface generation used to reject a complete UI frame solved before a
+    /// resize, plus the viewport of the most recently prepared coherent UI.
+    viewport_generation: u64,
+    prepared_ui_viewport: UiViewport,
     /// Camera right/up basis for world-space billboards (item sprites + particles),
     /// refreshed in `update_uniforms` from the inverse view rotation.
     billboard_basis: BillboardBasis,
@@ -432,6 +435,9 @@ pub struct Renderer {
     /// GUI-document draw path (petramond-ui DrawList upload + batches): every
     /// screen's chrome. See `doc_ui`.
     doc_ui: doc_ui::DocUi,
+    /// Client-WASM images drawn directly in physical screen pixels (HUD
+    /// overlays and the active modal canvas), outside document layout.
+    client_overlays: client_overlay::ClientOverlays,
     /// Solid-color quads (all stack-count digits) packed into one buffer:
     /// normal counts `[0, counts)`, then drag counts. Drawn with the
     /// icon-atlas bind (the solid sentinel skips the sampler anyway).
@@ -565,7 +571,6 @@ impl Renderer {
 
         self.refresh_overlay_buffers();
         self.prepare_held_item();
-        self.build_ui_frame();
         self.bake_world_instances();
 
         let mut enc = self

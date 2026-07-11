@@ -299,7 +299,7 @@ impl UiRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{NavKey, PointerButton};
+    use crate::input::{NavKey, PointerButton, PointerPhase};
     use crate::paint_walk::NoImages;
     use crate::state::{UiMap, UiState, UiValue};
     use std::sync::Arc;
@@ -652,6 +652,76 @@ mod tests {
         );
         // Hover reporting names the same cell.
         assert_eq!(out.hover_slot, Some(("storage".into(), 4)));
+    }
+
+    #[test]
+    fn interactive_image_keeps_drag_capture_and_reports_local_coordinates() {
+        let doc = Arc::new(
+            Document::from_json(
+                r#"{
+                "format": 1, "kind": "petramond:test_canvas", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 120, "h": 100, "pad": [10,10,10,10] },
+                    "children": [
+                        { "type": "image", "id": "canvas", "image": "test:canvas",
+                          "interactive": true, "layout": { "w": 80, "h": 60 } }
+                    ] }
+            }"#,
+            )
+            .unwrap(),
+        );
+        let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let state = UiState::new();
+        let frame = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
+            rt.frame(
+                FrameArgs {
+                    screen: (300, 300),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                fs,
+                out,
+            );
+            out.events.clone()
+        };
+        frame(&[], &mut fs, &mut out);
+        let rect = out.rect("canvas").unwrap();
+        let center = ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+        let outside = ((rect.x + rect.w + 20) as f32, (rect.y + rect.h / 2) as f32);
+
+        let events = frame(
+            &[
+                down(center.0, center.1),
+                InputEvent::PointerMove {
+                    x: outside.0,
+                    y: outside.1,
+                },
+                up(outside.0, outside.1),
+            ],
+            &mut fs,
+            &mut out,
+        );
+        let image_events: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                UiEvent::ImagePointer { phase, x, y, .. } => Some((*phase, *x, *y)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(image_events.len(), 3, "{events:?}");
+        assert_eq!(image_events[0].0, PointerPhase::Down);
+        assert_eq!(image_events[1].0, PointerPhase::Move);
+        assert_eq!(image_events[2].0, PointerPhase::Up);
+        assert!((image_events[0].1 - 40.0).abs() < 0.01);
+        assert!((image_events[0].2 - 30.0).abs() < 0.01);
+        assert!(image_events[1].1 > 80.0, "drag remains captured outside");
     }
 
     #[test]

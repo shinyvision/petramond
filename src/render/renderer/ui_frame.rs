@@ -8,6 +8,23 @@
 use super::*;
 
 impl Renderer {
+    /// Validate and prepare every UI layer as one viewport-stamped transaction.
+    /// A resize-stale document rejects the whole packet before any layer state
+    /// is cleared or uploaded.
+    pub(crate) fn prepare_ui_frame(&mut self, frame: UiFrame<'_>) -> bool {
+        if !frame.matches_viewport(self.ui_viewport()) {
+            return false;
+        }
+        let screen = frame.viewport.size;
+        let scale = frame.viewport.scale as f32;
+        let slots = frame.document.as_ref().map(|document| document.slots);
+        self.prepare_doc_ui(frame.document.as_ref(), screen);
+        self.prepare_client_overlays(frame.client_overlays, screen, frame.client_overlay_dim);
+        self.build_ui_frame(frame.content, screen, scale, slots);
+        self.prepared_ui_viewport = frame.viewport;
+        true
+    }
+
     /// Build + upload this frame's game-owned UI geometry from the [`UiBuild`]
     /// that [`build_ui`] fills:
     /// - `ui_solid_vbuf`: stack counts `[0, counts)`, then drag counts — all
@@ -17,17 +34,19 @@ impl Renderer {
     ///   vec to its own buffer.
     /// - `icon_quad_vbuf`: one textured quad per filled slot sampling the item's
     ///   pre-baked icon-atlas cell — normal icons then cursor-held icons.
-    pub(super) fn build_ui_frame(&mut self) {
+    fn build_ui_frame(
+        &mut self,
+        content: &UiSnapshot,
+        screen: (u32, u32),
+        scale: f32,
+        slots: Option<&[crate::gui::DocSlot]>,
+    ) {
         self.ui_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
-        // Disjoint-field borrow: `build_ui` reads the snapshot and writes the
-        // scratch `UiBuild`, both distinct from the GPU buffers used below.
-        build_ui(&self.ui, &mut self.ui_build);
-
-        let screen = self.ui.screen;
+        build_ui(content, screen, scale, slots, &mut self.ui_build);
         let cap = crate::render::pipeline::MAX_UI_VERTICES as usize;
         let vsize = std::mem::size_of::<UiVertex>();
 

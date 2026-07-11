@@ -3,7 +3,7 @@
 # from the engine workspace (different target, different profiles).
 [workspace]
 resolver = "2"
-members = ["kitchen", "wheel", "zombies"]
+members = ["kitchen", "minimap", "wheel", "zombies"]
 
 # Guests are size-sensitive and must abort (trap) on panic — the host treats a
 # trap as "disable the mod for this session, keep ticking".
@@ -13,3 +13,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.playtest]
+inherits = "dev"
+opt-level = 1

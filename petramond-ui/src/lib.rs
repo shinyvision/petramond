@@ -22,7 +22,7 @@ mod paint_walk;
 pub mod raster;
 pub mod runtime;
 pub mod state;
-pub mod text;
+pub use petramond_text as text;
 pub mod text_edit;
 pub mod theme;
 pub mod tree;
@@ -33,7 +33,9 @@ pub use doc::{
     AbsPos, AlertLevel, Align, Anchor, AnchorEdge, Bindings, Dir, DocClass, DocError, Document,
     GaugeMode, ImageFit, Justify, LayoutProps, Node, NodeKind, ScrollAxis, Size, FORMAT_VERSION,
 };
-pub use input::{FrameState, InputEvent, NavKey, PointerButton, PreviewState, UiEvent};
+pub use input::{
+    FrameState, InputEvent, NavKey, PointerButton, PointerPhase, PreviewState, UiEvent,
+};
 pub use layout::{grid_cell, solve, LayoutEnv, RectI, SlotMetrics, Solved};
 pub use paint::{Batch, DrawList, Painter, TexId, UiVertex};
 pub use paint_walk::{DocImages, NoImages};

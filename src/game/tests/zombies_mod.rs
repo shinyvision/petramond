@@ -253,11 +253,9 @@ fn zombie_sunburn_inner() {
         "torch-lit/dark-control zombies do not burn without direct sky light"
     );
     assert!(
-        dark_ids
+        dark_ids.iter().all(|id| mobs
             .iter()
-            .all(|id| mobs
-                .iter()
-                .any(|m| m.id() == *id && m.active_emitters().is_empty())),
+            .any(|m| m.id() == *id && m.active_emitters().is_empty())),
         "unburned zombies show no fire emitters"
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
@@ -269,7 +267,10 @@ fn zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm() {
     let Some(root) = crate::modding::tests::stage_zombies_fixture("burncool") else {
         return;
     };
-    crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_burn_cool_inner");
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::zombies_mod::zombie_burn_cool_inner",
+    );
 }
 
 /// Runs ONLY in the child process spawned above. Drives the full burn state
@@ -365,9 +366,10 @@ fn zombie_burn_cool_inner() {
 
     // Midnight: the core clock is authoritative for daylight, so the mod's
     // sunlight test goes dark everywhere from the next tick.
-    game.server
-        .world
-        .mod_kv_set("petramond:clock".to_owned(), 9_000u64.to_le_bytes().to_vec());
+    game.server.world.mod_kv_set(
+        "petramond:clock".to_owned(),
+        9_000u64.to_le_bytes().to_vec(),
+    );
     tick_until(
         &mut game,
         &mut ev,

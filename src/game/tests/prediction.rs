@@ -724,11 +724,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 
     let torch = wall - IVec3::X;
     assert_eq!(
-        Block::from_id(
-            game.game
-                .replica
-                .chunk_block(torch.x, torch.y, torch.z)
-        ),
+        Block::from_id(game.game.replica.chunk_block(torch.x, torch.y, torch.z)),
         Block::Torch
     );
     assert_eq!(
@@ -827,9 +823,8 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .section_at_world_for_test(floor.x, floor.y, floor.z)
         .expect("floor section")
         .entity_facing(0, 0, 0);
-    let facing_of = |g: &crate::game::Game| {
-        crate::server::placement::facing_from_forward(g.player.forward())
-    };
+    let facing_of =
+        |g: &crate::game::Game| crate::server::placement::facing_from_forward(g.player.forward());
     if facing_of(&game.game) == default_facing {
         game.game.player.yaw += std::f32::consts::PI;
     }
@@ -866,12 +861,17 @@ fn slab_stack_click_is_not_predicted() {
     // server-side, off the ghost convention (`target + normal`), so the
     // request denies by design — the client must not ghost a slab above.
     let cell = IVec3::new(8, 64, 8);
-    let facing =
-        crate::server::placement::facing_from_forward(game.game.player.forward());
+    let facing = crate::server::placement::facing_from_forward(game.game.player.forward());
     let slot = crate::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
-    assert!(game.game.replica.place_slab_layer(cell, Block::OakSlab, slot));
+    assert!(game
+        .game
+        .replica
+        .place_slab_layer(cell, Block::OakSlab, slot));
     let mut inv = crate::inventory::Inventory::new();
-    inv.add(crate::item::ItemStack::new(crate::item::ItemType::OakSlab, 1));
+    inv.add(crate::item::ItemStack::new(
+        crate::item::ItemType::OakSlab,
+        1,
+    ));
     game.server.sessions[0].player.inventory = inv;
     game.sync_self_view_for_test();
 

@@ -270,7 +270,7 @@ mod tests {
             p.document
                 .root
                 .children
-                .push(Node::leaf(NodeKind::Image { image: "art.png".into(), fit }));
+                .push(Node::leaf(NodeKind::Image { image: "art.png".into(), fit, interactive: false }));
         }
         p.document.root.children.last_mut().unwrap().bind.image = Some("icon".into());
 

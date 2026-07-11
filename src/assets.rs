@@ -29,6 +29,7 @@
 //!   "version": "0.1.0",
 //!   "description": "...",
 //!   "wasm": "mod.wasm",
+//!   "client_wasm": "client.wasm",
 //!   "dependencies": ["othermod"],
 //!   "after": ["thirdmod"]
 //! }
@@ -103,6 +104,9 @@ pub struct Pack {
     pub icon: Option<PathBuf>,
     /// Absolute path of the pack's compiled logic, when it ships one.
     pub wasm: Option<PathBuf>,
+    /// Optional presentation-only client module. It runs in a separate
+    /// restricted instance and cannot mutate the deterministic simulation.
+    pub client_wasm: Option<PathBuf>,
 }
 
 /// Discovered packs in LOAD order (lowest priority first — the merge order for
@@ -149,6 +153,9 @@ struct PackManifest {
     /// Pack-relative path of the compiled mod logic, if any.
     #[serde(default)]
     wasm: Option<String>,
+    /// Pack-relative path of presentation-only client logic, if any.
+    #[serde(default)]
+    client_wasm: Option<String>,
     #[serde(default)]
     dependencies: Vec<String>,
     #[serde(default)]
@@ -200,6 +207,13 @@ fn discover_packs() -> Vec<Pack> {
                 return disable(&format!("declared wasm '{wasm}' not found in the pack"));
             }
         }
+        if let Some(wasm) = &m.client_wasm {
+            if !dir.join(wasm).is_file() {
+                return disable(&format!(
+                    "declared client_wasm '{wasm}' not found in the pack"
+                ));
+            }
+        }
         let keys = match manifest::registration_keys(dir) {
             Ok(keys) => keys,
             Err(e) => return disable(&e),
@@ -221,7 +235,7 @@ fn discover_packs() -> Vec<Pack> {
         .map(|(dir_name, _, m)| PackMeta {
             dir_name: dir_name.clone(),
             id: m.id.clone(),
-            wasm: m.wasm.is_some(),
+            wasm: m.wasm.is_some() || m.client_wasm.is_some(),
             dependencies: m.dependencies.clone(),
             after: m.after.clone(),
         })
@@ -244,6 +258,7 @@ fn discover_packs() -> Vec<Pack> {
                 summary: m.summary.clone(),
                 icon: m.icon.as_ref().map(|i| dir.join(i)).filter(|p| p.is_file()),
                 wasm: m.wasm.as_ref().map(|w| dir.join(w)),
+                client_wasm: m.client_wasm.as_ref().map(|w| dir.join(w)),
             }
         })
         .collect()

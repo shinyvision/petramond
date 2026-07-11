@@ -273,11 +273,6 @@ impl Renderer {
         self.solid_particles.extend_from_slice(v);
     }
 
-    /// Store the already-owned UI state needed for this frame's UI pass.
-    pub fn set_ui(&mut self, v: UiSnapshot) {
-        self.ui = v;
-    }
-
     pub fn clear_world_state(&mut self) {
         self.terrain_columns.clear();
         self.terrain_upload_pending.clear();

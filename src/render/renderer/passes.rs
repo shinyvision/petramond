@@ -647,6 +647,7 @@ impl Renderer {
         if self.hud_layers.iter().any(|l| l.vertex_count > 0)
             || self.icon_quad_vertex_count > 0
             || !self.doc_ui.batches.is_empty()
+            || !self.client_overlays.batches.is_empty()
         {
             let mut pass = color_depth_pass(
                 enc,
@@ -679,6 +680,7 @@ impl Renderer {
             // gauge, text and dim quad of the frame's screen.
             self.draw_doc_ui(&mut pass);
             draw_layers(&mut pass, false);
+            self.draw_client_overlays(&mut pass);
             // Per-slot item icons (icon atlas), one bind + one draw.
             if self.icon_quad_vertex_count > 0 {
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);

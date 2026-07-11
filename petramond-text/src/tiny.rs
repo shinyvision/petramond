@@ -1,5 +1,4 @@
-//! A tiny built-in 3×5 bitmap font for the digits `0..9`, used to draw inventory
-//! stack counts as solid UI quads (no font-atlas asset dependency).
+//! The tiny 3×5 numeric font used for compact item-stack counts.
 //!
 //! Each glyph is 3 px wide × 5 px tall, encoded as 5 rows of 3 bits (MSB = left
 //! column). The UI renderer scales one "pixel" up to the chosen GUI scale and

@@ -150,7 +150,7 @@ fn convert(legacy: &LegacyProject) -> Imported {
                     .file_name()
                     .map(|f| f.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                let mut node = Node::leaf(NodeKind::Image { image: name, fit: Default::default() });
+                let mut node = Node::leaf(NodeKind::Image { image: name, fit: Default::default(), interactive: false });
                 node.layout = abs_layout(layer.rect, true);
                 root.children.push(node);
             }

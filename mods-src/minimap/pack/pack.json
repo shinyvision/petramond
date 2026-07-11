@@ -1,0 +1,8 @@
+{
+  "name": "Minimap",
+  "id": "minimap",
+  "version": "0.1.0",
+  "description": "Client-side rotating terrain minimap, explored world map, and persistent personal waypoints.",
+  "summary": "Minimap, world map, and waypoints.",
+  "client_wasm": "mod.wasm"
+}

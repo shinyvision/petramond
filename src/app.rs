@@ -6,6 +6,7 @@
 //! layer.
 
 mod chat;
+mod client_mod_ui;
 mod connect;
 mod gui_router;
 mod input;
@@ -75,6 +76,13 @@ pub struct App {
     gui_router: GuiRouter,
     /// GUI-document runtime driver (every screen is document-backed).
     ui: ui_runtime::AppUi,
+    /// Reused draw list for the active GUI document.
+    composed_doc: petramond_ui::DrawList,
+    composed_doc_images: Vec<crate::gui::DocImageSource>,
+    /// Open client-WASM physical-pixel canvas, separate from GUI documents.
+    client_canvas: Option<client_mod_ui::ClientCanvasState>,
+    /// Reused renderer handoff for always-on client overlays plus the canvas.
+    client_overlay_images: Vec<crate::render::ClientOverlayImage>,
     chat: chat::ChatUi,
     screen: AppScreen,
     /// Physical Ctrl/Shift modifier state from the windowing system, tracked apart
@@ -171,6 +179,10 @@ impl App {
             pointer: PointerState::default(),
             gui_router: GuiRouter::default(),
             ui: ui_runtime::AppUi::new(),
+            composed_doc: petramond_ui::DrawList::default(),
+            composed_doc_images: Vec::new(),
+            client_canvas: None,
+            client_overlay_images: Vec::new(),
             chat: chat::ChatUi::default(),
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
@@ -250,7 +262,8 @@ impl App {
                 // Not from a shell screen, and not over the sleep/death
                 // overlays — an inventory opened over a running sleep would
                 // strand the overlay's tick-owned state behind another screen.
-                if self.game.is_some() && !self.screen.shell_open() && !self.screen.overlay_open() {
+                if self.game.is_some() && (self.screen.gameplay_enabled() || self.screen.ui_open())
+                {
                     self.toggle_inventory();
                 }
                 true
@@ -327,6 +340,7 @@ impl App {
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,
             AppScreen::ModGui(kind) => kind,
+            AppScreen::ClientModGui(kind) => kind,
             AppScreen::Inventory => GuiKind::Inventory,
             AppScreen::CraftingTable => GuiKind::CraftingTable,
             AppScreen::Furnace => GuiKind::Furnace,
@@ -342,7 +356,7 @@ impl App {
     /// GUIs, containers) return `None` here — they drive their document UI
     /// AND tick the game.
     pub(crate) fn doc_shell_kind(&self) -> Option<crate::gui::GuiKind> {
-        if self.screen.ui_open() || self.screen.overlay_open() {
+        if self.screen.ui_open() || self.screen.client_ui_open() || self.screen.overlay_open() {
             return None;
         }
         self.doc_ui_kind()
