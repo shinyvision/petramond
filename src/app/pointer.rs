@@ -94,6 +94,11 @@ impl PointerState {
     }
 
     pub(super) fn grab_for_gameplay(&mut self) {
+        // A menu press must never ride into gameplay: when a click flips the
+        // screen BETWEEN press and release (double-click Play, RESUME), the
+        // release routes through the binding engine — which never saw the
+        // press — so a stale `left_held` here would mine forever.
+        self.clear_buttons();
         self.grabbing = true;
     }
 

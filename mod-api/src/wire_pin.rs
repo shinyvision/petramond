@@ -158,6 +158,7 @@ fn samples() -> Samples {
         margin: [1, 2], display_size: [3, 4],
     });
     s.pin("HostCall::ClientRegisterKey", &HostCall::ClientRegisterKey {
+        id: "open_map".into(), label: "Open World Map".into(),
         key: "key_m".into(), action_id: 1,
     });
     s.pin("HostCall::ClientSurface", &HostCall::ClientSurface { center: [1, 2], radius: 3 });
@@ -491,7 +492,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::EmitterBurst", "3d036d3a650000803f000000400000404000000040"),
     ("HostCall::RuntimeSide", "3e"),
     ("HostCall::ClientRegisterOverlay", "3f036d3a690001020304"),
-    ("HostCall::ClientRegisterKey", "40056b65795f6d01"),
+    ("HostCall::ClientRegisterKey", "40086f70656e5f6d61700e4f70656e20576f726c64204d6170056b65795f6d01"),
     ("HostCall::ClientSurface", "41020403"),
     ("HostCall::ClientUiStateSet", "42036d3a6b020176"),
     ("HostCall::ClientUiStateGet", "43036d3a6b"),

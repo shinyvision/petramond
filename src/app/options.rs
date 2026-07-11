@@ -7,7 +7,7 @@
 
 use super::{App, AppScreen};
 use crate::controls::{
-    fixed_control_from_key_code, is_modifier_key, BindMods, BindableAction, Binding, BoundInput,
+    fixed_control_from_key_code, is_modifier_key, ActionOut, BindMods, Binding, BoundInput,
     Control, PointerButton, ScrollDir,
 };
 use winit::event::MouseButton;
@@ -21,6 +21,7 @@ impl App {
     pub fn handle_raw_key(&mut self, code: KeyCode, down: bool) -> bool {
         let mut out = Vec::new();
         self.binding_engine.on_input(
+            &self.action_table,
             &self.settings.bindings,
             BoundInput::Key(code),
             down,
@@ -28,7 +29,7 @@ impl App {
             &mut out,
         );
         if !out.is_empty() {
-            self.dispatch_controls(out);
+            self.dispatch_actions(out);
             return true;
         }
         let Some(control) = fixed_control_from_key_code(code) else {
@@ -50,13 +51,14 @@ impl App {
         if gameplay || !down {
             let mut out = Vec::new();
             self.binding_engine.on_input(
+                &self.action_table,
                 &self.settings.bindings,
                 BoundInput::Mouse(button),
                 down,
                 self.modifiers,
                 &mut out,
             );
-            self.dispatch_controls(out);
+            self.dispatch_actions(out);
             if gameplay {
                 return;
             }
@@ -85,6 +87,7 @@ impl App {
         for _ in 0..notches.unsigned_abs() {
             let mut out = Vec::new();
             self.binding_engine.on_input(
+                &self.action_table,
                 &self.settings.bindings,
                 BoundInput::Scroll(dir),
                 true,
@@ -92,13 +95,14 @@ impl App {
                 &mut out,
             );
             self.binding_engine.on_input(
+                &self.action_table,
                 &self.settings.bindings,
                 BoundInput::Scroll(dir),
                 false,
                 self.modifiers,
                 &mut out,
             );
-            self.dispatch_controls(out);
+            self.dispatch_actions(out);
         }
     }
 
@@ -106,13 +110,50 @@ impl App {
     pub fn release_input_bindings(&mut self) {
         let mut out = Vec::new();
         self.binding_engine.release_all(&mut out);
-        self.dispatch_controls(out);
+        self.dispatch_actions(out);
     }
 
-    fn dispatch_controls(&mut self, out: Vec<(Control, bool)>) {
-        for (control, down) in out {
-            self.handle_control(control, down);
+    pub(super) fn dispatch_actions(&mut self, out: Vec<(ActionOut, bool)>) {
+        for (action, down) in out {
+            match action {
+                ActionOut::Control(control) => {
+                    self.handle_control(control, down);
+                }
+                ActionOut::ClientMod(id) => self.dispatch_mod_action(&id, down),
+            }
         }
+    }
+
+    /// Dispatch a mod-registered bound action to its owning client mod, with
+    /// the same gating the legacy physical-key path had: presses only reach
+    /// mods in gameplay/client-GUI contexts and never over a focused text
+    /// input; releases always land so the mod's edge filter can't latch.
+    fn dispatch_mod_action(&mut self, id: &str, pressed: bool) {
+        if !super::client_mod_ui::client_key_dispatch_permitted(
+            pressed,
+            self.screen,
+            self.ui.text_input_focused(),
+        ) {
+            return;
+        }
+        if let Some(game) = self.game.as_mut() {
+            game.client_mod_action(id, pressed);
+        }
+        self.apply_client_mod_commands();
+    }
+
+    /// Rebuild the remappable-action table for the current session: engine
+    /// actions plus whatever the loaded client mods registered. Held bindings
+    /// release first — an action must not stay down across the swap.
+    pub(super) fn rebuild_action_table(&mut self) {
+        self.release_input_bindings();
+        let mut table = crate::controls::ActionTable::engine();
+        if let Some(game) = self.game.as_ref() {
+            for (id, label, category, default) in game.client_bindable_actions() {
+                table.push_mod_action(id, label, category, default);
+            }
+        }
+        self.action_table = table;
     }
 
     // --- Remap capture (Options → Controls) ---
@@ -120,12 +161,12 @@ impl App {
     /// The armed remap, IF the controls screen is still the one open. Any
     /// other screen (a connection loss can swap screens underneath) disarms it
     /// so capture never eats input elsewhere.
-    fn active_remap(&mut self) -> Option<BindableAction> {
+    fn active_remap(&mut self) -> Option<String> {
         if self.screen != AppScreen::OptionsControls {
             self.cancel_remap();
             return None;
         }
-        self.remap
+        self.remap.clone()
     }
 
     /// Capture a raw KEY for the armed remap. Consumes everything while
@@ -149,7 +190,7 @@ impl App {
                 // Tap-released with nothing else captured: bind the bare
                 // modifier (any OTHER still-held modifiers chord it).
                 self.finish_remap(
-                    action,
+                    &action,
                     Binding {
                         mods: BindMods::from_modifiers(self.modifiers),
                         input: BoundInput::Key(code),
@@ -160,7 +201,7 @@ impl App {
         }
         if down {
             self.finish_remap(
-                action,
+                &action,
                 Binding {
                     mods: BindMods::from_modifiers(self.modifiers),
                     input: BoundInput::Key(code),
@@ -190,7 +231,7 @@ impl App {
             return false;
         }
         self.finish_remap(
-            action,
+            &action,
             Binding {
                 mods: BindMods::from_modifiers(self.modifiers),
                 input: BoundInput::Mouse(button),
@@ -214,7 +255,7 @@ impl App {
             ScrollDir::Up
         };
         self.finish_remap(
-            action,
+            &action,
             Binding {
                 mods: BindMods::from_modifiers(self.modifiers),
                 input: BoundInput::Scroll(dir),
@@ -227,7 +268,7 @@ impl App {
     fn cursor_over_interactive_widget(&self) -> bool {
         let (x, y) = self.pointer.cursor();
         self.ui.out().named.iter().any(|(key, rect)| {
-            (key.id == "back" || key.id.starts_with("bind:"))
+            (key.id == "back" || key.id == "bind")
                 && x >= rect.x as f32
                 && x < (rect.x + rect.w) as f32
                 && y >= rect.y as f32
@@ -235,10 +276,10 @@ impl App {
         })
     }
 
-    /// Arm `action` for remapping (clicking another action's button while one
-    /// is armed switches — the previous remap cancels, per design).
-    pub(super) fn begin_remap(&mut self, action: BindableAction) {
-        self.remap = Some(action);
+    /// Arm the action id for remapping (clicking another action's button
+    /// while one is armed switches — the previous remap cancels, per design).
+    pub(super) fn begin_remap(&mut self, action_id: &str) {
+        self.remap = Some(action_id.to_string());
         self.remap_armed_mod = None;
     }
 
@@ -247,8 +288,8 @@ impl App {
         self.remap_armed_mod = None;
     }
 
-    fn finish_remap(&mut self, action: BindableAction, binding: Binding) {
-        self.settings.bindings.set(action, binding);
+    fn finish_remap(&mut self, action_id: &str, binding: Binding) {
+        self.settings.bindings.set_id(action_id, binding);
         self.cancel_remap();
         self.persist_settings();
     }

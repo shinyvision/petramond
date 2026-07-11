@@ -284,8 +284,29 @@ impl Game {
         self.client_mods.frame(&self.replica, frame);
     }
 
-    pub(crate) fn client_mod_key(&mut self, key: &str, pressed: bool) -> bool {
-        self.client_mods.key(&self.replica, key, pressed)
+    /// Dispatch a mod-registered bound action edge (`mod_id:action`) to its
+    /// owning client mod.
+    pub(crate) fn client_mod_action(&mut self, full_id: &str, pressed: bool) -> bool {
+        self.client_mods.action(&self.replica, full_id, pressed)
+    }
+
+    /// The session's mod-registered remappable key actions, for the app's
+    /// action table: `(full_id, label, category, default binding)`.
+    pub(crate) fn client_bindable_actions(
+        &self,
+    ) -> Vec<(String, String, String, crate::controls::Binding)> {
+        self.client_mods
+            .key_actions()
+            .iter()
+            .map(|a| {
+                (
+                    a.full_id.clone(),
+                    a.label.clone(),
+                    a.category.clone(),
+                    crate::controls::Binding::key(a.default_code),
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn release_client_mod_keys(&mut self) {

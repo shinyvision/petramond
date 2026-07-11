@@ -32,6 +32,18 @@ use crate::audio::Sound;
 use crate::gui::GuiKind;
 use petramond_ui::UiState;
 
+/// Test support: the controls-list row index of an action id (category
+/// headers count), resolved through the controller's own row builder.
+#[cfg(test)]
+pub(in crate::app) fn controls_action_row_index(
+    table: &crate::controls::ActionTable,
+    action_id: &str,
+) -> Option<usize> {
+    options_controls::row_entries(table)
+        .iter()
+        .position(|e| matches!(e, options_controls::RowEntry::Action(id) if id == action_id))
+}
+
 /// Split-borrow helper: controllers read `&App` while writing the UI state.
 fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
     let mut state = std::mem::take(app.ui.state_mut());

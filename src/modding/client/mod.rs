@@ -11,6 +11,6 @@ mod state;
 mod storage;
 
 pub(in crate::modding) use calls::{client_capability, handle_client_call};
-pub(crate) use runtime::{physical_key_name, ClientCanvasView, ClientModRuntime, ClientUiView};
+pub(crate) use runtime::{ClientCanvasView, ClientModRuntime, ClientUiView};
 pub(in crate::modding) use state::ClientStoreData;
 pub(crate) use state::{ClientCommand, ClientImageData, ClientOverlayRegistration};

@@ -98,34 +98,37 @@ pub enum BindableAction {
     StrafeLeft,
     WalkBackward,
     Jump,
-    Attack,
-    Interact,
-    HotbarNext,
-    HotbarPrev,
-    OpenInventory,
-    Chat,
     Sprint,
     Sneak,
+    Attack,
+    Interact,
+    OpenInventory,
+    HotbarNext,
+    HotbarPrev,
     RotateBlock,
+    DropItem,
+    Chat,
 }
 
 impl BindableAction {
-    /// Display order of the Options → Controls screen.
-    pub const ALL: [BindableAction; 14] = [
+    /// Display order of the Options → Controls screen: grouped by
+    /// [`category`](Self::category), categories in first-appearance order.
+    pub const ALL: [BindableAction; 15] = [
         BindableAction::WalkForward,
         BindableAction::StrafeRight,
         BindableAction::StrafeLeft,
         BindableAction::WalkBackward,
         BindableAction::Jump,
-        BindableAction::Attack,
-        BindableAction::Interact,
-        BindableAction::HotbarNext,
-        BindableAction::HotbarPrev,
-        BindableAction::OpenInventory,
-        BindableAction::Chat,
         BindableAction::Sprint,
         BindableAction::Sneak,
+        BindableAction::Attack,
+        BindableAction::Interact,
+        BindableAction::OpenInventory,
+        BindableAction::HotbarNext,
+        BindableAction::HotbarPrev,
         BindableAction::RotateBlock,
+        BindableAction::DropItem,
+        BindableAction::Chat,
     ];
 
     /// Stable id string (the serde name): widget-id suffix + settings key.
@@ -145,11 +148,51 @@ impl BindableAction {
             BindableAction::Sprint => "sprint",
             BindableAction::Sneak => "sneak",
             BindableAction::RotateBlock => "rotate_block",
+            BindableAction::DropItem => "drop_item",
         }
     }
 
-    pub fn from_id(id: &str) -> Option<BindableAction> {
-        BindableAction::ALL.iter().copied().find(|a| a.id() == id)
+    /// Display label on the controls screen.
+    pub fn label(self) -> &'static str {
+        match self {
+            BindableAction::WalkForward => "Walk Forward",
+            BindableAction::StrafeRight => "Strafe Right",
+            BindableAction::StrafeLeft => "Strafe Left",
+            BindableAction::WalkBackward => "Walk Backward",
+            BindableAction::Jump => "Jump",
+            BindableAction::Attack => "Attack / Mine",
+            BindableAction::Interact => "Interact",
+            BindableAction::HotbarNext => "Next Hotbar",
+            BindableAction::HotbarPrev => "Previous Hotbar",
+            BindableAction::OpenInventory => "Open Inventory",
+            BindableAction::Chat => "Chat",
+            BindableAction::Sprint => "Sprint",
+            BindableAction::Sneak => "Sneak",
+            BindableAction::RotateBlock => "Rotate Block",
+            BindableAction::DropItem => "Drop Item",
+        }
+    }
+
+    /// The category header this action lists under (mods add their own
+    /// categories after these, one per pack).
+    pub fn category(self) -> &'static str {
+        match self {
+            BindableAction::WalkForward
+            | BindableAction::StrafeRight
+            | BindableAction::StrafeLeft
+            | BindableAction::WalkBackward
+            | BindableAction::Jump
+            | BindableAction::Sprint
+            | BindableAction::Sneak => "Movement",
+            BindableAction::Attack
+            | BindableAction::Interact
+            | BindableAction::OpenInventory
+            | BindableAction::HotbarNext
+            | BindableAction::HotbarPrev
+            | BindableAction::RotateBlock
+            | BindableAction::DropItem => "Interacting",
+            BindableAction::Chat => "Other",
+        }
     }
 
     /// The control this action drives when its binding fires.
@@ -169,6 +212,7 @@ impl BindableAction {
             BindableAction::Sprint => Control::Sprint,
             BindableAction::Sneak => Control::Sneak,
             BindableAction::RotateBlock => Control::RotateHeldBlock,
+            BindableAction::DropItem => Control::DropItem,
         }
     }
 
@@ -189,6 +233,7 @@ impl BindableAction {
             BindableAction::Sprint => key(KeyCode::ControlLeft),
             BindableAction::Sneak => key(KeyCode::ShiftLeft),
             BindableAction::RotateBlock => key(KeyCode::KeyR),
+            BindableAction::DropItem => key(KeyCode::KeyQ),
         }
     }
 }
@@ -370,78 +415,199 @@ pub fn is_modifier_key(code: KeyCode) -> bool {
     )
 }
 
-/// The per-player action → binding table. Missing actions fall back to their
-/// defaults, so hand-edited or older `client.json` files stay valid.
+/// The per-player action-id → binding table, keyed by the action's stable id
+/// STRING (`walk_forward`, `minimap:open_map`) so mod actions persist exactly
+/// like engine ones. Missing actions fall back to their defaults, so
+/// hand-edited or older `client.json` files stay valid; entries for mods not
+/// in the current session stay dormant.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BindingSet {
-    map: BTreeMap<BindableAction, Binding>,
+    map: BTreeMap<String, Binding>,
 }
 
 impl BindingSet {
+    /// The player's remap for `id`, if any (defaults live on the action rows).
+    pub fn get(&self, id: &str) -> Option<Binding> {
+        self.map.get(id).copied()
+    }
+
+    pub fn set_id(&mut self, id: &str, binding: Binding) {
+        self.map.insert(id.to_string(), binding);
+    }
+
+    /// Engine-action convenience over [`set_id`](Self::set_id) (tests).
+    #[cfg(test)]
+    pub fn set(&mut self, action: BindableAction, binding: Binding) {
+        self.set_id(action.id(), binding);
+    }
+
+    /// Engine-action convenience: the player's remap or the built-in default.
     pub fn binding(&self, action: BindableAction) -> Binding {
-        self.map
-            .get(&action)
-            .copied()
+        self.get(action.id())
             .unwrap_or_else(|| action.default_binding())
     }
+}
 
-    pub fn set(&mut self, action: BindableAction, binding: Binding) {
-        self.map.insert(action, binding);
+/// What a fired action drives: an engine [`Control`], or a client-mod key
+/// action dispatched by its namespaced id.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActionOut {
+    Control(Control),
+    ClientMod(String),
+}
+
+/// One remappable action the resolver knows: identity, display data, default
+/// binding, and what it fires.
+pub struct ActionRow {
+    /// Stable id: an engine action's serde name, or `mod_id:action` for mods.
+    pub id: String,
+    pub label: String,
+    /// Controls-screen category header ("Movement" / "Interacting" / "Other";
+    /// mods get their pack's display name).
+    pub category: String,
+    pub default: Binding,
+    target: ActionTarget,
+}
+
+enum ActionTarget {
+    Control(Control),
+    ClientMod,
+}
+
+/// Every remappable action of the current session: the engine actions plus
+/// whatever the loaded client mods registered. App-owned; rebuilt when a
+/// session starts or ends.
+pub struct ActionTable {
+    rows: Vec<ActionRow>,
+}
+
+impl ActionTable {
+    /// The engine actions only (no session / no client mods).
+    pub fn engine() -> ActionTable {
+        ActionTable {
+            rows: BindableAction::ALL
+                .iter()
+                .map(|a| ActionRow {
+                    id: a.id().to_string(),
+                    label: a.label().to_string(),
+                    category: a.category().to_string(),
+                    default: a.default_binding(),
+                    target: ActionTarget::Control(a.control()),
+                })
+                .collect(),
+        }
     }
 
-    /// The actions `input` fires under the currently held `mods`: a binding
+    /// Append a client-mod action (`id` = `mod_id:action`), listed under
+    /// `category` (the pack's display name).
+    pub fn push_mod_action(
+        &mut self,
+        id: String,
+        label: String,
+        category: String,
+        default: Binding,
+    ) {
+        self.rows.push(ActionRow {
+            id,
+            label,
+            category,
+            default,
+            target: ActionTarget::ClientMod,
+        });
+    }
+
+    pub fn rows(&self) -> &[ActionRow] {
+        &self.rows
+    }
+
+    pub fn row(&self, id: &str) -> Option<&ActionRow> {
+        self.rows.iter().find(|r| r.id == id)
+    }
+
+    /// The effective binding for a row: the player's remap or the row default.
+    pub fn effective(&self, set: &BindingSet, row: &ActionRow) -> Binding {
+        set.get(&row.id).unwrap_or(row.default)
+    }
+
+    /// The rows `input` fires under the currently held `mods`: a binding
     /// matches when its input matches and its required modifiers are all held.
     /// When bindings on the same input differ in specificity (`B` vs `Ctrl+B`),
     /// only the most specific satisfied chord(s) fire.
-    pub fn matches(&self, input: BoundInput, mods: Modifiers) -> Vec<BindableAction> {
-        let satisfied: Vec<(BindableAction, u32)> = BindableAction::ALL
+    fn matches(&self, set: &BindingSet, input: BoundInput, mods: Modifiers) -> Vec<usize> {
+        let satisfied: Vec<(usize, u32)> = self
+            .rows
             .iter()
-            .copied()
-            .filter_map(|action| {
-                let b = self.binding(action);
-                (b.input == input && b.mods.satisfied_by(mods)).then_some((action, b.mods.count()))
+            .enumerate()
+            .filter_map(|(i, row)| {
+                let b = self.effective(set, row);
+                (b.input == input && b.mods.satisfied_by(mods)).then_some((i, b.mods.count()))
             })
             .collect();
         let best = satisfied.iter().map(|(_, n)| *n).max().unwrap_or(0);
         satisfied
             .into_iter()
-            .filter_map(|(action, n)| (n == best).then_some(action))
+            .filter_map(|(i, n)| (n == best).then_some(i))
             .collect()
     }
+
+    fn out_for(&self, row: &ActionRow) -> ActionOut {
+        match row.target {
+            ActionTarget::Control(control) => ActionOut::Control(control),
+            ActionTarget::ClientMod => ActionOut::ClientMod(row.id.clone()),
+        }
+    }
+}
+
+/// One currently-held bound action.
+struct ActiveBind {
+    id: String,
+    out: ActionOut,
+    input: BoundInput,
+    required: BindMods,
 }
 
 /// Tracks which bound actions are currently DOWN, so releases resolve by the
 /// input that pressed them (a chord's modifier may lift before its key) and a
-/// held control never sticks. App-owned, never tick-visible.
+/// held control never sticks. Releases emit from the stored [`ActionOut`], so
+/// they stay correct even if the table was rebuilt mid-hold. App-owned, never
+/// tick-visible.
 #[derive(Default)]
 pub struct BindingEngine {
-    active: Vec<(BindableAction, BoundInput, BindMods)>,
+    active: Vec<ActiveBind>,
 }
 
 impl BindingEngine {
-    /// Resolve one raw input edge into `(Control, down)` transitions.
+    /// Resolve one raw input edge into `(action, down)` transitions.
     pub fn on_input(
         &mut self,
+        table: &ActionTable,
         set: &BindingSet,
         input: BoundInput,
         down: bool,
         mods: Modifiers,
-        out: &mut Vec<(Control, bool)>,
+        out: &mut Vec<(ActionOut, bool)>,
     ) {
         if down {
-            for action in set.matches(input, mods) {
-                if self.active.iter().any(|(a, ..)| *a == action) {
+            for i in table.matches(set, input, mods) {
+                let row = &table.rows()[i];
+                if self.active.iter().any(|a| a.id == row.id) {
                     continue; // key repeat
                 }
-                self.active.push((action, input, set.binding(action).mods));
-                out.push((action.control(), true));
+                let fired = table.out_for(row);
+                out.push((fired.clone(), true));
+                self.active.push(ActiveBind {
+                    id: row.id.clone(),
+                    out: fired,
+                    input,
+                    required: table.effective(set, row).mods,
+                });
             }
         } else {
-            self.active.retain(|(action, held_input, _)| {
-                let release = *held_input == input;
+            self.active.retain(|a| {
+                let release = a.input == input;
                 if release {
-                    out.push((action.control(), false));
+                    out.push((a.out.clone(), false));
                 }
                 !release
             });
@@ -451,20 +617,20 @@ impl BindingEngine {
     /// A modifier lifted: release every active chord whose required modifiers
     /// are no longer held (`Ctrl+B` sprint must stop when Ctrl lifts, even
     /// while B stays down).
-    pub fn on_modifiers_changed(&mut self, mods: Modifiers, out: &mut Vec<(Control, bool)>) {
-        self.active.retain(|(action, _, required)| {
-            let release = !required.satisfied_by(mods);
+    pub fn on_modifiers_changed(&mut self, mods: Modifiers, out: &mut Vec<(ActionOut, bool)>) {
+        self.active.retain(|a| {
+            let release = !a.required.satisfied_by(mods);
             if release {
-                out.push((action.control(), false));
+                out.push((a.out.clone(), false));
             }
             !release
         });
     }
 
     /// Release everything (focus loss, screen teardown).
-    pub fn release_all(&mut self, out: &mut Vec<(Control, bool)>) {
-        for (action, ..) in self.active.drain(..) {
-            out.push((action.control(), false));
+    pub fn release_all(&mut self, out: &mut Vec<(ActionOut, bool)>) {
+        for a in self.active.drain(..) {
+            out.push((a.out, false));
         }
     }
 }
@@ -475,7 +641,6 @@ pub fn fixed_control_from_key_code(code: KeyCode) -> Option<Control> {
     match code {
         KeyCode::Slash => Some(Control::OpenCommandChat),
         KeyCode::KeyY => Some(Control::TogglePlayerMode),
-        KeyCode::KeyQ => Some(Control::DropItem),
         // Plain V only — Ctrl+V stays the text-input paste shortcut.
         KeyCode::KeyV => Some(Control::TogglePerspective),
         KeyCode::Escape => Some(Control::CloseScreen),
@@ -504,13 +669,27 @@ mod binding_tests {
         }
     }
 
+    fn match_ids(
+        table: &ActionTable,
+        set: &BindingSet,
+        input: BoundInput,
+        m: Modifiers,
+    ) -> Vec<String> {
+        table
+            .matches(set, input, m)
+            .into_iter()
+            .map(|i| table.rows()[i].id.clone())
+            .collect()
+    }
+
     #[test]
     fn defaults_cover_every_action_and_roundtrip_serde() {
         let set = BindingSet::default();
         for action in BindableAction::ALL {
             let _ = set.binding(action); // no panic, always a binding
         }
-        // A customized set survives a JSON round-trip (the client.json path).
+        // A customized set (engine + mod ids) survives a JSON round-trip
+        // (the client.json path).
         let mut set = set;
         set.set(
             BindableAction::Sprint,
@@ -523,6 +702,7 @@ mod binding_tests {
             },
         );
         set.set(BindableAction::Attack, Binding::scroll(ScrollDir::Up));
+        set.set_id("minimap:open_map", Binding::key(KeyCode::KeyO));
         let json = serde_json::to_string(&set).expect("serialize");
         let back: BindingSet = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, set);
@@ -531,10 +711,15 @@ mod binding_tests {
             back.binding(BindableAction::Jump),
             Binding::key(KeyCode::Space)
         );
+        assert_eq!(
+            back.get("minimap:open_map"),
+            Some(Binding::key(KeyCode::KeyO))
+        );
     }
 
     #[test]
     fn chord_match_prefers_the_most_specific_binding() {
+        let table = ActionTable::engine();
         let mut set = BindingSet::default();
         set.set(BindableAction::Jump, Binding::key(KeyCode::KeyB));
         set.set(
@@ -549,23 +734,39 @@ mod binding_tests {
         );
         // Plain B: only the unchorded binding.
         assert_eq!(
-            set.matches(BoundInput::Key(KeyCode::KeyB), mods(false, false)),
-            vec![BindableAction::Jump]
+            match_ids(
+                &table,
+                &set,
+                BoundInput::Key(KeyCode::KeyB),
+                mods(false, false)
+            ),
+            vec!["jump"]
         );
         // Ctrl+B: the chord wins over the plain binding.
         assert_eq!(
-            set.matches(BoundInput::Key(KeyCode::KeyB), mods(true, false)),
-            vec![BindableAction::Sprint]
+            match_ids(
+                &table,
+                &set,
+                BoundInput::Key(KeyCode::KeyB),
+                mods(true, false)
+            ),
+            vec!["sprint"]
         );
         // A required-but-unheld modifier never fires.
         assert_eq!(
-            set.matches(BoundInput::Key(KeyCode::KeyB), mods(false, true)),
-            vec![BindableAction::Jump]
+            match_ids(
+                &table,
+                &set,
+                BoundInput::Key(KeyCode::KeyB),
+                mods(false, true)
+            ),
+            vec!["jump"]
         );
     }
 
     #[test]
     fn engine_releases_by_input_and_on_modifier_lift() {
+        let table = ActionTable::engine();
         let mut set = BindingSet::default();
         set.set(
             BindableAction::Sprint,
@@ -581,17 +782,19 @@ mod binding_tests {
         let mut out = Vec::new();
 
         engine.on_input(
+            &table,
             &set,
             BoundInput::Key(KeyCode::KeyB),
             true,
             mods(true, false),
             &mut out,
         );
-        assert_eq!(out, vec![(Control::Sprint, true)]);
+        assert_eq!(out, vec![(ActionOut::Control(Control::Sprint), true)]);
         out.clear();
 
         // Repeat (key auto-repeat) does not re-fire.
         engine.on_input(
+            &table,
             &set,
             BoundInput::Key(KeyCode::KeyB),
             true,
@@ -602,11 +805,12 @@ mod binding_tests {
 
         // Ctrl lifting releases the chord even while B stays down.
         engine.on_modifiers_changed(mods(false, false), &mut out);
-        assert_eq!(out, vec![(Control::Sprint, false)]);
+        assert_eq!(out, vec![(ActionOut::Control(Control::Sprint), false)]);
         out.clear();
 
         // The later B release no longer refers to an active action.
         engine.on_input(
+            &table,
             &set,
             BoundInput::Key(KeyCode::KeyB),
             false,
@@ -617,31 +821,79 @@ mod binding_tests {
     }
 
     #[test]
+    fn mod_actions_resolve_and_release_after_a_table_swap() {
+        let mut table = ActionTable::engine();
+        table.push_mod_action(
+            "minimap:open_map".into(),
+            "Open World Map".into(),
+            "Minimap".into(),
+            Binding::key(KeyCode::KeyM),
+        );
+        let set = BindingSet::default();
+        let mut engine = BindingEngine::default();
+        let mut out = Vec::new();
+
+        engine.on_input(
+            &table,
+            &set,
+            BoundInput::Key(KeyCode::KeyM),
+            true,
+            mods(false, false),
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            vec![(ActionOut::ClientMod("minimap:open_map".into()), true)]
+        );
+        out.clear();
+
+        // The session ends mid-hold (table rebuilt without the mod): the
+        // release still emits from the stored action, so the mod's edge
+        // filter can never latch.
+        let engine_only = ActionTable::engine();
+        engine.on_input(
+            &engine_only,
+            &set,
+            BoundInput::Key(KeyCode::KeyM),
+            false,
+            mods(false, false),
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            vec![(ActionOut::ClientMod("minimap:open_map".into()), false)]
+        );
+    }
+
+    #[test]
     fn engine_releases_a_plain_key_even_if_modifiers_changed_mid_hold() {
+        let table = ActionTable::engine();
         let set = BindingSet::default();
         let mut engine = BindingEngine::default();
         let mut out = Vec::new();
         engine.on_input(
+            &table,
             &set,
             BoundInput::Key(KeyCode::KeyW),
             true,
             mods(false, false),
             &mut out,
         );
-        assert_eq!(out, vec![(Control::MoveForward, true)]);
+        assert_eq!(out, vec![(ActionOut::Control(Control::MoveForward), true)]);
         out.clear();
         // Holding Ctrl (sprint) must not release W; unchorded bindings ignore
         // modifier changes.
         engine.on_modifiers_changed(mods(true, false), &mut out);
         assert!(out.is_empty());
         engine.on_input(
+            &table,
             &set,
             BoundInput::Key(KeyCode::KeyW),
             false,
             mods(true, false),
             &mut out,
         );
-        assert_eq!(out, vec![(Control::MoveForward, false)]);
+        assert_eq!(out, vec![(ActionOut::Control(Control::MoveForward), false)]);
     }
 
     #[test]

@@ -217,6 +217,7 @@ impl App {
     /// audio, scene, hand state, LAN bookkeeping, world-list refresh. The
     /// caller sets the target screen.
     fn teardown_game_scene(&mut self) {
+        self.rebuild_action_table();
         self.pointer.release_for_menu();
         self.audio.set_loop(None, now_seconds());
         self.scene.clear();
@@ -364,6 +365,7 @@ impl App {
     pub(crate) fn adopt_game(&mut self, game: crate::game::Game) {
         self.game = Some(game);
         self.apply_particles();
+        self.rebuild_action_table();
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();

@@ -152,7 +152,7 @@
               "axis": "vertical",
               "layout": {
                 "w": "auto",
-                "h": 120,
+                "h": 150,
                 "pad": [
                   1,
                   1,
@@ -173,7 +173,8 @@
               "style": "panel.inset",
               "children": [
                 {
-                  "type": "column",
+                  "id": "controls",
+                  "type": "list",
                   "layout": {
                     "w": "auto",
                     "h": "auto",
@@ -194,17 +195,20 @@
                     "align": "stretch",
                     "justify": "start"
                   },
+                  "bind": {
+                    "items": "rows"
+                  },
                   "children": [
                     {
-                      "type": "row",
+                      "type": "column",
                       "layout": {
                         "w": "auto",
                         "h": "auto",
                         "pad": [
-                          2,
-                          1,
-                          2,
-                          1
+                          0,
+                          0,
+                          0,
+                          0
                         ],
                         "margin": [
                           0,
@@ -212,25 +216,22 @@
                           0,
                           0
                         ],
-                        "gap": 4,
+                        "gap": 0,
                         "dir": "column",
-                        "align": "center",
+                        "align": "stretch",
                         "justify": "start"
                       },
                       "children": [
                         {
-                          "type": "label",
-                          "text": "Walk Forward",
+                          "type": "row",
                           "layout": {
-                            "w": {
-                              "grow": 1
-                            },
+                            "w": "auto",
                             "h": "auto",
                             "pad": [
-                              0,
-                              0,
-                              0,
-                              0
+                              2,
+                              4,
+                              2,
+                              4
                             ],
                             "margin": [
                               0,
@@ -238,98 +239,84 @@
                               0,
                               0
                             ],
-                            "gap": 0,
+                            "gap": 5,
                             "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:walk_forward",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
+                            "align": "center",
                             "justify": "start"
                           },
                           "bind": {
-                            "text": "bind:walk_forward"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Strafe Right",
-                          "layout": {
-                            "w": {
-                              "grow": 1
+                            "visible": "is_header"
+                          },
+                          "children": [
+                            {
+                              "type": "image",
+                              "image": "pixel.png",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": 1,
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
                             },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
+                            {
+                              "type": "label",
+                              "style": "label.muted",
+                              "bind": {
+                                "text": "label"
+                              }
+                            },
+                            {
+                              "type": "image",
+                              "image": "pixel.png",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": 1,
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            }
+                          ]
                         },
                         {
-                          "id": "bind:strafe_right",
-                          "type": "button",
+                          "type": "row",
                           "layout": {
-                            "w": 92,
+                            "w": "auto",
                             "h": "auto",
                             "pad": [
-                              0,
-                              0,
-                              0,
-                              0
+                              2,
+                              1,
+                              2,
+                              1
                             ],
                             "margin": [
                               0,
@@ -337,925 +324,69 @@
                               0,
                               0
                             ],
-                            "gap": 0,
+                            "gap": 4,
                             "dir": "column",
+                            "align": "center",
                             "justify": "start"
                           },
                           "bind": {
-                            "text": "bind:strafe_right"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Strafe Left",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:strafe_left",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
+                            "visible": "is_action"
                           },
-                          "bind": {
-                            "text": "bind:strafe_left"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Walk Backward",
-                          "layout": {
-                            "w": {
-                              "grow": 1
+                          "children": [
+                            {
+                              "type": "label",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "text": "label"
+                              }
                             },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:walk_backward",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:walk_backward"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Jump",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:jump",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:jump"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Attack / Mine",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:attack",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:attack"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Interact",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:interact",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:interact"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Next Hotbar Slot",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:hotbar_next",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:hotbar_next"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Previous Hotbar Slot",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:hotbar_prev",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:hotbar_prev"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Open Inventory",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:open_inventory",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:open_inventory"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Chat",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:chat",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:chat"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Sprint",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:sprint",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:sprint"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Sneak",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:sneak",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:sneak"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "row",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          2,
-                          1,
-                          2,
-                          1
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 4,
-                        "dir": "column",
-                        "align": "center",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Rotate Block",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "bind:rotate_block",
-                          "type": "button",
-                          "layout": {
-                            "w": 92,
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "text": "bind:rotate_block"
-                          }
+                            {
+                              "id": "bind",
+                              "type": "button",
+                              "layout": {
+                                "w": 92,
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "text": "binding"
+                              }
+                            }
+                          ]
                         }
                       ]
                     }
@@ -1318,11 +449,54 @@
   },
   "editor": {
     "sample_state": {
-      "bind:<action>": {
-        "str": "Sample text"
-      },
       "remap_hint": {
         "str": "Sample text"
+      },
+      "rows": {
+        "list": [
+          {
+            "binding": {
+              "str": "First item"
+            },
+            "is_action": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "label": {
+              "str": "First item"
+            }
+          },
+          {
+            "binding": {
+              "str": "Second item"
+            },
+            "is_action": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "label": {
+              "str": "Second item"
+            }
+          },
+          {
+            "binding": {
+              "str": "Third item"
+            },
+            "is_action": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "label": {
+              "str": "Third item"
+            }
+          }
+        ]
       },
       "show_backdrop": {
         "bool": true

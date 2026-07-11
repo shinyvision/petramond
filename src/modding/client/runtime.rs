@@ -37,10 +37,26 @@ pub(crate) struct ClientCanvasView {
     pub elements: Vec<ClientCanvasElementView>,
 }
 
+/// One mod-registered remappable key action, resolved for this session.
+pub(crate) struct ModKeyAction {
+    /// Namespaced identity (`mod_id:action`): the remap-persistence key, the
+    /// dispatch handle, and the controls-screen row id.
+    pub full_id: String,
+    pub label: String,
+    /// Controls-screen category: the owning pack's display name.
+    pub category: String,
+    /// The registered DEFAULT key (the player may remap it away).
+    pub default_code: winit::keyboard::KeyCode,
+    mod_index: usize,
+    action_id: u32,
+}
+
 pub(crate) struct ClientModRuntime {
     mods: Vec<ClientMod>,
-    bindings: Vec<(String, usize, u32)>,
+    actions: Vec<ModKeyAction>,
     overlays: Vec<super::state::ClientOverlayRegistration>,
+    /// Currently-down action `full_id`s — the edge filter for `ClientKey`
+    /// dispatch, whatever input the player bound.
     pressed: HashSet<String>,
 }
 
@@ -84,7 +100,7 @@ impl ClientModRuntime {
             mods.push(ClientMod { id, instance });
         }
 
-        let mut bindings = Vec::new();
+        let mut actions = Vec::new();
         let mut overlays = Vec::new();
         for (index, loaded) in mods.iter().enumerate() {
             let Some(data) = loaded.instance.client_data() else {
@@ -94,32 +110,58 @@ impl ClientModRuntime {
             // per-mod duplicates rejected there), so keys are already unique
             // across mods.
             overlays.extend(data.overlays.iter().cloned());
-            for (key, action) in &data.key_bindings {
-                if reserved_key(key) {
+            // Category = the pack's display name; the id keys the category
+            // when a pack somehow has no display row.
+            let category = crate::assets::packs()
+                .iter()
+                .find(|p| p.id.as_deref() == Some(loaded.id.as_str()))
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| loaded.id.clone());
+            for binding in &data.key_bindings {
+                // The DEFAULT may not shadow an engine default — the player
+                // could no longer tell who owns the key out of the box.
+                // (Remaps are the player's own choice and are not policed.)
+                if reserved_key(&binding.key) {
                     log::error!(
-                        "client mod '{}': key '{}' conflicts with an engine binding; ignored",
+                        "client mod '{}': default key '{}' conflicts with an engine binding; \
+                         action '{}' ignored",
                         loaded.id,
-                        key
+                        binding.key,
+                        binding.id
                     );
                     continue;
                 }
-                if bindings.iter().any(|(bound, _, _)| bound == key) {
+                let Some(default_code) = key_code_for_name(&binding.key) else {
                     log::error!(
-                        "client mod '{}': key '{}' conflicts with an earlier client mod; ignored",
+                        "client mod '{}': unknown default key '{}'; action '{}' ignored",
                         loaded.id,
-                        key
+                        binding.key,
+                        binding.id
                     );
                     continue;
-                }
-                bindings.push((key.clone(), index, *action));
+                };
+                actions.push(ModKeyAction {
+                    full_id: format!("{}:{}", loaded.id, binding.id),
+                    label: binding.label.clone(),
+                    category: category.clone(),
+                    default_code,
+                    mod_index: index,
+                    action_id: binding.action_id,
+                });
             }
         }
         Self {
             mods,
-            bindings,
+            actions,
             overlays,
             pressed: HashSet::new(),
         }
+    }
+
+    /// The session's mod-registered remappable actions, for the app's action
+    /// table and the controls screen.
+    pub(crate) fn key_actions(&self) -> &[ModKeyAction] {
+        &self.actions
     }
 
     /// The live (non-disabled) mod owning a namespaced `mod_id:name` key.
@@ -145,27 +187,29 @@ impl ClientModRuntime {
         }
     }
 
-    pub(crate) fn key(&mut self, world: &World, key: &str, pressed: bool) -> bool {
-        let Some((_, index, action_id)) = self
-            .bindings
+    /// Dispatch one bound-action edge to its owning mod, by the action's
+    /// namespaced `full_id`. Returns whether a live mod owns the action.
+    pub(crate) fn action(&mut self, world: &World, full_id: &str, pressed: bool) -> bool {
+        let Some((index, action_id)) = self
+            .actions
             .iter()
-            .find(|(bound, _, _)| bound == key)
-            .cloned()
+            .find(|a| a.full_id == full_id)
+            .map(|a| (a.mod_index, a.action_id))
         else {
             return false;
         };
         if self.mods[index].instance.disabled() {
-            self.pressed.remove(key);
+            self.pressed.remove(full_id);
             return false;
         }
-        let was_pressed = self.pressed.contains(key);
+        let was_pressed = self.pressed.contains(full_id);
         if was_pressed == pressed {
             return true;
         }
         if pressed {
-            self.pressed.insert(key.to_owned());
+            self.pressed.insert(full_id.to_owned());
         } else {
-            self.pressed.remove(key);
+            self.pressed.remove(full_id);
         }
         let call = GuestCall::ClientKey { action_id, pressed };
         dispatch_unit(&mut self.mods[index].instance, world, &call, "client key");
@@ -201,12 +245,12 @@ impl ClientModRuntime {
 
     pub(crate) fn release_all_keys(&mut self, world: &World) {
         let pressed: Vec<_> = self.pressed.drain().collect();
-        for key in pressed {
-            let Some((_, index, action_id)) = self
-                .bindings
+        for full_id in pressed {
+            let Some((index, action_id)) = self
+                .actions
                 .iter()
-                .find(|(bound, _, _)| bound == &key)
-                .cloned()
+                .find(|a| a.full_id == full_id)
+                .map(|a| (a.mod_index, a.action_id))
             else {
                 continue;
             };
@@ -347,7 +391,7 @@ fn client_storage_dir(session_key: &str, mod_id: &str) -> PathBuf {
 }
 
 /// The bindable physical keys and their stable ABI names — the one table
-/// behind [`physical_key_name`] and [`reserved_key`].
+/// behind [`key_code_for_name`] and [`reserved_key`].
 const PHYSICAL_KEYS: &[(winit::keyboard::KeyCode, &str)] = {
     use winit::keyboard::KeyCode;
     &[
@@ -390,11 +434,12 @@ const PHYSICAL_KEYS: &[(winit::keyboard::KeyCode, &str)] = {
     ]
 };
 
-pub(crate) fn physical_key_name(code: winit::keyboard::KeyCode) -> Option<&'static str> {
+/// The `KeyCode` behind a registered default-key name (`"key_m"` → `KeyM`).
+pub(crate) fn key_code_for_name(name: &str) -> Option<winit::keyboard::KeyCode> {
     PHYSICAL_KEYS
         .iter()
-        .find(|(bindable, _)| *bindable == code)
-        .map(|(_, name)| *name)
+        .find(|(_, bindable)| *bindable == name)
+        .map(|(code, _)| *code)
 }
 
 #[cfg(test)]

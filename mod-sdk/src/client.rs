@@ -31,11 +31,16 @@ pub fn client_register_overlay(
     );
 }
 
-/// Register a physical client key (for example `"key_m"`) during init.
-pub fn client_register_key(key: &str, action_id: u32) {
+/// Register a REMAPPABLE client key action during init: a stable bare `id`
+/// (the player's remap persists as `mod_id:id`), a display `label` for the
+/// Options → Controls screen, the DEFAULT physical `key` (for example
+/// `"key_m"`), and the `action_id` your `client_key` handler matches on.
+pub fn client_register_key(id: &str, label: &str, key: &str, action_id: u32) {
     __rt::expect_unit(
         "ClientRegisterKey",
         __rt::host_call(&HostCall::ClientRegisterKey {
+            id: id.into(),
+            label: label.into(),
             key: key.into(),
             action_id,
         }),

@@ -529,10 +529,16 @@ pub enum HostCall {
         margin: [u16; 2],
         display_size: [u16; 2],
     },
-    /// Register one physical key (`"key_m"`, `"digit_1"`, …) to an opaque
-    /// action id. Reserved engine bindings are rejected by the app. Legal only
-    /// during client `mod_init`. → [`HostRet::Unit`].
+    /// Register one REMAPPABLE key action: a stable bare `id` (the player's
+    /// remap persists under `mod_id:id`), a display `label` for the Options →
+    /// Controls screen (listed under the pack's name), the DEFAULT physical
+    /// key (`"key_m"`, `"digit_1"`, …), and the opaque `action_id` delivered
+    /// back in ClientKey events. Defaults colliding with an engine default are
+    /// rejected by the app. Legal only during client `mod_init`. →
+    /// [`HostRet::Unit`].
     ClientRegisterKey {
+        id: String,
+        label: String,
         key: String,
         action_id: u32,
     },
@@ -1030,6 +1036,8 @@ mod tests {
             display_size: [256, 256],
         });
         roundtrip(HostCall::ClientRegisterKey {
+            id: "open_map".into(),
+            label: "Open World Map".into(),
             key: "key_m".into(),
             action_id: 1,
         });

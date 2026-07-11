@@ -19,9 +19,9 @@ pub enum ControlEvent {
     Interact {
         down: bool,
     },
-    /// Drop the held item this press (edge-triggered). Whether it's one item or
-    /// the whole stack is decided by the App from the physical Ctrl modifier, not
-    /// here — keeping the drop key independent of the sprint binding.
+    /// Drop the held item this press (edge-triggered). Whether it's one item
+    /// or the whole stack is decided by the App: holding the SPRINT control
+    /// (wherever it's bound) drops the stack.
     DropItem,
     RotateHeldBlock,
     TogglePerspective,
@@ -122,8 +122,8 @@ impl InputController {
             Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
             Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),
             Control::DropItem => {
-                // Edge-triggered: one drop per press. The whole-stack vs single
-                // choice is the App's, read from the physical Ctrl modifier.
+                // Edge-triggered: one drop per press. The whole-stack vs
+                // single choice is the App's, read from the held SPRINT state.
                 let edge = down && !self.drop_item_held;
                 self.drop_item_held = down;
                 edge.then_some(ControlEvent::DropItem)
@@ -141,6 +141,12 @@ impl InputController {
         };
 
         event.or_else(|| self.mode_chord_event())
+    }
+
+    /// Whether the SPRINT control is held — the drop-whole-stack modifier
+    /// (follows the sprint binding, wherever it points).
+    pub fn sprint_held(&self) -> bool {
+        self.sprint
     }
 
     /// Drain the accumulated hotbar steps (positive = next slot).

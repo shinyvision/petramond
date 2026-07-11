@@ -52,8 +52,8 @@ impl Mod for Minimap {
             return;
         }
         client_register_overlay(HUD_IMAGE, ClientOverlayAnchor::TopRight, [8, 8], [256, 256]);
-        client_register_key("key_m", KEY_MAP);
-        client_register_key("key_n", KEY_WAYPOINT);
+        client_register_key("open_map", "Open World Map", "key_m", KEY_MAP);
+        client_register_key("add_waypoint", "Add Waypoint", "key_n", KEY_WAYPOINT);
         self.load_waypoints();
         log("client minimap initialized");
     }

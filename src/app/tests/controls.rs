@@ -583,11 +583,12 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::OptionsControls;
 
-    // Arm Jump for remapping.
+    // Arm Jump for remapping (rows near the top — the scroll viewport clips
+    // lower rows out of click reach).
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.0);
-    click_doc_id(&mut app, "bind:jump");
+    click_bind_row(&mut app, "jump");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.1);
-    assert_eq!(app.remap, Some(BindableAction::Jump));
+    assert_eq!(app.remap.as_deref(), Some("jump"));
 
     // ESC cancels without touching the binding.
     assert!(app.remap_capture_key(KeyCode::Escape, true));
@@ -597,14 +598,13 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
         Binding::key(KeyCode::Space)
     );
 
-    // Clicking one action then another switches the armed remap (rows near
-    // the top — the scroll viewport clips lower rows out of click reach).
+    // Clicking one action then another switches the armed remap.
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.2);
-    click_doc_id(&mut app, "bind:jump");
+    click_bind_row(&mut app, "jump");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.3);
-    click_doc_id(&mut app, "bind:strafe_left");
+    click_bind_row(&mut app, "strafe_left");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.4);
-    assert_eq!(app.remap, Some(BindableAction::StrafeLeft));
+    assert_eq!(app.remap.as_deref(), Some("strafe_left"));
 
     // Capture K (no chord): binding lands, remap disarms.
     assert!(app.remap_capture_key(KeyCode::KeyK, true));
@@ -625,18 +625,33 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     let _ = app.handle_raw_key(KeyCode::KeyA, false);
 
     // A tapped modifier binds ITSELF (chord starters bind on release).
-    app.remap = Some(BindableAction::Sprint);
+    app.remap = Some("sprint".to_string());
     assert!(app.remap_capture_key(KeyCode::AltLeft, true));
-    assert_eq!(
-        app.remap,
-        Some(BindableAction::Sprint),
-        "hold = chord start"
-    );
+    assert_eq!(app.remap.as_deref(), Some("sprint"), "hold = chord start");
     assert!(app.remap_capture_key(KeyCode::AltLeft, false));
     assert_eq!(
         app.settings.bindings.binding(BindableAction::Sprint).input,
         BoundInput::Key(KeyCode::AltLeft)
     );
+}
+
+/// Queue a primary click on the binding button of the controls-list row for
+/// `action_id`, resolved through the same row list the controller uses (the
+/// list interleaves category headers, so indexes are never hardcoded).
+fn click_bind_row(app: &mut App, action_id: &str) {
+    let index = crate::app::shell_docs::controls_action_row_index(&app.action_table, action_id)
+        .unwrap_or_else(|| panic!("no controls row for '{action_id}'"));
+    let rect = app
+        .ui
+        .out()
+        .named
+        .iter()
+        .find(|(key, _)| key.id == "bind" && key.item == Some(index as u32))
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no solved rect for bind row {index} ('{action_id}')"));
+    app.set_cursor_position((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.set_pointer_button(PointerButton::Primary, false);
 }
 
 /// Attack/interact are rebindable: the default mouse buttons land in the
@@ -677,4 +692,65 @@ fn attack_rebinds_from_mouse_to_key() {
         "left click moved off Attack; it must not mine"
     );
     app.handle_raw_mouse(winit::event::MouseButton::Left, false);
+}
+
+/// Mod-registered key actions join the remappable table under their pack's
+/// category (the bundled minimap registers two), and their rows resolve
+/// through the same list the engine actions use.
+#[test]
+fn mod_key_actions_join_the_controls_table_with_their_own_category() {
+    let app = app();
+    let table = &app.action_table;
+    let row = table
+        .row("minimap:open_map")
+        .expect("minimap's registered action is in the table");
+    assert_eq!(row.label, "Open World Map");
+    assert_eq!(row.category, "Minimap");
+    assert!(table.row("minimap:add_waypoint").is_some());
+    assert!(
+        crate::app::shell_docs::controls_action_row_index(table, "minimap:open_map").is_some(),
+        "the controls list has a row for the mod action"
+    );
+}
+
+/// Pressing a mod action's bound key dispatches to the owning client mod:
+/// the bundled minimap opens its world-map canvas on M (and the canvas
+/// screen releases the pointer like any modal).
+#[test]
+fn mod_bound_key_dispatches_to_the_client_mod() {
+    use winit::keyboard::KeyCode;
+    let mut app = app();
+    // A couple of frames so the client mod publishes its canvas scene.
+    app.update_frame((1280, 720));
+    assert!(app.handle_raw_key(KeyCode::KeyM, true));
+    let _ = app.handle_raw_key(KeyCode::KeyM, false);
+    app.update_frame((1280, 720));
+    assert!(
+        app.screen.client_canvas_open(),
+        "M reached the minimap mod and opened the world map, got {:?}",
+        app.screen
+    );
+}
+
+/// A click whose press lands on a MENU and whose release lands in GAMEPLAY
+/// (the screen flips in between — double-clicking a world to join it, or
+/// clicking RESUME) must not leave the attack/mine state held: the release
+/// routes through the binding engine, which never saw the press, so the
+/// gameplay transition itself has to shed menu-held buttons.
+#[test]
+fn menu_click_that_enters_gameplay_leaves_no_mining_held() {
+    let mut app = app();
+    app.handle_control(Control::CloseScreen, true); // pause menu
+    // Physical press over the menu: recorded in the pointer state, routed to
+    // the UI (this is the double-click's second press).
+    app.handle_raw_mouse(winit::event::MouseButton::Left, true);
+    // The controller flips to gameplay between press and release.
+    app.resume_game();
+    // The release lands in gameplay and resolves through the binding engine.
+    app.handle_raw_mouse(winit::event::MouseButton::Left, false);
+    let input = app.take_game_input();
+    assert!(
+        !input.break_held && !input.attack_clicked,
+        "no stale mining from the menu press"
+    );
 }

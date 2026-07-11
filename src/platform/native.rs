@@ -271,15 +271,10 @@ impl ApplicationHandler for NativeHost {
                     }
                 }
                 if let PhysicalKey::Code(code) = physical_key {
-                    if app.handle_client_key_code(code, down) {
-                        if app.take_quit_requested() {
-                            event_loop.exit();
-                        }
-                        return;
-                    }
                     // The app resolves raw keys through the player's binding
-                    // table (fixed fallback keys included). `false` = an
-                    // unconsumed CloseScreen press — quit, as always.
+                    // table (engine + mod actions, fixed fallback keys
+                    // included). `false` = an unconsumed CloseScreen press —
+                    // quit, as always.
                     if !app.handle_raw_key(code, down) {
                         event_loop.exit();
                     }

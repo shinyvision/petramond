@@ -80,7 +80,7 @@
       "axis": "vertical",
       "style": "panel.inset",
       "layout": {
-       "h": 120,
+       "h": 150,
        "min_h": 48,
        "pad": [
         1,
@@ -91,484 +91,104 @@
       },
       "children": [
        {
-        "type": "column",
+        "id": "controls",
+        "type": "list",
         "layout": {
          "align": "stretch"
         },
+        "bind": {
+         "items": "rows"
+        },
         "children": [
          {
-          "type": "row",
+          "type": "column",
           "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
+           "align": "stretch"
           },
           "children": [
            {
-            "type": "label",
-            "text": "Walk Forward",
+            "type": "row",
             "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:walk_forward",
-            "layout": {
-             "w": 92
+             "pad": [
+              2,
+              4,
+              2,
+              4
+             ],
+             "gap": 5,
+             "align": "center"
             },
             "bind": {
-             "text": "bind:walk_forward"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Strafe Right",
-            "layout": {
-             "w": {
-              "grow": 1
+             "visible": "is_header"
+            },
+            "children": [
+             {
+              "type": "image",
+              "image": "pixel.png",
+              "layout": {
+               "w": {
+                "grow": 1
+               },
+               "h": 1
+              }
+             },
+             {
+              "type": "label",
+              "style": "label.muted",
+              "bind": {
+               "text": "label"
+              }
+             },
+             {
+              "type": "image",
+              "image": "pixel.png",
+              "layout": {
+               "w": {
+                "grow": 1
+               },
+               "h": 1
+              }
              }
-            }
+            ]
            },
            {
-            "type": "button",
-            "id": "bind:strafe_right",
+            "type": "row",
             "layout": {
-             "w": 92
+             "pad": [
+              2,
+              1,
+              2,
+              1
+             ],
+             "gap": 4,
+             "align": "center"
             },
             "bind": {
-             "text": "bind:strafe_right"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Strafe Left",
-            "layout": {
-             "w": {
-              "grow": 1
+             "visible": "is_action"
+            },
+            "children": [
+             {
+              "type": "label",
+              "layout": {
+               "w": {
+                "grow": 1
+               }
+              },
+              "bind": {
+               "text": "label"
+              }
+             },
+             {
+              "type": "button",
+              "id": "bind",
+              "layout": {
+               "w": 92
+              },
+              "bind": {
+               "text": "binding"
+              }
              }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:strafe_left",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:strafe_left"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Walk Backward",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:walk_backward",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:walk_backward"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Jump",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:jump",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:jump"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Attack / Mine",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:attack",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:attack"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Interact",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:interact",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:interact"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Next Hotbar Slot",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:hotbar_next",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:hotbar_next"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Previous Hotbar Slot",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:hotbar_prev",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:hotbar_prev"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Open Inventory",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:open_inventory",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:open_inventory"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Chat",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:chat",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:chat"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Sprint",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:sprint",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:sprint"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Sneak",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:sneak",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:sneak"
-            }
-           }
-          ]
-         },
-         {
-          "type": "row",
-          "layout": {
-           "pad": [
-            2,
-            1,
-            2,
-            1
-           ],
-           "gap": 4,
-           "align": "center"
-          },
-          "children": [
-           {
-            "type": "label",
-            "text": "Rotate Block",
-            "layout": {
-             "w": {
-              "grow": 1
-             }
-            }
-           },
-           {
-            "type": "button",
-            "id": "bind:rotate_block",
-            "layout": {
-             "w": 92
-            },
-            "bind": {
-             "text": "bind:rotate_block"
-            }
+            ]
            }
           ]
          }

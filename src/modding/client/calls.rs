@@ -193,20 +193,38 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             }
             HostRet::Unit
         }
-        HostCall::ClientRegisterKey { key, action_id } => {
+        HostCall::ClientRegisterKey {
+            id,
+            label,
+            key,
+            action_id,
+        } => {
             if data.phase != Phase::Init {
                 return HostRet::Error("client keys may only be registered during mod_init".into());
+            }
+            if !valid_client_key_id(&id) {
+                return HostRet::Error(format!(
+                    "invalid client key id '{id}' (bare lowercase snake_case, max 48 chars)"
+                ));
+            }
+            if label.trim().is_empty() || label.len() > 48 {
+                return HostRet::Error(format!("invalid client key label '{label}'"));
             }
             if !valid_client_key(&key) {
                 return HostRet::Error(format!("unsupported client key '{key}'"));
             }
-            if client.key_bindings.iter().any(|(bound, _)| bound == &key) {
-                return HostRet::Error(format!("client key '{key}' registered twice"));
+            if client.key_bindings.iter().any(|b| b.id == id) {
+                return HostRet::Error(format!("client key id '{id}' registered twice"));
             }
             if client.key_bindings.len() >= CLIENT_KEY_BINDING_MAX {
                 return HostRet::Error("client key registration limit reached".into());
             }
-            client.key_bindings.push((key, action_id));
+            client.key_bindings.push(super::state::ClientKeyBinding {
+                id,
+                label,
+                key,
+                action_id,
+            });
             HostRet::Unit
         }
         HostCall::ClientSurface { center, radius } => {
@@ -502,6 +520,16 @@ fn valid_client_key(key: &str) -> bool {
         || key
             .strip_prefix("digit_")
             .is_some_and(|tail| tail.len() == 1 && tail.as_bytes()[0].is_ascii_digit())
+}
+
+/// A bare (un-namespaced) action id: lowercase snake_case, persisted in the
+/// player's client.json as `mod_id:id` — so it must be stable and file-safe.
+fn valid_client_key_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 48
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 #[cfg(test)]

@@ -382,17 +382,23 @@
      "type": "bool",
      "doc": "title flow (no game) shows the screenshot backdrop"
     },
-    "bind:<action>": {
-     "type": "str",
-     "doc": "current binding label per action (walk_forward, strafe_right, strafe_left, walk_backward, jump, attack, interact, hotbar_next, hotbar_prev, open_inventory, chat, sprint, sneak, rotate_block); '> ??? <' while armed"
-    },
     "remap_hint": {
      "type": "str",
      "doc": "the fixed hint line: how to rebind, or the capture instructions while a remap is armed"
+    },
+    "rows": {
+     "type": "list",
+     "item": {
+      "label": "str",
+      "binding": "str",
+      "is_header": "bool",
+      "is_action": "bool"
+     },
+     "doc": "category headers and action rows in display order: engine categories (Movement / Interacting / Other) then one category per client mod; an action row's binding label reads '> ??? <' while armed"
     }
    },
    "handles": {
-    "bind:<action>": "click: arm this action for remap (clicking another action switches; clicking the armed one cancels). The app then captures the next raw key/mouse/scroll; ESC cancels.",
+    "bind": "click (list row): arm this row's action for remap (clicking another action switches; clicking the armed one cancels). The app then captures the next raw key/mouse/scroll; ESC cancels.",
     "back": "click: cancel any remap and return to the Options root"
    }
   },

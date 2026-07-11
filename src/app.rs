@@ -95,12 +95,17 @@ pub struct App {
     /// differ from the file at launch); every committed Options change stores
     /// the file.
     settings: crate::save::client::ClientSettings,
-    /// Which bound actions are currently held (raw input → Control edges).
+    /// Every remappable action of the current session: the engine actions
+    /// plus what the loaded client mods registered. Rebuilt on session
+    /// start/end (`rebuild_action_table`).
+    action_table: crate::controls::ActionTable,
+    /// Which bound actions are currently held (raw input → action edges).
     binding_engine: crate::controls::BindingEngine,
-    /// The action armed for remapping on the Options → Controls screen
-    /// (`None` = not remapping). While set, raw input is CAPTURED as the new
+    /// The action ID armed for remapping on the Options → Controls screen
+    /// (`None` = not remapping; engine ids like `jump`, mod ids like
+    /// `minimap:open_map`). While set, raw input is CAPTURED as the new
     /// binding instead of dispatching; ESC cancels.
-    remap: Option<crate::controls::BindableAction>,
+    remap: Option<String>,
     /// The modifier key held down while remapping (a chord starter). If it
     /// releases with nothing else captured, the tap binds the modifier itself.
     remap_armed_mod: Option<winit::keyboard::KeyCode>,
@@ -225,6 +230,7 @@ impl App {
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             settings,
+            action_table: crate::controls::ActionTable::engine(),
             binding_engine: crate::controls::BindingEngine::default(),
             remap: None,
             remap_armed_mod: None,
@@ -348,11 +354,13 @@ impl App {
                 true
             }
             ControlEvent::DropItem => {
-                // Q drops the held item only while playing (not in a menu). The
-                // physical Ctrl modifier (not the sprint key) selects whole-stack.
+                // Drops the held item only while playing (not in a menu).
+                // Holding the SPRINT key (wherever it's bound) drops the
+                // whole stack.
                 if self.screen.gameplay_enabled() {
+                    let whole_stack = self.input.sprint_held();
                     if let Some(game) = self.game.as_mut() {
-                        game.drop_selected_item(self.modifiers.ctrl);
+                        game.drop_selected_item(whole_stack);
                     }
                 }
                 true
@@ -385,9 +393,7 @@ impl App {
         let mut out = Vec::new();
         self.binding_engine
             .on_modifiers_changed(modifiers, &mut out);
-        for (control, down) in out {
-            self.handle_control(control, down);
-        }
+        self.dispatch_actions(out);
     }
 
     /// Which GUI document backs the current screen, if any. Document-backed

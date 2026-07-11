@@ -32,29 +32,6 @@ impl App {
         self.apply_client_mod_commands();
     }
 
-    /// Platform physical-key seam. Returns true only when a client mod owns
-    /// the key in the current gameplay/client-GUI context.
-    pub fn handle_client_key_code(
-        &mut self,
-        code: winit::keyboard::KeyCode,
-        pressed: bool,
-    ) -> bool {
-        let Some(key) = crate::modding::client::physical_key_name(code) else {
-            return false;
-        };
-        // A release must reach the runtime even when the press changed screens
-        // or focus. Otherwise its edge filter keeps the action latched forever.
-        if !client_key_dispatch_permitted(pressed, self.screen, self.ui.text_input_focused()) {
-            return false;
-        }
-        let consumed = self
-            .game
-            .as_mut()
-            .is_some_and(|game| game.client_mod_key(key, pressed));
-        self.apply_client_mod_commands();
-        consumed
-    }
-
     pub fn release_client_mod_keys(&mut self) {
         if let Some(game) = self.game.as_mut() {
             game.release_client_mod_keys();
@@ -357,7 +334,11 @@ fn client_gui_open_permitted(
         || client_canvas_owned_by(screen, owner, canvas)
 }
 
-fn client_key_dispatch_permitted(pressed: bool, screen: AppScreen, text_focused: bool) -> bool {
+pub(super) fn client_key_dispatch_permitted(
+    pressed: bool,
+    screen: AppScreen,
+    text_focused: bool,
+) -> bool {
     !pressed
         || (!text_focused
             && (screen.gameplay_enabled()
