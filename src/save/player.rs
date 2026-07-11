@@ -13,8 +13,7 @@ use crate::player::{BedSpawn, Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8, Reader};
 
 /// The one supported player-file version. Only the CURRENT version decodes —
-/// no legacy ladders, per WIKI/project-rules.md "Release Status and
-/// Compatibility": bump this and let old dev players respawn fresh.
+/// no legacy ladders. Bump this and let old dev players respawn fresh.
 const VERSION: u32 = 1;
 
 /// Decoded `players/<name>.dat` contents.

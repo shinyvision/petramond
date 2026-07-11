@@ -1,5 +1,5 @@
 //! World replication: the server-side payload builders and the client-side
-//! replica install path (WIKI/multiplayer.md, Phase B2).
+//! replica install path (Phase B2).
 //!
 //! The server serializes nothing here — payloads carry `Arc` handles to the
 //! live section buffers ([`SectionBytes`]), so the in-process connection ships

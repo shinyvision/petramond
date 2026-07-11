@@ -185,7 +185,7 @@ impl TerrainDensitySpec {
         // --- Stylized silhouette (ours, not a reference port) -------------------
         // Two shaping terms ride on top of the reference offset, both weighted by
         // functions of the SAME climate channels that classify biomes, so terrain
-        // character and biome identity stay coupled (WIKI/visual-style.md):
+        // character and biome identity stay coupled:
         //
         // 1. CRAG: connected ridge crests on high, low-erosion terrain. A ridged
         //    transform (1 − 2|n|, creases along the field's zero lines) of our

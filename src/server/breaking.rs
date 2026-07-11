@@ -20,7 +20,7 @@ const BREAK_ACK_TTL_TICKS: u64 = 200;
 impl ServerGame {
     /// Mining, on the tick: advance the break timer against the block under the
     /// crosshair while held, AND resolve client `BreakFinished` requests
-    /// (duration/tool/reach validated). See WIKI/client-prediction.md.
+    /// (duration/tool/reach validated).
     pub(crate) fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
         let now = self.world.current_tick();
         self.sessions[s]

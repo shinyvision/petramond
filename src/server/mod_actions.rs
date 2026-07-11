@@ -21,8 +21,7 @@ impl ServerGame {
             return;
         }
         // The mod ABI is single-player-shaped: player-directed actions target
-        // the HOST session (0) until per-player ABI addressing exists — see
-        // WIKI/modding.md.
+        // the HOST session (0) until per-player ABI addressing exists.
         let s = 0;
         for action in self.bus.queue_mut().take_actions() {
             match action {

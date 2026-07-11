@@ -1147,7 +1147,7 @@ impl World {
         //    opaque records persist lightless by design), their content is
         //    byte-exactly what every neighbouring record's persisted bake read
         //    (records only persist with settled light) — this is what makes
-        //    persisted light load bake-free (see WIKI/lighting.md).
+        //    persisted light load bake-free.
         let overlaid_set: FxHashSet<SectionPos> = overlaid.iter().copied().collect();
         let mut affected: Vec<SectionPos> = Vec::new();
         let mut seen: FxHashSet<SectionPos> = FxHashSet::default();

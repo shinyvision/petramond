@@ -221,7 +221,7 @@ fn vs_main(in: VsIn) -> VsOut {
     // light-level gradient are soft.
     //   - Face shade: SUN-DIRECTIONAL for terrain faces carrying a normal code
     //     (packed2 bits 16..19): N·L against the moving sun, warm on lit faces,
-    //     cool in shadow — the flat storybook look (WIKI/visual-style.md). Code
+    //     cool in shadow — the flat storybook look. Code
     //     0 (cross plants, torches, dynamic props) keeps the classic SHADES
     //     table (mirror of mesh::SHADES — keep byte-identical).
     //   - AO_LUT: contact-shadow dip in lit areas.

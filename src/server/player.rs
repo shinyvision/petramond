@@ -348,8 +348,7 @@ pub(crate) struct ConnectedPlayer {
     /// window was full (`TooFast`). Kept until the hold-path timer finishes
     /// the same cell (then accepted + presentation stripped) or mining
     /// abandons the cell (then denied + corrective). Avoids deny→restore→
-    /// hold-path double presentation on slow links — see
-    /// WIKI/client-prediction.md.
+    /// hold-path double presentation on slow links.
     pub deferred_break_finished: Option<PendingBreakFinished>,
     /// Cells this session already broke (hold-path or BreakFinished) that
     /// still owe a `BreakFinished` accept, with the world tick each was

@@ -470,7 +470,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The per-world disabled-mod palette contract (WIKI/modding.md, per-world
+    /// The per-world disabled-mod palette contract (per-world
     /// mods): while a mod is disabled its namespaced names get NO new palette
     /// entries and existing entries decode as unknown (blocks→air, items→
     /// empty, no to-disk pin); re-enabling restores the mapping from the

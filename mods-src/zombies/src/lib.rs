@@ -1,4 +1,4 @@
-//! zombies — the hostile-mob proof-of-concept mod (WIKI/modding.md), and a
+//! zombies — the hostile-mob proof-of-concept mod, and a
 //! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value and
 //! the engine's split light channels to decide when to spawn and burn.
 //!

@@ -95,7 +95,7 @@ pub(crate) struct ServerGame {
     pub(crate) loot: LootTables,
     /// The modding event bus (Phase 1): pre events dispatch at their decision sites,
     /// post events queue and drain at tick-stage boundaries. The engine registers no
-    /// handlers yet — the seams exist for mods. See WIKI/modding.md.
+    /// handlers yet — the seams exist for mods.
     pub(crate) bus: EventBus,
     /// Systems attached between the fixed-tick stages (Phase 1 seam).
     pub(crate) systems: TickSystems,
@@ -592,7 +592,7 @@ impl ServerGame {
         };
         // The hand one-shots (broke/placed/swung/threw/used/interacted) are
         // deliberately absent: the recipient initiated them and animated at
-        // click time — see WIKI/client-prediction.md's echo rule. Observers
+        // click time echo rule. Observers
         // get them via the shared `player_actions` rows.
         SelfEvents {
             picked_up_item: p.picked_up_item,
@@ -905,7 +905,7 @@ impl ServerGame {
         use crate::net::protocol::{ActionDenyReason, ActionOutcome};
         // EVERY latched request id must eventually receive an ActionOutcome —
         // an unanswered id leaks the client's prediction-ledger entry forever
-        // (see WIKI/client-prediction.md). Single-slot latches deny the
+        // Single-slot latches deny the
         // superseded id; queue rejections deny immediately.
         let deny = |id| ActionOutcome {
             id,

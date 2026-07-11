@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use crate::save::codec::{get_kv_map, put_kv_map, put_u32, put_u64, Reader};
 
 /// The one supported `level.dat` version. Only the CURRENT version decodes —
-/// no legacy ladders, per WIKI/project-rules.md "Release Status and
-/// Compatibility": bump this and wipe dev worlds when the layout changes.
+/// no legacy ladders. Bump this and wipe dev worlds when the layout changes.
 /// v7 drops every player field (moved to `players/<name>.dat`) and makes
 /// `tick` real (it was written as 0 through v6).
 const VERSION: u32 = 7;
@@ -21,7 +20,7 @@ pub struct LevelData {
     /// tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0.
     pub tick: u64,
-    /// The mod world KV map (`mod_id:key` → bytes; WIKI/modding.md Phase 3b).
+    /// The mod world KV map (`mod_id:key` → bytes; Phase 3b).
     pub world_kv: BTreeMap<String, Vec<u8>>,
 }
 

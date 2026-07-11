@@ -113,7 +113,7 @@ impl Game {
     }
 
     /// Hand the section cache to the app shell at session teardown — the next
-    /// remote join's manifest claims it (WIKI/section-cache.md).
+    /// remote join's manifest claims it.
     pub(crate) fn take_section_cache(&mut self) -> crate::game::section_cache::SectionCache {
         std::mem::take(&mut self.section_cache)
     }
@@ -351,7 +351,7 @@ fn build_server(
     // engine at equal priority (the bus ordering contract), and after the
     // full session state exists so init-time host calls see a real world.
     // The mod ABI is single-player-shaped: init (and global tick stages)
-    // see the HOST session's player (session 0) — see WIKI/modding.md.
+    // see the HOST session's player (session 0).
     // Headless has no host session; init runs against a discarded stand-in
     // (every OTHER `sessions[0]` ABI site runs inside the fixed tick, which
     // the empty-session gate holds until a session exists).

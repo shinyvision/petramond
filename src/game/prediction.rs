@@ -1,6 +1,6 @@
 //! Client prediction ledger: pending request ids + undo snapshots.
 //!
-//! See WIKI/client-prediction.md. The server remains authoritative; this module
+//! The server remains authoritative; this module
 //! only tracks disposable local overlays until [`ActionOutcome`]s arrive.
 
 use crate::inventory::Inventory;

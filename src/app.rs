@@ -154,7 +154,7 @@ pub struct App {
     disconnect_message: String,
     /// The last session's section cache, harvested at teardown: the next
     /// remote join claims it in its Join manifest so a reconnect re-promotes
-    /// cached terrain instead of re-streaming it (WIKI/section-cache.md).
+    /// cached terrain instead of re-streaming it.
     retained_section_cache: Option<crate::game::section_cache::SectionCache>,
     quit_requested: bool,
     renderer_world_clear_pending: bool,

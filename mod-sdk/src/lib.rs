@@ -8,7 +8,7 @@
 //! ([`log`], [`current_tick`], [`rng_u64`], [`register_tick_system`],
 //! [`register_event_handler`]).
 //!
-//! Determinism contract (WIKI/modding.md): mod code runs only inside
+//! Determinism contract: mod code runs only inside
 //! `mod_init`, tick systems, and event handlers; randomness only through
 //! [`rng_u64`]'s seeded host streams; no clock, no filesystem, no entropy.
 //! A panic aborts the guest (the host logs it, disables the mod for the

@@ -1,7 +1,7 @@
 //! The client's join handshake (multiplayer Phase E), pure over any
 //! `Read + Write` stream so it unit-tests over an in-memory transcript.
 //!
-//! Exact sequence (see WIKI/multiplayer.md):
+//! Exact sequence:
 //! `Hello{protocol}` → `HelloAck` (or `HelloReject` = protocol mismatch) →
 //! `ModQuery` → `ModList{mods}` → compare ids against the installed packs
 //! (missing = CLOSE the socket, no farewell frame — the caller drops the
@@ -300,7 +300,7 @@ mod tests {
                     cached_sections: Vec::new(),
                 },
             ],
-            "the exact WIKI frame sequence, nothing more"
+            "the exact frame sequence, nothing more"
         );
     }
 

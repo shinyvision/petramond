@@ -1,7 +1,7 @@
 //! Shared sub-cell plane-quad emission for "full block with a piece cut out"
 //! shapes (stairs, slabs): the cell-local UV mapping that matches a full cube
 //! face, and the once-per-plane bilinear lighting push that keeps coplanar
-//! quads seam-free (see WIKI/stairs.md for the invariants this pins).
+//! quads seam-free.
 
 use crate::atlas::Tile;
 use crate::torch::warm_tint;

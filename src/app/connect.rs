@@ -362,7 +362,7 @@ fn run_connect(
         // Dropping the raw socket is the leave: the server reader hits EOF.
         return ConnectOutcome::Failed("Cancelled".to_owned());
     }
-    // Canonical order (WIKI/multiplayer.md): the id remap from the join
+    // Canonical order: the id remap from the join
     // tables, connection threads over the post-handshake stream, then the
     // handle that fronts them.
     let remap = crate::net::remap::IdRemap::build(&join.join.tables);

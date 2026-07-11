@@ -855,7 +855,7 @@ impl Section {
     /// Remove a cell mod KV entry; returns whether it was present. An inner
     /// map emptied by the removal is dropped whole, so the save codec's
     /// has-cell-kv flag clears once the last entry goes (the stale-record
-    /// guard pattern — see WIKI/save-entities.md).
+    /// guard pattern).
     pub fn cell_kv_remove(&mut self, x: usize, y: usize, z: usize, key: &str) -> bool {
         self.states.cell_kv_remove(x, y, z, key)
     }

@@ -1,4 +1,4 @@
-//! Typed event payloads — the Phase 1 taxonomy from WIKI/modding.md.
+//! Typed event payloads — the Phase 1 taxonomy.
 //!
 //! Fields mirror today's hardcoded data flows. Pre-event payloads are handed to
 //! handlers as `&mut`, but the engine only reads back the fields the taxonomy

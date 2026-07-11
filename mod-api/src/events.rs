@@ -12,7 +12,7 @@ pub enum Outcome {
     Cancel,
 }
 
-/// Every dispatchable event, pre and post (see the taxonomy in WIKI/modding.md).
+/// Every dispatchable event, pre and post.
 /// Registration key for [`HostCall::RegisterEventHandler`].
 ///
 /// [`HostCall::RegisterEventHandler`]: crate::HostCall::RegisterEventHandler
@@ -129,8 +129,8 @@ impl Default for MobDamageFeedback {
     }
 }
 
-/// One event's data, mirrored from the engine payloads (WIKI/modding.md
-/// taxonomy). Pre events hand the payload to the guest `&mut`; the engine reads
+/// One event's data, mirrored from the engine payloads.
+/// Pre events hand the payload to the guest `&mut`; the engine reads
 /// back ONLY the fields the taxonomy marks mutable ([`MobDamagePre::amount`],
 /// [`MobDamagePre::feedback`], [`PlayerDamagePre::amount`]) — everything else
 /// is observational.

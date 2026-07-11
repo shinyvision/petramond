@@ -393,7 +393,7 @@ impl World {
     /// waste: it is entirely air (the empty-sky band) and emits nothing. This is the exact
     /// counter-based case ONLY. The neighbour-plane "sealed section" skip that used to
     /// live here was removed on 2026-07-06 after playtests traced black (unlit) faces to
-    /// section culling — do not reintroduce it here; see WIKI/rendering-performance.md.
+    /// section culling — do not reintroduce it here.
     pub(super) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
         self.sections.get(&pos).is_some_and(|s| s.is_empty_air())
     }

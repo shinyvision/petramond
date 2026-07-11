@@ -38,7 +38,7 @@ const LOCAL_MAX_BATCH_MSGS: usize = 64;
 
 /// Unacknowledged batches allowed in flight after the FIRST ack proves the
 /// client speaks the ack loop; exactly one before it (vanilla-verified
-/// 1.20.2 values — see WIKI/multiplayer.md "prior art").
+/// 1.20.2 values).
 const MAX_UNACKED_BATCHES: u32 = 4;
 const LOCAL_MAX_UNACKED_BATCHES: u32 = 1;
 

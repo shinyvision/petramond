@@ -2,7 +2,7 @@
 //! `host_dispatch` import, and the per-mod store state (RNG streams, the
 //! registration window, diagnostics counters).
 //!
-//! Engine config is part of the determinism contract (WIKI/modding.md): NaN
+//! Engine config is part of the determinism contract: NaN
 //! canonicalization ON, no threads, no WASI, no relaxed-SIMD, epoch
 //! interruption armed by a background ticker thread so a runaway mod traps out
 //! instead of hanging the tick loop.

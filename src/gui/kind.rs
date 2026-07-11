@@ -1,4 +1,4 @@
-//! The runtime GUI-kind registry (WIKI/modding.md Phase 5).
+//! The runtime GUI-kind registry (Phase 5).
 //!
 //! [`GuiKind`] follows the Phase 2a newtype pattern: engine kinds are frozen
 //! low ids behind consts named exactly like the old enum variants, so existing

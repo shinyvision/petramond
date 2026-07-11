@@ -1,5 +1,5 @@
 //! Multiplayer networking: wire protocol types, server address parsing, and
-//! registry id remapping. See WIKI/multiplayer.md.
+//! registry id remapping.
 //!
 //! Protocol messages are plain Rust values; SERIALIZATION IS A TRANSPORT
 //! CONCERN. The in-process (singleplayer / listen-host) connection passes them

@@ -1,4 +1,4 @@
-//! The client-side section cache (WIKI/section-cache.md): replica sections
+//! The client-side section cache: replica sections
 //! evicted by the server's keep-shape unloads, parked under the SERVER-DOMAIN
 //! content hash the unload vouched, and re-promoted by
 //! [`SectionCached`](crate::net::protocol::ServerToClient::SectionCached)

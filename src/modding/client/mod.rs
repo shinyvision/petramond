@@ -2,7 +2,7 @@
 //! isolated instances beside the client replica, with read-only surface
 //! sampling, published images/state, physical overlays, retained canvases,
 //! and sandboxed storage. Never installed in the deterministic tick
-//! scheduler; see WIKI/modding.md "Client modules".
+//! scheduler.
 
 mod calls;
 mod runtime;

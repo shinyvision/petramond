@@ -1,4 +1,4 @@
-//! Persistent mod data on the world (WIKI/modding.md Phase 3b): the world KV
+//! Persistent mod data on the world (Phase 3b): the world KV
 //! map (rides `level.dat`, restored at session open) and the per-cell section
 //! KV accessors (each cell's entries ride its section's save record).
 //!

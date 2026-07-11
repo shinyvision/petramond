@@ -1,4 +1,4 @@
-//! WASM mod host — modding system Phase 2b (see WIKI/modding.md).
+//! WASM mod host — modding system Phase 2b.
 //!
 //! Loads each pack's `mod.wasm` (core module, built by `make mods` from
 //! `mods-src/`), runs its `mod_init` registration window, and wires the
@@ -14,7 +14,7 @@
 //!
 //! Determinism: guests get NaN-canonicalized floats, no clock/entropy imports,
 //! seeded RNG streams, and the tick counter — see the contract section of the
-//! wiki page. A trapping / deadline-blowing / protocol-breaking mod is
+//! A trapping / deadline-blowing / protocol-breaking mod is
 //! disabled for the session with a visible error and the tick continues.
 
 pub(crate) mod ai;

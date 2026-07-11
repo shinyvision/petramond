@@ -388,7 +388,7 @@ pub(crate) mod climate_fields {
     /// silhouette folds into high, low-erosion terrain (see `terrain.rs`).
     /// Two octaves at ~128/64-block periods — deliberately broad so ridge
     /// crests are walkable crests, never one-block pillar fields (the pillar
-    /// trap, WIKI/worldgen.md). The salt is an arbitrary fixed fork of our own.
+    /// trap). The salt is an arbitrary fixed fork of our own.
     pub(crate) const CRAG: ClimateFieldParams = ClimateFieldParams {
         salt: (0x11a3_c0de_5eed_2026, 0x0707_beef_cafe_f00d),
         omin: -5,

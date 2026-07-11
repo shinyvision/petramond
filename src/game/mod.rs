@@ -208,8 +208,7 @@ pub struct Game {
     predicted_input: crate::player::Input,
     /// One-shot hand/presentation triggers latched this frame for P0
     /// prediction — the ONLY source of the own hand animation (the server
-    /// never echoes self-initiated one-shots back; see
-    /// WIKI/client-prediction.md). Consumed into `GameEvents` in
+    /// never echoes self-initiated one-shots back). Consumed into `GameEvents` in
     /// `tick_receive`.
     local_hand_jab: bool,
     local_hand_swing: bool,
@@ -227,7 +226,7 @@ pub struct Game {
     predicted_presentation_cells: rustc_hash::FxHashSet<IVec3>,
     /// Evicted replica sections parked for `SectionCached` re-promotion —
     /// harvested by the app shell on disconnect so a reconnect's Join
-    /// manifest can claim them (see WIKI/section-cache.md).
+    /// manifest can claim them.
     pub(crate) section_cache: section_cache::SectionCache,
     fallback_world: SurfaceDensitySystem,
     particles: ParticleSystem,
@@ -501,7 +500,7 @@ impl Game {
 
     /// Change the client view distance live: the replica re-shapes its
     /// mesh/light priority ring, and the server is asked to stream the new
-    /// radius (it clamps to its own maximum; see WIKI/options.md).
+    /// radius (it clamps to its own maximum).
     pub fn set_view_distance(&mut self, chunks: i32) {
         let chunks = chunks.clamp(4, 64);
         self.replica.set_render_dist(chunks);
@@ -681,7 +680,7 @@ impl Game {
     /// target: shift-clicks route into an open chest/furnace/mod/workbench,
     /// and a gather sweeps an open block container. Predicting those with
     /// inventory-only primitives would drift from the server (the
-    /// single-apply-path rule in WIKI/client-prediction.md).
+    /// single-apply-path rule).
     fn menu_click_is_predictable(
         &self,
         slot: crate::gui::MenuSlot,

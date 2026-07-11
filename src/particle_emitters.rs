@@ -3,7 +3,7 @@
 //! pattern).
 //!
 //! A BUNDLE is one named visual effect: one or more particle rows (the shared
-//! [`ParticleEmitter`] schema blocks use — see WIKI/particles.md) plus an
+//! [`ParticleEmitter`] schema blocks use) plus an
 //! optional multiply body tint. Engine bundles own the low ids in the frozen
 //! const order below; a mod pack ADDS a bundle with a namespaced
 //! (`mod_id:name`) key, which registers a fresh id in load order.

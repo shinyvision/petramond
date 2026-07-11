@@ -1,7 +1,7 @@
 use super::definition::BiomeDef;
 use super::Biome;
 
-/// The storybook biome palette (WIKI/visual-style.md). Curation rules, applied
+/// The storybook biome palette. Curation rules, applied
 /// 2026-07 with the worldgen stylization pass:
 ///
 /// - GRASS/FOLIAGE greens are warm-shifted (toward yellow-green) and sit in a

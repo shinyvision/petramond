@@ -103,8 +103,8 @@ impl Feature for GiantOakFeature {
     }
 }
 
-/// Skeleton broadleaf tree — the stylized canopy silhouette (storybook look,
-/// WIKI/visual-style.md): a single trunk that forks into a few limbs, each limb
+/// Skeleton broadleaf tree — the stylized canopy silhouette (storybook look):
+/// a single trunk that forks into a few limbs, each limb
 /// tipped with a rounded leaf clump, under a rounded central crown. The
 /// overlapping clumps read as one irregular puffy canopy instead of the boxy
 /// stacked-square blob. One struct expresses every broadleaf species (oak,

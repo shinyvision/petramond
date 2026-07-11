@@ -1,4 +1,4 @@
-//! Event bus + tick-stage scheduler — modding system Phase 1 (see WIKI/modding.md).
+//! Event bus + tick-stage scheduler — modding system Phase 1.
 //!
 //! Pure engine seams, no WASM: pre events dispatch synchronously at their decision
 //! site (mutable payload, cancellable), post events queue and drain FIFO at stage

@@ -7,7 +7,7 @@
 // asset, so it cannot be concat!-ed) mirrors the haze-colour formula and the
 // sun-glow constants — keep them in sync.
 //
-// The look (see WIKI/visual-style.md): a CLEAR, saturated midrange that
+// The look: a CLEAR, saturated midrange that
 // dissolves late into a luminous haze — the haze is the biome fog colour with
 // its chroma pushed UP, so distance glows like painted air instead of washing
 // out to milk (Firewatch/Sable-style authored fog, not scattering). Underwater

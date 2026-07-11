@@ -1,4 +1,4 @@
-//! wheel — the wheel-of-fortune proof-of-concept mod (WIKI/modding.md), the
+//! wheel — the wheel-of-fortune proof-of-concept mod, the
 //! Phase 5 GUI showcase: a craftable block (`wheel:wheel_of_fortune`, pack
 //! data only — block + linked item + shaped recipe) whose `open_gui`
 //! interaction opens the `wheel:wheel` GUI. Its `spin` button starts a

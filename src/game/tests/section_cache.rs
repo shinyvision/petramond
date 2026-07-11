@@ -1,4 +1,4 @@
-//! Cross-side contract tests for the section cache (WIKI/section-cache.md):
+//! Cross-side contract tests for the section cache:
 //! keep-shape unloads vouch content hashes and the client parks the evicted
 //! copies; a re-entered section with unmoved content re-promotes as
 //! `SectionCached` (byte-identical to what a full resend would install); a

@@ -7,7 +7,7 @@
 //! cheaply regenerated, and so are never written here. Baked light IS persisted
 //! (when clean at snapshot time), so a reload samples the saved cubes instead of
 //! re-baking the whole explored area; the cubes are mostly uniform and deflate
-//! to almost nothing. See WIKI/lighting.md "Persistence".
+//! to almost nothing.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
@@ -35,7 +35,7 @@ use crate::torch::TorchPlacement;
 /// furnaces, mod containers), splits the furnace record into pure machine
 /// state, and adds the shared entity-facing list. v5 is a CLEAN BREAK
 /// (`SECTION_REC_MIN_VERSION` = 5): pre-v5 records do not load — the game is
-/// unreleased, dev worlds regenerate (see WIKI/project-rules.md).
+/// unreleased, dev worlds regenerate.
 const SECTION_REC_VERSION: u8 = 5;
 /// Oldest section-record version this build can still read.
 const SECTION_REC_MIN_VERSION: u8 = 5;

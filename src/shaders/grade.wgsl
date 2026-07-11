@@ -8,7 +8,7 @@
 // grade pass doubles as the upscale. At scale 1.0 every sample lands exactly
 // on a texel centre, identical to a load.
 //
-// The grade shapes the vibrant storybook tonal range (WIKI/visual-style.md):
+// The grade shapes the vibrant storybook tonal range:
 //  - a gentle S-curve for soft contrast without crushing the flat colour fields,
 //  - VIBRANCE instead of flat saturation: muted pixels get pushed toward colour
 //    hard, already-saturated pixels (grass, flowers, sky) are protected, so the

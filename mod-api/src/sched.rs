@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The engine's fixed-tick stages, in execution order (mirrors the engine's
-/// stage list — see WIKI/modding.md "Tick stages").
+/// stage list).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
     Mining,

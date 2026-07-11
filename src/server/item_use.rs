@@ -18,7 +18,7 @@ use crate::player::Player;
 /// for how many ticks the button has been held on it. Session-owned (one per
 /// player); aborted the moment the button lifts or the hotbar selection
 /// changes — the SLOT is tracked so switching to a different slot holding the
-/// same food still aborts (per WIKI/status-effects.md, switching slots aborts).
+/// same food still aborts (switching slots aborts).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct EatingState {
     pub(crate) slot: u8,

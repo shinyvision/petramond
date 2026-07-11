@@ -25,7 +25,7 @@ const SUN_ARC_TILT: f32 = 0.15;
 
 /// The atmosphere's sun lane: unit sun direction (xyz) + daylight (w), derived
 /// from the engine-owned `petramond:time` shader param (`[fraction, daylight,
-/// moon_phase, 0]`, see WIKI/day-night.md) with the same arc formula as
+/// moon_phase, 0]`) with the same arc formula as
 /// `daynight_sky.wgsl`. Without a day/night cycle the sun holds late morning at
 /// full daylight.
 pub(super) fn sun_uniform(

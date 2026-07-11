@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for SectionBytes {
 }
 
 /// One enabled mod, as the handshake reports it. Version is display-only —
-/// compatibility checks are by ID (see WIKI/multiplayer.md).
+/// compatibility checks are by ID.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ModEntry {
     pub id: String,
@@ -266,7 +266,7 @@ pub(crate) enum PlayerAction {
     },
     /// Client finished mining locally; server validates tool/reach and the
     /// duration against ITS OWN observed mining window (never client-reported
-    /// time — see WIKI/client-prediction.md).
+    /// time).
     BreakFinished {
         request_id: ClientRequestId,
         pos: IVec3,
@@ -865,7 +865,7 @@ pub(crate) enum ClientToServer {
     /// Acknowledge one streaming batch (`StreamBatchStart`..`StreamBatchEnd`)
     /// and report the rate this client actually applied it at — the
     /// end-to-end flow-control signal the server sizes future batches from
-    /// (the 1.20.2 chunk-batching design; see WIKI/multiplayer.md).
+    /// (the 1.20.2 chunk-batching design).
     StreamBatchAck {
         messages_per_second: f32,
     },

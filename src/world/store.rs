@@ -26,7 +26,7 @@ use super::tick::TickState;
 pub const RENDER_DIST: i32 = 32;
 
 /// Which half of the client/server split this `World` instance plays
-/// (WIKI/multiplayer.md). Until Phase C flips the split on, the one live world
+/// Until Phase C flips the split on, the one live world
 /// is [`Combined`](WorldRole::Combined): it runs the sim AND meshes for the
 /// renderer, exactly as before.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -320,7 +320,7 @@ pub struct World {
     /// defaults on world open, the owning mod re-applies it (Phase 3 world KV).
     pub(super) environment: WorldEnvironment,
     /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
-    /// surface (WIKI/modding.md Phase 3b). BTreeMap so the save encoding (it
+    /// surface (Phase 3b). BTreeMap so the save encoding (it
     /// rides `level.dat`) iterates in one deterministic order. Mutated on the
     /// tick only (mod HostCalls); restored at session open.
     pub(super) mod_kv: BTreeMap<String, Vec<u8>>,

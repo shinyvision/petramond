@@ -1,6 +1,6 @@
 //! Server-side movement, on the tick: integrate each session from latched
 //! intent (F2), then soft-accept a validated client transform claim (F1).
-//! See WIKI/client-prediction.md — the claim checks are the anti-cheat
+//! The claim checks are the anti-cheat
 //! surface: velocity envelope, per-axis displacement bound, body
 //! penetration, and ground-support verification for the fall tracker. The
 //! same drift ring bounds the reach eye ([`reach_eye`]) so a fabricated

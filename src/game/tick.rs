@@ -504,7 +504,7 @@ impl Game {
     /// Advance the local mining timer for crack overlay and emit
     /// `BreakFinished` when the client finishes a break. On finish the client
     /// fully applies the break it can see (cell clear, hand, local world
-    /// event) — see WIKI/client-prediction.md.
+    /// event).
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
         let tool = self
             .self_view
@@ -595,7 +595,7 @@ impl Game {
         let se = events.self_events;
         // The hand one-shots are fed EXCLUSIVELY by the local prediction
         // latches — the server never echoes self-initiated actions back
-        // (WIKI/client-prediction.md), so nothing plays twice.
+        // so nothing plays twice.
         let local_jab = std::mem::take(&mut self.local_hand_jab);
         let local_swing = std::mem::take(&mut self.local_hand_swing);
         let local_threw = std::mem::take(&mut self.local_hand_threw);

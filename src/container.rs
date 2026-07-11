@@ -1,6 +1,6 @@
 //! THE generic item-slot storage: one section-owned `Container` per block
 //! position backs chests, furnaces, and mod container blocks alike — there
-//! are NO parallel slot stores (see WIKI/containers.md).
+//! are NO parallel slot stores.
 //!
 //! The engine stores, renders, click-routes, persists, and scatters the
 //! slots; what the contents MEAN is the container's owner — engine machine
