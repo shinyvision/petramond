@@ -1,13 +1,14 @@
 //! The `M` full-map modal canvas: a retained 5×5 slot grid of reusable
-//! 160×160 tile images, pan via the two-float view offset, tile
-//! invalidation, the native-resolution player sprite, and pointer flow.
+//! 160×160 tile images, pan via the two-float view offset, dirty-rect tile
+//! invalidation with blit-based partial updates, the native-resolution
+//! player sprite, and the pointer flow.
 
 use crate::*;
 
 pub(crate) const FULL_SIZE: usize = 640;
 const FULL_TILE_IMAGE_PREFIX: &str = "minimap:full_tile_";
 pub(crate) const PLAYER_ARROW_IMAGE: &str = "minimap:player_arrow";
-const FULL_TILE_BLOCKS: i32 = 80;
+pub(crate) const FULL_TILE_BLOCKS: i32 = 80;
 const FULL_TILE_SIZE: usize = 160;
 const FULL_TILE_GRID: i32 = 5;
 pub(crate) const FULL_TILE_SLOTS: usize = (FULL_TILE_GRID * FULL_TILE_GRID) as usize;
@@ -15,10 +16,12 @@ const PLAYER_ARROW_SIZE: usize = 48;
 pub(crate) const FULL_BLOCKS_PER_PIXEL: f32 = 0.5;
 const FULL_TILE_TEXT_RUN_MAX: usize = 256;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct FullTileSlot {
     pub(crate) coord: Option<(i32, i32)>,
-    pub(crate) waypoint_revision: u64,
+    /// Tile-local block rect `[x0, z0, x1, z1)` whose raster is stale, or
+    /// `None` when the cached image is current. Repainted as one blit.
+    pub(crate) dirty: Option<[i32; 4]>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -27,33 +30,36 @@ pub(crate) struct FullSceneStamp {
     pub(crate) player: [u32; 2],
 }
 
-struct FullWaypointLayout {
-    marker: [i64; 2],
-    label: [i64; 4],
-    text: String,
-    color: [u8; 3],
+pub(crate) struct FullWaypointLayout {
+    pub(crate) marker: [i64; 2],
+    pub(crate) label: [i64; 4],
+    pub(crate) text: String,
+    pub(crate) color: [u8; 3],
 }
 
 impl Minimap {
     pub(crate) fn sync_full_canvas(&mut self) {
         let bounds = full_tile_bounds(self.pan);
-        let mut publish = Vec::new();
+        let mut full = Vec::new();
+        let mut partial = Vec::new();
         for tz in bounds[2]..=bounds[3] {
             for tx in bounds[0]..=bounds[1] {
                 let coord = (tx, tz);
                 let slot = full_tile_slot(coord);
                 let cached = self.full_tile_slots[slot];
-                if cached.coord != Some(coord) || cached.waypoint_revision != self.waypoint_revision
-                {
-                    publish.push((coord, slot));
+                if cached.coord != Some(coord) {
+                    full.push((coord, slot));
+                } else if let Some(rect) = cached.dirty {
+                    partial.push((coord, slot, rect));
                 }
             }
         }
-        if !publish.is_empty() {
+        if !full.is_empty() || !partial.is_empty() {
             self.ensure_full_tile_data(bounds);
-            let waypoints = self.full_waypoint_layouts();
-            for (coord, slot) in publish {
-                let (rgba, text_runs) = self.render_full_tile(coord, &waypoints);
+            self.ensure_full_layouts();
+            for (coord, slot) in full {
+                let (rgba, text_runs) =
+                    self.render_full_region(coord, [0, 0, FULL_TILE_BLOCKS, FULL_TILE_BLOCKS]);
                 let image_key = full_tile_image_key(slot);
                 client_image_set(
                     &image_key,
@@ -66,8 +72,25 @@ impl Minimap {
                 }
                 self.full_tile_slots[slot] = FullTileSlot {
                     coord: Some(coord),
-                    waypoint_revision: self.waypoint_revision,
+                    dirty: None,
                 };
+            }
+            for (coord, slot, rect) in partial {
+                let (rgba, text_runs) = self.render_full_region(coord, rect);
+                let image_key = full_tile_image_key(slot);
+                client_image_blit(
+                    &image_key,
+                    [rect[0] as u16 * 2, rect[1] as u16 * 2],
+                    [
+                        (rect[2] - rect[0]) as u16 * 2,
+                        (rect[3] - rect[1]) as u16 * 2,
+                    ],
+                    rgba,
+                );
+                if !text_runs.is_empty() {
+                    client_image_draw_texts(&image_key, text_runs);
+                }
+                self.full_tile_slots[slot].dirty = None;
             }
         }
 
@@ -134,52 +157,105 @@ impl Minimap {
         self.ensure_tiles(&needed);
     }
 
-    fn render_full_tile(
+    /// Rasterize one block rect of a full-map tile (`rect` tile-local,
+    /// `[x0, z0, x1, z1)`) at 2×2 px per block: relief-shaded terrain plus
+    /// the waypoint markers and label fills that intersect it. Text runs are
+    /// positioned in whole-tile image coordinates (the host draws them into
+    /// the image after the pixels land), while pixels are region-local.
+    /// Explored cells are gathered per 16×16 tile — one map lookup per tile,
+    /// not per block.
+    fn render_full_region(
         &self,
         coord: (i32, i32),
-        waypoints: &[FullWaypointLayout],
+        rect: [i32; 4],
     ) -> (Vec<u8>, Vec<ClientTextRun>) {
-        let mut rgba = vec![0u8; FULL_TILE_SIZE * FULL_TILE_SIZE * 4];
-        let world_x = coord.0 * FULL_TILE_BLOCKS;
-        let world_z = coord.1 * FULL_TILE_BLOCKS;
-        for bz in 0..FULL_TILE_BLOCKS {
-            for bx in 0..FULL_TILE_BLOCKS {
-                let rgb = self.terrain_rgb(world_x + bx, world_z + bz);
-                let px = bx * 2;
-                let py = bz * 2;
-                set_pixel(&mut rgba, FULL_TILE_SIZE, px, py, rgb);
-                set_pixel(&mut rgba, FULL_TILE_SIZE, px + 1, py, rgb);
-                set_pixel(&mut rgba, FULL_TILE_SIZE, px, py + 1, rgb);
-                set_pixel(&mut rgba, FULL_TILE_SIZE, px + 1, py + 1, rgb);
+        let wb = (rect[2] - rect[0]) as usize;
+        let hb = (rect[3] - rect[1]) as usize;
+        let width_px = wb * 2;
+        let mut rgba = vec![0u8; width_px * hb * 2 * 4];
+
+        // Gather the region plus a one-cell northwest apron (relief input).
+        let gw = wb + 1;
+        let gh = hb + 1;
+        let gx0 = coord.0 * FULL_TILE_BLOCKS + rect[0] - 1;
+        let gz0 = coord.1 * FULL_TILE_BLOCKS + rect[1] - 1;
+        let mut cells = vec![Cell::default(); gw * gh];
+        for tz in gz0.div_euclid(16)..=(gz0 + gh as i32 - 1).div_euclid(16) {
+            for tx in gx0.div_euclid(16)..=(gx0 + gw as i32 - 1).div_euclid(16) {
+                let Some(cached) = self.tiles.get(&(tx, tz)) else {
+                    continue;
+                };
+                let x_lo = gx0.max(tx * 16);
+                let x_hi = (gx0 + gw as i32).min(tx * 16 + 16);
+                let z_lo = gz0.max(tz * 16);
+                let z_hi = (gz0 + gh as i32).min(tz * 16 + 16);
+                let len = (x_hi - x_lo) as usize;
+                for wz in z_lo..z_hi {
+                    let src = ((wz - tz * 16) * 16 + (x_lo - tx * 16)) as usize;
+                    let dst = (wz - gz0) as usize * gw + (x_lo - gx0) as usize;
+                    cells[dst..dst + len].copy_from_slice(&cached.tile.cells[src..src + len]);
+                }
             }
         }
 
-        let tile_rect = [
+        for bz in 0..hb {
+            for bx in 0..wb {
+                let cell = cells[(bz + 1) * gw + (bx + 1)];
+                let rgb = if cell.height == UNKNOWN_HEIGHT {
+                    [0, 0, 0] // unexplored stays black
+                } else {
+                    let northwest = cells[bz * gw + bx].height;
+                    let northwest = if northwest == UNKNOWN_HEIGHT {
+                        cell.height
+                    } else {
+                        northwest
+                    };
+                    shade_rgb(cell.rgb, cell.height, northwest)
+                };
+                let px = (bx * 2) as i32;
+                let py = (bz * 2) as i32;
+                set_pixel(&mut rgba, width_px, px, py, rgb);
+                set_pixel(&mut rgba, width_px, px + 1, py, rgb);
+                set_pixel(&mut rgba, width_px, px, py + 1, rgb);
+                set_pixel(&mut rgba, width_px, px + 1, py + 1, rgb);
+            }
+        }
+
+        let tile_px = [
             coord.0 as i64 * FULL_TILE_SIZE as i64,
             coord.1 as i64 * FULL_TILE_SIZE as i64,
-            FULL_TILE_SIZE as i64,
-            FULL_TILE_SIZE as i64,
+        ];
+        let region_px = [
+            tile_px[0] + rect[0] as i64 * 2,
+            tile_px[1] + rect[1] as i64 * 2,
+            width_px as i64,
+            hb as i64 * 2,
         ];
         let mut text_runs = Vec::new();
+        let waypoints = self
+            .full_layouts
+            .as_ref()
+            .map(|(_, layouts)| layouts.as_slice())
+            .unwrap_or(&[]);
         for waypoint in waypoints {
             let marker_rect = [waypoint.marker[0] - 9, waypoint.marker[1] - 9, 19, 19];
-            if rects_intersect(marker_rect, tile_rect) {
+            if rects_intersect(marker_rect, region_px) {
                 draw_diamond(
                     &mut rgba,
-                    FULL_TILE_SIZE,
-                    (waypoint.marker[0] - tile_rect[0]) as i32,
-                    (waypoint.marker[1] - tile_rect[1]) as i32,
+                    width_px,
+                    (waypoint.marker[0] - region_px[0]) as i32,
+                    (waypoint.marker[1] - region_px[1]) as i32,
                     waypoint.color,
                 );
             }
-            if rects_intersect(waypoint.label, tile_rect)
+            if rects_intersect(waypoint.label, region_px)
                 && text_runs.len() < FULL_TILE_TEXT_RUN_MAX
             {
                 fill_rect(
                     &mut rgba,
-                    FULL_TILE_SIZE,
-                    (waypoint.label[0] - tile_rect[0]) as i32,
-                    (waypoint.label[1] - tile_rect[1]) as i32,
+                    width_px,
+                    (waypoint.label[0] - region_px[0]) as i32,
+                    (waypoint.label[1] - region_px[1]) as i32,
                     waypoint.label[2] as i32,
                     waypoint.label[3] as i32,
                     [18, 22, 26],
@@ -187,8 +263,8 @@ impl Minimap {
                 text_runs.push(ClientTextRun {
                     text: waypoint.text.clone(),
                     position: [
-                        (waypoint.label[0] + 2 - tile_rect[0]) as i32,
-                        (waypoint.label[1] + 2 - tile_rect[1]) as i32,
+                        (waypoint.label[0] + 2 - tile_px[0]) as i32,
+                        (waypoint.label[1] + 2 - tile_px[1]) as i32,
                     ],
                     scale: 2,
                     color: [waypoint.color[0], waypoint.color[1], waypoint.color[2], 255],
@@ -198,29 +274,104 @@ impl Minimap {
         (rgba, text_runs)
     }
 
-    fn full_waypoint_layouts(&self) -> Vec<FullWaypointLayout> {
-        self.waypoints
-            .iter()
-            .filter_map(|waypoint| {
-                let text: String = waypoint.name.chars().take(48).collect();
-                if text.is_empty() {
-                    return None;
+    /// Rebuild the cached waypoint layouts when the waypoint set changed.
+    /// Text measurement is a host call — it runs per waypoint edit, never
+    /// per publish.
+    pub(crate) fn ensure_full_layouts(&mut self) {
+        if self
+            .full_layouts
+            .as_ref()
+            .is_some_and(|(revision, _)| *revision == self.waypoint_revision)
+        {
+            return;
+        }
+        let mut layouts = Vec::new();
+        for index in 0..self.waypoints.len() {
+            let (name, pos, color) = {
+                let waypoint = &self.waypoints[index];
+                (waypoint.name.clone(), waypoint.pos, waypoint.color)
+            };
+            if let Some(layout) = self.build_waypoint_layout(&name, pos, color) {
+                layouts.push(layout);
+            }
+        }
+        self.full_layouts = Some((self.waypoint_revision, layouts));
+    }
+
+    fn build_waypoint_layout(
+        &mut self,
+        name: &str,
+        pos: [i32; 3],
+        color: [u8; 3],
+    ) -> Option<FullWaypointLayout> {
+        let text: String = name.chars().take(48).collect();
+        if text.is_empty() {
+            return None;
+        }
+        let [text_width, text_height] = self.measure_cached(&text);
+        let marker = [pos[0] as i64 * 2 + 1, pos[2] as i64 * 2 + 1];
+        let width = text_width as i64 + 4;
+        let height = text_height as i64 + 4;
+        Some(FullWaypointLayout {
+            marker,
+            label: [marker[0] + 12, marker[1] - height / 2, width, height],
+            text,
+            color,
+        })
+    }
+
+    /// Union a world-space block rect (`[x0, z0, x1, z1)`, already including
+    /// any relief fringe) into the dirty rect of every currently cached
+    /// full-map tile it touches.
+    pub(crate) fn mark_full_tiles_dirty(&mut self, rect: [i32; 4]) {
+        if rect[0] >= rect[2] || rect[1] >= rect[3] {
+            return;
+        }
+        for tz in rect[1].div_euclid(FULL_TILE_BLOCKS)..=(rect[3] - 1).div_euclid(FULL_TILE_BLOCKS)
+        {
+            for tx in
+                rect[0].div_euclid(FULL_TILE_BLOCKS)..=(rect[2] - 1).div_euclid(FULL_TILE_BLOCKS)
+            {
+                let coord = (tx, tz);
+                let slot = full_tile_slot(coord);
+                if self.full_tile_slots[slot].coord != Some(coord) {
+                    continue;
                 }
-                let [text_width, text_height] = client_text_measure(&text, 2);
-                let marker = [
-                    waypoint.pos[0] as i64 * 2 + 1,
-                    waypoint.pos[2] as i64 * 2 + 1,
+                let local = [
+                    (rect[0] - tx * FULL_TILE_BLOCKS).max(0),
+                    (rect[1] - tz * FULL_TILE_BLOCKS).max(0),
+                    (rect[2] - tx * FULL_TILE_BLOCKS).min(FULL_TILE_BLOCKS),
+                    (rect[3] - tz * FULL_TILE_BLOCKS).min(FULL_TILE_BLOCKS),
                 ];
-                let width = text_width as i64 + 4;
-                let height = text_height as i64 + 4;
-                Some(FullWaypointLayout {
-                    marker,
-                    label: [marker[0] + 12, marker[1] - height / 2, width, height],
-                    text,
-                    color: waypoint.color,
-                })
-            })
-            .collect()
+                let dirty = &mut self.full_tile_slots[slot].dirty;
+                *dirty = Some(match *dirty {
+                    None => local,
+                    Some(d) => [
+                        d[0].min(local[0]),
+                        d[1].min(local[1]),
+                        d[2].max(local[2]),
+                        d[3].max(local[3]),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Dirty the map area one waypoint occupies (marker + label), so edits
+    /// repaint only the tiles they touch instead of every visible tile.
+    pub(crate) fn invalidate_waypoint_area(&mut self, name: &str, pos: [i32; 3], color: [u8; 3]) {
+        let Some(layout) = self.build_waypoint_layout(name, pos, color) else {
+            return;
+        };
+        let marker_rect = [layout.marker[0] - 9, layout.marker[1] - 9, 19, 19];
+        for px_rect in [marker_rect, layout.label] {
+            self.mark_full_tiles_dirty([
+                px_rect[0].div_euclid(2) as i32,
+                px_rect[1].div_euclid(2) as i32,
+                ((px_rect[0] + px_rect[2] + 1).div_euclid(2) + 1) as i32,
+                ((px_rect[1] + px_rect[3] + 1).div_euclid(2) + 1) as i32,
+            ]);
+        }
     }
 
     fn publish_player_arrow_texture(&mut self) {
@@ -235,13 +386,6 @@ impl Minimap {
             player_arrow_rgba(self.yaw),
         );
         self.arrow_yaw_bits = Some(yaw_bits);
-    }
-
-    pub(crate) fn invalidate_full_tile(&mut self, coord: (i32, i32)) {
-        let slot = full_tile_slot(coord);
-        if self.full_tile_slots[slot].coord == Some(coord) {
-            self.full_tile_slots[slot].coord = None;
-        }
     }
 
     pub(crate) fn map_pointer(&mut self, phase: ClientPointerPhase, x: f32, y: f32) {
@@ -291,14 +435,7 @@ fn full_tile_bounds(pan: [f32; 2]) -> [i32; 4] {
     [min_x, max_x, min_z, max_z]
 }
 
-pub(crate) fn full_tile_coord(wx: i32, wz: i32) -> (i32, i32) {
-    (
-        wx.div_euclid(FULL_TILE_BLOCKS),
-        wz.div_euclid(FULL_TILE_BLOCKS),
-    )
-}
-
-fn full_tile_slot((tx, tz): (i32, i32)) -> usize {
+pub(crate) fn full_tile_slot((tx, tz): (i32, i32)) -> usize {
     // A viewport intersects at most five consecutive tiles per axis, so the
     // modulo grid is collision-free while letting the map roam without new keys.
     (tx.rem_euclid(FULL_TILE_GRID) + tz.rem_euclid(FULL_TILE_GRID) * FULL_TILE_GRID) as usize
@@ -366,5 +503,103 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn synthetic_map() -> Minimap {
+        let mut map = Minimap::default();
+        for tz in -2..=6 {
+            for tx in -2..=6 {
+                let mut tile = Tile::default();
+                for i in 0..256 {
+                    let wx = tx * 16 + (i % 16) as i32;
+                    let wz = tz * 16 + (i / 16) as i32;
+                    if (wx + wz).rem_euclid(7) == 0 {
+                        continue; // holes exercise the unknown paths
+                    }
+                    tile.cells[i] = Cell {
+                        height: ((wx * 3 + wz * 5).rem_euclid(60)) as i16,
+                        rgb: [
+                            (wx.rem_euclid(251)) as u8,
+                            (wz.rem_euclid(241)) as u8,
+                            200,
+                        ],
+                    };
+                }
+                map.tiles.insert(
+                    (tx, tz),
+                    CachedTile {
+                        tile,
+                        last_used: 0,
+                        watermark: 0,
+                        dirty: false,
+                    },
+                );
+            }
+        }
+        map
+    }
+
+    #[test]
+    fn region_raster_matches_the_full_tile_raster() {
+        // The blit path repaints sub-rects of a tile; any drift against the
+        // whole-tile raster leaves visible seams.
+        let map = synthetic_map();
+        let (full, _) =
+            map.render_full_region((0, 0), [0, 0, FULL_TILE_BLOCKS, FULL_TILE_BLOCKS]);
+        for rect in [[0, 0, 40, 40], [40, 0, 80, 40], [17, 23, 61, 59], [0, 79, 80, 80]] {
+            let (part, _) = map.render_full_region((0, 0), rect);
+            let wb = (rect[2] - rect[0]) as usize;
+            for bz in 0..(rect[3] - rect[1]) as usize * 2 {
+                for bx in 0..wb * 2 {
+                    let full_at =
+                        ((rect[1] as usize * 2 + bz) * FULL_TILE_SIZE + rect[0] as usize * 2 + bx)
+                            * 4;
+                    let part_at = (bz * wb * 2 + bx) * 4;
+                    assert_eq!(
+                        &part[part_at..part_at + 4],
+                        &full[full_at..full_at + 4],
+                        "pixel ({bx}, {bz}) of region {rect:?} must match the full raster"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explored_changes_dirty_only_matching_slots() {
+        let mut map = Minimap::default();
+        let a = (0, 0);
+        let b = (1, 0);
+        map.full_tile_slots[full_tile_slot(a)] = FullTileSlot {
+            coord: Some(a),
+            dirty: None,
+        };
+        map.full_tile_slots[full_tile_slot(b)] = FullTileSlot {
+            coord: Some(b),
+            dirty: None,
+        };
+        // A change at tile a's east edge; its +1 relief fringe crosses into b.
+        map.mark_full_tiles_dirty([79, 10, 81, 12]);
+        assert_eq!(
+            map.full_tile_slots[full_tile_slot(a)].dirty,
+            Some([79, 10, 80, 12])
+        );
+        assert_eq!(
+            map.full_tile_slots[full_tile_slot(b)].dirty,
+            Some([0, 10, 1, 12])
+        );
+        // Rects union; a slot caching another coord stays untouched.
+        map.mark_full_tiles_dirty([0, 0, 2, 2]);
+        assert_eq!(
+            map.full_tile_slots[full_tile_slot(a)].dirty,
+            Some([0, 0, 80, 12])
+        );
+        let elsewhere = (2, 0);
+        map.full_tile_slots[full_tile_slot(elsewhere)] = FullTileSlot {
+            coord: Some((7, 7)),
+            dirty: None,
+        };
+        map.mark_full_tiles_dirty([170, 0, 172, 2]);
+        assert_eq!(map.full_tile_slots[full_tile_slot(elsewhere)].dirty, None);
     }
 }

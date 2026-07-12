@@ -29,7 +29,7 @@ fn client_canvas_element_valid(element: &mod_api::ClientCanvasElement) -> bool {
     }
 }
 
-const CLIENT_SURFACE_RADIUS_MAX: u16 = 192;
+const CLIENT_SURFACE_QUERY_MAX: usize = 512;
 const CLIENT_IMAGE_SIDE_MAX: u16 = 640;
 const CLIENT_OVERLAY_MAX: usize = 16;
 const CLIENT_OVERLAY_DISPLAY_SIDE_MAX: u16 = 2048;
@@ -58,10 +58,11 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
-        | HostCall::ClientSurface { .. }
+        | HostCall::ClientSurfaceColumns { .. }
         | HostCall::ClientUiStateSet { .. }
         | HostCall::ClientUiStateGet { .. }
         | HostCall::ClientImageSet { .. }
+        | HostCall::ClientImageBlit { .. }
         | HostCall::ClientTextMeasure { .. }
         | HostCall::ClientImageDrawTexts { .. }
         | HostCall::ClientGuiOpen { .. }
@@ -228,25 +229,47 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             });
             HostRet::Unit
         }
-        HostCall::ClientSurface { center, radius } => {
-            if radius > CLIENT_SURFACE_RADIUS_MAX {
+        HostCall::ClientSurfaceColumns { queries } => {
+            if queries.len() > CLIENT_SURFACE_QUERY_MAX {
                 return HostRet::Error(format!(
-                    "ClientSurface radius {radius} exceeds {CLIENT_SURFACE_RADIUS_MAX}"
+                    "ClientSurfaceColumns query count {} exceeds {CLIENT_SURFACE_QUERY_MAX}",
+                    queries.len()
                 ));
             }
             client_scope::with_active(|world| {
-                let side = radius as i32 * 2 + 1;
-                let mut cells = Vec::with_capacity((side * side) as usize);
-                for dz in -(radius as i32)..=radius as i32 {
-                    for dx in -(radius as i32)..=radius as i32 {
-                        cells.push(
-                            world
-                                .client_surface_cell(center[0] + dx, center[1] + dz)
-                                .map(|(height, rgb)| mod_api::ClientSurfaceCell { height, rgb }),
-                        );
-                    }
-                }
-                HostRet::ClientSurface(cells)
+                let mut cells = [None::<(i16, [u8; 3])>; 256];
+                let columns = queries
+                    .iter()
+                    .map(|query| {
+                        let pos = crate::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
+                        let revision = world.client_surface_column_revision(pos)?;
+                        // A zero query revision means "never seen complete" —
+                        // it must never match, even against a defaulted host
+                        // revision.
+                        if query.revision != 0 && query.revision == revision {
+                            return Some(mod_api::ClientSurfaceColumn {
+                                revision,
+                                cells: None,
+                            });
+                        }
+                        if !world.client_surface_column(pos, &mut cells) {
+                            return None;
+                        }
+                        let mut packed =
+                            Vec::with_capacity(mod_api::CLIENT_SURFACE_COLUMN_BYTES);
+                        for cell in &cells {
+                            let (height, rgb) = cell
+                                .unwrap_or((mod_api::CLIENT_SURFACE_UNKNOWN_HEIGHT, [0; 3]));
+                            packed.extend_from_slice(&height.to_le_bytes());
+                            packed.extend_from_slice(&rgb);
+                        }
+                        Some(mod_api::ClientSurfaceColumn {
+                            revision,
+                            cells: Some(packed),
+                        })
+                    })
+                    .collect();
+                HostRet::ClientSurfaceColumns(columns)
             })
             .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
         }
@@ -310,6 +333,50 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     revision,
                 },
             );
+            HostRet::Unit
+        }
+        HostCall::ClientImageBlit {
+            key,
+            origin,
+            size,
+            rgba,
+        } => {
+            if !key_owned_by_namespace(&mod_id, &key) {
+                return HostRet::Error(format!(
+                    "client image key '{key}' must be namespaced '{mod_id}:name'"
+                ));
+            }
+            let Some((width, height)) = client
+                .images
+                .get(&key)
+                .map(|image| (image.width as usize, image.height as usize))
+            else {
+                return HostRet::Error(format!("client image '{key}' has not been published"));
+            };
+            let (w, h) = (size[0] as usize, size[1] as usize);
+            if w == 0
+                || h == 0
+                || origin[0] as usize + w > width
+                || origin[1] as usize + h > height
+                || rgba.len() != w * h * 4
+            {
+                return HostRet::Error(format!(
+                    "invalid client image blit {w}x{h} at ({}, {}) with {} RGBA bytes into {width}x{height}",
+                    origin[0],
+                    origin[1],
+                    rgba.len()
+                ));
+            }
+            let revision = client.next_image_revision;
+            client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
+            let image = client.images.get_mut(&key).unwrap();
+            let dst = Arc::make_mut(&mut image.rgba);
+            for row in 0..h {
+                let src = row * w * 4;
+                let at = ((origin[1] as usize + row) * width + origin[0] as usize) * 4;
+                dst[at..at + w * 4].copy_from_slice(&rgba[src..src + w * 4]);
+            }
+            image.revision = revision;
             HostRet::Unit
         }
         HostCall::ClientTextMeasure { text, scale } => {
@@ -643,5 +710,148 @@ mod tests {
         assert_eq!(scene.elements, elements);
         assert_eq!(scene.offset, [12.0, -7.0]);
         assert_eq!(client.images["map:tile"].revision, image_revision);
+    }
+
+    #[test]
+    fn client_image_blit_mutates_in_place_and_validates_bounds() {
+        let mut data = ModStoreData::new_for_side(
+            "map",
+            7,
+            RuntimeSide::Client,
+            Some(std::env::temp_dir().join("petramond-unused-client-blit-test")),
+        );
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientImageSet {
+                    key: "map:tile".into(),
+                    width: 2,
+                    height: 2,
+                    rgba: vec![0; 16],
+                },
+            ),
+            HostRet::Unit
+        );
+        let revision = data.client.as_ref().unwrap().images["map:tile"].revision;
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientImageBlit {
+                    key: "map:tile".into(),
+                    origin: [1, 1],
+                    size: [1, 1],
+                    rgba: vec![9, 8, 7, 255],
+                },
+            ),
+            HostRet::Unit
+        );
+        let image = &data.client.as_ref().unwrap().images["map:tile"];
+        assert_eq!(&image.rgba[12..16], &[9, 8, 7, 255], "blit lands at (1,1)");
+        assert_eq!(&image.rgba[0..4], &[0, 0, 0, 0], "pixels outside stay");
+        assert_ne!(image.revision, revision, "a blit must move the revision");
+
+        for bad in [
+            // out of bounds
+            HostCall::ClientImageBlit {
+                key: "map:tile".into(),
+                origin: [2, 0],
+                size: [1, 1],
+                rgba: vec![0; 4],
+            },
+            // byte count mismatch
+            HostCall::ClientImageBlit {
+                key: "map:tile".into(),
+                origin: [0, 0],
+                size: [1, 1],
+                rgba: vec![0; 3],
+            },
+            // never published
+            HostCall::ClientImageBlit {
+                key: "map:none".into(),
+                origin: [0, 0],
+                size: [1, 1],
+                rgba: vec![0; 4],
+            },
+            // foreign namespace
+            HostCall::ClientImageBlit {
+                key: "other:tile".into(),
+                origin: [0, 0],
+                size: [1, 1],
+                rgba: vec![0; 4],
+            },
+        ] {
+            assert!(matches!(
+                handle_host_call(&mut data, bad),
+                HostRet::Error(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn client_surface_columns_gate_on_revision_and_pack_cells() {
+        let mut data = ModStoreData::new_for_side(
+            "map",
+            7,
+            RuntimeSide::Client,
+            Some(std::env::temp_dir().join("petramond-unused-client-surface-test")),
+        );
+        let mut world = crate::world::World::new(0, 0);
+        let sp = crate::chunk::SectionPos::new(0, 4, 0);
+        world.insert_section_for_test(sp, crate::section::Section::new(0, 4, 0));
+        assert!(world.set_block_world(3, 64, 5, crate::block::Block::Stone));
+
+        let query = |revision| HostCall::ClientSurfaceColumns {
+            queries: vec![
+                mod_api::ClientSurfaceQuery {
+                    coord: [0, 0],
+                    revision,
+                },
+                mod_api::ClientSurfaceQuery {
+                    coord: [9, 9],
+                    revision: 0,
+                },
+            ],
+        };
+        let HostRet::ClientSurfaceColumns(replies) =
+            super::client_scope::enter(&world, || handle_host_call(&mut data, query(0)))
+        else {
+            panic!("surface columns reply expected");
+        };
+        assert!(replies[1].is_none(), "an unloaded column replies None");
+        let column = replies[0].as_ref().expect("loaded column");
+        let cells = column.cells.as_ref().expect("first sight sends cells");
+        assert_eq!(cells.len(), mod_api::CLIENT_SURFACE_COLUMN_BYTES);
+        let cell = |lx: usize, lz: usize| {
+            let at = (lz * 16 + lx) * mod_api::CLIENT_SURFACE_CELL_BYTES;
+            i16::from_le_bytes([cells[at], cells[at + 1]])
+        };
+        assert_eq!(cell(3, 5), 64, "the placed surface cell is known");
+        assert_eq!(
+            cell(0, 0),
+            mod_api::CLIENT_SURFACE_UNKNOWN_HEIGHT,
+            "cells with no surface stay unknown"
+        );
+
+        // Echoing the served revision skips the cell payload…
+        let revision = column.revision;
+        let HostRet::ClientSurfaceColumns(replies) =
+            super::client_scope::enter(&world, || handle_host_call(&mut data, query(revision)))
+        else {
+            panic!("surface columns reply expected");
+        };
+        let unchanged = replies[0].as_ref().expect("loaded column");
+        assert_eq!(unchanged.revision, revision);
+        assert!(unchanged.cells.is_none(), "unchanged column sends no cells");
+
+        // …until an edit moves the column revision.
+        assert!(world.set_block_world(3, 64, 5, crate::block::Block::Dirt));
+        let HostRet::ClientSurfaceColumns(replies) =
+            super::client_scope::enter(&world, || handle_host_call(&mut data, query(revision)))
+        else {
+            panic!("surface columns reply expected");
+        };
+        let changed = replies[0].as_ref().expect("loaded column");
+        assert_ne!(changed.revision, revision);
+        assert!(changed.cells.is_some(), "a moved revision resends cells");
     }
 }

@@ -198,6 +198,9 @@ impl World {
         self.column_summaries.insert(pos, summaries);
         self.column_biome_halos.insert(pos, payload.mesh_biomes.0);
         self.column_deep_band_los.insert(pos, payload.deep_band_lo);
+        // The sender re-ships only on its own revision change; move the
+        // replica's revision so surface consumers resample the column.
+        self.bump_column_payload_revision(pos);
     }
 
     /// Install one replicated section on a replica, entering at the same
@@ -300,6 +303,10 @@ impl World {
 
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
+        // Installed content may change the visible surface without moving the
+        // heightmap (a same-height block swap) — surface consumers gate on
+        // the column revision, so it must move with every section install.
+        self.bump_column_payload_revision(pos.chunk_pos());
         // The post-ingest seam, minus gen/save bookkeeping (none exists here).
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
@@ -540,6 +547,9 @@ impl World {
         );
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, section);
+        // Same rule as a full section install: newly visible surface content
+        // must move the column revision for revision-gated surface sampling.
+        self.bump_column_payload_revision(pos.chunk_pos());
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.classify_deep_on_install(pos);

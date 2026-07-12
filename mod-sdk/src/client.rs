@@ -3,8 +3,8 @@
 //! lifecycle, and sandboxed client storage.
 
 use mod_api::{
-    ClientCanvasElement, ClientOverlayAnchor, ClientSurfaceCell, ClientTextRun, GuiValue, HostCall,
-    HostRet,
+    ClientCanvasElement, ClientOverlayAnchor, ClientSurfaceColumn, ClientSurfaceQuery,
+    ClientTextRun, GuiValue, HostCall, HostRet,
 };
 
 // Imported for intra-doc links only.
@@ -47,13 +47,30 @@ pub fn client_register_key(id: &str, label: &str, key: &str, action_id: u32) {
     );
 }
 
-/// Read a square of final surface cells around `center` from the client
-/// replica, row-major with z outer/x inner.
-pub fn client_surface(center: [i32; 2], radius: u16) -> Vec<Option<ClientSurfaceCell>> {
-    match __rt::host_call(&HostCall::ClientSurface { center, radius }) {
-        HostRet::ClientSurface(cells) => cells,
-        other => panic!("ClientSurface returned {other:?}"),
+/// Read whole surface chunk columns from the client replica, revision gated:
+/// the reply is parallel to `queries`, `None` = column unknown, and a reply
+/// without cell bytes = unchanged since the queried revision. Only echo a
+/// revision back once a reply for it had every cell known (see
+/// [`mod_api::ClientSurfaceColumn`]).
+pub fn client_surface_columns(queries: Vec<ClientSurfaceQuery>) -> Vec<Option<ClientSurfaceColumn>> {
+    match __rt::host_call(&HostCall::ClientSurfaceColumns { queries }) {
+        HostRet::ClientSurfaceColumns(columns) => columns,
+        other => panic!("ClientSurfaceColumns returned {other:?}"),
     }
+}
+
+/// Overwrite one rectangle of an existing published client image in place:
+/// `origin`/`size` in image pixels, `rgba` = exactly `size` pixels of RGBA8.
+pub fn client_image_blit(key: &str, origin: [u16; 2], size: [u16; 2], rgba: Vec<u8>) {
+    __rt::expect_unit(
+        "ClientImageBlit",
+        __rt::host_call(&HostCall::ClientImageBlit {
+            key: key.into(),
+            origin,
+            size,
+            rgba,
+        }),
+    );
 }
 
 pub fn client_ui_state_set(key: &str, value: GuiValue) {

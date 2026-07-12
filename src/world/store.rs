@@ -117,9 +117,14 @@ pub struct World {
     /// Per-column 2D data (biome, surface heightmap) shared by a vertical stack of
     /// sections. Cheap; ensured present whenever a section in the column loads.
     pub(super) columns: FxHashMap<ChunkPos, Column>,
-    /// Monotonic per-column presentation revision (biome/heightmap/summaries).
-    /// Terrain replication resends ColumnData only when this changes.
+    /// Per-column presentation revision (biome/heightmap/summaries/visible
+    /// surface). Terrain replication resends ColumnData only when this
+    /// changes, and revision-gated surface sampling relies on EQUALITY:
+    /// values come from `column_revision_counter`, so a value is never reused
+    /// — not even by a column that unloads and reloads with other content.
     pub(super) column_payload_revisions: FxHashMap<ChunkPos, u64>,
+    /// Store-wide source of unique column payload revision values.
+    pub(super) column_revision_counter: u64,
     /// One GPU-ready mesh per section.
     pub(super) meshes: FxHashMap<SectionPos, ChunkMesh>,
     /// XZ columns that currently have at least one CPU section mesh.
@@ -358,6 +363,7 @@ impl World {
             sections: FxHashMap::default(),
             columns: FxHashMap::default(),
             column_payload_revisions: FxHashMap::default(),
+            column_revision_counter: 0,
             meshes: FxHashMap::default(),
             mesh_columns: FxHashSet::default(),
             mesh_upload_revisions: FxHashMap::default(),
@@ -1097,13 +1103,18 @@ impl World {
     /// Ensure the per-column data for `(cx,cz)` exists, building it cheaply if not.
     /// Worldgen fills biome + heightmap; an empty column is the pre-gen placeholder.
     pub(super) fn ensure_column(&mut self, pos: ChunkPos) -> &mut Column {
-        self.column_payload_revisions.entry(pos).or_insert(1);
+        if !self.column_payload_revisions.contains_key(&pos) {
+            self.column_revision_counter += 1;
+            self.column_payload_revisions
+                .insert(pos, self.column_revision_counter);
+        }
         self.columns.entry(pos).or_insert_with(Column::new)
     }
 
     pub(super) fn bump_column_payload_revision(&mut self, pos: ChunkPos) {
-        let revision = self.column_payload_revisions.entry(pos).or_insert(1);
-        *revision = revision.wrapping_add(1).max(1);
+        self.column_revision_counter += 1;
+        self.column_payload_revisions
+            .insert(pos, self.column_revision_counter);
     }
 
     pub(crate) fn column_payload_revision(&self, pos: ChunkPos) -> u64 {
@@ -1118,72 +1129,76 @@ impl World {
         self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))
     }
 
-    /// Final top-down surface sample for presentation-only client modules.
-    /// Missing column data or a surface section still in flight is unknown,
-    /// never guessed from generation; callers retain prior explored samples.
-    pub(crate) fn client_surface_cell(&self, wx: i32, wz: i32) -> Option<(i16, [u8; 3])> {
-        let column = self.column_at(wx, wz)?;
-        let lx = wx.rem_euclid(16) as usize;
-        let lz = wz.rem_euclid(16) as usize;
-        let height = column.surface_y(lx, lz);
-        if height == NO_SURFACE {
-            return None;
-        }
-        let block = self.block_if_stream_final(wx, height, wz)?;
-        let tile = block.tiles()[0];
-        let tint = self.client_surface_tint(wx, wz, tile.world_tint());
-        let base = tile.map_rgb();
-        let rgb = std::array::from_fn(|channel| {
-            (base[channel] as f32 * tint[channel])
-                .round()
-                .clamp(0.0, 255.0) as u8
-        });
-        Some((height as i16, rgb))
+    /// Whether the column is loaded, and if so its payload revision — the
+    /// change-detection half of [`client_surface_column`](Self::client_surface_column).
+    pub(crate) fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
+        self.columns
+            .contains_key(&pos)
+            .then(|| self.column_payload_revision(pos))
     }
 
-    fn client_surface_tint(
+    /// Final top-down surface samples for one whole chunk column, for
+    /// presentation-only client modules: per cell `(height, rgb)`, or `None`
+    /// where the cell is unknown (missing data or a surface section still in
+    /// flight — never guessed from generation; callers retain prior explored
+    /// samples). Returns `false` when the column itself is not loaded.
+    ///
+    /// Column, section finality, and the 5×5 biome tint blend are resolved
+    /// once per column / per section / per tint kind, not per cell — this is
+    /// the sampling hot path.
+    pub(crate) fn client_surface_column(
         &self,
-        wx: i32,
-        wz: i32,
-        kind: Option<crate::atlas::TileTint>,
-    ) -> [f32; 3] {
-        let Some(kind) = kind else {
-            return [1.0; 3];
+        pos: ChunkPos,
+        out: &mut [Option<(i16, [u8; 3])>; 256],
+    ) -> bool {
+        let Some(column) = self.columns.get(&pos) else {
+            return false;
         };
-        let pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
-        let halo = self
-            .column_gen
-            .get(&pos)
-            .map(|column| column.mesh_biome_slice())
-            .or_else(|| self.column_biome_halos.get(&pos).map(|halo| halo.as_ref()));
-        let Some(halo) = halo.filter(|halo| halo.len() == 20 * 20) else {
-            let biome = crate::biome::Biome::from_id(self.column_biome(wx, wz).unwrap_or_default());
-            return match kind {
-                crate::atlas::TileTint::Grass => biome.grass_color(),
-                crate::atlas::TileTint::Foliage => biome.foliage_color(),
-                crate::atlas::TileTint::Water => biome.water_color(),
-            };
-        };
-
-        // The halo starts two cells before the column, so the 5x5 blend window
-        // for local (x,z) occupies [x..x+5, z..z+5] directly.
-        let lx = wx.rem_euclid(16) as usize;
-        let lz = wz.rem_euclid(16) as usize;
-        let mut sum = [0.0; 3];
-        for z in lz..lz + 5 {
-            for x in lx..lx + 5 {
-                let biome = crate::biome::Biome::from_id(halo[z * 20 + x]);
-                let color = match kind {
-                    crate::atlas::TileTint::Grass => biome.grass_color(),
-                    crate::atlas::TileTint::Foliage => biome.foliage_color(),
-                    crate::atlas::TileTint::Water => biome.water_color(),
-                };
-                for channel in 0..3 {
-                    sum[channel] += color[channel];
+        let mut tints = SurfaceTintGrids::new(self, pos, column);
+        // Surface heights cluster in a handful of sections per column.
+        let mut sections: Vec<(i32, Option<&Section>)> = Vec::new();
+        for lz in 0..16usize {
+            for lx in 0..16usize {
+                let i = lz * 16 + lx;
+                out[i] = None;
+                let height = column.surface_y(lx, lz);
+                if height == NO_SURFACE {
+                    continue;
                 }
+                let cy = height.div_euclid(SECTION_SIZE as i32);
+                let section = match sections.iter().find(|(known, _)| *known == cy) {
+                    Some((_, section)) => *section,
+                    None => {
+                        let sp = SectionPos::new(pos.cx, cy, pos.cz);
+                        let section = (SectionPos::cy_in_range(cy)
+                            && self.stream_writable(sp))
+                        .then(|| self.sections.get(&sp).map(Arc::as_ref))
+                        .flatten();
+                        sections.push((cy, section));
+                        section
+                    }
+                };
+                let Some(section) = section else {
+                    continue;
+                };
+                let block = section.block(lx, height.rem_euclid(SECTION_SIZE as i32) as usize, lz);
+                let tile = block.tiles()[0];
+                let base = tile.map_rgb();
+                let rgb = match tile.world_tint() {
+                    None => base,
+                    Some(kind) => {
+                        let tint = tints.at(kind, lx, lz);
+                        std::array::from_fn(|channel| {
+                            (base[channel] as f32 * tint[channel])
+                                .round()
+                                .clamp(0.0, 255.0) as u8
+                        })
+                    }
+                };
+                out[i] = Some((height as i16, rgb));
             }
         }
-        sum.map(|channel| channel / 25.0)
+        true
     }
 
     #[inline]
@@ -1695,6 +1710,95 @@ impl World {
     }
 }
 
+/// Lazy per-column 5×5 biome-blended tint grids for surface sampling: one
+/// 16×16 grid per [`TileTint`] kind, built on first use. With a 20×20 biome
+/// halo the blend is a separable box sum (each halo biome color decodes once);
+/// without one it falls back to the column's own unblended biome colors.
+struct SurfaceTintGrids<'a> {
+    halo: Option<&'a [u8]>,
+    column: &'a Column,
+    grids: [Option<Box<[[f32; 3]; 256]>>; 3],
+}
+
+impl<'a> SurfaceTintGrids<'a> {
+    fn new(world: &'a World, pos: ChunkPos, column: &'a Column) -> Self {
+        let halo = world
+            .column_gen
+            .get(&pos)
+            .map(|column| column.mesh_biome_slice())
+            .or_else(|| world.column_biome_halos.get(&pos).map(|halo| halo.as_ref()))
+            .filter(|halo| halo.len() == 20 * 20);
+        Self {
+            halo,
+            column,
+            grids: [None, None, None],
+        }
+    }
+
+    fn at(&mut self, kind: crate::atlas::TileTint, lx: usize, lz: usize) -> [f32; 3] {
+        let slot = match kind {
+            crate::atlas::TileTint::Grass => &mut self.grids[0],
+            crate::atlas::TileTint::Foliage => &mut self.grids[1],
+            crate::atlas::TileTint::Water => &mut self.grids[2],
+        };
+        slot.get_or_insert_with(|| Self::build(self.halo, self.column, kind))[lz * 16 + lx]
+    }
+
+    fn build(
+        halo: Option<&[u8]>,
+        column: &Column,
+        kind: crate::atlas::TileTint,
+    ) -> Box<[[f32; 3]; 256]> {
+        let color_of = |id: u8| {
+            let biome = crate::biome::Biome::from_id(id);
+            match kind {
+                crate::atlas::TileTint::Grass => biome.grass_color(),
+                crate::atlas::TileTint::Foliage => biome.foliage_color(),
+                crate::atlas::TileTint::Water => biome.water_color(),
+            }
+        };
+        let mut out = Box::new([[0.0f32; 3]; 256]);
+        let Some(halo) = halo else {
+            for lz in 0..16 {
+                for lx in 0..16 {
+                    out[lz * 16 + lx] = color_of(column.biome_at(lx, lz));
+                }
+            }
+            return out;
+        };
+        let mut colors = [[0.0f32; 3]; 400];
+        for (color, &id) in colors.iter_mut().zip(halo) {
+            *color = color_of(id);
+        }
+        // The halo starts two cells before the column, so the 5x5 blend window
+        // for local (x,z) occupies [x..x+5, z..z+5] directly.
+        let mut rows = [[0.0f32; 3]; 20 * 16];
+        for z in 0..20 {
+            for x in 0..16 {
+                let mut sum = [0.0f32; 3];
+                for cell in &colors[z * 20 + x..z * 20 + x + 5] {
+                    for channel in 0..3 {
+                        sum[channel] += cell[channel];
+                    }
+                }
+                rows[z * 16 + x] = sum;
+            }
+        }
+        for z in 0..16 {
+            for x in 0..16 {
+                let mut sum = [0.0f32; 3];
+                for row in 0..5 {
+                    for channel in 0..3 {
+                        sum[channel] += rows[(z + row) * 16 + x][channel];
+                    }
+                }
+                out[z * 16 + x] = sum.map(|channel| channel / 25.0);
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1713,6 +1817,35 @@ mod tests {
         world
             .column_gen
             .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
+    }
+
+    #[test]
+    fn same_height_surface_swap_bumps_the_column_revision() {
+        // Replacing the visible surface block in place (tilling, grass
+        // spread, …) keeps the heightmap, but revision-gated surface
+        // sampling must still see the column move or the swapped color is
+        // never resampled.
+        let mut world = World::new(0, 0);
+        let sp = SectionPos::new(0, 4, 0);
+        let mut s = Section::new(0, 4, 0);
+        s.set_block(8, 0, 8, Block::Stone);
+        world.insert_section_for_test(sp, s);
+        world
+            .ensure_column(sp.chunk_pos())
+            .set_surface_y(8, 8, 64);
+
+        let before = world.column_payload_revision(sp.chunk_pos());
+        world.set_block_world(8, 64, 8, Block::Dirt);
+        assert_eq!(
+            world.columns[&sp.chunk_pos()].surface_y(8, 8),
+            64,
+            "fixture: the swap must not move the heightmap"
+        );
+        assert_ne!(
+            before,
+            world.column_payload_revision(sp.chunk_pos()),
+            "a same-height surface swap must move the column revision"
+        );
     }
 
     #[test]

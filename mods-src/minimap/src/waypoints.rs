@@ -66,7 +66,7 @@ impl Minimap {
     }
 
     pub(crate) fn save_editor(&mut self) {
-        let name = self.draft.trim();
+        let name = self.draft.trim().to_owned();
         if name.is_empty() {
             return;
         }
@@ -79,7 +79,7 @@ impl Minimap {
                     96 + ((roll >> 8) & 127) as u8,
                     96 + ((roll >> 16) & 127) as u8,
                 ];
-                self.waypoints.push(Waypoint {
+                let waypoint = Waypoint {
                     name: name.to_owned(),
                     pos: [
                         self.player[0].floor() as i32,
@@ -87,12 +87,18 @@ impl Minimap {
                         self.player[2].floor() as i32,
                     ],
                     color,
-                });
+                };
+                self.waypoints.push(waypoint.clone());
+                self.invalidate_waypoint_area(&waypoint.name, waypoint.pos, waypoint.color);
             }
             Editor::Edit(index) => {
-                if let Some(waypoint) = self.waypoints.get_mut(index) {
-                    waypoint.name = name.to_owned();
-                }
+                let Some(old) = self.waypoints.get(index).cloned() else {
+                    return;
+                };
+                self.invalidate_waypoint_area(&old.name, old.pos, old.color);
+                self.waypoints[index].name = name.to_owned();
+                let renamed = self.waypoints[index].clone();
+                self.invalidate_waypoint_area(&renamed.name, renamed.pos, renamed.color);
             }
             Editor::None => return,
         }
@@ -122,7 +128,8 @@ impl Minimap {
             return;
         };
         if index < self.waypoints.len() {
-            self.waypoints.remove(index);
+            let removed = self.waypoints.remove(index);
+            self.invalidate_waypoint_area(&removed.name, removed.pos, removed.color);
             self.persist_waypoints();
         }
         self.editor = Editor::None;

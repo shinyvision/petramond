@@ -161,7 +161,9 @@ fn samples() -> Samples {
         id: "open_map".into(), label: "Open World Map".into(),
         key: "key_m".into(), action_id: 1,
     });
-    s.pin("HostCall::ClientSurface", &HostCall::ClientSurface { center: [1, 2], radius: 3 });
+    s.pin("HostCall::ClientSurfaceColumns", &HostCall::ClientSurfaceColumns {
+        queries: vec![ClientSurfaceQuery { coord: [1, -2], revision: 3 }],
+    });
     s.pin("HostCall::ClientUiStateSet", &HostCall::ClientUiStateSet {
         key: "m:k".into(), value: GuiValue::Str("v".into()),
     });
@@ -199,6 +201,9 @@ fn samples() -> Samples {
         entries: vec![("m:k".into(), vec![1])],
     });
     s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { key: "m:i".into() });
+    s.pin("HostCall::ClientImageBlit", &HostCall::ClientImageBlit {
+        key: "m:i".into(), origin: [1, 2], size: [1, 1], rgba: vec![1, 2, 3, 4],
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -231,8 +236,10 @@ fn samples() -> Samples {
     }]));
     s.pin("HostRet::Containers", &HostRet::Containers(vec![Some(vec![None]), None]));
     s.pin("HostRet::RuntimeSide", &HostRet::RuntimeSide(RuntimeSide::Client));
-    s.pin("HostRet::ClientSurface", &HostRet::ClientSurface(vec![
-        None, Some(ClientSurfaceCell { height: -1, rgb: [1, 2, 3] }),
+    s.pin("HostRet::ClientSurfaceColumns", &HostRet::ClientSurfaceColumns(vec![
+        None,
+        Some(ClientSurfaceColumn { revision: 2, cells: None }),
+        Some(ClientSurfaceColumn { revision: 3, cells: Some(vec![255, 127, 1, 2, 3]) }),
     ]));
     s.pin("HostRet::ClientTextSize", &HostRet::ClientTextSize([1, 2]));
     s.pin("HostRet::ClientStorageValues", &HostRet::ClientStorageValues(vec![None, Some(vec![1])]));
@@ -495,7 +502,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::RuntimeSide", "3e"),
     ("HostCall::ClientRegisterOverlay", "3f036d3a690001020304"),
     ("HostCall::ClientRegisterKey", "40086f70656e5f6d61700e4f70656e20576f726c64204d6170056b65795f6d01"),
-    ("HostCall::ClientSurface", "41020403"),
+    ("HostCall::ClientSurfaceColumns", "4101020303"),
     ("HostCall::ClientUiStateSet", "42036d3a6b020176"),
     ("HostCall::ClientUiStateGet", "43036d3a6b"),
     ("HostCall::ClientImageSet", "44036d3a6901010401020304"),
@@ -510,6 +517,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientStorageGetMany", "4d01036d3a6b"),
     ("HostCall::ClientStorageSetMany", "4e01036d3a6b0101"),
     ("HostCall::ResolveItem", "4f036d3a69"),
+    ("HostCall::ClientImageBlit", "50036d3a69010201010401020304"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -527,7 +535,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Effects", "0e01036d3a6509"),
     ("HostRet::Containers", "0f0201010000"),
     ("HostRet::RuntimeSide", "1002"),
-    ("HostRet::ClientSurface", "1102000101010203"),
+    ("HostRet::ClientSurfaceColumns", "11030001020001030105ff7f010203"),
     ("HostRet::ClientTextSize", "120102"),
     ("HostRet::ClientStorageValues", "130200010101"),
     ("HostRet::Item", "140101"),

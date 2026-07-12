@@ -16,6 +16,7 @@ mod waypoints;
 
 use explore::*;
 use fullmap::*;
+use hud::*;
 use raster::*;
 use waypoints::*;
 
@@ -44,6 +45,15 @@ struct Minimap {
     full_view_bits: Option<[u32; 2]>,
     waypoint_revision: u64,
     arrow_yaw_bits: Option<u32>,
+    /// Bumps whenever any explored cell changes; part of the HUD stamp.
+    explored_revision: u64,
+    /// The inputs the current HUD raster was published from.
+    hud_stamp: Option<HudStamp>,
+    /// Waypoint layouts cached per `waypoint_revision` (text measurement is
+    /// a host call — never re-measure per publish).
+    full_layouts: Option<(u64, Vec<FullWaypointLayout>)>,
+    /// Scale-2 text measurement cache (waypoint names, initials, cardinals).
+    text_sizes: HashMap<String, [u16; 2]>,
 }
 
 impl Mod for Minimap {
@@ -75,10 +85,17 @@ impl Mod for Minimap {
             self.last_sample = Some(center);
         }
         if frame.open_gui.is_none() && frame.open_canvas.is_none() {
-            self.publish_hud();
+            let stamp = self.hud_stamp();
+            if self.hud_stamp != Some(stamp) {
+                self.publish_hud();
+                self.hud_stamp = Some(stamp);
+            }
         }
         if frame.open_canvas.as_deref() == Some(FULL_CANVAS) {
             self.sync_full_canvas();
+        }
+        if self.frame % FLUSH_INTERVAL == 0 {
+            self.flush_dirty_tiles();
         }
     }
 
@@ -126,6 +143,22 @@ impl Mod for Minimap {
         if canvas_key == FULL_CANVAS && event.button == ClientPointerButton::Primary {
             self.map_pointer(event.phase, event.x, event.y);
         }
+    }
+}
+
+impl Minimap {
+    /// Scale-2 single-line measurement through a cache: `client_text_measure`
+    /// crosses the ABI, so each distinct string measures once.
+    fn measure_cached(&mut self, text: &str) -> [u16; 2] {
+        if let Some(&size) = self.text_sizes.get(text) {
+            return size;
+        }
+        let size = client_text_measure(text, 2);
+        if self.text_sizes.len() >= 512 {
+            self.text_sizes.clear();
+        }
+        self.text_sizes.insert(text.to_owned(), size);
+        size
     }
 }
 

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::client::{
     ClientCanvasElement, ClientCanvasEvent, ClientFrameData, ClientOverlayAnchor,
-    ClientSurfaceCell, ClientTextRun, ClientUiEvent,
+    ClientSurfaceColumn, ClientSurfaceQuery, ClientTextRun, ClientUiEvent,
 };
 use crate::data::{
     AiNodeCtx, AiNodeDecision, BlockHookKind, EffectStateData, GuiValue, HostileSpawnCandidate,
@@ -542,13 +542,14 @@ pub enum HostCall {
         key: String,
         action_id: u32,
     },
-    /// Read a square of final surface cells from the client replica. The
-    /// result is row-major over `(2*radius+1)^2`, z outer/x inner; unknown or
-    /// not-yet-final cells are `None`. Radius is host-capped. →
-    /// [`HostRet::ClientSurface`].
-    ClientSurface {
-        center: [i32; 2],
-        radius: u16,
+    /// Read whole surface chunk columns from the client replica, revision
+    /// gated: a column whose host revision still equals the query's `revision`
+    /// replies without cell bytes, so a steady-state resample costs near
+    /// nothing. The reply is parallel to `queries`; `None` = column unknown to
+    /// the replica. Query count is host-capped. →
+    /// [`HostRet::ClientSurfaceColumns`].
+    ClientSurfaceColumns {
+        queries: Vec<ClientSurfaceQuery>,
     },
     /// Write/read the client module's document-binding state. Keys must use
     /// the caller's namespace. → [`HostRet::Unit`] / [`HostRet::GuiValue`].
@@ -637,6 +638,17 @@ pub enum HostCall {
     ResolveItem {
         key: String,
     },
+    /// Overwrite one rectangle of an existing namespaced client image in
+    /// place (`origin`/`size` in image pixels, `rgba` = `size` pixels of
+    /// RGBA8). The partial-update companion to [`HostCall::ClientImageSet`]:
+    /// spatial clients refresh an invalidated region without re-publishing
+    /// the whole image. → [`HostRet::Unit`].
+    ClientImageBlit {
+        key: String,
+        origin: [u16; 2],
+        size: [u16; 2],
+        rgba: Vec<u8>,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -679,7 +691,10 @@ pub enum HostRet {
     /// (each entry as [`HostRet::ContainerSlots`]'s payload).
     Containers(Vec<Option<Vec<Option<ItemStackData>>>>),
     RuntimeSide(RuntimeSide),
-    ClientSurface(Vec<Option<ClientSurfaceCell>>),
+    /// [`HostCall::ClientSurfaceColumns`], parallel to the request queries:
+    /// `None` = column unknown to the replica; a reply without cell bytes =
+    /// unchanged since the queried revision.
+    ClientSurfaceColumns(Vec<Option<ClientSurfaceColumn>>),
     ClientTextSize([u16; 2]),
     ClientStorageValues(Vec<Option<Vec<u8>>>),
     /// [`HostCall::ResolveItem`]: `None` = unknown item name.
@@ -1052,9 +1067,23 @@ mod tests {
             key: "key_m".into(),
             action_id: 1,
         });
-        roundtrip(HostCall::ClientSurface {
-            center: [-12, 34],
-            radius: 96,
+        roundtrip(HostCall::ClientSurfaceColumns {
+            queries: vec![
+                ClientSurfaceQuery {
+                    coord: [-12, 34],
+                    revision: 0,
+                },
+                ClientSurfaceQuery {
+                    coord: [3, -4],
+                    revision: 17,
+                },
+            ],
+        });
+        roundtrip(HostCall::ClientImageBlit {
+            key: "minimap:full_tile_0".into(),
+            origin: [32, 64],
+            size: [2, 1],
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
         });
         roundtrip(HostCall::ClientUiStateSet {
             key: "minimap:waypoint_name".into(),
@@ -1115,11 +1144,15 @@ mod tests {
             entries: vec![("minimap:tile/-1/2".into(), vec![7, 8, 9])],
         });
         roundtrip(HostRet::RuntimeSide(RuntimeSide::Client));
-        roundtrip(HostRet::ClientSurface(vec![
+        roundtrip(HostRet::ClientSurfaceColumns(vec![
             None,
-            Some(ClientSurfaceCell {
-                height: 71,
-                rgb: [42, 96, 31],
+            Some(ClientSurfaceColumn {
+                revision: 9,
+                cells: None,
+            }),
+            Some(ClientSurfaceColumn {
+                revision: 12,
+                cells: Some(vec![71, 0, 42, 96, 31]),
             }),
         ]));
         roundtrip(HostRet::ClientStorageValues(vec![

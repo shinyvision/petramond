@@ -351,10 +351,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
-        | HostCall::ClientSurface { .. }
+        | HostCall::ClientSurfaceColumns { .. }
         | HostCall::ClientUiStateSet { .. }
         | HostCall::ClientUiStateGet { .. }
         | HostCall::ClientImageSet { .. }
+        | HostCall::ClientImageBlit { .. }
         | HostCall::ClientTextMeasure { .. }
         | HostCall::ClientImageDrawTexts { .. }
         | HostCall::ClientGuiOpen { .. }

@@ -155,7 +155,10 @@ impl World {
             let old = col.surface_y(lx, lz);
             col.raise_surface(lx, lz, wy);
             let changed = wy > old;
-            if changed {
+            // wy == old replaced the visible surface block in place: the
+            // heightmap is unchanged but surface consumers (map sampling)
+            // still need the revision to move.
+            if wy >= old {
                 self.bump_column_payload_revision(cpos);
             }
             return changed;
