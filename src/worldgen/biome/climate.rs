@@ -419,6 +419,11 @@ pub(crate) struct ClimateSampleCell {
 }
 
 impl ClimateSampleCell {
+    /// Raw cell coordinates, for world-anchored memo keys.
+    pub(crate) fn coords(self) -> (i32, i32, i32) {
+        (self.x, self.y, self.z)
+    }
+
     pub(crate) fn surface(wx: i32, wz: i32) -> Self {
         Self {
             x: wx.div_euclid(CLIMATE_SAMPLE_CELL_X),

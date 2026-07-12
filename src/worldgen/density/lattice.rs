@@ -9,7 +9,9 @@
 //! pure scan derives top solid surfaces from interpolated density sign
 //! (`> 0.0` solid, `<= 0.0` air) without writing blocks.
 
-use crate::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use crate::chunk::CHUNK_SY;
+#[cfg(test)]
+use crate::chunk::{CHUNK_SX, CHUNK_SZ};
 
 use super::super::graph::{SamplePoint, ScalarGraph};
 
@@ -103,6 +105,7 @@ impl DensityLatticeBounds {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn chunk(cx: i32, cz: i32) -> Self {
         Self::new(
             cx * CHUNK_SX as i32,
@@ -123,6 +126,7 @@ impl DensityLatticeBounds {
         self.size_x * self.size_z
     }
 
+    #[cfg(test)]
     pub(crate) fn world_x(self, local_x: usize) -> i32 {
         assert!(
             local_x < self.size_x,
@@ -131,6 +135,7 @@ impl DensityLatticeBounds {
         axis_coord(self.origin_x, local_x, "density lattice local X")
     }
 
+    #[cfg(test)]
     pub(crate) fn world_y(self, local_y: usize) -> i32 {
         assert!(
             local_y < self.size_y,
@@ -139,6 +144,7 @@ impl DensityLatticeBounds {
         axis_coord(self.origin_y, local_y, "density lattice local Y")
     }
 
+    #[cfg(test)]
     pub(crate) fn world_z(self, local_z: usize) -> i32 {
         assert!(
             local_z < self.size_z,
@@ -275,6 +281,7 @@ impl DensityLattice {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn density_at_local(&self, x: usize, y: usize, z: usize) -> f64 {
         let wx = self.bounds.world_x(x);
         let wy = self.bounds.world_y(y);
@@ -291,6 +298,7 @@ impl DensityLattice {
         self.interpolate_at_world(wx, wy, wz)
     }
 
+    #[cfg(test)]
     pub(crate) fn solid_at_local(&self, x: usize, y: usize, z: usize) -> bool {
         density_is_solid(self.density_at_local(x, y, z))
     }
@@ -316,6 +324,7 @@ impl DensityLattice {
         mask
     }
 
+    #[cfg(test)]
     pub(crate) fn top_solid_surface(&self, x: usize, z: usize) -> Option<i32> {
         assert!(
             x < self.bounds.size_x && z < self.bounds.size_z,
@@ -463,6 +472,7 @@ impl DensityLattice {
         lerp(y0, y1, tz)
     }
 
+    #[cfg(test)]
     fn interpolate_at_world(&self, wx: i32, wy: i32, wz: i32) -> f64 {
         let (sx, tx) = self.sample_x.position(wx);
         let (sy, ty) = self.sample_y.position(wy);

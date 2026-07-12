@@ -22,7 +22,8 @@ use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
     apply_gen_writes, feature_candidate_bounds, feature_region_bounds, place_features_section,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
-    vegetation, ColumnFeatureField, RuntimeFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE,
+    cached_feature_region, vegetation, ColumnFeatureField, RuntimeFeatureField,
+    SurfaceHeights, MAX_TREE_REACH_ABOVE,
     TREELINE,
 };
 use super::noise::height::CaveField;
@@ -283,7 +284,21 @@ impl ChunkGenerator {
     /// padded feature region.
     pub fn generate_surface(&self, cx: i32, cz: i32) -> Chunk {
         let mut proto = ProtoChunk::new(cx, cz);
-        self.surface_density.fill_chunk_direct(&mut proto);
+        // Per-column biome + surface from the shared window tile memo — the
+        // same tile the carve and feature stages read — so terrain fill no
+        // longer builds its own lattice or re-classifies climate.
+        let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
+        let (region, raw) = cached_feature_region(
+            &self.surface_density,
+            &self.caves,
+            self.seed,
+            ox,
+            oz,
+            CHUNK_SX,
+            CHUNK_SZ,
+        );
+        self.surface_density
+            .fill_chunk_from(&mut proto, &region.biomes, &raw);
         proto.into_chunk()
     }
 
@@ -292,9 +307,18 @@ impl ChunkGenerator {
     /// [`ColumnGen`].
     pub fn carve_caves(&self, chunk: &mut Chunk) {
         let (ox, oz) = chunk.chunk_origin_world();
-        let surf = self
-            .surface_density
-            .surface_heights(ox, oz, CHUNK_SX, CHUNK_SZ);
+        // Raw surfaces via the shared window tile memo — the feature stage
+        // needs this chunk's tile anyway, so the carve query is free on hit
+        // and pre-warms it on miss.
+        let (_region, surf) = cached_feature_region(
+            &self.surface_density,
+            &self.caves,
+            self.seed,
+            ox,
+            oz,
+            CHUNK_SX,
+            CHUNK_SZ,
+        );
         self.caves.carve_chunk(chunk, &surf);
     }
 
@@ -317,7 +341,8 @@ impl ChunkGenerator {
     /// region; the windows come out cave-adjusted (mouths are not tree roots).
     pub fn place_features_runtime(&self, chunk: &mut Chunk) {
         let (ox, oz) = chunk.chunk_origin_world();
-        let mut field = RuntimeFeatureField::new(&self.surface_density, &self.caves, ox, oz);
+        let mut field =
+            RuntimeFeatureField::new(&self.surface_density, &self.caves, self.seed, ox, oz);
         super::feature::place_features_with_field(chunk, &mut field, self.seed);
     }
 
@@ -332,8 +357,18 @@ impl ChunkGenerator {
 
         // Candidate window (chunk + spacing margin): full biome + surface. The chunk's
         // own 16×16 biome/surface is the centre of this region, so no separate query.
+        // Served by the per-thread window memo; `raw_surf` carries the
+        // pre-cave-adjustment surfaces the column core stores.
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
+        let (candidates, raw_surf) = cached_feature_region(
+            &self.surface_density,
+            &self.caves,
+            self.seed,
+            cx0,
+            cz0,
+            cw,
+            ch,
+        );
 
         const MESH_BIOME_RADIUS: i32 = 2;
         const MESH_BIOME_SIDE: usize = SECTION_SIZE + MESH_BIOME_RADIUS as usize * 2;
@@ -344,7 +379,10 @@ impl ChunkGenerator {
         let (mut surf_min, mut surf_max) = (i32::MAX, i32::MIN);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
-                let (s, b) = candidates.at(ox + x as i32, oz + z as i32);
+                let wx = ox + x as i32;
+                let wz = oz + z as i32;
+                let (_, b) = candidates.at(wx, wz);
+                let s = raw_surf[(wz - cz0) as usize * cw + (wx - cx0) as usize];
                 let i = z * SECTION_SIZE + x;
                 biome[i] = b.id();
                 surf[i] = s;
@@ -429,30 +467,34 @@ impl ChunkGenerator {
     fn build_feature_windows(&self, cx: i32, cz: i32) -> FeatureWindows {
         let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let candidates = self.surface_density.region(cx0, cz0, cw, ch);
+        let (candidates, _raw) = cached_feature_region(
+            &self.surface_density,
+            &self.caves,
+            self.seed,
+            cx0,
+            cz0,
+            cw,
+            ch,
+        );
         self.finish_feature_windows(ox, oz, candidates)
     }
 
-    /// Cave-adjust the raw candidate region and build the redwood-support halo:
-    /// the shared tail of [`generate_column_gen`] and [`build_feature_windows`].
+    /// Build the redwood-support halo over the (already cave-adjusted)
+    /// candidate region: the shared tail of [`generate_column_gen`] and
+    /// [`build_feature_windows`]. `candidates` must come from
+    /// `cached_feature_region`.
     fn finish_feature_windows(
         &self,
         ox: i32,
         oz: i32,
-        mut candidates: RegionCells,
+        candidates: RegionCells,
     ) -> FeatureWindows {
-        let mut needs_support = false;
-        for (i, s) in candidates.surf.iter_mut().enumerate() {
-            let wx = candidates.x0 + (i % candidates.w) as i32;
-            let wz = candidates.z0 + (i / candidates.w) as i32;
-            *s = self.caves.feature_surface_after_caves(wx, wz, *s);
-            if matches!(
-                super::biome::spec(candidates.biomes[i]).trees.support,
+        let needs_support = candidates.biomes.iter().any(|b| {
+            matches!(
+                super::biome::spec(*b).trees.support,
                 super::biome::TreeSupport::RedwoodBase
-            ) {
-                needs_support = true;
-            }
-        }
+            )
+        });
 
         // Support window (the larger redwood-support halo): surfaces only, and ONLY when
         // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
@@ -460,13 +502,16 @@ impl ChunkGenerator {
         let support = needs_support.then(|| {
             let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
             debug_assert_eq!(sw, sh);
-            let mut support_surf = self.surface_density.surface_heights(sx0, sz0, sw, sh);
-            for (i, s) in support_surf.iter_mut().enumerate() {
-                let wx = sx0 + (i % sw) as i32;
-                let wz = sz0 + (i / sw) as i32;
-                *s = self.caves.feature_surface_after_caves(wx, wz, *s);
-            }
-            SurfaceHeights::new(sx0, sz0, sw, support_surf)
+            let (region, _raw) = cached_feature_region(
+                &self.surface_density,
+                &self.caves,
+                self.seed,
+                sx0,
+                sz0,
+                sw,
+                sh,
+            );
+            SurfaceHeights::new(sx0, sz0, sw, region.surf)
         });
 
         FeatureWindows {

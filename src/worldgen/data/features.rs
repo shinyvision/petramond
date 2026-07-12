@@ -11,7 +11,7 @@ use crate::worldgen::feature::placers::foliage::{
 };
 use crate::worldgen::feature::placers::trunk::{LeaningTrunk, StraightTrunk};
 use crate::worldgen::feature::tree::{
-    CanopyTreeFeature, GiantOakFeature, RedwoodFeature, TreeFeature,
+    BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, TreeFeature,
 };
 use crate::worldgen::feature::ConfiguredFeature;
 use crate::worldgen::rng::FeatureRng;
@@ -38,20 +38,34 @@ static CONIFER_SMALL: ConiferFoliage = ConiferFoliage {
     skirt_ragged: 0.25,
 };
 
-// Tree shapes. Broadleaf species ride `CanopyTreeFeature` — the stylized
-// skeleton-and-clumps silhouette (storybook look) — with per-species width,
-// limb count and clump size. Horizontal footprint = reach.1 + tip_radius.1;
-// keep it ≤ proto::MARGIN (9).
-static OAK_SMALL_F: CanopyTreeFeature = CanopyTreeFeature {
+// Tree shapes. Oaks ride `BlockyOakFeature` — the tuned concept silhouette
+// (wandering flared trunk, surface roots, levelled turning/splitting branches,
+// eroded cuboid leaf clumps) — in three sizes: young, standard, and grand
+// (the vouched-for tuning; the smaller two scale it down). Branch walks fence
+// at `tree::TIP_FENCE`, so keep reach_max.1 ≤ that (== proto::MARGIN − 5) and
+// leaf_radius at 2. Other broadleaf species (birch, jungle) keep
+// `CanopyTreeFeature`, the rounded skeleton-and-clumps silhouette.
+static OAK_YOUNG_F: BlockyOakFeature = BlockyOakFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
-    height: (6, 8),
-    split: 0.50,
-    limbs: (3, 5),
-    reach: (2, 4),
-    tip_radius: (2, 3),
-    crown_radius: 3,
-    round: 0.60,
+    height: (10, 13),
+    levels: (2, 3),
+    reach_min: 3,
+    reach_max: (4, 6),
+    roots: (3, 5),
+    root_reach: (2, 4),
+    leaf_radius: 2,
+};
+static OAK_SMALL_F: BlockyOakFeature = BlockyOakFeature {
+    log: Block::OakLog,
+    leaf: Block::OakLeaves,
+    height: (14, 18),
+    levels: (3, 4),
+    reach_min: 4,
+    reach_max: (6, 8),
+    roots: (4, 6),
+    root_reach: (3, 5),
+    leaf_radius: 2,
 };
 static OAK_SWAMP_F: TreeFeature = TreeFeature {
     trunk: &STRAIGHT,
@@ -60,11 +74,18 @@ static OAK_SWAMP_F: TreeFeature = TreeFeature {
     leaf: Block::OakLeaves,
     height: (5, 7),
 };
-// Big single-trunk fancy oak; limbs+crown reach ~5.
-static OAK_BIG_F: GiantOakFeature = GiantOakFeature {
+// Grand oak — the landmark tree, at the exact tuning that playtested well
+// (2026-07-12): trunk 20–26, levels 4–6, reach up to 11, roots 5–8.
+static OAK_BIG_F: BlockyOakFeature = BlockyOakFeature {
     log: Block::OakLog,
     leaf: Block::OakLeaves,
-    height: (9, 14),
+    height: (20, 26),
+    levels: (4, 6),
+    reach_min: 5,
+    reach_max: (8, 11),
+    roots: (5, 8),
+    root_reach: (5, 7),
+    leaf_radius: 2,
 };
 // Huge redwood; tall trunk + long spreading limbs + wide crown, built from the
 // dedicated redwood log/leaf blocks.
@@ -112,6 +133,9 @@ static ACACIA_F: TreeFeature = TreeFeature {
     height: (5, 8),
 };
 
+pub static OAK_YOUNG: ConfiguredFeature = ConfiguredFeature {
+    feature: &OAK_YOUNG_F,
+};
 pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_SMALL_F,
 };
@@ -130,8 +154,8 @@ pub static JUNGLE: ConfiguredFeature = ConfiguredFeature { feature: &JUNGLE_F };
 pub static ACACIA: ConfiguredFeature = ConfiguredFeature { feature: &ACACIA_F };
 
 /// Pick the tree a placed sapling grows into when it matures (see
-/// `world::sapling`). An oak sapling becomes the big fancy oak 20% of the time and
-/// the ordinary small oak otherwise (the task's rule); every other sapling grows
+/// `world::sapling`). An oak sapling becomes the grand oak 20% of the time and
+/// the ordinary standard oak otherwise (the task's rule); every other sapling grows
 /// into the single feature for its species. `rng` is drawn for the oak roll and
 /// then consumed by the chosen feature's own geometry. A non-sapling block can't
 /// reach here from the sapling behaviour; it falls back to the small oak.

@@ -103,6 +103,11 @@ impl SurfaceDensitySystem {
         }
     }
 
+    /// Reference whole-chunk fill via the density lattice — superseded by
+    /// [`fill_chunk_from`](Self::fill_chunk_from) in production, kept as the
+    /// independent implementation `direct_fill_matches_region_fill` pins the
+    /// surf-driven fill against.
+    #[cfg(test)]
     pub(crate) fn fill_chunk_direct(&self, proto: &mut ProtoChunk) {
         let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
         let lattice = self.master_density_lattice(bounds);
@@ -117,6 +122,74 @@ impl SurfaceDensitySystem {
                 let biome = self.biome_at_cell(&mut cells, wx, wz, surf_y);
                 proto.set_biome(x, z, biome.id());
                 self.fill_column(proto.terrain_blocks_mut(), &lattice, x, z, wx, wz, biome);
+            }
+        }
+    }
+
+    /// Fill one whole chunk from precomputed per-column `(biome, surf)` — no
+    /// density lattice: `master_density` is depth-only and exactly linear in
+    /// Y, so a voxel is solid IFF `wy <= surf`, the same equivalence
+    /// [`fill_section`](Self::fill_section) relies on. The run below the
+    /// deepest depth-gated skin band resolves to one (depth-independent)
+    /// block computed once. Byte-identical to [`fill_chunk_direct`], pinned
+    /// by `direct_fill_matches_region_fill`.
+    pub(crate) fn fill_chunk_from(&self, proto: &mut ProtoChunk, biomes: &[Biome], surf: &[i32]) {
+        debug_assert_eq!(biomes.len(), CHUNK_SX * CHUNK_SZ);
+        debug_assert_eq!(surf.len(), CHUNK_SX * CHUNK_SZ);
+        let (ox, oz) = proto.chunk_origin_world();
+        let seed = self.seed;
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                let i = z * CHUNK_SX + x;
+                let biome = biomes[i];
+                proto.set_biome(x, z, biome.id());
+                let s = surf[i];
+                let rule = spec(biome).surface;
+                let (wx, wz) = (ox + x as i32, oz + z as i32);
+                let blocks = proto.terrain_blocks_mut();
+
+                // Water fills non-solid cells at/below sea level; air stays
+                // zeroed.
+                for y in (s + 1).max(0)..=SEA_LEVEL {
+                    blocks[idx(x, y as usize, z)] = Block::Water.id();
+                }
+                if s < 0 {
+                    continue;
+                }
+                let top = s.min(CHUNK_SY as i32 - 1);
+
+                // Deep uniform run below the skin band: one skin call fills it.
+                let band_lo = (s - MAX_SKIN_BAND_DEPTH).max(0);
+                if band_lo > 0 {
+                    let deep = self
+                        .surface
+                        .skin_block(
+                            &SurfaceCtx {
+                                seed,
+                                wx,
+                                wz,
+                                y: 0,
+                                surf_y: s,
+                                depth_from_top: s as u32,
+                            },
+                            rule,
+                        )
+                        .id();
+                    for y in 0..band_lo {
+                        blocks[idx(x, y as usize, z)] = deep;
+                    }
+                }
+                for y in band_lo..=top {
+                    let ctx = SurfaceCtx {
+                        seed,
+                        wx,
+                        wz,
+                        y,
+                        surf_y: s,
+                        depth_from_top: (s - y) as u32,
+                    };
+                    blocks[idx(x, y as usize, z)] = self.surface.skin_block(&ctx, rule).id();
+                }
             }
         }
     }
@@ -194,6 +267,7 @@ impl SurfaceDensitySystem {
         }
     }
 
+    #[cfg(test)]
     fn fill_column(
         &self,
         blocks: &mut [u8],
@@ -246,7 +320,7 @@ impl SurfaceDensitySystem {
     /// that lands in it, reuses one sample+classify instead of recomputing. Output
     /// stays a pure function of `(seed, cell)`, independent of call order.
     fn climate_cells(&self) -> ClimateCellCache<'_> {
-        ClimateCellCache::new(ClimateSampler::new(self.density.graph()), &self.climate)
+        ClimateCellCache::new(ClimateSampler::new(self.density.graph()), &self.climate, self.seed)
     }
 
     fn biome_at_cell(
@@ -327,6 +401,7 @@ struct CellClimate {
 struct ClimateCellCache<'a> {
     sampler: ClimateSampler<'a>,
     index: &'a BiomeClimateIndex,
+    seed: u32,
     /// Raw climate sampled once per 4×4 cell corner (the expensive noise step).
     climate: HashMap<ClimateSampleCell, SurfaceClimate>,
     /// Coarse per-cell classification of that corner — only the cheap ocean
@@ -334,11 +409,53 @@ struct ClimateCellCache<'a> {
     base: HashMap<ClimateSampleCell, Biome>,
 }
 
+/// One memoized quart-cell climate sample.
+#[derive(Clone, Copy)]
+struct ClimateMemoEntry {
+    init: bool,
+    seed: u32,
+    cell: ClimateSampleCell,
+    climate: SurfaceClimate,
+}
+
+/// Per-thread, world-anchored memo of raw quart-cell climate samples (the
+/// 5-channel double-perlin — the expensive step). A fresh [`ClimateCellCache`]
+/// is built per region call, and adjacent window tiles share edge cells, so
+/// without this the same quart corner is re-sampled by several tile builds.
+/// Keyed by exact `(seed, cell)`: pure dedupe, values byte-identical.
+const CLIMATE_MEMO_BITS: u32 = 15;
+
+thread_local! {
+    static CLIMATE_MEMO: std::cell::RefCell<Box<[ClimateMemoEntry]>> =
+        std::cell::RefCell::new(
+            vec![
+                ClimateMemoEntry {
+                    init: false,
+                    seed: 0,
+                    cell: ClimateSampleCell::surface(0, 0),
+                    climate: SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.0),
+                };
+                1 << CLIMATE_MEMO_BITS
+            ]
+            .into_boxed_slice(),
+        );
+}
+
+fn climate_memo_idx(seed: u32, cell: ClimateSampleCell) -> usize {
+    let (x, y, z) = cell.coords();
+    let key = (((x as u32 as u64) << 32) | (z as u32 as u64))
+        ^ ((seed as u64) << 16)
+        ^ ((y as u32 as u64) << 8);
+    let h = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    (h >> (64 - CLIMATE_MEMO_BITS)) as usize
+}
+
 impl<'a> ClimateCellCache<'a> {
-    fn new(sampler: ClimateSampler<'a>, index: &'a BiomeClimateIndex) -> Self {
+    fn new(sampler: ClimateSampler<'a>, index: &'a BiomeClimateIndex, seed: u32) -> Self {
         Self {
             sampler,
             index,
+            seed,
             climate: HashMap::new(),
             base: HashMap::new(),
         }
@@ -348,11 +465,26 @@ impl<'a> ClimateCellCache<'a> {
         if let Some(cached) = self.climate.get(&cell) {
             return *cached;
         }
-        let climate = self
-            .sampler
-            .sample_surface_cell(cell)
-            .expect("surface density graph must expose climate channels")
-            .climate;
+        let seed = self.seed;
+        let sampler = self.sampler;
+        let climate = CLIMATE_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            let e = &mut memo[climate_memo_idx(seed, cell)];
+            if e.init && e.seed == seed && e.cell == cell {
+                return e.climate;
+            }
+            let climate = sampler
+                .sample_surface_cell(cell)
+                .expect("surface density graph must expose climate channels")
+                .climate;
+            *e = ClimateMemoEntry {
+                init: true,
+                seed,
+                cell,
+                climate,
+            };
+            climate
+        });
         self.climate.insert(cell, climate);
         climate
     }
@@ -703,6 +835,10 @@ mod tests {
             system.fill_chunk_direct(&mut direct_proto);
             let direct_chunk = direct_proto.into_chunk();
 
+            let mut from_proto = ProtoChunk::new(cx, cz);
+            system.fill_chunk_from(&mut from_proto, &region.biomes, &region.surf);
+            let from_chunk = from_proto.into_chunk();
+
             assert_eq!(
                 region_chunk.blocks_slice(),
                 direct_chunk.blocks_slice(),
@@ -712,6 +848,16 @@ mod tests {
                 region_chunk.biomes_slice(),
                 direct_chunk.biomes_slice(),
                 "biomes differ at ({cx},{cz})"
+            );
+            assert_eq!(
+                region_chunk.blocks_slice(),
+                from_chunk.blocks_slice(),
+                "surf-driven fill blocks differ at ({cx},{cz})"
+            );
+            assert_eq!(
+                region_chunk.biomes_slice(),
+                from_chunk.biomes_slice(),
+                "surf-driven fill biomes differ at ({cx},{cz})"
             );
         }
     }

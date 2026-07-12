@@ -14,9 +14,13 @@ use crate::chunk::Chunk;
 /// no wider buffer is needed: an in-chunk write only ever reads in-chunk cells,
 /// and a feature whose footprint <= MARGIN is materialised identically by every
 /// chunk that owns part of it (seam-consistent, no double-placement). MARGIN is
-/// sized to the widest feature (redwood branch reach + leaf blob, footprint ~9)
-/// so every tree rooted in a neighbour replays seamlessly across chunks.
-pub const MARGIN: i32 = 9;
+/// sized to the widest feature: the grand oak's fenced branch tips
+/// (`tree::TIP_FENCE` = 11) plus its widest leaf-clump overhang (satellite box
+/// offset 2 + half-extent 3). Redwoods (branch reach + leaf blob ≤ 10) fit
+/// inside that. Every tree rooted in a neighbour replays seamlessly across
+/// chunks. Raising this widens every chunk's candidate scan and padded surface
+/// region — re-time chunk generation when it changes.
+pub const MARGIN: i32 = 16;
 
 pub struct ProtoChunk {
     chunk: Chunk,
@@ -29,11 +33,13 @@ impl ProtoChunk {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub fn cx(&self) -> i32 {
         self.chunk.cx
     }
 
+    #[cfg(test)]
     #[inline]
     pub fn cz(&self) -> i32 {
         self.chunk.cz

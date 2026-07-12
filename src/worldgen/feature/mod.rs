@@ -57,6 +57,25 @@ fn feature_bounds_with_pad(ox: i32, oz: i32, pad: i32) -> (i32, i32, usize, usiz
 /// A worldgen feature: imperatively writes voxels around a world origin.
 pub trait Feature: Send + Sync {
     fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng);
+
+    /// Ground-anchoring gate, consulted for an ACCEPTED origin just before
+    /// `generate`: return false to skip the feature at this site entirely
+    /// (e.g. oak roots that would hang over a drop). `surf` is the
+    /// cave-adjusted generation surface per column; `rng` is a COPY of the
+    /// stream `generate` will receive (positioned right after the variant
+    /// pick), so an implementation may dry-run its draw prefix. Must read
+    /// only `surf` and the rng — never chunk content — and must stay within
+    /// `MAX_TREE_SPACING_RADIUS` of the origin so the candidate window covers
+    /// every read on both placement paths. Default: anchored everywhere.
+    fn is_anchored(
+        &self,
+        surf: &mut dyn FnMut(i32, i32) -> i32,
+        origin: IVec3,
+        rng: FeatureRng,
+    ) -> bool {
+        let _ = (surf, origin, rng);
+        true
+    }
 }
 
 /// A feature plus its baked parameters.
@@ -229,11 +248,6 @@ impl<'a> FeatureCtx<'a> {
         }
     }
 
-    /// Unconditional leaf write (== `leaf_blob` with `allow_overwrite = true`).
-    pub fn set_leaf_force(&mut self, p: IVec3, b: Block) {
-        self.sink.set(p, b);
-    }
-
     /// Replace a voxel only when it currently equals `expect`. Used by the
     /// underground ore / stone-blob veins, which overwrite Stone (and never air,
     /// dirt, or an already-placed ore). World coords; clipped to this chunk.
@@ -275,33 +289,31 @@ impl FeatureField for &RegionCells {
 pub(crate) struct RuntimeFeatureField<'a> {
     surface: &'a SurfaceDensitySystem,
     caves: &'a crate::worldgen::noise::height::CaveField,
+    seed: u32,
     candidates: RegionCells,
     support_bounds: (i32, i32, usize, usize),
     support_surfaces: Option<SurfaceHeights>,
 }
 
 impl<'a> RuntimeFeatureField<'a> {
-    /// Candidate surfaces are cave-adjusted EAGERLY, once per cell — the spacing
-    /// scans re-query the same cells many times over, so a per-query adjustment
-    /// multiplies the (expensive) cave surface probe by the scan fan-out. This
-    /// mirrors the cubic path's `finish_feature_windows`, so both paths read
+    /// Candidate surfaces come pre cave-adjusted from the shared per-thread
+    /// window memo (`cached_feature_region`) — eager per cell, because the
+    /// spacing scans re-query the same cells many times over. This mirrors
+    /// the cubic path's `finish_feature_windows`, so both paths read
     /// identical values.
     pub(crate) fn new(
         surface: &'a SurfaceDensitySystem,
         caves: &'a crate::worldgen::noise::height::CaveField,
+        seed: u32,
         ox: i32,
         oz: i32,
     ) -> Self {
         let (x0, z0, w, h) = feature_candidate_bounds(ox, oz);
-        let mut candidates = surface.region(x0, z0, w, h);
-        for (i, s) in candidates.surf.iter_mut().enumerate() {
-            let wx = candidates.x0 + (i % candidates.w) as i32;
-            let wz = candidates.z0 + (i / candidates.w) as i32;
-            *s = caves.feature_surface_after_caves(wx, wz, *s);
-        }
+        let (candidates, _raw) = cached_feature_region(surface, caves, seed, x0, z0, w, h);
         Self {
             surface,
             caves,
+            seed,
             candidates,
             support_bounds: feature_region_bounds(ox, oz),
             support_surfaces: None,
@@ -311,16 +323,126 @@ impl<'a> RuntimeFeatureField<'a> {
     fn support_surfaces(&mut self) -> &SurfaceHeights {
         if self.support_surfaces.is_none() {
             let (x0, z0, w, h) = self.support_bounds;
-            let mut surf = self.surface.surface_heights(x0, z0, w, h);
-            for (i, s) in surf.iter_mut().enumerate() {
-                let wx = x0 + (i % w) as i32;
-                let wz = z0 + (i / w) as i32;
-                *s = self.caves.feature_surface_after_caves(wx, wz, *s);
-            }
-            self.support_surfaces = Some(SurfaceHeights { x0, z0, w, surf });
+            let (region, _raw) =
+                cached_feature_region(self.surface, self.caves, self.seed, x0, z0, w, h);
+            self.support_surfaces = Some(SurfaceHeights::new(x0, z0, w, region.surf));
         }
         self.support_surfaces.as_ref().unwrap()
     }
+}
+
+/// One memoized 16×16 world tile of the feature windows: raw surfaces,
+/// cave-adjusted surfaces, and biomes.
+#[derive(Clone, Copy)]
+struct RegionTile {
+    init: bool,
+    seed: u32,
+    tcx: i32,
+    tcz: i32,
+    raw: [i32; 256],
+    adj: [i32; 256],
+    biomes: [Biome; 256],
+}
+
+/// Tile count of the per-thread window memo (direct-mapped, ~5 MB/thread).
+/// A streaming row touches a few hundred live tiles; 2048 keeps row-to-row
+/// revisits hitting.
+const TILE_MEMO_BITS: u32 = 11;
+
+thread_local! {
+    static TILE_MEMO: std::cell::RefCell<Box<[RegionTile]>> =
+        std::cell::RefCell::new(
+            vec![
+                RegionTile {
+                    init: false,
+                    seed: 0,
+                    tcx: 0,
+                    tcz: 0,
+                    raw: [0; 256],
+                    adj: [0; 256],
+                    biomes: [Biome::Ocean; 256],
+                };
+                1 << TILE_MEMO_BITS
+            ]
+            .into_boxed_slice(),
+        );
+}
+
+fn tile_memo_idx(seed: u32, tcx: i32, tcz: i32) -> usize {
+    let key = (((tcx as u32 as u64) << 32) | (tcz as u32 as u64)) ^ ((seed as u64) << 16);
+    let h = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    (h >> (64 - TILE_MEMO_BITS)) as usize
+}
+
+/// The feature window for `(x0,z0,w,h)`: cave-adjusted surfaces + biomes in
+/// the returned [`RegionCells`], plus the RAW (pre-adjustment) surfaces the
+/// column core needs. Assembled from per-thread memoized 16×16 world tiles:
+/// neighbouring chunks' candidate windows overlap ~18×, and this window
+/// build dominated whole-world generation (~75%, 2026-07-13) before the
+/// memo. Tiles are the memo unit because windows are chunk-aligned — every
+/// window covers whole tiles, so a tile computes once and is copied ever
+/// after (per-cell memoization died by scattered evictions defeating bulk
+/// recomputation).
+///
+/// Byte-identical by construction: a tile is keyed by exact
+/// `(seed, tile coords)` and every value is a pure world-anchored function of
+/// that key (the density lattice's corner grid is world-anchored, so region
+/// bounds don't affect per-column results) — the memo can only dedupe work.
+/// `runtime_field_matches_full_region_field` pins this against an uncached
+/// reference.
+pub(crate) fn cached_feature_region(
+    surface: &SurfaceDensitySystem,
+    caves: &crate::worldgen::noise::height::CaveField,
+    seed: u32,
+    x0: i32,
+    z0: i32,
+    w: usize,
+    h: usize,
+) -> (RegionCells, Vec<i32>) {
+    const T: i32 = CHUNK_SX as i32;
+    let mut region = RegionCells::new(x0, z0, w, h);
+    let mut raw = vec![0i32; w * h];
+    let (x1, z1) = (x0 + w as i32, z0 + h as i32);
+
+    TILE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
+            for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
+                let tile = &mut memo[tile_memo_idx(seed, tcx, tcz)];
+                if !(tile.init && tile.seed == seed && tile.tcx == tcx && tile.tcz == tcz) {
+                    let (tx0, tz0) = (tcx * T, tcz * T);
+                    let bulk = surface.region(tx0, tz0, T as usize, T as usize);
+                    tile.init = true;
+                    tile.seed = seed;
+                    tile.tcx = tcx;
+                    tile.tcz = tcz;
+                    for i in 0..(T * T) as usize {
+                        let wx = tx0 + (i % T as usize) as i32;
+                        let wz = tz0 + (i / T as usize) as i32;
+                        tile.raw[i] = bulk.surf[i];
+                        tile.adj[i] = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
+                        tile.biomes[i] = bulk.biomes[i];
+                    }
+                }
+                // Copy the tile ∩ window intersection.
+                let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
+                let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));
+                for wz in iz0..iz1 {
+                    let trow = ((wz - tcz * T) * T) as usize;
+                    let rrow = (wz - z0) as usize * w;
+                    for wx in ix0..ix1 {
+                        let ti = trow + (wx - tcx * T) as usize;
+                        let ri = rrow + (wx - x0) as usize;
+                        region.surf[ri] = tile.adj[ti];
+                        region.biomes[ri] = tile.biomes[ti];
+                        raw[ri] = tile.raw[ti];
+                    }
+                }
+            }
+        }
+    });
+
+    (region, raw)
 }
 
 impl FeatureField for RuntimeFeatureField<'_> {
@@ -598,8 +720,21 @@ fn place_feature_origins(
             let _density_hit = rng.chance(candidate.density);
             debug_assert!(_density_hit);
             let cf = (spec(candidate.biome).trees.picker)(&mut rng);
-            cf.feature
-                .generate(ctx, IVec3::new(wx, candidate.anchor, wz), &mut rng);
+            let origin = IVec3::new(wx, candidate.anchor, wz);
+            // Ground-anchoring gate, on the accepted origin only. Spacing-scan
+            // neighbours are NOT gated, so an unanchorable neighbour still
+            // suppresses candidates around it — deterministic either way, and
+            // it keeps the gate's surface reads inside the candidate window
+            // (origins lie within MARGIN of the chunk; the gate adds at most
+            // MAX_TREE_SPACING_RADIUS). Every chunk replaying this origin
+            // reaches the same verdict: the window values are world-anchored.
+            if !cf
+                .feature
+                .is_anchored(&mut |sx, sz| field.surf_at(sx, sz), origin, rng)
+            {
+                continue;
+            }
+            cf.feature.generate(ctx, origin, &mut rng);
         }
     }
 }
@@ -630,6 +765,35 @@ mod tests {
         region
     }
 
+    /// Unclipped write collector: trees now overhang a single chunk (footprint
+    /// up to MARGIN), so the shape invariants below inspect the feature's FULL
+    /// write set instead of one chunk's clipped slice.
+    struct MapSink(std::collections::HashMap<crate::mathh::IVec3, Block>);
+
+    impl super::VoxelSink for MapSink {
+        fn get(&self, p: crate::mathh::IVec3) -> Block {
+            self.0.get(&p).copied().unwrap_or(Block::Air)
+        }
+        fn set(&mut self, p: crate::mathh::IVec3, b: Block) {
+            self.0.insert(p, b);
+        }
+    }
+
+    fn generate_into_map(
+        feat: &'static super::ConfiguredFeature,
+        seed: u32,
+    ) -> std::collections::HashMap<crate::mathh::IVec3, Block> {
+        use crate::mathh::IVec3;
+        use crate::worldgen::rng::FeatureRng;
+        let mut sink = MapSink(std::collections::HashMap::new());
+        let mut rng = FeatureRng::positional(seed, 0xACAC, 0, 0, 0);
+        {
+            let mut ctx = super::FeatureCtx::new(&mut sink);
+            feat.feature.generate(&mut ctx, IVec3::new(0, 64, 0), &mut rng);
+        }
+        sink.0
+    }
+
     /// Every leaf a configured tree places must reach one of its logs within
     /// `MAX_LOG_DISTANCE` FACE-steps travelling only through leaves — the exact
     /// rule `block::behavior::leaves` decays against. Diagonal-only attachment (the
@@ -637,55 +801,38 @@ mod tests {
     /// silently rot after generation.
     #[test]
     fn configured_trees_place_only_orthogonally_supported_leaves() {
-        use super::{ChunkSink, FeatureCtx};
-        use crate::mathh::IVec3;
-        use crate::worldgen::data::features::{ACACIA, OAK_BIG, OAK_SMALL, REDWOOD, SPRUCE};
-        use crate::worldgen::rng::FeatureRng;
+        use crate::worldgen::data::features::{
+            ACACIA, OAK_BIG, OAK_SMALL, OAK_YOUNG, REDWOOD, SPRUCE,
+        };
         use std::collections::{HashSet, VecDeque};
 
         const MAX_LOG_DISTANCE: i32 = 6; // mirrors block::behavior::leaves
-        const FACES: [IVec3; 6] = [
-            IVec3::new(1, 0, 0),
-            IVec3::new(-1, 0, 0),
-            IVec3::new(0, 1, 0),
-            IVec3::new(0, -1, 0),
-            IVec3::new(0, 0, 1),
-            IVec3::new(0, 0, -1),
+        const FACES: [(i32, i32, i32); 6] = [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
         ];
 
         for (name, feat) in [
             ("acacia", &ACACIA),
+            ("oak_young", &OAK_YOUNG),
             ("oak_small", &OAK_SMALL),
             ("oak_big", &OAK_BIG),
             ("spruce", &SPRUCE),
             ("redwood", &REDWOOD),
         ] {
-            for seed in [1u32, 7, 42, 1000, 31337] {
-                // Root at chunk centre so the whole tree lands in one chunk (world
-                // coords == local for chunk 0,0); edge leaves still reach the trunk
-                // by stepping inward, so nothing falsely fails at a chunk border.
-                let origin = IVec3::new(8, 64, 8);
-                let mut chunk = Chunk::new(0, 0);
-                let mut rng = FeatureRng::positional(seed, 0xACAC, origin.x, 0, origin.z);
-                {
-                    let mut sink = ChunkSink::new(&mut chunk);
-                    let mut ctx = FeatureCtx::new(&mut sink);
-                    feat.feature.generate(&mut ctx, origin, &mut rng);
-                }
-
+            for seed in [1u32, 7, 42, 99, 1000, 31337] {
+                let map = generate_into_map(feat, seed);
                 let mut leaves = HashSet::new();
                 let mut logs = HashSet::new();
-                for y in 0..CHUNK_SY {
-                    for z in 0..CHUNK_SZ {
-                        for x in 0..CHUNK_SX {
-                            let p = (x as i32, y as i32, z as i32);
-                            let b = chunk.block(x, y, z);
-                            if b.is_leaves() {
-                                leaves.insert(p);
-                            } else if b.is_log() {
-                                logs.insert(p);
-                            }
-                        }
+                for (p, b) in &map {
+                    if b.is_leaves() {
+                        leaves.insert((p.x, p.y, p.z));
+                    } else if b.is_log() {
+                        logs.insert((p.x, p.y, p.z));
                     }
                 }
                 assert!(!leaves.is_empty(), "{name} seed {seed}: placed no leaves");
@@ -695,8 +842,8 @@ mod tests {
                     let mut frontier = VecDeque::from([(start, 0)]);
                     let mut supported = false;
                     'bfs: while let Some(((sx, sy, sz), dist)) = frontier.pop_front() {
-                        for d in FACES {
-                            let n = (sx + d.x, sy + d.y, sz + d.z);
+                        for (dx, dy, dz) in FACES {
+                            let n = (sx + dx, sy + dy, sz + dz);
                             if logs.contains(&n) {
                                 supported = true;
                                 break 'bfs;
@@ -714,6 +861,79 @@ mod tests {
                         "{name} seed {seed}: leaf at {start:?} only diagonally attached — it would decay"
                     );
                 }
+            }
+        }
+    }
+
+    /// Seen from straight above, an oak's trunk top must end in leaves, never
+    /// a bare log end — the exposed-top-log artifact playtesting flagged
+    /// (2026-07-12). The trunk centre wanders within ±1 of the origin, so the
+    /// tallest log column in that window is the trunk top; its column must
+    /// hold a leaf above the log.
+    #[test]
+    fn oak_crowns_bury_the_trunk_top() {
+        use crate::worldgen::data::features::{OAK_BIG, OAK_SMALL, OAK_YOUNG};
+
+        for (name, feat) in [
+            ("oak_young", &OAK_YOUNG),
+            ("oak_small", &OAK_SMALL),
+            ("oak_big", &OAK_BIG),
+        ] {
+            for seed in [1u32, 7, 42, 99, 1000, 31337] {
+                let map = generate_into_map(feat, seed);
+                let top_log = |x: i32, z: i32| {
+                    map.iter()
+                        .filter(|(p, b)| p.x == x && p.z == z && b.is_log())
+                        .map(|(p, _)| p.y)
+                        .max()
+                };
+                let best = (-1..=1)
+                    .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+                    .filter_map(|(x, z)| top_log(x, z).map(|y| (x, z, y)))
+                    .max_by_key(|&(_, _, y)| y)
+                    .expect("trunk has logs");
+                let covered = map.iter().any(|(p, b)| {
+                    p.x == best.0 && p.z == best.1 && p.y > best.2 && b.is_leaves()
+                });
+                assert!(
+                    covered,
+                    "{name} seed {seed}: bare trunk-top log exposed at column ({}, {}), y {}",
+                    best.0, best.1, best.2
+                );
+            }
+        }
+    }
+
+    /// The oak anchoring gate: flat ground accepts, a drop under the root
+    /// splay rejects the whole tree — the floating-tree guard.
+    #[test]
+    fn oaks_refuse_sites_where_roots_would_hang() {
+        use crate::mathh::IVec3;
+        use crate::worldgen::data::features::{OAK_BIG, OAK_SMALL, OAK_YOUNG};
+        use crate::worldgen::rng::FeatureRng;
+
+        for (name, feat) in [
+            ("oak_young", &OAK_YOUNG),
+            ("oak_small", &OAK_SMALL),
+            ("oak_big", &OAK_BIG),
+        ] {
+            for seed in [1u32, 7, 42, 99, 1000, 31337] {
+                let origin = IVec3::new(0, 64, 0);
+                let rng = FeatureRng::positional(seed, 0xACAC, 0, 0, 0);
+                assert!(
+                    feat.feature.is_anchored(&mut |_, _| 64, origin, rng),
+                    "{name} seed {seed}: flat ground must anchor"
+                );
+                // Everything but the origin column drops far below: some base
+                // cell always lies off-column, so the site must be refused.
+                assert!(
+                    !feat.feature.is_anchored(
+                        &mut |x, z| if x == 0 && z == 0 { 64 } else { 40 },
+                        origin,
+                        rng,
+                    ),
+                    "{name} seed {seed}: a cliff under the roots must refuse the site"
+                );
             }
         }
     }
@@ -816,7 +1036,7 @@ mod tests {
             place_features_with_field(&mut full_chunk, &mut full_field, seed);
 
             let mut runtime_chunk = Chunk::new(cx, cz);
-            let mut field = RuntimeFeatureField::new(&surface, &caves, ox, oz);
+            let mut field = RuntimeFeatureField::new(&surface, &caves, seed, ox, oz);
             place_features_with_field(&mut runtime_chunk, &mut field, seed);
 
             assert_eq!(

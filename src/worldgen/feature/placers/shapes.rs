@@ -24,40 +24,10 @@ pub fn leaf_disc(ctx: &mut FeatureCtx, center: IVec3, radius: f32, leaf: Block) 
     }
 }
 
-/// Spherical-ish leaf blob centered at `center` (== `trees::leaf_blob`).
-/// Loop order (ly, lx, lz) and the radius test are preserved for parity.
-pub fn leaf_blob(
-    ctx: &mut FeatureCtx,
-    center: IVec3,
-    radius: i32,
-    leaf: Block,
-    allow_overwrite: bool,
-) {
-    let r = radius;
-    for ly in -r..=r {
-        for lx in -r..=r {
-            for lz in -r..=r {
-                let d2 = lx * lx + ly * ly + lz * lz;
-                if d2 > r * r + 1 {
-                    continue;
-                }
-                if d2 > r * r - 1 && (lx.abs() == r || lz.abs() == r || ly.abs() == r) {
-                    continue;
-                }
-                let p = IVec3::new(center.x + lx, center.y + ly, center.z + lz);
-                if allow_overwrite {
-                    ctx.set_leaf_force(p, leaf);
-                } else {
-                    ctx.set_leaf(p, leaf);
-                }
-            }
-        }
-    }
-}
-
-/// Like [`leaf_blob`] but rounds the box corners: at small radii `leaf_blob` is a
-/// near-solid cube (r=2 fills the whole 3×3×3, since the 8 corners sit at
-/// `d²=3 ≤ r²`), which reads as a literal block of leaves. Each corner-ish cell —
+/// Spherical-ish leaf blob with rounded box corners: a plain radius test at
+/// small radii yields a near-solid cube (r=2 fills the whole 3×3×3, since the
+/// 8 corners sit at `d²=3 ≤ r²`), which reads as a literal block of leaves.
+/// Each corner-ish cell —
 /// one on the outer shell with NO axis at zero, i.e. the bits that bulge the
 /// sphere toward a box corner — is trimmed with probability `round`, so the mass
 /// reads as a rounded clump. `round` near 1 gives an octahedral clump; 0 is the

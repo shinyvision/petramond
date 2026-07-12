@@ -39,6 +39,10 @@ fn positional_state(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> u64 {
 }
 
 /// xorshift64 RNG seeded deterministically from world seed + position + salt.
+/// `Copy` is deliberate: pre-placement probes (e.g. the oak anchoring gate)
+/// dry-run a feature's draw prefix on a copy so the real placement still sees
+/// the unconsumed stream.
+#[derive(Clone, Copy)]
 pub struct FeatureRng {
     state: u64,
 }

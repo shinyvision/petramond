@@ -16,18 +16,21 @@
 //!
 //! Growth: on each random tick a sapling has a 50% chance to advance one stage;
 //! there are three stages (`0..=2`), and a successful roll at the last stage grows
-//! the sapling into a tree instead of advancing. Oak grows the big fancy oak 20% of
+//! the sapling into a tree instead of advancing. Oak grows the grand oak 20% of
 //! the time and the ordinary oak otherwise; every other sapling grows its species
 //! tree (see [`sapling_tree`](crate::worldgen::data::features::sapling_tree)). A
-//! tree only grows if every block it would place lands in air, or passes through a
-//! log or leaves already in the way (existing logs are kept; leaves yield) — any
-//! other block in the footprint refuses growth, and the sapling waits and tries
-//! again later.
+//! tree only grows if its roots are anchored (the feature's `is_anchored` gate —
+//! no floating trees off cliff edges) and every block it would place lands in
+//! air, or passes through a log, leaves, or a fragile plant already in the way
+//! (existing logs are kept; leaves and plants yield, so grass tufts on the
+//! forest floor never block the oak root splay) — any other block in the
+//! footprint refuses growth, and the sapling waits and tries again later.
 
 use std::collections::HashMap;
 
 use crate::block::{Block, BlockBehavior};
 use crate::mathh::IVec3;
+use crate::section::SectionSummary;
 use crate::worldgen::feature::{FeatureCtx, VoxelSink};
 use crate::worldgen::rng::FeatureRng;
 
@@ -110,17 +113,46 @@ impl World {
     }
 
     /// Try to grow the sapling at `pos` (block `sapling`) into its tree. Picks the
-    /// tree type, generates it into an overlay over the LIVE world, and commits ONLY
-    /// IF every cell the tree would change is currently air, a log, or leaves — the
-    /// sapling's own cell (which the trunk replaces) excepted — and lies in a loaded
-    /// chunk. So a tree grows up through any logs OR leaves already in its way; only
-    /// some other block (terrain, water, a built block) refuses the growth. On
-    /// commit, pre-existing LOGS are kept (a tree never overwrites a log already
-    /// there), while leaves yield — the trunk grows through them and the new canopy
-    /// merges with them (its own leaves never overwrite existing ones). If the tree
-    /// doesn't fit, the sapling is left as-is to try again on a later tick.
+    /// tree type, checks the feature's ground-anchoring gate against the live
+    /// world (the oaks refuse a site where a root would hang over a drop — the
+    /// same no-floating-trees rule worldgen applies), generates the tree into
+    /// an overlay over the LIVE world, and commits ONLY IF every cell the tree
+    /// would change is currently air, a log, leaves, or a fragile plant — the
+    /// sapling's own cell (which the trunk replaces) excepted — and lies in a
+    /// loaded chunk (an absent section that is known empty sky counts as
+    /// loaded air). So a tree grows up through any logs OR leaves already in
+    /// its way, and its roots plow through grass tufts and flowers exactly as
+    /// worldgen trees do (the huge oak root splay would otherwise be blocked
+    /// by any tuft on a forest floor); only some other block (terrain, water,
+    /// a built block) refuses the growth. On commit, pre-existing LOGS are
+    /// kept (a tree never overwrites a log already there), while leaves and
+    /// plants yield. If the tree doesn't fit, the sapling is left as-is to try
+    /// again on a later tick.
     fn grow_sapling(&mut self, pos: IVec3, sapling: Block, rng: &mut FeatureRng) {
         let cf = crate::worldgen::data::features::sapling_tree(sapling, rng);
+
+        // Ground-anchoring gate, mirroring worldgen's accepted-origin check:
+        // a root ground cell is anchored when the block directly below it is
+        // something solid to grip (not air/water, not leaves, not a fragile
+        // plant that will shatter). The probe reports the surface as the
+        // sapling's level when anchored, and as unreachable when not, which is
+        // exactly the `surf ≥ origin.y - 1` contract `is_anchored` checks.
+        // Runs on an rng COPY so `generate` still sees the post-pick stream.
+        let anchored = cf.feature.is_anchored(
+            &mut |wx, wz| match self.block_if_loaded(wx, pos.y - 1, wz) {
+                Some(b)
+                    if b != Block::Air && b != Block::Water && !b.is_leaves() && !b.is_fragile() =>
+                {
+                    pos.y
+                }
+                _ => i32::MIN,
+            },
+            pos,
+            *rng,
+        );
+        if !anchored {
+            return;
+        }
 
         // Generate into an overlay: reads fall through to the world (and the
         // feature's own earlier writes), every write lands in `overlay`, and the
@@ -133,17 +165,26 @@ impl World {
             sink.overlay
         };
 
-        // Validate: every changed cell must be air, a log, or leaves — in a LOADED
-        // chunk. The origin holds the sapling itself, which the trunk consumes — skip
-        // it. A tree ignores logs AND leaves of any kind in its way; only some OTHER
-        // block (terrain, water, a built block) or an unloaded cell refuses growth.
+        // Validate: every changed cell must be air, a log, leaves, or a
+        // fragile plant — in a LOADED chunk. The origin holds the sapling
+        // itself, which the trunk consumes — skip it. Only some OTHER block
+        // (terrain, water, a built block) or an unloaded cell refuses growth.
         for &cell in writes.keys() {
             if cell == pos {
                 continue;
             }
             match self.block_if_loaded(cell.x, cell.y, cell.z) {
-                Some(b) if b == Block::Air || b.is_log() || b.is_leaves() => {}
-                _ => return,
+                Some(b) if b == Block::Air || b.is_log() || b.is_leaves() || b.is_fragile() => {}
+                Some(_) => return,
+                // An absent SECTION whose generated summary is empty sky is
+                // still growable air — the commit's `set_block_world`
+                // materializes it on demand. Any other absent cell (unloaded
+                // column, saved-but-unloaded, solid/water summary) refuses
+                // growth as before.
+                None => match Self::split_world(cell.x, cell.y, cell.z) {
+                    Some((sp, ..)) if self.section_summary(sp) == SectionSummary::Empty => {}
+                    _ => return,
+                },
             }
         }
 
@@ -227,9 +268,15 @@ mod tests {
     }
 
     /// Plant an oak sapling at (8,64,8) on dirt; return its position.
+    /// Plant an oak sapling at (8,64,8) on a dirt floor wide enough for the
+    /// oak root splay's anchoring gate; return its position.
     fn plant_oak(w: &mut World) -> IVec3 {
         let pos = IVec3::new(8, 64, 8);
-        w.set_block_world(8, 63, 8, Block::Dirt);
+        for z in -4..=20 {
+            for x in -4..=20 {
+                w.set_block_world(x, 63, z, Block::Dirt);
+            }
+        }
         w.set_block_world(pos.x, pos.y, pos.z, Block::OakSapling);
         pos
     }
@@ -319,6 +366,47 @@ mod tests {
             "the sapling grew past the leaves"
         );
         assert!(has_canopy(&w), "the tree grew its canopy");
+    }
+
+    /// Ground cover must never block growth: the oak root splay covers a wide
+    /// disc of forest floor, and forest floors are littered with tufts and
+    /// flowers — they yield to the tree exactly as they do in worldgen.
+    #[test]
+    fn a_tree_grows_through_ground_cover() {
+        let mut w = world_with_grove();
+        let pos = plant_oak(&mut w);
+        for (x, z) in [(6, 8), (10, 9), (8, 11), (12, 8), (5, 5)] {
+            w.set_block_world(x, 64, z, Block::ShortGrass);
+        }
+        w.set_block_world(9, 64, 6, Block::Poppy);
+        let mut rng = FeatureRng::from_state(0x1234_5678);
+        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+
+        assert!(
+            block(&w, 8, 64, 8).is_log(),
+            "ground cover must not block growth"
+        );
+        assert!(has_canopy(&w), "the tree grew its canopy");
+    }
+
+    /// The anchoring gate holds for player-grown trees too: on a lone dirt
+    /// pillar the root splay hangs over air on every side, so the sapling
+    /// waits instead of growing a floating tree.
+    #[test]
+    fn a_sapling_waits_when_roots_would_hang() {
+        let mut w = world_with_grove();
+        let pos = IVec3::new(8, 64, 8);
+        w.set_block_world(8, 63, 8, Block::Dirt);
+        w.set_block_world(pos.x, pos.y, pos.z, Block::OakSapling);
+        let mut rng = FeatureRng::from_state(0x1234_5678);
+        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+
+        assert_eq!(
+            block(&w, 8, 64, 8),
+            Block::OakSapling,
+            "the unanchorable sapling stays"
+        );
+        assert!(!has_canopy(&w), "nothing of the tree was placed");
     }
 
     #[test]

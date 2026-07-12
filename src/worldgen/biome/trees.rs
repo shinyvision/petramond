@@ -5,20 +5,26 @@ use crate::worldgen::feature::ConfiguredFeature;
 use crate::worldgen::rng::FeatureRng;
 
 pub(crate) fn oak_small(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
-    let _ = rng.next_i32(0, 99);
-    &features::OAK_SMALL
+    match rng.next_i32(0, 99) {
+        0..=39 => &features::OAK_YOUNG,
+        _ => &features::OAK_SMALL,
+    }
 }
 
+/// Forest age mix: mostly standard oaks, a scattering of young trees between
+/// them, and the occasional grand landmark oak.
 pub(crate) fn forest_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=4 => &features::OAK_BIG,
+        0..=11 => &features::OAK_BIG,
+        12..=41 => &features::OAK_YOUNG,
         _ => &features::OAK_SMALL,
     }
 }
 
 pub(crate) fn plains_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=9 => &features::OAK_BIG,
+        0..=19 => &features::OAK_BIG,
+        20..=44 => &features::OAK_YOUNG,
         _ => &features::OAK_SMALL,
     }
 }

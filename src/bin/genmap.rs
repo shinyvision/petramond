@@ -128,6 +128,11 @@ fn biome_color(id: u8) -> [u8; 3] {
 }
 
 fn save(out: &str, buf: &[u8], w: usize, h: usize) {
+    // Timing/stat runs pass /dev/null; skip the encode (the image crate can't
+    // infer a format from it) but keep the printed summaries.
+    if out == "/dev/null" {
+        return;
+    }
     image::save_buffer(out, buf, w as u32, h as u32, image::ColorType::Rgb8).expect("write png");
 }
 
@@ -139,10 +144,13 @@ fn render_topdown(seed: u32, out: &str, by_biome: bool) {
     let h = n * CHUNK_SZ;
     let mut buf = vec![0u8; w * h * 3];
     let mut heights: Vec<i32> = Vec::with_capacity(w * h);
+    let mut gen_time = std::time::Duration::ZERO;
 
     for cz in 0..n {
         for cx in 0..n {
+            let t0 = std::time::Instant::now();
             let chunk = generate_chunk(seed, cx as i32 - r, cz as i32 - r);
+            gen_time += t0.elapsed();
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {
                     let (b, y) = top_block(&chunk, x, z);
@@ -182,6 +190,12 @@ fn render_topdown(seed: u32, out: &str, by_biome: bool) {
         pct(0.99),
         heights[heights.len() - 1],
         below_sea * 100.0
+    );
+    println!(
+        "  generation: {:.2}s over {} chunks ({:.2}ms/chunk)",
+        gen_time.as_secs_f64(),
+        n * n,
+        gen_time.as_secs_f64() * 1000.0 / (n * n) as f64
     );
 }
 

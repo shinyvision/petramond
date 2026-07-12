@@ -1652,13 +1652,21 @@ impl World {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = super::stream::split_generated_column(&chunk);
         self.columns.insert(pos, column);
+        // A test chunk is fully known, so record per-section summaries: its
+        // absent sections are genuinely empty sky, and probes that consult
+        // `section_summary` (sapling growth validation, physics) read them as
+        // air — matching what a generated column's facts would answer.
+        let mut sums = vec![SectionSummary::Empty; (SECTION_MAX_CY - SECTION_MIN_CY + 1) as usize]
+            .into_boxed_slice();
         for (cy, section) in sections {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            sums[(cy - SECTION_MIN_CY) as usize] = section.summary();
             self.sections.insert(sp, Arc::new(section));
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);
         }
+        self.column_summaries.insert(pos, sums);
         self.bump_terrain_revision();
     }
 

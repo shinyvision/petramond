@@ -158,6 +158,86 @@ impl CaveLattice {
     fn cheese(&self, x: i32, y: i32, z: i32) -> f64 {
         self.tri(&self.cheese, x, y, z)
     }
+    /// Conservative per-cell "any voxel here might open or shell" mask, one
+    /// flag per LATTICE_STEP³ cell. Trilinear values are convex combinations
+    /// of the 8 cell corners, so per-field corner min/max bound every
+    /// interpolated voxel in the cell; a cell whose bounds clear every carver
+    /// family's most permissive radius (shell margins included) is provably
+    /// all-`CaveCut::Solid` and its voxels can be skipped wholesale —
+    /// byte-identical by construction. Indexed `(cy * (nz-1) + cz) * (nx-1) + cx`.
+    fn may_cut_mask(&self) -> Vec<bool> {
+        let (mx, my, mz) = (self.nx - 1, self.ny - 1, self.nz - 1);
+        let mut mask = vec![true; mx * my * mz];
+        let corner = |f: &[f64], cx: usize, cy: usize, cz: usize, d: usize| {
+            f[((cy + (d >> 2 & 1)) * self.nz + cz + (d >> 1 & 1)) * self.nx + cx + (d & 1)]
+        };
+        let bounds = |f: &[f64], cx: usize, cy: usize, cz: usize| {
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            for d in 0..8 {
+                let v = corner(f, cx, cy, cz, d);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+            (lo, hi)
+        };
+        let abs_lb = |(lo, hi): (f64, f64)| {
+            if lo > 0.0 {
+                lo
+            } else if hi < 0.0 {
+                -hi
+            } else {
+                0.0
+            }
+        };
+
+        for cy in 0..my {
+            let wy_lo = (self.ly0 + cy as i32) * LATTICE_STEP;
+            let wy_hi = wy_lo + LATTICE_STEP - 1;
+            // cheese_threshold is monotone in y, so the cell max is at an end.
+            let cheese_t = cheese_threshold(wy_lo).max(cheese_threshold(wy_hi));
+            for cz in 0..mz {
+                for cx in 0..mx {
+                    let (rough_lo, rough_hi) = bounds(&self.rough, cx, cy, cz);
+                    let rough_ub = |scale: f64| (rough_lo * scale).max(rough_hi * scale);
+
+                    let a_lb = abs_lb(bounds(&self.a, cx, cy, cz));
+                    let ab_lb = a_lb.max(abs_lb(bounds(&self.b, cx, cy, cz)));
+
+                    // Entrance and tunnel both open on the a/b metric; bound
+                    // them with the largest radius either can reach here.
+                    let tunnel_r_ub =
+                        (CAVE_TUNNEL_R + rough_ub(CAVE_TUNNEL_ROUGHNESS)).max(0.018);
+                    let entrance_r_ub = (CAVE_ENTRANCE_SURFACE_R.max(CAVE_ENTRANCE_DEEP_R)
+                        + rough_ub(CAVE_TUNNEL_ROUGHNESS))
+                    .max(0.016);
+                    if ab_lb < tunnel_r_ub.max(entrance_r_ub) + CAVE_LINING_SHELL {
+                        continue;
+                    }
+                    let branch_lb = a_lb.max(abs_lb(bounds(&self.branch, cx, cy, cz)));
+                    if branch_lb < tunnel_r_ub * CAVE_BRANCH_R_SCALE + CAVE_LINING_SHELL {
+                        continue;
+                    }
+                    if rough_lo < CAVE_NOODLE_GATE_T {
+                        let noodle_lb = abs_lb(bounds(&self.na, cx, cy, cz))
+                            .max(abs_lb(bounds(&self.nb, cx, cy, cz)));
+                        if noodle_lb < CAVE_NOODLE_R + CAVE_LINING_SHELL {
+                            continue;
+                        }
+                    }
+                    let (cheese_lo, _) = bounds(&self.cheese, cx, cy, cz);
+                    if cheese_lo
+                        < cheese_t + rough_ub(CAVE_CHEESE_ROUGHNESS) + CAVE_CHEESE_LINING_SHELL
+                    {
+                        continue;
+                    }
+                    mask[(cy * mz + cz) * mx + cx] = false;
+                }
+            }
+        }
+        mask
+    }
+
     #[inline]
     fn biome(&self, x: i32, y: i32, z: i32) -> f64 {
         self.tri(&self.biome, x, y, z)
@@ -519,6 +599,8 @@ impl CaveField {
         );
         let blocks = chunk.blocks_slice_mut();
 
+        let may_cut = lat.may_cut_mask();
+        let (mx, mz) = (lat.nx - 1, lat.nz - 1);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 let surf_y = surf[z * CHUNK_SX + x];
@@ -528,10 +610,20 @@ impl CaveField {
                 }
                 let wx = ox + x as i32;
                 let wz = oz + z as i32;
-                for y in y0..=y1 {
+                let cxc = (wx.div_euclid(LATTICE_STEP) - lat.lx0) as usize;
+                let czc = (wz.div_euclid(LATTICE_STEP) - lat.lz0) as usize;
+                let mut y = y0;
+                while y <= y1 {
+                    let cyc = (y.div_euclid(LATTICE_STEP) - lat.ly0) as usize;
+                    if !may_cut[(cyc * mz + czc) * mx + cxc] {
+                        // Provably solid cell: jump to the next cell floor.
+                        y = (y.div_euclid(LATTICE_STEP) + 1) * LATTICE_STEP;
+                        continue;
+                    }
                     let i = idx(x, y as usize, z);
                     let id = blocks[i];
                     if id == air || id == water {
+                        y += 1;
                         continue;
                     }
                     match self.cut_lat(&lat, wx, y, wz, surf_y) {
@@ -546,6 +638,7 @@ impl CaveField {
                         }
                         _ => {}
                     }
+                    y += 1;
                 }
             }
         }
@@ -578,6 +671,8 @@ impl CaveField {
         );
         let blocks = section.blocks_slice_mut();
 
+        let may_cut = lat.may_cut_mask();
+        let (mx, mz) = (lat.nx - 1, lat.nz - 1);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
                 let surf_y = surf[z * SECTION_SIZE + x];
@@ -587,11 +682,21 @@ impl CaveField {
                 }
                 let wx = ox + x as i32;
                 let wz = oz + z as i32;
-                for wy in y0..=y1 {
+                let cxc = (wx.div_euclid(LATTICE_STEP) - lat.lx0) as usize;
+                let czc = (wz.div_euclid(LATTICE_STEP) - lat.lz0) as usize;
+                let mut wy = y0;
+                while wy <= y1 {
+                    let cyc = (wy.div_euclid(LATTICE_STEP) - lat.ly0) as usize;
+                    if !may_cut[(cyc * mz + czc) * mx + cxc] {
+                        // Provably solid cell: jump to the next cell floor.
+                        wy = (wy.div_euclid(LATTICE_STEP) + 1) * LATTICE_STEP;
+                        continue;
+                    }
                     let ly = (wy - oy) as usize;
                     let i = section_idx(x, ly, z);
                     let id = blocks[i];
                     if id == air || id == water {
+                        wy += 1;
                         continue;
                     }
                     match self.cut_lat(&lat, wx, wy, wz, surf_y) {
@@ -603,6 +708,7 @@ impl CaveField {
                         }
                         _ => {}
                     }
+                    wy += 1;
                 }
             }
         }

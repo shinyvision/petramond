@@ -111,6 +111,7 @@ pub mod worldgen {
     pub fn feature_preview_names() -> &'static [&'static str] {
         &[
             "redwood",
+            "oak_young",
             "oak_small",
             "oak_swamp",
             "oak_big",
@@ -150,6 +151,7 @@ pub mod worldgen {
         let key = name.trim().to_ascii_lowercase().replace('-', "_");
         Some(match key.as_str() {
             "redwood" => &crate::worldgen::data::features::REDWOOD,
+            "oak_young" | "young_oak" => &crate::worldgen::data::features::OAK_YOUNG,
             "oak_small" | "oak" => &crate::worldgen::data::features::OAK_SMALL,
             "oak_swamp" | "swamp_oak" => &crate::worldgen::data::features::OAK_SWAMP,
             "oak_big" | "giant_oak" | "fancy_oak" => &crate::worldgen::data::features::OAK_BIG,
