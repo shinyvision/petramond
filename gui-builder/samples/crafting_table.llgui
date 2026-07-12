@@ -94,8 +94,8 @@
               "type": "toggle",
               "icon": "icon.craft_filter",
               "layout": {
-                "w": 16,
-                "h": "auto",
+                "w": 18,
+                "h": 18,
                 "pad": [
                   0,
                   0,
@@ -190,7 +190,7 @@
                     "w": {
                       "grow": 1
                     },
-                    "h": 34,
+                    "h": 30,
                     "pad": [
                       3,
                       3,
@@ -216,8 +216,8 @@
                       "id": "recipe_result",
                       "type": "hook",
                       "layout": {
-                        "w": 20,
-                        "h": 20,
+                        "w": 16,
+                        "h": 16,
                         "pad": [
                           0,
                           0,

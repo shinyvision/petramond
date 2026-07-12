@@ -4,7 +4,7 @@
     "format": 1,
     "kind": "petramond:inventory",
     "class": "container",
-    "compact_below_w": 360,
+    "compact_below_w": 416,
     "root": {
       "type": "frame",
       "layout": {
@@ -59,9 +59,7 @@
         {
           "type": "column",
           "layout": {
-            "w": {
-              "grow": 1
-            },
+            "w": 220,
             "h": "auto",
             "pad": [
               4,
@@ -78,9 +76,7 @@
             "gap": 3,
             "dir": "column",
             "align": "stretch",
-            "justify": "start",
-            "min_w": 120,
-            "max_w": 220
+            "justify": "start"
           },
           "compact_layout": {
             "w": "auto",
@@ -103,7 +99,7 @@
             "dir": "column",
             "align": "stretch",
             "justify": "start",
-            "min_h": 110
+            "min_h": 126
           },
           "style": "panel.large",
           "children": [
@@ -169,8 +165,8 @@
                   "type": "toggle",
                   "icon": "icon.craft_filter",
                   "layout": {
-                    "w": 16,
-                    "h": "auto",
+                    "w": 18,
+                    "h": 18,
                     "pad": [
                       0,
                       0,
@@ -285,7 +281,7 @@
                         "w": {
                           "grow": 1
                         },
-                        "h": 34,
+                        "h": 30,
                         "pad": [
                           3,
                           3,
@@ -311,8 +307,8 @@
                           "id": "recipe_result",
                           "type": "hook",
                           "layout": {
-                            "w": 20,
-                            "h": 20,
+                            "w": 16,
+                            "h": 16,
                             "pad": [
                               0,
                               0,
